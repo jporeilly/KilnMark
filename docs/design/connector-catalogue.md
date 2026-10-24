@@ -158,6 +158,10 @@ stays visible. The panel guides the person through four steps, each of which can
 2. **Test:** test the connection before anything is saved, with a plain-English result.
 3. **Choose what to scan:** the schema or folder picker with counts, plus include and exclude
    patterns and, for files, formats.
+   Any table or file can be previewed here: its first rows (100 by default, at most 1,000),
+   with columns and inferred types, read live and never stored. For files, the preview also
+   shows what was detected (format, delimiter, header, encoding, JSON record path), and the
+   person can override it for the scan.
 4. **Save:** save only, or save and scan now. Common settings (display name, description, AI
    rule) are set here.
 
