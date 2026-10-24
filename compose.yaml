@@ -70,6 +70,8 @@ services:
   # and http://ai-embed:8080/v1). Images are pinned by tag and digest.
   # Slots: chat has 2 (--parallel 2) sharing 8,192 tokens, so 4,096 each, matching Kilnmark's
   # default of 2 calls at a time per model; embeddings have 2 slots of 512 tokens, bge's maximum.
+  # llama-server refuses a longer input instead of cutting it, so give the embedding profile a
+  # context size of 512 in Kilnmark: it then sizes asset text to fit (1.5 characters per token).
   ai:
     image: ghcr.io/ggml-org/llama.cpp:server-b11429@sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1
     profiles: ["ai"]

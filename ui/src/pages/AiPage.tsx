@@ -116,7 +116,7 @@ export function AiPage() {
                   .map((p) => (
                     <option key={p.name} value={p.name}>
                       {p.name} ({p.model}
-                      {p.local ? ", local" : ", hosted"})
+                      {p.effectiveLocal ? ", local" : ", hosted"})
                     </option>
                   ))}
               </select>
@@ -193,9 +193,12 @@ export function AiPage() {
                         <div className="muted">{p.providerLabel}</div>
                       </td>
                       <td>
-                        <span className={`badge ${p.local ? "badge-succeeded" : "badge-running"}`}>
-                          {p.local ? "Local" : "Hosted"}
+                        <span className={`badge ${p.effectiveLocal ? "badge-succeeded" : p.local ? "badge-failed" : "badge-running"}`}>
+                          {p.effectiveLocal ? "Local" : p.local ? "Not accepted as local" : "Hosted"}
                         </span>
+                        {p.local && !p.effectiveLocal && (
+                          <div className="small muted">Its address is not on one of this server&rsquo;s local networks.</div>
+                        )}
                         <div className="small muted mono">{p.effectiveBaseUrl}</div>
                       </td>
                       <td className="small">{p.hasApiKey ? (p.apiKeyHint ? `Ends ${p.apiKeyHint}` : "Stored") : "None"}</td>
@@ -321,6 +324,17 @@ function hostOf(url: string | null | undefined): string {
   }
 }
 
+/** Scheme, host and port, with the scheme's default port: where a stored key may be sent. */
+function originOf(url: string | null | undefined): string {
+  try {
+    if (!url) return "";
+    const u = new URL(url);
+    return `${u.protocol}//${u.hostname.toLowerCase()}:${u.port || (u.protocol === "https:" ? "443" : "80")}`;
+  } catch {
+    return "";
+  }
+}
+
 function ProfileForm({
   profile,
   providers,
@@ -357,8 +371,8 @@ function ProfileForm({
   const provider = providers.find((p) => p.id === f.provider);
   const compatible = f.provider === "openai-compatible";
   const effective = (baseUrl: string) => baseUrl.trim() || provider?.defaultBaseUrl || "";
-  // A stored key is only sent to the host it was entered for, and "local" is about one server.
-  const hostChanged = profile !== null && hostOf(effective(f.baseUrl)) !== hostOf(profile.effectiveBaseUrl);
+  // A stored key is only sent where it was entered for (scheme, host and port), and "local" is about one server.
+  const hostChanged = profile !== null && originOf(effective(f.baseUrl)) !== originOf(profile.effectiveBaseUrl);
   const changeUrl = (url: string) =>
     setF((s) => {
       const moved = hostOf(effective(url)) !== hostOf(effective(s.baseUrl));

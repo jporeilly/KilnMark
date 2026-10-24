@@ -18,8 +18,11 @@ public final class AssetText {
     public record Field(String name, String type, String description) {
     }
 
-    /** Characters sent when the profile gives no context size; about 400 tokens, safe for small models. */
-    static final int DEFAULT_MAX_CHARS = 1500;
+    /**
+     * Characters sent when the profile gives no context size: a 512-token context, the smallest in
+     * common use (bge-small, for one). llama-server refuses a longer input rather than cutting it.
+     */
+    static final int DEFAULT_MAX_CHARS = 768;
 
     /** The text for one asset, cut to {@code maxChars}. */
     public static String of(String source, String sourceDescription, String kind, String container, String name,
@@ -59,9 +62,14 @@ public final class AssetText {
         return text.length() <= maxChars ? text : text.substring(0, maxChars);
     }
 
-    /** How much text a profile can take: about three characters per token, at most 30,000. */
+    /**
+     * How much text a profile can take: one and a half characters per token of its context, at most
+     * 30,000. Asset text is mostly identifiers and types, which tokenise at about 1.8 characters
+     * per token (measured with bge-small's tokenizer), so this leaves room; llama-server answers an
+     * input longer than its context with an error, not a cut.
+     */
     static int maxChars(ModelProfile p) {
-        return p.contextSize() == null ? DEFAULT_MAX_CHARS : (int) Math.min(30_000L, p.contextSize() * 3L);
+        return p.contextSize() == null ? DEFAULT_MAX_CHARS : (int) Math.min(30_000L, p.contextSize() * 3L / 2);
     }
 
     /** customer_orders and customerOrders read as "customer orders", which embeds better. */

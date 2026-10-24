@@ -260,4 +260,44 @@ class AiRulesTest {
         assertFalse(HybridSearch.atLeast("0.7.4", 0, 8));
         assertFalse(HybridSearch.atLeast("x", 0, 8));
     }
+
+    @Test
+    void wrongAiSettingsStopTheServer() {
+        java.util.function.Function<String[], List<String>> problems = pairs -> AiConfigCheck.problems(
+            config(pairs).getConfigMapping(io.kilnmark.server.KilnmarkConfig.class));
+        assertTrue(problems.apply(new String[] {}).isEmpty());
+        assertTrue(problems.apply(new String[] {"kilnmark.ai.local-hosts", "10.0.0.0/33"}).get(0).contains("10.0.0.0/33"));
+        assertTrue(problems.apply(new String[] {"kilnmark.ai.local-hosts", "not a host!"}).get(0).contains("not a host!"));
+        assertTrue(problems.apply(new String[] {"kilnmark.ai.usage-retention", "1h"}).get(0).contains("at least 1d"));
+        assertTrue(problems.apply(new String[] {"kilnmark.ai.usage-retention", "1d"}).isEmpty());
+    }
+
+    @Test
+    void anEmptyLocalHostsValueMeansTheDefaultNetworks() {
+        ModelHosts hosts = new ModelHosts(config("kilnmark.ai.hosted-models", "forbidden", "kilnmark.ai.local-hosts", "")
+            .getConfigMapping(io.kilnmark.server.KilnmarkConfig.class));
+        assertTrue(hosts.mayBeLocal("http://10.1.2.3/v1"));
+        assertTrue(hosts.mayBeLocal("http://localhost:8080/v1"));
+        // Under the lock, a name counts only when listed, whatever it resolves to.
+        assertFalse(hosts.mayBeLocal("http://localhost.localdomain/v1"));
+        ModelHosts listed = new ModelHosts(config("kilnmark.ai.hosted-models", "forbidden", "kilnmark.ai.local-hosts",
+            "kb-x.invalid").getConfigMapping(io.kilnmark.server.KilnmarkConfig.class));
+        assertTrue(listed.mayBeLocal("http://kb-x.invalid/v1"), "listed: local without a lookup");
+    }
+
+    @Test
+    void aKeyStaysWithItsSchemeHostAndPort() {
+        assertEquals(ModelHosts.origin("http://h/v1"), ModelHosts.origin("http://H:80/other"));
+        assertEquals(ModelHosts.origin("https://h/v1"), ModelHosts.origin("https://h:443/v1"));
+        assertFalse(ModelHosts.origin("http://h/v1").equals(ModelHosts.origin("https://h/v1")));
+        assertFalse(ModelHosts.origin("http://h:8080/v1").equals(ModelHosts.origin("http://h:8081/v1")));
+    }
+
+    @Test
+    void assetTextFitsA512TokenContext() {
+        ModelProfile small = new ModelProfile(1, "e", Provider.OPENAI_COMPATIBLE, "http://h/v1", "m",
+            AiFeature.Purpose.EMBEDDING, 384, 512, true, false, null, 5, 1, 1, "t", null, null);
+        assertEquals(768, AssetText.maxChars(small));
+        assertEquals(768, AssetText.DEFAULT_MAX_CHARS);
+    }
 }

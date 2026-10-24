@@ -180,21 +180,31 @@ class AiEval {
             System.out.println("Baseline updated: " + baseline.toAbsolutePath());
             return;
         }
-        assertTrue(worse.isEmpty(), "Scores fell below the baseline (" + baseline + "): " + String.join("; ", worse)
+        assertTrue(worse.isEmpty(), "Not as good as the baseline (" + baseline + "): " + String.join("; ", worse)
             + ". Fix the regression, or accept the new scores with -Pkilnmark.eval.update-baseline=true.");
     }
 
-    /** The scores that fell below the baseline by more than its tolerance, in words. */
+    /**
+     * The scores that fell below the baseline by more than its tolerance, in words. A missing
+     * baseline file, tolerance or score counts too: without them nothing can be compared, and the
+     * release gate must not pass by default.
+     */
     private List<String> compare(Map<String, Double> scores) throws IOException {
         List<String> worse = new ArrayList<>();
         if (!Files.exists(baseline)) {
+            worse.add("no baseline file at " + baseline);
             return worse;
         }
         JsonNode b = json.readTree(baseline.toFile());
+        if (!b.path("tolerance").isNumber()) {
+            worse.add("the baseline has no tolerance");
+        }
         double tolerance = b.path("tolerance").asDouble(0.02);
         scores.forEach((k, v) -> {
             JsonNode base = b.path("scores").path(k);
-            if (base.isNumber() && v < base.asDouble() - tolerance) {
+            if (!base.isNumber()) {
+                worse.add("the baseline has no score for " + k);
+            } else if (v < base.asDouble() - tolerance) {
                 worse.add(String.format(Locale.ROOT, "%s %.3f (baseline %.3f)", k, v, base.asDouble()));
             }
         });

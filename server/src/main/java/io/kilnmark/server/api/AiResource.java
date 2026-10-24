@@ -98,13 +98,13 @@ public class AiResource {
     @Path("profiles")
     public List<AiViews.Profile> list() {
         Map<AiFeature, ModelProfile> routes = profiles.routes();
-        return profiles.list().stream().map(p -> view(p, routes)).toList();
+        return profiles.list().stream().map(p -> view(p, routes, egress)).toList();
     }
 
     @GET
     @Path("profiles/{name}")
     public AiViews.Profile get(@PathParam("name") String name) {
-        return view(find(name), profiles.routes());
+        return view(find(name), profiles.routes(), egress);
     }
 
     @POST
@@ -112,7 +112,7 @@ public class AiResource {
     @Consumes(MediaType.APPLICATION_JSON)
     public Response create(ModelProfile.Input body) {
         ModelProfile p = profiles.create(checkAddress(ModelProfile.validate(body, false)), Callers.of(identity));
-        return Response.created(URI.create("/api/v1/ai/profiles/" + p.name())).entity(view(p, profiles.routes()))
+        return Response.created(URI.create("/api/v1/ai/profiles/" + p.name())).entity(view(p, profiles.routes(), egress))
             .build();
     }
 
@@ -123,11 +123,12 @@ public class AiResource {
     public AiViews.Profile update(@PathParam("name") String name, ModelProfile.Input body) {
         ModelProfile before = find(name);
         ModelProfile.Valid v = checkAddress(ModelProfile.validate(body, before.hasKey()));
-        // A stored key goes only to the host it was entered for: a new host needs the key again.
+        // A stored key goes only where it was entered for: same scheme, host and port.
         if (before.hasKey() && body.apiKey() == null
-            && !ModelHosts.host(before.effectiveBaseUrl()).equals(ModelHosts.host(v.effectiveBaseUrl()))) {
-            throw new IllegalArgumentException("apiKey: the address now points at another server, so enter the API key "
-                + "again (or send an empty key to remove it). A stored key is only sent where it was entered for.");
+            && !ModelHosts.origin(before.effectiveBaseUrl()).equals(ModelHosts.origin(v.effectiveBaseUrl()))) {
+            throw new IllegalArgumentException("apiKey: the address now points at another server (scheme, host or "
+                + "port changed), so enter the API key again (or send an empty key to remove it). A stored key is "
+                + "only sent where it was entered for.");
         }
         ModelProfiles.Updated u = profiles.update(before, v, Callers.of(identity));
         if (u.reembed()) {
@@ -136,7 +137,7 @@ public class AiResource {
                 embeddings.reembedAllInBackground("profile " + u.profile().name() + " changed");
             }
         }
-        return view(u.profile(), profiles.routes());
+        return view(u.profile(), profiles.routes(), egress);
     }
 
     @DELETE
@@ -258,14 +259,14 @@ public class AiResource {
             "No model profile called " + name));
     }
 
-    private static AiViews.Profile view(ModelProfile p, Map<AiFeature, ModelProfile> routes) {
+    private static AiViews.Profile view(ModelProfile p, Map<AiFeature, ModelProfile> routes, EgressPolicy egress) {
         List<String> usedBy = new ArrayList<>();
         routes.forEach((f, r) -> {
             if (r.id() == p.id()) {
                 usedBy.add(f.id());
             }
         });
-        return AiViews.Profile.of(p, usedBy);
+        return AiViews.Profile.of(p, usedBy, egress.local(p));
     }
 
     /** A clash with what is stored, such as deleting a profile in use: 409. */

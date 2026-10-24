@@ -260,17 +260,19 @@ sets `kilnmark.ai.allow-metadata-addresses=true`.
 `local_only` (the default) lets only local models see its metadata, `allowed` any model, `none`
 no model. The admin's rule under **AI models** can refuse every model that is not local. Whoever
 runs the server can go further with `KILNMARK_AI_HOSTED_MODELS=forbidden`: admins cannot undo it,
-and a model then counts as local only if its address is on one of the networks in
-`KILNMARK_AI_LOCAL_HOSTS` (default: loopback and private networks), checked when it is saved and
-before every call; ticking **local** is not enough. A refused call never reaches the model; usage
-shows it.
+and a model then counts as local only if its address is an IP address on one of the networks in
+`KILNMARK_AI_LOCAL_HOSTS`, or a host name listed there (names are not resolved for this), checked
+when it is saved and before every call; ticking **local** is not enough. With the Compose AI
+services, list their names: `KILNMARK_AI_LOCAL_HOSTS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,ai,ai-cuda,ai-embed`.
+Kilnmark cannot tell when a local server forwards requests to a hosted one. A refused call never
+reaches the model; usage shows it.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `kilnmark.ai.hosted-models` | `allowed` | `forbidden` locks out every model that is not local; admins cannot undo it. Other values stop the server |
-| `kilnmark.ai.local-hosts` | loopback and private networks | While hosted models are forbidden, where a local model must be: CIDRs and host names, comma-separated |
+| `kilnmark.ai.local-hosts` | loopback and private networks, and `localhost` | While hosted models are forbidden, where a local model must be: networks (CIDR), IP addresses and host names, comma-separated. Empty means the default. An entry that does not parse stops the server |
 | `kilnmark.ai.allow-metadata-addresses` | `false` | Allow link-local and cloud metadata addresses as model addresses |
-| `kilnmark.ai.usage-retention` | `90d` | Usage records older than this are deleted |
+| `kilnmark.ai.usage-retention` | `90d` | Usage records older than this are deleted; at least `1d` |
 | `kilnmark.ai.max-retries` | `2` | Retries after timeouts, rate limits and server errors, with backoff (scans; a search waits about 10 seconds at most) |
 | `kilnmark.ai.embed-batch-size` | `16` | Assets per embedding request |
 | `kilnmark.ai.min-similarity` | `0.3` | Search by meaning ignores less similar assets (cosine, 0 to 1) |

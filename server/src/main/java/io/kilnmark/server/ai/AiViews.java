@@ -15,15 +15,21 @@ public final class AiViews {
         }
     }
 
-    /** A model profile as listed. {@code baseUrl} is what was entered; {@code effectiveBaseUrl} what is called. */
+    /**
+     * A model profile as listed. {@code baseUrl} is what was entered; {@code effectiveBaseUrl} what is
+     * called. {@code local} is the admin's tick; {@code effectiveLocal} whether the server treats the
+     * model as local now (under the operator lock, only on a local network).
+     */
     public record Profile(String name, String provider, String providerLabel, String baseUrl, String effectiveBaseUrl,
                           String model, String purpose, Integer dimensions, Integer contextSize, boolean local,
-                          boolean hasApiKey, String apiKeyHint, int timeoutSeconds, int maxConcurrent,
-                          List<String> usedBy, String createdBy, Instant createdAt, Instant updatedAt) {
-        public static Profile of(ModelProfile p, List<String> usedBy) {
+                          boolean effectiveLocal, boolean hasApiKey, String apiKeyHint, int timeoutSeconds,
+                          int maxConcurrent, List<String> usedBy, String createdBy, Instant createdAt,
+                          Instant updatedAt) {
+        public static Profile of(ModelProfile p, List<String> usedBy, boolean effectiveLocal) {
             return new Profile(p.name(), p.provider().id(), p.provider().label(), p.baseUrl(), p.effectiveBaseUrl(),
-                p.model(), p.purpose().id(), p.dimensions(), p.contextSize(), p.local(), p.hasKey(), p.keyHint(),
-                p.timeoutSeconds(), p.maxConcurrent(), usedBy, p.createdBy(), p.createdAt(), p.updatedAt());
+                p.model(), p.purpose().id(), p.dimensions(), p.contextSize(), p.local(), effectiveLocal, p.hasKey(),
+                p.keyHint(), p.timeoutSeconds(), p.maxConcurrent(), usedBy, p.createdBy(), p.createdAt(),
+                p.updatedAt());
         }
     }
 

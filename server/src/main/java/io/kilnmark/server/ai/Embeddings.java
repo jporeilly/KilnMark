@@ -46,6 +46,8 @@ public class Embeddings {
     private static final Logger LOG = Logger.getLogger(Embeddings.class);
     /** pg_advisory_lock key for a full re-embed, so only one process runs it at a time. */
     private static final long REEMBED_LOCK = 0x6b6d_6169_656dL;
+    /** First half of the two-part advisory lock key for building one profile's index (the profile id is the second). */
+    static final int INDEX_LOCK_CLASS = 0x6b6d_6978;
     /** Assets read from the catalogue at a time, so a large source never sits in memory at once. */
     static final int PAGE = 500;
 
@@ -178,8 +180,14 @@ public class Embeddings {
         if (fresh.isEmpty()) {
             return "the source was removed.";
         }
-        if (current.isEmpty() || current.get().id() != p.id() || current.get().version() != p.version()) {
-            return "the embedding model changed meanwhile; the new one embeds every source again.";
+        if (current.isEmpty()) {
+            return "search by meaning was turned off meanwhile.";
+        }
+        if (current.get().id() != p.id()) {
+            return "another embedding model was chosen meanwhile; it embeds every source again.";
+        }
+        if (!sameVectors(p, current.get())) {
+            return "the embedding model's address, model or size changed meanwhile; every source is embedded again.";
         }
         try {
             List<float[]> vectors = gateway.embedWith(current.get(), AiFeature.EMBED.id(), fresh.get(),
@@ -187,7 +195,8 @@ public class Embeddings {
                 .answer().vectors();
             if (!saveIfCurrent(p, batch.stream().map(Pending::urn).toList(),
                 batch.stream().map(Pending::hash).toList(), vectors)) {
-                return "the embedding model changed meanwhile; the new one embeds every source again.";
+                return "the embedding model's address, model or size changed meanwhile; every source is embedded "
+                    + "again.";
             }
             return null;
         } catch (AiException e) {
@@ -244,19 +253,31 @@ public class Embeddings {
     }
 
     /**
-     * Saves vectors, but only while the profile is still the version they were made with: the
-     * profile row is share-locked in the same transaction, so an edit to its model or dimensions
-     * cannot slip in between, and rows of an old size never land under a profile.
+     * Whether two versions of a profile make the same vectors: same provider, address, model and
+     * size. A change to its timeout or concurrency does not matter.
+     */
+    static boolean sameVectors(ModelProfile a, ModelProfile b) {
+        return a.provider() == b.provider() && java.util.Objects.equals(a.effectiveBaseUrl(), b.effectiveBaseUrl())
+            && a.model().equals(b.model()) && java.util.Objects.equals(a.dimensions(), b.dimensions());
+    }
+
+    /**
+     * Saves vectors, but only while the profile still makes the same vectors (provider, address,
+     * model and size) as when they were made: the profile row is share-locked in the same
+     * transaction, so such an edit cannot slip in between, and rows of an old size never land under
+     * a profile. Other edits (timeout, concurrency) do not stop it.
      *
-     * @return false (nothing saved) if the profile changed or was deleted
+     * @return false (nothing saved) if the profile changed that way or was deleted
      */
     boolean saveIfCurrent(ModelProfile p, List<String> urns, List<byte[]> hashes, List<float[]> vectors) {
         return db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement(
-                "SELECT version, dimensions FROM kilnmark.model_profile WHERE id = ? FOR SHARE")) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT provider, coalesce(base_url, ''), model, dimensions "
+                + "FROM kilnmark.model_profile WHERE id = ? FOR SHARE")) {
                 ps.setLong(1, p.id());
                 try (ResultSet rs = ps.executeQuery()) {
-                    if (!rs.next() || rs.getInt(1) != p.version() || rs.getInt(2) != p.dimensions()) {
+                    if (!rs.next() || !rs.getString(1).equals(p.provider().id())
+                        || !rs.getString(2).equals(p.baseUrl() == null ? "" : p.baseUrl())
+                        || !rs.getString(3).equals(p.model()) || rs.getInt(4) != p.dimensions()) {
                         return false;
                     }
                 }
@@ -307,9 +328,11 @@ public class Embeddings {
     }
 
     /**
-     * Creates the profile's partial HNSW index if {@code pg_indexes} does not have a valid one,
-     * with {@code CREATE INDEX CONCURRENTLY} outside any transaction, so scans and searches go on
-     * while it builds. A build that failed half-way (an invalid index) is dropped and built again.
+     * Creates the profile's partial HNSW index if {@code pg_index} does not have a valid one, with
+     * {@code CREATE INDEX CONCURRENTLY} outside any transaction, so scans and searches go on while it
+     * builds. Building takes a per-profile advisory lock: while another process holds it (its build
+     * shows as an invalid index until it finishes), this one skips. Only the holder drops an invalid
+     * index (a build that failed half-way) and builds it again.
      */
     void ensureIndex(ModelProfile p) {
         if (p.dimensions() == null || p.dimensions() > 4000) {
@@ -323,29 +346,51 @@ public class Embeddings {
             + " AND dimensions = " + p.dimensions();
         try (Connection c = db.connection()) {
             c.setAutoCommit(true);
-            Boolean valid = null;
-            try (PreparedStatement ps = c.prepareStatement("SELECT i.indisvalid FROM pg_index i JOIN pg_class x "
-                + "ON x.oid = i.indexrelid JOIN pg_namespace n ON n.oid = x.relnamespace "
-                + "WHERE n.nspname = 'kilnmark' AND x.relname = ?")) {
-                ps.setString(1, name);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (rs.next()) {
-                        valid = rs.getBoolean(1);
-                    }
-                }
-            }
-            if (Boolean.TRUE.equals(valid)) {
+            if (Boolean.TRUE.equals(validIndex(c, name))) {
                 return;
             }
-            try (Statement s = c.createStatement()) {
-                if (Boolean.FALSE.equals(valid)) {
-                    s.execute("DROP INDEX CONCURRENTLY IF EXISTS kilnmark." + name);
+            if (!indexLock(c, "pg_try_advisory_lock", p.id())) {
+                return; // another process is building it; searches scan until it is ready
+            }
+            try {
+                Boolean valid = validIndex(c, name);
+                if (Boolean.TRUE.equals(valid)) {
+                    return;
                 }
-                s.execute(create);
+                try (Statement s = c.createStatement()) {
+                    if (Boolean.FALSE.equals(valid)) {
+                        s.execute("DROP INDEX CONCURRENTLY IF EXISTS kilnmark." + name);
+                    }
+                    s.execute(create);
+                }
+            } finally {
+                indexLock(c, "pg_advisory_unlock", p.id());
             }
         } catch (SQLException e) {
             LOG.warnf("Could not create the search index %s (searches still work, more slowly): %s", name,
                 e.getMessage());
+        }
+    }
+
+    private static boolean indexLock(Connection c, String function, long profileId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT " + function + "(?, ?)")) {
+            ps.setInt(1, INDEX_LOCK_CLASS);
+            ps.setInt(2, (int) profileId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getBoolean(1);
+            }
+        }
+    }
+
+    /** Whether the index exists and is valid; null when it does not exist. */
+    private static Boolean validIndex(Connection c, String name) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT i.indisvalid FROM pg_index i JOIN pg_class x "
+            + "ON x.oid = i.indexrelid JOIN pg_namespace n ON n.oid = x.relnamespace "
+            + "WHERE n.nspname = 'kilnmark' AND x.relname = ?")) {
+            ps.setString(1, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getBoolean(1) : null;
+            }
         }
     }
 
