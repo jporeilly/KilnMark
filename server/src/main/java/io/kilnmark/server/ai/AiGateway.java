@@ -168,7 +168,15 @@ public class AiGateway {
                               BooleanSupplier cancelled, Budget budget, String prompt, Function<ModelClient, T> call,
                               Function<T, long[]> tokens, Function<T, String> answerText, Function<T, String> check) {
         long start = System.nanoTime();
-        Optional<String> refusal = hosts.forbidden(p.effectiveBaseUrl()).or(() -> egress.refusal(p, source));
+        long deadline = budget.totalMs() > 0 ? System.currentTimeMillis() + budget.totalMs() : Long.MAX_VALUE;
+        Optional<String> refusal;
+        try {
+            refusal = refusal(p, source, deadline);
+        } catch (AiException e) {
+            usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, e.outcome(), e.getMessage(), caller, null,
+                null));
+            throw e;
+        }
         if (refusal.isPresent()) {
             usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, "refused", refusal.get(), caller, null,
                 null));
@@ -188,7 +196,6 @@ public class AiGateway {
             usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, "failed", msg, caller, null, null));
             throw new AiException(Kind.FAILED, msg);
         }
-        long deadline = budget.totalMs() > 0 ? System.currentTimeMillis() + budget.totalMs() : Long.MAX_VALUE;
         boolean acquired = false;
         try {
             long wait = budget.slotWaitMs() > 0 ? budget.slotWaitMs() : p.timeoutSeconds() * 1000L;
@@ -198,7 +205,7 @@ public class AiGateway {
                     + " calls were already running in this process for " + wait / 1000.0 + " seconds. Try again "
                     + "shortly, or raise the profile's limit if its server can take more.");
             }
-            T answer = withRetries(p, budget, deadline, () -> call.apply(built.client()), cancelled);
+            T answer = withRetries(p, source, budget, deadline, () -> call.apply(built.client()), cancelled);
             String wrong = check.apply(answer);
             if (wrong != null) {
                 throw new AiException(Kind.FAILED, wrong);
@@ -210,7 +217,8 @@ public class AiGateway {
                 t[1] < 0 ? null : (int) t[1], ms, "ok", null, caller, prompt, answerText.apply(answer)));
             return new Result<>(answer, p, ms);
         } catch (AiException e) {
-            if (e.kind() == Kind.TIMEOUT || e.unreachable()) {
+            // Only interactive failures make searches skip the model: a slow background batch does not.
+            if (budget.skipIfDown() && (e.kind() == Kind.TIMEOUT || e.unreachable())) {
                 downUntil.put(p.id(), System.currentTimeMillis() + DOWN_FOR_MS);
             }
             usage.record(new UsageLog.Entry(feature, p, source, null, null, (System.nanoTime() - start) / 1_000_000,
@@ -274,10 +282,49 @@ public class AiGateway {
         T run();
     }
 
-    private <T> T withRetries(ModelProfile p, Budget budget, long deadline, Attempt<T> attempt,
+    /**
+     * The address and egress checks: a metadata or link-local address, or a model the source's rule
+     * or the server's rule does not allow. The name lookup for the metadata check runs within the
+     * call's time (at most the profile's timeout); one that does not finish is a failure to reach
+     * the server, not a refusal.
+     */
+    private Optional<String> refusal(ModelProfile p, Records.Source source, long deadline) {
+        long limit = Math.min(p.timeoutSeconds() * 1000L, deadline - System.currentTimeMillis());
+        CompletableFuture<Optional<String>> lookup = new CompletableFuture<>();
+        Thread t = Thread.ofVirtual().name("kilnmark-ai-lookup").start(() -> {
+            try {
+                lookup.complete(hosts.forbidden(p.effectiveBaseUrl()));
+            } catch (Throwable e) {
+                lookup.completeExceptionally(e);
+            }
+        });
+        Optional<String> forbidden;
+        try {
+            forbidden = lookup.get(Math.max(1, limit), TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            t.interrupt();
+            throw new AiException(Kind.FAILED, "Looking up the address of model " + p.name() + " (" + p.effectiveBaseUrl()
+                + ") took too long. Check the server's name service.", true);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AiException(Kind.CANCELLED, "The call was cancelled.");
+        } catch (ExecutionException e) {
+            forbidden = Optional.empty(); // the call itself will say the server cannot be reached
+        }
+        return forbidden.or(() -> egress.refusal(p, source));
+    }
+
+    private <T> T withRetries(ModelProfile p, Records.Source source, Budget budget, long deadline, Attempt<T> attempt,
                               BooleanSupplier cancelled) {
         int retries = Math.max(0, config.ai().maxRetries());
         for (int n = 0; ; n++) {
+            if (n > 0) {
+                // Again before every retry: the rules or the address may have changed meanwhile.
+                Optional<String> refused = refusal(p, source, deadline);
+                if (refused.isPresent()) {
+                    throw new AiException(Kind.REFUSED, refused.get());
+                }
+            }
             long attemptMs = Math.min(p.timeoutSeconds() * 1000L + 5000, deadline - System.currentTimeMillis());
             if (attemptMs <= 0) {
                 throw new AiException(Kind.TIMEOUT, timeoutMessage(p, budget));

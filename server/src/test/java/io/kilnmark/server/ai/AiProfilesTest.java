@@ -270,6 +270,12 @@ class AiProfilesTest {
         p.put("baseUrl", fake.baseUrl() + "/");
         admin().contentType(ContentType.JSON).body(p).put("/api/v1/ai/profiles/t-moved").then().statusCode(200)
             .body("hasApiKey", equalTo(true));
+        // Another port, or another scheme: the key must be entered again.
+        p.put("baseUrl", "http://127.0.0.1:1/v1");
+        admin().contentType(ContentType.JSON).body(p).put("/api/v1/ai/profiles/t-moved").then().statusCode(400)
+            .body("error", containsString("enter the API key again"));
+        p.put("baseUrl", fake.baseUrl().replace("http://", "https://"));
+        admin().contentType(ContentType.JSON).body(p).put("/api/v1/ai/profiles/t-moved").then().statusCode(400);
         // Another host: the key must be entered again.
         p.put("baseUrl", "http://localhost:1/v1");
         admin().contentType(ContentType.JSON).body(p).put("/api/v1/ai/profiles/t-moved").then().statusCode(400)

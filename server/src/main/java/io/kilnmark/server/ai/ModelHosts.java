@@ -17,9 +17,11 @@ import jakarta.enterprise.context.ApplicationScoped;
  * and again, with a fresh name lookup, before every call:
  * <ul>
  *   <li>While {@code kilnmark.ai.hosted-models=forbidden}, a profile counts as local only if its
- *       host is in {@code kilnmark.ai.local-hosts}: by name, or with every address it resolves to
- *       inside one of the listed networks (default: loopback and private networks). The
- *       administrator's "local" tick alone is not enough.</li>
+ *       host is an IP address inside one of the networks in {@code kilnmark.ai.local-hosts}
+ *       (default: loopback and private networks), or a host name listed there explicitly. Names
+ *       are never resolved for this, so a name that resolves to a private address does not count
+ *       unless the operator listed it. The administrator's "local" tick alone is not enough. A
+ *       reverse proxy on a local address that forwards to a hosted service cannot be detected.</li>
  *   <li>Link-local addresses (169.254.0.0/16, fe80::/10) and cloud metadata names are refused,
  *       unless {@code kilnmark.ai.allow-metadata-addresses=true}, so a profile cannot be pointed at
  *       a cloud provider's metadata service.</li>
@@ -40,16 +42,27 @@ public class ModelHosts {
     private final boolean lock;
     private final boolean allowMetadata;
 
+    private static final java.util.regex.Pattern NAME = java.util.regex.Pattern.compile(
+        "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*");
+
+    /**
+     * @throws IllegalArgumentException naming an entry of {@code kilnmark.ai.local-hosts} that is
+     *         neither a network, an IP address nor a host name (the server does not start)
+     */
     public ModelHosts(KilnmarkConfig config) {
+        // Unset or empty: the default networks.
         for (String entry : config.ai().localHosts().orElse(DEFAULT_LOCAL)) {
             String e = entry.strip().toLowerCase(Locale.ROOT);
             if (e.isEmpty()) {
                 continue;
             }
-            if (e.contains("/") || Character.digit(e.charAt(0), 16) >= 0 && (e.contains(":") || e.matches("[0-9.]+"))) {
+            if (e.contains("/") || isIpLiteral(e)) {
                 localNetworks.add(Cidr.parse(e.contains("/") ? e : e + (e.contains(":") ? "/128" : "/32")));
-            } else {
+            } else if (NAME.matcher(e).matches()) {
                 localNames.add(e);
+            } else {
+                throw new IllegalArgumentException("kilnmark.ai.local-hosts: '" + entry.strip() + "' is not a network "
+                    + "(10.0.0.0/8), an IP address or a host name");
             }
         }
         this.lock = config.ai().hostedModels() == KilnmarkConfig.Ai.HostedModels.FORBIDDEN;
@@ -79,6 +92,7 @@ public class ModelHosts {
         return lock;
     }
 
+    /** Local by configuration alone, with no name lookup: a listed name, or an IP literal in a listed network. */
     boolean isLocalHost(String host) {
         if (host.isEmpty()) {
             return false;
@@ -86,18 +100,34 @@ public class ModelHosts {
         if (localNames.contains(host)) {
             return true;
         }
-        InetAddress[] addresses;
+        if (!isIpLiteral(host)) {
+            return false;
+        }
         try {
-            addresses = InetAddress.getAllByName(host);
+            InetAddress a = InetAddress.getByName(host); // a literal: parsed, not looked up
+            return localNetworks.stream().anyMatch(n -> n.contains(a));
         } catch (UnknownHostException e) {
             return false;
         }
-        for (InetAddress a : addresses) {
-            if (localNetworks.stream().noneMatch(n -> n.contains(a))) {
-                return false;
-            }
+    }
+
+    /** An IPv4 dotted quad or an IPv6 address (no brackets). */
+    static boolean isIpLiteral(String host) {
+        return host.matches("\\d{1,3}(\\.\\d{1,3}){3}") || host.contains(":") && host.matches("[0-9a-f:.%]+");
+    }
+
+    /**
+     * Where a stored key may go: scheme, host and port, with the scheme's default port filled in.
+     * A key is kept on edit only while this is unchanged.
+     */
+    public static String origin(String baseUrl) {
+        if (baseUrl == null) {
+            return "";
         }
-        return addresses.length > 0;
+        URI u = URI.create(baseUrl);
+        String scheme = u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
+        int port = u.getPort() >= 0 ? u.getPort() : scheme.equals("https") ? 443 : 80;
+        return scheme + "://" + host(baseUrl) + ":" + port;
     }
 
     /** Why a base URL may not be used (a metadata or link-local address), or empty. */

@@ -46,12 +46,17 @@ In all, 2.7 MB of jars. All pass `:server:checkLicense`.
   unticked, and clears it when the address's host changes.
 - **The operator lock and the local flag.** With `kilnmark.ai.hosted-models=forbidden` (set by
   whoever runs the server, not an admin), the admin's tick is not enough: a profile counts as local
-  only if its host is in `kilnmark.ai.local-hosts`, by name, or with every address it resolves to
-  inside a listed network. The default list is loopback and private networks (127.0.0.0/8, ::1,
-  10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7) and `localhost`; the operator can narrow
-  it. It is checked when a profile is saved and again, with a fresh name lookup, before every call
-  (`ModelHosts`, `EgressPolicy.local`). A name that resolves differently between the check and the
-  connection (DNS rebinding) is not caught; list addresses, not names, where that matters.
+  only if its host is an IP address inside a network listed in `kilnmark.ai.local-hosts`, or a host
+  name listed there explicitly. Names are never resolved for this, so DNS cannot make a name
+  local; a listed name is trusted as the operator's word, and one that stops resolving is a failed
+  call ("cannot reach"), never a refusal that would delete embeddings. The default list is loopback
+  and private networks (127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7) and
+  the name `localhost`; an empty value also means this default; the operator can narrow it, for
+  example to `10.20.0.0/16,ai,ai-embed` for the Compose services. Every entry must parse, or the
+  server does not start. It is checked when a profile is saved and before every call
+  (`ModelHosts`, `EgressPolicy.local`). **What cannot be detected:** a server on a local address
+  that forwards to a hosted service (a reverse proxy or gateway). The lock keeps Kilnmark from
+  calling outside addresses; what a local server does with a request is the operator's to control.
 - **No metadata services.** Base URLs on link-local addresses (169.254.0.0/16, fe80::/10), the
   Alibaba and AWS IPv6 metadata addresses, and cloud metadata names (`metadata.google.internal`
   and the like) are refused on save and at call time, unless the operator sets
@@ -61,7 +66,8 @@ In all, 2.7 MB of jars. All pass `:server:checkLicense`.
   opens them. The API returns `hasApiKey` and, for keys of 16 characters or more, the last four
   (0012); shorter keys show nothing. Failure messages are scrubbed of the key, the input records
   hide it in `toString`, and a test captures the log while keys are used and refused. A stored key
-  goes only to the host it was entered for: changing the address's host needs the key again.
+  goes only where it was entered for: changing the address's scheme, host or port needs the key
+  again.
 - A profile carries a `version` that goes up on every change. Each process caches one client per
   profile and rebuilds it when the stored version differs, so a change takes effect at once in
   every api and worker process, without a restart.
@@ -80,10 +86,12 @@ timeouts with exponential backoff and jitter, stops when the caller cancels, and
 record whatever the outcome. LangChain4j's own retries are off.
 
 **Two budgets.** Interactive calls (a search, a question, an MCP search) wait at most 2 seconds
-for a slot, never retry a timeout, and give up after 10 seconds in all; for 30 seconds after a
-model timed out or could not be reached, they skip it at once (recorded as `failed`, "not tried
-again yet"), so an outage does not hold every search. Background calls (embedding at scan, the
-profile test) use the profile's timeout and up to `kilnmark.ai.max-retries` (default 2).
+for a slot, never retry a timeout, and give up after 10 seconds in all, name lookups included;
+for 30 seconds after an interactive call timed out or could not reach the model, they skip it at
+once (recorded as `failed`, "not tried again yet"), so an outage does not hold every search.
+Background calls (embedding at scan, the profile test) use the profile's timeout and up to
+`kilnmark.ai.max-retries` (default 2), and a slow background batch does not make searches skip the
+model. The address and egress checks run again before every retry.
 
 **What viewers see.** An `AiException`'s message can name the model's address and quote the
 server: it goes to usage records and the profile test, which are admin-only. Search notes, ask
@@ -138,8 +146,11 @@ whose reasoning models refuse a temperature.
   unchanged).
 - **What.** `AssetText`: kind, location and name (also split into words), source name and
   description, asset description, and every field with its type and description. Never values or
-  profile statistics. Cut to about three characters per token of the profile's context size
-  (1,500 characters when it has none).
+  profile statistics. Cut to one and a half characters per token of the profile's context size
+  (768 characters, for 512 tokens, when it has none). Asset text is mostly identifiers and types,
+  which bge-small's tokenizer reads at about 1.8 characters per token, and llama-server answers an
+  input longer than its slot's context with an error (HTTP 500, "input is too large"), not a cut;
+  both were measured with build b11429.
 - **Skipping.** Each row keeps a SHA-256 of the text plus provider, base URL, model and
   dimensions; an asset is embedded again only when that changes. A profile whose model, address
   or dimensions change loses its embeddings (and indexes) and, if it is the embedding model, all
@@ -149,14 +160,16 @@ whose reasoning models refuse a temperature.
   check that `vector_dims(embedding) = dimensions`. The server creates, per profile,
   `asset_embedding_hnsw_p{id}_d{n} USING hnsw ((embedding::vector(n)) vector_cosine_ops) WHERE
   profile_id = {id} AND dimensions = {n}`, with `CREATE INDEX CONCURRENTLY` outside a transaction,
-  after checking `pg_index` for a valid one (a half-built, invalid index is dropped and built
-  again). Above 2,000 dimensions (pgvector's HNSW limit for `vector`) it indexes
+  after checking `pg_index` for a valid one. Building holds a per-profile advisory lock; a process
+  that cannot take it skips, because the other's build shows as an invalid index until it ends.
+  Only the lock holder drops an invalid index (a build that failed half-way) and builds it again. Above 2,000 dimensions (pgvector's HNSW limit for `vector`) it indexes
   `embedding::halfvec(n)`, up to 4,000; above that, searches scan without an index. Searches put
   the profile id and size into the SQL as numbers and use the same cast, so the partial index
   matches even under a generic plan, and rows of another size are never compared.
-- **Changing a profile's size mid-scan.** Vectors are saved only while the profile is still the
-  version they were made with: the profile row is share-locked in the same transaction as the
-  insert. Searches also filter on `dimensions`, and a database error in the vector half of a
+- **Changing a profile mid-scan.** Vectors are saved only while the profile still makes the same
+  vectors (provider, address, model and size) as when they were made: the profile row is
+  share-locked in the same transaction as the insert. Editing its timeout or concurrency does not
+  stop a scan. Searches also filter on `dimensions`, and a database error in the vector half of a
   search falls back to words with a note. We chose this over a table per dimension
   because there is one place to query, one foreign key to cascade, and swapping models never
   needs DDL beyond an index.
@@ -225,7 +238,7 @@ conversion published by ggml-org, the llama.cpp project itself, rather than a th
 
 Slots: chat runs `--parallel 2` over 8,192 tokens (4,096 per slot, matching the default of two
 calls at a time per model); embeddings run `--parallel 2` over 1,024 tokens, so each slot has the
-512 tokens bge-small accepts. The models are not added to Kilnmark automatically: the admin adds
+512 tokens bge-small accepts (Kilnmark sizes the text to fit, above). The models are not added to Kilnmark automatically: the admin adds
 the profiles and ticks them local.
 
 ### Evaluation
@@ -266,5 +279,7 @@ without a migration.
 - Concurrency limits are per process; the model server should be sized for api and worker
   processes together.
 - Every search with an embedding model costs one embedding call and one usage row.
-- The `local` flag is the administrator's word. Kilnmark does not check where a server is.
+- Without the operator lock, the `local` flag is the administrator's word. With it, Kilnmark checks
+  the address against the operator's list, but cannot see past a local server that forwards
+  requests elsewhere.
 - Hosted calls go straight out; there is no HTTP proxy setting yet.

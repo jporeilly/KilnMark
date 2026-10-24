@@ -463,6 +463,8 @@ export type AiProfile = {
   dimensions: number | null;
   contextSize: number | null;
   local: boolean;
+  /** Whether the server treats it as local now: under the operator lock, only on a local network. */
+  effectiveLocal: boolean;
   hasApiKey: boolean;
   apiKeyHint: string | null;
   timeoutSeconds: number;

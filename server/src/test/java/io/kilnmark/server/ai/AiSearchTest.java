@@ -493,16 +493,21 @@ class AiSearchTest {
             .contains("urn:kilnmark:ai-none:ainone.secret_buyers"), "the row of another size is never compared");
         sql("DELETE FROM kilnmark.asset_embedding WHERE dimensions = 32");
 
-        // Vectors made with an older version of the profile are not saved.
+        // Vectors made before the profile's model changed are not saved; a timeout edit does not matter.
         ModelProfile p = profiles.find("s-embed").orElseThrow();
-        ModelProfile stale = new ModelProfile(p.id(), p.name(), p.provider(), p.baseUrl(), p.model(), p.purpose(),
-            p.dimensions(), p.contextSize(), p.local(), p.hasKey(), p.keyHint(), p.timeoutSeconds(), p.maxConcurrent(),
-            p.version() - 1, p.createdBy(), p.createdAt(), p.updatedAt());
+        ModelProfile stale = new ModelProfile(p.id(), p.name(), p.provider(), p.baseUrl(), "an-older-model",
+            p.purpose(), p.dimensions(), p.contextSize(), p.local(), p.hasKey(), p.keyHint(), p.timeoutSeconds(),
+            p.maxConcurrent(), p.version() - 1, p.createdBy(), p.createdAt(), p.updatedAt());
+        ModelProfile retimed = new ModelProfile(p.id(), p.name(), p.provider(), p.baseUrl(), p.model(), p.purpose(),
+            p.dimensions(), p.contextSize(), p.local(), p.hasKey(), p.keyHint(), p.timeoutSeconds() + 7,
+            p.maxConcurrent(), p.version() - 1, p.createdBy(), p.createdAt(), p.updatedAt());
+        assertTrue(Embeddings.sameVectors(p, retimed));
+        assertFalse(Embeddings.sameVectors(p, stale));
         assertFalse(embeddings.saveIfCurrent(stale, List.of("urn:kilnmark:ai-none:ainone.secret_buyers"),
             List.of(new byte[] {1}), List.of(FakeModelServer.vector("x", 64))));
         assertEquals(0, count("SELECT count(*) FROM kilnmark.asset_embedding WHERE asset_urn = "
             + "'urn:kilnmark:ai-none:ainone.secret_buyers'"));
-        assertTrue(embeddings.saveIfCurrent(p, List.of("urn:kilnmark:ai-none:ainone.secret_buyers"),
+        assertTrue(embeddings.saveIfCurrent(retimed, List.of("urn:kilnmark:ai-none:ainone.secret_buyers"),
             List.of(new byte[] {1}), List.of(FakeModelServer.vector("x", 64))));
         sql("DELETE FROM kilnmark.asset_embedding WHERE asset_urn = 'urn:kilnmark:ai-none:ainone.secret_buyers'");
     }
@@ -545,6 +550,31 @@ class AiSearchTest {
         assertEquals(1, count("SELECT count(*) FROM pg_index i JOIN pg_class x ON x.oid = i.indexrelid "
             + "WHERE x.relname = 'asset_embedding_hnsw_p' || (SELECT id FROM kilnmark.model_profile "
             + "WHERE name = 's-embed') || '_d64' AND i.indisvalid"));
+    }
+
+    @Test
+    @Order(105)
+    void anIndexAnotherProcessIsBuildingIsLeftAlone() throws Exception {
+        ModelProfile p = profiles.find("s-embed").orElseThrow();
+        String index = Embeddings.indexName(p);
+        String valid = "SELECT count(*) FROM pg_index i JOIN pg_class x ON x.oid = i.indexrelid WHERE x.relname = '"
+            + index + "' AND i.indisvalid";
+        String exists = "SELECT count(*) FROM pg_class WHERE relname = '" + index + "'";
+        assertEquals(1, count(valid));
+        // What another process's CREATE INDEX CONCURRENTLY looks like while it runs: an invalid index,
+        // and that process holding the profile's index lock.
+        sql("UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'kilnmark." + index + "'::regclass");
+        try (Connection other = db.getConnection(); Statement st = other.createStatement()) {
+            other.setAutoCommit(true);
+            st.execute("SELECT pg_advisory_lock(" + Embeddings.INDEX_LOCK_CLASS + ", " + p.id() + ")");
+            embeddings.ensureIndex(p);
+            assertEquals(1, count(exists), "not dropped while another process holds the lock");
+            assertEquals(0, count(valid));
+            st.execute("SELECT pg_advisory_unlock(" + Embeddings.INDEX_LOCK_CLASS + ", " + p.id() + ")");
+        }
+        // Nobody building it: an invalid index is a failed build, dropped and built again.
+        embeddings.ensureIndex(p);
+        assertEquals(1, count(valid));
     }
 
     @Test
