@@ -6,7 +6,7 @@ pluginManagement {
 }
 
 // Downloads the JDK 25 the build needs when the machine has none, so nobody has to change
-// JAVA_HOME (which other software, such as Pentaho, may rely on).
+// JAVA_HOME (which other software on the machine may rely on).
 plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }

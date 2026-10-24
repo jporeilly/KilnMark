@@ -24,7 +24,7 @@ services:
       retries: 20
     ports:
       # Published on 5442 so it never clashes with another PostgreSQL on this machine
-      # (a Pentaho repository often uses 5432). Change with KILNMARK_DB_PORT.
+      # (another product's repository often uses 5432). Change with KILNMARK_DB_PORT.
       - "${KILNMARK_DB_PORT:-5442}:5432"
 
   kilnmark:
@@ -56,7 +56,7 @@ services:
     # (kilnmark.worker.shutdown-timeout); the default 10 s would cut them off.
     stop_grace_period: 60s
     ports:
-      # 8780, not 8080, which Pentaho and Tomcat use. Change the host side with KILNMARK_PORT.
+      # 8780, not 8080, which Tomcat and many Java servers use. Change the host side with KILNMARK_PORT.
       - "${KILNMARK_PORT:-8780}:8780"
 
 # A fixed network name, so the reference lab (lab/compose.yaml) can join it and Kilnmark reaches

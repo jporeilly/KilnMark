@@ -16,7 +16,7 @@ a container.
 **Java 25 is downloaded for you.** The build runs on JDK 25 (`gradle/gradle-daemon-jvm.properties`)
 and compiles with it; if the machine has none, Gradle downloads one into its own cache the first
 time. Any Java 17 or later on the `PATH` is enough to start the wrapper, so leave `JAVA_HOME` as
-Pentaho and Tomcat expect it.
+other software on the machine (Tomcat, for example) expects it.
 
 Gradle is not needed: use the wrapper (`./gradlew`, or `gradlew.bat` on Windows).
 
@@ -28,7 +28,7 @@ Gradle is not needed: use the wrapper (`./gradlew`, or `gradlew.bat` on Windows)
 ./gradlew release               # assemble dist/release/kilnmark-<version>
 ```
 
-Ports: Kilnmark listens on **8780** (8080 is left for Pentaho, Tomcat and the like) and its
+Ports: Kilnmark listens on **8780** (8080 is left for Tomcat and the like) and its
 PostgreSQL is published on **5442**. Change them with `KILNMARK_PORT` and `KILNMARK_DB_PORT` for
 Compose, or `QUARKUS_HTTP_PORT` for the server on its own.
 
