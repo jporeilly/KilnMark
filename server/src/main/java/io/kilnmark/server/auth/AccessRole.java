@@ -11,7 +11,7 @@ import java.util.Set;
 public enum AccessRole {
     /** Reads the catalogue: search, assets, sources, runs and connectors. */
     VIEWER,
-    /** Also starts scans. */
+    /** Also edits, tests and deletes sources, and starts scans. */
     STEWARD,
     /** Also adds and imports sources and manages API tokens. */
     ADMIN;

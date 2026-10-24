@@ -1,11 +1,24 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { allows, api, formatNumber, formatTime, type AccessRole, type Connector, type ImportReport, type Source } from "../api";
+import { useCallback, useEffect, useState } from "react";
+import {
+  allows,
+  api,
+  formatNumber,
+  formatTime,
+  type AccessRole,
+  type ImportBatch,
+  type ImportOptions,
+  type ImportReport,
+  type Source,
+} from "../api";
+import { ScanAction } from "../components/ScanAction";
+import { SourceForm } from "../components/SourceForm";
 import { Status } from "../components/Status";
 import { useTitle } from "../components/useTitle";
+import { href } from "../router";
 
 const busy = (s: Source) => s.lastRun?.status === "queued" || s.lastRun?.status === "running";
 
-/** Sources and their scans. Stewards can start scans; admins can also add and import sources. */
+/** Sources and their scans. Stewards can start scans and open a source to change it; admins can also add and import sources. */
 export function SourcesPage({ role }: { role: AccessRole }) {
   useTitle("Sources");
   const canScan = allows(role, "steward");
@@ -33,20 +46,13 @@ export function SourcesPage({ role }: { role: AccessRole }) {
     return () => window.clearInterval(t);
   }, [sources, load]);
 
-  const scan = async (name: string) => {
-    try {
-      await api.scan(name);
-      setNotice(`Scan of ${name} queued. A worker will start it shortly.`);
-      load();
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
   return (
     <>
       <h1 tabIndex={-1}>Sources</h1>
-      <p className="lead">Databases Kilnmark reads. A scan records every table and view, and profiles each column.</p>
+      <p className="lead">
+        Databases, folders and buckets Kilnmark reads. A scan records every table, view and file, and profiles each
+        column. Open a source to edit, test or delete it.
+      </p>
       <p role="status" className="notice">
         {notice}
       </p>
@@ -74,11 +80,15 @@ export function SourcesPage({ role }: { role: AccessRole }) {
               <tbody>
                 {sources.map((s) => (
                   <tr key={s.name}>
-                    <th scope="row">{s.name}</th>
+                    <th scope="row">
+                      <a href={href.source(s.name)}>{s.displayName}</a>
+                      {s.displayName !== s.name && <div className="small muted mono">{s.name}</div>}
+                    </th>
                     <td className="small">
                       <div className="muted">{s.kind}</div>
                       <div className="mono">{s.settings.url ?? s.settings.path ?? s.settings.bucket ?? "–"}</div>
                       {s.settings.schemas && <div className="muted">schemas: {s.settings.schemas}</div>}
+                      {s.settings.containers && <div className="muted">folders: {s.settings.containers}</div>}
                     </td>
                     <td>
                       <Status run={s.lastRun} />
@@ -99,10 +109,14 @@ export function SourcesPage({ role }: { role: AccessRole }) {
                     </td>
                     {canScan && (
                       <td>
-                        <button type="button" onClick={() => scan(s.name)} disabled={busy(s)}
-                          aria-label={`Scan ${s.name} now`}>
-                          {s.lastRun?.status === "queued" ? "Queued…" : busy(s) ? "Scanning…" : "Scan now"}
-                        </button>
+                        <ScanAction
+                          source={s}
+                          onQueued={(m) => {
+                            setNotice(m);
+                            load();
+                          }}
+                          onError={setError}
+                        />
                       </td>
                     )}
                   </tr>
@@ -118,18 +132,16 @@ export function SourcesPage({ role }: { role: AccessRole }) {
       )}
       {canAdd ? (
         <>
-          <AddSource
-            onAdded={(s) => {
-              setNotice(`Source ${s.name} added. Scan it to fill the catalogue.`);
-              load();
-            }}
-          />
-          <ImportSources
-            onImported={(n) => {
-              setNotice(`${n} ${n === 1 ? "source" : "sources"} imported.`);
-              load();
-            }}
-          />
+          <section aria-labelledby="add-h" className="panel">
+            <h2 id="add-h">Add a source</h2>
+            <SourceForm
+              onSaved={(s) => {
+                setNotice(`Source ${s.displayName} added. Scan it to fill the catalogue.`);
+                load();
+              }}
+            />
+          </section>
+          <ImportSources onImported={load} />
         </>
       ) : (
         <p className="hint">Only admins can add sources. Ask an admin if a database is missing.</p>
@@ -138,114 +150,70 @@ export function SourcesPage({ role }: { role: AccessRole }) {
   );
 }
 
-function AddSource({ onAdded }: { onAdded: (s: Source) => void }) {
-  const [connectors, setConnectors] = useState<Connector[]>([]);
-  const [kind, setKind] = useState("postgresql");
-  const [name, setName] = useState("");
-  const [settings, setSettings] = useState<Record<string, string>>({});
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const errorRef = useRef<HTMLParagraphElement>(null);
+const STATUS: Record<string, string> = {
+  created: "Created",
+  updated: "Updated",
+  unchanged: "Unchanged",
+  failed: "Needs fixing",
+};
+const DRY: Record<string, string> = {
+  created: "Would be created",
+  updated: "Would be updated",
+  unchanged: "Unchanged",
+  failed: "Needs fixing",
+};
+const TEST: Record<string, string> = {
+  waiting: "Waiting",
+  testing: "Testing…",
+  ok: "Connected",
+  failed: "Could not connect",
+  skipped: "Not tested",
+};
+const SCAN: Record<string, string> = { waiting: "Waiting", queued: "Scan queued", skipped: "Not scanned", failed: "Not queued" };
 
-  useEffect(() => {
-    api.connectors().then(setConnectors).catch((e: Error) => setError(e.message));
-  }, []);
-
-  const connector = connectors.find((c) => c.kind === kind);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
-    try {
-      const s = await api.addSource({ name: name.trim(), kind, settings, password });
-      setName("");
-      setSettings({});
-      setPassword("");
-      onAdded(s);
-    } catch (err) {
-      setError((err as Error).message);
-      window.setTimeout(() => errorRef.current?.focus(), 0);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <section aria-labelledby="add-h" className="panel">
-      <h2 id="add-h">Add a source</h2>
-      {error && (
-        <p role="alert" className="error" tabIndex={-1} ref={errorRef}>
-          {error}
-        </p>
-      )}
-      <form onSubmit={submit} className="form">
-        <div className="field-row">
-          <div className="field">
-            <label htmlFor="src-kind">Kind</label>
-            <select id="src-kind" value={kind} onChange={(e) => {
-              setKind(e.target.value);
-              setSettings({});
-            }}>
-              {connectors.map((c) => (
-                <option key={c.kind} value={c.kind}>{c.displayName}</option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="src-name">Name</label>
-            <input id="src-name" value={name} onChange={(e) => setName(e.target.value)} required
-              pattern="[a-z0-9][a-z0-9\-]{0,62}" aria-describedby="src-name-hint" autoComplete="off" />
-            <p id="src-name-hint" className="hint">Lower-case letters, digits and hyphens, for example finance-db.</p>
-          </div>
-        </div>
-        {connector?.settings.map((s) => (
-          <div className="field" key={s.key}>
-            <label htmlFor={`src-${s.key}`}>
-              {s.label}
-              {!s.required && " (optional)"}
-            </label>
-            <input id={`src-${s.key}`} value={settings[s.key] ?? ""} required={s.required} autoComplete="off"
-              spellCheck={false} aria-describedby={s.hint ? `src-${s.key}-hint` : undefined}
-              onChange={(e) => setSettings({ ...settings, [s.key]: e.target.value })} />
-            {s.hint && (
-              <p id={`src-${s.key}-hint`} className="hint">
-                {s.hint}
-                {s.multiple && ". Separate several with commas."}
-              </p>
-            )}
-          </div>
-        ))}
-        <div className="field">
-          <label htmlFor="src-pass">Password or secret (optional)</label>
-          <input id="src-pass" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-            autoComplete="new-password" aria-describedby="src-pass-hint" />
-          <p id="src-pass-hint" className="hint">Stored encrypted. Use a read-only account.</p>
-        </div>
-        <button type="submit" className="primary" disabled={saving || !connector}>
-          {saving ? "Adding…" : "Add source"}
-        </button>
-      </form>
-    </section>
-  );
-}
-
-function ImportSources({ onImported }: { onImported: (count: number) => void }) {
+/**
+ * Import many sources from a CSV or JSON file. Re-runnable: rows create sources, update them to
+ * match, or leave them unchanged. Optionally tests each one and queues scans, with progress here.
+ */
+function ImportSources({ onImported }: { onImported: () => void }) {
   const [file, setFile] = useState<File | null>(null);
+  const [options, setOptions] = useState<Omit<ImportOptions, "dryRun">>({
+    skipErrors: false,
+    remapHosts: false,
+    test: false,
+    scan: false,
+  });
   const [report, setReport] = useState<ImportReport | null>(null);
+  const [batch, setBatch] = useState<ImportBatch | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
+
+  // Poll the follow-up tests and scans until they finish.
+  useEffect(() => {
+    const id = report?.batchId;
+    if (id == null || (batch && batch.id === id && batch.status !== "running")) return;
+    const t = window.setTimeout(() => {
+      api
+        .importBatch(id)
+        .then((b) => {
+          setBatch(b);
+          if (b.status !== "running") onImported();
+        })
+        .catch((e: Error) => setError(e.message));
+    }, 1000);
+    return () => window.clearTimeout(t);
+  }, [report, batch, onImported]);
 
   const send = async (dryRun: boolean) => {
     if (!file) return;
     setWorking(true);
     setError(null);
+    setBatch(null);
     try {
       const format = file.name.toLowerCase().endsWith(".json") ? "json" : "csv";
-      const r = await api.importSources(await file.text(), format, dryRun);
+      const r = await api.importSources(await file.text(), format, { dryRun, ...options });
       setReport(r);
-      if (!dryRun && r.errors === 0) onImported(r.created);
+      if (r.applied) onImported();
     } catch (e) {
       setReport(null);
       setError((e as Error).message);
@@ -254,27 +222,71 @@ function ImportSources({ onImported }: { onImported: (count: number) => void }) 
     }
   };
 
+  const option = (key: keyof typeof options, label: string, hint: string) => (
+    <div className="check">
+      <input
+        type="checkbox"
+        id={`import-${key}`}
+        checked={options[key]}
+        onChange={(e) => setOptions({ ...options, [key]: e.target.checked })}
+        aria-describedby={`import-${key}-hint`}
+      />
+      <label htmlFor={`import-${key}`}>{label}</label>
+      <p id={`import-${key}-hint`} className="hint">
+        {hint}
+      </p>
+    </div>
+  );
+
+  const progress = (line: number) => batch?.rows.find((b) => b.line === line);
+  const summary = (r: ImportReport) => {
+    const n = (status: string) => r.rows.filter((x) => x.status === status).length;
+    const done = r.applied;
+    const parts = [
+      n("created") && `${n("created")} ${done ? "created" : "to create"}`,
+      n("updated") && `${n("updated")} ${done ? "updated" : "to update"}`,
+      n("unchanged") && `${n("unchanged")} unchanged`,
+      n("failed") && `${n("failed")} ${n("failed") === 1 ? "needs" : "need"} fixing`,
+    ].filter(Boolean);
+    const head = r.dryRun ? "Checked, nothing changed: " : done ? "Imported: " : "Nothing was imported: ";
+    return head + (parts.join(", ") || "no rows") + ".";
+  };
+
   return (
     <section aria-labelledby="import-h" className="panel">
       <h2 id="import-h">Import sources from a file</h2>
       <p className="hint">
-        A CSV with a header row: <span className="mono">name, kind, password</span> or{" "}
-        <span className="mono">password_ref</span>, then one column per setting (for PostgreSQL{" "}
-        <span className="mono">url, username, schemas</span>; lists separated by semicolons), or a JSON array with the
-        same keys. Use{" "}
-        <span className="mono">password_ref</span> as <span className="mono">env:VARIABLE</span> or{" "}
-        <span className="mono">secret:NAME</span> to keep passwords out of the file. Nothing is created unless
-        every row is right.
+        A CSV with a header row: <span className="mono">name</span> (the source ID),{" "}
+        <span className="mono">kind</span>, <span className="mono">display_name</span>,{" "}
+        <span className="mono">password</span> or <span className="mono">password_ref</span>, then one column per
+        setting (for PostgreSQL <span className="mono">url, username, schemas</span>, or{" "}
+        <span className="mono">host, port, database</span> instead of the URL), and the settings every source has:{" "}
+        <span className="mono">description, ai_egress, include, exclude</span>. Lists are separated by semicolons. Or a
+        JSON array with the same keys. Use <span className="mono">password_ref</span> as{" "}
+        <span className="mono">env:VARIABLE</span> or <span className="mono">secret:NAME</span> to keep passwords out
+        of the file. Run the same file again at any time: each source is set to what its row says.
       </p>
       <div className="form">
         <div className="field">
           <label htmlFor="import-file">File</label>
-          <input id="import-file" type="file" accept=".csv,.json,text/csv,application/json"
+          <input
+            id="import-file"
+            type="file"
+            accept=".csv,.json,text/csv,application/json"
             onChange={(e) => {
               setFile(e.target.files?.[0] ?? null);
               setReport(null);
-            }} />
+              setBatch(null);
+            }}
+          />
         </div>
+        <fieldset className="group">
+          <legend>Options</legend>
+          {option("skipErrors", "Import the rows that are right, even if others need fixing", "Otherwise nothing changes until every row is right.")}
+          {option("remapHosts", "Rewrite host names for this server", "Uses the host map an administrator set (kilnmark.sources.host-map), for example localhost to host.docker.internal, so sources written from a desktop work from inside the container.")}
+          {option("test", "Test each connection afterwards", "Up to 15 seconds each, a few at a time. Progress shows below.")}
+          {option("scan", "Queue a scan of each source afterwards", "With testing on, only sources that connected are scanned. A check of the file never scans.")}
+        </fieldset>
         <div className="buttons">
           <button type="button" onClick={() => send(true)} disabled={!file || working}>
             Check the file
@@ -284,14 +296,16 @@ function ImportSources({ onImported }: { onImported: (count: number) => void }) 
           </button>
         </div>
       </div>
-      {error && <p role="alert" className="error">{error}</p>}
-      <div role="status">
-        {report &&
-          (report.errors > 0
-            ? `${report.errors} ${report.errors === 1 ? "row needs" : "rows need"} fixing. Nothing was imported.`
-            : report.dryRun
-              ? `All ${report.rows.length} rows are ready to import.`
-              : `Imported ${report.created} ${report.created === 1 ? "source" : "sources"}.`)}
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+      <div role="status" aria-live="polite">
+        {report && <p>{summary(report)}</p>}
+        {batch && batch.status !== "running" && (
+          <p>{batch.status === "finished" ? "Tests and scans are done." : "The server stopped before finishing. Run the import again."}</p>
+        )}
       </div>
       {report && (
         <div className="table-scroll" role="region" aria-label="Import results by line" tabIndex={0}>
@@ -299,20 +313,40 @@ function ImportSources({ onImported }: { onImported: (count: number) => void }) 
             <thead>
               <tr>
                 <th scope="col">Line</th>
-                <th scope="col">Name</th>
+                <th scope="col">Source ID</th>
                 <th scope="col">Result</th>
+                {report.batchId != null && <th scope="col">Connection</th>}
+                {report.batchId != null && !report.dryRun && <th scope="col">Scan</th>}
               </tr>
             </thead>
             <tbody>
-              {report.rows.map((r) => (
-                <tr key={r.line}>
-                  <td>{r.line}</td>
-                  <th scope="row" className="mono">{r.name ?? "–"}</th>
-                  <td className={r.status === "error" ? "error" : undefined}>
-                    {r.status === "error" ? r.error : r.status === "created" ? "Imported" : "Ready"}
-                  </td>
-                </tr>
-              ))}
+              {report.rows.map((r) => {
+                const p = progress(r.line);
+                return (
+                  <tr key={r.line}>
+                    <td>{r.line}</td>
+                    <th scope="row" className="mono">
+                      {r.name && r.status !== "failed" && report.applied ? <a href={href.source(r.name)}>{r.name}</a> : (r.name ?? "–")}
+                    </th>
+                    <td className={r.status === "failed" ? "error" : undefined}>
+                      {(report.applied ? STATUS : DRY)[r.status] ?? r.status}
+                      {r.error && <div>{r.error}</div>}
+                      {r.notes?.map((n) => (
+                        <div key={n} className="small muted">
+                          {n}
+                        </div>
+                      ))}
+                    </td>
+                    {report.batchId != null && (
+                      <td>
+                        {p ? TEST[p.test] : r.status === "failed" ? "–" : "Waiting"}
+                        {p?.problem && <div className="small">{p.problem}</div>}
+                      </td>
+                    )}
+                    {report.batchId != null && !report.dryRun && <td>{p ? SCAN[p.scan] : "–"}</td>}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -5,12 +5,15 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 import javax.sql.DataSource;
 
@@ -22,6 +25,7 @@ import io.kilnmark.graph.store.Records.NewSource;
 import io.kilnmark.graph.store.Records.Run;
 import io.kilnmark.graph.store.Records.SearchHit;
 import io.kilnmark.graph.store.Records.Source;
+import io.kilnmark.graph.store.Records.SourceChange;
 
 /** {@link GraphStore} on PostgreSQL, in the {@code kilnmark} schema (migration V2). */
 public final class JdbcGraphStore implements GraphStore {
@@ -57,11 +61,11 @@ public final class JdbcGraphStore implements GraphStore {
     }
 
     private static final String SOURCE_COLUMNS =
-        "s.id, s.name, s.kind, s.settings::text, s.secret IS NOT NULL, s.created_at";
+        "s.id, s.name, s.kind, s.settings::text, s.secret IS NOT NULL, s.created_at, s.display_name";
 
     private static Source source(ResultSet rs) throws SQLException {
         return new Source(rs.getLong(1), rs.getString(2), rs.getString(3), FlatJson.read(rs.getString(4)),
-            rs.getBoolean(5), instant(rs.getTimestamp(6)));
+            rs.getBoolean(5), instant(rs.getTimestamp(6)), rs.getString(7));
     }
 
     @Override
@@ -82,12 +86,14 @@ public final class JdbcGraphStore implements GraphStore {
 
     private static Source insertSource(Connection c, NewSource s) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-            "INSERT INTO kilnmark.data_source AS s (name, kind, settings, secret) "
-                + "VALUES (?, ?, ?::jsonb, ?) RETURNING " + SOURCE_COLUMNS)) {
+            "INSERT INTO kilnmark.data_source AS s (name, kind, settings, secret, display_name) "
+                + "VALUES (?, ?, ?::jsonb, ?, coalesce(?, ?)) RETURNING " + SOURCE_COLUMNS)) {
             ps.setString(1, s.name());
             ps.setString(2, s.kind());
             ps.setString(3, FlatJson.write(s.settings()));
             ps.setBytes(4, s.secret());
+            ps.setString(5, s.displayName());
+            ps.setString(6, s.name());
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return source(rs);
@@ -132,6 +138,171 @@ public final class JdbcGraphStore implements GraphStore {
                     return rs.next() ? Optional.ofNullable(rs.getBytes(1)) : Optional.empty();
                 }
             }
+        });
+    }
+
+    /** Source names as the database's check constraint allows them; safe to write into a Cypher string. */
+    private static final Pattern SOURCE_NAME = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");
+    private static final String URN_PREFIX = "urn:kilnmark:";
+
+    @Override
+    public Optional<Source> updateSource(long id, SourceChange change) {
+        return tx(c -> lockSource(c, id) == null ? Optional.<Source>empty() : Optional.of(writeSource(c, id, change)));
+    }
+
+    @Override
+    public List<Source> saveSources(List<NewSource> creates, Map<Long, SourceChange> updates) {
+        return tx(c -> {
+            List<Source> out = new ArrayList<>();
+            for (NewSource s : creates) {
+                out.add(insertSource(c, s));
+            }
+            for (var e : updates.entrySet()) {
+                if (lockSource(c, e.getKey()) == null) {
+                    throw new IllegalStateException("Source " + e.getKey() + " was deleted meanwhile. Run the import "
+                        + "again");
+                }
+                out.add(writeSource(c, e.getKey(), e.getValue()));
+            }
+            return out;
+        });
+    }
+
+    private static Source writeSource(Connection c, long id, SourceChange change) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.data_source AS s SET "
+            + "display_name = coalesce(?, s.name), settings = ?::jsonb, "
+            + "secret = CASE WHEN ? THEN ? ELSE s.secret END, updated_at = now() "
+            + "WHERE s.id = ? RETURNING " + SOURCE_COLUMNS)) {
+            ps.setString(1, change.displayName());
+            ps.setString(2, FlatJson.write(change.settings()));
+            ps.setBoolean(3, change.replaceSecret());
+            ps.setBytes(4, change.secret());
+            ps.setLong(5, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return source(rs);
+            }
+        }
+    }
+
+    /** Locks a source's row until the transaction ends, so no scan can be queued meanwhile; its name, or null. */
+    private static String lockSource(Connection c, long id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT name FROM kilnmark.data_source WHERE id = ? FOR UPDATE")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        }
+    }
+
+    private static boolean activeRun(Connection c, long sourceId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+            "SELECT 1 FROM kilnmark.run WHERE source_id = ? AND status IN ('queued', 'running')")) {
+            ps.setLong(1, sourceId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static void requireName(String name) {
+        if (!SOURCE_NAME.matcher(name).matches()) {
+            throw new IllegalArgumentException("Not a source name: " + name);
+        }
+    }
+
+    /**
+     * Runs a Cypher statement on the catalogue graph (Apache AGE) inside the current transaction.
+     * Callers only build statements from source names checked against {@link #SOURCE_NAME}.
+     */
+    private static void cypher(Connection c, String statement) throws SQLException {
+        try (Statement s = c.createStatement()) {
+            s.execute("SET LOCAL search_path = ag_catalog, kilnmark, public");
+            s.execute("SELECT * FROM ag_catalog.cypher('kilnmark_graph', $$ " + statement
+                + " $$) AS (v ag_catalog.agtype)");
+            s.execute("SET LOCAL search_path = kilnmark, public");
+        }
+    }
+
+    @Override
+    public Optional<Records.Deleted> deleteSource(long id) {
+        return tx(c -> {
+            String name = lockSource(c, id);
+            if (name == null) {
+                return Optional.empty();
+            }
+            requireName(name);
+            if (activeRun(c, id)) {
+                throw new SourceBusyException("A scan of " + name + " is queued or running. Wait for it to finish, "
+                    + "then delete the source.");
+            }
+            int assets = count(c, "SELECT count(*) FROM kilnmark.asset WHERE source_id = ?", id);
+            int runs = count(c, "SELECT count(*) FROM kilnmark.run WHERE source_id = ?", id);
+            cypher(c, "MATCH (n) WHERE n.source = '" + name + "' OR n.urn STARTS WITH '" + URN_PREFIX + name
+                + ":' DETACH DELETE n");
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.job WHERE kind = 'scan' "
+                + "AND (payload ->> 'sourceId')::bigint = ?")) {
+                ps.setLong(1, id);
+                ps.executeUpdate();
+            }
+            // runs, assets, fields and profiles go with it (ON DELETE CASCADE)
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.data_source WHERE id = ?")) {
+                ps.setLong(1, id);
+                ps.executeUpdate();
+            }
+            return Optional.of(new Records.Deleted(name, assets, runs));
+        });
+    }
+
+    private static int count(Connection c, String sql, long id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getInt(1);
+            }
+        }
+    }
+
+    @Override
+    public Map<Long, Integer> assetCounts() {
+        return tx(c -> {
+            Map<Long, Integer> out = new java.util.HashMap<>();
+            try (PreparedStatement ps = c.prepareStatement(
+                "SELECT source_id, count(*) FROM kilnmark.asset GROUP BY source_id");
+                 ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.put(rs.getLong(1), rs.getInt(2));
+                }
+            }
+            return out;
+        });
+    }
+
+    @Override
+    public boolean hasActiveRun(long sourceId) {
+        return tx(c -> activeRun(c, sourceId));
+    }
+
+    @Override
+    public List<Records.RunHistory> runHistory(String sourceName, int limit) {
+        return tx(c -> {
+            List<Records.RunHistory> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS.replace("FROM kilnmark.run r ",
+                ", j.attempts, j.last_error FROM kilnmark.run r ")
+                + "LEFT JOIN kilnmark.job j ON j.kind = 'scan' AND (j.payload ->> 'runId')::bigint = r.id "
+                + "WHERE s.name = ? ORDER BY r.id DESC LIMIT ?")) {
+                ps.setString(1, sourceName);
+                ps.setInt(2, limit);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        int attempts = rs.getInt(12);
+                        Integer a = rs.wasNull() ? null : attempts;
+                        out.add(new Records.RunHistory(run(rs), a, rs.getString(13)));
+                    }
+                }
+            }
+            return out;
         });
     }
 

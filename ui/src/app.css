@@ -501,6 +501,128 @@ tbody th {
   color: var(--km-bad);
 }
 
+/* Source management: forms, the container picker, delete confirmation. */
+textarea {
+  font: inherit;
+  color: var(--km-ink);
+  background: var(--km-surface);
+  border: 1px solid var(--km-border-control);
+  border-radius: 8px;
+  padding: 9px 12px;
+  max-width: 100%;
+  resize: vertical;
+}
+
+.sidenav a[aria-current="true"] {
+  font-weight: 600;
+}
+
+fieldset.group,
+fieldset.picker-list {
+  border: 1px solid var(--km-border);
+  border-radius: 10px;
+  padding: 12px 16px 16px;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+fieldset.group legend,
+fieldset.picker-list legend {
+  font-weight: 600;
+  padding: 0 6px;
+}
+
+.picker {
+  display: grid;
+  gap: 8px;
+}
+
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--km-border);
+  border-radius: 8px;
+}
+
+.checklist li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--km-border);
+}
+
+.checklist li:last-child {
+  border-bottom: 0;
+}
+
+.checklist label {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: center;
+}
+
+.check .hint {
+  grid-column: 2;
+}
+
+input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--km-accent);
+}
+
+input[readonly] {
+  background: var(--km-ground);
+}
+
+button.danger {
+  color: var(--km-bad);
+  border-color: var(--km-bad);
+}
+
+.actions {
+  margin: 8px 0 16px;
+  align-items: flex-start;
+}
+
+.scan-action {
+  display: grid;
+  gap: 8px;
+}
+
+.scan-action .warning ul {
+  margin: 4px 0 12px;
+  padding-left: 20px;
+}
+
+.dialog {
+  max-width: 520px;
+  width: calc(100% - 32px);
+  color: var(--km-ink);
+  background: var(--km-surface);
+  border: 1px solid var(--km-border);
+  border-radius: 12px;
+  padding: 20px 24px;
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 50%);
+}
+
 @media (max-width: 760px) {
   .shell {
     grid-template-columns: minmax(0, 1fr); /* wide tables scroll inside their region, not the page */

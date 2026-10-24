@@ -2,6 +2,7 @@ package io.kilnmark.graph.store;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import io.kilnmark.graph.store.Records.Asset;
@@ -27,6 +28,39 @@ public interface GraphStore {
     /** The encrypted password of a source, if it has one. */
     Optional<byte[]> sourceSecret(String name);
 
+    /**
+     * Changes a source's display name, settings and (when the change says so) secret. Its name,
+     * part of every asset URN, never changes.
+     *
+     * @return the source as it now is; empty if there is no source {@code id}
+     */
+    Optional<Source> updateSource(long id, Records.SourceChange change);
+
+    /**
+     * Creates and updates sources in one transaction: all of them, or none.
+     *
+     * @param updates by source id
+     */
+    List<Source> saveSources(List<NewSource> creates, Map<Long, Records.SourceChange> updates);
+
+    /**
+     * Deletes a source and everything recorded about it (runs, jobs, assets, fields, profiles and
+     * graph nodes) in one transaction.
+     *
+     * @return what was removed; empty if there is no source {@code id}
+     * @throws SourceBusyException when a scan of it is queued or running
+     */
+    Optional<Records.Deleted> deleteSource(long id);
+
+    /** How many assets each source has recorded (including ones no longer found), by source id. */
+    Map<Long, Integer> assetCounts();
+
+    /** Whether a scan of the source is queued or running. */
+    boolean hasActiveRun(long sourceId);
+
+    /** A source's latest runs, newest first, with their jobs' attempts and errors. */
+    List<Records.RunHistory> runHistory(String sourceName, int limit);
+
     long queueRun(long sourceId, String kind);
 
     void startRun(long runId);
@@ -50,4 +84,14 @@ public interface GraphStore {
     List<SearchHit> search(String query, int limit);
 
     Optional<AssetDetail> asset(String urn);
+
+    /** The source cannot be changed that way while a scan of it is queued or running. */
+    final class SourceBusyException extends RuntimeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        public SourceBusyException(String message) {
+            super(message);
+        }
+    }
 }

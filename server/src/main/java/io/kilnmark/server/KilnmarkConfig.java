@@ -45,6 +45,9 @@ public interface KilnmarkConfig {
     /** Settings for the {@code s3} connector. */
     S3 s3();
 
+    /** Managing sources: connection tests, container discovery and bulk import. */
+    Sources sources();
+
     /** API sign-in. */
     interface Auth {
         /**
@@ -122,5 +125,24 @@ public interface KilnmarkConfig {
         /** Arrow memory one table's pipeline may hold. */
         @WithDefault("512")
         long memoryLimitMb();
+    }
+
+    /** Managing sources. */
+    interface Sources {
+        /** How long a connection test or a container listing may take before it is reported as too slow. */
+        @WithDefault("15s")
+        Duration checkTimeout();
+
+        /** Connection tests and container listings people may run at the same time, across the server. */
+        @WithDefault("4")
+        int checkConcurrency();
+
+        /**
+         * Host names bulk import may replace when asked to (its {@code remapHosts} option), as
+         * {@code from=to} pairs, comma-separated, for example
+         * {@code localhost=host.docker.internal,127.0.0.1=host.docker.internal}: sources written from
+         * a desktop's point of view then work from inside a container. None by default.
+         */
+        Optional<List<String>> hostMap();
     }
 }

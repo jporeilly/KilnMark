@@ -26,7 +26,7 @@ class SourceImportTest {
             .then().statusCode(200)
             .body("dryRun", equalTo(true))
             .body("created", equalTo(0))
-            .body("rows.status", hasItems("ok"));
+            .body("rows.status", hasItems("created"));
         admin().get("/api/v1/sources/sales-eu").then().statusCode(404);
     }
 

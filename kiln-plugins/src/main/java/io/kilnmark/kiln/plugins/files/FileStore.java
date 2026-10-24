@@ -28,6 +28,14 @@ public interface FileStore extends Closeable {
     /** Every file to record, sorted by path. */
     List<Entry> list() throws IOException;
 
+    /**
+     * Checks the store can be read, as cheaply as it can: by default by listing it. Throws with a
+     * message a person can act on.
+     */
+    default void probe() throws IOException {
+        list();
+    }
+
     /** Streams a whole file. Closing the stream before its end stops the transfer. */
     InputStream open(String path) throws IOException;
 

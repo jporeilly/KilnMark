@@ -38,9 +38,15 @@ Useful endpoints in dev mode (all but the first and the `/q` ones need an API to
 - `GET /api/v1/info`: product, version and roles
 - `GET /api/v1/me`: who the token belongs to
 - `POST /api/v1/sources`, `POST /api/v1/sources/import`, `POST /api/v1/sources/{name}/scans`
+- `PUT /api/v1/sources/{name}`, `DELETE /api/v1/sources/{name}`: edit and delete (steward)
+- `POST /api/v1/sources/{name}/test`, `GET /api/v1/sources/{name}/containers`: test the connection,
+  list schemas or folders with counts (steward); `POST /api/v1/drafts/test` and
+  `POST /api/v1/drafts/containers` do the same for settings not yet saved
+- `GET /api/v1/sources/{name}/history`: runs with their jobs; `GET /api/v1/common-settings`
+- `GET /api/v1/imports/{id}`: progress of an import's tests and scans (admin)
 - `GET /api/v1/search?q=...`, `GET /api/v1/assets/{urn}`, `GET /api/v1/runs/{id}`
 - `POST /api/v1/tokens`, `GET /api/v1/tokens`, `DELETE /api/v1/tokens/{id}`: API tokens (admin)
-- `GET /q/health`: health checks
+- `GET /q/health/ready`, `GET /q/health/live`: readiness and liveness (see [Health](#health))
 - `GET /q/openapi`: the API specification
 
 ## Run the stack
@@ -87,7 +93,7 @@ for that browser tab. A token has one role, and each role includes the ones befo
 | Role | Can |
 | --- | --- |
 | `viewer` | search, and read assets, sources, runs and connectors |
-| `steward` | also start scans |
+| `steward` | also edit, test and delete sources, list what they hold, and start scans |
 | `admin` | also add and import sources, and create, list and revoke tokens |
 
 **The first admin token.** On first start, when no admin token is usable, the server creates
@@ -198,7 +204,77 @@ run) takes about 15 seconds. Then search for `customer` and open `crm.customers`
 
 To register many sources at once, import a CSV (header row `name, url, username, password,
 password_ref, schemas`) or a JSON array under **Sources > Import sources from a file**, or post it
-to `POST /api/v1/sources/import` (`?dryRun=true` only checks).
+to `POST /api/v1/sources/import` (`?dryRun=true` only checks). See [Sources](#sources) for the
+other columns and options; `lab/sources.csv` registers the whole lab (see `lab/README.md`).
+
+## Sources
+
+**Name and display name.** A source's name is its ID: it is part of every asset's reference
+(`urn:kilnmark:<name>:<path>`), so it is set when the source is added and never changes. An edit
+that tries to change it is refused; add a new source instead. People see the display name, which
+can change at any time (by default it is the name).
+
+**Settings every source has**, whatever its kind, stored beside the connector's own settings and
+listed by `GET /api/v1/common-settings`:
+
+| Setting | Meaning |
+| --- | --- |
+| `description` | Free text for people |
+| `ai_egress` | Which AI models may see the source's metadata and data: `local_only` (the default) only models on servers marked local, `allowed` any configured model, `none` no model |
+| `include` | Only tables or files matching these patterns (see below); empty for all |
+| `exclude` | Leave out tables or files matching these patterns |
+
+Patterns are globs, matched ignoring case: `*` (not across `/`), `**` (across `/`), `?`, `[abc]`,
+`{a,b}`; several separated by commas or semicolons. A pattern with a `/` is matched against the
+whole path (`raw/**`); any other against the name and the whole path, so `cust*` matches the table
+`crm.customers` and `crm.*` every table in `crm`. Every kind of source applies them the same way.
+
+**Choosing what to scan.** A database source scans the schemas in `schemas`; a folder or bucket
+source the top-level folders in `containers` (`/` stands for files at the top). Empty means all.
+The form's **Choose from the source** lists them with how many tables or files each holds, read
+from database metadata or a listing, never by reading data. Before every scan the UI asks the
+same question, and warns before a scan that would find nothing.
+
+**Editing.** Leaving the password empty keeps the stored one, unless the edit changes where it
+would go (the JDBC URL or user name, the S3 endpoint or access key): then enter it again, so a
+stored password is never sent somewhere new. **Delete** is refused while a scan is waiting or
+running; otherwise it removes the source with its assets, fields, profiles, run history and
+graph nodes, in one transaction.
+
+**Connection tests** and listings take at most `kilnmark.sources.check-timeout` (15 s), and at
+most `kilnmark.sources.check-concurrency` (4) run at once; they answer in plain words and never
+repeat the password.
+
+**Bulk import** is re-runnable, keyed by name: each row creates its source, updates it to match
+the row (a setting the row leaves out is removed; the stored password stays unless the row gives
+one or moves it), or leaves it unchanged, and the report says which. Columns: `name`, `kind`,
+`display_name`, `password` or `password_ref`, the connector's settings, the common ones above, and,
+for databases, `host`, `port` and `database` instead of `url`. Options on
+`POST /api/v1/sources/import`:
+
+| Option | Effect |
+| --- | --- |
+| `dryRun=true` | Check only; nothing changes |
+| `onError=skip` | Apply the rows that are right even if others are wrong (default `stop`: nothing changes) |
+| `remapHosts=true` | Rewrite host names in URLs and the `host` column with `kilnmark.sources.host-map` |
+| `test=true` | Afterwards, test each source's connection |
+| `scan=true` | Afterwards, queue a scan of each source (only those that connected, with `test`) |
+
+With `test` or `scan` the report has a `batchId`; `GET /api/v1/imports/{id}` shows each row's
+progress (the UI polls it). The host map, `KILNMARK_SOURCES_HOST_MAP`, is a list of `from=to` pairs
+set by an administrator, for example `localhost=host.docker.internal,127.0.0.1=host.docker.internal`:
+sources written down from a desktop then work from inside a container. Only whole host names in
+the host part of a URL are replaced, and only when an import asks for it. The compose stack sets
+that example by default.
+
+## Health
+
+`GET /q/health/ready` (readiness) is up when the database answers, every migration is applied and,
+in a process with the worker role, the worker is taking jobs. `GET /q/health/live` (liveness) is up
+while the process runs. Both are public and say only UP or DOWN per check (`database`,
+`migrations`, `worker`, `server`): no host names, users or errors, which go to the log instead.
+`compose.yaml` uses readiness as the `kilnmark` service's health check; in Kubernetes, point the
+readiness probe at `/q/health/ready` and the liveness probe at `/q/health/live`.
 
 Sign in first with the admin token from `admin-token` (see [Sign in](#sign-in)). API tokens are
 for machines and for the lab; people will sign in through OpenID Connect from v0.2

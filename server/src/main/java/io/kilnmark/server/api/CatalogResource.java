@@ -58,9 +58,20 @@ public class CatalogResource {
     @GET
     @Path("connectors")
     public java.util.List<Views.Connector> connectors() {
-        return connectors.all().stream().map(c -> new Views.Connector(c.kind(), c.displayName(),
-            c.settings().stream().map(s -> new Views.Setting(s.key(), s.label(), s.required(), s.hint(), s.multiple()))
-                .toList())).toList();
+        return connectors.all().stream().map(CatalogResource::view).toList();
+    }
+
+    /** A connector as the form needs it: its settings, plus its container setting if it does not list it. */
+    static Views.Connector view(io.kilnmark.kiln.connect.Connector c) {
+        var kind = c.containerKind();
+        java.util.List<Views.Setting> settings = new java.util.ArrayList<>(c.settings().stream()
+            .map(s -> new Views.Setting(s.key(), s.label(), s.required(), s.hint(), s.multiple())).toList());
+        if (settings.stream().noneMatch(s -> s.key().equals(kind.setting()))) {
+            settings.add(new Views.Setting(kind.setting(), kind.label(), false, "Leave empty to scan them all, or "
+                + "choose them from a list", true));
+        }
+        return new Views.Connector(c.kind(), c.displayName(), java.util.List.copyOf(settings), kind.setting(),
+            kind.label(), kind.counted());
     }
 
     @GET

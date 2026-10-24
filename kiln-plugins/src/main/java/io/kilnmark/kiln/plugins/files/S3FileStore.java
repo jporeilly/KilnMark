@@ -115,6 +115,20 @@ public final class S3FileStore implements FileStore {
         return out;
     }
 
+    /** One listing request for at most one key: checks the endpoint, bucket, key and permission. */
+    @Override
+    public void probe() throws IOException {
+        ListObjectsV2Request.Builder req = ListObjectsV2Request.builder().bucket(settings.bucket()).maxKeys(1);
+        if (settings.prefix() != null) {
+            req.prefix(settings.prefix());
+        }
+        try {
+            s3.listObjectsV2(req.build());
+        } catch (SdkException e) {
+            throw explain(e, "list the bucket");
+        }
+    }
+
     @Override
     public InputStream open(String key) throws IOException {
         ResponseInputStream<GetObjectResponse> response = start(get(key).build(), key);

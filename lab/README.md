@@ -24,6 +24,22 @@ mounts `lab/files/share` read-only at `/srv/files` and allows it, so in the comp
 source of kind **files** with path `/srv/files`. Running the server outside a container, set
 `KILNMARK_FILES_ROOTS` to the full path of `lab/files/share` and use that path.
 
+## Register the lab in one go
+
+`lab/sources.csv` lists the three lab sources as you see them from this machine (`localhost:5433`,
+`localhost:9000`). In Kilnmark, open **Sources > Import sources from a file**, choose the file, tick
+**Rewrite host names for this server** and, if you like, **Test each connection** and **Queue a
+scan**, then press **Import**. The compose stack's host map (`KILNMARK_SOURCES_HOST_MAP`, by default
+`localhost=host.docker.internal`) turns `localhost` into the address of this machine as the container
+sees it. Or from a shell:
+
+```
+curl -X POST "http://localhost:8780/api/v1/sources/import?remapHosts=true&test=true&scan=true" \
+     -H "Authorization: Bearer $KILNMARK_ADMIN_TOKEN" -H "Content-Type: text/csv" --data-binary @lab/sources.csv
+```
+
+Run it again whenever you like: sources already there are left unchanged, or updated to match the file.
+
 ## What is in it
 
 **Database** (`lab/postgres`, loaded on first start, same rows every time):

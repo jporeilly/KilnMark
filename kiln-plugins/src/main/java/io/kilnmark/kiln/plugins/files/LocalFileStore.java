@@ -155,6 +155,12 @@ public final class LocalFileStore implements FileStore {
         return real;
     }
 
+    /** The constructor already checked the folder exists and can be read. */
+    @Override
+    public void probe() {
+        // nothing more to check without walking the folder
+    }
+
     @Override
     public InputStream open(String path) throws IOException {
         return Files.newInputStream(resolve(path));

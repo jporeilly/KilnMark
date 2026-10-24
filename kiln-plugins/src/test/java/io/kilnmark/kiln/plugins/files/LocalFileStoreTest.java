@@ -93,14 +93,34 @@ class LocalFileStoreTest {
     }
 
     @Test
+    void topLevelFoldersAreTheContainersWithFileCounts() throws Exception {
+        FilesConnector files = TestFiles.files(tmp);
+        Map<String, Long> counts = new java.util.TreeMap<>();
+        files.containers(new SourceConfig("f", "files", Map.of("path", share.toString()), null))
+            .forEach(c -> counts.put(c.name(), c.count()));
+        assertEquals(Map.of("/", 2L, "exports", 2L), counts, "files at the top, and one folder; links out skipped");
+        counts.clear();
+        files.containers(new SourceConfig("f", "files", Map.of("path", share.toString(), "exclude", "*.MD"), null))
+            .forEach(c -> counts.put(c.name(), c.count()));
+        assertEquals(Map.of("/", 2L, "exports", 1L), counts);
+        var chosen = files.catalog(new SourceConfig("f", "files", Map.of("path", share.toString(),
+            "containers", "exports", "include", "*.csv"), null));
+        assertEquals(java.util.List.of("exports/2025/orders.csv"), chosen.stream()
+            .map(io.kilnmark.kiln.connect.AssetInfo::path).toList());
+        assertEquals("exports", files.containerOf(null, chosen.get(0)));
+        files.test(new SourceConfig("f", "files", Map.of("path", share.toString()), null));
+    }
+
+    @Test
     void validationNamesTheSettingAtFault() {
         FilesConnector files = TestFiles.files(tmp);
         assertTrue(files.validate(new SourceConfig("f", "files", Map.of("path", share.toString()), null)).isEmpty());
         assertTrue(files.validate(new SourceConfig("f", "files", Map.of(), null)).get(0).startsWith("path:"));
         assertTrue(files.validate(new SourceConfig("f", "files", Map.of("path", "share"), null)).get(0)
             .startsWith("path:"));
-        assertTrue(files.validate(new SourceConfig("f", "files", Map.of("path", share.toString(), "include", "*.{csv"),
-            null)).get(0).startsWith("include:"));
+        // include and exclude are common settings now, checked for every kind by AssetFilter
+        assertTrue(io.kilnmark.kiln.connect.AssetFilter.problems(new SourceConfig("f", "files",
+            Map.of("path", share.toString(), "include", "*.{csv"), null)).get(0).startsWith("include:"));
         assertTrue(files.validate(new SourceConfig("f", "files", Map.of("path", share.toString(), "recursive", "yes"),
             null)).get(0).startsWith("recursive:"));
 

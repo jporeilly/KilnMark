@@ -9,9 +9,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.connect.AssetFilter;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
@@ -46,11 +48,21 @@ public abstract class JdbcConnector implements Connector {
     }
 
     /**
-     * The tables and views in {@code schemas} (every user schema when empty). By default standard
-     * JDBC metadata; override to add what the driver does not report, such as comments.
+     * The tables and views {@code filter} keeps (its schemas, every user schema when it names
+     * none, and its patterns). By default standard JDBC metadata; override to add what the driver
+     * does not report, such as comments.
      */
-    protected List<JdbcCatalog.Table> readCatalog(Connection connection, List<String> schemas) throws SQLException {
-        return JdbcCatalog.read(connection, schemas, new JdbcCatalog.Dialect() {
+    protected List<JdbcCatalog.Table> readCatalog(Connection connection, AssetFilter filter) throws SQLException {
+        return JdbcCatalog.read(connection, filter, dialect());
+    }
+
+    /** The URL for a host, port (null for the usual one) and database; null if this database has no such form. */
+    protected String addressUrl(String host, Integer port, String database) {
+        return null;
+    }
+
+    private JdbcCatalog.Dialect dialect() {
+        return new JdbcCatalog.Dialect() {
             @Override
             public boolean isSystemSchema(String schema) {
                 return JdbcConnector.this.isSystemSchema(schema);
@@ -60,7 +72,7 @@ public abstract class JdbcConnector implements Connector {
             public String schemaPattern(DatabaseMetaData md, String schema) throws SQLException {
                 return JdbcConnector.this.schemaPattern(md, schema);
             }
-        });
+        };
     }
 
     /**
@@ -102,7 +114,7 @@ public abstract class JdbcConnector implements Connector {
         return List.of(
             new Setting("url", "JDBC URL", true, "For example " + exampleUrl(), false),
             new Setting("username", "User name", false, "A read-only account is enough", false),
-            new Setting("schemas", "Schemas", false, "Leave empty to scan every schema", true));
+            new Setting("schemas", "Schemas", false, "Leave empty to scan every schema, or choose them from a list", true));
     }
 
     @Override
@@ -119,11 +131,67 @@ public abstract class JdbcConnector implements Connector {
     }
 
     @Override
+    public ContainerKind containerKind() {
+        return new ContainerKind("schemas", "Schemas", "tables and views");
+    }
+
+    @Override
+    public List<ContainerInfo> containers(SourceConfig source) throws ConnectorException {
+        AssetFilter patterns = filter(source).allContainers();
+        try (Connection c = connect(source)) {
+            return JdbcCatalog.counts(c, patterns, dialect()).entrySet().stream()
+                .map(e -> new ContainerInfo(e.getKey(), e.getValue())).toList();
+        } catch (SQLException e) {
+            throw new ConnectorException("Cannot list the schemas of " + source.name() + ": " + explain(e), e);
+        }
+    }
+
+    @Override
+    public void test(SourceConfig source) throws ConnectorException {
+        List<String> problems = validate(source);
+        if (!problems.isEmpty()) {
+            throw new ConnectorException(String.join("; ", problems));
+        }
+        try (Connection c = connect(source)) {
+            if (!c.isValid(5)) {
+                throw new ConnectorException("Connected to " + source.name() + ", but the database did not answer "
+                    + "a check within 5 seconds");
+            }
+        } catch (SQLException e) {
+            throw new ConnectorException("Cannot connect to " + source.name() + ": " + explain(e), e);
+        }
+    }
+
+    /** The URL and user name decide where the password goes; schemas and patterns do not. */
+    @Override
+    public Set<String> secretScope() {
+        return Set.of("url", "username");
+    }
+
+    @Override
+    public Map<String, String> addressSettings(String host, Integer port, String database) {
+        String url = addressUrl(host, port, database);
+        return url == null ? Map.of() : Map.of("url", url);
+    }
+
+    private static Connection connect(SourceConfig source) throws SQLException {
+        return DriverManager.getConnection(source.setting("url"), source.setting("username"), source.secret());
+    }
+
+    private AssetFilter filter(SourceConfig source) throws ConnectorException {
+        try {
+            return AssetFilter.of(this, source);
+        } catch (IllegalArgumentException e) {
+            throw new ConnectorException("Check the settings of " + source.name() + ": " + e.getMessage(), e);
+        }
+    }
+
+    @Override
     public List<AssetInfo> catalog(SourceConfig source) throws ConnectorException {
-        try (Connection c = DriverManager.getConnection(source.setting("url"), source.setting("username"),
-            source.secret())) {
+        AssetFilter filter = filter(source);
+        try (Connection c = connect(source)) {
             List<AssetInfo> out = new ArrayList<>();
-            for (JdbcCatalog.Table t : readCatalog(c, source.list("schemas"))) {
+            for (JdbcCatalog.Table t : readCatalog(c, filter)) {
                 List<AssetInfo.FieldInfo> fields = t.columns().stream().map(col -> new AssetInfo.FieldInfo(col.name(),
                     col.position(), col.sourceType(), col.kind().name().toLowerCase(Locale.ROOT), col.nullable(),
                     col.comment())).toList();

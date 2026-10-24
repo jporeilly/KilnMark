@@ -1,0 +1,75 @@
+package io.kilnmark.server.api;
+
+import java.util.List;
+
+import io.kilnmark.graph.store.Records;
+import io.kilnmark.server.auth.AccessRole;
+import io.kilnmark.server.sources.CommonSettings;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+
+/**
+ * Checks of a source not yet saved, as the add and edit forms hold it: test its connection, list
+ * what it holds. Nothing is stored. When editing, {@code source} names the saved source, and a
+ * blank password means its stored one (unless the URL, endpoint or user name changed). Also the
+ * settings every source has, for forms.
+ */
+@Path("/api/v1")
+@Produces(MediaType.APPLICATION_JSON)
+@RolesAllowed(AccessRole.VIEWER_ROLE)
+public class SourceDraftResource {
+
+    private final SourceService sources;
+    private final ImportBatches batches;
+
+    public SourceDraftResource(SourceService sources, ImportBatches batches) {
+        this.sources = sources;
+        this.batches = batches;
+    }
+
+    /** A bulk import's follow-up tests and scans, row by row, for the web UI to poll. */
+    @GET
+    @Path("imports/{id}")
+    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    public Views.ImportBatch importBatch(@jakarta.ws.rs.PathParam("id") long id) {
+        return batches.get(id).orElseThrow(() -> ApiError.of(jakarta.ws.rs.core.Response.Status.NOT_FOUND,
+            "No import batch " + id + ". Batches are kept for a week"));
+    }
+
+    /** The settings every source has, whatever its kind, in the order forms show them. */
+    @GET
+    @Path("common-settings")
+    public List<Views.CommonSetting> commonSettings() {
+        return CommonSettings.definitions().stream().map(d -> new Views.CommonSetting(d.key(), d.label(), d.hint(),
+            d.multiple(), d.choices(), d.defaultValue())).toList();
+    }
+
+    /** Tests the connection of a source as a form describes it, within the check time limit. */
+    @POST
+    @Path("drafts/test")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    public Views.TestResult test(SourceForm form) {
+        SourceService.Draft d = sources.draft(form, existing(form), false);
+        return sources.test(d.connector(), d.config());
+    }
+
+    /** What a source as a form describes it holds, by container, with counts. */
+    @POST
+    @Path("drafts/containers")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    public Views.ContainerList containers(SourceForm form) {
+        SourceService.Draft d = sources.draft(form, existing(form), false);
+        return sources.containers(d.connector(), d.config());
+    }
+
+    private Records.Source existing(SourceForm form) {
+        return form == null || form.source() == null || form.source().isBlank() ? null : sources.find(form.source());
+    }
+}

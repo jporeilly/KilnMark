@@ -1,7 +1,6 @@
 package io.kilnmark.kiln.plugins.files;
 
 import java.io.IOException;
-import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -14,8 +13,9 @@ import io.kilnmark.kiln.connect.SourceConfig;
 
 /**
  * Files in a folder the server can read: a local disk or a mounted share. Settings {@code path}
- * (the folder), {@code include} (a glob, default every file), {@code recursive} (default true) and
- * {@code encoding}. Asset paths are relative to the folder; nothing outside it is listed or read.
+ * (the folder), {@code recursive} (default true) and {@code encoding}; which files to record comes
+ * from the settings every source has ({@code include}, {@code exclude}, {@code containers}). Asset
+ * paths are relative to the folder; nothing outside it is listed or read.
  *
  * <p>Whoever adds a source chooses the folder, but the server's administrator chooses which
  * folders may be chosen: {@code kilnmark.files.roots}, a comma-separated list of folders. A
@@ -84,9 +84,6 @@ public final class FilesConnector extends FileSourceConnector {
                 "The full path of a folder this server can read, inside one of the folders its administrator "
                     + "allows" + (roots.isEmpty() ? "" : " (" + String.join(", ", roots.stream().map(Path::toString)
                     .toList()) + ")"), false),
-            new Setting("include", "Include", false,
-                "Which files to record, as a glob: *.csv matches file names, exports/** matches paths. "
-                    + "Leave empty for every file", false),
             new Setting("recursive", "Include sub-folders", false, "true (the default) or false", false),
             ENCODING);
     }
@@ -116,14 +113,6 @@ public final class FilesConnector extends FileSourceConnector {
                 }
             } catch (InvalidPathException | IOException e) {
                 problems.add("path: not a valid path (" + e.getMessage() + ")");
-            }
-        }
-        String include = source.setting("include");
-        if (include != null) {
-            try {
-                FileSystems.getDefault().getPathMatcher("glob:" + include);
-            } catch (IllegalArgumentException e) { // including PatternSyntaxException
-                problems.add("include: not a valid glob, for example *.csv or **/*.{csv,parquet}");
             }
         }
         checkBoolean(source, "recursive", problems);
@@ -169,7 +158,8 @@ public final class FilesConnector extends FileSourceConnector {
             throw new IOException("The source has no folder: set path");
         }
         Path folder = Path.of(path);
-        LocalFileStore store = new LocalFileStore(folder, source.setting("include"),
+        // include and exclude are applied to the listing by the connector, as for every kind of source
+        LocalFileStore store = new LocalFileStore(folder, null,
             source.setting("recursive") == null || Boolean.parseBoolean(source.setting("recursive")));
         if (!folder.isAbsolute() || allowedReal(store.root()) == null) {
             throw new IOException("The folder " + path + (store.root().equals(folder) ? "" : " (" + store.root() + ")")

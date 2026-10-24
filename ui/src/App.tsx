@@ -5,6 +5,7 @@ import { HomePage } from "./pages/HomePage";
 import { SearchPage } from "./pages/SearchPage";
 import { AssetPage } from "./pages/AssetPage";
 import { SourcesPage } from "./pages/SourcesPage";
+import { SourcePage } from "./pages/SourcePage";
 import { SignInPage, type SignInNotice } from "./pages/SignInPage";
 import { TokensPage } from "./pages/TokensPage";
 
@@ -108,6 +109,7 @@ function Shell({ me }: { me: Me }) {
   };
 
   const current = (page: string) => (route.page === page ? "page" : undefined);
+  const inSources = route.page === "sources" || route.page === "source";
 
   return (
     <>
@@ -158,7 +160,7 @@ function Shell({ me }: { me: Me }) {
               </a>
             </li>
             <li>
-              <a href={href.sources()} aria-current={current("sources")}>
+              <a href={href.sources()} aria-current={route.page === "source" ? "true" : inSources ? "page" : undefined}>
                 Sources
               </a>
             </li>
@@ -176,6 +178,7 @@ function Shell({ me }: { me: Me }) {
           {route.page === "search" && <SearchPage q={route.q} />}
           {route.page === "asset" && <AssetPage urn={route.urn} />}
           {route.page === "sources" && <SourcesPage role={me.role} />}
+          {route.page === "source" && <SourcePage name={route.name} role={me.role} />}
           {route.page === "tokens" &&
             (allows(me.role, "admin") ? (
               <TokensPage me={me} />

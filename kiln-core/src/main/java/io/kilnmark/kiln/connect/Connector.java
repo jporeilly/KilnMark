@@ -1,6 +1,11 @@
 package io.kilnmark.kiln.connect;
 
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 
 import io.kilnmark.kiln.StepSpec;
 
@@ -56,6 +61,92 @@ public interface Connector {
      */
     default Connector withContext(ConnectorContext context) {
         return this;
+    }
+
+    // ------------------------------------------------------------------ choosing what to scan
+
+    /**
+     * How this kind of source groups its assets, so people can choose which groups to scan. The
+     * default: a list setting {@code containers} holding names as {@link #containerOf} reports them.
+     */
+    default ContainerKind containerKind() {
+        return new ContainerKind("containers", "Containers", "assets");
+    }
+
+    /**
+     * The container an asset belongs to, as {@link #containers} names it and the container setting
+     * selects it. The default is the asset's own {@link AssetInfo#container()}.
+     */
+    default String containerOf(SourceConfig source, AssetInfo asset) {
+        return asset.container() == null ? "" : asset.container();
+    }
+
+    /**
+     * Every container the source holds, with how many assets in each the source's
+     * {@link AssetFilter patterns} keep, whatever containers are chosen. Should be cheap: database
+     * metadata or a listing, not a full catalogue. The default reads the full catalogue, so
+     * connectors override it.
+     *
+     * @throws ConnectorException when the source cannot be reached, with a message a person can act on
+     */
+    default List<ContainerInfo> containers(SourceConfig source) throws ConnectorException {
+        Map<String, String> every = new HashMap<>(source.settings());
+        every.remove(containerKind().setting());
+        every.remove(AssetFilter.INCLUDE);
+        every.remove(AssetFilter.EXCLUDE);
+        SourceConfig all = new SourceConfig(source.name(), source.kind(), every, source.secret());
+        AssetFilter patterns = AssetFilter.of(this, source).allContainers();
+        Map<String, Long> counts = new TreeMap<>();
+        for (AssetInfo a : catalog(all)) {
+            counts.merge(containerOf(all, a), patterns.patterns(a.path(), a.name()) ? 1L : 0L, Long::sum);
+        }
+        return counts.entrySet().stream().map(e -> new ContainerInfo(e.getKey(), e.getValue())).toList();
+    }
+
+    /**
+     * Checks that the source can be reached with its settings and secret, as cheaply as possible.
+     * The default lists its {@link #containers}.
+     *
+     * @throws ConnectorException saying what is wrong, in words a person can act on; never holding the secret
+     */
+    default void test(SourceConfig source) throws ConnectorException {
+        containers(source);
+    }
+
+    /**
+     * The settings that decide where the source's secret is sent (a URL, an endpoint, a user
+     * name). Changing one of them on a saved source needs the secret entered again, so a stored
+     * secret is never sent somewhere new. The default is every setting.
+     */
+    default Set<String> secretScope() {
+        Set<String> keys = new LinkedHashSet<>();
+        settings().forEach(s -> keys.add(s.key()));
+        return keys;
+    }
+
+    /**
+     * Settings that point a source at a host, port and database, for bulk files that give them
+     * apart (for example a JDBC {@code url}). Empty when this kind has no such address; the
+     * default.
+     *
+     * @param port null for the kind's usual port
+     */
+    default Map<String, String> addressSettings(String host, Integer port, String database) {
+        return Map.of();
+    }
+
+    /**
+     * How a kind of source groups its assets.
+     *
+     * @param setting the list setting holding the chosen containers, for example {@code schemas}
+     * @param label   what people call a container, plural: "Schemas", "Folders"
+     * @param counted what a container's count counts: "tables and views", "files"
+     */
+    record ContainerKind(String setting, String label, String counted) {
+    }
+
+    /** One container and how many assets in it the source's patterns keep. */
+    record ContainerInfo(String name, long count) {
     }
 
     /** How much of an asset to read. {@code rowLimit} 0 reads everything. */

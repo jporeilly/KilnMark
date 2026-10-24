@@ -5,6 +5,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorContext;
@@ -124,6 +125,18 @@ public final class S3Connector extends FileSourceConnector {
         return new S3FileStore.Settings(source.setting("endpoint"), source.setting("region"),
             source.setting("bucket"), source.setting("prefix"), source.setting("access_key_id"), source.secret(),
             Boolean.parseBoolean(source.setting("path_style")));
+    }
+
+    @Override
+    protected String prefix(SourceConfig source) {
+        String prefix = source.setting("prefix");
+        return prefix == null ? "" : prefix;
+    }
+
+    /** The endpoint and access key decide who the secret signs requests for. */
+    @Override
+    public Set<String> secretScope() {
+        return Set.of("endpoint", "access_key_id");
     }
 
     @Override

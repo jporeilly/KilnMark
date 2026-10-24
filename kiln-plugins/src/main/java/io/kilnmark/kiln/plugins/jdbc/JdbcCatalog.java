@@ -11,6 +11,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
+import io.kilnmark.kiln.connect.AssetFilter;
+
 /**
  * Reads a database's catalogue (schemas, tables, views and columns) through standard JDBC
  * metadata, so it works for any database with a driver.
@@ -57,6 +59,16 @@ public final class JdbcCatalog {
      * schema of the same name, or failing that one that differs only in case.
      */
     public static List<Table> read(Connection connection, List<String> schemas, Dialect dialect) throws SQLException {
+        return read(connection, AssetFilter.of(schemas, null, null), dialect);
+    }
+
+    /**
+     * Every table and view {@code filter} keeps: in its schemas (every schema that is not a system
+     * schema when it names none), and matching its patterns against {@code schema.table} and the
+     * table's name. Columns and primary keys are read only for the tables kept.
+     */
+    public static List<Table> read(Connection connection, AssetFilter filter, Dialect dialect) throws SQLException {
+        List<String> schemas = filter.containers();
         DatabaseMetaData md = connection.getMetaData();
         List<String> all = allSchemas(md);
         List<String> wanted = schemas.isEmpty()
@@ -69,8 +81,9 @@ public final class JdbcCatalog {
             Map<String, String[]> found = new TreeMap<>();
             try (ResultSet rs = md.getTables(null, pattern, "%", TABLE_TYPES)) {
                 while (rs.next()) {
-                    if (schema.equals(rs.getString("TABLE_SCHEM"))) {
-                        found.put(rs.getString("TABLE_NAME"),
+                    String table = rs.getString("TABLE_NAME");
+                    if (schema.equals(rs.getString("TABLE_SCHEM")) && filter.patterns(schema + "." + table, table)) {
+                        found.put(table,
                             new String[] {rs.getString("TABLE_TYPE"), rs.getString("REMARKS")});
                     }
                 }
@@ -101,6 +114,31 @@ public final class JdbcCatalog {
             }
         }
         return tables;
+    }
+
+    /**
+     * Every schema that is not a system schema, with how many tables and views in it
+     * {@code patterns} keep: two metadata calls, whatever the number of schemas.
+     */
+    public static Map<String, Long> counts(Connection connection, AssetFilter patterns, Dialect dialect)
+        throws SQLException {
+        DatabaseMetaData md = connection.getMetaData();
+        Map<String, Long> counts = new TreeMap<>();
+        for (String schema : allSchemas(md)) {
+            if (!dialect.isSystemSchema(schema)) {
+                counts.put(schema, 0L);
+            }
+        }
+        try (ResultSet rs = md.getTables(null, null, "%", TABLE_TYPES)) {
+            while (rs.next()) {
+                String schema = rs.getString("TABLE_SCHEM");
+                String table = rs.getString("TABLE_NAME");
+                if (schema != null && counts.containsKey(schema) && patterns.patterns(schema + "." + table, table)) {
+                    counts.merge(schema, 1L, Long::sum);
+                }
+            }
+        }
+        return counts;
     }
 
     /**

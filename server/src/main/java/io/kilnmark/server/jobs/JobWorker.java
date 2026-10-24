@@ -87,6 +87,12 @@ public class JobWorker {
         stop();
     }
 
+    /** Whether this process is taking jobs: started, not stopping, and its poller alive. */
+    public boolean running() {
+        Thread p = poller;
+        return p != null && p.isAlive() && !stopping;
+    }
+
     /** This worker's name in the queue's {@code locked_by}: host, process id and a random suffix. */
     public String id() {
         return workerId;

@@ -5,6 +5,7 @@ export type Route =
   | { page: "search"; q: string }
   | { page: "asset"; urn: string }
   | { page: "sources" }
+  | { page: "source"; name: string }
   | { page: "tokens" }
   | { page: "signout" }
   | { page: "home" };
@@ -15,6 +16,7 @@ export function parse(hash: string): Route {
   if (path === "/search") return { page: "search", q: params.get("q") ?? "" };
   if (path.startsWith("/asset/")) return { page: "asset", urn: decodeURIComponent(path.slice("/asset/".length)) };
   if (path === "/sources") return { page: "sources" };
+  if (path.startsWith("/source/")) return { page: "source", name: decodeURIComponent(path.slice("/source/".length)) };
   if (path === "/tokens") return { page: "tokens" };
   if (path === "/sign-out") return { page: "signout" };
   return { page: "home" };
@@ -25,6 +27,7 @@ export const href = {
   search: (q: string) => `#/search?q=${encodeURIComponent(q)}`,
   asset: (urn: string) => `#/asset/${encodeURIComponent(urn)}`,
   sources: () => "#/sources",
+  source: (name: string) => `#/source/${encodeURIComponent(name)}`,
   tokens: () => "#/tokens",
   signOut: () => "#/sign-out",
 };

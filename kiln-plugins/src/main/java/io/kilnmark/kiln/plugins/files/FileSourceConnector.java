@@ -7,8 +7,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.connect.AssetFilter;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
@@ -33,16 +35,90 @@ public abstract class FileSourceConnector implements Connector {
     /** The container shown for a file: its folder, or bucket and folder. */
     protected abstract String container(SourceConfig source, String path);
 
+    /** What every path in the store starts with ({@code prefix} for a bucket); empty by default. */
+    protected String prefix(SourceConfig source) {
+        return "";
+    }
+
+    /** Containers to choose from are the top-level folders: {@value #TOP} stands for files directly at the top. */
+    static final String TOP = "/";
+
     @Override
-    public List<AssetInfo> catalog(SourceConfig source) throws ConnectorException {
-        List<String> problems = validate(source);
+    public ContainerKind containerKind() {
+        return new ContainerKind("containers", "Folders", "files");
+    }
+
+    /**
+     * The top-level folder a file is in, below the prefix: {@code raw/2025} for the key
+     * {@code raw/2025/orders.csv} under the prefix {@code raw/}; {@value #TOP} for a file at the top.
+     */
+    @Override
+    public String containerOf(SourceConfig source, AssetInfo asset) {
+        return top(source, asset.path());
+    }
+
+    String top(SourceConfig source, String path) {
+        String prefix = prefix(source);
+        String rel = path.startsWith(prefix) ? path.substring(prefix.length()) : path;
+        int slash = rel.indexOf('/');
+        return slash < 0 ? TOP : prefix + rel.substring(0, slash);
+    }
+
+    private static String fileName(String path) {
+        return path.substring(path.lastIndexOf('/') + 1);
+    }
+
+    private void checkSettings(SourceConfig source) throws ConnectorException {
+        List<String> problems = new ArrayList<>(validate(source));
+        problems.addAll(AssetFilter.problems(source));
         if (!problems.isEmpty()) {
             throw new ConnectorException("Check the settings of " + source.name() + ": " + String.join("; ", problems));
         }
+    }
+
+    /** Every top-level folder, with how many files in it the patterns keep: a listing, no file is read. */
+    @Override
+    public List<ContainerInfo> containers(SourceConfig source) throws ConnectorException {
+        checkSettings(source);
+        AssetFilter patterns = AssetFilter.of(this, source).allContainers();
+        try (FileStore store = open(source)) {
+            Map<String, Long> counts = new TreeMap<>();
+            for (FileStore.Entry e : store.list()) {
+                counts.merge(top(source, e.path()), patterns.patterns(e.path(), fileName(e.path())) ? 1L : 0L,
+                    Long::sum);
+            }
+            return counts.entrySet().stream().map(e -> new ContainerInfo(e.getKey(), e.getValue())).toList();
+        } catch (IOException e) {
+            throw new ConnectorException(source.name() + ": " + e.getMessage(), e);
+        } catch (RuntimeException e) {
+            throw new ConnectorException(source.name() + ": cannot list its files (" + e
+                + "): check the source's settings", e);
+        }
+    }
+
+    @Override
+    public void test(SourceConfig source) throws ConnectorException {
+        checkSettings(source);
+        try (FileStore store = open(source)) {
+            store.probe();
+        } catch (IOException e) {
+            throw new ConnectorException(source.name() + ": " + e.getMessage(), e);
+        } catch (RuntimeException e) {
+            throw new ConnectorException(source.name() + ": cannot open it (" + e + "): check the source's settings", e);
+        }
+    }
+
+    @Override
+    public List<AssetInfo> catalog(SourceConfig source) throws ConnectorException {
+        checkSettings(source);
+        AssetFilter filter = AssetFilter.of(this, source);
         Charset encoding = encoding(source);
         try (FileStore store = open(source)) {
             List<AssetInfo> out = new ArrayList<>();
             for (FileStore.Entry e : store.list()) {
+                if (!filter.keeps(top(source, e.path()), e.path(), fileName(e.path()))) {
+                    continue; // not chosen: never opened
+                }
                 String container = container(source, e.path());
                 try {
                     out.add(FileInspector.inspect(store, e, container, encoding));

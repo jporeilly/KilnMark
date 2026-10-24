@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import io.kilnmark.kiln.connect.AssetFilter;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.SourceConfig;
 
@@ -118,6 +119,13 @@ public final class SqlServerConnector extends JdbcConnector {
         return Collections.unmodifiableMap(levels);
     }
 
+    /** {@code jdbc:sqlserver://host:1433;databaseName=database}; the driver encrypts by default. */
+    @Override
+    protected String addressUrl(String host, Integer port, String database) {
+        return "jdbc:sqlserver://" + host + ":" + (port == null ? 1433 : port)
+            + (database == null || database.isBlank() ? "" : ";databaseName=" + database);
+    }
+
     @Override
     protected boolean isSystemSchema(String schema) {
         return SYSTEM_SCHEMAS.contains(schema.toLowerCase(Locale.ROOT));
@@ -166,8 +174,8 @@ public final class SqlServerConnector extends JdbcConnector {
     }
 
     @Override
-    protected List<JdbcCatalog.Table> readCatalog(Connection connection, List<String> schemas) throws SQLException {
-        List<JdbcCatalog.Table> tables = super.readCatalog(connection, schemas);
+    protected List<JdbcCatalog.Table> readCatalog(Connection connection, AssetFilter filter) throws SQLException {
+        List<JdbcCatalog.Table> tables = super.readCatalog(connection, filter);
         Map<String, String> descriptions = descriptions(connection);
         if (descriptions.isEmpty()) {
             return tables;

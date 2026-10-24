@@ -53,6 +53,35 @@
   text. S3 through the AWS SDK's S3 module only (ADR 0015). 19.3 MB of jars added.
 - **Fixed:** profile statistics above about 9.2 trillion are no longer capped.
 
+- **Managing sources:** stewards can edit a source (display name, settings, password) and delete
+  it. A source's name is its fixed ID, part of every asset reference, so it cannot change; the new
+  display name can. A blank password keeps the stored one, unless the URL, endpoint or user name
+  changes. Delete is refused while a scan waits or runs, and otherwise removes the source's assets,
+  fields, profiles, runs and graph nodes in one transaction.
+- **Settings every source has:** `description`, `ai_egress` (`local_only` by default, `allowed` or
+  `none`), and `include` / `exclude` glob patterns (ignoring case) that choose tables or files for
+  every kind of source. The folder connector's own `include` setting is now this common one, and
+  now ignores case.
+- **Test connection** for a saved source or a form not yet saved, within 15 seconds, in plain words
+  and never repeating the password.
+- **Choose what to scan from a list:** schemas (databases) or top-level folders (folders and
+  buckets) with how many tables or files each holds, from metadata or a listing. Before a scan the
+  UI warns if it would find nothing.
+- **Bulk import, version 2:** run the same file again to create, update or leave sources unchanged
+  (reported per row); `onError=skip` applies the right rows; `host`, `port` and `database` columns
+  build the URL; `display_name` and the common settings as columns; `remapHosts=true` rewrites
+  host names with the administrator's `kilnmark.sources.host-map` (for example localhost to
+  host.docker.internal); `test=true` and `scan=true` test each source and queue scans, with
+  progress the UI shows. Files in the earlier format still import. `lab/sources.csv` registers
+  the lab.
+- **Source page** in the web UI: settings (never the password), what it scans, run history with
+  durations, attempts and errors, and edit, test, scan and delete.
+- **Readiness and liveness:** `/q/health/ready` (database, migrations, worker) and
+  `/q/health/live`, public and saying only UP or DOWN. The Compose service has a health check.
+- **Database:** migration V5 adds `data_source.display_name` and the import batch tables.
+- **Fixed:** an S3 source with its own access key can be added through the API, the form and bulk
+  import; the check that the secret goes with the key no longer misses the secret.
+
 ## 0.0.2 (24 October 2026)
 
 The first working slice: point Kilnmark at PostgreSQL databases, scan them, and search what it

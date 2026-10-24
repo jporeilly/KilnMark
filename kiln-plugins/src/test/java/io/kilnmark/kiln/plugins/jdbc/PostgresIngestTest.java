@@ -24,6 +24,10 @@ import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
 import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.connect.AssetFilter;
+import io.kilnmark.kiln.connect.Connector;
+import io.kilnmark.kiln.connect.ConnectorException;
+import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.profile.ProfileStep;
 
 @Testcontainers
@@ -80,7 +84,7 @@ class PostgresIngestTest {
     @Test
     void catalogListsTablesViewsColumnsAndKeys() throws Exception {
         try (Connection c = DriverManager.getConnection(PG.getJdbcUrl(), PG.getUsername(), PG.getPassword())) {
-            List<JdbcCatalog.Table> tables = new PostgresConnector().readCatalog(c, List.of());
+            List<JdbcCatalog.Table> tables = new PostgresConnector().readCatalog(c, AssetFilter.ALL);
             assertEquals(List.of("a_b.t", "axb.t", "crm.customers", "crm.premier", "sys.settings"),
                 tables.stream().map(JdbcCatalog.Table::path).sorted().toList());
             Map<String, JdbcCatalog.Table> byPath = new HashMap<>();
@@ -102,12 +106,12 @@ class PostgresIngestTest {
         try (Connection c = DriverManager.getConnection(PG.getJdbcUrl(), PG.getUsername(), PG.getPassword())) {
             PostgresConnector pg = new PostgresConnector();
             Map<String, List<String>> columns = new HashMap<>();
-            pg.readCatalog(c, List.of()).forEach(t -> columns.put(t.path(),
+            pg.readCatalog(c, AssetFilter.ALL).forEach(t -> columns.put(t.path(),
                 t.columns().stream().map(JdbcCatalog.Column::name).toList()));
             assertEquals(List.of("one"), columns.get("a_b.t"));
             assertEquals(List.of("two", "three"), columns.get("axb.t"));
 
-            List<JdbcCatalog.Table> only = pg.readCatalog(c, List.of("a_b"));
+            List<JdbcCatalog.Table> only = pg.readCatalog(c, AssetFilter.of(List.of("a_b"), null, null));
             assertEquals(List.of("a_b.t"), only.stream().map(JdbcCatalog.Table::path).toList());
             assertEquals(List.of("one"), only.get(0).primaryKey());
 
@@ -122,6 +126,53 @@ class PostgresIngestTest {
             }
             assertEquals(List.of("a_b"), schemas);
         }
+    }
+
+    private static SourceConfig source(Map<String, String> extra) {
+        Map<String, String> settings = new HashMap<>(Map.of("url", PG.getJdbcUrl(), "username", PG.getUsername()));
+        settings.putAll(extra);
+        return new SourceConfig("lab", "postgresql", settings, PG.getPassword());
+    }
+
+    @Test
+    void listsUserSchemasWithTableCountsFromMetadata() throws Exception {
+        PostgresConnector pg = new PostgresConnector();
+        Map<String, Long> counts = new HashMap<>();
+        pg.containers(source(Map.of())).forEach(c -> counts.put(c.name(), c.count()));
+        assertEquals(Map.of("public", 0L, "crm", 2L, "a_b", 1L, "axb", 1L, "sys", 1L), counts,
+            "user schemas only, empty ones too, views counted");
+        Map<String, Long> filtered = new HashMap<>();
+        pg.containers(source(Map.of("include", "crm.*,T", "exclude", "*premier", "schemas", "crm")))
+            .forEach(c -> filtered.put(c.name(), c.count()));
+        assertEquals(1L, filtered.get("crm"), "patterns apply, ignoring case; the chosen schemas do not");
+        assertEquals(1L, filtered.get("axb"));
+        assertEquals(0L, filtered.get("sys"));
+    }
+
+    @Test
+    void theCatalogueHonoursSchemasAndPatterns() throws Exception {
+        PostgresConnector pg = new PostgresConnector();
+        assertEquals(List.of("crm.customers"), pg.catalog(source(Map.of("schemas", "crm", "exclude", "PREMIER")))
+            .stream().map(io.kilnmark.kiln.connect.AssetInfo::path).toList());
+        assertEquals(List.of("a_b.t", "axb.t"), pg.catalog(source(Map.of("include", "t"))).stream()
+            .map(io.kilnmark.kiln.connect.AssetInfo::path).sorted().toList());
+    }
+
+    @Test
+    void aConnectionTestSaysWhatIsWrongWithoutTheSecret() throws Exception {
+        PostgresConnector pg = new PostgresConnector();
+        pg.test(source(Map.of()));
+        String wrong = "not-the-password-4471";
+        ConnectorException e = org.junit.jupiter.api.Assertions.assertThrows(ConnectorException.class, () -> pg.test(
+            new SourceConfig("lab", "postgresql", Map.of("url", PG.getJdbcUrl(), "username", PG.getUsername()), wrong)));
+        assertTrue(e.getMessage().contains("Cannot connect to lab"), e.getMessage());
+        assertTrue(!e.getMessage().contains(wrong));
+        assertEquals("schemas", pg.containerKind().setting());
+        assertEquals(Map.of("url", "jdbc:postgresql://db.example.com:5433/sales"),
+            pg.addressSettings("db.example.com", 5433, "sales"));
+        assertEquals(java.util.Set.of("url", "username"), pg.secretScope());
+        Connector plain = pg;
+        assertTrue(plain.secretScope().contains("url"));
     }
 
     @Test
