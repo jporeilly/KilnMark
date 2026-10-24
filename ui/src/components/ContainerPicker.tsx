@@ -29,7 +29,9 @@ export function ContainerPicker({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("");
-  const chosen = useMemo(() => new Set(splitList(value)), [value]);
+  // Names compare ignoring case, as the server does.
+  const chosen = useMemo(() => new Set(splitList(value).map((n) => n.toLowerCase())), [value]);
+  const isChosen = (name: string) => chosen.has(name.toLowerCase());
   const lower = label.toLowerCase();
 
   const fetchList = async () => {
@@ -46,21 +48,28 @@ export function ContainerPicker({
   };
 
   const shown = (list?.containers ?? []).filter((c) => c.name.toLowerCase().includes(filter.trim().toLowerCase()));
-  const set = (names: Set<string>) => onChange([...names].join(","));
-  const toggle = (name: string, on: boolean) => {
-    const next = new Set(chosen);
-    if (on) next.add(name);
-    else next.delete(name);
-    set(next);
+  // The setting is a comma-separated list, so a name holding a comma or semicolon cannot be chosen.
+  const listable = (name: string) => !/[,;]/.test(name);
+  /** The chosen names as written, keeping the case of the list where it has them. */
+  const update = (change: (names: Map<string, string>) => void) => {
+    const names = new Map(splitList(value).map((n) => [n.toLowerCase(), n] as [string, string]));
+    change(names);
+    onChange([...names.values()].join(","));
   };
+  const toggle = (name: string, on: boolean) =>
+    update((names) => (on ? names.set(name.toLowerCase(), name) : names.delete(name.toLowerCase())));
   const tickShown = (on: boolean) => {
-    if (!on && !filter.trim()) return set(new Set()); // also clears names no longer in the source
-    const next = new Set(chosen);
-    shown.forEach((c) => (on ? next.add(c.name) : next.delete(c.name)));
-    set(next);
+    if (!on && !filter.trim()) return onChange(""); // also clears names no longer in the source
+    update((names) =>
+      shown.filter((c) => listable(c.name)).forEach((c) =>
+        on ? names.set(c.name.toLowerCase(), c.name) : names.delete(c.name.toLowerCase()),
+      ),
+    );
   };
   const display = (name: string) => (name === "/" ? "Top level (files not in a folder)" : name);
-  const missing = [...chosen].filter((n) => list && !list.containers.some((c) => c.name.toLowerCase() === n.toLowerCase()));
+  const missing = splitList(value).filter(
+    (n) => list && !list.containers.some((c) => c.name.toLowerCase() === n.toLowerCase()),
+  );
 
   return (
     <div className="picker">
@@ -117,7 +126,9 @@ export function ContainerPicker({
                     <input
                       type="checkbox"
                       id={box}
-                      checked={chosen.has(c.name)}
+                      checked={isChosen(c.name)}
+                      disabled={!listable(c.name)}
+                      aria-describedby={listable(c.name) ? undefined : `${box}-why`}
                       onChange={(e) => toggle(c.name, e.target.checked)}
                     />
                     <label htmlFor={box}>
@@ -125,6 +136,13 @@ export function ContainerPicker({
                       <span className="muted">
                         ({formatNumber(c.count)} {list.counted})
                       </span>
+                      {!listable(c.name) && (
+                        <span id={`${box}-why`} className="small">
+                          {" "}
+                          Cannot be chosen: its name holds a comma or semicolon. Leave every box empty to scan it
+                          with the rest, or rename it.
+                        </span>
+                      )}
                     </label>
                   </li>
                 );

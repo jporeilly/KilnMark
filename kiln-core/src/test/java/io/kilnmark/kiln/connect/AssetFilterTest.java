@@ -18,6 +18,11 @@ class AssetFilterTest {
         return AssetFilter.of(List.of(), include, exclude);
     }
 
+    /** As a database source matches: paths are schema.table. */
+    private static AssetFilter tables(String include, String exclude) {
+        return AssetFilter.of(List.of(), include, exclude, ".");
+    }
+
     @Test
     void noPatternsKeepEverything() {
         assertTrue(AssetFilter.ALL.patterns("crm.customers", "customers"));
@@ -25,13 +30,20 @@ class AssetFilterTest {
     }
 
     @Test
-    void aPatternWithoutASlashMatchesTheNameOrTheWholePathIgnoringCase() {
-        AssetFilter f = patterns("CUST*", null);
+    void forTablesAPatternWithoutADotMatchesTheNameAndOneWithADotTheSchemaAndName() {
+        AssetFilter f = tables("CUST*", null);
         assertTrue(f.patterns("crm.customers", "customers"));
         assertFalse(f.patterns("crm.orders", "orders"));
-        assertTrue(patterns("crm.*", null).patterns("crm.orders", "orders"), "schema.table paths");
-        assertFalse(patterns("crm.*", null).patterns("sales.orders", "orders"));
+        assertFalse(tables("crm*", null).patterns("crm.orders", "orders"), "no dot: the table name only");
+        assertTrue(tables("crm.*", null).patterns("crm.orders", "orders"), "schema.table paths");
+        assertFalse(tables("crm.*", null).patterns("sales.orders", "orders"));
+        assertTrue(tables("*.orders", null).patterns("sales.orders", "orders"));
+    }
+
+    @Test
+    void forFilesAPatternWithoutASlashMatchesTheFileNameOnly() {
         assertTrue(patterns("*.csv", null).patterns("raw/2025/orders.CSV", "orders.CSV"), "file names");
+        assertFalse(patterns("raw*", null).patterns("raw/orders.csv", "orders.csv"));
     }
 
     @Test
@@ -62,12 +74,40 @@ class AssetFilterTest {
 
     @Test
     void includeThenExclude() {
-        AssetFilter f = patterns("crm.*;sales.*", "*_backup, tmp_*");
+        AssetFilter f = tables("crm.*;sales.*", "*_backup, tmp_*");
         assertTrue(f.patterns("crm.customers", "customers"));
         assertTrue(f.patterns("sales.orders", "orders"));
         assertFalse(f.patterns("crm.customers_backup", "customers_backup"));
         assertFalse(f.patterns("sales.tmp_load", "tmp_load"));
         assertFalse(f.patterns("hr.people", "people"));
+    }
+
+    @Test
+    void aPathologicalPatternFinishesAtOnce() {
+        String name = "a".repeat(63);
+        long start = System.nanoTime();
+        for (int i = 0; i < 100; i++) {
+            assertFalse(patterns("*a*a*a*a*a*a*a*a*b", null).patterns(name, name));
+            assertFalse(patterns("**a**a**a**a**a**a**a**b", null).patterns(name + "/" + name, name));
+        }
+        long ms = (System.nanoTime() - start) / 1_000_000;
+        assertTrue(ms < 2000, "200 matches took " + ms + " ms");
+        assertTrue(patterns("*a*a*a*a*a*a*a*a*b", null).patterns(name + "b", name + "b"));
+    }
+
+    @Test
+    void patternsAndAlternativesAreCapped() {
+        assertTrue(assertThrows(IllegalArgumentException.class, () -> patterns("x".repeat(201), null)).getMessage()
+            .contains("at most 200"));
+        String many = String.join(",", java.util.Collections.nCopies(101, "a*"));
+        assertTrue(assertThrows(IllegalArgumentException.class, () -> patterns(many, null)).getMessage()
+            .contains("at most 100"));
+        assertTrue(assertThrows(IllegalArgumentException.class, () -> patterns("{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}",
+            null)).getMessage().contains("too many"));
+        assertTrue(patterns("{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}", null).patterns("bcfgjl", "bcfgjl"), "64 alternatives");
+        assertTrue(patterns("x{a,{b,c}}y", null).patterns("xcy", "xcy"), "nested braces");
+        assertTrue(patterns("a\\*", null).patterns("a*", "a*"));
+        assertFalse(patterns("a\\*", null).patterns("ab", "ab"));
     }
 
     @Test

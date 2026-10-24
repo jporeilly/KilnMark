@@ -64,6 +64,14 @@ public final class S3FileStore implements FileStore {
      * @throws IOException when the settings would use credentials the server does not allow
      */
     public S3FileStore(Settings settings, boolean allowDefaultCredentials) throws IOException {
+        this(settings, allowDefaultCredentials, null);
+    }
+
+    /**
+     * @param callTimeout when not null, the longest any one request may take, connection included:
+     *                    for checks, which must end in time
+     */
+    public S3FileStore(Settings settings, boolean allowDefaultCredentials, Duration callTimeout) throws IOException {
         this.settings = settings;
         if (settings.endpoint() != null && settings.endpoint().contains("@")) {
             throw new IOException("The endpoint must not hold a user name or password: put the access key ID in "
@@ -91,11 +99,20 @@ public final class S3FileStore implements FileStore {
         if (settings.endpoint() != null) {
             builder.endpointOverride(URI.create(settings.endpoint()));
         }
+        if (callTimeout != null) {
+            builder.overrideConfiguration(o -> o.apiCallTimeout(callTimeout).apiCallAttemptTimeout(callTimeout));
+        }
         this.s3 = builder.build();
     }
 
     @Override
     public List<Entry> list() throws IOException {
+        return list(null);
+    }
+
+    /** Lists page by page (1,000 keys each), giving up between pages once {@code deadline} has passed. */
+    @Override
+    public List<Entry> list(java.time.Instant deadline) throws IOException {
         List<Entry> out = new ArrayList<>();
         ListObjectsV2Request.Builder req = ListObjectsV2Request.builder().bucket(settings.bucket());
         if (settings.prefix() != null) {
@@ -103,6 +120,11 @@ public final class S3FileStore implements FileStore {
         }
         try {
             for (S3Object o : s3.listObjectsV2Paginator(req.build()).contents()) {
+                if (deadline != null && (java.time.Instant.now().isAfter(deadline)
+                    || Thread.currentThread().isInterrupted())) {
+                    throw new IOException("Listing the bucket took too long (" + out.size() + " objects so far): set "
+                        + "prefix to a smaller part of the bucket, or type the folders to scan");
+                }
                 if (o.key().endsWith("/")) {
                     continue; // a folder marker
                 }

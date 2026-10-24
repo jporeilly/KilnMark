@@ -423,6 +423,115 @@ class SourceManagementTest {
             .body("find { it.kind == 'files' }.settings.key", not(hasItem("include")));
     }
 
+    @Inject
+    io.kilnmark.graph.store.GraphStore store;
+
+    @Test
+    void aSilentServerCannotHoldAChecksPlaceOrTheCallerForLong() throws Exception {
+        try (java.net.ServerSocket silent = new java.net.ServerSocket(0, 50,
+            java.net.InetAddress.getLoopbackAddress())) {
+            Map<String, Object> draft = Map.of("kind", "postgresql", "password", "pw",
+                "settings", Map.of("url", "jdbc:postgresql://127.0.0.1:" + silent.getLocalPort() + "/x",
+                    "username", "u"));
+            var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+            List<java.util.concurrent.Future<Long>> stuck = new ArrayList<>();
+            for (int i = 0; i < 4; i++) {
+                stuck.add(pool.submit(() -> {
+                    long start = System.nanoTime();
+                    steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/test")
+                        .then().statusCode(200).body("ok", equalTo(false));
+                    return (System.nanoTime() - start) / 1_000_000;
+                }));
+            }
+            Thread.sleep(800);
+            steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/test")
+                .then().statusCode(429).body("error", containsString("Try again"));
+            steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/containers")
+                .then().statusCode(429);
+            for (var f : stuck) {
+                long ms = f.get(20, java.util.concurrent.TimeUnit.SECONDS);
+                assertTrue(ms < 6000, "a check ends within about the 3 s limit, took " + ms + " ms");
+            }
+            pool.shutdown();
+            // the places come back once the checks have really ended
+            int status = 429;
+            for (int i = 0; i < 40 && status == 429; i++) {
+                status = steward().contentType(ContentType.JSON).body(source("", password, null))
+                    .post("/api/v1/drafts/test").then().extract().statusCode();
+                if (status == 429) {
+                    Thread.sleep(250);
+                }
+            }
+            assertEquals(200, status);
+        }
+    }
+
+    @Test
+    void movedSettingsNeedThePasswordAgainForListingsAndS3Too() {
+        add("mgmt-moved", password, null);
+        Map<String, Object> moved = new HashMap<>(Map.of("source", "mgmt-moved", "settings",
+            Map.of("url", "jdbc:postgresql://elsewhere.example.com/x", "username", user)));
+        steward().contentType(ContentType.JSON).body(moved).post("/api/v1/drafts/containers")
+            .then().statusCode(400).body("error", containsString("enter the password again"));
+
+        admin().contentType(ContentType.JSON).body(Map.of("name", "mgmt-s3", "kind", "s3", "password", "s3-secret",
+                "settings", Map.of("endpoint", "http://store.example.com:9000", "bucket", "raw", "access_key_id", "AK")))
+            .post("/api/v1/sources").then().statusCode(201);
+        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("endpoint", "http://evil.example.com",
+                "bucket", "raw", "access_key_id", "AK")))
+            .put("/api/v1/sources/mgmt-s3").then().statusCode(400).body("error", containsString("endpoint"));
+        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("endpoint",
+                "http://store.example.com:9000", "bucket", "raw", "access_key_id", "OTHER")))
+            .put("/api/v1/sources/mgmt-s3").then().statusCode(400).body("error", containsString("access_key_id"));
+        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("endpoint",
+                "http://store.example.com:9000", "bucket", "curated", "access_key_id", "AK")))
+            .put("/api/v1/sources/mgmt-s3").then().statusCode(200).body("hasPassword", equalTo(true));
+    }
+
+    @Test
+    void anUnreachableSourcesErrorNeverHoldsItsSecret() {
+        String secret = "pw-secret-7731";
+        String error = steward().contentType(ContentType.JSON)
+            .body(Map.of("kind", "postgresql", "password", secret,
+                "settings", Map.of("url", "jdbc:postgresql://127.0.0.1:1/none", "username", "u")))
+            .post("/api/v1/drafts/containers").then().statusCode(502).extract().jsonPath().getString("error");
+        assertFalse(error.contains(secret), error);
+    }
+
+    @Test
+    void urlPropertiesThatUseTheServersIdentityAreRefused() {
+        admin().contentType(ContentType.JSON).body(Map.of("name", "mgmt-sslkey", "kind", "postgresql",
+                "settings", Map.of("url", url + (url.contains("?") ? "&" : "?") + "sslfactory=org.example.Evil")))
+            .post("/api/v1/sources").then().statusCode(400).body("error", containsString("sslfactory"))
+            .body("error", containsString("identity"));
+    }
+
+    @Test
+    void aChangeThatRacedAChangeOfWhereThePasswordGoesIsRefused() {
+        add("mgmt-race", password, null);
+        var s = store.source("mgmt-race").orElseThrow();
+        var stale = new io.kilnmark.graph.store.Records.SourceChange(null, Map.of("url", url, "username", user,
+            "description", "x"), false, null, Map.of("url", "jdbc:postgresql://what-it-was-before/x"));
+        org.junit.jupiter.api.Assertions.assertThrows(io.kilnmark.graph.store.GraphStore.SourceChangedException.class,
+            () -> store.updateSource(s.id(), stale));
+        var fresh = new io.kilnmark.graph.store.Records.SourceChange(null, Map.of("url", url, "username", user,
+            "description", "x"), false, null, Map.of("url", url, "username", user));
+        assertEquals("x", store.updateSource(s.id(), fresh).orElseThrow().settings().get("description"));
+    }
+
+    @Test
+    void deleteIsRefusedWhileAWorkerHoldsTheSourcesScanLock() throws Exception {
+        add("mgmt-locked", password, null);
+        long id = store.source("mgmt-locked").orElseThrow().id();
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            s.execute("SELECT pg_advisory_lock(" + 0x4B53 + ", " + id + ")");
+            steward().delete("/api/v1/sources/mgmt-locked").then().statusCode(409);
+            s.execute("SELECT pg_advisory_unlock(" + 0x4B53 + ", " + id + ")");
+        }
+        steward().delete("/api/v1/sources/mgmt-locked").then().statusCode(200);
+        steward().post("/api/v1/sources/mgmt-locked/scans").then().statusCode(404);
+    }
+
     @Test
     void readinessIsPublicAndSaysNoMoreThanUpOrDown() {
         String body = given().get("/q/health/ready").then().statusCode(200)

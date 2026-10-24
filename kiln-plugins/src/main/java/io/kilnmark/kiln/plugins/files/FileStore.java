@@ -29,6 +29,14 @@ public interface FileStore extends Closeable {
     List<Entry> list() throws IOException;
 
     /**
+     * Every file to record, as {@link #list()}, but giving up with an {@link IOException} once
+     * {@code deadline} has passed (null: no deadline). By default the deadline is not checked.
+     */
+    default List<Entry> list(java.time.Instant deadline) throws IOException {
+        return list();
+    }
+
+    /**
      * Checks the store can be read, as cheaply as it can: by default by listing it. Throws with a
      * message a person can act on.
      */

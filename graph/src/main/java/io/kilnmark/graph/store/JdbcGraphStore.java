@@ -168,7 +168,33 @@ public final class JdbcGraphStore implements GraphStore {
         });
     }
 
+    /** Refuses a change that keeps the secret when the settings it depends on changed since they were read. */
+    private static void checkScope(Connection c, long id, SourceChange change) throws SQLException {
+        if (change.replaceSecret() || change.keepSecretIf().isEmpty()) {
+            return;
+        }
+        Map<String, String> now;
+        try (PreparedStatement ps = c.prepareStatement("SELECT settings::text FROM kilnmark.data_source WHERE id = ?")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                now = FlatJson.read(rs.getString(1));
+            }
+        }
+        for (var e : change.keepSecretIf().entrySet()) {
+            if (!java.util.Objects.equals(blank(e.getValue()), blank(now.get(e.getKey())))) {
+                throw new SourceChangedException("Someone changed this source's " + e.getKey() + " while you were "
+                    + "editing it. Open it again, check the settings, and save again");
+            }
+        }
+    }
+
+    private static String blank(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
     private static Source writeSource(Connection c, long id, SourceChange change) throws SQLException {
+        checkScope(c, id, change);
         try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.data_source AS s SET "
             + "display_name = coalesce(?, s.name), settings = ?::jsonb, "
             + "secret = CASE WHEN ? THEN ? ELSE s.secret END, updated_at = now() "
@@ -232,7 +258,7 @@ public final class JdbcGraphStore implements GraphStore {
                 return Optional.empty();
             }
             requireName(name);
-            if (activeRun(c, id)) {
+            if (activeRun(c, id) || !scanLock(c, id)) {
                 throw new SourceBusyException("A scan of " + name + " is queued or running. Wait for it to finish, "
                     + "then delete the source.");
             }
@@ -252,6 +278,24 @@ public final class JdbcGraphStore implements GraphStore {
             }
             return Optional.of(new Records.Deleted(name, assets, runs));
         });
+    }
+
+    /**
+     * Advisory lock class and key a worker holds while it scans a source (the server's
+     * {@code JobQueue.lockSource}): taken here for the rest of the transaction, so a scan cannot
+     * be running unseen while its source is deleted. False if a worker holds it.
+     */
+    static final int SOURCE_LOCK_CLASS = 0x4B53;
+
+    private static boolean scanLock(Connection c, long id) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT pg_try_advisory_xact_lock(?, ?)")) {
+            ps.setInt(1, SOURCE_LOCK_CLASS);
+            ps.setInt(2, (int) id);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getBoolean(1);
+            }
+        }
     }
 
     private static int count(Connection c, String sql, long id) throws SQLException {

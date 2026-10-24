@@ -104,6 +104,15 @@ public interface Connector {
     }
 
     /**
+     * {@link #containers(SourceConfig)} within {@code timeout}: a connector that can bound its own
+     * network waits (driver timeouts, a listing that stops at a deadline) overrides this. The server
+     * also abandons and interrupts a call that runs over. The default ignores the timeout.
+     */
+    default List<ContainerInfo> containers(SourceConfig source, java.time.Duration timeout) throws ConnectorException {
+        return containers(source);
+    }
+
+    /**
      * Checks that the source can be reached with its settings and secret, as cheaply as possible.
      * The default lists its {@link #containers}.
      *
@@ -111,6 +120,31 @@ public interface Connector {
      */
     default void test(SourceConfig source) throws ConnectorException {
         containers(source);
+    }
+
+    /** {@link #test(SourceConfig)} within {@code timeout}; see {@link #containers(SourceConfig, java.time.Duration)}. */
+    default void test(SourceConfig source, java.time.Duration timeout) throws ConnectorException {
+        test(source);
+    }
+
+    /**
+     * The settings that hold the source's network address (a JDBC {@code url}, an S3
+     * {@code endpoint}): the only ones bulk import's host map rewrites. None by default.
+     */
+    default Set<String> addressKeys() {
+        return Set.of();
+    }
+
+    /**
+     * Every network host the source would connect to, for the server's allow-list of hosts. The
+     * default reads the host names from the URLs in {@link #addressKeys()}.
+     */
+    default List<String> hosts(SourceConfig source) {
+        List<String> hosts = new java.util.ArrayList<>();
+        for (String key : addressKeys()) {
+            hosts.addAll(UrlHosts.hosts(source.setting(key)));
+        }
+        return hosts;
     }
 
     /**
@@ -138,11 +172,18 @@ public interface Connector {
     /**
      * How a kind of source groups its assets.
      *
-     * @param setting the list setting holding the chosen containers, for example {@code schemas}
-     * @param label   what people call a container, plural: "Schemas", "Folders"
-     * @param counted what a container's count counts: "tables and views", "files"
+     * @param setting   the list setting holding the chosen containers, for example {@code schemas}
+     * @param label     what people call a container, plural: "Schemas", "Folders"
+     * @param counted   what a container's count counts: "tables and views", "files"
+     * @param separator what divides an asset's path: {@code .} for {@code schema.table}, {@code /}
+     *                  for files. Patterns holding it match whole paths, others names only
      */
-    record ContainerKind(String setting, String label, String counted) {
+    record ContainerKind(String setting, String label, String counted, String separator) {
+
+        /** A kind whose asset paths are divided by {@code /}. */
+        public ContainerKind(String setting, String label, String counted) {
+            this(setting, label, counted, "/");
+        }
     }
 
     /** One container and how many assets in it the source's patterns keep. */

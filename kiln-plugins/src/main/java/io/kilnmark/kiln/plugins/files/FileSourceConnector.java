@@ -32,6 +32,14 @@ public abstract class FileSourceConnector implements Connector {
     /** Opens the folder or bucket a source names, after checking the server allows it. */
     protected abstract FileStore open(SourceConfig source) throws IOException;
 
+    /**
+     * Opens the store for a check that must end within {@code timeout}: by default as
+     * {@link #open(SourceConfig)}; a store reached over the network bounds each request instead.
+     */
+    protected FileStore open(SourceConfig source, java.time.Duration timeout) throws IOException {
+        return open(source);
+    }
+
     /** The container shown for a file: its folder, or bucket and folder. */
     protected abstract String container(SourceConfig source, String path);
 
@@ -45,7 +53,7 @@ public abstract class FileSourceConnector implements Connector {
 
     @Override
     public ContainerKind containerKind() {
-        return new ContainerKind("containers", "Folders", "files");
+        return new ContainerKind("containers", "Folders", "files", "/");
     }
 
     /**
@@ -79,11 +87,18 @@ public abstract class FileSourceConnector implements Connector {
     /** Every top-level folder, with how many files in it the patterns keep: a listing, no file is read. */
     @Override
     public List<ContainerInfo> containers(SourceConfig source) throws ConnectorException {
+        return containers(source, null);
+    }
+
+    /** As {@link #containers(SourceConfig)}, stopping the listing once {@code timeout} has passed. */
+    @Override
+    public List<ContainerInfo> containers(SourceConfig source, java.time.Duration timeout) throws ConnectorException {
         checkSettings(source);
         AssetFilter patterns = AssetFilter.of(this, source).allContainers();
-        try (FileStore store = open(source)) {
+        java.time.Instant deadline = timeout == null ? null : java.time.Instant.now().plus(timeout);
+        try (FileStore store = timeout == null ? open(source) : open(source, timeout)) {
             Map<String, Long> counts = new TreeMap<>();
-            for (FileStore.Entry e : store.list()) {
+            for (FileStore.Entry e : store.list(deadline)) {
                 counts.merge(top(source, e.path()), patterns.patterns(e.path(), fileName(e.path())) ? 1L : 0L,
                     Long::sum);
             }
@@ -98,8 +113,13 @@ public abstract class FileSourceConnector implements Connector {
 
     @Override
     public void test(SourceConfig source) throws ConnectorException {
+        test(source, null);
+    }
+
+    @Override
+    public void test(SourceConfig source, java.time.Duration timeout) throws ConnectorException {
         checkSettings(source);
-        try (FileStore store = open(source)) {
+        try (FileStore store = timeout == null ? open(source) : open(source, timeout)) {
             store.probe();
         } catch (IOException e) {
             throw new ConnectorException(source.name() + ": " + e.getMessage(), e);

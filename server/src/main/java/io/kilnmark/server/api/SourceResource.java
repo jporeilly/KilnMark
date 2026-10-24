@@ -8,6 +8,7 @@ import java.util.Map;
 import io.kilnmark.graph.store.GraphStore;
 import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.connect.Connectors;
+import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.server.SecretBox;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.scan.ScanService;
@@ -87,8 +88,8 @@ public class SourceResource {
             throw ApiError.of(Response.Status.CONFLICT, "A source called " + d.config().name() + " already exists");
         }
         byte[] secret = d.newSecret() == null ? null : secrets.seal(d.newSecret());
-        Records.Source s = store.addSource(new Records.NewSource(d.config().name(), d.config().kind(),
-            d.config().settings(), secret, d.displayName()));
+        Records.Source s = conflicts(() -> store.addSource(new Records.NewSource(d.config().name(), d.config().kind(),
+            d.config().settings(), secret, d.displayName())));
         return Response.created(URI.create("/api/v1/sources/" + s.name())).entity(view(s)).build();
     }
 
@@ -108,8 +109,8 @@ public class SourceResource {
         }
         SourceService.Draft d = sources.draft(body, existing, true);
         byte[] secret = d.replaceSecret() && d.newSecret() != null ? secrets.seal(d.newSecret()) : null;
-        Records.Source s = store.updateSource(existing.id(), new Records.SourceChange(d.displayName(),
-            d.config().settings(), d.replaceSecret(), secret)).orElseThrow(() -> ApiError.of(
+        Records.Source s = conflicts(() -> store.updateSource(existing.id(), new Records.SourceChange(d.displayName(),
+            d.config().settings(), d.replaceSecret(), secret, d.keepSecretIf()))).orElseThrow(() -> ApiError.of(
                 Response.Status.NOT_FOUND, "No source called " + name));
         org.jboss.logging.Logger.getLogger(SourceResource.class).infof("Source %s changed by %s", existing.name(),
             who());
@@ -126,7 +127,7 @@ public class SourceResource {
     public Views.Deleted delete(@PathParam("name") String name) {
         Records.Source existing = find(name);
         try {
-            Records.Deleted d = store.deleteSource(existing.id()).orElseThrow(() -> ApiError.of(
+            Records.Deleted d = conflicts(() -> store.deleteSource(existing.id())).orElseThrow(() -> ApiError.of(
                 Response.Status.NOT_FOUND, "No source called " + name));
             org.jboss.logging.Logger.getLogger(SourceResource.class).infof(
                 "Source %s deleted by %s, with %d assets and %d runs", d.name(), who(), d.assets(), d.runs());
@@ -142,7 +143,9 @@ public class SourceResource {
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Views.TestResult test(@PathParam("name") String name) {
         Records.Source s = find(name);
-        return sources.test(sources.connector(s.kind()), sources.config(s));
+        SourceConfig config = sources.config(s);
+        sources.checkHosts(sources.connector(s.kind()), config);
+        return sources.test(sources.connector(s.kind()), config);
     }
 
     /**
@@ -154,7 +157,9 @@ public class SourceResource {
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Views.ContainerList containers(@PathParam("name") String name) {
         Records.Source s = find(name);
-        return sources.containers(sources.connector(s.kind()), sources.config(s));
+        SourceConfig config = sources.config(s);
+        sources.checkHosts(sources.connector(s.kind()), config);
+        return sources.containers(sources.connector(s.kind()), config);
     }
 
     /** The source's latest runs with their jobs' attempts and errors, newest first. */
@@ -165,6 +170,40 @@ public class SourceResource {
         int n = limit == null ? 20 : Math.max(1, Math.min(limit, 200));
         return store.runHistory(name, n).stream()
             .map(h -> new Views.HistoryRun(Views.Run.of(h.run()), h.attempts(), h.jobError())).toList();
+    }
+
+    /**
+     * Runs a change, answering 409 when it collided with another one: a scan in progress, a source
+     * changed or deleted meanwhile, a source of the same name added at the same moment; and 404
+     * when the source was deleted under it.
+     */
+    static <T> T conflicts(java.util.function.Supplier<T> work) {
+        try {
+            return work.get();
+        } catch (GraphStore.SourceBusyException | GraphStore.SourceChangedException | IllegalStateException e) {
+            throw ApiError.of(Response.Status.CONFLICT, e.getMessage());
+        } catch (jakarta.ws.rs.WebApplicationException | IllegalArgumentException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            String state = sqlState(e);
+            if ("23505".equals(state)) {
+                throw ApiError.of(Response.Status.CONFLICT, "A source of the same name was added at the same moment. "
+                    + "Look at the sources, then try again");
+            }
+            if ("23503".equals(state)) {
+                throw ApiError.of(Response.Status.NOT_FOUND, "The source was deleted at the same moment");
+            }
+            throw e;
+        }
+    }
+
+    private static String sqlState(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof java.sql.SQLException sql && sql.getSQLState() != null) {
+                return sql.getSQLState();
+            }
+        }
+        return null;
     }
 
     private String who() {
@@ -197,8 +236,8 @@ public class SourceResource {
     public Response importCsv(String body, @QueryParam("dryRun") boolean dryRun, @QueryParam("onError") String onError,
                               @QueryParam("remapHosts") boolean remapHosts, @QueryParam("test") boolean test,
                               @QueryParam("scan") boolean scan) {
-        return report(importer.run(importer.fromCsv(body == null ? "" : body),
-            options(dryRun, onError, remapHosts, test, scan), who()));
+        return report(conflicts(() -> importer.run(importer.fromCsv(body == null ? "" : body),
+            options(dryRun, onError, remapHosts, test, scan), who())));
     }
 
     /** The same as a JSON array of sources. */
@@ -209,8 +248,8 @@ public class SourceResource {
     public Response importJson(String body, @QueryParam("dryRun") boolean dryRun, @QueryParam("onError") String onError,
                                @QueryParam("remapHosts") boolean remapHosts, @QueryParam("test") boolean test,
                                @QueryParam("scan") boolean scan) {
-        return report(importer.run(importer.fromJson(body == null ? "[]" : body),
-            options(dryRun, onError, remapHosts, test, scan), who()));
+        return report(conflicts(() -> importer.run(importer.fromJson(body == null ? "[]" : body),
+            options(dryRun, onError, remapHosts, test, scan), who())));
     }
 
     private static SourceImporter.Options options(boolean dryRun, String onError, boolean remapHosts, boolean test,
@@ -235,7 +274,8 @@ public class SourceResource {
     @Path("{name}/scans")
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Response scan(@PathParam("name") String name) {
-        Records.Run run = scans.request(find(name));
+        Records.Source source = find(name);
+        Records.Run run = conflicts(() -> scans.request(source));
         return Response.accepted(Views.Run.of(run)).location(URI.create("/api/v1/runs/" + run.id())).build();
     }
 

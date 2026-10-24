@@ -144,5 +144,12 @@ public interface KilnmarkConfig {
          * a desktop's point of view then work from inside a container. None by default.
          */
         Optional<List<String>> hostMap();
+
+        /**
+         * The hosts sources may connect to: host names or addresses, or {@code *.example.com} for a
+         * whole domain, comma-separated. Applied to database URLs and S3 endpoints whenever a source
+         * is added, edited, imported or checked. None (the default) allows any host.
+         */
+        Optional<List<String>> allowedHosts();
     }
 }

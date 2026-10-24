@@ -128,6 +128,26 @@ public final class S3Connector extends FileSourceConnector {
     }
 
     @Override
+    protected FileStore open(SourceConfig source, java.time.Duration timeout) throws IOException {
+        return new S3FileStore(settings(source), allowDefaultCredentials, timeout);
+    }
+
+    @Override
+    public Set<String> addressKeys() {
+        return Set.of("endpoint");
+    }
+
+    /** The endpoint's host, or AWS's S3 host for the region when there is no endpoint. */
+    @Override
+    public List<String> hosts(SourceConfig source) {
+        if (source.setting("endpoint") != null) {
+            return io.kilnmark.kiln.connect.UrlHosts.hosts(source.setting("endpoint"));
+        }
+        String region = source.setting("region") == null ? S3FileStore.DEFAULT_REGION : source.setting("region");
+        return List.of("s3." + region + ".amazonaws.com");
+    }
+
+    @Override
     protected String prefix(SourceConfig source) {
         String prefix = source.setting("prefix");
         return prefix == null ? "" : prefix;

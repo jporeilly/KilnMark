@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
-import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -33,8 +32,13 @@ class HostRemapTest {
         assertEquals("jdbc:postgresql://mylocalhost:5432/localhost", map.apply("jdbc:postgresql://mylocalhost:5432/localhost"));
         assertEquals("jdbc:postgresql://localhost.example.com/db", map.apply("jdbc:postgresql://localhost.example.com/db"));
         assertEquals("localhost", map.apply("localhost"), "only URL hosts, not any text");
-        assertEquals(Map.of("url", "jdbc:postgresql://host.docker.internal/x", "username", "localhost"),
-            map.apply(Map.of("url", "jdbc:postgresql://localhost/x", "username", "localhost")));
+        assertEquals("jdbc:sqlserver://host.docker.internal;user=a@b;databaseName=x",
+            map.apply("jdbc:sqlserver://localhost;user=a@b;databaseName=x"), "an @ after the host is not a user name");
+        assertEquals("jdbc:sqlserver://example.com;user=a@localhost",
+            map.apply("jdbc:sqlserver://example.com;user=a@localhost"));
+        assertEquals("jdbc:postgresql://host.docker.internal:5432,db2:5432/x",
+            map.apply("jdbc:postgresql://localhost:5432,db2:5432/x"), "every host of a list");
+        assertEquals("http://u@host.docker.internal:9000", map.apply("http://u@localhost:9000"));
         assertEquals("db.internal", map.host("db.internal"));
         assertEquals("host.docker.internal", map.host("127.0.0.1"));
     }

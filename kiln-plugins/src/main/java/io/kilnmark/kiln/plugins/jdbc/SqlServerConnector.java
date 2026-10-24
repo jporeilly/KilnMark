@@ -119,6 +119,15 @@ public final class SqlServerConnector extends JdbcConnector {
         return Collections.unmodifiableMap(levels);
     }
 
+    /** Microsoft's driver: login timeout in seconds, socket timeout in milliseconds. */
+    @Override
+    protected java.util.Properties timeouts(java.time.Duration timeout) {
+        java.util.Properties p = new java.util.Properties();
+        p.setProperty("loginTimeout", Integer.toString(seconds(timeout)));
+        p.setProperty("socketTimeout", Long.toString(seconds(timeout) * 1000L));
+        return p;
+    }
+
     /** {@code jdbc:sqlserver://host:1433;databaseName=database}; the driver encrypts by default. */
     @Override
     protected String addressUrl(String host, Integer port, String database) {

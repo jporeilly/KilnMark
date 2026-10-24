@@ -225,9 +225,11 @@ listed by `GET /api/v1/common-settings`:
 | `exclude` | Leave out tables or files matching these patterns |
 
 Patterns are globs, matched ignoring case: `*` (not across `/`), `**` (across `/`), `?`, `[abc]`,
-`{a,b}`; several separated by commas or semicolons. A pattern with a `/` is matched against the
-whole path (`raw/**`); any other against the name and the whole path, so `cust*` matches the table
-`crm.customers` and `crm.*` every table in `crm`. Every kind of source applies them the same way.
+`{a,b}`, `\` before a character to take it literally; up to 100 per setting, each up to 200
+characters. Matching never backtracks, so no pattern can be slow. For a database, a pattern without
+a `.` matches table names (`cust*` matches `crm.customers`) and one with a `.` matches
+`schema.table` (`crm.*` every table in `crm`). For files, a pattern without a `/` matches file names
+(`*.csv`) and one with a `/` matches paths (`raw/**`). Every kind of source applies them the same way.
 
 **Choosing what to scan.** A database source scans the schemas in `schemas`; a folder or bucket
 source the top-level folders in `containers` (`/` stands for files at the top). Empty means all.
@@ -241,13 +243,20 @@ stored password is never sent somewhere new. **Delete** is refused while a scan 
 running; otherwise it removes the source with its assets, fields, profiles, run history and
 graph nodes, in one transaction.
 
-**Connection tests** and listings take at most `kilnmark.sources.check-timeout` (15 s), and at
-most `kilnmark.sources.check-concurrency` (4) run at once; they answer in plain words and never
-repeat the password.
+**Connection tests** and listings answer within `kilnmark.sources.check-timeout` (15 s), and at
+most `kilnmark.sources.check-concurrency` (4) run at once (more get 429, "try again"). A check
+keeps its place until it has really ended, so a source that never answers cannot get round the
+limit: the drivers get connect, login and socket timeouts a second under the limit, S3 requests the
+same time limit and listings a deadline, and a check still running at the limit is interrupted.
+They answer in plain words and never repeat the password.
 
-**Bulk import** is re-runnable, keyed by name: each row creates its source, updates it to match
-the row (a setting the row leaves out is removed; the stored password stays unless the row gives
-one or moves it), or leaves it unchanged, and the report says which. Columns: `name`, `kind`,
+**Bulk import** is re-runnable, keyed by name: each row creates its source, updates it, or leaves
+it unchanged, and the report says which. An update changes only the settings the file has (its
+CSV columns, a JSON object's keys); an empty value removes that setting, and everything else, such
+as a steward's later edits, stays. `ai_egress` is never loosened by an empty value, and a row that
+sets a looser one says so in its notes. The stored password stays unless the row gives one or
+moves it; a row with a password always counts as updated, since comparing it with the stored one
+would let anyone running imports test guesses. Columns: `name`, `kind`,
 `display_name`, `password` or `password_ref`, the connector's settings, the common ones above, and,
 for databases, `host`, `port` and `database` instead of `url`. Options on
 `POST /api/v1/sources/import`:
@@ -264,8 +273,31 @@ With `test` or `scan` the report has a `batchId`; `GET /api/v1/imports/{id}` sho
 progress (the UI polls it). The host map, `KILNMARK_SOURCES_HOST_MAP`, is a list of `from=to` pairs
 set by an administrator, for example `localhost=host.docker.internal,127.0.0.1=host.docker.internal`:
 sources written down from a desktop then work from inside a container. Only whole host names in
-the host part of a URL are replaced, and only when an import asks for it. The compose stack sets
+the host part of address settings (a JDBC `url`, an S3 `endpoint`, the `host` column) are
+replaced, never other settings, and only when an import asks for it. The compose stack sets
 that example by default.
+
+## Security of sources
+
+Stewards can edit, test and list sources, and test settings that are not saved. Each of those
+makes the Kilnmark server open a connection to a host the steward chooses, from the server's
+network: treat the steward role as able to probe what the server can reach (server-side request
+forgery). To limit it:
+
+- **Allowed hosts.** `kilnmark.sources.allowed-hosts` (`KILNMARK_SOURCES_ALLOWED_HOSTS`) lists the
+  hosts sources may reach: names, addresses or `*.example.com`, comma-separated. Every host a
+  source names is checked (each host of a PostgreSQL host list, SQL Server's `serverName` and
+  `failoverPartner`, S3 endpoints, and AWS's S3 host when there is none) whenever a source is added,
+  edited, imported, tested or listed. Empty, the default, allows any host.
+- **The server's own identity and files.** JDBC URL properties that make the driver act as the
+  server or touch its files are refused when a source is checked or scanned: SQL Server
+  `integratedSecurity`, `authentication=ActiveDirectory...`, `authenticationScheme`, `trustStore`,
+  `keyStoreLocation`, `serverCertificate`; PostgreSQL `sslkey`, `sslcert`, `sslrootcert`,
+  `sslfactory`, `sslpasswordcallback`, `socketFactory`, `loggerFile`, Kerberos and GSS options; and
+  any property whose name ends in File, Path, Factory, Class or ClassName.
+- **Stored passwords stay put.** An edit, check or import that changes where a password goes (URL,
+  user name, S3 endpoint or access key) needs the password again. The check is repeated on the
+  locked row when the change is saved, so two edits at once cannot slip past it.
 
 ## Health
 

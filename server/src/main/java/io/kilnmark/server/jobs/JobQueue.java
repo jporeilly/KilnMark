@@ -34,7 +34,7 @@ public class JobQueue {
 
     /** PostgreSQL notification channel: a job was queued. */
     public static final String CHANNEL = "kilnmark_jobs";
-    /** Advisory lock class for scans of a source (objid is the source id). */
+    /** Advisory lock class for scans of a source (objid is the source id); deleting a source takes it too. */
     static final int SOURCE_LOCK_CLASS = 0x4B53;
     private static final long OID_RANGE = 1L << 32;
 

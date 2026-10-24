@@ -78,6 +78,16 @@
   durations, attempts and errors, and edit, test, scan and delete.
 - **Readiness and liveness:** `/q/health/ready` (database, migrations, worker) and
   `/q/health/live`, public and saying only UP or DOWN. The Compose service has a health check.
+- **Security:** stewards' checks connect from the server, so an administrator can limit the hosts
+  sources may reach with `kilnmark.sources.allowed-hosts`. JDBC URL properties that make a driver
+  use the server's own identity or files (`integratedSecurity`, `authentication=ActiveDirectory...`,
+  `sslkey`, `sslfactory`, `socketFactory`, `loggerFile`, any `...File`, `...Path`, `...Factory`,
+  `...Class`) are refused. Checks give their place back only when they have really ended.
+- **Changed:** bulk import's row statuses are now `created`, `updated`, `unchanged` and `failed`
+  (they were `ok`, `created` and `error`), and a row naming an existing source updates it instead
+  of failing. An update changes only the columns in the file.
+- **Changed:** `include` and `exclude` patterns without a `.` match database table names only (with
+  a `.`, `schema.table`); without a `/`, file names only.
 - **Database:** migration V5 adds `data_source.display_name` and the import batch tables.
 - **Fixed:** an S3 source with its own access key can be added through the API, the form and bulk
   import; the check that the secret goes with the key no longer misses the secret.

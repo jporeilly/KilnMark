@@ -33,6 +33,8 @@ public interface GraphStore {
      * part of every asset URN, never changes.
      *
      * @return the source as it now is; empty if there is no source {@code id}
+     * @throws SourceChangedException when the secret is kept but the settings it depends on changed
+     *                                meanwhile ({@link Records.SourceChange#keepSecretIf()})
      */
     Optional<Source> updateSource(long id, Records.SourceChange change);
 
@@ -84,6 +86,16 @@ public interface GraphStore {
     List<SearchHit> search(String query, int limit);
 
     Optional<AssetDetail> asset(String urn);
+
+    /** Someone changed the source between reading it and saving a change to it. */
+    final class SourceChangedException extends RuntimeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        public SourceChangedException(String message) {
+            super(message);
+        }
+    }
 
     /** The source cannot be changed that way while a scan of it is queued or running. */
     final class SourceBusyException extends RuntimeException {

@@ -4,12 +4,15 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import io.kilnmark.kiln.StepSpec;
@@ -18,6 +21,7 @@ import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.SourceConfig;
+import io.kilnmark.kiln.connect.UrlHosts;
 
 /**
  * What every JDBC database shares: settings {@code url}, {@code username}, {@code schemas}; the
@@ -28,6 +32,65 @@ public abstract class JdbcConnector implements Connector {
 
     /** A password written into a URL: {@code ;password=} (SQL Server) or {@code ?password=} / {@code &password=}. */
     private static final Pattern PASSWORD_IN_URL = Pattern.compile("[;?&]\\s*password\\s*=", Pattern.CASE_INSENSITIVE);
+
+    /** A property in a URL: {@code ?name=value&...} or {@code ;name=value;...}. */
+    private static final Pattern URL_PROPERTY = Pattern.compile("[;?&]\\s*([^=;?&\\s]+)\\s*=\\s*([^;&]*)");
+
+    /**
+     * URL properties that make a driver act as the Kilnmark server itself (its Windows, Kerberos or
+     * cloud identity) or read or write its files, or load classes: a source must not use them. Also
+     * refused: any property whose name ends in File, Path, Factory, Class or ClassName. Names ignore case.
+     */
+    private static final Set<String> DENIED_PROPERTIES = Set.of(
+        // SQL Server
+        "integratedsecurity", "authenticationscheme", "truststore", "keystorelocation", "keystoresecret",
+        "servercertificate", "keystoreauthentication", "msiclientid",
+        // PostgreSQL
+        "sslkey", "sslcert", "sslrootcert", "sslfactory", "sslfactoryarg", "sslpasswordcallback",
+        "sslhostnameverifier", "socketfactory", "socketfactoryarg", "loggerfile", "jaaslogin", "jaasapplicationname",
+        "gsslib", "kerberosservername", "usespnego", "gssusedefaultcreds", "sspiservicename");
+
+    /** URL properties naming another host to connect to (SQL Server). */
+    private static final Set<String> HOST_PROPERTIES = Set.of("servername", "failoverpartner");
+
+    /**
+     * The properties written into a JDBC URL, by lower-case name. Values are as written.
+     */
+    static Map<String, String> urlProperties(String url) {
+        Map<String, String> out = new HashMap<>();
+        if (url == null) {
+            return out;
+        }
+        Matcher m = URL_PROPERTY.matcher(url);
+        while (m.find()) {
+            out.put(m.group(1).toLowerCase(Locale.ROOT), m.group(2).trim());
+        }
+        return out;
+    }
+
+    /** Why a URL property is refused, or null when it is allowed. */
+    static String deniedProperty(String name, String value) {
+        String n = name.toLowerCase(Locale.ROOT);
+        boolean denied = DENIED_PROPERTIES.contains(n) || n.endsWith("file") || n.endsWith("path")
+            || n.endsWith("factory") || n.endsWith("class") || n.endsWith("classname")
+            || n.equals("authentication") && value.toLowerCase(Locale.ROOT).startsWith("activedirectory");
+        return denied ? "url: the property " + name + " makes the database driver use this server's own identity, "
+            + "files or code, which a source may not do. Take it out of the URL, and give the source its own user "
+            + "name and password" : null;
+    }
+
+    /**
+     * Driver properties that bound how long connecting, logging in and each network read may take,
+     * so a silent server cannot hold a check for ever. None by default; each database sets its own.
+     */
+    protected Properties timeouts(Duration timeout) {
+        return new Properties();
+    }
+
+    /** Whole seconds for a driver timeout: a little under {@code timeout}, at least one. */
+    protected static int seconds(Duration timeout) {
+        return (int) Math.max(1, timeout.toSeconds() - 1);
+    }
 
     /** The JDBC URL prefix this database's driver accepts, for example {@code jdbc:postgresql://}. */
     protected abstract String urlPrefix();
@@ -126,19 +189,33 @@ public abstract class JdbcConnector implements Connector {
         } else if (PASSWORD_IN_URL.matcher(url).find()) {
             problems.add("url: take the password out of the URL and enter it as the source's password instead; "
                 + "the URL is stored and shown as plain text, the password is encrypted");
+        } else {
+            for (var e : urlProperties(url).entrySet()) {
+                String denied = deniedProperty(e.getKey(), e.getValue());
+                if (denied != null) {
+                    problems.add(denied);
+                    break;
+                }
+            }
         }
         return problems;
     }
 
     @Override
     public ContainerKind containerKind() {
-        return new ContainerKind("schemas", "Schemas", "tables and views");
+        return new ContainerKind("schemas", "Schemas", "tables and views", ".");
     }
 
     @Override
     public List<ContainerInfo> containers(SourceConfig source) throws ConnectorException {
+        return containers(source, null);
+    }
+
+    @Override
+    public List<ContainerInfo> containers(SourceConfig source, Duration timeout) throws ConnectorException {
+        checkValid(source);
         AssetFilter patterns = filter(source).allContainers();
-        try (Connection c = connect(source)) {
+        try (Connection c = connect(source, timeout)) {
             return JdbcCatalog.counts(c, patterns, dialect()).entrySet().stream()
                 .map(e -> new ContainerInfo(e.getKey(), e.getValue())).toList();
         } catch (SQLException e) {
@@ -148,11 +225,13 @@ public abstract class JdbcConnector implements Connector {
 
     @Override
     public void test(SourceConfig source) throws ConnectorException {
-        List<String> problems = validate(source);
-        if (!problems.isEmpty()) {
-            throw new ConnectorException(String.join("; ", problems));
-        }
-        try (Connection c = connect(source)) {
+        test(source, null);
+    }
+
+    @Override
+    public void test(SourceConfig source, Duration timeout) throws ConnectorException {
+        checkValid(source);
+        try (Connection c = connect(source, timeout)) {
             if (!c.isValid(5)) {
                 throw new ConnectorException("Connected to " + source.name() + ", but the database did not answer "
                     + "a check within 5 seconds");
@@ -174,8 +253,46 @@ public abstract class JdbcConnector implements Connector {
         return url == null ? Map.of() : Map.of("url", url);
     }
 
-    private static Connection connect(SourceConfig source) throws SQLException {
-        return DriverManager.getConnection(source.setting("url"), source.setting("username"), source.secret());
+    @Override
+    public Set<String> addressKeys() {
+        return Set.of("url");
+    }
+
+    /** The URL's hosts, and any other host its properties name (SQL Server's serverName, failoverPartner). */
+    @Override
+    public List<String> hosts(SourceConfig source) {
+        List<String> hosts = new ArrayList<>(UrlHosts.hosts(source.setting("url")));
+        urlProperties(source.setting("url")).forEach((k, v) -> {
+            if (HOST_PROPERTIES.contains(k) && !v.isBlank()) {
+                String h = v.trim();
+                int cut = h.indexOf('\\');
+                hosts.add(cut < 0 ? h : h.substring(0, cut));
+            }
+        });
+        return hosts;
+    }
+
+    private void checkValid(SourceConfig source) throws ConnectorException {
+        List<String> problems = validate(source);
+        if (!problems.isEmpty()) {
+            throw new ConnectorException("Check the settings of " + source.name() + ": " + String.join("; ", problems));
+        }
+    }
+
+    private Connection connect(SourceConfig source) throws SQLException {
+        return connect(source, null);
+    }
+
+    /** Connects with the source's user name and secret and, for checks, the driver's own timeouts. */
+    private Connection connect(SourceConfig source, Duration timeout) throws SQLException {
+        Properties p = timeout == null ? new Properties() : timeouts(timeout);
+        if (source.setting("username") != null) {
+            p.setProperty("user", source.setting("username"));
+        }
+        if (source.secret() != null) {
+            p.setProperty("password", source.secret());
+        }
+        return DriverManager.getConnection(source.setting("url"), p);
     }
 
     private AssetFilter filter(SourceConfig source) throws ConnectorException {
@@ -188,6 +305,7 @@ public abstract class JdbcConnector implements Connector {
 
     @Override
     public List<AssetInfo> catalog(SourceConfig source) throws ConnectorException {
+        checkValid(source); // also for sources saved before a rule existed
         AssetFilter filter = filter(source);
         try (Connection c = connect(source)) {
             List<AssetInfo> out = new ArrayList<>();

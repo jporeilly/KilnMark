@@ -30,7 +30,6 @@ public final class CommonSettings {
     public static final String AI_EGRESS = "ai_egress";
 
     static final int MAX_DESCRIPTION = 2000;
-    static final int MAX_PATTERNS = 1000;
 
     /** One common setting, as forms show it. {@code choices} is empty for free text. */
     public record Definition(String key, String label, String hint, boolean multiple, List<String> choices,
@@ -79,8 +78,9 @@ public final class CommonSettings {
         new Definition(AI_EGRESS, "AI models", "local_only: only models on servers marked local may see this source's "
             + "metadata and data. allowed: any configured model. none: no model at all", false,
             List.of(AiEgress.LOCAL_ONLY.id(), AiEgress.ALLOWED.id(), AiEgress.NONE.id()), AiEgress.LOCAL_ONLY.id()),
-        new Definition(AssetFilter.INCLUDE, "Include", "Only tables or files matching these patterns, ignoring case: "
-            + "cust* matches names, crm.* or raw/** match paths. Leave empty for all", true, List.of(), null),
+        new Definition(AssetFilter.INCLUDE, "Include", "Only tables or files matching these patterns, ignoring case. "
+            + "cust* or *.csv match names; crm.* (a schema's tables) or raw/** (a folder's files) match paths. "
+            + "Leave empty for all", true, List.of(), null),
         new Definition(AssetFilter.EXCLUDE, "Exclude", "Leave out tables or files matching these patterns, for "
             + "example tmp_*, *_backup or archive/**", true, List.of(), null));
 
@@ -126,11 +126,6 @@ public final class CommonSettings {
         String egress = settings.get(AI_EGRESS);
         if (egress != null && !egress.isBlank() && AiEgress.parse(egress) == null) {
             problems.add(AI_EGRESS + ": one of local_only, allowed or none, not '" + egress + "'");
-        }
-        for (String key : List.of(AssetFilter.INCLUDE, AssetFilter.EXCLUDE)) {
-            if (AssetFilter.split(settings.get(key)).size() > MAX_PATTERNS) {
-                problems.add(key + ": at most " + MAX_PATTERNS + " patterns");
-            }
         }
         problems.addAll(AssetFilter.problems(new SourceConfig("check", "check", settings, null)));
         return problems;

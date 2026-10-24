@@ -14,8 +14,10 @@ import io.kilnmark.kiln.connect.AssetFilter;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.connect.SourceConfig;
+import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.SecretBox;
 import io.kilnmark.server.sources.CommonSettings;
+import io.kilnmark.server.sources.HostPolicy;
 import io.kilnmark.server.sources.SourceChecks;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.ws.rs.core.Response;
@@ -35,7 +37,7 @@ public class SourceService {
      * saving it changes the stored secret, to {@code newSecret} (null removes it).
      */
     record Draft(Connector connector, SourceConfig config, boolean replaceSecret, String newSecret,
-                 String displayName) {
+                 String displayName, Map<String, String> keepSecretIf) {
     }
 
     /** Said when an edit tries to change a source's name. */
@@ -48,11 +50,24 @@ public class SourceService {
     private final Connectors connectors;
     private final SourceChecks checks;
 
-    public SourceService(GraphStore store, SecretBox secrets, Connectors connectors, SourceChecks checks) {
+    private final HostPolicy hosts;
+
+    public SourceService(GraphStore store, SecretBox secrets, Connectors connectors, SourceChecks checks,
+                         KilnmarkConfig config) {
         this.store = store;
         this.secrets = secrets;
         this.connectors = connectors;
         this.checks = checks;
+        this.hosts = new HostPolicy(config.sources().allowedHosts().orElse(List.of()));
+    }
+
+    /**
+     * Checks the hosts a source would reach against the administrator's allow-list.
+     *
+     * @throws IllegalArgumentException for a 400 answer
+     */
+    void checkHosts(Connector connector, SourceConfig config) {
+        hosts.check(connector, config);
     }
 
     Records.Source find(String name) {
@@ -120,6 +135,7 @@ public class SourceService {
         }
         String secret = null;
         boolean replace = false;
+        Map<String, String> keepSecretIf = Map.of();
         if (newPassword) {
             secret = form.password();
             replace = true;
@@ -133,13 +149,18 @@ public class SourceService {
                     + ", so enter the password again. Kilnmark never sends a stored password to a new place");
             }
             secret = store.sourceSecret(existing.name()).map(secrets::open).orElse(null);
+            // Saving checks these again on the locked row, so a change made meanwhile cannot slip past.
+            Map<String, String> scope = new HashMap<>();
+            connector.secretScope().forEach(k -> scope.put(k, existing.settings().get(k)));
+            keepSecretIf = scope;
         }
         SourceConfig config = new SourceConfig(name, kind, settings, secret);
         String problem = SourceRules.check(connectors, config);
         if (problem != null) {
             throw new IllegalArgumentException(problem);
         }
-        return new Draft(connector, config, replace, replace ? secret : null, displayName);
+        hosts.check(connector, config);
+        return new Draft(connector, config, replace, replace ? secret : null, displayName, keepSecretIf);
     }
 
     private static boolean same(String a, String b) {
@@ -149,7 +170,12 @@ public class SourceService {
     }
 
     Views.TestResult test(Connector connector, SourceConfig config) {
-        SourceChecks.TestResult r = checks.test(connector, config);
+        SourceChecks.TestResult r;
+        try {
+            r = checks.test(connector, config);
+        } catch (SourceChecks.Busy e) {
+            throw ApiError.of(Response.Status.TOO_MANY_REQUESTS, e.getMessage());
+        }
         return new Views.TestResult(r.ok(), r.problem(), r.millis());
     }
 

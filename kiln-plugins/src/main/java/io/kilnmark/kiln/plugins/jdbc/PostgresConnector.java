@@ -34,6 +34,17 @@ public final class PostgresConnector extends JdbcConnector {
         return "SELECT * FROM " + quote(schema) + "." + quote(table) + (rowLimit > 0 ? " LIMIT " + rowLimit : "");
     }
 
+    /** pgjdbc's connect, login and socket timeouts, in seconds. */
+    @Override
+    protected java.util.Properties timeouts(java.time.Duration timeout) {
+        java.util.Properties p = new java.util.Properties();
+        String s = Integer.toString(seconds(timeout));
+        p.setProperty("connectTimeout", s);
+        p.setProperty("loginTimeout", s);
+        p.setProperty("socketTimeout", s);
+        return p;
+    }
+
     /** {@code jdbc:postgresql://host:5432/database}. */
     @Override
     protected String addressUrl(String host, Integer port, String database) {

@@ -269,6 +269,7 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
 /** Delete, after a confirmation that says what goes with the source. */
 function DeleteSource({ source, runs }: { source: Source; runs: number }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -288,7 +289,15 @@ function DeleteSource({ source, runs }: { source: Source; runs: number }) {
 
   return (
     <>
-      <button type="button" className="danger" onClick={() => dialog.current?.showModal()}>
+      <button
+        type="button"
+        className="danger"
+        onClick={() => {
+          setError(null);
+          dialog.current?.showModal();
+          cancel.current?.focus(); // the safe choice first
+        }}
+      >
         Delete…
       </button>
       <dialog ref={dialog} aria-labelledby="del-h" aria-describedby="del-what" className="dialog">
@@ -318,7 +327,7 @@ function DeleteSource({ source, runs }: { source: Source; runs: number }) {
           <button type="button" className="danger" onClick={confirm} disabled={deleting}>
             {deleting ? "Deleting…" : `Delete ${source.displayName}`}
           </button>
-          <button type="button" onClick={() => dialog.current?.close()} autoFocus>
+          <button type="button" ref={cancel} onClick={() => dialog.current?.close()}>
             Cancel
           </button>
         </div>

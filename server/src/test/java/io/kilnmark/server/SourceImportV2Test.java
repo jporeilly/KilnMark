@@ -55,10 +55,15 @@ class SourceImportV2Test {
             .body("settings.description", equalTo("First"));
         admin().get("/api/v1/sources/up-two").then().body("displayName", equalTo("up-two"));
 
-        JsonPath again = csv(file, "", 200);
+        String noPasswords = file.replace(",password,", ",").replace(",ro,pw1,", ",ro,").replace(",ro,pw2,", ",ro,");
+        JsonPath again = csv(noPasswords, "", 200);
         assertEquals(List.of("unchanged", "unchanged"), again.getList("rows.status"));
         assertEquals(0, again.getInt("created"));
         assertEquals(2, again.getInt("unchanged"));
+
+        // a supplied password always counts as an update: it is never compared with the stored one
+        JsonPath withPasswords = csv(file, "", 200);
+        assertEquals(List.of("updated", "updated"), withPasswords.getList("rows.status"));
 
         String changed = file.replace(",First,", ",\"First, edited\",").replace("pw2", "pw2-new");
         JsonPath third = csv(changed, "", 200);
@@ -78,6 +83,61 @@ class SourceImportV2Test {
         assertFalse(fourth.getBoolean("applied"));
         admin().get("/api/v1/sources/up-two").then().body("hasPassword", equalTo(true))
             .body("settings.description", nullValue());
+    }
+
+    @Test
+    void anUpdateChangesOnlyTheColumnsInTheFileAndNeverQuietlyLoosensAiEgress() {
+        csv("""
+            name,url,username,description,schemas,ai_egress
+            merge-db,jdbc:postgresql://m.example.com/db,ro,First,crm;sales,none
+            """, "", 200);
+        // a steward's later edit
+        admin().contentType("application/json").body(Map.of("settings", Map.of("url",
+                "jdbc:postgresql://m.example.com/db", "username", "ro", "description", "First", "schemas", "crm,sales",
+                "ai_egress", "none", "exclude", "tmp_*")))
+            .put("/api/v1/sources/merge-db").then().statusCode(200);
+
+        JsonPath r = csv("name,description,ai_egress\nmerge-db,Second,\n", "", 200);
+        assertEquals("updated", r.getString("rows[0].status"));
+        admin().get("/api/v1/sources/merge-db").then()
+            .body("settings.description", equalTo("Second"))
+            .body("settings.exclude", equalTo("tmp_*"))
+            .body("settings.schemas", equalTo("crm,sales"))
+            .body("settings.url", equalTo("jdbc:postgresql://m.example.com/db"))
+            .body("settings.ai_egress", equalTo("none"));
+
+        JsonPath json = admin().contentType("application/json")
+            .body("[{\"name\": \"merge-db\", \"settings\": {\"exclude\": null}}]")
+            .post("/api/v1/sources/import").then().statusCode(200).extract().jsonPath();
+        assertEquals("updated", json.getString("rows[0].status"));
+        admin().get("/api/v1/sources/merge-db").then()
+            .body("settings", org.hamcrest.Matchers.not(org.hamcrest.Matchers.hasKey("exclude")))
+            .body("settings.description", equalTo("Second"));
+
+        JsonPath looser = csv("name,ai_egress\nmerge-db,allowed\n", "", 200);
+        assertEquals("updated", looser.getString("rows[0].status"));
+        assertTrue(looser.getList("rows[0].notes").toString().contains("loosened from none to allowed"),
+            looser.getList("rows[0].notes").toString());
+        admin().get("/api/v1/sources/merge-db").then().body("settings.ai_egress", equalTo("allowed"));
+        JsonPath stricter = csv("name,ai_egress\nmerge-db,local_only\n", "", 200);
+        assertTrue(stricter.getList("rows[0].notes").isEmpty());
+    }
+
+    @Test
+    void remappingAnExistingSourcesHostNeedsItsPasswordAgain() {
+        csv("name,url,username,password\nremap-again,jdbc:postgresql://localhost:5433/lab,lab,pw\n", "", 200);
+        JsonPath r = csv("name,url\nremap-again,jdbc:postgresql://localhost:5433/lab\n", "?remapHosts=true", 422);
+        assertEquals("failed", r.getString("rows[0].status"));
+        assertTrue(r.getString("rows[0].error").contains("enter the password again"), r.getString("rows[0].error"));
+        JsonPath ok = csv("name,url,password\nremap-again,jdbc:postgresql://localhost:5433/lab,pw\n",
+            "?remapHosts=true", 200);
+        assertEquals("updated", ok.getString("rows[0].status"));
+        admin().get("/api/v1/sources/remap-again").then()
+            .body("settings.url", equalTo("jdbc:postgresql://db.internal:5433/lab"));
+        // only addresses are remapped, never other settings
+        csv("name,description\nremap-again,see http://localhost:8080/wiki\n", "?remapHosts=true", 200);
+        admin().get("/api/v1/sources/remap-again").then()
+            .body("settings.description", equalTo("see http://localhost:8080/wiki"));
     }
 
     @Test

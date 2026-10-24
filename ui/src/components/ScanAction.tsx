@@ -54,8 +54,9 @@ export function ScanAction({
 
   return (
     <div className="scan-action">
-      <button type="button" onClick={start} disabled={busy(source) || checking} aria-label={`Scan ${label} now`}>
+      <button type="button" onClick={start} disabled={busy(source) || checking}>
         {checking ? "Checking…" : source.lastRun?.status === "queued" ? "Queued…" : busy(source) ? "Scanning…" : "Scan now"}
+        <span className="visually-hidden"> ({label})</span>
       </button>
       {warnings && (
         <div className="warning" role="alert" tabIndex={-1} ref={alertRef}>

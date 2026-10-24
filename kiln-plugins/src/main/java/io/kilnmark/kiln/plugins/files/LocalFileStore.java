@@ -69,6 +69,12 @@ public final class LocalFileStore implements FileStore {
 
     @Override
     public List<Entry> list() throws IOException {
+        return list(null);
+    }
+
+    /** Walks the folder, giving up once {@code deadline} has passed or the thread is interrupted. */
+    @Override
+    public List<Entry> list(java.time.Instant deadline) throws IOException {
         List<Entry> out = new ArrayList<>();
         EnumSet<FileVisitOption> options = EnumSet.of(FileVisitOption.FOLLOW_LINKS);
         Files.walkFileTree(root, options, recursive ? Integer.MAX_VALUE : 1, new SimpleFileVisitor<>() {
@@ -85,6 +91,9 @@ public final class LocalFileStore implements FileStore {
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                if (deadline != null && (java.time.Instant.now().isAfter(deadline) || Thread.currentThread().isInterrupted())) {
+                    throw new IOException("Listing the folder took too long: choose a smaller folder");
+                }
                 if (!attrs.isRegularFile() || hidden(file) || !inside(file)) {
                     return FileVisitResult.CONTINUE;
                 }

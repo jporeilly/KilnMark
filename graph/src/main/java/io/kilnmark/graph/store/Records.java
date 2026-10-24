@@ -71,11 +71,20 @@ public final class Records {
      * New values for a registered source; its name never changes. The secret is replaced only
      * when {@code replaceSecret} is true ({@code secret} null removes it), and is otherwise kept as
      * it is. {@code secret} is already encrypted. {@code displayName} null means the name.
+     * {@code keepSecretIf}: when the secret is kept, the settings (a null value meaning absent) the
+     * stored source must still have, checked on the locked row, or the change is refused; these
+     * are the settings that decide where the secret is sent.
      */
     public record SourceChange(String displayName, Map<String, String> settings, boolean replaceSecret,
-                               byte[] secret) {
+                               byte[] secret, Map<String, String> keepSecretIf) {
         public SourceChange {
             settings = Map.copyOf(settings == null ? Map.of() : settings);
+            keepSecretIf = keepSecretIf == null ? Map.of() : java.util.Collections.unmodifiableMap(
+                new java.util.HashMap<>(keepSecretIf));
+        }
+
+        public SourceChange(String displayName, Map<String, String> settings, boolean replaceSecret, byte[] secret) {
+            this(displayName, settings, replaceSecret, secret, null);
         }
     }
 
