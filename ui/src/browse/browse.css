@@ -1,0 +1,500 @@
+/* Browse, diagrams, relationships and column statistics. Colours only from tokens.css. */
+
+.km-icon {
+  flex: none;
+  color: var(--km-muted);
+}
+
+.browse {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+  margin-top: 16px;
+}
+
+.browse-side {
+  background: var(--km-surface);
+  border: 1px solid var(--km-border);
+  border-radius: 12px;
+  padding: 14px;
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+}
+
+.browse-main > .panel:first-child {
+  margin-top: 0;
+}
+
+.browse-tree .field {
+  margin-bottom: 12px;
+}
+
+.tree,
+.tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree ul {
+  padding-left: 18px;
+}
+
+.tree [role="treeitem"]:focus {
+  outline: none;
+}
+
+.tree [role="treeitem"]:focus-visible > .tree-row {
+  outline: 3px solid var(--km-link);
+  outline-offset: -1px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.tree-row:hover {
+  background: var(--km-ground);
+}
+
+.tree-row.is-selected {
+  background: var(--km-ground);
+  box-shadow: inset 3px 0 0 var(--km-accent);
+  font-weight: 700;
+}
+
+.tree-toggle {
+  display: inline-block;
+  width: 16px;
+  flex: none;
+  text-align: center;
+  color: var(--km-muted);
+}
+
+.tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tree-meta {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 12px;
+  color: var(--km-muted);
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+.tree-more {
+  color: var(--km-link);
+  text-decoration: underline;
+}
+
+.tree-status {
+  padding: 4px 6px 4px 28px;
+  font-size: 13px;
+}
+
+.browse-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.kind-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.panel-head h2 {
+  margin: 0;
+}
+
+h3 {
+  font-size: 16px;
+  margin: 20px 0 8px;
+}
+
+h4 {
+  font-size: 14px;
+  margin: 12px 0 6px;
+}
+
+.dg-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+}
+
+.check {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  min-height: 24px;
+}
+
+.buttons.tight {
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.buttons.tight button {
+  padding: 6px 10px;
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+table.rel {
+  min-width: 860px;
+}
+
+table.rel td {
+  overflow-wrap: anywhere;
+}
+
+table.rel td:nth-child(1),
+table.rel td:nth-child(2) {
+  min-width: 170px;
+}
+
+.rel-status {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  min-width: 140px;
+}
+
+.rel-why {
+  width: 30%;
+  min-width: 200px;
+}
+
+.badge-rel-proposed {
+  color: var(--km-warn);
+}
+
+.badge-rel-accepted {
+  color: var(--km-good);
+}
+
+.badge-rel-rejected {
+  color: var(--km-muted);
+}
+
+/* The diagram. xyflow's own variables are pointed at our tokens, so both themes follow. */
+.dg-frame {
+  height: 560px;
+  border: 1px solid var(--km-border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 8px 0 16px;
+}
+
+.dg-frame .react-flow {
+  --xy-background-color: var(--km-ground);
+  --xy-background-pattern-color: var(--km-border);
+  --xy-edge-stroke: var(--km-muted);
+  --xy-edge-stroke-width: 1.5;
+  --xy-edge-label-background-color: var(--km-surface);
+  --xy-edge-label-color: var(--km-ink);
+  --xy-controls-button-background-color: var(--km-surface);
+  --xy-controls-button-background-color-hover: var(--km-ground);
+  --xy-controls-button-color: var(--km-ink);
+  --xy-controls-button-border-color: var(--km-border);
+  --xy-node-border-radius: 8px;
+  background: var(--km-ground);
+}
+
+.dg-frame .react-flow__edge.dg-edge-proposed .react-flow__edge-path {
+  stroke: var(--km-warn);
+}
+
+.dg-frame .react-flow__edge.dg-edge-declared .react-flow__edge-path {
+  stroke: var(--km-ink);
+}
+
+.dg-frame .react-flow__edge.dg-edge-inferred.dg-edge-accepted .react-flow__edge-path {
+  stroke: var(--km-good);
+}
+
+.dg-frame .react-flow__edge-textbg {
+  fill: var(--km-surface);
+}
+
+.dg-frame .react-flow__edge-text {
+  fill: var(--km-ink);
+  font-size: 11px;
+}
+
+.dg-frame .react-flow__node:focus-visible {
+  outline: 3px solid var(--km-link);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.dg-table {
+  width: 260px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border-control);
+  border-radius: 8px;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.dg-table.is-external {
+  border-style: dashed;
+}
+
+.dg-table.is-centre {
+  border: 2px solid var(--km-accent);
+}
+
+.dg-head {
+  display: grid;
+  gap: 2px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--km-border);
+  height: 44px;
+  box-sizing: border-box;
+}
+
+.dg-name {
+  font-weight: 700;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dg-sub {
+  color: var(--km-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dg-cols {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.dg-col {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+}
+
+.dg-col-name,
+.dg-col-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dg-col-type {
+  color: var(--km-muted);
+  max-width: 90px;
+}
+
+.dg-keys {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.dg-keys abbr {
+  text-decoration: none;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 3px;
+  border: 1px solid var(--km-accent);
+  border-radius: 3px;
+  color: var(--km-ink);
+}
+
+.dg-more {
+  display: block;
+  color: var(--km-muted);
+}
+
+.dg-handle {
+  opacity: 0;
+  width: 6px;
+  height: 6px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+}
+
+/* Columns and their statistics. */
+.disclosure {
+  border: 0;
+  background: none;
+  padding: 4px 2px;
+  min-height: 32px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--km-link);
+}
+
+.disclosure:hover {
+  text-decoration: underline;
+}
+
+tr.is-open > th,
+tr.is-open > td {
+  border-bottom: 0;
+}
+
+.detail-row > td {
+  background: var(--km-ground);
+}
+
+.col-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 32px;
+  align-items: flex-start;
+}
+
+.col-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+  min-width: 240px;
+  flex: 1 1 320px;
+}
+
+.col-facts dt {
+  font-size: 12px;
+  color: var(--km-muted);
+}
+
+.col-facts dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.histogram {
+  margin: 0;
+}
+
+.histogram figcaption {
+  font-size: 12px;
+  color: var(--km-muted);
+  margin-bottom: 4px;
+}
+
+.histogram svg rect {
+  fill: var(--km-link);
+}
+
+.histogram-axis {
+  display: flex;
+  justify-content: space-between;
+  width: 280px;
+  max-width: 100%;
+}
+
+.histogram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.top-values ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.top-values h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.top-values li {
+  display: grid;
+  grid-template-columns: 16ch 80px auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.top-values li > .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-bar {
+  display: inline-block;
+  height: 8px;
+  background: var(--km-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.top-bar span {
+  display: block;
+  height: 100%;
+  background: var(--km-good);
+}
+
+@media (max-width: 960px) {
+  .browse {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .browse-side {
+    position: static;
+    max-height: 420px;
+  }
+
+  .dg-frame {
+    height: 420px;
+  }
+}

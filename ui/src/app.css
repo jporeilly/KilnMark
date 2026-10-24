@@ -528,7 +528,8 @@ tbody th {
 
   .sidenav ul {
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 0 8px;
   }
 
   main {

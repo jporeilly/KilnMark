@@ -39,6 +39,13 @@ Useful endpoints in dev mode (all but the first and the `/q` ones need an API to
 - `GET /api/v1/me`: who the token belongs to
 - `POST /api/v1/sources`, `POST /api/v1/sources/import`, `POST /api/v1/sources/{name}/scans`
 - `GET /api/v1/search?q=...`, `GET /api/v1/assets/{urn}`, `GET /api/v1/runs/{id}`
+- `GET /api/v1/browse/sources`, `GET /api/v1/browse/sources/{name}/containers`,
+  `GET /api/v1/browse/sources/{name}/assets?container=...`: the catalogue as a tree, paged
+  (`offset`, `limit`) and filtered by name (`q`)
+- `GET /api/v1/diagram?source=...&container=...`, `?asset={urn}&depth=1`, or `?urn=...&urn=...`:
+  tables, columns and relationships for a diagram (at most 60 tables unless `limit` says more, up to 150)
+- `GET /api/v1/relationships?asset={urn}` or `?source=...&status=proposed`, and
+  `POST /api/v1/relationships/{id}/accept` or `/reject` (steward)
 - `POST /api/v1/tokens`, `GET /api/v1/tokens`, `DELETE /api/v1/tokens/{id}`: API tokens (admin)
 - `GET /q/health`: health checks
 - `GET /q/openapi`: the API specification
@@ -87,7 +94,7 @@ for that browser tab. A token has one role, and each role includes the ones befo
 | Role | Can |
 | --- | --- |
 | `viewer` | search, and read assets, sources, runs and connectors |
-| `steward` | also start scans |
+| `steward` | also start scans, and accept or reject proposed relationships |
 | `admin` | also add and import sources, and create, list and revoke tokens |
 
 **The first admin token.** On first start, when no admin token is usable, the server creates
@@ -195,6 +202,12 @@ name, the same under Podman and Docker:
 
 Press **Scan now**. A scan of the lab (six tables, 10 million rows once `lab.make_big_table` has
 run) takes about 15 seconds. Then search for `customer` and open `crm.customers`.
+
+Open **Browse** to walk the lab: choose `billing` to see its tables drawn with their
+relationships. The declared key from `crm.accounts` is a solid line; the join from
+`billing.transactions.customer_id`, which no key declares, is a dashed proposal. As a steward or
+admin, accept or reject it there, on the asset page, or under **Relationships**. Proposals are
+refreshed after every scan (within and across sources); decisions are kept.
 
 To register many sources at once, import a CSV (header row `name, url, username, password,
 password_ref, schemas`) or a JSON array under **Sources > Import sources from a file**, or post it

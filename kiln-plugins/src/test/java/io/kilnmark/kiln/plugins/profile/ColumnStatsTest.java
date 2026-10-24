@@ -19,4 +19,29 @@ class ColumnStatsTest {
         assertEquals("0", ColumnStats.number(1e-9));
         assertEquals("NaN", ColumnStats.number(Double.NaN));
     }
+
+    @Test
+    void histogramsHaveEqualWidthBinsOrOneBinPerSmallWholeNumber() {
+        ColumnStats wide = new ColumnStats("n", ColumnStats.Shape.INTEGER);
+        for (long v = 1; v <= 100; v++) {
+            wide.addLong(v);
+        }
+        String h = wide.histogram();
+        assertEquals(10, h.split("\\{").length - 1, h);
+        assertEquals(true, h.startsWith("[{\"from\":\"1\",\"to\":\"10.9\",\"count\":10}"), h);
+        assertEquals(true, h.endsWith("\"to\":\"100\",\"count\":10}]"), h);
+
+        ColumnStats small = new ColumnStats("s", ColumnStats.Shape.INTEGER);
+        for (long v : new long[] {1, 1, 2, 3, 3, 3}) {
+            small.addLong(v);
+        }
+        assertEquals("[{\"from\":\"1\",\"to\":\"1\",\"count\":2},{\"from\":\"2\",\"to\":\"2\",\"count\":1},"
+            + "{\"from\":\"3\",\"to\":\"3\",\"count\":3}]", small.histogram());
+
+        ColumnStats same = new ColumnStats("c", ColumnStats.Shape.NUMBER);
+        same.addDouble(2.5);
+        same.addDouble(2.5);
+        assertEquals("[{\"from\":\"2.5\",\"to\":\"2.5\",\"count\":2}]", same.histogram());
+        assertEquals(true, same.attributes().containsKey("hll"), "number columns carry their sketch");
+    }
 }

@@ -25,6 +25,7 @@ import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
 import io.kilnmark.kiln.StepSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
+import io.kilnmark.kiln.connect.CatalogInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.Connectors;
@@ -33,6 +34,7 @@ import io.kilnmark.kiln.plugins.profile.ProfileStep;
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.SecretBox;
 import io.kilnmark.server.jobs.JobQueue;
+import io.kilnmark.server.relations.RelationshipService;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
@@ -55,15 +57,17 @@ public class ScanService {
     private final ObjectMapper json;
     private final Connectors connectors;
     private final JobQueue jobs;
+    private final RelationshipService relationships;
 
     public ScanService(GraphStore store, SecretBox secrets, KilnmarkConfig config, ObjectMapper json,
-                       Connectors connectors, JobQueue jobs) {
+                       Connectors connectors, JobQueue jobs, RelationshipService relationships) {
         this.store = store;
         this.secrets = secrets;
         this.config = config;
         this.json = json;
         this.connectors = connectors;
         this.jobs = jobs;
+        this.relationships = relationships;
     }
 
     /** Queues a scan of {@code source} for a worker to run, and returns the queued run. */
@@ -139,7 +143,8 @@ public class ScanService {
                 "This server has no connector for sources of kind '" + source.kind() + "'"));
             String secret = store.sourceSecret(source.name()).map(secrets::open).orElse(null);
             SourceConfig config = new SourceConfig(source.name(), source.kind(), source.settings(), secret);
-            List<AssetInfo> assets = connector.catalog(config);
+            CatalogInfo catalog = connector.catalogWithRelationships(config);
+            List<AssetInfo> assets = catalog.assets();
             Semaphore slots = new Semaphore(Math.max(1, this.config.scan().parallelTables()));
             for (AssetInfo a : assets) {
                 if (stop.getAsBoolean()) {
@@ -180,7 +185,7 @@ public class ScanService {
             }
             int removed = store.markUnseenRemoved(source.id(), runId);
             status = failed.get() == 0 ? "succeeded" : failed.get() < seen.get() ? "partial" : "failed";
-            detail = summary(seen.get(), failed.get(), removed, problems);
+            detail = summary(seen.get(), failed.get(), removed, problems) + relate(source, catalog);
             LOG.infof("Scan %d of %s: %s", runId, source.name(), detail);
         } catch (ConnectorException e) {
             detail = e.getMessage();
@@ -240,8 +245,10 @@ public class ScanService {
         switch (e.kind()) {
             case ROW_COUNT -> store.saveRowCount(e.assetUrn(), Long.parseLong(e.attributes().get("rows")),
                 Boolean.parseBoolean(e.attributes().get("complete")), e.observedAt());
-            case PROFILE -> store.saveProfile(e.assetUrn(), e.attributes().get("field"), runId, profileJson(e),
-                e.observedAt());
+            case PROFILE -> {
+                store.saveProfile(e.assetUrn(), e.attributes().get("field"), runId, profileJson(e), e.observedAt());
+                relationships.saveSketch(e, runId);
+            }
             default -> { }
         }
     }
@@ -255,7 +262,7 @@ public class ScanService {
         for (var a : e.attributes().entrySet()) {
             String k = a.getKey();
             String v = a.getValue();
-            if (k.equals("field")) {
+            if (k.equals("field") || RelationshipService.storedApart(k)) {
                 continue;
             }
             try {
@@ -273,6 +280,21 @@ public class ScanService {
             }
         }
         return o.toString();
+    }
+
+    /**
+     * Records the source's declared relationships and refreshes inferred ones; for the run's
+     * summary. A failure here never fails the scan: what was catalogued and profiled stays.
+     */
+    private String relate(Records.Source source, CatalogInfo catalog) {
+        try {
+            RelationshipService.Outcome r = relationships.afterScan(source, catalog.relationships());
+            return r.proposed() > 0 ? ". " + r.proposed() + (r.proposed() == 1 ? " relationship" : " relationships")
+                + " proposed for review" : "";
+        } catch (RuntimeException e) {
+            LOG.errorf(e, "Relationship discovery for %s failed", source.name());
+            return ". Relationship discovery failed: " + e.getMessage();
+        }
     }
 
     private static Records.Asset asset(String urn, AssetInfo a) {

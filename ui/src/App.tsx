@@ -7,6 +7,9 @@ import { AssetPage } from "./pages/AssetPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { SignInPage, type SignInNotice } from "./pages/SignInPage";
 import { TokensPage } from "./pages/TokensPage";
+import { BrowsePage } from "./browse/BrowsePage";
+import { RelationshipsPage } from "./browse/RelationshipsPage";
+import { RoleContext } from "./components/role";
 
 /**
  * Checks who is signed in, then shows either the sign-in page or the app. Signing out (the
@@ -98,7 +101,11 @@ function Shell({ me }: { me: Me }) {
       first.current = false;
       return;
     }
-    const t = window.setTimeout(() => document.querySelector<HTMLElement>("main h1")?.focus(), 0);
+    const t = window.setTimeout(() => {
+      // A widget that changes the page in place (the browse tree) keeps the focus where it is.
+      if (document.activeElement?.closest("[data-keeps-focus]")) return;
+      document.querySelector<HTMLElement>("main h1")?.focus();
+    }, 0);
     return () => window.clearTimeout(t);
   }, [route]);
 
@@ -162,6 +169,16 @@ function Shell({ me }: { me: Me }) {
                 Sources
               </a>
             </li>
+            <li>
+              <a href={href.browse()} aria-current={current("browse")}>
+                Browse
+              </a>
+            </li>
+            <li>
+              <a href={href.relationships()} aria-current={current("relationships")}>
+                Relationships
+              </a>
+            </li>
             {allows(me.role, "admin") && (
               <li>
                 <a href={href.tokens()} aria-current={current("tokens")}>
@@ -171,11 +188,16 @@ function Shell({ me }: { me: Me }) {
             )}
           </ul>
         </nav>
+        <RoleContext.Provider value={me.role}>
         <main id="main" tabIndex={-1}>
           {route.page === "home" && <HomePage />}
           {route.page === "search" && <SearchPage q={route.q} />}
           {route.page === "asset" && <AssetPage urn={route.urn} />}
           {route.page === "sources" && <SourcesPage role={me.role} />}
+          {route.page === "browse" && (
+            <BrowsePage source={route.source} container={route.container} asset={route.asset} />
+          )}
+          {route.page === "relationships" && <RelationshipsPage status={route.status} />}
           {route.page === "tokens" &&
             (allows(me.role, "admin") ? (
               <TokensPage me={me} />
@@ -186,6 +208,7 @@ function Shell({ me }: { me: Me }) {
               </>
             ))}
         </main>
+        </RoleContext.Provider>
       </div>
     </>
   );

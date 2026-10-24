@@ -13,8 +13,10 @@ import java.util.regex.Pattern;
 
 import io.kilnmark.kiln.StepSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
+import io.kilnmark.kiln.connect.CatalogInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
+import io.kilnmark.kiln.connect.RelationshipInfo;
 import io.kilnmark.kiln.connect.SourceConfig;
 
 /**
@@ -118,23 +120,57 @@ public abstract class JdbcConnector implements Connector {
         return problems;
     }
 
+    /**
+     * The foreign keys declared on {@code tables}. By default standard JDBC metadata
+     * ({@code getImportedKeys}); override where a driver reports them differently or too slowly.
+     */
+    protected List<JdbcCatalog.ForeignKey> readForeignKeys(Connection connection, List<JdbcCatalog.Table> tables)
+        throws SQLException {
+        return JdbcCatalog.foreignKeys(connection, tables);
+    }
+
     @Override
     public List<AssetInfo> catalog(SourceConfig source) throws ConnectorException {
+        return catalogWithRelationships(source).assets();
+    }
+
+    /**
+     * The catalogue and its foreign keys, on one connection. Keys to tables outside the schemas
+     * read are left out, since those tables are not in the catalogue.
+     */
+    @Override
+    public CatalogInfo catalogWithRelationships(SourceConfig source) throws ConnectorException {
         try (Connection c = DriverManager.getConnection(source.setting("url"), source.setting("username"),
             source.secret())) {
-            List<AssetInfo> out = new ArrayList<>();
-            for (JdbcCatalog.Table t : readCatalog(c, source.list("schemas"))) {
-                List<AssetInfo.FieldInfo> fields = t.columns().stream().map(col -> new AssetInfo.FieldInfo(col.name(),
-                    col.position(), col.sourceType(), col.kind().name().toLowerCase(Locale.ROOT), col.nullable(),
-                    col.comment())).toList();
-                boolean table = t.type().equals("table") || t.type().equals("partitioned table");
-                out.add(new AssetInfo(t.path(), t.type(), t.schema(), t.name(), t.comment(), fields, t.primaryKey(),
-                    !table, true, Map.of("schema", t.schema(), "table", t.name())));
+            List<JdbcCatalog.Table> tables = readCatalog(c, source.list("schemas"));
+            List<AssetInfo> assets = assets(tables);
+            java.util.Set<String> paths = new java.util.HashSet<>();
+            assets.forEach(a -> paths.add(a.path()));
+            List<RelationshipInfo> relationships = new ArrayList<>();
+            for (JdbcCatalog.ForeignKey k : readForeignKeys(c, tables)) {
+                String from = k.fromSchema() + "." + k.fromTable();
+                String to = k.toSchema() + "." + k.toTable();
+                if (paths.contains(from) && paths.contains(to)) {
+                    relationships.add(new RelationshipInfo(from, k.fromColumns(), to, k.toColumns(), k.name()));
+                }
             }
-            return out;
+            return new CatalogInfo(assets, relationships);
         } catch (SQLException e) {
             throw new ConnectorException("Cannot read the catalogue of " + source.name() + ": " + explain(e), e);
         }
+    }
+
+    private static List<AssetInfo> assets(List<JdbcCatalog.Table> tables) {
+        List<AssetInfo> out = new ArrayList<>();
+        for (JdbcCatalog.Table t : tables) {
+            List<AssetInfo.FieldInfo> fields = t.columns().stream().map(col -> new AssetInfo.FieldInfo(col.name(),
+                col.position(), col.sourceType(), col.kind().name().toLowerCase(Locale.ROOT), col.nullable(),
+                col.comment())).toList();
+            boolean table = t.type().equals("table") || t.type().equals("partitioned table");
+            out.add(new AssetInfo(t.path(), t.type(), t.schema(), t.name(), t.comment(), fields, t.primaryKey(),
+                !table, true, Map.of("schema", t.schema(), "table", t.name())));
+        }
+        return out;
     }
 
     @Override

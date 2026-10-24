@@ -17,6 +17,7 @@ line in a services file; nothing in the server changes.
 | `catalog(source)` | Every asset the source holds, with its fields; throws `ConnectorException` with a message a person can act on |
 | `reader(source, asset, read)` | The first pipeline step that reads one asset as Arrow batches |
 | `withContext(context)` | Optional (default: unchanged). Returns the connector set up with server-wide settings |
+| `catalogWithRelationships(source)` | Optional (default: `catalog` with no relationships). The catalogue plus the relationships the source declares, such as foreign keys; the scan calls this one |
 
 Server-wide settings that people adding sources must not control (which folders may be read,
 whether the server's own cloud identity may be used) reach a connector as a `ConnectorContext`:
@@ -31,6 +32,12 @@ An `AssetInfo` is one table, view or file: a `path` unique within the source (it
 path, `urn:kilnmark:<source>:<path>`), a `kind`, a `container` (schema, folder or bucket), the
 fields, any primary key, `bounded` (true when reading it in full may be expensive: the scan then
 reads `kilnmark.scan.view-row-limit` rows), and `hints` the reader needs.
+
+A `RelationshipInfo` is a relationship the source declares between two of its assets, by path:
+`fromPath` and `fromFields` refer to `toPath` and `toFields`, field for field in key order, with
+the constraint's `name`. Both assets must be in the same catalogue. Relationships Kilnmark infers
+from names and values are not the connector's business: the server proposes those after the scan
+([ADR 0019](../adr/0019-relationships.md)).
 
 ## The reader step
 
@@ -66,6 +73,9 @@ an example URL and the SQL that reads a table (`selectSql`), and may override:
 - `selectSql(AssetInfo, rowLimit)` to read particular columns differently (SQL Server reads
   geography, geometry and hierarchyid through `ToString()`, so they arrive as text people can
   read);
+- `readForeignKeys` to read declared keys differently; by default `getImportedKeys` table by
+  table, multi-column keys kept together in `KEY_SEQ` order, keys to tables outside the schemas
+  read left out (`catalogWithRelationships` reads tables and keys on one connection);
 - `readCatalog` to add what the driver's metadata leaves out (SQL Server's driver reports no
   comments, so its connector reads `MS_Description` extended properties in one query);
 - `readSettings` for extra `JdbcTableInput` settings, such as the transaction isolation level;

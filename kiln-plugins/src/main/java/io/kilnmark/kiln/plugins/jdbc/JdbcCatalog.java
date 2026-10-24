@@ -48,7 +48,60 @@ public final class JdbcCatalog {
         }
     }
 
+    /**
+     * A declared foreign key: {@code fromColumns.get(i)} refers to {@code toColumns.get(i)}, in key
+     * order. The referred table may be in another schema.
+     */
+    public record ForeignKey(String fromSchema, String fromTable, List<String> fromColumns, String toSchema,
+                             String toTable, List<String> toColumns, String name) {
+    }
+
     private JdbcCatalog() {
+    }
+
+    /**
+     * The foreign keys declared on {@code tables}, through {@link DatabaseMetaData#getImportedKeys},
+     * one table at a time as the drivers require. Multi-column keys come back as one key with its
+     * columns in key order ({@code KEY_SEQ}). Keys that refer to tables in schemas not read are kept:
+     * the caller decides what to do with them. Tables (views) without keys cost one metadata call.
+     */
+    public static List<ForeignKey> foreignKeys(Connection connection, List<Table> tables) throws SQLException {
+        DatabaseMetaData md = connection.getMetaData();
+        List<ForeignKey> out = new ArrayList<>();
+        for (Table t : tables) {
+            if (!t.type().contains("table")) {
+                continue; // views carry no keys
+            }
+            // Group by constraint name and referred table; a nameless key starts again at KEY_SEQ 1.
+            Map<String, TreeMap<Integer, String[]>> keys = new LinkedHashMap<>();
+            Map<String, String[]> heads = new LinkedHashMap<>();
+            int unnamed = 0;
+            try (ResultSet rs = md.getImportedKeys(null, t.schema(), t.name())) {
+                while (rs.next()) {
+                    if (!t.schema().equals(rs.getString("FKTABLE_SCHEM")) || !t.name().equals(rs.getString("FKTABLE_NAME"))) {
+                        continue;
+                    }
+                    String name = rs.getString("FK_NAME");
+                    String toSchema = rs.getString("PKTABLE_SCHEM");
+                    String toTable = rs.getString("PKTABLE_NAME");
+                    int seq = rs.getInt("KEY_SEQ");
+                    if (name == null && seq <= 1) {
+                        unnamed++;
+                    }
+                    String key = (name == null ? "\u0000" + unnamed : name) + '\u0000' + toSchema + '\u0000' + toTable;
+                    heads.putIfAbsent(key, new String[] {name, toSchema, toTable});
+                    keys.computeIfAbsent(key, k -> new TreeMap<>()).put(seq,
+                        new String[] {rs.getString("FKCOLUMN_NAME"), rs.getString("PKCOLUMN_NAME")});
+                }
+            }
+            for (var e : keys.entrySet()) {
+                String[] head = heads.get(e.getKey());
+                List<String> from = e.getValue().values().stream().map(c -> c[0]).toList();
+                List<String> to = e.getValue().values().stream().map(c -> c[1]).toList();
+                out.add(new ForeignKey(t.schema(), t.name(), from, head[1], head[2], to, head[0]));
+            }
+        }
+        return out;
     }
 
     /**

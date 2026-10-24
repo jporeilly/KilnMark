@@ -36,6 +36,15 @@ public final class ProfileStep implements Step {
 
     public static final String TYPE = "profile";
 
+    /**
+     * Attribute of a {@code PROFILE} event holding the column's distinct-value sketch: base64 of a
+     * compact HyperLogLog (lgK 14, 4 bits per bucket, at most about 8 KiB). Kept apart from the
+     * profile, it lets relationship discovery estimate how far one column's values lie inside
+     * another's ({@code |A ∪ B|} against {@code |B|}) without reading either again. Only integer,
+     * number and text columns with values have one, the types keys have.
+     */
+    public static final String SKETCH = "hll";
+
     private String assetUrn;
     private List<ColumnStats> stats;
 

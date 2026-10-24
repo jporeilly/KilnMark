@@ -111,6 +111,11 @@ final class ColumnStats {
         topLongs.merge(other.topLongs);
     }
 
+    /** The sketch behind {@code distinct}, for {@link ProfileStep#SKETCH}. */
+    private String sketch() {
+        return java.util.Base64.getEncoder().encodeToString(distinct.copyAs(TgtHllType.HLL_4).toCompactByteArray());
+    }
+
     long values() {
         return rows - nulls;
     }
@@ -128,6 +133,9 @@ final class ColumnStats {
         }
         long d = Math.min(Math.round(distinct.getEstimate()), values());
         a.put("distinct", Long.toString(d));
+        if (shape == Shape.INTEGER || shape == Shape.NUMBER || shape == Shape.TEXT) {
+            a.put(ProfileStep.SKETCH, sketch());
+        }
         // Below a few thousand values the sketch keeps every hash, and its bounds meet the estimate.
         a.put("distinct_exact", Boolean.toString(
             Math.round(distinct.getLowerBound(1)) == Math.round(distinct.getUpperBound(1))));
@@ -139,6 +147,7 @@ final class ColumnStats {
                 a.put("p75", number(quantiles.getQuantile(0.75)));
                 a.put("max", number(quantiles.getMaxItem()));
                 a.put("mean", number(sum / values()));
+                a.put("histogram", histogram());
                 if (shape == Shape.INTEGER) {
                     a.put("top", topLongs());
                 }
@@ -147,6 +156,7 @@ final class ColumnStats {
                 a.put("min", temporal(quantiles.getMinItem()));
                 a.put("median", temporal(quantiles.getQuantile(0.5)));
                 a.put("max", temporal(quantiles.getMaxItem()));
+                a.put("histogram", histogram());
             }
             case TEXT -> {
                 a.put("min_length", Integer.toString(minLength));
@@ -160,6 +170,68 @@ final class ColumnStats {
             case BOOLEAN -> a.put("true", Long.toString(trues));
         }
         return a;
+    }
+
+    static final int BINS = 10;
+
+    /**
+     * An equal-width histogram from the quantile sketch: up to {@link #BINS} bins between the
+     * smallest and largest value, each with its bounds and an estimated count; for whole numbers
+     * spanning fewer than {@code BINS} values, one bin per value. JSON, for the UI to draw.
+     */
+    String histogram() {
+        double min = quantiles.getMinItem();
+        double max = quantiles.getMaxItem();
+        long n = quantiles.getN();
+        StringBuilder b = new StringBuilder("[");
+        if (n == 0 || Double.isNaN(min) || Double.isNaN(max) || Double.isInfinite(min) || Double.isInfinite(max)) {
+            return "[]";
+        }
+        double[] lows;
+        double[] highs;
+        double[] splits;
+        boolean whole = shape != Shape.NUMBER && max - min < BINS && min == Math.rint(min) && max == Math.rint(max);
+        if (max == min) {
+            return "[{\"from\":" + Json.string(bound(min)) + ",\"to\":" + Json.string(bound(max)) + ",\"count\":" + n + "}]";
+        } else if (whole) {
+            int values = (int) (max - min) + 1;
+            lows = new double[values];
+            highs = new double[values];
+            splits = new double[values - 1];
+            for (int i = 0; i < values; i++) {
+                lows[i] = min + i;
+                highs[i] = min + i;
+                if (i < values - 1) {
+                    splits[i] = min + i + 0.5;
+                }
+            }
+        } else {
+            double width = (max - min) / BINS;
+            lows = new double[BINS];
+            highs = new double[BINS];
+            splits = new double[BINS - 1];
+            for (int i = 0; i < BINS; i++) {
+                lows[i] = min + i * width;
+                highs[i] = i == BINS - 1 ? max : min + (i + 1) * width;
+                if (i < BINS - 1) {
+                    splits[i] = highs[i];
+                }
+            }
+        }
+        double[] mass = quantiles.getPMF(splits, org.apache.datasketches.quantilescommon.QuantileSearchCriteria.INCLUSIVE);
+        for (int i = 0; i < lows.length; i++) {
+            b.append(i == 0 ? "" : ",").append("{\"from\":").append(Json.string(bound(lows[i])))
+                .append(",\"to\":").append(Json.string(bound(highs[i])))
+                .append(",\"count\":").append(Math.round(mass[i] * n)).append('}');
+        }
+        return b.append(']').toString();
+    }
+
+    private String bound(double v) {
+        return switch (shape) {
+            case DATE, TIME, TIMESTAMP -> temporal(v);
+            default -> number(v);
+        };
     }
 
     private String topText() {
