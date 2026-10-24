@@ -269,8 +269,11 @@ class S3IngestTest {
         }
         // the copy made to read it is gone (shared copies of workbooks wait for their sheets; drop them first)
         LocalCopy.dropIdle();
+        // Only the copy of this PDF is checked: the parsers' own scratch files and other tests'
+        // shared copies may share the folder.
         try (var left = Files.list(io.kilnmark.kiln.plugins.documents.DocumentRuntime.tempDir())) {
-            assertEquals(0, left.count());
+            assertEquals(List.of(), left.map(p -> p.getFileName().toString())
+                .filter(n -> n.startsWith("doc-") && n.endsWith(".pdf")).toList());
         }
     }
 

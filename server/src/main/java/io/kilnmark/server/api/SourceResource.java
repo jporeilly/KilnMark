@@ -35,6 +35,11 @@ import jakarta.ws.rs.core.Response;
 @RolesAllowed(AccessRole.VIEWER_ROLE)
 public class SourceResource {
 
+    /** Data quality: purges stored samples when a source stops keeping them. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.QualityService quality;
+
+
     /**
      * Body of {@code POST /api/v1/sources}: a connector kind (default {@code postgresql}), its
      * settings (see {@code GET /api/v1/connectors}) and the secret, encrypted before it is stored.
@@ -115,6 +120,7 @@ public class SourceResource {
                 Response.Status.NOT_FOUND, "No source called " + name));
         org.jboss.logging.Logger.getLogger(SourceResource.class).infof("Source %s changed by %s", existing.name(),
             who());
+        quality.settingsChanged(s); // samples go at once when keep_samples is turned off
         return view(s);
     }
 

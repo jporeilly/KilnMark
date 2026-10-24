@@ -259,14 +259,14 @@ public final class JdbcGraphStore implements GraphStore {
             }
             requireName(name);
             if (activeRun(c, id) || !scanLock(c, id)) {
-                throw new SourceBusyException("A scan of " + name + " is queued or running. Wait for it to finish, "
-                    + "then delete the source.");
+                throw new SourceBusyException("A scan or quality check of " + name + " is queued or running. Wait for it "
+                    + "to finish, then delete the source.");
             }
             int assets = count(c, "SELECT count(*) FROM kilnmark.asset WHERE source_id = ?", id);
             int runs = count(c, "SELECT count(*) FROM kilnmark.run WHERE source_id = ?", id);
             cypher(c, "MATCH (n) WHERE n.source = '" + name + "' OR n.urn STARTS WITH '" + URN_PREFIX + name
                 + ":' DETACH DELETE n");
-            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.job WHERE kind = 'scan' "
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.job WHERE kind IN ('scan', 'quality') "
                 + "AND (payload ->> 'sourceId')::bigint = ?")) {
                 ps.setLong(1, id);
                 ps.executeUpdate();

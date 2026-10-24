@@ -14,6 +14,8 @@ import { AiUsagePage } from "./pages/AiUsagePage";
 import { BrowsePage } from "./browse/BrowsePage";
 import { RelationshipsPage } from "./browse/RelationshipsPage";
 import { RoleContext } from "./components/role";
+import { RulesPage } from "./pages/RulesPage";
+import { IssuesPage } from "./pages/IssuesPage";
 
 /**
  * Checks who is signed in, then shows either the sign-in page or the app. Signing out (the
@@ -185,6 +187,16 @@ function Shell({ me }: { me: Me }) {
                 Relationships
               </a>
             </li>
+            <li>
+              <a href={href.rules()} aria-current={current("rules")}>
+                Quality rules
+              </a>
+            </li>
+            <li>
+              <a href={href.issues()} aria-current={current("issues")}>
+                Issues
+              </a>
+            </li>
             {allows(me.role, "admin") && (
               <li>
                 <a
@@ -228,6 +240,8 @@ function Shell({ me }: { me: Me }) {
             <BrowsePage source={route.source} container={route.container} asset={route.asset} />
           )}
           {route.page === "relationships" && <RelationshipsPage status={route.status} />}
+          {route.page === "rules" && <RulesPage role={me.role} urn={route.urn} />}
+          {route.page === "issues" && <IssuesPage role={me.role} />}
           {route.page === "tokens" &&
             (allows(me.role, "admin") ? (
               <TokensPage me={me} />

@@ -17,7 +17,10 @@ podman compose -f lab/compose.yaml down -v   # stop and wipe
 | S3-compatible (VersityGW) | `localhost:9000`, bucket `lab-raw`, path-style addressing | `labadmin` / `labadmin123` |
 | File share | `lab/files/share` on disk | none |
 
-These are lab-only credentials for local testing.
+These are lab-only credentials for local testing. The `lab` login owns the lab database, which is
+fine for a lab; for real sources, register a read-only login that is not a superuser (see
+"Security" in docs/development.md): data quality rules run as that login, and custom SQL rules
+can read anything it can see.
 
 Kilnmark reads folders only inside the ones its administrator allows. The main `compose.yaml`
 mounts `lab/files/share` read-only at `/srv/files` and allows it, so in the compose stack add a

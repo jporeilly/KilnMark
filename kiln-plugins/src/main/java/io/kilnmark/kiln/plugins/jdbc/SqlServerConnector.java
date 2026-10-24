@@ -155,6 +155,23 @@ public final class SqlServerConnector extends JdbcConnector {
     }
 
     @Override
+    public SqlDialect dialect() {
+        return SqlDialect.SQL_SERVER;
+    }
+
+    @Override
+    protected String estimateRowsSql(AssetInfo asset) {
+        String name = quote(asset.hints().get("schema")) + "." + quote(asset.hints().get("table"));
+        return "SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = OBJECT_ID(" + dialect().literal(name)
+            + ") AND p.index_id IN (0, 1)";
+    }
+
+    @Override
+    protected String tableSampleClause(String percent) {
+        return "TABLESAMPLE SYSTEM (" + percent + " PERCENT) REPEATABLE (7)";
+    }
+
+    @Override
     protected String selectSql(String schema, String table, long rowLimit) {
         return select("*", schema, table, rowLimit);
     }

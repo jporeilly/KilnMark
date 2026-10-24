@@ -1,6 +1,6 @@
 # Data quality and discovery
 
-Status: design, not yet built. Build order at the end.
+Status: build step 1 built (round 2, stream E; ADR 0020). Build order at the end.
 
 Kilnmark qualifies data before anyone relies on it. A scan profiles every column. Quality
 measures follow from the profile with no set-up. People then add rules, and AI proposes more.

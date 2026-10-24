@@ -24,3 +24,4 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0016](0016-ai-runtime-choices.md) | AI runtime: LangChain4j modules, model profiles, one egress gate, embeddings in one table | Accepted |
 | [0019](0019-relationships.md) | Relationships: declared and inferred, in PostgreSQL tables, proposed for people to decide | Accepted |
 | [0017](0017-documents.md) | Documents: Tika's parsers, POI's streaming reader for sheets, text in chunks | Accepted |
+| [0020](0020-quality-standard-formats.md) | Data quality in open formats: OpenLineage facets and ODCS 3.1 | Accepted |

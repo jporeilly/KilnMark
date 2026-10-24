@@ -59,6 +59,9 @@ public class JobWorker {
     private final Db db;
     private final KilnmarkConfig config;
     private final Map<Long, Execution> running = new ConcurrentHashMap<>();
+    /** Runs jobs of kind {@value io.kilnmark.server.quality.QualityService#JOB_KIND}. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.QualityService quality;
     /** Jobs whose lease was lost: another worker may now own them, so this one must not touch them. */
     private final Map<Long, Boolean> lost = new ConcurrentHashMap<>();
     private final Semaphore wake = new Semaphore(0);
@@ -164,7 +167,8 @@ public class JobWorker {
 
     /** Runs one claimed job while holding its source's scan lock. */
     void execute(JobQueue.Job job) {
-        if (!"scan".equals(job.kind()) || job.runId() < 0 || job.sourceId() < 0) {
+        boolean qualityJob = io.kilnmark.server.quality.QualityService.JOB_KIND.equals(job.kind()) && job.sourceId() >= 0;
+        if (!qualityJob && (!"scan".equals(job.kind()) || job.runId() < 0 || job.sourceId() < 0)) {
             queue.retryOrFail(new JobQueue.Job(job.id(), job.kind(), job.runId(), job.sourceId(), job.maxAttempts(),
                 job.maxAttempts(), job.workerId()), "This server cannot run jobs of kind '" + job.kind()
                 + "' with this payload");
@@ -186,7 +190,8 @@ public class JobWorker {
         AtomicBoolean cancelled = new AtomicBoolean();
         running.put(job.id(), new Execution(job, lease.get(), cancelled));
         try {
-            ScanService.Result result = scans.execute(job.runId(), cancelled::get);
+            ScanService.Result result = qualityJob ? quality.execute(job.id(), cancelled::get)
+                : scans.execute(job.runId(), cancelled::get);
             if (lost.remove(job.id()) != null) {
                 LOG.warnf("Job %d lost its lock while running; another worker may own it now", job.id());
             } else if (result.outcome() == ScanService.Outcome.CANCELLED) {

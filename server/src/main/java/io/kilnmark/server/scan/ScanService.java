@@ -63,6 +63,10 @@ public class ScanService {
     @jakarta.inject.Inject
     io.kilnmark.server.documents.DocumentScan documents;
 
+    /** Data quality: sampling settings, profile versions and samples, and the evaluation after each scan. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.QualityService quality;
+
     public ScanService(GraphStore store, SecretBox secrets, KilnmarkConfig config, ObjectMapper json,
                        Connectors connectors, JobQueue jobs, RelationshipService relationships) {
         this.store = store;
@@ -215,7 +219,7 @@ public class ScanService {
                     try {
                         RunResult r = documents.handles(a)
                             ? documents.read(connector, config, a, urn, source.id(), runId, stop)
-                            : profile(connector, config, a, urn, runId, stop);
+                            : profile(connector, config, a, urn, runId, stop, source);
                         rows.addAndGet(r.steps().get(0).rowsOut());
                         if (!r.succeeded()) {
                             failed.incrementAndGet();
@@ -236,6 +240,7 @@ public class ScanService {
                 return false; // nothing final written: the worker puts the scan back in the queue
             }
             int removed = store.markUnseenRemoved(source.id(), runId);
+            quality.afterScan(source, runId);
             status = failed.get() == 0 ? "succeeded" : failed.get() < seen.get() ? "partial" : "failed";
             detail = summary(seen.get(), failed.get(), removed, problems) + relate(source, catalog);
             LOG.infof("Scan %d of %s: %s", runId, source.name(), detail);
@@ -281,14 +286,19 @@ public class ScanService {
     }
 
     private RunResult profile(Connector connector, SourceConfig config, AssetInfo a, String urn, long runId,
-                              BooleanSupplier stop) throws InterruptedException {
+                              BooleanSupplier stop, Records.Source source) throws InterruptedException {
         long limit = a.bounded() ? this.config.scan().viewRowLimit() : 0;
         StepSpec read = connector.reader(config, a, new Connector.ReadOptions(urn, limit, 8192));
+        Map<String, String> profiling = new java.util.HashMap<>(quality.profileSettings(source, connector, a, urn));
+        profiling.put("asset-urn", urn);
+        // Relationships: keep the distinct-value sketch of key-like fields only.
+        profiling.put(ProfileStep.SKETCH_FIELDS, RelationshipService.sketchFields(a));
         Pipeline p = new Pipeline("scan-" + runId + "-" + a.path(), List.of(
-            read, new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", urn,
-                // Relationships: keep the distinct-value sketch of key-like fields only.
-                ProfileStep.SKETCH_FIELDS, RelationshipService.sketchFields(a)))));
-        return new Runner(this.config.scan().memoryLimitMb() << 20, 4).run(p, event -> record(event, runId, stop));
+            read, new StepSpec("profile", new ProfileStep(), profiling)));
+        return new Runner(this.config.scan().memoryLimitMb() << 20, 4).run(p, event -> {
+            record(event, runId, stop);
+            quality.observe(event, runId, source);
+        });
     }
 
     /** Stores what a pipeline found; once the scan is stopped, ends the pipeline instead. */
@@ -297,7 +307,8 @@ public class ScanService {
             throw new Stopped();
         }
         switch (e.kind()) {
-            case ROW_COUNT -> store.saveRowCount(e.assetUrn(), Long.parseLong(e.attributes().get("rows")),
+            case ROW_COUNT -> store.saveRowCount(e.assetUrn(), io.kilnmark.server.quality.QualityService.reportedRows(
+                e.attributes()),
                 Boolean.parseBoolean(e.attributes().get("complete")), e.observedAt());
             case PROFILE -> {
                 store.saveProfile(e.assetUrn(), e.attributes().get("field"), runId, profileJson(e), e.observedAt());

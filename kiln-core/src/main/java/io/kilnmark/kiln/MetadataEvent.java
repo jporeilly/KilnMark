@@ -18,8 +18,10 @@ public record MetadataEvent(String assetUrn, Kind kind, Map<String, String> attr
     /**
      * The kinds of fact a step can report. {@code DOCUMENT} is a document's profile (content type,
      * pages, words, language, title, author, ...), reported once when its text has been read.
+     * {@code SAMPLE} carries real values (sample rows and example values per value shape); whoever
+     * stores it applies the source's controls on samples.
      */
-    public enum Kind { SCHEMA, ROW_COUNT, PROFILE, LINEAGE, DOCUMENT }
+    public enum Kind { SCHEMA, ROW_COUNT, PROFILE, LINEAGE, DOCUMENT, SAMPLE }
 
     public MetadataEvent {
         Objects.requireNonNull(assetUrn, "assetUrn");

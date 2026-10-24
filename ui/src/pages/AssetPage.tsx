@@ -6,6 +6,7 @@ import { TableDetails } from "../asset/TableDetails";
 import { DocumentDetails, PartOf } from "../components/DocumentDetails";
 import { DocumentReader } from "../components/DocumentReader";
 import { KindIcon } from "../components/KindIcon";
+import { QualityPanel } from "../components/QualityPanel";
 
 export function AssetPage({ urn }: { urn: string }) {
   const [asset, setAsset] = useState<Asset | null>(null);
@@ -74,6 +75,7 @@ export function AssetPage({ urn }: { urn: string }) {
       {asset.kind !== "document" && (
       <>
       <TableDetails asset={asset} />
+      <QualityPanel asset={asset} />
       </>
       )}
       <p className="muted small">

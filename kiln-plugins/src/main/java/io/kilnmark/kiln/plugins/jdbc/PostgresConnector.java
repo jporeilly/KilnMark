@@ -54,6 +54,24 @@ public final class PostgresConnector extends JdbcConnector {
     }
 
     @Override
+    public SqlDialect dialect() {
+        return SqlDialect.POSTGRESQL;
+    }
+
+    /** The planner's estimate (-1 before the table was first analysed, so it is then read in full). */
+    @Override
+    protected String estimateRowsSql(io.kilnmark.kiln.connect.AssetInfo asset) {
+        String name = quote(asset.hints().get("schema")) + "." + quote(asset.hints().get("table"));
+        return "SELECT reltuples::bigint FROM pg_class WHERE oid = to_regclass(" + dialect().literal(name) + ")";
+    }
+
+    /** Block sampling, repeatable: the same blocks while the table is unchanged. */
+    @Override
+    protected String tableSampleClause(String percent) {
+        return "TABLESAMPLE SYSTEM (" + percent + ") REPEATABLE (7)";
+    }
+
+    @Override
     protected boolean isSystemSchema(String schema) {
         return SYSTEM_SCHEMAS.contains(schema) || schema.startsWith("pg_temp") || schema.startsWith("pg_toast");
     }

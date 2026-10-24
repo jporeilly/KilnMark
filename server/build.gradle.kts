@@ -48,6 +48,8 @@ dependencies {
 
     "testImplementation"("io.quarkus:quarkus-junit5")
     "testImplementation"("io.rest-assured:rest-assured")
+    // Validates the data quality exports against the published OpenLineage and ODCS schemas (Apache-2.0, test only).
+    "testImplementation"(libs.json.schema.validator)
 }
 
 // Arrow reads buffer addresses through java.nio; tests and dev mode need the same opening as the jar.

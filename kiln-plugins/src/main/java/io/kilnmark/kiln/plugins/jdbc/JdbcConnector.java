@@ -208,7 +208,7 @@ public abstract class JdbcConnector implements Connector {
      * does not report, such as comments.
      */
     protected List<JdbcCatalog.Table> readCatalog(Connection connection, AssetFilter filter) throws SQLException {
-        return JdbcCatalog.read(connection, filter, dialect());
+        return JdbcCatalog.read(connection, filter, catalogDialect());
     }
 
     /** The URL for a host, port (null for the usual one) and database; null if this database has no such form. */
@@ -216,7 +216,7 @@ public abstract class JdbcConnector implements Connector {
         return null;
     }
 
-    private JdbcCatalog.Dialect dialect() {
+    private JdbcCatalog.Dialect catalogDialect() {
         return new JdbcCatalog.Dialect() {
             @Override
             public boolean isSystemSchema(String schema) {
@@ -264,6 +264,33 @@ public abstract class JdbcConnector implements Connector {
         return "\"" + identifier.replace("\"", "\"\"") + "\"";
     }
 
+    /**
+     * Setting: tables with more rows than this (by the database's own estimate) are profiled from a
+     * {@code TABLESAMPLE} of about that many rows, and their profile is marked as an estimate.
+     * Absent: every row is read. Like {@code keep_samples}, it is one of the source's common
+     * settings rather than a form field of each database's connector.
+     */
+    public static final String TABLE_SAMPLE_ABOVE = "table_sample_above_rows";
+
+    /** How this database writes SQL, for checks Kilnmark runs in it. */
+    public SqlDialect dialect() {
+        return SqlDialect.POSTGRESQL;
+    }
+
+
+    /**
+     * SQL giving the database's estimate of {@code asset}'s row count as one number, or null when
+     * this database has none (then tables are never sampled).
+     */
+    protected String estimateRowsSql(AssetInfo asset) {
+        return null;
+    }
+
+    /** The {@code TABLESAMPLE} clause for {@code percent} (a number as text), or null when unsupported. */
+    protected String tableSampleClause(String percent) {
+        return null;
+    }
+
     @Override
     public List<Setting> settings() {
         return List.of(
@@ -296,6 +323,16 @@ public abstract class JdbcConnector implements Connector {
                 problems.add(denied);
             }
         }
+        String above = source.setting(TABLE_SAMPLE_ABOVE);
+        if (above != null) {
+            try {
+                if (Long.parseLong(above) < 1000) {
+                    problems.add(TABLE_SAMPLE_ABOVE + ": at least 1000 rows");
+                }
+            } catch (NumberFormatException e) {
+                problems.add(TABLE_SAMPLE_ABOVE + ": a whole number of rows, for example 10000000");
+            }
+        }
         return problems;
     }
 
@@ -314,7 +351,7 @@ public abstract class JdbcConnector implements Connector {
         checkValid(source);
         AssetFilter patterns = filter(source).allContainers();
         try (Connection c = connect(source, timeout)) {
-            return JdbcCatalog.counts(c, patterns, dialect()).entrySet().stream()
+            return JdbcCatalog.counts(c, patterns, catalogDialect()).entrySet().stream()
                 .map(e -> new ContainerInfo(e.getKey(), e.getValue())).toList();
         } catch (SQLException e) {
             throw new ConnectorException("Cannot list the schemas of " + source.name() + ": " + explain(e), e);
@@ -387,7 +424,7 @@ public abstract class JdbcConnector implements Connector {
         checkValid(source);
         try (Connection c = connect(source)) {
             List<AssetInfo> out = new ArrayList<>();
-            for (String[] t : JdbcCatalog.tables(c, container, dialect())) {
+            for (String[] t : JdbcCatalog.tables(c, container, catalogDialect())) {
                 boolean table = t[1].equals("table") || t[1].equals("partitioned table");
                 out.add(new AssetInfo(container + "." + t[0], t[1], container, t[0], null, List.of(), List.of(),
                     !table, true, Map.of("schema", container, "table", t[0])));
@@ -468,7 +505,11 @@ public abstract class JdbcConnector implements Connector {
         }
     }
 
-    private Connection connect(SourceConfig source) throws SQLException {
+    /**
+     * A connection to the source with its user name and secret, for scans and for checks run in the
+     * database (data quality rules); the caller closes it.
+     */
+    public Connection connect(SourceConfig source) throws SQLException {
         return connect(source, null);
     }
 
@@ -563,6 +604,16 @@ public abstract class JdbcConnector implements Connector {
         s.put("asset-urn", read.assetUrn());
         s.put("row-limit", Long.toString(read.rowLimit()));
         s.put("batch-size", Integer.toString(read.batchSize()));
+        String above = source.setting(TABLE_SAMPLE_ABOVE);
+        if (above != null && !asset.bounded() && read.rowLimit() <= 0 && asset.hints().containsKey("table")) {
+            String estimate = estimateRowsSql(asset);
+            String clause = tableSampleClause(JdbcTableInput.PERCENT);
+            if (estimate != null && clause != null) {
+                s.put(JdbcTableInput.SAMPLE_ABOVE, above);
+                s.put(JdbcTableInput.ESTIMATE_QUERY, estimate);
+                s.put(JdbcTableInput.SAMPLE_QUERY, selectSql(asset, 0) + " " + clause);
+            }
+        }
         s.putAll(readSettings(source));
         return new StepSpec("read", new JdbcTableInput(), s);
     }

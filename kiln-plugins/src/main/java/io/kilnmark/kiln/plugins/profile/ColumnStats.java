@@ -45,9 +45,25 @@ final class ColumnStats {
     boolean keepSketch;
 
     ColumnStats(String field, Shape shape) {
+        this(field, shape, true, PatternProfile.DEFAULT_EXAMPLES);
+    }
+
+    /**
+     * @param keepValues false to keep no values at all: no example values, and no most common
+     *                   values for text columns (a source with {@code keep_samples} off)
+     * @param examples   example values kept per value shape
+     */
+    ColumnStats(String field, Shape shape, boolean keepValues, int examples) {
         this.field = field;
         this.shape = shape;
+        this.keepValues = keepValues;
+        this.patterns = shape == Shape.TEXT ? new PatternProfile(keepValues, examples) : null;
     }
+
+    // Data quality additions: value shapes and formats (text), negatives (numbers).
+    private final boolean keepValues;
+    final PatternProfile patterns;
+    long negatives;
 
     void addNull() {
         rows++;
@@ -56,6 +72,9 @@ final class ColumnStats {
 
     void addLong(long v) {
         rows++;
+        if (v < 0) {
+            negatives++;
+        }
         distinct.update(v);
         quantiles.update(v);
         sum += v;
@@ -66,6 +85,9 @@ final class ColumnStats {
 
     void addDouble(double v) {
         rows++;
+        if (v < 0) {
+            negatives++;
+        }
         distinct.update(v);
         quantiles.update(v);
         sum += v;
@@ -87,6 +109,9 @@ final class ColumnStats {
         minLength = Math.min(minLength, length);
         maxLength = Math.max(maxLength, length);
         topText.update(s);
+        if (patterns != null) {
+            patterns.add(s);
+        }
     }
 
     void addBinary(byte[] bytes) {
@@ -112,6 +137,10 @@ final class ColumnStats {
         }
         topText.merge(other.topText);
         topLongs.merge(other.topLongs);
+        negatives += other.negatives;
+        if (patterns != null && other.patterns != null) {
+            patterns.merge(other.patterns);
+        }
     }
 
     /** The sketch behind {@code distinct}, for {@link ProfileStep#SKETCH}. */
@@ -172,6 +201,7 @@ final class ColumnStats {
             }
             case BOOLEAN -> a.put("true", Long.toString(trues));
         }
+        quality(a);
         return a;
     }
 
@@ -236,6 +266,60 @@ final class ColumnStats {
             b.append(i == 0 ? "" : ",").append("{\"from\":").append(Json.string(bound(lows[i])))
                 .append(",\"to\":").append(Json.string(bound(highs[i])))
                 .append(",\"count\":").append(Math.round(mass[i] * n)).append('}');
+        }
+        return b.append(']').toString();
+    }
+
+    /** Quantiles every 5%, for drift and for OpenLineage's {@code quantiles}. */
+    static final int QUANTILE_STEPS = 20;
+
+    /**
+     * What data quality needs beyond the profile, from the same sketches with no extra pass:
+     * <ul>
+     * <li>numbers: {@code sum}, {@code negatives}, {@code quantiles} (JSON array of 21, every 5%),
+     * Tukey fences {@code fence_low} and {@code fence_high} (1.5 interquartile ranges beyond the
+     * quartiles) and the estimated count of {@code outliers} beyond them;</li>
+     * <li>dates and timestamps: {@code quantiles} (as days or microseconds since 1970) and
+     * {@code after_now}, the estimated count of values later than the end of the read;</li>
+     * <li>text: shapes and formats ({@link PatternProfile#attributes}).</li>
+     * </ul>
+     * With values not kept, most common values are left out.
+     */
+    private void quality(Map<String, String> a) {
+        switch (shape) {
+            case NUMBER, INTEGER -> {
+                a.put("sum", number(sum));
+                a.put("negatives", Long.toString(negatives));
+                a.put("quantiles", quantilesJson());
+                double q1 = quantiles.getQuantile(0.25);
+                double q3 = quantiles.getQuantile(0.75);
+                double low = q1 - 1.5 * (q3 - q1);
+                double high = q3 + 1.5 * (q3 - q1);
+                a.put("fence_low", number(low));
+                a.put("fence_high", number(high));
+                double below = quantiles.getRank(low, org.apache.datasketches.quantilescommon.QuantileSearchCriteria.EXCLUSIVE);
+                double above = 1 - quantiles.getRank(high, org.apache.datasketches.quantilescommon.QuantileSearchCriteria.INCLUSIVE);
+                a.put("outliers", Long.toString(Math.round((below + above) * values())));
+            }
+            case DATE, TIMESTAMP -> {
+                a.put("quantiles", quantilesJson());
+                double now = shape == Shape.DATE ? java.time.LocalDate.now(java.time.ZoneOffset.UTC).toEpochDay()
+                    : java.time.Instant.now().toEpochMilli() * 1000.0;
+                double later = 1 - quantiles.getRank(now, org.apache.datasketches.quantilescommon.QuantileSearchCriteria.INCLUSIVE);
+                a.put("after_now", Long.toString(Math.round(later * values())));
+            }
+            case TEXT -> patterns.attributes(a);
+            default -> { }
+        }
+        if (!keepValues) {
+            a.remove("top");
+        }
+    }
+
+    private String quantilesJson() {
+        StringBuilder b = new StringBuilder("[");
+        for (int i = 0; i <= QUANTILE_STEPS; i++) {
+            b.append(i == 0 ? "" : ",").append(number(quantiles.getQuantile((double) i / QUANTILE_STEPS)));
         }
         return b.append(']').toString();
     }
