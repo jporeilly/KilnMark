@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -65,23 +66,61 @@ class PostgresIngestTest {
                        jsonb_build_object('n', n)
                 FROM generate_series(1, 20000) n""");
             s.execute("CREATE VIEW crm.premier AS SELECT * FROM crm.customers WHERE segment = 'Premier'");
+            // _ is a LIKE wildcard: a_b must not pick up axb's table of the same name
+            s.execute("CREATE SCHEMA a_b");
+            s.execute("CREATE TABLE a_b.t (one integer PRIMARY KEY)");
+            s.execute("CREATE SCHEMA axb");
+            s.execute("CREATE TABLE axb.t (two text, three text)");
+            // SQL Server's system schema names are ordinary names in PostgreSQL
+            s.execute("CREATE SCHEMA sys");
+            s.execute("CREATE TABLE sys.settings (k text)");
         }
     }
 
     @Test
     void catalogListsTablesViewsColumnsAndKeys() throws Exception {
         try (Connection c = DriverManager.getConnection(PG.getJdbcUrl(), PG.getUsername(), PG.getPassword())) {
-            List<JdbcCatalog.Table> tables = JdbcCatalog.read(c, List.of());
-            assertEquals(List.of("crm.customers", "crm.premier"), tables.stream().map(JdbcCatalog.Table::path).toList());
-            JdbcCatalog.Table customers = tables.get(0);
+            List<JdbcCatalog.Table> tables = new PostgresConnector().readCatalog(c, List.of());
+            assertEquals(List.of("a_b.t", "axb.t", "crm.customers", "crm.premier", "sys.settings"),
+                tables.stream().map(JdbcCatalog.Table::path).sorted().toList());
+            Map<String, JdbcCatalog.Table> byPath = new HashMap<>();
+            tables.forEach(t -> byPath.put(t.path(), t));
+            JdbcCatalog.Table customers = byPath.get("crm.customers");
             assertEquals("table", customers.type());
-            assertEquals("view", tables.get(1).type());
+            assertEquals("view", byPath.get("crm.premier").type());
             assertEquals("People who hold an account", customers.comment());
             assertEquals(List.of("customer_id"), customers.primaryKey());
             assertEquals(9, customers.columns().size());
             assertEquals("email", customers.columns().get(1).name());
             assertTrue(!customers.columns().get(2).nullable(), "segment is NOT NULL");
             assertEquals(JdbcColumn.Kind.TIMESTAMP_TZ, customers.columns().get(7).kind());
+        }
+    }
+
+    @Test
+    void schemasWhoseNamesHoldWildcardsKeepTheirOwnTables() throws Exception {
+        try (Connection c = DriverManager.getConnection(PG.getJdbcUrl(), PG.getUsername(), PG.getPassword())) {
+            PostgresConnector pg = new PostgresConnector();
+            Map<String, List<String>> columns = new HashMap<>();
+            pg.readCatalog(c, List.of()).forEach(t -> columns.put(t.path(),
+                t.columns().stream().map(JdbcCatalog.Column::name).toList()));
+            assertEquals(List.of("one"), columns.get("a_b.t"));
+            assertEquals(List.of("two", "three"), columns.get("axb.t"));
+
+            List<JdbcCatalog.Table> only = pg.readCatalog(c, List.of("a_b"));
+            assertEquals(List.of("a_b.t"), only.stream().map(JdbcCatalog.Table::path).toList());
+            assertEquals(List.of("one"), only.get(0).primaryKey());
+
+            // the escaped pattern itself matches only a_b, so the driver does the filtering
+            String pattern = pg.schemaPattern(c.getMetaData(), "a_b");
+            assertEquals("a\\_b", pattern);
+            List<String> schemas = new ArrayList<>();
+            try (var rs = c.getMetaData().getTables(null, pattern, "%", new String[] {"TABLE"})) {
+                while (rs.next()) {
+                    schemas.add(rs.getString("TABLE_SCHEM"));
+                }
+            }
+            assertEquals(List.of("a_b"), schemas);
         }
     }
 

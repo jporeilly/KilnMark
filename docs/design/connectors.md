@@ -41,6 +41,54 @@ float64, decimal, text, binary, date, time, timestamp, timestamp_tz) and the Arr
 `JdbcColumn` maps them to, so the profiler treats every source alike. Timestamps are
 microseconds. Types with no Arrow equivalent are read as text rather than dropped.
 
+## JDBC databases
+
+A database with a JDBC driver extends `JdbcConnector`, which supplies the `url`, `username` and
+`schemas` settings, the catalogue from JDBC metadata and the reader. It must give its URL prefix,
+an example URL and the SQL that reads a table (`selectSql`), and may override:
+
+- `quote` for its identifier quoting (SQL Server: `[name]`, `]` doubled);
+- `isSystemSchema` for the schemas that belong to the database itself, which a scan of every
+  schema skips (PostgreSQL: `pg_catalog`, `pg_toast*`, `pg_temp*`, ...; SQL Server: `sys`,
+  `INFORMATION_SCHEMA`, `guest` and the `db_*` roles, ignoring case). Each database lists its
+  own, so a PostgreSQL schema called `sys` is still scanned;
+- `schemaPattern` to escape a schema name for `getTables` and `getColumns`, which take LIKE
+  patterns: by default the driver's search-string escape before `_`, `%` and the escape itself;
+  SQL Server brackets them (`[_]`, `[%]`, `[[]`). The catalogue also keeps only rows whose
+  schema is exactly the one asked for;
+- `selectSql(AssetInfo, rowLimit)` to read particular columns differently (SQL Server reads
+  geography, geometry and hierarchyid through `ToString()`, so they arrive as text people can
+  read);
+- `readCatalog` to add what the driver's metadata leaves out (SQL Server's driver reports no
+  comments, so its connector reads `MS_Description` extended properties in one query);
+- `readSettings` for extra `JdbcTableInput` settings, such as the transaction isolation level;
+- `explain` to add what to do about connection failures the database is known for.
+
+`validate` refuses a URL holding a password (`;password=` or `?password=` / `&password=`): the
+URL is stored and shown as plain text, while the password field is encrypted.
+
+Check what the driver actually reports, in result metadata and in `getColumns`, before mapping
+types: they can differ (Microsoft's driver reports geography as `VARBINARY` in the catalogue and
+as its own code in results), so `JdbcColumn.map` matches type names where codes are not enough.
+Text columns are read with `getObject`, and bytes found there (a `sql_variant` holding
+`varbinary`) are written as hex, `0xCAFE`.
+
+When a read stops early (a later step failed), `JdbcTableInput` cancels the query before closing
+it: some drivers, SQL Server's among them, otherwise read every remaining row while closing.
+
+### SQL Server
+
+The `isolation` setting chooses how profiling reads see the application's changes:
+
+| Value | Effect |
+| --- | --- |
+| `read-uncommitted` (default) | No shared locks: a long read never blocks writers, but may see rows not yet committed |
+| `snapshot` | A consistent view without locks; needs `ALTER DATABASE ... SET ALLOW_SNAPSHOT_ISOLATION ON` |
+| `read-committed` | Shared locks, as most applications read; a long read can block writers |
+
+Profiles are statistics, so the default trades exactness on rows being changed for never
+holding up a production database.
+
 ## Files and object storage
 
 Two connectors share `io.kilnmark.kiln.plugins.files`: `files` (a folder the server can read:

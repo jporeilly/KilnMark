@@ -1,8 +1,14 @@
 # Kilnmark, small topology: two containers on one Linux VM.
 # Works with Podman (podman compose up --build) and Docker (docker compose up --build).
-# Build the server first: ./gradlew :server:quarkusBuild
+# Build the server first: ./gradlew release
+# If a compose tool cannot build (podman-compose on Windows, for example), build the two images
+# by hand, then start without --build:
+#   podman build -t localhost/kilnmark-postgres:dev -f containers/postgres/Containerfile containers/postgres
+#   podman build -t localhost/kilnmark-server:dev -f containers/server/Containerfile .
+#   podman compose up
 services:
   postgres:
+    image: localhost/kilnmark-postgres:dev
     build:
       context: containers/postgres
       dockerfile: Containerfile
@@ -22,6 +28,7 @@ services:
       - "${KILNMARK_DB_PORT:-5442}:5432"
 
   kilnmark:
+    image: localhost/kilnmark-server:dev
     build:
       context: .
       dockerfile: containers/server/Containerfile
@@ -40,6 +47,12 @@ services:
     ports:
       # 8780, not 8080, which Pentaho and Tomcat use. Change the host side with KILNMARK_PORT.
       - "${KILNMARK_PORT:-8780}:8780"
+
+# A fixed network name, so the reference lab (lab/compose.yaml) can join it and Kilnmark reaches
+# the lab's services by name (lab-postgres, lab-s3), whatever the container runtime.
+networks:
+  default:
+    name: kilnmark
 
 volumes:
   pgdata:

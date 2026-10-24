@@ -75,21 +75,24 @@ for example `KILNMARK_ROLES=worker`.
 
 ## Try it on the reference lab
 
-With the stack and the lab both running:
+Start Kilnmark first, then the lab, which joins Kilnmark's network (`kilnmark`):
 
 ```
-podman compose -f lab/compose.yaml up -d      # the lab's PostgreSQL on :5433
-podman compose up --build                     # Kilnmark on http://localhost:8780
+podman compose up -d                          # Kilnmark on http://localhost:8780
+podman compose -f lab/compose.yaml up -d      # the lab, reachable from Kilnmark by name
 ```
 
-Open http://localhost:8780, go to **Sources**, and add the lab. From inside the Kilnmark container
-the host is `host.containers.internal` under Podman (`host.docker.internal` under Docker):
+Open http://localhost:8780, go to **Sources**, and add the lab. Kilnmark reaches it by service
+name, the same under Podman and Docker:
 
 | Field | Value |
 | --- | --- |
+| Kind | PostgreSQL |
 | Name | `lab` |
-| JDBC URL | `jdbc:postgresql://host.containers.internal:5433/lab` |
+| JDBC URL | `jdbc:postgresql://lab-postgres:5432/lab` |
 | User name / password | `lab` / `lab` |
+
+(From the machine itself the lab is on `localhost:5433`, and its S3 on `localhost:9000`.)
 
 Press **Scan now**. A scan of the lab (six tables, 10 million rows once `lab.make_big_table` has
 run) takes about 15 seconds. Then search for `customer` and open `crm.customers`.
