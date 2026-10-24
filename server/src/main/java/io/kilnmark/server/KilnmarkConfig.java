@@ -40,9 +40,12 @@ public interface KilnmarkConfig {
 
     /** API sign-in. */
     interface Auth {
-        /** Off only for a lab on a trusted machine: every caller is then treated as an admin. */
-        @WithDefault("true")
-        boolean enabled();
+        /**
+         * {@code tokens} (the default) or {@code off}. Off makes every caller an admin and is only
+         * allowed when the server listens on a loopback address. Any other value stops the server.
+         */
+        @WithDefault("tokens")
+        io.kilnmark.server.auth.AuthMode mode();
     }
 
     /** The worker role: how it pulls jobs from the queue. */

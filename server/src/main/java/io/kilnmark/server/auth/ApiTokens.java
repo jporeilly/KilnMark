@@ -25,6 +25,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import io.kilnmark.server.Db;
@@ -63,6 +64,10 @@ public class ApiTokens {
 
     static final String FROM_ENVIRONMENT = "environment";
     static final String FROM_FIRST_START = "first-start";
+    /** Revocation reason for an environment token replaced on start; undone if the value returns. */
+    static final String ENVIRONMENT_CHANGED = "environment-changed";
+    /** The first-start token is for signing in once and creating a permanent admin token. */
+    private static final Duration FIRST_TOKEN_LIFE = Duration.ofHours(24);
     /** File, next to the secret key, holding the first admin token. */
     public static final String ADMIN_TOKEN_FILE = "admin-token";
 
@@ -93,9 +98,13 @@ public class ApiTokens {
     /** When this process last wrote last_used_at for each token, so a busy token is not written every request. */
     private final Map<Long, Instant> touched = new ConcurrentHashMap<>();
 
-    public ApiTokens(Db db, KilnmarkConfig config) {
+    private final String httpHost;
+
+    public ApiTokens(Db db, KilnmarkConfig config,
+                     @ConfigProperty(name = "quarkus.http.host", defaultValue = "0.0.0.0") String httpHost) {
         this.db = db;
         this.config = config;
+        this.httpHost = httpHost;
     }
 
     /** A new random token: {@code km_} and 43 base64url characters. */
@@ -120,6 +129,10 @@ public class ApiTokens {
         if (clean.isEmpty() || clean.length() > 100) {
             throw new IllegalArgumentException("name: give the token a name of 1 to 100 characters, such as ci-pipeline");
         }
+        if (clean.codePoints().anyMatch(ApiTokens::unprintable)) {
+            throw new IllegalArgumentException("name: use letters, digits, spaces and punctuation only, without line "
+                + "breaks or other control characters");
+        }
         if (role == null) {
             throw new IllegalArgumentException("role: use viewer, steward or admin");
         }
@@ -128,7 +141,8 @@ public class ApiTokens {
         }
         String secret = newSecret();
         Token t = db.tx(c -> insert(c, clean, role, hash(secret), createdBy, expiresAt));
-        LOG.infof("API token %d (%s, %s) created by %s", t.id(), t.name(), t.role().id(), createdBy);
+        LOG.infof("API token %d (%s, %s) created by %s", t.id(), loggable(t.name()), t.role().id(),
+            loggable(createdBy));
         return new Issued(t, secret);
     }
 
@@ -188,14 +202,16 @@ public class ApiTokens {
     public Optional<Token> revoke(long id, String by) {
         Optional<Token> t = db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.api_token "
-                + "SET revoked_at = coalesce(revoked_at, now()) WHERE id = ? RETURNING " + COLUMNS)) {
-                ps.setLong(1, id);
+                + "SET revoked_reason = CASE WHEN revoked_at IS NULL THEN ? ELSE revoked_reason END, "
+                + "revoked_at = coalesce(revoked_at, now()) WHERE id = ? RETURNING " + COLUMNS)) {
+                ps.setString(1, "revoked by " + by);
+                ps.setLong(2, id);
                 try (ResultSet rs = ps.executeQuery()) {
                     return rs.next() ? Optional.of(token(rs)) : Optional.empty();
                 }
             }
         });
-        t.ifPresent(x -> LOG.infof("API token %d (%s) revoked by %s", x.id(), x.name(), by));
+        t.ifPresent(x -> LOG.infof("API token %d (%s) revoked by %s", x.id(), loggable(x.name()), loggable(by)));
         return t;
     }
 
@@ -247,10 +263,26 @@ public class ApiTokens {
         }
     }
 
+    private static boolean unprintable(int cp) {
+        return Character.isISOControl(cp) || Character.getType(cp) == Character.LINE_SEPARATOR
+            || Character.getType(cp) == Character.PARAGRAPH_SEPARATOR || Character.getType(cp) == Character.FORMAT;
+    }
+
+    /** Text as it may appear in a log line: control characters (a forged line break, say) become '?'. */
+    static String loggable(String text) {
+        if (text == null) {
+            return "";
+        }
+        StringBuilder b = new StringBuilder(text.length());
+        text.codePoints().forEach(cp -> b.appendCodePoint(unprintable(cp) ? '?' : cp));
+        return b.toString();
+    }
+
     void onStart(@Observes StartupEvent event) {
-        if (!config.auth().enabled()) {
-            LOG.warn("Sign-in is off (kilnmark.auth.enabled=false): anyone who can reach this server is an admin. "
-                + "Use this only on a trusted machine, and turn it back on before others can connect.");
+        AuthMode.check(config.auth().mode(), httpHost);
+        if (config.auth().mode() == AuthMode.OFF) {
+            LOG.warnf("Sign-in is off (kilnmark.auth.mode=off): anyone who can reach %s is an admin. Remove "
+                + "KILNMARK_AUTH_MODE to sign in with API tokens.", httpHost);
             return;
         }
         if (!config.roles().contains(Role.API)) {
@@ -284,26 +316,30 @@ public class ApiTokens {
                 ps.execute();
             }
             byte[] envHash = envToken.map(ApiTokens::hash).orElse(new byte[0]);
-            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.api_token SET revoked_at = now() "
-                + "WHERE created_by = ? AND revoked_at IS NULL AND hash <> ?")) {
-                ps.setString(1, FROM_ENVIRONMENT);
-                ps.setBytes(2, envHash);
+            // Set aside, not destroyed: setting the same value again brings the token back.
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.api_token SET revoked_at = now(), "
+                + "revoked_reason = ? WHERE created_by = ? AND revoked_at IS NULL AND hash <> ?")) {
+                ps.setString(1, ENVIRONMENT_CHANGED);
+                ps.setString(2, FROM_ENVIRONMENT);
+                ps.setBytes(3, envHash);
                 if (ps.executeUpdate() > 0) {
-                    LOG.info("Revoked the previous KILNMARK_ADMIN_TOKEN, which is no longer set");
+                    LOG.info("Set aside the previous KILNMARK_ADMIN_TOKEN, which is no longer set");
                 }
             }
             if (envToken.isPresent()) {
                 acceptEnvironmentToken(c, envHash);
-                return Optional.<Path>empty();
             }
             if (usableAdmins(c) > 0) {
                 return Optional.<Path>empty();
             }
+            // Never leave the server with no way for an admin to sign in.
             String secret = newSecret();
-            Token t = insert(c, "first admin", AccessRole.ADMIN, hash(secret), FROM_FIRST_START, null);
+            Token t = insert(c, "first admin", AccessRole.ADMIN, hash(secret), FROM_FIRST_START,
+                Instant.now().plus(FIRST_TOKEN_LIFE));
             writePrivate(file, secret);
             LOG.infof("No admin API token was usable, so token %d was created. It is in %s (readable only by this "
-                + "user). Sign in with it, create your own tokens, then delete the file.", t.id(), file);
+                + "user) and works for 24 hours: sign in with it, create a permanent admin token under API tokens, "
+                + "then delete the file.", t.id(), file);
             return Optional.of(file);
         });
     }
@@ -315,14 +351,24 @@ public class ApiTokens {
             ps.setString(2, FROM_ENVIRONMENT);
             ps.executeUpdate();
         }
+        // Back in use if only the start-up check had set it aside; a revocation by an admin stands.
+        try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.api_token SET revoked_at = NULL, "
+            + "revoked_reason = NULL WHERE hash = ? AND created_by = ? AND revoked_reason = ?")) {
+            ps.setBytes(1, envHash);
+            ps.setString(2, FROM_ENVIRONMENT);
+            ps.setString(3, ENVIRONMENT_CHANGED);
+            if (ps.executeUpdate() > 0) {
+                LOG.info("KILNMARK_ADMIN_TOKEN is set to an earlier value again, so that token works again");
+            }
+        }
         try (PreparedStatement ps = c.prepareStatement(
             "SELECT role, created_by, revoked_at FROM kilnmark.api_token WHERE hash = ?")) {
             ps.setBytes(1, envHash);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 if (rs.getTimestamp(3) != null) {
-                    LOG.warn("KILNMARK_ADMIN_TOKEN was revoked, so it is not accepted. Set it to a new token and "
-                        + "restart the server.");
+                    LOG.warn("KILNMARK_ADMIN_TOKEN was revoked by an admin, so it is not accepted. Set it to a new "
+                        + "token and restart the server.");
                 } else if (!FROM_ENVIRONMENT.equals(rs.getString(2))) {
                     LOG.warnf("KILNMARK_ADMIN_TOKEN is the same as a token created through the API, so it keeps "
                         + "that token's role (%s). Set it to a new token to have an admin token.", rs.getString(1));

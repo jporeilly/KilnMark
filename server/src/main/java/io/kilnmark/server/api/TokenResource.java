@@ -8,6 +8,7 @@ import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.auth.ApiTokenIdentityProvider;
 import io.kilnmark.server.auth.ApiTokens;
+import io.kilnmark.server.auth.AuthMode;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
@@ -49,7 +50,7 @@ public class TokenResource {
         Long id = identity.getAttribute(ApiTokenIdentityProvider.TOKEN_ID);
         Instant expires = identity.getAttribute(ApiTokenIdentityProvider.EXPIRES_AT);
         return new Views.Me(identity.getPrincipal().getName(), role.id(), id == null || id == 0 ? null : id, expires,
-            config.auth().enabled());
+            config.auth().mode() != AuthMode.OFF);
     }
 
     /** Creates a token and returns it this once; only its hash is kept. */
@@ -58,6 +59,10 @@ public class TokenResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.ADMIN_ROLE)
     public Response create(NewToken body) {
+        if (config.auth().mode() == AuthMode.OFF) {
+            throw ApiError.of(Response.Status.CONFLICT, "Sign-in is off (kilnmark.auth.mode=off), so tokens would not "
+                + "be checked. Remove KILNMARK_AUTH_MODE and restart the server, then create tokens.");
+        }
         if (body == null) {
             throw new IllegalArgumentException("Send the token as JSON: a name, a role (viewer, steward or admin) "
                 + "and optionally expiresAt");

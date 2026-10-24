@@ -166,6 +166,8 @@ class ApiTokenTest {
             .post("/api/v1/tokens").then().statusCode(400).body("error", containsString("viewer, steward or admin"));
         admin().contentType(ContentType.JSON).body(Map.of("name", " ", "role", "viewer"))
             .post("/api/v1/tokens").then().statusCode(400).body("error", containsString("name"));
+        admin().contentType(ContentType.JSON).body(Map.of("name", "ci\nINFO forged log line", "role", "viewer"))
+            .post("/api/v1/tokens").then().statusCode(400).body("error", containsString("control characters"));
     }
 
     @Test
@@ -196,7 +198,8 @@ class ApiTokenTest {
     private void withoutAdmins(ThrowingRunnable test) throws Exception {
         List<Long> revoked = new ArrayList<>();
         try (Connection c = db.getConnection(); PreparedStatement ps = c.prepareStatement(
-            "UPDATE kilnmark.api_token SET revoked_at = now() WHERE role = 'admin' AND revoked_at IS NULL RETURNING id");
+            "UPDATE kilnmark.api_token SET revoked_at = now(), revoked_reason = 'test' WHERE role = 'admin' "
+                + "AND revoked_at IS NULL RETURNING id");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 revoked.add(rs.getLong(1));
@@ -212,7 +215,7 @@ class ApiTokenTest {
                 }
                 Array ids = c.createArrayOf("bigint", revoked.toArray());
                 try (PreparedStatement ps = c.prepareStatement(
-                    "UPDATE kilnmark.api_token SET revoked_at = NULL WHERE id = ANY(?)")) {
+                    "UPDATE kilnmark.api_token SET revoked_at = NULL, revoked_reason = NULL WHERE id = ANY(?)")) {
                     ps.setArray(1, ids);
                     ps.executeUpdate();
                 }
@@ -236,6 +239,12 @@ class ApiTokenTest {
             Tokens.as(token).get("/api/v1/tokens").then().statusCode(200);
             Tokens.as(token).get("/api/v1/me").then().body("name", equalTo("first admin"));
             Tokens.as(Tokens.ADMIN).get("/api/v1/sources").then().statusCode(401);
+            try (Connection c = db.getConnection(); PreparedStatement ps = c.prepareStatement(
+                "SELECT expires_at > now() + interval '23 hours' AND expires_at < now() + interval '25 hours' "
+                    + "FROM kilnmark.api_token WHERE created_by = 'first-start' AND revoked_at IS NULL");
+                 ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next() && rs.getBoolean(1), "the first-start token works for 24 hours");
+            }
 
             Files.delete(file.get());
             assertEquals(Optional.empty(), tokens.bootstrap(Optional.empty(), dir), "an admin exists now");
@@ -245,14 +254,31 @@ class ApiTokenTest {
     }
 
     @Test
-    void changingTheEnvironmentTokenRevokesTheOldOne(@TempDir Path dir) throws Exception {
+    void changingTheEnvironmentTokenSetsTheOldOneAsideUntilItReturns(@TempDir Path dir) throws Exception {
         String next = "km_" + "n".repeat(43);
         withoutAdmins(() -> {
             assertEquals(Optional.empty(), tokens.bootstrap(Optional.of(next), dir));
             Tokens.as(next).get("/api/v1/me").then().statusCode(200).body("role", equalTo("admin"));
             assertFalse(Files.exists(dir.resolve("admin-token")), "no file when the environment gives the token");
-            tokens.bootstrap(Optional.of(Tokens.ADMIN), dir);
+
+            // Back to a value an admin had revoked: it stays revoked, and the server is never left without an admin.
+            Optional<Path> file = tokens.bootstrap(Optional.of(Tokens.ADMIN), dir);
             Tokens.as(next).get("/api/v1/me").then().statusCode(401);
+            Tokens.as(Tokens.ADMIN).get("/api/v1/me").then().statusCode(401);
+            assertTrue(file.isPresent(), "no usable admin was left, so a first-start token was written");
+            String firstStart = Files.readString(file.get()).strip();
+            Files.delete(file.get());
+
+            // The earlier value again: only set aside by the start-up check, so it works again.
+            assertEquals(Optional.empty(), tokens.bootstrap(Optional.of(next), dir));
+            Tokens.as(next).get("/api/v1/me").then().statusCode(200).body("role", equalTo("admin"));
+
+            // Revoked by an admin: setting the same value again does not bring it back.
+            long id = Tokens.as(next).get("/api/v1/me").then().extract().jsonPath().getLong("tokenId");
+            Tokens.as(firstStart).delete("/api/v1/tokens/" + id).then().statusCode(204);
+            tokens.bootstrap(Optional.of(next), dir);
+            Tokens.as(next).get("/api/v1/me").then().statusCode(401);
+            assertFalse(Files.exists(dir.resolve("admin-token")), "the first-start token is still usable");
         });
         admin().get("/api/v1/me").then().statusCode(200);
         IllegalStateException e = assertThrows(IllegalStateException.class,

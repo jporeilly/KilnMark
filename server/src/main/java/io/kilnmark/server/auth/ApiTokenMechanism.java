@@ -16,7 +16,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 
 /**
  * Reads {@code Authorization: Bearer km_...} and hands the token to {@link ApiTokenIdentityProvider}.
- * With {@code kilnmark.auth.enabled=false} every caller is an admin (lab use on a trusted machine).
+ * With {@code kilnmark.auth.mode=off} every caller is an admin (a lab on one machine; see {@link AuthMode}).
  */
 @ApplicationScoped
 public class ApiTokenMechanism implements HttpAuthenticationMechanism {
@@ -29,7 +29,7 @@ public class ApiTokenMechanism implements HttpAuthenticationMechanism {
     private final boolean enabled;
 
     public ApiTokenMechanism(KilnmarkConfig config) {
-        this.enabled = config.auth().enabled();
+        this.enabled = config.auth().mode() != AuthMode.OFF;
     }
 
     @Override
