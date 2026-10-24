@@ -65,7 +65,7 @@ public abstract class JdbcConnector implements Connector {
                     col.comment())).toList();
                 boolean table = t.type().equals("table") || t.type().equals("partitioned table");
                 out.add(new AssetInfo(t.path(), t.type(), t.schema(), t.name(), t.comment(), fields, t.primaryKey(),
-                    !table, Map.of("schema", t.schema(), "table", t.name())));
+                    !table, true, Map.of("schema", t.schema(), "table", t.name())));
             }
             return out;
         } catch (SQLException e) {

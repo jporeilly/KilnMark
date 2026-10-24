@@ -96,6 +96,9 @@ public class ScanService {
                 String urn = new Urn(source.name(), a.path()).toString();
                 store.saveAsset(source.id(), runId, asset(urn, a), fields(a));
                 seen.incrementAndGet();
+                if (!a.readable()) {
+                    continue; // recorded, not read: a document, for example
+                }
                 slots.acquire();
                 work.add(Thread.ofVirtual().name("scan-" + runId + "-" + a.path()).start(() -> {
                     try {
