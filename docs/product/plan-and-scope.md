@@ -4,6 +4,8 @@ Oct 22, 2026 · @James O'Reilly
 
 A standalone product, independent of any existing Pentaho product. First milestone: **v0.1.0 Foundation** — ingest, profile and search metadata from databases, files and object storage on a Kettle-style Java engine, in about 12 weeks.
 
+> **Direction, 24 October:** pipeline-first, not a catalogue ([ADR 0021](../adr/0021-pipeline-first.md)). Phases after v0.1 are re-planned around trusted pipelines; see docs/design/data-quality.md.
+
 ## Scope
 
 v0.1 proves the core loop: point the engine at a source, and it ingests metadata, profiles the data in-stream, and makes everything searchable through an API. Discovery, rules and AI build on that loop in later phases.

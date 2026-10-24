@@ -2,6 +2,8 @@
 
 Oct 24, 2026 · @James O'Reilly
 
+> **Superseded in part by [ADR 0021](../adr/0021-pipeline-first.md):** Kilnmark is a modern, quality-aware data integration engine, not a catalogue. The living version of this document is kept up to date outside the repository.
+
 A first cut of who Kilnmark is for and why they'd pick it, plus a plan to recruit three design partners to test it against real data. Everything here is a hypothesis until partners confirm it.
 
 ## Positioning
