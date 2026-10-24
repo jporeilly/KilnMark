@@ -83,6 +83,10 @@
   use the server's own identity or files (`integratedSecurity`, `authentication=ActiveDirectory...`,
   `sslkey`, `sslfactory`, `socketFactory`, `loggerFile`, any `...File`, `...Path`, `...Factory`,
   `...Class`) are refused. Checks give their place back only when they have really ended.
+- **Security:** host names come from the database driver's own URL parser; URL properties naming
+  another host (`PGHOST`, `server`, `address`...), loosening time limits (`socketTimeout`,
+  `loginTimeout`...), using `pg_service.conf` (`service`), or any SQL Server `authentication` but
+  `SqlPassword` are refused, whatever braces, quotes or encoding they are written with.
 - **Changed:** bulk import's row statuses are now `created`, `updated`, `unchanged` and `failed`
   (they were `ok`, `created` and `error`), and a row naming an existing source updates it instead
   of failing. An update changes only the columns in the file.

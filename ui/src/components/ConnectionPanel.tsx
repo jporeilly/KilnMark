@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import {
   api,
   type CommonSetting,
@@ -32,7 +32,7 @@ const AI_LABELS: Record<string, string> = {
  */
 export function ConnectionPanel({
   connector,
-  existing,
+  existing: initial,
   onClose,
   onSaved,
 }: {
@@ -42,6 +42,9 @@ export function ConnectionPanel({
   onSaved: (s: Source, scanQueued: boolean) => void;
 }) {
   const id = useId();
+  // Once saved, the panel edits what it saved: a retry after a failed scan updates, never adds twice.
+  const [saved, setSaved] = useState<Source | undefined>(initial);
+  const existing = saved;
   const editing = existing != null;
   const [common, setCommon] = useState<CommonSetting[]>([]);
   const [step, setStep] = useState(0);
@@ -58,6 +61,9 @@ export function ConnectionPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const snapshot = JSON.stringify({ name, displayName, settings, password, clearPassword, address });
+  const [baseline, setBaseline] = useState(snapshot);
+  const dirty = snapshot !== baseline;
 
   useEffect(() => {
     api.commonSettings().then(setCommon).catch((e: Error) => setError(e.message));
@@ -134,12 +140,19 @@ export function ConnectionPanel({
             password,
             displayName: f.displayName,
           });
-      let queued = false;
+      setSaved(s);
+      setPassword("");
+      setClearPassword(false);
+      setBaseline(JSON.stringify({ name, displayName, settings, password: "", clearPassword: false, address }));
       if (scan) {
-        await api.scan(s.name);
-        queued = true;
+        try {
+          await api.scan(s.name);
+        } catch (e) {
+          setError(`Saved. The scan could not be queued: ${(e as Error).message}`);
+          return;
+        }
       }
-      onSaved(s, queued);
+      onSaved(s, scan);
     } catch (e) {
       const message = (e as Error).message;
       setError(message);
@@ -150,17 +163,28 @@ export function ConnectionPanel({
     }
   };
 
-  // Escape closes the panel wherever focus is (also after a button that had focus was disabled),
-  // except while a dialog is open, which Escape closes first.
-  useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector("dialog[open]")) {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  /** Closes the panel, asking first if there are changes not saved. */
+  const requestClose = () => {
+    if (dirty && !window.confirm("Discard the changes you made to this connection?")) return;
+    onClose();
+  };
+
+  // Escape closes the panel when focus is inside it, but not from a search box or a list, which
+  // use Escape themselves, nor when something else has already handled it.
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    const t = e.target as HTMLElement;
+    if (
+      e.key !== "Escape" ||
+      e.defaultPrevented ||
+      t.tagName === "SELECT" ||
+      (t instanceof HTMLInputElement && t.type === "search") ||
+      document.querySelector("dialog[open]")
+    ) {
+      return;
+    }
+    e.preventDefault();
+    requestClose();
+  };
 
   const field = (key: string) => `${id}-${key}`;
   const own = connector.settings.filter((s) => s.key !== connector.containerSetting);
@@ -247,12 +271,12 @@ export function ConnectionPanel({
     );
 
   return (
-    <section className="connection-panel panel" aria-labelledby={`${id}-title`}>
+    <section className="connection-panel panel" aria-labelledby={`${id}-title`} onKeyDown={onKeyDown}>
       <div className="panel-head">
         <h2 id={`${id}-title`}>
           <Icon name={connector.icon} size={22} /> {editing ? `Edit ${existing.displayName}` : `New ${connector.displayName} connection`}
         </h2>
-        <button type="button" onClick={onClose}>
+        <button type="button" onClick={requestClose}>
           Close<span className="visually-hidden"> the connection panel</span>
         </button>
       </div>

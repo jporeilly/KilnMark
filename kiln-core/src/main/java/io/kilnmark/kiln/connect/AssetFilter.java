@@ -27,6 +27,11 @@ public final class AssetFilter {
     public static final String EXCLUDE = "exclude";
     /** The most patterns one setting may hold. */
     public static final int MAX_PATTERNS = 100;
+    /**
+     * The most matching work one setting may ask for: the length of every alternative of every
+     * pattern, added up. Matching a name costs about this times the name's length.
+     */
+    public static final int MAX_COST = 5000;
 
     /** Keeps everything. */
     public static final AssetFilter ALL = new AssetFilter(List.of(), List.of(), List.of(), "/");
@@ -178,8 +183,15 @@ public final class AssetFilter {
                 + patterns.size());
         }
         List<Glob> out = new ArrayList<>();
+        int cost = 0;
         for (String glob : patterns) {
-            out.add(Glob.compile(key, glob));
+            Glob g = Glob.compile(key, glob);
+            cost += g.cost();
+            if (cost > MAX_COST) {
+                throw new IllegalArgumentException(key + ": these patterns are too many or too long to check quickly; "
+                    + "use fewer, shorter patterns or fewer {a,b} alternatives");
+            }
+            out.add(g);
         }
         return out;
     }

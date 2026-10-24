@@ -164,9 +164,17 @@ public final class LocalFileStore implements FileStore {
         return real;
     }
 
-    /** One file, checked to be inside the folder like every read. */
+    /** One file, by the listing's rules: inside the folder, not hidden, at the top unless recursive. */
     @Override
     public Entry entry(String path) throws IOException {
+        for (String part : path.split("/")) {
+            if (part.startsWith(".")) {
+                throw new IOException("There is no file " + path + " to read: hidden files are skipped");
+            }
+        }
+        if (!recursive && path.contains("/")) {
+            throw new IOException("There is no file " + path + " to read: this source does not look in sub-folders");
+        }
         Path real = resolve(path);
         BasicFileAttributes attrs = Files.readAttributes(real, BasicFileAttributes.class);
         if (!attrs.isRegularFile()) {

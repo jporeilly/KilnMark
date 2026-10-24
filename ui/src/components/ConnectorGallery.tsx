@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Capability, Connector, ConnectorCatalogue, PlannedConnector } from "../api";
 import { Icon } from "./Icon";
 
@@ -71,6 +71,15 @@ export function ConnectorGallery({
         (c.built && c.connector.formats.some((f) => f.includes(q)))),
   );
   const built = shown.filter((c) => c.built).length;
+  const countText = `${shown.length} ${shown.length === 1 ? "connector" : "connectors"}${
+    q ? ` match "${query.trim()}"` : ""
+  }, ${built} available now.`;
+  // Announced once typing pauses, not at every key.
+  const [announced, setAnnounced] = useState(countText);
+  useEffect(() => {
+    const t = window.setTimeout(() => setAnnounced(countText), 600);
+    return () => window.clearTimeout(t);
+  }, [countText]);
 
   const onTabKey = (e: KeyboardEvent, index: number) => {
     const to =
@@ -104,9 +113,11 @@ export function ConnectorGallery({
           placeholder="postgres, parquet, bucket…"
         />
       </div>
-      <p role="status" aria-live="polite" className="small">
-        {shown.length} {shown.length === 1 ? "connector" : "connectors"}
-        {q ? ` match "${query.trim()}"` : ""}, {built} available now.
+      <p className="small" aria-hidden="true">
+        {countText}
+      </p>
+      <p role="status" aria-live="polite" className="visually-hidden">
+        {announced}
       </p>
       <div role="tablist" aria-label="Connector categories" className="tabs">
         {tabs.map((t, i) => (
@@ -172,7 +183,9 @@ export function ConnectorGallery({
                               >
                                 <Icon name={c.category} />
                                 <span className="card-name">{c.name}</span>
-                                <span className="planned-label">Planned · wave {c.planned.wave}</span>
+                                <span className="planned-label">
+                                  Planned · {/^\d/.test(c.planned.wave) ? `wave ${c.planned.wave}` : c.planned.wave}
+                                </span>
                                 <Badges caps={c.capabilities} formats={[]} />
                               </button>
                             )}

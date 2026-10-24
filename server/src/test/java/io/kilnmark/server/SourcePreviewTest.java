@@ -62,6 +62,7 @@ class SourcePreviewTest {
         folder = Files.createDirectories(Path.of(System.getProperty("java.io.tmpdir"), "kilnmark-test-files",
             "preview"));
         Files.writeString(folder.resolve("data.csv"), "1;alpha\n2;beta\n3;gamma\n");
+        Files.writeString(folder.resolve(".hidden.csv"), "secret\n1\n");
         Files.createDirectories(folder.resolve("letters"));
         Files.writeString(folder.resolve("letters/note.txt"), "hello");
         steward = token("prev-steward", "steward");
@@ -82,7 +83,8 @@ class SourcePreviewTest {
     @Test
     void previewsTheFirstRowsOfATableWithColumnsAndKinds() {
         JsonPath p = steward().queryParam("asset", "prev.people").queryParam("rows", 5)
-            .get("/api/v1/sources/prev-db/preview").then().statusCode(200).extract().jsonPath();
+            .get("/api/v1/sources/prev-db/preview").then().statusCode(200)
+            .header("Cache-Control", containsString("no-store")).extract().jsonPath();
         assertEquals(5, p.getInt("rowCount"));
         assertEquals(List.of("id", "name", "photo", "notes"), p.getList("columns.name"));
         assertEquals("int32", p.getString("columns[0].kind"));
@@ -120,7 +122,7 @@ class SourcePreviewTest {
     }
 
     @Test
-    void aCsvWithoutAHeaderCanBePreviewedWithTheRightSettings() {
+    void aCsvWithoutAHeaderCanBePreviewedWithTheRightSettings() throws Exception {
         Map<String, Object> draft = new HashMap<>(Map.of("kind", "files", "settings",
             Map.of("path", folder.toString())));
         JsonPath detected = steward().contentType(ContentType.JSON).body(draft)
@@ -142,6 +144,12 @@ class SourcePreviewTest {
             .then().statusCode(200).body("items.path", hasItem("data.csv"));
         steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/assets?container=letters")
             .then().statusCode(200).body("items[0].readable", equalTo(false));
+        steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/preview?asset=.hidden.csv")
+            .then().statusCode(502).body("error", containsString("hidden"));
+        draft.put("settings", Map.of("path", folder.toString(), "recursive", "false"));
+        Files.createDirectories(folder.resolve("sub"));
+        steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/preview?asset=letters/note.txt")
+            .then().statusCode(502).body("error", containsString("sub-folders"));
         draft.put("settings", Map.of("path", folder.toString(), "delimiter", "ab"));
         steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/preview?asset=data.csv")
             .then().statusCode(400).body("error", containsString("delimiter"));

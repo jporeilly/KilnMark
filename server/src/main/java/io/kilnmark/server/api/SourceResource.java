@@ -183,12 +183,12 @@ public class SourceResource {
     @GET
     @Path("{name}/preview")
     @RolesAllowed(AccessRole.STEWARD_ROLE)
-    public Views.Preview preview(@PathParam("name") String name, @QueryParam("asset") String asset,
+    public Response preview(@PathParam("name") String name, @QueryParam("asset") String asset,
                                  @QueryParam("rows") Integer rows) {
         Records.Source s = find(name);
         SourceConfig config = sources.config(s);
         sources.checkHosts(sources.connector(s.kind()), config);
-        return sources.preview(sources.connector(s.kind()), config, asset, rows);
+        return SourceService.noStore(sources.preview(sources.connector(s.kind()), config, asset, rows));
     }
 
     /** The source's latest runs with their jobs' attempts and errors, newest first. */

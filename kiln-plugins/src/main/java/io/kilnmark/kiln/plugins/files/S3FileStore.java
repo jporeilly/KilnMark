@@ -137,9 +137,12 @@ public final class S3FileStore implements FileStore {
         return out;
     }
 
-    /** One object, by a HEAD request. */
+    /** One object, by a HEAD request; only within the prefix, as the listing. */
     @Override
     public Entry entry(String key) throws IOException {
+        if (settings.prefix() != null && !key.startsWith(settings.prefix()) || key.endsWith("/")) {
+            throw new IOException("There is no object " + key + " in this source: it is outside its prefix");
+        }
         try {
             var head = s3.headObject(software.amazon.awssdk.services.s3.model.HeadObjectRequest.builder()
                 .bucket(settings.bucket()).key(key).build());

@@ -54,6 +54,15 @@ final class Glob {
         this.alternatives = alternatives;
     }
 
+    /** What matching costs, per character of a name: the length of every alternative, added up. */
+    int cost() {
+        int cost = 0;
+        for (Token[] t : alternatives) {
+            cost += Math.max(1, t.length);
+        }
+        return cost;
+    }
+
     /** The pattern as written. */
     String text() {
         return text;

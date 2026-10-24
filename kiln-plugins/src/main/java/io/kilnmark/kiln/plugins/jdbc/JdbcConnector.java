@@ -3,6 +3,7 @@ package io.kilnmark.kiln.plugins.jdbc;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
+import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -33,8 +34,11 @@ public abstract class JdbcConnector implements Connector {
     /** A password written into a URL: {@code ;password=} (SQL Server) or {@code ?password=} / {@code &password=}. */
     private static final Pattern PASSWORD_IN_URL = Pattern.compile("[;?&]\\s*password\\s*=", Pattern.CASE_INSENSITIVE);
 
-    /** A property in a URL: {@code ?name=value&...} or {@code ;name=value;...}. */
-    private static final Pattern URL_PROPERTY = Pattern.compile("[;?&]\\s*([^=;?&\\s]+)\\s*=\\s*([^;&]*)");
+    /**
+     * A property in a URL: {@code ?name=value&...} or {@code ;name=value;...}. Names may hold
+     * spaces (SQL Server's {@code network address}).
+     */
+    private static final Pattern URL_PROPERTY = Pattern.compile("[;?&]([^=;?&]+)=([^;&]*)");
 
     /**
      * URL properties that make a driver act as the Kilnmark server itself (its Windows, Kerberos or
@@ -48,10 +52,70 @@ public abstract class JdbcConnector implements Connector {
         // PostgreSQL
         "sslkey", "sslcert", "sslrootcert", "sslfactory", "sslfactoryarg", "sslpasswordcallback",
         "sslhostnameverifier", "socketfactory", "socketfactoryarg", "loggerfile", "jaaslogin", "jaasapplicationname",
-        "gsslib", "kerberosservername", "usespnego", "gssusedefaultcreds", "sspiservicename");
+        "gsslib", "kerberosservername", "usespnego", "gssusedefaultcreds", "sspiservicename",
+        // PostgreSQL's pg_service.conf on this server
+        "service");
 
-    /** URL properties naming another host to connect to (SQL Server). */
-    private static final Set<String> HOST_PROPERTIES = Set.of("servername", "failoverpartner");
+    /**
+     * URL properties that name another host, port or database than the URL's own, which the
+     * allowed-hosts check could miss: refused, so the address is always the URL's.
+     */
+    private static final Set<String> ADDRESS_PROPERTIES = Set.of("pghost", "pgport", "pgdbname", "server", "address",
+        "addr", "network address");
+
+    /**
+     * Timeouts the server sets for checks, which a URL must not loosen (pgjdbc lets URL values win
+     * over the server's).
+     */
+    private static final Set<String> TIMEOUT_PROPERTIES = Set.of("logintimeout", "connecttimeout", "sockettimeout",
+        "cancelsignaltimeout");
+
+    /** The only SQL Server authentication values allowed: a user name and password of the source's own. */
+    private static final Set<String> AUTHENTICATION_ALLOWED = Set.of("sqlpassword", "notspecified");
+
+    /** A name as drivers compare them: decoded, lower case, single spaces. */
+    static String normalName(String name) {
+        String n = name;
+        try {
+            n = java.net.URLDecoder.decode(name, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            // not valid percent-encoding: compare it as written
+        }
+        return n.strip().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+    }
+
+    /** A value as SQL Server reads it: without surrounding braces or quotes. */
+    static String bareValue(String value) {
+        String v = value == null ? "" : value.strip();
+        while (v.length() >= 2 && (v.startsWith("{") && v.endsWith("}") || v.startsWith("\"") && v.endsWith("\"")
+            || v.startsWith("'") && v.endsWith("'"))) {
+            v = v.substring(1, v.length() - 1).strip();
+        }
+        return v;
+    }
+
+    /**
+     * The properties the database driver itself reads from {@code url}, by lower-case name, from
+     * its own parser ({@link java.sql.Driver#getPropertyInfo}), so what is checked is what the driver will
+     * use. Empty when no driver accepts the URL.
+     */
+    static Map<String, String> driverProperties(String url) {
+        Map<String, String> out = new HashMap<>();
+        if (url == null) {
+            return out;
+        }
+        try {
+            java.sql.Driver d = DriverManager.getDriver(url);
+            for (DriverPropertyInfo i : d.getPropertyInfo(url, new Properties())) {
+                if (i.name != null && i.value != null) {
+                    out.put(i.name.toLowerCase(Locale.ROOT), i.value);
+                }
+            }
+        } catch (SQLException | RuntimeException e) {
+            // no driver for it, or it cannot parse the URL: validation and connecting say so
+        }
+        return out;
+    }
 
     /**
      * The properties written into a JDBC URL, by lower-case name. Values are as written.
@@ -63,20 +127,45 @@ public abstract class JdbcConnector implements Connector {
         }
         Matcher m = URL_PROPERTY.matcher(url);
         while (m.find()) {
-            out.put(m.group(1).toLowerCase(Locale.ROOT), m.group(2).trim());
+            out.put(normalName(m.group(1)), m.group(2).trim());
         }
         return out;
     }
 
-    /** Why a URL property is refused, or null when it is allowed. */
+    /** Why a URL property is refused, or null when it is allowed. Names and values compare as drivers read them. */
     static String deniedProperty(String name, String value) {
-        String n = name.toLowerCase(Locale.ROOT);
+        String n = normalName(name);
+        String v = bareValue(value).toLowerCase(Locale.ROOT);
+        if (ADDRESS_PROPERTIES.contains(n)) {
+            return "url: the property " + name + " names another host, port or database than the URL's own. Write "
+                + "the address in the URL itself, for example " + "jdbc:postgresql://db.example.com:5432/sales";
+        }
+        if (TIMEOUT_PROPERTIES.contains(n)) {
+            return "url: the property " + name + " would change the time limits Kilnmark sets for connecting and "
+                + "reading. Take it out of the URL";
+        }
         boolean denied = DENIED_PROPERTIES.contains(n) || n.endsWith("file") || n.endsWith("path")
             || n.endsWith("factory") || n.endsWith("class") || n.endsWith("classname")
-            || n.equals("authentication") && value.toLowerCase(Locale.ROOT).startsWith("activedirectory");
+            || n.equals("authentication") && !AUTHENTICATION_ALLOWED.contains(v);
         return denied ? "url: the property " + name + " makes the database driver use this server's own identity, "
             + "files or code, which a source may not do. Take it out of the URL, and give the source its own user "
             + "name and password" : null;
+    }
+
+    /**
+     * Problems with what the driver itself reads from the URL, so encodings and braces the
+     * driver undoes cannot hide a refused setting: SQL Server's authentication and
+     * integratedSecurity.
+     */
+    static String deniedByDriver(Map<String, String> driver) {
+        String auth = bareValue(driver.get("authentication")).toLowerCase(Locale.ROOT);
+        if (!auth.isEmpty() && !AUTHENTICATION_ALLOWED.contains(auth)) {
+            return deniedProperty("authentication", auth);
+        }
+        if ("true".equalsIgnoreCase(bareValue(driver.get("integratedsecurity")))) {
+            return deniedProperty("integratedSecurity", "true");
+        }
+        return null;
     }
 
     /**
@@ -190,12 +279,18 @@ public abstract class JdbcConnector implements Connector {
             problems.add("url: take the password out of the URL and enter it as the source's password instead; "
                 + "the URL is stored and shown as plain text, the password is encrypted");
         } else {
+            String denied = null;
             for (var e : urlProperties(url).entrySet()) {
-                String denied = deniedProperty(e.getKey(), e.getValue());
+                denied = deniedProperty(e.getKey(), e.getValue());
                 if (denied != null) {
-                    problems.add(denied);
                     break;
                 }
+            }
+            if (denied == null) {
+                denied = deniedByDriver(driverProperties(url));
+            }
+            if (denied != null) {
+                problems.add(denied);
             }
         }
         return problems;
@@ -308,7 +403,10 @@ public abstract class JdbcConnector implements Connector {
         try (Connection c = connect(source)) {
             for (int dot = path.indexOf('.'); dot > 0; dot = path.indexOf('.', dot + 1)) {
                 String schema = path.substring(0, dot);
-                for (JdbcCatalog.Table t : readCatalog(c, AssetFilter.of(List.of(schema), null, null, "."))) {
+                String table = path.substring(dot + 1);
+                // only that table's keys and comments are read; a name a pattern cannot hold reads its schema
+                String only = table.matches(".*[,;.].*") ? null : table.replaceAll("([\\\\*?\\[\\]{}])", "\\\\$1");
+                for (JdbcCatalog.Table t : readCatalog(c, AssetFilter.of(List.of(schema), only, null, "."))) {
                     if (t.path().equals(path)) {
                         return info(t);
                     }
@@ -329,18 +427,35 @@ public abstract class JdbcConnector implements Connector {
             !table, true, Map.of("schema", t.schema(), "table", t.name()));
     }
 
-    /** The URL's hosts, and any other host its properties name (SQL Server's serverName, failoverPartner). */
+    /**
+     * Every host the driver would reach: the URL's, and those its own parser reads (PostgreSQL's
+     * PGHOST list; SQL Server's serverName and failoverPartner, without an instance name).
+     */
     @Override
     public List<String> hosts(SourceConfig source) {
-        List<String> hosts = new ArrayList<>(UrlHosts.hosts(source.setting("url")));
-        urlProperties(source.setting("url")).forEach((k, v) -> {
-            if (HOST_PROPERTIES.contains(k) && !v.isBlank()) {
-                String h = v.trim();
-                int cut = h.indexOf('\\');
-                hosts.add(cut < 0 ? h : h.substring(0, cut));
+        String url = source.setting("url");
+        List<String> hosts = new ArrayList<>(UrlHosts.hosts(url));
+        // the driver's own reading, and the URL's as written in case the driver cannot be asked
+        List<Map<String, String>> readings = List.of(driverProperties(url), urlProperties(url));
+        for (Map<String, String> props : readings) {
+            for (String key : List.of("pghost", "servername", "failoverpartner", "server", "address", "addr",
+                "network address")) {
+                addHosts(hosts, bareValue(props.get(key)));
             }
-        });
+        }
         return hosts;
+    }
+
+    /** Adds each host of a comma-separated list, without a SQL Server instance name. */
+    private static void addHosts(List<String> hosts, String v) {
+        for (String h : v.split(",")) {
+            String host = h.strip();
+            int cut = host.indexOf('\\');
+            host = cut < 0 ? host : host.substring(0, cut);
+            if (!host.isEmpty() && !hosts.contains(host)) {
+                hosts.add(host);
+            }
+        }
     }
 
     private void checkValid(SourceConfig source) throws ConnectorException {

@@ -230,7 +230,9 @@ or sent to a model. Values longer than 500 characters are cut, bytes are shown a
 length, and a preview stops at about 2 MB. For files it also shows what was detected (format,
 delimiter, header row, encoding); if that is wrong, set `delimiter`, `header` (false when the
 first row is data) or `encoding` on the source: they apply to every file of it, in previews and
-scans.
+scans. A preview reads the table or file named even when the source's include or exclude patterns
+leave it out of scans, and it is not masked yet: sensitive-column masking arrives with column
+flags. Previews are sent with `Cache-Control: no-store`.
 
 **Name and display name.** A source's name is its ID: it is part of every asset's reference
 (`urn:kilnmark:<name>:<path>`), so it is set when the source is added and never changes. An edit
@@ -249,7 +251,8 @@ listed by `GET /api/v1/common-settings`:
 
 Patterns are globs, matched ignoring case: `*` (not across `/`), `**` (across `/`), `?`, `[abc]`,
 `{a,b}`, `\` before a character to take it literally; up to 100 per setting, each up to 200
-characters. Matching never backtracks, so no pattern can be slow. For a database, a pattern without
+characters, and their total size per setting is capped. Matching never backtracks: its cost grows
+with the patterns' size times the name's length, never faster. For a database, a pattern without
 a `.` matches table names (`cust*` matches `crm.customers`) and one with a `.` matches
 `schema.table` (`crm.*` every table in `crm`). For files, a pattern without a `/` matches file names
 (`*.csv`) and one with a `/` matches paths (`raw/**`). Every kind of source applies them the same way.
@@ -311,13 +314,22 @@ forgery). To limit it:
   hosts sources may reach: names, addresses or `*.example.com`, comma-separated. Every host a
   source names is checked (each host of a PostgreSQL host list, SQL Server's `serverName` and
   `failoverPartner`, S3 endpoints, and AWS's S3 host when there is none) whenever a source is added,
-  edited, imported, tested or listed. Empty, the default, allows any host.
+  edited, imported, tested or listed. Hosts are read with the database driver's own parser, and URL
+  properties that would name another host, port or database (PostgreSQL `PGHOST`, `PGPORT`,
+  `PGDBNAME`; SQL Server `server`, `address`, `addr`, `network address`) are refused, so the
+  address is always the URL's. Empty, the default, allows any host.
 - **The server's own identity and files.** JDBC URL properties that make the driver act as the
-  server or touch its files are refused when a source is checked or scanned: SQL Server
-  `integratedSecurity`, `authentication=ActiveDirectory...`, `authenticationScheme`, `trustStore`,
+  server or touch its files are refused when a source is checked or scanned, as the driver reads
+  them (braces, quotes and percent-encoding do not hide them): SQL Server `integratedSecurity`,
+  any `authentication` but `SqlPassword` or `NotSpecified`, `authenticationScheme`, `trustStore`,
   `keyStoreLocation`, `serverCertificate`; PostgreSQL `sslkey`, `sslcert`, `sslrootcert`,
-  `sslfactory`, `sslpasswordcallback`, `socketFactory`, `loggerFile`, Kerberos and GSS options; and
-  any property whose name ends in File, Path, Factory, Class or ClassName.
+  `sslfactory`, `sslpasswordcallback`, `socketFactory`, `loggerFile`, `service` (the server's
+  `pg_service.conf`), Kerberos and GSS options; and any property whose name ends in File, Path,
+  Factory, Class or ClassName. Note that PostgreSQL's driver reads the server's own `~/.pgpass`
+  when a source gives no password: keep no `.pgpass` file for the user Kilnmark runs as.
+- **Time limits.** URL properties that set the driver's timeouts (`loginTimeout`,
+  `connectTimeout`, `socketTimeout`, `cancelSignalTimeout`) are refused, since PostgreSQL's driver
+  lets them override the limits Kilnmark sets for checks.
 - **Stored passwords stay put.** An edit, check or import that changes where a password goes (URL,
   user name, S3 endpoint or access key) needs the password again. The check is repeated on the
   locked row when the change is saved, so two edits at once cannot slip past it.
