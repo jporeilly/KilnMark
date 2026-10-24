@@ -104,8 +104,9 @@ public class JobQueue {
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     long runId = rs.getLong(2);
-                    return Optional.of(new Job(id, rs.getString(1), rs.wasNull() ? -1 : runId, rs.getInt(3),
-                        rs.getInt(4), workerId));
+                    boolean noRun = rs.wasNull(); // a payload without a runId: the worker fails the job
+                    return Optional.of(new Job(id, rs.getString(1), noRun ? -1 : runId, rs.getInt(3), rs.getInt(4),
+                        workerId));
                 }
             }
         });
