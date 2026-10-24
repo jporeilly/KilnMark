@@ -1,7 +1,10 @@
 # APIs and version control
 
-Status: design. Settings and the interactive API docs come with the round 2 merge. The rest is
-planned for round 3 onwards.
+Status: design, trimmed on 24 October to what a pipeline engine needs.
+
+- **Now:** Settings, interactive API docs, and in-app version history.
+- **v0.2:** one Git and files feature.
+- **Parked until a design partner asks:** data as APIs, and the Python service.
 
 ## Settings
 
@@ -31,7 +34,11 @@ browser with an API token.
   signed-in users.
 - The OpenAPI document is versioned with the API (`/api/v1`). A breaking change needs `/api/v2`.
 
-## Data as APIs
+## Data as APIs (parked)
+
+Parked until a design partner asks. It is a product category of its own (data services), with
+security, caching and rate-limit work that would pull focus from pipelines. The idea, for later:
+
 
 Any table, view, file or pipeline output can be published as a read-only REST endpoint, the way
 earlier tools offered data services.
@@ -50,7 +57,12 @@ earlier tools offered data services.
   per token. Queries are pushed down to the source with the same read-only rules as quality
   checks. Every call is logged without its data.
 
-## Python service
+## Python service (parked)
+
+Parked until a design partner asks. It is a second runtime to package, secure and support. The
+AI steps and the documented REST API cover most needs. Anyone can generate a Python client from
+the OpenAPI document in minutes. The idea, for later:
+
 
 A Python sidecar built on FastAPI serves Python users and AI tooling:
 
@@ -78,39 +90,26 @@ Three layers. Each works on its own, and Git is optional.
 - Pipeline runs record the version they ran, so a result can always be traced to the exact
   pipeline that produced it.
 
-### Git (optional)
+### Git and files (v0.2, one feature)
 
-- An admin connects a Git repository (HTTPS or SSH; GitHub, GitLab, Azure DevOps, Gitea or a
-  bare server). Kilnmark keeps a working copy.
-- **Pipelines live in the repository as YAML files**, one per pipeline, in a readable layout.
-  Saving in Kilnmark commits, with the author and message. Commits made outside Kilnmark are
-  picked up, checked and loaded.
-- **Branches and reviews:** a person can work on a branch and open a pull request in the Git
-  host. Kilnmark shows which branch each environment follows.
-- **Promotion:** dev, test and prod are Kilnmark servers following different branches or tags.
-  Promotion is a merge or a tag, and the target server loads it after validation and, if
-  configured, a dry run.
+Pipelines are YAML already, so one feature covers Git and configuration as code.
 
-### Config as code
-
-- Sources (without secrets), quality rules, contracts, published APIs, AI routing and settings
-  export as YAML files in the same repository layout, and import back.
-- Secrets are never written to Git. A file refers to a secret by name (`secret:NAME` or
+- **Export and import as files:** the project, meaning pipelines plus sources (without secrets),
+  quality rules, contracts and AI routing, exports to a folder of YAML files in a readable
+  layout, and imports back with a summary of what will change before it is applied.
+- **Secrets never go into files.** A file refers to a secret by name (`secret:NAME` or
   `env:NAME`), and each environment supplies its own values.
-- **Import is a plan, then an apply:** Kilnmark shows what would be created, changed or removed,
-  as infrastructure-as-code tools do, and applies it only when confirmed. It can be run from the
-  command line in CI.
-- An environment can be rebuilt from the repository plus its secrets.
+- **Optional Git:** an admin connects a repository (HTTPS or SSH, any Git host) and that folder
+  is kept in sync.
+  - Saving in Kilnmark commits, with author and message.
+  - Commits made elsewhere are checked and loaded.
+  - Branches, reviews and promotion between dev, test and prod use the team's own Git host and
+    merges. Kilnmark does not add its own promotion workflow.
 
 ## Build order
 
-1. **With the round 2 merge:** the Settings section, and the interactive API docs.
-2. **Round 3, with pipelines:** in-app history for pipelines, rules, sources and contracts.
-3. **Round 3 or 4:**
-   - Git for pipelines;
-   - config as code with plan and apply;
-   - data as APIs for assets.
-4. **Later:**
-   - data as APIs for pipeline outputs;
-   - the Python sidecar, SDK and Python steps;
-   - promotion between environments.
+1. **With the round 2 merge:** the Settings section and the interactive API docs.
+2. **Round 3, with pipelines:** in-app history for pipelines, rules, sources and contracts. Every
+   run records the pipeline version it ran.
+3. **v0.2:** Git and files.
+4. **Parked:** data as APIs and the Python service, until a design partner asks.
