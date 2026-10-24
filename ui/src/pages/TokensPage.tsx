@@ -15,7 +15,12 @@ const EXPIRY: { value: string; label: string }[] = [
   { value: "never", label: "Never" },
 ];
 
-const STATUS: Record<ApiToken["status"], string> = { active: "Active", expired: "Expired", revoked: "Revoked" };
+const STATUS: Record<ApiToken["status"], string> = {
+  active: "Active",
+  expired: "Expired",
+  "set-aside": "Set aside (replaced environment token)",
+  revoked: "Revoked",
+};
 
 /** Admins create, list and revoke API tokens. A new token is shown once, with a copy button. */
 export function TokensPage({ me }: { me: Me }) {

@@ -73,12 +73,15 @@ public class ApiTokens {
 
     /** A stored token, without its hash. */
     public record Token(long id, String name, AccessRole role, String createdBy, Instant createdAt, Instant expiresAt,
-                        Instant lastUsedAt, Instant revokedAt) {
+                        Instant lastUsedAt, Instant revokedAt, String revokedReason) {
 
-        /** {@code active}, {@code expired} or {@code revoked} at {@code now}. */
+        /**
+         * {@code active}, {@code expired}, {@code set-aside} (an environment token replaced by a new
+         * value, which comes back if that value is set again) or {@code revoked} at {@code now}.
+         */
         public String status(Instant now) {
             if (revokedAt != null) {
-                return "revoked";
+                return ENVIRONMENT_CHANGED.equals(revokedReason) ? "set-aside" : "revoked";
             }
             return expiresAt != null && !expiresAt.isAfter(now) ? "expired" : "active";
         }
@@ -147,12 +150,12 @@ public class ApiTokens {
     }
 
     private static final String COLUMNS =
-        "id, name, role, created_by, created_at, expires_at, last_used_at, revoked_at";
+        "id, name, role, created_by, created_at, expires_at, last_used_at, revoked_at, revoked_reason";
 
     private static Token token(ResultSet rs) throws SQLException {
         return new Token(rs.getLong(1), rs.getString(2), AccessRole.parse(rs.getString(3)), rs.getString(4),
             Db.instant(rs.getTimestamp(5)), Db.instant(rs.getTimestamp(6)), Db.instant(rs.getTimestamp(7)),
-            Db.instant(rs.getTimestamp(8)));
+            Db.instant(rs.getTimestamp(8)), rs.getString(9));
     }
 
     private static Token insert(Connection c, String name, AccessRole role, byte[] hash, String createdBy,
@@ -202,10 +205,14 @@ public class ApiTokens {
     public Optional<Token> revoke(long id, String by) {
         Optional<Token> t = db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.api_token "
-                + "SET revoked_reason = CASE WHEN revoked_at IS NULL THEN ? ELSE revoked_reason END, "
-                + "revoked_at = coalesce(revoked_at, now()) WHERE id = ? RETURNING " + COLUMNS)) {
-                ps.setString(1, "revoked by " + by);
-                ps.setLong(2, id);
+                // An admin's revocation is final: it also turns a set-aside environment token into a
+                // revoked one, so restoring an old KILNMARK_ADMIN_TOKEN value cannot bring it back.
+                + "SET revoked_reason = CASE WHEN revoked_at IS NULL OR revoked_reason = ? THEN ? "
+                + "ELSE revoked_reason END, revoked_at = coalesce(revoked_at, now()) WHERE id = ? RETURNING "
+                + COLUMNS)) {
+                ps.setString(1, ENVIRONMENT_CHANGED);
+                ps.setString(2, "revoked by " + by);
+                ps.setLong(3, id);
                 try (ResultSet rs = ps.executeQuery()) {
                     return rs.next() ? Optional.of(token(rs)) : Optional.empty();
                 }

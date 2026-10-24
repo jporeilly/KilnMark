@@ -28,8 +28,12 @@ public class ApiTokenMechanism implements HttpAuthenticationMechanism {
 
     private final boolean enabled;
 
-    public ApiTokenMechanism(KilnmarkConfig config) {
-        this.enabled = config.auth().mode() != AuthMode.OFF;
+    public ApiTokenMechanism(KilnmarkConfig config,
+                             @org.eclipse.microprofile.config.inject.ConfigProperty(name = "quarkus.http.host",
+                                 defaultValue = "0.0.0.0") String httpHost) {
+        // Sign-in stays on unless the server also listens on loopback only, so a misconfigured
+        // mode=off never serves an admin to the network, even before the startup check stops it.
+        this.enabled = !AuthMode.signInOff(config.auth().mode(), httpHost);
     }
 
     @Override

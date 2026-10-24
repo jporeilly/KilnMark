@@ -287,6 +287,22 @@ class ApiTokenTest {
     }
 
     @Test
+    void anAdminCanRevokeASetAsideEnvironmentTokenForGood(@TempDir Path dir) throws Exception {
+        String leaked = "km_" + "l".repeat(43);
+        String replacement = "km_" + "r".repeat(43);
+        withoutAdmins(() -> {
+            tokens.bootstrap(Optional.of(leaked), dir);
+            long id = Tokens.as(leaked).get("/api/v1/me").then().extract().jsonPath().getLong("tokenId");
+            tokens.bootstrap(Optional.of(replacement), dir); // the leaked value is replaced: set aside
+            Tokens.as(replacement).get("/api/v1/tokens").then().statusCode(200)
+                .body("find { it.id == " + id + " }.status", equalTo("set-aside"));
+            Tokens.as(replacement).delete("/api/v1/tokens/" + id).then().statusCode(204);
+            tokens.bootstrap(Optional.of(leaked), dir); // a configuration rollback to the leaked value
+            Tokens.as(leaked).get("/api/v1/me").then().statusCode(401);
+        });
+    }
+
+    @Test
     void rolesAreParsedStrictly() {
         assertEquals(AccessRole.ADMIN, AccessRole.parse(" Admin "));
         assertThrows(IllegalArgumentException.class, () -> AccessRole.parse("root"));

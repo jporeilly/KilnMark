@@ -26,17 +26,24 @@ public enum AuthMode {
         if (mode != OFF) {
             return;
         }
-        boolean loopback;
-        try {
-            loopback = httpHost != null && !httpHost.isBlank() && InetAddress.getByName(httpHost.strip())
-                .isLoopbackAddress();
-        } catch (UnknownHostException e) {
-            loopback = false;
-        }
-        if (!loopback) {
+        if (!loopback(httpHost)) {
             throw new IllegalStateException("kilnmark.auth.mode=off makes every caller an admin, so the server only "
                 + "allows it when it listens on this machine alone, but quarkus.http.host is '" + httpHost + "'. "
                 + "Set QUARKUS_HTTP_HOST=127.0.0.1, or remove KILNMARK_AUTH_MODE to sign in with API tokens.");
+        }
+    }
+
+    /** Whether sign-in is really off: {@link #OFF} and listening on a loopback address only. */
+    public static boolean signInOff(AuthMode mode, String httpHost) {
+        return mode == OFF && loopback(httpHost);
+    }
+
+    private static boolean loopback(String httpHost) {
+        try {
+            return httpHost != null && !httpHost.isBlank() && InetAddress.getByName(httpHost.strip())
+                .isLoopbackAddress();
+        } catch (UnknownHostException e) {
+            return false;
         }
     }
 }

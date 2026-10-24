@@ -19,7 +19,7 @@ export type ApiToken = {
   id: number;
   name: string;
   role: AccessRole;
-  status: "active" | "expired" | "revoked";
+  status: "active" | "expired" | "set-aside" | "revoked";
   createdBy: string;
   createdAt: string;
   expiresAt: string | null;
