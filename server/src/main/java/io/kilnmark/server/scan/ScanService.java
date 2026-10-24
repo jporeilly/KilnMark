@@ -3,8 +3,8 @@ package io.kilnmark.server.scan;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -29,9 +29,8 @@ import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.profile.ProfileStep;
 import io.kilnmark.server.KilnmarkConfig;
-import io.kilnmark.server.Role;
 import io.kilnmark.server.SecretBox;
-import jakarta.annotation.PreDestroy;
+import io.kilnmark.server.jobs.JobQueue;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
@@ -40,8 +39,8 @@ import jakarta.enterprise.context.ApplicationScoped;
  * stores the row count and column profiles. Assets are profiled a few at a time; one failing does
  * not stop the scan.
  *
- * <p>For v0.0.2 scans run in this process when it has the worker role. The PostgreSQL job queue
- * (plan task 13) replaces this so any worker can pick a scan up.
+ * <p>{@link #request} (api role) only queues the scan: a run and a job in the PostgreSQL queue. Any
+ * process with the worker role picks the job up and calls {@link #execute}.
  */
 @ApplicationScoped
 public class ScanService {
@@ -53,29 +52,44 @@ public class ScanService {
     private final KilnmarkConfig config;
     private final ObjectMapper json;
     private final Connectors connectors;
-    private final ExecutorService scans = Executors.newVirtualThreadPerTaskExecutor();
+    private final JobQueue jobs;
 
     public ScanService(GraphStore store, SecretBox secrets, KilnmarkConfig config, ObjectMapper json,
-                       Connectors connectors) {
+                       Connectors connectors, JobQueue jobs) {
         this.store = store;
         this.secrets = secrets;
         this.config = config;
         this.json = json;
         this.connectors = connectors;
+        this.jobs = jobs;
     }
 
-    @PreDestroy
-    void stop() {
-        scans.shutdownNow();
-    }
-
-    /** Queues a scan of {@code source} and, on a worker, starts it. */
+    /** Queues a scan of {@code source} for a worker to run, and returns the queued run. */
     public Records.Run request(Records.Source source) {
-        long runId = store.queueRun(source.id(), "scan");
-        if (config.roles().contains(Role.WORKER)) {
-            scans.submit(() -> scan(source, runId));
-        }
+        long runId = jobs.queueScan(source.id());
         return store.run(runId).orElseThrow();
+    }
+
+    private static final Set<String> UNFINISHED = Set.of("queued", "running");
+
+    /**
+     * Runs a queued scan; called by a worker holding the run's lock. Does nothing, and returns a
+     * reason, if the run no longer exists or has already finished.
+     */
+    public Optional<String> execute(long runId) {
+        Optional<Records.Run> run = store.run(runId);
+        if (run.isEmpty()) {
+            return Optional.of("Run " + runId + " no longer exists: its source was removed");
+        }
+        if (!UNFINISHED.contains(run.get().status())) {
+            return Optional.of("Run " + runId + " had already finished (" + run.get().status() + ")");
+        }
+        Optional<Records.Source> source = store.source(run.get().source());
+        if (source.isEmpty()) {
+            return Optional.of("Run " + runId + "'s source no longer exists");
+        }
+        scan(source.get(), runId);
+        return Optional.empty();
     }
 
     void scan(Records.Source source, long runId) {
@@ -84,6 +98,7 @@ public class ScanService {
         AtomicInteger failed = new AtomicInteger();
         AtomicLong rows = new AtomicLong();
         List<String> problems = java.util.Collections.synchronizedList(new ArrayList<>());
+        List<Thread> work = new ArrayList<>();
         try {
             Connector connector = connectors.get(source.kind()).orElseThrow(() -> new ConnectorException(
                 "This server has no connector for sources of kind '" + source.kind() + "'"));
@@ -91,7 +106,6 @@ public class ScanService {
             SourceConfig config = new SourceConfig(source.name(), source.kind(), source.settings(), secret);
             List<AssetInfo> assets = connector.catalog(config);
             Semaphore slots = new Semaphore(Math.max(1, this.config.scan().parallelTables()));
-            List<Thread> work = new ArrayList<>();
             for (AssetInfo a : assets) {
                 String urn = new Urn(source.name(), a.path()).toString();
                 store.saveAsset(source.id(), runId, asset(urn, a), fields(a));
@@ -129,11 +143,31 @@ public class ScanService {
         } catch (ConnectorException e) {
             store.finishRun(runId, "failed", seen.get(), failed.get(), rows.get(), e.getMessage());
         } catch (InterruptedException e) {
+            stopAll(work);
+            // Record the outcome first: a database call with the interrupt flag set may be refused.
+            store.finishRun(runId, "failed", seen.get(), failed.get(), rows.get(),
+                "The server stopped during the scan. Start the scan again.");
             Thread.currentThread().interrupt();
-            store.finishRun(runId, "failed", seen.get(), failed.get(), rows.get(), "The server stopped during the scan");
         } catch (RuntimeException e) {
             LOG.errorf(e, "Scan %d of %s failed", runId, source.name());
             store.finishRun(runId, "failed", seen.get(), failed.get(), rows.get(), "Scan failed: " + e.getMessage());
+        }
+    }
+
+    /** Stops the assets still being profiled, and waits a little for them to let go of the run. */
+    private static void stopAll(List<Thread> work) {
+        work.forEach(Thread::interrupt);
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        for (Thread t : work) {
+            long left = deadline - System.nanoTime();
+            if (left <= 0) {
+                break;
+            }
+            try {
+                t.join(java.time.Duration.ofNanos(left));
+            } catch (InterruptedException e) {
+                break; // already stopping; the caller restores the flag
+            }
         }
     }
 

@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.kilnmark.graph.store.GraphStore;
 import io.kilnmark.graph.store.Records;
+import io.kilnmark.server.auth.AccessRole;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
@@ -17,6 +19,7 @@ import jakarta.ws.rs.core.Response;
 /** Reading the catalogue: search, assets with their fields and profiles, and runs. */
 @Path("/api/v1")
 @Produces(MediaType.APPLICATION_JSON)
+@RolesAllowed(AccessRole.VIEWER_ROLE)
 public class CatalogResource {
 
     private final GraphStore store;

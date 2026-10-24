@@ -47,6 +47,23 @@ public final class Views {
                         String description, JsonNode profile, Instant profiledAt) {
     }
 
+    /** An API token as listed: never its secret or hash. {@code status} is active, expired or revoked. */
+    public record Token(long id, String name, String role, String status, String createdBy, Instant createdAt,
+                        Instant expiresAt, Instant lastUsedAt, Instant revokedAt) {
+        static Token of(io.kilnmark.server.auth.ApiTokens.Token t, Instant now) {
+            return new Token(t.id(), t.name(), t.role().id(), t.status(now), t.createdBy(), t.createdAt(),
+                t.expiresAt(), t.lastUsedAt(), t.revokedAt());
+        }
+    }
+
+    /** A token just created. {@code token} is shown this once and cannot be read again. */
+    public record NewToken(long id, String name, String role, Instant createdAt, Instant expiresAt, String token) {
+    }
+
+    /** Who is signed in. */
+    public record Me(String name, String role, Long tokenId, Instant expiresAt, boolean signInRequired) {
+    }
+
     public record Asset(String urn, String source, String kind, String container, String name, String description,
                         List<String> primaryKey, Long rowCount, Boolean rowCountComplete, Instant firstSeenAt,
                         Instant lastScannedAt, Instant removedAt, List<Field> fields) {

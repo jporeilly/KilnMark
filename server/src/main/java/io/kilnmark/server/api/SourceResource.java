@@ -10,7 +10,9 @@ import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.server.SecretBox;
+import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.scan.ScanService;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
@@ -21,9 +23,13 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
-/** Data sources: register one or many, list them, start a scan, see its runs. */
+/**
+ * Data sources: register one or many, list them, start a scan, see its runs. Viewers read,
+ * stewards also start scans, admins also add and import sources.
+ */
 @Path("/api/v1/sources")
 @Produces(MediaType.APPLICATION_JSON)
+@RolesAllowed(AccessRole.VIEWER_ROLE)
 public class SourceResource {
 
     /**
@@ -61,6 +67,7 @@ public class SourceResource {
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.ADMIN_ROLE)
     public Response add(NewSource body) {
         if (body == null || body.name() == null) {
             throw new IllegalArgumentException("Send the source as JSON with at least a name");
@@ -99,6 +106,7 @@ public class SourceResource {
     @POST
     @Path("import")
     @Consumes({"text/csv", MediaType.TEXT_PLAIN})
+    @RolesAllowed(AccessRole.ADMIN_ROLE)
     public Response importCsv(String body, @QueryParam("dryRun") boolean dryRun) {
         return report(importer.run(importer.fromCsv(body == null ? "" : body), dryRun));
     }
@@ -107,6 +115,7 @@ public class SourceResource {
     @POST
     @Path("import")
     @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.ADMIN_ROLE)
     public Response importJson(String body, @QueryParam("dryRun") boolean dryRun) {
         return report(importer.run(importer.fromJson(body == null ? "[]" : body), dryRun));
     }
@@ -117,6 +126,7 @@ public class SourceResource {
 
     @POST
     @Path("{name}/scans")
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Response scan(@PathParam("name") String name) {
         Records.Run run = scans.request(find(name));
         return Response.accepted(Views.Run.of(run)).location(URI.create("/api/v1/runs/" + run.id())).build();

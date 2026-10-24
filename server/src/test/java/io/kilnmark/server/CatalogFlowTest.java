@@ -1,6 +1,6 @@
 package io.kilnmark.server;
 
-import static io.restassured.RestAssured.given;
+import static io.kilnmark.server.Tokens.admin;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
@@ -28,7 +28,10 @@ import io.restassured.http.ContentType;
 import io.restassured.path.json.JsonPath;
 import jakarta.inject.Inject;
 
-/** The v0.0.2 loop end to end: register a PostgreSQL source, scan it, search, open an asset. */
+/**
+ * The v0.0.2 loop end to end: register a PostgreSQL source, scan it (queued, then run by this
+ * process's worker), search, open an asset.
+ */
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class CatalogFlowTest {
@@ -84,7 +87,7 @@ class CatalogFlowTest {
 
     private JsonPath waitForRun(long id) throws InterruptedException {
         for (int i = 0; i < 120; i++) {
-            JsonPath run = given().get("/api/v1/runs/" + id).then().statusCode(200).extract().jsonPath();
+            JsonPath run = admin().get("/api/v1/runs/" + id).then().statusCode(200).extract().jsonPath();
             String status = run.getString("status");
             if (!status.equals("queued") && !status.equals("running")) {
                 return run;
@@ -97,7 +100,7 @@ class CatalogFlowTest {
     @Test
     @Order(1)
     void registersAPostgresSourceWithItsPasswordEncrypted() throws Exception {
-        given().contentType(ContentType.JSON).body(source("shop-db", password))
+        admin().contentType(ContentType.JSON).body(source("shop-db", password))
             .when().post("/api/v1/sources")
             .then().statusCode(201)
             .body("name", equalTo("shop-db"))
@@ -115,7 +118,7 @@ class CatalogFlowTest {
     @Test
     @Order(2)
     void scansProfilesAndRecordsEveryTableAndView() throws Exception {
-        long runId = given().post("/api/v1/sources/shop-db/scans")
+        long runId = admin().post("/api/v1/sources/shop-db/scans")
             .then().statusCode(202).body("status", notNullValue())
             .extract().jsonPath().getLong("id");
         JsonPath run = waitForRun(runId);
@@ -123,22 +126,30 @@ class CatalogFlowTest {
         assertEquals(3, run.getInt("assetsSeen"));
         assertEquals(5000 + 30000 + 2500, run.getLong("rowsRead"));
 
-        given().get("/api/v1/sources/shop-db").then().statusCode(200)
+        admin().get("/api/v1/sources/shop-db").then().statusCode(200)
             .body("lastRun.id", equalTo((int) runId));
+        try (Connection c = db.getConnection(); Statement s = c.createStatement();
+             ResultSet rs = s.executeQuery("SELECT status, attempts, locked_by FROM kilnmark.job "
+                 + "WHERE kind = 'scan' AND (payload ->> 'runId')::bigint = " + runId)) {
+            assertTrue(rs.next(), "the scan went through the job queue");
+            assertEquals("done", rs.getString(1));
+            assertEquals(1, rs.getInt(2));
+            assertTrue(rs.getString(3) != null && !rs.getString(3).isBlank(), "the worker that ran it is recorded");
+        }
     }
 
     @Test
     @Order(3)
     void findsAssetsByNameAndByFieldName() {
-        given().queryParam("q", "order lines").get("/api/v1/search")
+        admin().queryParam("q", "order lines").get("/api/v1/search")
             .then().statusCode(200)
             .body("hits[0].urn", equalTo("urn:kilnmark:shop-db:shop.order_lines"))
             .body("hits[0].rowCount", equalTo(30000));
-        given().queryParam("q", "email").get("/api/v1/search")
+        admin().queryParam("q", "email").get("/api/v1/search")
             .then().statusCode(200)
             .body("hits.urn", hasItem("urn:kilnmark:shop-db:shop.customers"))
             .body("hits[0].matchedFields", hasItem("email"));
-        given().queryParam("q", "custmers").get("/api/v1/search") // misspelt
+        admin().queryParam("q", "custmers").get("/api/v1/search") // misspelt
             .then().statusCode(200)
             .body("hits.urn", hasItem("urn:kilnmark:shop-db:shop.customers"));
     }
@@ -146,7 +157,7 @@ class CatalogFlowTest {
     @Test
     @Order(4)
     void anAssetPageHasFieldsAndTheirProfiles() {
-        JsonPath a = given().get("/api/v1/assets/urn:kilnmark:shop-db:shop.customers")
+        JsonPath a = admin().get("/api/v1/assets/urn:kilnmark:shop-db:shop.customers")
             .then().statusCode(200).extract().jsonPath();
         assertEquals("People who buy from the shop", a.getString("description"));
         assertEquals(5000, a.getLong("rowCount"));
@@ -158,7 +169,7 @@ class CatalogFlowTest {
         assertEquals(java.util.Set.of("Retail", "Trade"), java.util.Set.copyOf(a.getList("fields[2].profile.top.value")));
         assertEquals(2500, a.getInt("fields[2].profile.top[0].count"));
 
-        JsonPath view = given().get("/api/v1/assets/urn:kilnmark:shop-db:shop.trade_customers")
+        JsonPath view = admin().get("/api/v1/assets/urn:kilnmark:shop-db:shop.trade_customers")
             .then().statusCode(200).extract().jsonPath();
         assertEquals("view", view.getString("kind"));
         assertEquals(2500, view.getLong("rowCount"));
@@ -167,9 +178,9 @@ class CatalogFlowTest {
     @Test
     @Order(5)
     void aWrongPasswordEndsTheRunWithAReason() throws Exception {
-        given().contentType(ContentType.JSON).body(source("shop-bad", "not-the-password"))
+        admin().contentType(ContentType.JSON).body(source("shop-bad", "not-the-password"))
             .post("/api/v1/sources").then().statusCode(201);
-        long runId = given().post("/api/v1/sources/shop-bad/scans").then().statusCode(202)
+        long runId = admin().post("/api/v1/sources/shop-bad/scans").then().statusCode(202)
             .extract().jsonPath().getLong("id");
         JsonPath run = waitForRun(runId);
         assertEquals("failed", run.getString("status"));
@@ -179,19 +190,19 @@ class CatalogFlowTest {
     @Test
     @Order(6)
     void rejectsBadRequestsClearly() {
-        given().contentType(ContentType.JSON).body(Map.of("name", "Bad Name", "settings", Map.of("url", url)))
+        admin().contentType(ContentType.JSON).body(Map.of("name", "Bad Name", "settings", Map.of("url", url)))
             .post("/api/v1/sources").then().statusCode(400).body("error", containsString("name"));
-        given().contentType(ContentType.JSON).body(Map.of("name", "odd", "kind", "teradata"))
+        admin().contentType(ContentType.JSON).body(Map.of("name", "odd", "kind", "teradata"))
             .post("/api/v1/sources").then().statusCode(400).body("error", containsString("unknown kind"));
-        given().contentType(ContentType.JSON).body(Map.of("name", "no-url"))
+        admin().contentType(ContentType.JSON).body(Map.of("name", "no-url"))
             .post("/api/v1/sources").then().statusCode(400).body("error", containsString("url: required"));
-        given().get("/api/v1/connectors").then().statusCode(200)
+        admin().get("/api/v1/connectors").then().statusCode(200)
             .body("kind", hasItem("postgresql"))
             .body("find { it.kind == 'postgresql' }.settings.key", hasItem("url"));
-        given().contentType(ContentType.JSON).body(source("shop-db", password))
+        admin().contentType(ContentType.JSON).body(source("shop-db", password))
             .post("/api/v1/sources").then().statusCode(409).body("error", containsString("already exists"));
-        given().get("/api/v1/assets/urn:kilnmark:shop-db:shop.nothing").then().statusCode(404);
-        given().get("/api/v1/search").then().statusCode(400);
-        given().post("/api/v1/sources/nope/scans").then().statusCode(404);
+        admin().get("/api/v1/assets/urn:kilnmark:shop-db:shop.nothing").then().statusCode(404);
+        admin().get("/api/v1/search").then().statusCode(400);
+        admin().post("/api/v1/sources/nope/scans").then().statusCode(404);
     }
 }

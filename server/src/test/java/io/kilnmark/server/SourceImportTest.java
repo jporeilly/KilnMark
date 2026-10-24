@@ -1,6 +1,6 @@
 package io.kilnmark.server;
 
-import static io.restassured.RestAssured.given;
+import static io.kilnmark.server.Tokens.admin;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItems;
@@ -21,13 +21,13 @@ class SourceImportTest {
 
     @Test
     void aDryRunChecksWithoutCreating() {
-        given().contentType("text/csv").body(CSV).queryParam("dryRun", true)
+        admin().contentType("text/csv").body(CSV).queryParam("dryRun", true)
             .post("/api/v1/sources/import")
             .then().statusCode(200)
             .body("dryRun", equalTo(true))
             .body("created", equalTo(0))
             .body("rows.status", hasItems("ok"));
-        given().get("/api/v1/sources/sales-eu").then().statusCode(404);
+        admin().get("/api/v1/sources/sales-eu").then().statusCode(404);
     }
 
     @Test
@@ -41,7 +41,7 @@ class SourceImportTest {
             twice,jdbc:postgresql://e.example.com/db,
             sneaky,jdbc:postgresql://f.example.com/db,secret:../../etc/passwd
             """;
-        given().contentType("text/csv").body(csv)
+        admin().contentType("text/csv").body(csv)
             .post("/api/v1/sources/import")
             .then().statusCode(422)
             .body("created", equalTo(0))
@@ -50,19 +50,19 @@ class SourceImportTest {
             .body("rows.find { it.line == 4 }.error", containsString("no environment variable"))
             .body("rows.find { it.line == 6 }.error", containsString("more than once"))
             .body("rows.find { it.line == 7 }.error", containsString("not a valid secret name"));
-        given().get("/api/v1/sources/good-one").then().statusCode(404);
+        admin().get("/api/v1/sources/good-one").then().statusCode(404);
     }
 
     @Test
     void createsEverySourceWithQuotedValuesIntact() {
-        given().contentType("text/csv").body(CSV)
+        admin().contentType("text/csv").body(CSV)
             .post("/api/v1/sources/import")
             .then().statusCode(200).body("created", equalTo(2));
-        given().get("/api/v1/sources/sales-eu").then().statusCode(200)
+        admin().get("/api/v1/sources/sales-eu").then().statusCode(200)
             .body("hasPassword", equalTo(true))
             .body("settings.schemas", equalTo("public,orders"))
             .body("settings.username", equalTo("reader"));
-        given().get("/api/v1/sources/sales-us").then().statusCode(200).body("settings.schemas", equalTo(null));
+        admin().get("/api/v1/sources/sales-us").then().statusCode(200).body("settings.schemas", equalTo(null));
     }
 
     @Test
@@ -71,17 +71,17 @@ class SourceImportTest {
             [{"name": "hr-db", "url": "jdbc:postgresql://hr.example.com/hr", "username": "ro",
               "password": "x", "schemas": ["people"]},
              {"name": "ops-db", "url": "jdbc:postgresql://ops.example.com/ops"}]""";
-        given().contentType("application/json").body(body)
+        admin().contentType("application/json").body(body)
             .post("/api/v1/sources/import")
             .then().statusCode(200).body("created", equalTo(2));
-        given().get("/api/v1/sources/hr-db").then().statusCode(200)
+        admin().get("/api/v1/sources/hr-db").then().statusCode(200)
             .body("settings.username", equalTo("ro"))
             .body("settings.schemas", equalTo("people"));
     }
 
     @Test
     void rejectsAFileWithoutTheRequiredColumns() {
-        given().contentType("text/csv").body("host,port\nx,5432\n")
+        admin().contentType("text/csv").body("host,port\nx,5432\n")
             .post("/api/v1/sources/import")
             .then().statusCode(400).body("error", containsString("'name'"));
     }
