@@ -41,6 +41,47 @@ float64, decimal, text, binary, date, time, timestamp, timestamp_tz) and the Arr
 `JdbcColumn` maps them to, so the profiler treats every source alike. Timestamps are
 microseconds. Types with no Arrow equivalent are read as text rather than dropped.
 
+## Files and object storage
+
+Two connectors share `io.kilnmark.kiln.plugins.files`: `files` (a folder the server can read:
+`path`, `include` glob, `recursive`) and `s3` (`endpoint`, `region`, `bucket`, `prefix`,
+`access_key_id`, `path_style`; the secret is the secret access key). Libraries and the reasons
+for them are in [ADR 0015](../adr/0015-file-formats.md).
+
+- **Assets.** Every file is an asset. Its path is the path within the folder (with `/`) or the
+  object key; its container is the folder, or the bucket and folder. CSV, TSV, JSON, JSON lines
+  (`.jsonl`, `.ndjson`) and Parquet have kind `file` and are read; anything else has kind
+  `document` and `readable=false`, with `size` and `modified` in its hints. Files are never
+  `bounded`: the reader streams them. A file that cannot be catalogued (a corrupt Parquet file,
+  say) is recorded as not readable with the reason as its description; it does not stop the scan.
+- **Sampling.** The catalogue reads only the first 1 MiB of a text file (a ranged GET on S3) and
+  infers types from its first 1,000 rows; for Parquet it reads only the footer.
+- **CSV.** The first row is the header (blank names become `column_N`, repeats get `_2`). The
+  delimiter (`,` `;` tab `|`) is the one that gives the header the most fields and keeps the same
+  count in the rows below; the quote is `"` unless fields only start with `'`. UTF-8, with a
+  UTF-8 or UTF-16 byte-order mark skipped. An empty unquoted field is null; `""` is an empty string.
+- **Type inference** (CSV fields and JSON values): a column gets a type only if every sampled
+  value fits it, tried in order boolean (`true/false/t/f/yes/no`), int64 (no leading zeros, so
+  phone numbers and codes like `007` stay text), decimal(38, largest scale seen), float64
+  (scientific notation, or more than 18 decimal places), date (`yyyy-mm-dd`), time, timestamp
+  (ISO 8601, `T` or space) and timestamp_tz (every value has an offset: `Z`, `+01`, `+0100`,
+  `+01:00`); otherwise text. JSON strings only become dates and times: numbers in quotes stay text.
+- **Values that do not parse.** The reader never fails a file because a later value does not fit
+  its column's type: the value is read as null and counted, and `ROW_COUNT` carries the count as
+  `unparsed`. Decimals with more places than the column's scale are rounded half-even; ones too
+  large for it are unparsed. A timestamp_tz value without an offset is taken as UTC. JSON lines
+  that are not valid JSON are skipped and counted as `skipped`; a syntax error in a `.json`
+  document fails the read, naming the line.
+- **JSON.** Each object's own fields are columns, in the order first seen in the sample; nested
+  objects and arrays are kept as JSON text. Fields that first appear after the sample are not read.
+- **Parquet** keeps its own types: 8- and 16-bit integers are int16, unsigned ones are widened,
+  UTC-adjusted timestamps (and legacy INT96) are timestamp_tz, decimals up to 38 digits are
+  decimal, strings, enums, JSON and UUIDs are text, and nested groups are read as text.
+- **Safety.** The folder connector refuses paths with `..`, absolute paths and links that resolve
+  outside the folder, both when listing and when reading; hidden files and folders are skipped.
+- **Changed files.** If a CSV header no longer matches the catalogue, the reader infers the
+  columns again rather than misreading them.
+
 ## Registering it
 
 List the class in `kiln-plugins/src/main/resources/META-INF/services/io.kilnmark.kiln.connect.Connector`.

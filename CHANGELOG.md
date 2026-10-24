@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **Files and object storage:** two new kinds of source. `files` scans a folder the server can
+  read; `s3` scans a bucket on AWS or any S3-compatible store (VersityGW, MinIO, Ceph). CSV, TSV,
+  JSON, JSON lines and Parquet files are catalogued with their fields and profiled like tables;
+  every other file is recorded as a document (size and time) without being read.
+- CSV: delimiter, quote and byte-order mark found automatically; column types (integer, decimal,
+  boolean, date, time, timestamp) inferred from the first 1,000 rows. A value that does not parse
+  later in the file is read as null and counted (`unparsed`), never a failed scan.
+- Objects are streamed: a catalogue reads only the first megabyte of text files and the footer of
+  Parquet files, and a sampled read stops the transfer when it has enough rows.
+- The folder connector never reads outside its folder: `..`, absolute paths and links that lead out
+  are refused.
+- Parquet is read without Hadoop, through Hardwood; S3 through the AWS SDK's S3 module only
+  (ADR 0015). 18.4 MB of jars added.
+
 ## 0.0.2 (24 October 2026)
 
 The first working slice: point Kilnmark at PostgreSQL databases, scan them, and search what it

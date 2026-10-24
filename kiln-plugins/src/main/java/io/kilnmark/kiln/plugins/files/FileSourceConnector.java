@@ -39,7 +39,10 @@ public abstract class FileSourceConnector implements Connector {
             }
             return out;
         } catch (IOException e) {
-            throw new ConnectorException("Cannot list the files of " + source.name() + ": " + e.getMessage(), e);
+            throw new ConnectorException(source.name() + ": " + e.getMessage(), e);
+        } catch (RuntimeException e) {
+            throw new ConnectorException(source.name() + ": cannot list its files (" + e.getMessage()
+                + "): check the source's settings", e);
         }
     }
 
