@@ -1,0 +1,23 @@
+# All build output
+/dist/
+.gradle/
+build/
+
+# UI dependencies
+node_modules/
+
+# Python
+__pycache__/
+.venv/
+*.pyc
+
+# IDEs and OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local settings and secrets
+.env
+*.local

@@ -1,0 +1,9 @@
+Copyright (c) 2026 James O'Reilly. All rights reserved.
+
+This software and its documentation are proprietary and confidential.
+No licence is granted to use, copy, modify or distribute them without
+written permission from the copyright holder.
+
+This notice is a placeholder until the licence model is decided
+(proprietary, open core or source-available); see docs/adr/0008-licence.md.
+Third-party components keep their own licences; see NOTICE.

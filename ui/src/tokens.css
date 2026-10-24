@@ -1,0 +1,67 @@
+/* Design tokens from the mockups (docs/design/mockups.md). Contrast checked to WCAG 2.2 AA. */
+:root {
+  --km-ink: #15171c;
+  --km-muted: #5a6170;
+  --km-border: #e2e5ea;
+  --km-border-control: #767d89;
+  --km-ground: #f5f6f8;
+  --km-surface: #ffffff;
+  --km-accent: #c2410c;
+  --km-link: #1d4ed8;
+  --km-good: #0f766e;
+  --km-warn: #b45309;
+  --km-bad: #b91c1c;
+  --km-font: Inter, system-ui, sans-serif;
+  --km-mono: "JetBrains Mono", ui-monospace, monospace;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --km-ink: #e8eaee;
+    --km-muted: #a3a9b3;
+    --km-border: #2a2d35;
+    --km-border-control: #8c929d;
+    --km-ground: #0f1115;
+    --km-surface: #15171c;
+    --km-link: #9db8ff;
+  }
+}
+
+body {
+  margin: 0;
+  font-family: var(--km-font);
+  color: var(--km-ink);
+  background: var(--km-ground);
+}
+
+a {
+  color: var(--km-link);
+}
+
+:focus-visible {
+  outline: 3px solid var(--km-link);
+  outline-offset: 2px;
+}
+
+.skip {
+  position: absolute;
+  left: 8px;
+  top: -60px;
+  padding: 10px 14px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.skip:focus {
+  top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

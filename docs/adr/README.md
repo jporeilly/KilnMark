@@ -1,0 +1,17 @@
+# Decision records
+
+One file per decision that is hard to reverse. Each says what was decided, why, and what it costs.
+Add a new record rather than editing an accepted one; mark the old one superseded.
+
+| # | Decision | Status |
+| --- | --- | --- |
+| [0001](0001-standalone-product.md) | Standalone product, built clean-room | Accepted |
+| [0002](0002-linux-on-prem-one-image.md) | Linux servers, on-prem first, one image with roles | Accepted |
+| [0003](0003-postgresql-age-pgvector.md) | PostgreSQL with Apache AGE and pgvector as the only store | Accepted |
+| [0004](0004-java-quarkus-arrow.md) | Java 21, Quarkus and Apache Arrow | Accepted |
+| [0005](0005-step-plugin-interface.md) | Step plugin interface stays provisional until sprint 3 | Accepted |
+| [0006](0006-kettle-10-2-no-hop.md) | Clean engine, selective Kettle 10.2 code, no Apache Hop | Accepted |
+| [0007](0007-dependency-policy.md) | Libraries yes, platforms no | Accepted |
+| [0008](0008-licence.md) | Licence model | Open |
+| [0009](0009-accessibility.md) | WCAG 2.2 AA | Accepted |
+| [0010](0010-repository-layout.md) | Docs in /docs, all build output in /dist | Accepted |

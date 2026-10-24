@@ -1,0 +1,32 @@
+# Built-in pipeline: harvest a relational source, profile it, write the results to the graph.
+# Draft format; the validator arrives in sprint 2 (docs/product/plan-and-scope.md, task 12).
+pipeline: ingest-relational
+version: 1
+description: Harvest schemas, sample tables, profile columns and record everything in the graph.
+
+parameters:
+  source: { type: datasource, required: true }
+  sample_rows: { type: integer, default: 10000 }
+
+steps:
+  - name: harvest
+    type: jdbc-schema-harvester
+    settings:
+      source: ${source}
+
+  - name: sample
+    type: jdbc-sampler
+    settings:
+      source: ${source}
+      rows: ${sample_rows}
+
+  - name: profile
+    type: profiler
+
+  - name: write
+    type: graph-writer
+
+hops:
+  - harvest -> sample
+  - sample -> profile
+  - profile -> write
