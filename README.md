@@ -3,7 +3,9 @@
 On-prem trusted-data engine: it finds, profiles and scores every data asset, then acts on what it
 finds. **Kiln** is its execution engine.
 
-Status: sprint 0 (scaffolding). Version 0.0.1.
+Status: version 0.0.2, the first working slice. Register PostgreSQL sources (one at a time or
+imported from a file), scan them, search tables, views and columns, and open an asset page with
+every column's profile. No sign-in yet: lab use only.
 
 ## Quick start
 
@@ -23,9 +25,9 @@ See the [development guide](docs/development.md).
 
 | Folder | Contents |
 | --- | --- |
-| `kiln-core/` | Kiln engine: step interface, metadata side-channel, runner |
+| `kiln-core/` | Kiln engine: step interface, Arrow row sets, metadata side-channel, runner |
 | `kiln-plugins/` | Built-in steps: connectors, profiling, discovery |
-| `graph/` | Metadata graph: URNs, schema migrations |
+| `graph/` | Metadata store: URNs, schema migrations, the GraphStore interface |
 | `server/` | The one server image (roles: api, scheduler, worker) |
 | `ui/` | Web UI: React and TypeScript |
 | `sidecar-python/` | AI sidecar (from v0.4) |

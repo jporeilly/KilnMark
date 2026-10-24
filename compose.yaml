@@ -28,6 +28,10 @@ services:
       QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/kilnmark
       QUARKUS_DATASOURCE_USERNAME: kilnmark
       QUARKUS_DATASOURCE_PASSWORD: ${KILNMARK_DB_PASSWORD:-kilnmark}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
+    volumes:
+      - keys:/var/lib/kilnmark     # the key for stored source passwords: back it up apart from pgdata
     depends_on:
       postgres:
         condition: service_healthy
@@ -36,3 +40,4 @@ services:
 
 volumes:
   pgdata:
+  keys:

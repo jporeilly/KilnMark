@@ -22,7 +22,8 @@ import org.apache.datasketches.kll.KllDoublesSketch;
  */
 final class ColumnStats {
 
-    static final int LG_K = 12;
+    /** 2^14 buckets: exact up to about 12,000 distinct values, about 0.8% error beyond. */
+    static final int LG_K = 14;
     static final int TOP = 5;
 
     enum Shape { NUMBER, INTEGER, TEXT, BOOLEAN, DATE, TIME, TIMESTAMP, BINARY }
@@ -127,7 +128,9 @@ final class ColumnStats {
         }
         long d = Math.min(Math.round(distinct.getEstimate()), values());
         a.put("distinct", Long.toString(d));
-        a.put("distinct_exact", Boolean.toString(!distinct.isEstimationMode()));
+        // Below a few thousand values the sketch keeps every hash, and its bounds meet the estimate.
+        a.put("distinct_exact", Boolean.toString(
+            Math.round(distinct.getLowerBound(1)) == Math.round(distinct.getUpperBound(1))));
         switch (shape) {
             case NUMBER, INTEGER -> {
                 a.put("min", number(quantiles.getMinItem()));

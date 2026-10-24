@@ -17,6 +17,9 @@ public interface GraphStore {
 
     Source addSource(NewSource source);
 
+    /** Adds every source in one transaction: all of them, or none. */
+    List<Source> addSources(List<NewSource> sources);
+
     Optional<Source> source(String name);
 
     List<Source> sources();

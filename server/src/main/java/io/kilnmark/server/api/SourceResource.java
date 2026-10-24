@@ -2,7 +2,6 @@ package io.kilnmark.server.api;
 
 import java.net.URI;
 import java.util.List;
-import java.util.regex.Pattern;
 
 import io.kilnmark.graph.store.GraphStore;
 import io.kilnmark.graph.store.Records;
@@ -23,8 +22,6 @@ import jakarta.ws.rs.core.Response;
 @Produces(MediaType.APPLICATION_JSON)
 public class SourceResource {
 
-    private static final Pattern NAME = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");
-
     /** Body of {@code POST /api/v1/sources}. The password is encrypted before it is stored. */
     public record NewSource(String name, String kind, String url, String username, String password,
                             List<String> schemas) {
@@ -33,11 +30,13 @@ public class SourceResource {
     private final GraphStore store;
     private final SecretBox secrets;
     private final ScanService scans;
+    private final SourceImporter importer;
 
-    public SourceResource(GraphStore store, SecretBox secrets, ScanService scans) {
+    public SourceResource(GraphStore store, SecretBox secrets, ScanService scans, SourceImporter importer) {
         this.store = store;
         this.secrets = secrets;
         this.scans = scans;
+        this.importer = importer;
     }
 
     @GET
@@ -57,16 +56,10 @@ public class SourceResource {
         if (body == null) {
             throw new IllegalArgumentException("Send the source as JSON");
         }
-        if (body.name() == null || !NAME.matcher(body.name()).matches()) {
-            throw new IllegalArgumentException(
-                "name: 1 to 63 lower-case letters, digits and hyphens, starting with a letter or digit");
-        }
         String kind = body.kind() == null ? "postgresql" : body.kind();
-        if (!kind.equals("postgresql")) {
-            throw new IllegalArgumentException("kind: only postgresql is supported in this version");
-        }
-        if (body.url() == null || !body.url().startsWith("jdbc:postgresql://")) {
-            throw new IllegalArgumentException("url: a PostgreSQL JDBC URL, for example jdbc:postgresql://host:5432/db");
+        String problem = SourceRules.check(body.name(), kind, body.url());
+        if (problem != null) {
+            throw new IllegalArgumentException(problem);
         }
         if (store.source(body.name()).isPresent()) {
             throw ApiError.of(Response.Status.CONFLICT, "A source called " + body.name() + " already exists");
@@ -75,6 +68,29 @@ public class SourceResource {
         Records.Source s = store.addSource(new Records.NewSource(body.name(), kind, body.url(), body.username(), secret,
             body.schemas() == null ? List.of() : body.schemas()));
         return Response.created(URI.create("/api/v1/sources/" + s.name())).entity(view(s)).build();
+    }
+
+    /**
+     * Registers many sources from a CSV file (header row: name, url, username, password,
+     * password_ref, schemas). All or nothing; {@code dryRun=true} only checks.
+     */
+    @POST
+    @Path("import")
+    @Consumes({"text/csv", MediaType.TEXT_PLAIN})
+    public Response importCsv(String body, @QueryParam("dryRun") boolean dryRun) {
+        return report(importer.run(importer.fromCsv(body == null ? "" : body), dryRun));
+    }
+
+    /** The same as a JSON array of sources. */
+    @POST
+    @Path("import")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response importJson(String body, @QueryParam("dryRun") boolean dryRun) {
+        return report(importer.run(importer.fromJson(body == null ? "[]" : body), dryRun));
+    }
+
+    private static Response report(SourceImporter.Report r) {
+        return Response.status(r.errors() > 0 ? 422 : 200).entity(r).build();
     }
 
     @POST

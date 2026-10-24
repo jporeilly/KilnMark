@@ -26,6 +26,8 @@ Gradle is not needed: use the wrapper (`./gradlew`, or `gradlew.bat` on Windows)
 Useful endpoints in dev mode:
 
 - `GET /api/v1/info`: product, version and roles
+- `POST /api/v1/sources`, `POST /api/v1/sources/import`, `POST /api/v1/sources/{name}/scans`
+- `GET /api/v1/search?q=...`, `GET /api/v1/assets/{urn}`, `GET /api/v1/runs/{id}`
 - `GET /q/health`: health checks
 - `GET /q/openapi`: the API specification
 
@@ -42,12 +44,46 @@ podman compose up --build       # PostgreSQL (AGE, pgvector) and the Kilnmark se
 same `compose.yaml` and Containerfiles work for both
 ([ADR 0011](adr/0011-container-runtime.md)).
 
-Integration tests (from sprint 1) use Testcontainers. With Podman, point it at the Podman socket:
+Integration tests use Testcontainers, against the same PostgreSQL image Kilnmark ships. Build it
+once (and after changing it) before `./gradlew build`:
+
+```
+podman build -t kilnmark-postgres:dev -f containers/postgres/Containerfile containers/postgres
+```
+
+With Podman, point Testcontainers at the Podman socket:
 set `DOCKER_HOST` to the address `podman machine inspect` reports, and
 `TESTCONTAINERS_RYUK_DISABLED=true` if Ryuk fails to start under rootless Podman.
 
 The server applies database migrations on start. To run separate roles, set `KILNMARK_ROLES`,
 for example `KILNMARK_ROLES=worker`.
+
+## Try it on the reference lab
+
+With the stack and the lab both running:
+
+```
+podman compose -f lab/compose.yaml up -d      # the lab's PostgreSQL on :5433
+podman compose up --build                     # Kilnmark on http://localhost:8080
+```
+
+Open http://localhost:8080, go to **Sources**, and add the lab. From inside the Kilnmark container
+the host is `host.containers.internal` under Podman (`host.docker.internal` under Docker):
+
+| Field | Value |
+| --- | --- |
+| Name | `lab` |
+| JDBC URL | `jdbc:postgresql://host.containers.internal:5433/lab` |
+| User name / password | `lab` / `lab` |
+
+Press **Scan now**. A scan of the lab (six tables, 10 million rows once `lab.make_big_table` has
+run) takes about 15 seconds. Then search for `customer` and open `crm.customers`.
+
+To register many sources at once, import a CSV (header row `name, url, username, password,
+password_ref, schemas`) or a JSON array under **Sources > Import sources from a file**, or post it
+to `POST /api/v1/sources/import` (`?dryRun=true` only checks).
+
+There is no sign-in yet ([ADR 0014](adr/0014-authentication.md)): run it only on a trusted machine.
 
 ## Web UI
 

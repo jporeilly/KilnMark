@@ -1,9 +1,10 @@
 -- Kilnmark baseline: extensions and schemas only.
--- The graph model itself (DataSource, Asset, Field, Profile, Run) lands in sprint 1.
+-- Extensions go in public by name: Flyway runs with search_path = kilnmark.
+-- The catalogue tables are in V2.
 
 CREATE EXTENSION IF NOT EXISTS age;      -- Cypher graph (Apache AGE)
-CREATE EXTENSION IF NOT EXISTS vector;   -- embeddings (pgvector)
-CREATE EXTENSION IF NOT EXISTS pg_trgm;  -- fuzzy keyword search
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;   -- embeddings (pgvector)
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;  -- fuzzy keyword search
 
 CREATE SCHEMA IF NOT EXISTS kilnmark;
 

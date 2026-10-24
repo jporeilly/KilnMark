@@ -66,22 +66,35 @@ public final class JdbcGraphStore implements GraphStore {
 
     @Override
     public Source addSource(NewSource s) {
+        return tx(c -> insertSource(c, s));
+    }
+
+    @Override
+    public List<Source> addSources(List<NewSource> sources) {
         return tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO kilnmark.data_source AS s (name, kind, jdbc_url, username, secret, schemas) "
-                    + "VALUES (?, ?, ?, ?, ?, ?) RETURNING " + SOURCE_COLUMNS)) {
-                ps.setString(1, s.name());
-                ps.setString(2, s.kind());
-                ps.setString(3, s.jdbcUrl());
-                ps.setString(4, s.username());
-                ps.setBytes(5, s.secret());
-                ps.setArray(6, c.createArrayOf("text", s.schemas().toArray()));
-                try (ResultSet rs = ps.executeQuery()) {
-                    rs.next();
-                    return source(rs);
-                }
+            List<Source> out = new ArrayList<>();
+            for (NewSource s : sources) {
+                out.add(insertSource(c, s));
             }
+            return out;
         });
+    }
+
+    private static Source insertSource(Connection c, NewSource s) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+            "INSERT INTO kilnmark.data_source AS s (name, kind, jdbc_url, username, secret, schemas) "
+                + "VALUES (?, ?, ?, ?, ?, ?) RETURNING " + SOURCE_COLUMNS)) {
+            ps.setString(1, s.name());
+            ps.setString(2, s.kind());
+            ps.setString(3, s.jdbcUrl());
+            ps.setString(4, s.username());
+            ps.setBytes(5, s.secret());
+            ps.setArray(6, c.createArrayOf("text", s.schemas().toArray()));
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return source(rs);
+            }
+        }
     }
 
     @Override
@@ -330,7 +343,7 @@ public final class JdbcGraphStore implements GraphStore {
                 LEFT JOIN fields f ON f.asset_urn = a.urn
                 GROUP BY a.urn, s.name, h.asset_score
                 HAVING greatest(h.asset_score, coalesce(max(f.score) * 0.9, 0)) >= 0.4
-                ORDER BY score DESC, a.schema_name, a.name
+                ORDER BY score DESC, h.asset_score DESC, a.schema_name, a.name
                 LIMIT ?""")) {
                 ps.setString(1, q);
                 ps.setString(2, q);

@@ -25,6 +25,9 @@
     --km-ground: #0f1115;
     --km-surface: #15171c;
     --km-link: #9db8ff;
+    --km-good: #34d399;
+    --km-warn: #fbbf24;
+    --km-bad: #f87171;
   }
 }
 

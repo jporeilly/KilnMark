@@ -20,6 +20,10 @@ public interface KilnmarkConfig {
     /** Where the key lives when {@link #secretKey()} is not set; created on first start. */
     String secretKeyFile();
 
+    /** Folder holding secret files that bulk import may refer to as {@code secret:NAME}. */
+    @WithDefault("/run/secrets")
+    String secretsDir();
+
     Scan scan();
 
     interface Scan {
