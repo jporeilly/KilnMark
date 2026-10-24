@@ -7,5 +7,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends postgresql-18-age postgresql-18-pgvector \
  && rm -rf /var/lib/apt/lists/*
 
-# AGE must be preloaded.
-CMD ["postgres", "-c", "shared_preload_libraries=age"]
+# AGE must be preloaded. Set in the configuration template, so it holds whatever command the
+# container is started with (test tools often pass their own).
+RUN sed -i "s/^#\?shared_preload_libraries = .*/shared_preload_libraries = 'age'/" \
+      /usr/share/postgresql/postgresql.conf.sample \
+ && grep -q "^shared_preload_libraries = 'age'" /usr/share/postgresql/postgresql.conf.sample

@@ -4,6 +4,7 @@ arrow = "19.0.0"
 datasketches = "9.0.0"
 postgresql = "42.7.14"
 junit = "5.14.4"
+testcontainers = "2.0.5"
 
 [libraries]
 quarkus-bom = { module = "io.quarkus.platform:quarkus-bom", version.ref = "quarkus" }
@@ -13,6 +14,8 @@ arrow-memory-unsafe = { module = "org.apache.arrow:arrow-memory-unsafe", version
 arrow-jdbc = { module = "org.apache.arrow:arrow-jdbc", version.ref = "arrow" }
 datasketches = { module = "org.apache.datasketches:datasketches-java", version.ref = "datasketches" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }
+testcontainers-junit = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }

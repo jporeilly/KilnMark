@@ -4,8 +4,10 @@ package io.kilnmark.kiln;
  * One step in a Kiln pipeline: a source, transform, profiler, classifier or sink.
  *
  * <p>Each step runs on its own worker. The runner calls {@link #init} once, then
- * {@link #process} until it returns {@code false}, then {@link #close}. Steps
- * report schema, row counts and field lineage through
+ * {@link #process} until it returns {@code false}, then {@link #close}. A source puts one
+ * Arrow batch on {@link StepContext#output()} per call; a step with an input takes one batch
+ * from {@link StepContext#input()} per call and returns {@code false} when it gets {@code null}.
+ * Steps report schema, row counts, profiles and field lineage through
  * {@link StepContext#metadata()} as they run, so the engine writes the metadata
  * graph without a separate scan.
  *

@@ -1,0 +1,209 @@
+package io.kilnmark.kiln.plugins.profile;
+
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import org.apache.datasketches.frequencies.ErrorType;
+import org.apache.datasketches.frequencies.FrequentItemsSketch;
+import org.apache.datasketches.frequencies.FrequentLongsSketch;
+import org.apache.datasketches.hll.HllSketch;
+import org.apache.datasketches.hll.HllUnion;
+import org.apache.datasketches.hll.TgtHllType;
+import org.apache.datasketches.kll.KllDoublesSketch;
+
+/**
+ * One column's profile from mergeable sketches: distinct count (HyperLogLog), quantiles (KLL) and
+ * frequent values, plus exact counts, nulls, lengths and sums. Its size stays a few kilobytes
+ * whatever the row count, and profiles of separate partitions merge into one.
+ */
+final class ColumnStats {
+
+    static final int LG_K = 12;
+    static final int TOP = 5;
+
+    enum Shape { NUMBER, INTEGER, TEXT, BOOLEAN, DATE, TIME, TIMESTAMP, BINARY }
+
+    final String field;
+    final Shape shape;
+    long rows;
+    long nulls;
+    long trues;
+    double sum;
+    int minLength = Integer.MAX_VALUE;
+    int maxLength;
+    private HllSketch distinct = new HllSketch(LG_K, TgtHllType.HLL_8);
+    private final KllDoublesSketch quantiles = KllDoublesSketch.newHeapInstance(200);
+    private final FrequentItemsSketch<String> topText = new FrequentItemsSketch<>(64);
+    private final FrequentLongsSketch topLongs = new FrequentLongsSketch(64);
+
+    ColumnStats(String field, Shape shape) {
+        this.field = field;
+        this.shape = shape;
+    }
+
+    void addNull() {
+        rows++;
+        nulls++;
+    }
+
+    void addLong(long v) {
+        rows++;
+        distinct.update(v);
+        quantiles.update(v);
+        sum += v;
+        if (shape == Shape.INTEGER) {
+            topLongs.update(v);
+        }
+    }
+
+    void addDouble(double v) {
+        rows++;
+        distinct.update(v);
+        quantiles.update(v);
+        sum += v;
+    }
+
+    void addBoolean(boolean v) {
+        rows++;
+        distinct.update(v ? 1L : 0L);
+        if (v) {
+            trues++;
+        }
+    }
+
+    void addText(byte[] utf8) {
+        rows++;
+        distinct.update(utf8);
+        String s = new String(utf8, StandardCharsets.UTF_8);
+        int length = s.codePointCount(0, s.length());
+        minLength = Math.min(minLength, length);
+        maxLength = Math.max(maxLength, length);
+        topText.update(s);
+    }
+
+    void addBinary(byte[] bytes) {
+        rows++;
+        distinct.update(bytes);
+        minLength = Math.min(minLength, bytes.length);
+        maxLength = Math.max(maxLength, bytes.length);
+    }
+
+    void merge(ColumnStats other) {
+        rows += other.rows;
+        nulls += other.nulls;
+        trues += other.trues;
+        sum += other.sum;
+        minLength = Math.min(minLength, other.minLength);
+        maxLength = Math.max(maxLength, other.maxLength);
+        HllUnion union = new HllUnion(LG_K);
+        union.update(distinct);
+        union.update(other.distinct);
+        distinct = union.getResult(TgtHllType.HLL_8);
+        if (!other.quantiles.isEmpty()) {
+            quantiles.merge(other.quantiles);
+        }
+        topText.merge(other.topText);
+        topLongs.merge(other.topLongs);
+    }
+
+    long values() {
+        return rows - nulls;
+    }
+
+    /** The profile as the attributes of a PROFILE event. Values are text; lists are JSON. */
+    Map<String, String> attributes() {
+        Map<String, String> a = new LinkedHashMap<>();
+        a.put("field", field);
+        a.put("shape", shape.name().toLowerCase(java.util.Locale.ROOT));
+        a.put("rows", Long.toString(rows));
+        a.put("nulls", Long.toString(nulls));
+        if (values() == 0) {
+            a.put("distinct", "0");
+            return a;
+        }
+        long d = Math.min(Math.round(distinct.getEstimate()), values());
+        a.put("distinct", Long.toString(d));
+        a.put("distinct_exact", Boolean.toString(!distinct.isEstimationMode()));
+        switch (shape) {
+            case NUMBER, INTEGER -> {
+                a.put("min", number(quantiles.getMinItem()));
+                a.put("p25", number(quantiles.getQuantile(0.25)));
+                a.put("median", number(quantiles.getQuantile(0.5)));
+                a.put("p75", number(quantiles.getQuantile(0.75)));
+                a.put("max", number(quantiles.getMaxItem()));
+                a.put("mean", number(sum / values()));
+                if (shape == Shape.INTEGER) {
+                    a.put("top", topLongs());
+                }
+            }
+            case DATE, TIME, TIMESTAMP -> {
+                a.put("min", temporal(quantiles.getMinItem()));
+                a.put("median", temporal(quantiles.getQuantile(0.5)));
+                a.put("max", temporal(quantiles.getMaxItem()));
+            }
+            case TEXT -> {
+                a.put("min_length", Integer.toString(minLength));
+                a.put("max_length", Integer.toString(maxLength));
+                a.put("top", topText());
+            }
+            case BINARY -> {
+                a.put("min_length", Integer.toString(minLength));
+                a.put("max_length", Integer.toString(maxLength));
+            }
+            case BOOLEAN -> a.put("true", Long.toString(trues));
+        }
+        return a;
+    }
+
+    private String topText() {
+        StringBuilder b = new StringBuilder("[");
+        int n = 0;
+        for (FrequentItemsSketch.Row<String> r : topText.getFrequentItems(ErrorType.NO_FALSE_POSITIVES)) {
+            if (n == TOP || !repeated(r.getEstimate())) {
+                break;
+            }
+            b.append(n++ == 0 ? "" : ",").append("{\"value\":").append(Json.string(r.getItem()))
+                .append(",\"count\":").append(r.getEstimate()).append('}');
+        }
+        return b.append(']').toString();
+    }
+
+    private String topLongs() {
+        StringBuilder b = new StringBuilder("[");
+        int n = 0;
+        for (FrequentLongsSketch.Row r : topLongs.getFrequentItems(ErrorType.NO_FALSE_POSITIVES)) {
+            if (n == TOP || !repeated(r.getEstimate())) {
+                break;
+            }
+            b.append(n++ == 0 ? "" : ",").append("{\"value\":").append(Json.string(Long.toString(r.getItem())))
+                .append(",\"count\":").append(r.getEstimate()).append('}');
+        }
+        return b.append(']').toString();
+    }
+
+    /** A value is worth listing only if it appears in at least 1% of rows and more than once. */
+    private boolean repeated(long count) {
+        return count > 1 && count * 100 >= values();
+    }
+
+    private static String number(double v) {
+        if (v == Math.rint(v) && Math.abs(v) < 1e15) {
+            return Long.toString((long) v);
+        }
+        return Double.toString(Math.round(v * 1e6) / 1e6);
+    }
+
+    private String temporal(double v) {
+        long n = (long) v;
+        return switch (shape) {
+            case DATE -> LocalDate.ofEpochDay(n).toString();
+            case TIME -> LocalTime.ofNanoOfDay(n * 1_000).toString();
+            default -> Instant.ofEpochSecond(Math.floorDiv(n, 1_000_000), Math.floorMod(n, 1_000_000) * 1_000L)
+                .toString();
+        };
+    }
+}

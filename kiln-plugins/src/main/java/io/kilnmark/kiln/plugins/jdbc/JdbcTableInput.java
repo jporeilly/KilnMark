@@ -1,0 +1,139 @@
+package io.kilnmark.kiln.plugins.jdbc;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.Schema;
+
+import io.kilnmark.kiln.MetadataEvent;
+import io.kilnmark.kiln.Step;
+import io.kilnmark.kiln.StepContext;
+import io.kilnmark.kiln.StepException;
+
+/**
+ * Reads a database table into Arrow batches.
+ *
+ * <p>Settings: {@code url}, {@code user}, {@code password}, {@code schema}, {@code table},
+ * {@code asset-urn} (for the row count it reports), {@code batch-size} (default 8192) and
+ * {@code row-limit} (default 0, every row). When it finishes it reports the rows it read as a
+ * {@code ROW_COUNT} event, marked complete unless a row limit cut the read short.
+ */
+public final class JdbcTableInput implements Step {
+
+    public static final String TYPE = "jdbc-table-input";
+
+    private Connection connection;
+    private Statement statement;
+    private ResultSet rows;
+    private List<JdbcColumn> columns;
+    private Schema schema;
+    private int batchSize;
+    private long rowLimit;
+    private long read;
+    private boolean exhausted;
+    private String assetUrn;
+
+    @Override
+    public String type() {
+        return TYPE;
+    }
+
+    @Override
+    public void init(StepContext context) throws StepException {
+        batchSize = Integer.parseInt(context.setting("batch-size", "8192"));
+        rowLimit = Long.parseLong(context.setting("row-limit", "0"));
+        assetUrn = context.setting("asset-urn");
+        String sql = "SELECT * FROM " + quote(context.setting("schema")) + "." + quote(context.setting("table"))
+            + (rowLimit > 0 ? " LIMIT " + rowLimit : "");
+        try {
+            connection = DriverManager.getConnection(context.setting("url"), context.setting("user", null),
+                context.settings().get("password"));
+            connection.setReadOnly(true);
+            connection.setAutoCommit(false); // PostgreSQL streams with a cursor only inside a transaction
+            statement = connection.createStatement();
+            statement.setFetchSize(batchSize);
+            rows = statement.executeQuery(sql);
+            ResultSetMetaData md = rows.getMetaData();
+            columns = new ArrayList<>(md.getColumnCount());
+            List<Field> fields = new ArrayList<>(md.getColumnCount());
+            for (int i = 1; i <= md.getColumnCount(); i++) {
+                JdbcColumn c = JdbcColumn.of(md, i);
+                columns.add(c);
+                fields.add(c.field());
+            }
+            schema = new Schema(fields);
+        } catch (SQLException e) {
+            throw new StepException("Cannot read " + context.setting("schema") + "." + context.setting("table")
+                + ": " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public boolean process(StepContext context) throws StepException {
+        VectorSchemaRoot batch = VectorSchemaRoot.create(schema, context.allocator());
+        try {
+            for (FieldVector v : batch.getFieldVectors()) {
+                v.setInitialCapacity(batchSize);
+            }
+            batch.allocateNew();
+            int n = 0;
+            while (n < batchSize && rows.next()) {
+                for (int c = 0; c < columns.size(); c++) {
+                    columns.get(c).copy(rows, c + 1, batch.getVector(c), n);
+                }
+                n++;
+            }
+            exhausted = n < batchSize;
+            batch.setRowCount(n);
+            read += n;
+        } catch (SQLException | RuntimeException e) {
+            batch.close();
+            throw new StepException("Reading row " + (read + 1) + " failed: " + e.getMessage(), e);
+        }
+        try {
+            if (batch.getRowCount() > 0 || read == 0) {
+                context.output().put(batch); // an empty table still sends its schema once
+            } else {
+                batch.close();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new StepException("Interrupted", e);
+        }
+        if (exhausted) {
+            boolean complete = rowLimit <= 0 || read < rowLimit;
+            context.metadata().emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.ROW_COUNT,
+                Map.of("rows", Long.toString(read), "complete", Boolean.toString(complete)), Instant.now()));
+        }
+        return !exhausted;
+    }
+
+    @Override
+    public void close() {
+        try {
+            if (rows != null) rows.close();
+            if (statement != null) statement.close();
+            if (connection != null) {
+                connection.rollback();
+                connection.close();
+            }
+        } catch (SQLException e) {
+            // closing a read-only connection; nothing to keep
+        }
+    }
+
+    static String quote(String identifier) {
+        return "\"" + identifier.replace("\"", "\"\"") + "\"";
+    }
+}
