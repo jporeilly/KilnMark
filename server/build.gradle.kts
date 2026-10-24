@@ -33,6 +33,8 @@ dependencies {
     "implementation"(project(":kiln-core"))
     "implementation"(project(":kiln-plugins"))
     "implementation"(project(":graph"))
+    // POI (documents, ADR 0017) logs through the Log4j API: send it to the server's own log.
+    "runtimeOnly"("org.jboss.logmanager:log4j2-jboss-logmanager")
 
     // AI runtime (ADR 0016): models are chosen at run time, so plain LangChain4j provider modules,
     // not the Quarkus extension. OpenAI's module also serves llama-server, vLLM, Ollama and Azure

@@ -5,3 +5,7 @@
 *.ps1 text eol=crlf
 *.jar binary
 *.png binary
+# Lab and test documents are kept byte for byte (mail uses CRLF line ends)
+*.eml binary
+*.msg binary
+*.doc binary

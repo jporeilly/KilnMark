@@ -187,6 +187,11 @@ public final class LocalFileStore implements FileStore {
     }
 
     @Override
+    public Path localPath(String path) throws IOException {
+        return resolve(path);
+    }
+
+    @Override
     public byte[] head(String path, int bytes) throws IOException {
         try (InputStream in = open(path)) {
             return in.readNBytes(bytes);

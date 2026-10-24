@@ -572,3 +572,87 @@ export const aiApi = {
       body: JSON.stringify({ localAssistant }),
     }),
 };
+
+// ---- Documents (ADR 0017): profiles, parts, reading and finding text. Text is always plain text.
+
+export type Highlight = { start: number; length: number };
+export type Snippet = { text: string; highlights: Highlight[] };
+
+export type PageLabel = { number: number; label: string | null };
+
+export type MailHeaders = {
+  from: string | null;
+  to: string | null;
+  cc: string | null;
+  subject: string | null;
+  date: string | null;
+};
+
+export type DocumentProfile = {
+  readable: boolean;
+  problem: string | null;
+  format: string | null;
+  contentType: string | null;
+  size: number | null;
+  pages: number | null;
+  words: number | null;
+  characters: number | null;
+  language: string | null;
+  title: string | null;
+  author: string | null;
+  created: string | null;
+  modified: string | null;
+  owner: string | null;
+  tags: Record<string, string>;
+  mail: MailHeaders | null;
+  notes: string[];
+  truncated: boolean;
+  textKept: boolean;
+  chunks: number;
+  pageList: PageLabel[];
+  readAt: string;
+};
+
+/** A link to an asset inside another, or to the one it sits in. */
+export type AssetLink = {
+  urn: string;
+  kind: string;
+  name: string;
+  readable: boolean;
+  description: string | null;
+  removed: boolean;
+};
+
+/** The parts of an asset response that only documents, sheets and attachments have. */
+export type DocumentAsset = Asset & {
+  document?: DocumentProfile | null;
+  parent?: AssetLink | null;
+  parts?: AssetLink[];
+};
+
+export type SearchHitWithSnippet = SearchHit & { snippet?: Snippet | null };
+
+export type DocumentPage = {
+  urn: string;
+  page: number;
+  pageCount: number;
+  pageKind: "page" | "slide" | "sheet" | "part";
+  pages: PageLabel[];
+  text: string;
+  truncated: boolean;
+  extractedNow: boolean;
+};
+
+export type FindResult = {
+  query: string;
+  total: number;
+  pages: { number: number; label: string | null; count: number; snippet: Snippet }[];
+};
+
+const docQuery = (urn: string) => `urn=${encodeURIComponent(urn)}`;
+
+export const documentsApi = {
+  text: (urn: string, page: number) => call<DocumentPage>(`/api/v1/documents/text?${docQuery(urn)}&page=${page}`),
+  find: (urn: string, q: string) =>
+    call<FindResult>(`/api/v1/documents/find?${docQuery(urn)}&q=${encodeURIComponent(q)}`),
+};

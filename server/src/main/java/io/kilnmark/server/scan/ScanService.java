@@ -59,6 +59,10 @@ public class ScanService {
     private final JobQueue jobs;
     private final RelationshipService relationships;
 
+    /** Reads documents' text (ADR 0017); injected here so the constructor stays as other streams know it. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.documents.DocumentScan documents;
+
     public ScanService(GraphStore store, SecretBox secrets, KilnmarkConfig config, ObjectMapper json,
                        Connectors connectors, JobQueue jobs, RelationshipService relationships) {
         this.store = store;
@@ -167,8 +171,17 @@ public class ScanService {
             // Containers and include/exclude patterns, applied to every connector's catalogue alike;
             // relationships are kept only between assets that remain.
             CatalogInfo found = connector.catalogWithRelationships(config);
-            List<AssetInfo> assets = io.kilnmark.kiln.connect.AssetFilter.of(connector, config)
-                .apply(connector, config, found.assets());
+            // Assets inside others (a workbook's sheets) follow their parent: patterns match the
+            // parent's path, so a sheet is kept exactly when its workbook is.
+            List<AssetInfo> top = found.assets().stream().filter(a -> a.hints().get("parent") == null).toList();
+            List<AssetInfo> keptTop = io.kilnmark.kiln.connect.AssetFilter.of(connector, config)
+                .apply(connector, config, top);
+            java.util.Set<String> parents = new java.util.HashSet<>();
+            keptTop.forEach(a -> parents.add(a.path()));
+            List<AssetInfo> assets = found.assets().stream().filter(a -> {
+                String parent = a.hints().get("parent");
+                return parent == null ? keptTop.contains(a) : parents.contains(parent);
+            }).toList();
             java.util.Set<String> kept = new java.util.HashSet<>();
             assets.forEach(a -> kept.add(a.path()));
             CatalogInfo catalog = new CatalogInfo(assets, found.relationships().stream()
@@ -181,6 +194,7 @@ public class ScanService {
                 }
                 String urn = new Urn(source.name(), a.path()).toString();
                 store.saveAsset(source.id(), runId, asset(urn, a), fields(a));
+                documents.recorded(source.name(), urn, a); // documents (ADR 0017): a sheet's workbook
                 seen.incrementAndGet();
                 if (!a.readable()) {
                     continue; // recorded, not read: a document, for example
@@ -192,7 +206,9 @@ public class ScanService {
                 }
                 work.add(Thread.ofVirtual().name("scan-" + runId + "-" + a.path()).start(() -> {
                     try {
-                        RunResult r = profile(connector, config, a, urn, runId, stop);
+                        RunResult r = documents.handles(a)
+                            ? documents.read(connector, config, a, urn, source.id(), runId, stop)
+                            : profile(connector, config, a, urn, runId, stop);
                         rows.addAndGet(r.steps().get(0).rowsOut());
                         if (!r.succeeded()) {
                             failed.incrementAndGet();

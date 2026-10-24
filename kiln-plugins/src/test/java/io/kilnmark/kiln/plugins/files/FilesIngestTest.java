@@ -92,7 +92,7 @@ class FilesIngestTest {
 
         AssetInfo txt = assets.get("letters/complaint.txt");
         assertEquals("document", txt.kind());
-        assertFalse(txt.readable());
+        assertTrue(txt.readable(), "its text is read (DocumentFilesTest)");
         assertTrue(txt.fields().isEmpty());
         assertEquals(Long.toString(Files.size(share.resolve("letters/complaint.txt"))), txt.hints().get("size"));
         assertTrue(txt.hints().containsKey("modified"));
@@ -292,9 +292,21 @@ class FilesIngestTest {
         SourceConfig lab = new SourceConfig("lab", "files", Map.of("path", TestFiles.lab().toString()), null);
         Map<String, AssetInfo> found = files.catalog(lab).stream()
             .collect(Collectors.toMap(AssetInfo::path, Function.identity()));
-        assertEquals(List.of("bucket/exports/customers_export_2025.csv", "bucket/finance/invoices_2024_2025.parquet",
-            "bucket/raw/transactions/transactions_2025-q1.ndjson", "share/complaints/2025-03-complaint-ref-4471.txt",
-            "share/marketing/2024-q4-campaign-plan.md"), found.keySet().stream().sorted().toList());
+        List<String> docs = List.of("2025-04-delivery-schedule.eml", "depot-budget-2025.xlsx",
+            "depot-budget-2025.xlsx#Expenses", "depot-budget-2025.xlsx#Headcount", "depot-budget-2025.xlsx#Notes",
+            "onboarding-guide.docx", "remote-working-policy.pdf", "team-handbook.md");
+        List<String> listed = new java.util.ArrayList<>(List.of("bucket/exports/customers_export_2025.csv",
+            "bucket/finance/invoices_2024_2025.parquet", "bucket/raw/transactions/transactions_2025-q1.ndjson",
+            "share/complaints/2025-03-complaint-ref-4471.txt", "share/marketing/2024-q4-campaign-plan.md"));
+        docs.forEach(d -> listed.add("bucket/documents/" + d));
+        docs.forEach(d -> listed.add("share/documents/" + d));
+        assertEquals(listed.stream().sorted().toList(), found.keySet().stream().sorted().toList());
+        assertEquals(Map.of("month", "text", "depot", "text", "category", "text", "amount", "float64",
+            "approved_on", "date", "approved", "boolean"),
+            TestFiles.kinds(found.get("share/documents/depot-budget-2025.xlsx#Expenses")));
+        assertEquals(Map.of("depot", "text", "team", "text", "staff", "int64", "contractors", "int64"),
+            TestFiles.kinds(found.get("share/documents/depot-budget-2025.xlsx#Headcount")));
+        assertFalse(found.get("share/documents/depot-budget-2025.xlsx#Notes").readable());
 
         AssetInfo csv = found.get("bucket/exports/customers_export_2025.csv");
         assertEquals(Map.of("customer_id", "int64", "first_name", "text", "last_name", "text", "email", "text",

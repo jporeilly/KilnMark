@@ -29,6 +29,15 @@ public class ConnectorsProducer {
         s.put("kilnmark.files.parquet-chunk-mb", Integer.toString(config.files().parquetChunkMb()));
         config.files().nativeDir().ifPresent(d -> s.put("kilnmark.files.native-dir", d));
         s.put("kilnmark.s3.allow-default-credentials", Boolean.toString(config.s3().allowDefaultCredentials()));
+        KilnmarkConfig.Documents d = config.documents();
+        s.put("kilnmark.documents.max-file-mb", Integer.toString(d.maxFileMb()));
+        s.put("kilnmark.documents.max-legacy-file-mb", Integer.toString(d.maxLegacyFileMb()));
+        s.put("kilnmark.documents.max-characters", Integer.toString(d.maxCharacters()));
+        s.put("kilnmark.documents.timeout-seconds", Integer.toString(d.timeoutSeconds()));
+        s.put("kilnmark.documents.max-depth", Integer.toString(d.maxDepth()));
+        s.put("kilnmark.documents.threads", Integer.toString(d.threads()));
+        s.put("kilnmark.documents.chunk-characters", Integer.toString(d.chunkCharacters()));
+        s.put("kilnmark.documents.chunk-overlap", Integer.toString(d.chunkOverlap()));
         return new ConnectorContext(s);
     }
 }

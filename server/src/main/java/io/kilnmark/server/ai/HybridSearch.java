@@ -64,9 +64,14 @@ public class HybridSearch {
         }
     }
 
-    /** One result. {@code matchedBy} holds {@code words}, {@code meaning} or both. */
+    /**
+     * One result. {@code matchedBy} holds {@code words}, {@code meaning} or both. {@code snippet} is
+     * the best passage from a document's text when its words matched there (ADR 0017), else null;
+     * the MCP tools leave it out.
+     */
     public record Hit(String urn, String source, String kind, String container, String name, String description,
-                      Long rowCount, List<String> matchedFields, double score, List<String> matchedBy) {
+                      Long rowCount, List<String> matchedFields, double score, List<String> matchedBy,
+                      io.kilnmark.server.api.Views.Snippet snippet) {
     }
 
     /** {@code mode} is {@code hybrid} when meaning was used, else {@code keyword}; {@code note} says why, or null. */
@@ -147,7 +152,7 @@ public class HybridSearch {
             List<String> matched = k != null && !k.matchedFields().isEmpty() ? k.matchedFields() : r.matchedFields();
             double score = Math.round(scores.getOrDefault(urn, 0.0) * 10000) / 10000.0;
             hits.add(new Hit(urn, r.source(), r.kind(), r.container(), r.name(), r.description(), r.rowCount(), matched,
-                score, by));
+                score, by, k == null ? null : io.kilnmark.server.api.Views.Snippet.of(k.snippet())));
             if (hits.size() >= limit) {
                 break;
             }
@@ -364,7 +369,7 @@ public class HybridSearch {
                     while (rs.next()) {
                         Row r = row(rs);
                         out.add(new Hit(rs.getString(1), r.source(), r.kind(), r.container(), r.name(), r.description(),
-                            r.rowCount(), r.matchedFields(), 0, List.of("filters")));
+                            r.rowCount(), r.matchedFields(), 0, List.of("filters"), null));
                     }
                 }
             }

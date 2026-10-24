@@ -173,6 +173,31 @@
 - Interactive API documentation at `/api/docs`, served by the server itself (works offline), from
   the OpenAPI document at `/q/openapi`. Calls made from it need an API token (Authorize button).
 
+- **Documents are read, not just listed:** the `files` and `s3` sources read the text of PDF,
+  Word, Excel, PowerPoint (current and 97-2003 formats), OpenDocument, EPUB, RTF, HTML, XML, mail
+  (`.eml`, `.msg`), plain text and Markdown files, with Apache Tika. Each document gets a profile:
+  content type, pages, words, characters, language, title, author, created and modified dates, and
+  for S3 the object's owner and tags. A mail message shows from, to, cc, date and subject, and each
+  attachment is an asset of its own. No OCR yet (ADR 0017).
+- **Excel sheets as tables:** each sheet with a header row is a table inside its workbook, read with
+  POI's streaming reader and profiled like any table, with typed columns. Other sheets (notes) are
+  recorded with the reason.
+- **Search finds words in documents,** ranked below name matches, with a highlighted snippet
+  (`snippet` in search results, text with highlight positions, never markup).
+- **Reading documents:** the asset page shows a document's profile and its text page by page (slide
+  by slide, sheet by sheet), with find; `GET /api/v1/documents/text`, `/find` and `/chunks`.
+- **Documents are untrusted input:** limits on size, characters, time (a document still being read
+  after 60 seconds is abandoned), nesting depth and zip bombs; one bad document is marked not
+  readable with the reason and the scan goes on. Settings `kilnmark.documents.*`.
+- **Sources:** setting `keep_text` (default `true`); `false` keeps only documents' properties, and
+  their text is read from the source again when someone opens it.
+- **Database:** migration V7 adds `document` (profiles), `document_chunk` (text in chunks, searched
+  through a `tsvector`) and `asset.parent_urn` (sheets and attachments inside their file), all
+  deleted with their asset. The text of documents no longer in their source is deleted on the scan
+  that notices.
+- **Lab:** synthetic documents (PDF, Word, Excel, mail, Markdown) in the share and the bucket, made
+  by `lab/make-documents.py`. 27.4 MB of jars added (ADR 0017).
+
 ## 0.0.2 (24 October 2026)
 
 The first working slice: point Kilnmark at PostgreSQL databases, scan them, and search what it

@@ -17,8 +17,10 @@ import java.util.Objects;
  * @param primaryKey  declared key fields, if any
  * @param bounded     true for things that may be expensive to read in full (views): the scan
  *                    then reads a sample
- * @param readable    false for assets recorded but not read as rows, such as documents; the scan
- *                    stores them without a reader or profile
+ * @param readable    false for assets recorded but not read, such as images or files that could
+ *                    not be inspected; the scan stores them without a reader or profile. A
+ *                    readable asset of kind {@code document} is read as text: its reader puts the
+ *                    text's chunks on its output and reports a {@code DOCUMENT} event
  * @param hints       connector-specific details the reader needs (format, size, ...)
  */
 public record AssetInfo(String path, String kind, String container, String name, String description,

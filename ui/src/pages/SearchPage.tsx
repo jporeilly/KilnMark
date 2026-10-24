@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { aiApi, formatNumber, type AskResult, type HybridHit, type QueryPlan } from "../api";
+import { aiApi, formatNumber, type AskResult, type HybridHit, type QueryPlan, type SearchHitWithSnippet } from "../api";
 import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
+import { KindIcon } from "../components/KindIcon";
+import { SnippetText } from "../components/SnippetText";
 
 const MATCHED: Record<string, string> = { words: "words", meaning: "meaning", filters: "the question's filters" };
 
@@ -65,7 +67,7 @@ export function SearchPage({ q, ask }: { q: string; ask: boolean }) {
         <p>
           {ask
             ? "Type a question in the search bar above, for example: which tables hold customer email addresses?"
-            : "Type in the search bar above: a table name, a column name, or words from a description."}
+            : "Type in the search bar above: a table or file name, a column name, or words from a description or a document."}
         </p>
       )}
       {answer && <Interpreted answer={answer} />}
@@ -90,11 +92,21 @@ export function SearchPage({ q, ask }: { q: string; ask: boolean }) {
                 </a>
               </h2>
               <p className="meta">
-                <span className="tag">{h.kind}</span> in <strong>{h.source}</strong>
+                <span className="tag">
+                  <KindIcon kind={h.kind} name={h.name} />
+                  {h.kind}
+                </span>{" "}
+                in <strong>{h.source}</strong>
                 {h.rowCount != null && <> · {formatNumber(h.rowCount)} rows</>}
                 {h.matchedBy?.length > 0 && <> · Matched by {h.matchedBy.map((m) => MATCHED[m] ?? m).join(" and ")}</>}
               </p>
               {h.description && <p>{h.description}</p>}
+              {(h as SearchHitWithSnippet).snippet && (
+                <p>
+                  <span className="visually-hidden">From its text: </span>
+                  <SnippetText snippet={(h as SearchHitWithSnippet).snippet!} />
+                </p>
+              )}
               {h.matchedFields.length > 0 && (
                 <p className="meta">
                   Matching columns:{" "}

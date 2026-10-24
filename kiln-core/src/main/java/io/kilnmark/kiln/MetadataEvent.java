@@ -15,8 +15,11 @@ import java.util.Objects;
  */
 public record MetadataEvent(String assetUrn, Kind kind, Map<String, String> attributes, Instant observedAt) {
 
-    /** The kinds of fact a step can report. */
-    public enum Kind { SCHEMA, ROW_COUNT, PROFILE, LINEAGE }
+    /**
+     * The kinds of fact a step can report. {@code DOCUMENT} is a document's profile (content type,
+     * pages, words, language, title, author, ...), reported once when its text has been read.
+     */
+    public enum Kind { SCHEMA, ROW_COUNT, PROFILE, LINEAGE, DOCUMENT }
 
     public MetadataEvent {
         Objects.requireNonNull(assetUrn, "assetUrn");

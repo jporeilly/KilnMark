@@ -10,6 +10,7 @@ import java.util.Set;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorContext;
 import io.kilnmark.kiln.connect.SourceConfig;
+import io.kilnmark.kiln.plugins.documents.DocumentRuntime;
 
 /**
  * A bucket in Amazon S3 or an S3-compatible store (VersityGW, MinIO, Ceph, ...). Settings
@@ -45,6 +46,7 @@ public final class S3Connector extends FileSourceConnector {
     @Override
     public Connector withContext(ConnectorContext context) {
         ParquetRuntime.configure(context);
+        DocumentRuntime.configure(context);
         return new S3Connector(context.flag(ALLOW_DEFAULT_CREDENTIALS, false));
     }
 
@@ -97,7 +99,7 @@ public final class S3Connector extends FileSourceConnector {
                 false),
             new Setting("path_style", "Path-style addressing", false,
                 "true for most S3-compatible storage (VersityGW, MinIO); false (the default) for AWS", false),
-            ENCODING, DELIMITER, HEADER);
+            ENCODING, DELIMITER, HEADER, KEEP_TEXT);
     }
 
     @Override
@@ -138,6 +140,7 @@ public final class S3Connector extends FileSourceConnector {
         checkBoolean(source, "path_style", problems);
         checkEncoding(source, problems);
         checkText(source, problems);
+        checkBoolean(source, "keep_text", problems);
         return problems;
     }
 

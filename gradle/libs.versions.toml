@@ -14,6 +14,8 @@ jackson = "2.21.7"
 awssdk = "2.55.16"
 # AI runtime (ADR 0016)
 langchain4j = "1.22.0"
+tika = "3.3.3"
+poi = "5.5.1"
 
 [libraries]
 quarkus-bom = { module = "io.quarkus.platform:quarkus-bom", version.ref = "quarkus" }
@@ -34,6 +36,13 @@ langchain4j-open-ai = { module = "dev.langchain4j:langchain4j-open-ai", version.
 langchain4j-anthropic = { module = "dev.langchain4j:langchain4j-anthropic", version.ref = "langchain4j" }
 langchain4j-google-ai-gemini = { module = "dev.langchain4j:langchain4j-google-ai-gemini", version.ref = "langchain4j" }
 quarkus-mcp-server-bom = { module = "io.quarkus.platform:quarkus-mcp-server-bom", version.ref = "quarkus" }
+tika-core = { module = "org.apache.tika:tika-core", version.ref = "tika" }
+tika-parser-pdf = { module = "org.apache.tika:tika-parser-pdf-module", version.ref = "tika" }
+tika-parser-microsoft = { module = "org.apache.tika:tika-parser-microsoft-module", version.ref = "tika" }
+tika-parser-mail = { module = "org.apache.tika:tika-parser-mail-module", version.ref = "tika" }
+tika-parser-miscoffice = { module = "org.apache.tika:tika-parser-miscoffice-module", version.ref = "tika" }
+poi-ooxml = { module = "org.apache.poi:poi-ooxml", version.ref = "poi" }
+poi-ooxml-lite = { module = "org.apache.poi:poi-ooxml-lite", version.ref = "poi" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 mssql-jdbc = { module = "com.microsoft.sqlserver:mssql-jdbc", version.ref = "mssql-jdbc" }
 testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }
