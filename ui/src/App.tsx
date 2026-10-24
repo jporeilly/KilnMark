@@ -1,12 +1,77 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { allows, api, ApiError, session, SIGNED_OUT, type Me } from "./api";
 import { go, href, useRoute } from "./router";
 import { HomePage } from "./pages/HomePage";
 import { SearchPage } from "./pages/SearchPage";
 import { AssetPage } from "./pages/AssetPage";
 import { SourcesPage } from "./pages/SourcesPage";
+import { SignInPage, type SignInNotice } from "./pages/SignInPage";
+import { TokensPage } from "./pages/TokensPage";
 
-/** App shell: skip link, search bar (Ctrl+K), main navigation and the current page. */
+/**
+ * Checks who is signed in, then shows either the sign-in page or the app. Signing out (the
+ * #/sign-out link) and a token the server stops accepting both return to sign-in, with a message.
+ */
 export function App() {
+  const route = useRoute();
+  const [me, setMe] = useState<Me | null>(null);
+  const [checking, setChecking] = useState(true);
+  const [notice, setNotice] = useState<SignInNotice | null>(null);
+
+  // Is there a usable token in this tab already (or is sign-in turned off on the server)?
+  useEffect(() => {
+    api
+      .me()
+      .then(setMe)
+      .catch((e) => {
+        if (!(e instanceof ApiError) || e.status !== 401) setNotice({ kind: "error", text: (e as Error).message });
+      })
+      .finally(() => setChecking(false));
+  }, []);
+
+  useEffect(() => {
+    const onSignedOut = (e: Event) => {
+      setMe(null);
+      setNotice({ kind: "error", text: (e as CustomEvent<string>).detail });
+    };
+    window.addEventListener(SIGNED_OUT, onSignedOut);
+    return () => window.removeEventListener(SIGNED_OUT, onSignedOut);
+  }, []);
+
+  useEffect(() => {
+    if (route.page === "signout" && me?.signInRequired) {
+      session.clear();
+      setMe(null);
+      setNotice({ kind: "info", text: "You have signed out." });
+    }
+  }, [route, me]);
+
+  if (checking) {
+    return (
+      <main id="main" className="signin">
+        <p role="status">Loading Kilnmark…</p>
+      </main>
+    );
+  }
+  if (!me) {
+    return (
+      <main id="main" tabIndex={-1}>
+        <SignInPage
+          notice={notice}
+          onSignedIn={(who) => {
+            setMe(who);
+            setNotice(null);
+            if (route.page === "signout") go(href.home());
+          }}
+        />
+      </main>
+    );
+  }
+  return <Shell me={me} />;
+}
+
+/** App shell: skip link, search bar (Ctrl+K), who is signed in, main navigation and the current page. */
+function Shell({ me }: { me: Me }) {
   const route = useRoute();
   const searchBox = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState(route.page === "search" ? route.q : "");
@@ -77,6 +142,13 @@ export function App() {
             </span>
             <button type="submit">Search</button>
           </form>
+          <div className="who">
+            <span>
+              {me.signInRequired ? "Signed in as " : ""}
+              <strong>{me.name}</strong> <span className="muted">({me.role})</span>
+            </span>
+            {me.signInRequired && <a href={href.signOut()}>Sign out</a>}
+          </div>
         </header>
         <nav aria-label="Main" className="sidenav">
           <ul>
@@ -90,13 +162,29 @@ export function App() {
                 Sources
               </a>
             </li>
+            {allows(me.role, "admin") && (
+              <li>
+                <a href={href.tokens()} aria-current={current("tokens")}>
+                  API tokens
+                </a>
+              </li>
+            )}
           </ul>
         </nav>
         <main id="main" tabIndex={-1}>
           {route.page === "home" && <HomePage />}
           {route.page === "search" && <SearchPage q={route.q} />}
           {route.page === "asset" && <AssetPage urn={route.urn} />}
-          {route.page === "sources" && <SourcesPage />}
+          {route.page === "sources" && <SourcesPage role={me.role} />}
+          {route.page === "tokens" &&
+            (allows(me.role, "admin") ? (
+              <TokensPage me={me} />
+            ) : (
+              <>
+                <h1 tabIndex={-1}>API tokens</h1>
+                <p>Only admins can manage API tokens. Ask an admin if you need a token.</p>
+              </>
+            ))}
         </main>
       </div>
     </>

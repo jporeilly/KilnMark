@@ -11,7 +11,9 @@ import org.apache.arrow.memory.RootAllocator;
 /**
  * Runs a pipeline: each step on its own virtual thread, joined by bounded {@link RowSet}s, inside
  * one memory limit. A failing step stops the steps before it and ends the steps after it; the run
- * reports the step where the failure started.
+ * reports the step where the failure started. If the thread calling {@link #run} is interrupted,
+ * every step is stopped and waited for before the {@link InterruptedException} is thrown, so no
+ * step outlives the call.
  */
 public final class Runner {
 
@@ -27,6 +29,11 @@ public final class Runner {
         this.rowSetCapacity = rowSetCapacity;
     }
 
+    /**
+     * Runs {@code pipeline} to the end and reports each step.
+     *
+     * @throws InterruptedException if the calling thread is interrupted; the steps have stopped by then
+     */
     public RunResult run(Pipeline pipeline, MetadataEmitter metadata) throws InterruptedException {
         Instant started = Instant.now();
         List<StepSpec> specs = pipeline.steps();
@@ -52,8 +59,14 @@ public final class Runner {
                 threads.add(Thread.ofVirtual().name("kiln-" + pipeline.name() + "-" + spec.name())
                     .start(() -> errors[index] = runStep(spec.step(), ctx)));
             }
-            for (Thread t : threads) {
-                t.join();
+            try {
+                for (Thread t : threads) {
+                    t.join();
+                }
+            } catch (InterruptedException e) {
+                stop(threads, rowSets);
+                allocators.forEach(Runner::closeQuietly);
+                throw e;
             }
             for (int i = 0; i < n; i++) {
                 BufferAllocator a = allocators.get(i);
@@ -81,6 +94,37 @@ public final class Runner {
         }
         return new RunResult(pipeline.name(), first == null ? RunResult.Status.SUCCEEDED : RunResult.Status.FAILED,
             started, Instant.now(), results, first);
+    }
+
+    /**
+     * Stops every step: cancels the row sets (a blocked put or take fails at once) and interrupts the
+     * step threads, then waits for all of them, however often this thread is interrupted meanwhile.
+     * The interrupt flag is set again on return.
+     */
+    private static void stop(List<Thread> threads, List<RowSet> rowSets) {
+        rowSets.forEach(RowSet::cancel);
+        threads.forEach(Thread::interrupt);
+        boolean interrupted = false;
+        for (Thread t : threads) {
+            while (t.isAlive()) {
+                try {
+                    t.join();
+                } catch (InterruptedException again) {
+                    interrupted = true;
+                }
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void closeQuietly(BufferAllocator a) {
+        try {
+            a.close();
+        } catch (IllegalStateException leak) {
+            // stopped mid-batch; the run is abandoned, so a leak here is not reported
+        }
     }
 
     /** Runs one step to the end; returns its own failure, or null. */

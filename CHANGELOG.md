@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Sign-in with API tokens:** every API call needs a token (`Authorization: Bearer km_...`)
+  with a role: viewer (read), steward (also start scans) or admin (also add sources and manage
+  tokens). Public without a token: `GET /api/v1/info`, `/q/health` and the API description
+  `/q/openapi`. Tokens are shown once and stored only as SHA-256 hashes; they can expire and be
+  revoked at once. The first start writes a 24-hour admin token to `admin-token` next to the
+  secret key (use it to create a permanent one), or takes one from `KILNMARK_ADMIN_TOKEN`.
+  `KILNMARK_AUTH_MODE=off` turns sign-in off for a lab, and only on a loopback address.
+- **Web UI:** a sign-in page, sign-out, and an **API tokens** page for admins (create with a
+  role and expiry, copy the new token once, revoke). Viewers no longer see controls they cannot
+  use. Pages no longer scroll sideways on phones.
+- **Job queue:** scans are queued in PostgreSQL and run by any process with the worker role, so
+  api and worker can run apart. Workers wake on `LISTEN/NOTIFY` and also poll, run
+  `kilnmark.worker.concurrency` scans at a time (default 2), never scan one source twice at
+  once (asking again returns the scan in progress), recover scans left by a worker that
+  stopped, and finish running scans before shutting down (Compose now allows 60 s for this).
+- **Database:** migration V4 adds the `api_token` and `job` tables, and marks scans left waiting
+  or running by an earlier version as failed, so they can be started again.
 - **Sources:** SQL Server (kind `sqlserver`): tables and views in user schemas,
   with `MS_Description` descriptions and primary keys; every SQL Server type read, with
   `datetimeoffset` as a UTC timestamp, `money` as an exact decimal, and geography, geometry and

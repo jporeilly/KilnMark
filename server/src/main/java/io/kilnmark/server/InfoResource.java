@@ -1,5 +1,6 @@
 package io.kilnmark.server;
 
+import jakarta.annotation.security.PermitAll;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
@@ -8,8 +9,9 @@ import java.util.Set;
 import java.util.TreeSet;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
-/** Reports what this server is and which roles it runs. */
+/** Reports what this server is and which roles it runs. Public: no token needed. */
 @Path("/api/v1/info")
+@PermitAll
 public class InfoResource {
 
     /** Response body for {@code GET /api/v1/info}. */

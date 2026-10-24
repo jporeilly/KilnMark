@@ -1,5 +1,6 @@
 package io.kilnmark.server;
 
+import java.time.Duration;
 import java.util.Optional;
 import java.util.Set;
 
@@ -24,7 +25,55 @@ public interface KilnmarkConfig {
     @WithDefault("/run/secrets")
     String secretsDir();
 
+    /**
+     * An admin API token taken from the environment ({@code KILNMARK_ADMIN_TOKEN}): {@code km_}
+     * followed by at least 43 random base64url characters. It is stored hashed on start and stops
+     * working when the variable is removed or changed.
+     */
+    Optional<String> adminToken();
+
+    Auth auth();
+
     Scan scan();
+
+    Worker worker();
+
+    /** API sign-in. */
+    interface Auth {
+        /**
+         * {@code tokens} (the default) or {@code off}. Off makes every caller an admin and is only
+         * allowed when the server listens on a loopback address. Any other value stops the server.
+         */
+        @WithDefault("tokens")
+        io.kilnmark.server.auth.AuthMode mode();
+    }
+
+    /** The worker role: how it pulls jobs from the queue. */
+    interface Worker {
+        /** Jobs (scans) one worker runs at the same time. */
+        @WithDefault("2")
+        int concurrency();
+
+        /** How often to look for jobs when no notification arrives. */
+        @WithDefault("5s")
+        Duration pollInterval();
+
+        /** How often a running job's heartbeat is refreshed. */
+        @WithDefault("10s")
+        Duration heartbeatInterval();
+
+        /** A running job whose heartbeat is older than this, and whose worker is gone, is recovered. */
+        @WithDefault("2m")
+        Duration staleAfter();
+
+        /** Times a job is tried before it is marked failed. */
+        @WithDefault("3")
+        int maxAttempts();
+
+        /** On shutdown, how long running jobs may take to finish before they are stopped and requeued. */
+        @WithDefault("30s")
+        Duration shutdownTimeout();
+    }
 
     interface Scan {
         /** Tables profiled at the same time within one scan. */

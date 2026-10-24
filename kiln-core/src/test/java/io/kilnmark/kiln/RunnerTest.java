@@ -159,6 +159,49 @@ class RunnerTest {
     }
 
     @Test
+    void interruptingTheCallerStopsEveryStepBeforeRunReturns() throws Exception {
+        java.util.concurrent.CountDownLatch flowing = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<Throwable> outcome = new java.util.concurrent.atomic.AtomicReference<>();
+        Numbers numbers = new Numbers(Integer.MAX_VALUE, -1);
+        Step endless = new Step() {
+            @Override
+            public String type() {
+                return numbers.type();
+            }
+
+            @Override
+            public void init(StepContext context) {
+            }
+
+            @Override
+            public boolean process(StepContext context) throws StepException {
+                flowing.countDown();
+                return numbers.process(context);
+            }
+
+            @Override
+            public void close() {
+                closed.set(true);
+            }
+        };
+        Thread caller = Thread.ofVirtual().start(() -> {
+            try {
+                new Runner(64L << 20, 2).run(line(endless, new Count(5, false, false)), e -> { });
+                outcome.set(new AssertionError("the run ended by itself"));
+            } catch (InterruptedException e) {
+                outcome.set(e);
+            }
+        });
+        assertTrue(flowing.await(10, java.util.concurrent.TimeUnit.SECONDS));
+        caller.interrupt();
+        caller.join(java.time.Duration.ofSeconds(10));
+        assertTrue(!caller.isAlive(), "run returned after the interrupt");
+        assertTrue(outcome.get() instanceof InterruptedException, String.valueOf(outcome.get()));
+        assertTrue(closed.get(), "the source step was stopped and closed before run returned");
+    }
+
+    @Test
     void aStepThatLeaksMemoryIsNamed() throws Exception {
         RunResult r = new Runner(64L << 20, 4).run(line(new Numbers(3, -1), new Count(0, false, true)), e -> { });
         assertEquals(RunResult.Status.FAILED, r.status());
