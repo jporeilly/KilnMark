@@ -1,8 +1,11 @@
-# Reference lab: the test estate Kilnmark discovers. Separate from the Kilnmark stack.
+# Reference lab: the test estate Kilnmark discovers. It joins Kilnmark's network, so start
+# Kilnmark first (podman compose up -d), then the lab:
 #   podman compose -f lab/compose.yaml up -d      (or: docker compose ...)
 # Sources it provides:
-#   PostgreSQL  localhost:5433  db=lab  user=lab  password=lab   (schemas crm, billing)
-#   S3          localhost:9000  access key=labadmin  secret=labadmin123  bucket=lab-raw  (path-style)
+#   From Kilnmark:      jdbc:postgresql://lab-postgres:5432/lab     S3 endpoint http://lab-s3:7070
+#   From this machine:  localhost:5433                              S3 endpoint http://localhost:9000
+#   PostgreSQL  db=lab  user=lab  password=lab   (schemas crm, billing)
+#   S3          access key=labadmin  secret=labadmin123  bucket=lab-raw  (path-style)
 #   File share  lab/files/share (read directly from disk)
 services:
   lab-postgres:
@@ -32,3 +35,9 @@ services:
       - ./files/bucket:/data/lab-raw:Z
     ports:
       - "9000:7070"
+
+# Kilnmark's network (created by the main compose.yaml), so Kilnmark reaches these services by name.
+networks:
+  default:
+    name: kilnmark
+    external: true
