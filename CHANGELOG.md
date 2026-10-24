@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- **Sign-in with API tokens:** every API call except `/api/v1/info` and `/q/health` needs a
+  token (`Authorization: Bearer km_...`) with a role: viewer (read), steward (also start scans)
+  or admin (also add sources and manage tokens). Tokens are shown once and stored only as
+  SHA-256 hashes; they can expire and be revoked at once. The first start writes an admin token
+  to `admin-token` next to the secret key, or takes one from `KILNMARK_ADMIN_TOKEN`.
+- **Web UI:** a sign-in page, sign-out, and an **API tokens** page for admins (create with a
+  role and expiry, copy the new token once, revoke). Viewers no longer see controls they cannot
+  use. Pages no longer scroll sideways on phones.
+- **Job queue:** scans are queued in PostgreSQL and run by any process with the worker role, so
+  api and worker can run apart. Workers wake on `LISTEN/NOTIFY` and also poll, run
+  `kilnmark.worker.concurrency` scans at a time (default 2), never run the same scan twice at
+  once, recover scans left by a worker that stopped, and finish running scans before shutting
+  down.
+- **Database:** migration V4 adds the `api_token` and `job` tables.
+
 ## 0.0.2 (24 October 2026)
 
 The first working slice: point Kilnmark at PostgreSQL databases, scan them, and search what it

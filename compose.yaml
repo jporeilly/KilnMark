@@ -30,6 +30,9 @@ services:
       QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/kilnmark
       QUARKUS_DATASOURCE_USERNAME: kilnmark
       QUARKUS_DATASOURCE_PASSWORD: ${KILNMARK_DB_PASSWORD:-kilnmark}
+      # Optional admin API token (km_ + 43 or more base64url characters). Unset, the first start
+      # writes one to /var/lib/kilnmark/admin-token in the keys volume.
+      KILNMARK_ADMIN_TOKEN: ${KILNMARK_ADMIN_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
     volumes:
