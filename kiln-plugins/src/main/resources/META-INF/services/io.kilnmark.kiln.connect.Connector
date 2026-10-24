@@ -1,1 +1,2 @@
 io.kilnmark.kiln.plugins.jdbc.PostgresConnector
+io.kilnmark.kiln.plugins.jdbc.SqlServerConnector

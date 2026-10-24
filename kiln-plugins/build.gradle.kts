@@ -9,8 +9,11 @@ description = "Built-in Kiln steps"
 dependencies {
     "api"(project(":kiln-core"))
     "implementation"(libs.datasketches)
+    // SQL Server's JDBC driver (MIT); loaded through DriverManager, so only needed at run time.
+    "runtimeOnly"(libs.mssql.jdbc)
 
     "testImplementation"(libs.testcontainers.postgresql)
+    "testImplementation"(libs.testcontainers.mssqlserver)
     "testImplementation"(libs.testcontainers.junit)
     "testRuntimeOnly"(libs.postgresql)
 }

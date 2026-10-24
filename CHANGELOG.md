@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Sources:** SQL Server (kind `sqlserver`): tables and views in user schemas,
+  with `MS_Description` descriptions and primary keys; every SQL Server type read, with
+  `datetimeoffset` as a UTC timestamp, `money` as an exact decimal, and geography, geometry and
+  hierarchyid as text. Reads take no shared locks by default (setting `isolation`:
+  `read-uncommitted`, `snapshot` or `read-committed`). Uses Microsoft's JDBC driver (MIT).
+- **Sources:** a JDBC URL holding a password is refused; enter it as the source's password, which
+  is encrypted.
+- **Fixed:** a schema whose name holds `_` (such as `a_b`) no longer picks up the columns of a
+  same-named table in a schema it matches as a pattern (`axb`); PostgreSQL schemas named `sys` or
+  `guest` are scanned.
+- **Fixed:** a read stopped early by a failing step now ends at once instead of reading the rest
+  of the table.
+
 ## 0.0.2 (24 October 2026)
 
 The first working slice: point Kilnmark at PostgreSQL databases, scan them, and search what it
