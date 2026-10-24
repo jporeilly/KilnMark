@@ -57,4 +57,86 @@ class DocumentRuntimeTest {
         assertTrue(DocumentRuntime.explain(new org.apache.tika.exception.EncryptedDocumentException("x"))
             .getMessage().contains("password"));
     }
+
+    @Test
+    void healthyDocumentsWaitForAReaderInsteadOfFailing() throws Exception {
+        // the review's Busy probe: 6 documents of 2 s each, 2 readers, a 3-second limit per read
+        DocumentRuntime.configure(new ConnectorContext(Map.of(DocumentLimits.THREADS, "2",
+            DocumentLimits.TIMEOUT_SECONDS, "3")));
+        java.util.concurrent.ExecutorService ex = java.util.concurrent.Executors.newFixedThreadPool(6);
+        try {
+            java.util.List<java.util.concurrent.Future<String>> all = new java.util.ArrayList<>();
+            for (int i = 0; i < 6; i++) {
+                all.add(ex.submit(() -> DocumentRuntime.run("doc", c -> {
+                    Thread.sleep(2000);
+                    return "ok";
+                })));
+            }
+            for (var f : all) {
+                assertEquals("ok", f.get(30, TimeUnit.SECONDS));
+            }
+        } finally {
+            ex.shutdownNow();
+        }
+    }
+
+    @Test
+    void whenEveryReaderIsHeldByAStalledReadTheNextFailsAtOnce() throws Exception {
+        DocumentRuntime.configure(new ConnectorContext(Map.of(DocumentLimits.THREADS, "1",
+            DocumentLimits.TIMEOUT_SECONDS, "1")));
+        CountDownLatch release = new CountDownLatch(1);
+        DocumentException late = assertThrows(DocumentException.class, () -> DocumentRuntime.run("stuck", c -> {
+            while (release.getCount() > 0) {
+                Thread.onSpinWait(); // a parser that ignores both the flag and interrupts
+            }
+            return null;
+        }));
+        assertTrue(late.passing(), "out of time says nothing about the document");
+        assertEquals(1, DocumentRuntime.abandoned());
+        long started = System.nanoTime();
+        DocumentException busy = assertThrows(DocumentException.class, () -> DocumentRuntime.run("next", c -> "ok"));
+        assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(3), "fails at once, not after a wait");
+        assertTrue(busy.getMessage().contains("ran past its time limit"), busy.getMessage());
+        assertTrue(busy.passing());
+        release.countDown();
+        for (int i = 0; i < 50 && DocumentRuntime.abandoned() > 0; i++) {
+            Thread.sleep(100);
+        }
+        assertEquals(0, DocumentRuntime.abandoned());
+        assertEquals("ok", DocumentRuntime.run("after", c -> "ok"));
+    }
+
+    @Test
+    void aStoppedScanStopsWaiting() throws Exception {
+        DocumentRuntime.configure(new ConnectorContext(Map.of(DocumentLimits.THREADS, "1")));
+        CountDownLatch inside = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Thread holder = Thread.ofVirtual().start(() -> {
+            try {
+                DocumentRuntime.run("holder", c -> {
+                    inside.countDown();
+                    release.await();
+                    return null;
+                });
+            } catch (Exception e) {
+                // ends with the test
+            }
+        });
+        assertTrue(inside.await(5, TimeUnit.SECONDS));
+        java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread.ofVirtual().start(() -> {
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException e) {
+                return;
+            }
+            stop.set(true);
+        });
+        DocumentException e = assertThrows(DocumentException.class, () -> DocumentRuntime.run("waiting", stop::get,
+            c -> "never"));
+        assertTrue(e.passing());
+        assertTrue(e.getMessage().contains("stopped"), e.getMessage());
+        release.countDown();
+        holder.join();
+    }
 }

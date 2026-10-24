@@ -223,7 +223,13 @@ Libraries, limits and the reasons for them are in [ADR 0017](../adr/0017-documen
   workbook, hint `parent`. Sheets with a header row have fields and are read by `SheetInput` like
   any table; others are `readable=false` with the reason as their description.
 - **Setting `keep_text`** (both connectors, default `true`): `false` reads documents for their
-  profile but sends no chunks, so no text is stored.
+  profile but sends no chunks, so no text is stored. **`read_text_on_demand`** (default `false`)
+  lets stewards read such a source's text on the asset page, read from the source each time.
+- **Asset paths** escape `%` and `#` (`FileSourceConnector.urnPath`) so `#` only separates a file
+  from a sheet or attachment inside it; the `file` hint keeps the real path, which readers use.
+- **Failures that say nothing about the document** (busy, out of time, stopped, source not reachable)
+  carry `passing=true` on the `DOCUMENT` event; the scan then keeps what it stored before. A workbook
+  whose sheets could not be listed gets the hint `sheets-problem`, and the scan keeps its sheets.
 - **Server settings** (`kilnmark.documents.*`) reach the connectors through the `ConnectorContext`.
 
 ## Registering it

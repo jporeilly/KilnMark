@@ -267,10 +267,37 @@ class S3IngestTest {
         if (tagged) {
             assertEquals("{\"department\":\"people\",\"review\":\"2026\"}", tags);
         }
-        // the copy made to read it is gone
+        // the copy made to read it is gone (shared copies of workbooks wait for their sheets; drop them first)
+        LocalCopy.dropIdle();
         try (var left = Files.list(io.kilnmark.kiln.plugins.documents.DocumentRuntime.tempDir())) {
             assertEquals(0, left.count());
         }
+    }
+
+    @Test
+    void aWorkbookIsFetchedOncePerScan() throws Exception {
+        LocalCopy.dropIdle();
+        try (CountingProxy proxy = new CountingProxy(gateway.getHost(), gateway.getMappedPort(7070))) {
+            SourceConfig viaProxy = source(Map.of("endpoint", "http://127.0.0.1:" + proxy.port(),
+                "prefix", "documents/depot"));
+            List<AssetInfo> found = S3.catalog(viaProxy); // fetches the workbook to list its sheets
+            assertEquals(4, found.size());
+            long size = Long.parseLong(found.get(0).hints().get("size"));
+            Thread.sleep(300);
+            proxy.reset();
+            for (AssetInfo a : found) {
+                if ("sheet".equals(a.kind()) && a.readable()) {
+                    assertTrue(TestFiles.read(S3, viaProxy, a, 0).result().succeeded());
+                } else if ("document".equals(a.kind())) {
+                    assertTrue(DocumentReads.read(S3, viaProxy, a).result().succeeded());
+                }
+            }
+            Thread.sleep(300);
+            long more = proxy.bytesFromServer();
+            assertTrue(more < size, "reading two sheets and the text fetched " + more + " bytes of a " + size
+                + "-byte workbook: they used the copy the catalogue made");
+        }
+        LocalCopy.dropIdle();
     }
 
     @Test

@@ -107,7 +107,7 @@ public final class FilesConnector extends FileSourceConnector {
                     + "allows" + (roots.isEmpty() ? "" : " (" + String.join(", ", roots.stream().map(Path::toString)
                     .toList()) + ")"), false),
             new Setting("recursive", "Include sub-folders", false, "true (the default) or false", false),
-            ENCODING, DELIMITER, HEADER, KEEP_TEXT);
+            ENCODING, DELIMITER, HEADER, KEEP_TEXT, READ_TEXT_ON_DEMAND);
     }
 
     @Override
@@ -141,6 +141,7 @@ public final class FilesConnector extends FileSourceConnector {
         checkEncoding(source, problems);
         checkText(source, problems);
         checkBoolean(source, "keep_text", problems);
+        checkBoolean(source, "read_text_on_demand", problems);
         return problems;
     }
 

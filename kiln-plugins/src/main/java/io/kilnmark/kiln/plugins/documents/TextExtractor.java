@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.commons.io.input.CloseShieldInputStream;
 import org.apache.tika.exception.TikaException;
 import org.apache.tika.extractor.EmbeddedDocumentExtractor;
+import org.apache.tika.io.TemporaryResources;
 import org.apache.tika.io.TikaInputStream;
 import org.apache.tika.metadata.Message;
 import org.apache.tika.metadata.Metadata;
@@ -31,7 +32,6 @@ import org.apache.tika.parser.CompositeParser;
 import org.apache.tika.parser.ParseContext;
 import org.apache.tika.parser.Parser;
 import org.apache.tika.parser.epub.EpubParser;
-import org.apache.tika.parser.html.JSoupParser;
 import org.apache.tika.parser.mail.RFC822Parser;
 import org.apache.tika.parser.microsoft.OfficeParser;
 import org.apache.tika.parser.microsoft.OfficeParserConfig;
@@ -85,6 +85,9 @@ public final class TextExtractor {
         Parser parser = parser();
         Embedded embedded = new Embedded(parser, limits, budget, cancelled, main, DocumentTypes.mail(type));
         ParseContext context = context(parser, embedded);
+        if (OfficeParts.ooxml(name)) {
+            OfficeParts.check(file, limits.maxPartBytes());
+        }
         Metadata metadata = new Metadata();
         metadata.set(TikaCoreProperties.RESOURCE_NAME_KEY, name);
         metadata.set(Metadata.CONTENT_TYPE, type);
@@ -92,7 +95,7 @@ public final class TextExtractor {
             parser.parse(in, main, metadata, context);
         } catch (IOException | SAXException | TikaException | RuntimeException e) {
             if (cancelled.get()) {
-                throw new DocumentException("the read was stopped", e);
+                throw new DocumentException("the read was stopped", true, e);
             }
             if (!main.truncated() && !(e instanceof TextCollector.LimitReached)) {
                 throw DocumentRuntime.explain(e);
@@ -100,7 +103,7 @@ public final class TextExtractor {
             // the character limit: keep what was read
         }
         if (cancelled.get()) {
-            throw new DocumentException("the read was stopped");
+            throw new DocumentException("the read was stopped", true, null);
         }
         List<String> warnings = warnings(metadata);
         for (String w : warnings) {
@@ -140,7 +143,7 @@ public final class TextExtractor {
     static Parser parser() {
         DocumentRuntime.limits(); // its class sets the zip-bomb check, after Tika's OOXML parser turns it off
         return new CompositeParser(REGISTRY, List.of(new PDFParser(), new OfficeParser(), new OOXMLParser(),
-            new RTFParser(), new JSoupParser(Encodings.detector()), new RFC822Parser(), new OpenDocumentParser(),
+            new RTFParser(), new HtmlParser(), new RFC822Parser(), new OpenDocumentParser(),
             new EpubParser(), new XMLParser(), new PlainTextParser()));
     }
 
@@ -370,31 +373,56 @@ public final class TextExtractor {
                 tooDeep++;
                 return;
             }
-            if (count >= limits.maxEmbedded()) {
-                tooMany++;
-                return;
-            }
-            count++;
             String name = metadata.get(TikaCoreProperties.RESOURCE_NAME_KEY);
-            if (name == null || name.isBlank()) {
-                name = attachment ? "attachment-" + (attachments.size() + 1) : null;
-            } else {
+            if (name != null) {
                 name = name.replace('\\', '/');
-                name = name.substring(name.lastIndexOf('/') + 1).strip();
+                name = Names.clean(name.substring(name.lastIndexOf('/') + 1), null);
+            }
+            if (name == null && attachment) {
+                name = "attachment-" + (attachments.size() + 1);
             }
             Counting counted = new Counting(CloseShieldInputStream.wrap(stream));
-            try (TikaInputStream in = TikaInputStream.get(counted)) {
+            TemporaryResources tmp = new TemporaryResources();
+            tmp.setTemporaryFileDirectory(DocumentRuntime.tempDir());
+            try (TikaInputStream in = TikaInputStream.get(counted, tmp, metadata)) {
                 MediaType type = type(in, metadata, name);
                 boolean readable = type != null && supported(parser, type);
+                if (!attachment && !readable) {
+                    return; // images and the like inside a document: skipped, and not counted
+                }
+                if (count >= limits.maxEmbedded()) {
+                    tooMany++;
+                    return;
+                }
+                count++;
                 if (readable) {
                     metadata.set(Metadata.CONTENT_TYPE, type.toString());
                 }
+                String refused = null;
+                if (readable && OfficeParts.ooxml(name == null ? "x." + extension(type) : name)) {
+                    try {
+                        OfficeParts.check(in.getPath(), limits.maxPartBytes());
+                    } catch (DocumentException e) {
+                        refused = e.getMessage();
+                    }
+                }
                 if (attachment) {
-                    attachment(in, counted, metadata, name, type, readable);
-                } else if (readable) {
+                    attachment(in, counted, metadata, name, type, readable, refused);
+                } else if (refused != null) {
+                    failed++;
+                } else {
                     inline(in, metadata);
                 }
+            } finally {
+                tmp.close();
             }
+        }
+
+        /** The usual extension of an Office Open XML media type, else empty. */
+        private static String extension(MediaType type) {
+            String t = type == null ? "" : type.getBaseType().toString();
+            return t.contains("wordprocessingml") ? "docx" : t.contains("spreadsheetml") ? "xlsx"
+                : t.contains("presentationml") ? "pptx" : "";
         }
 
         private static boolean isAttachment(Metadata metadata) {
@@ -438,10 +466,11 @@ public final class TextExtractor {
 
         /** A mail message's attachment: a part of its own. */
         private void attachment(InputStream in, Counting counted, Metadata metadata, String name, MediaType type,
-                                boolean readable) throws SAXException, IOException {
+                                boolean readable, String refused) throws SAXException, IOException {
             TextCollector into = new TextCollector(budget, cancelled);
-            String problem = readable ? null : "Kilnmark does not read the text of this kind of file";
-            if (readable) {
+            String problem = refused != null ? refused
+                : readable ? null : "Kilnmark does not read the text of this kind of file";
+            if (problem == null) {
                 collectors.push(into);
                 depth++;
                 try {

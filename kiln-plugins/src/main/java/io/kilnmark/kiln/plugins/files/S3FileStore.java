@@ -321,6 +321,12 @@ public final class S3FileStore implements FileStore {
     }
 
     @Override
+    public String copyKey(String key) {
+        return "s3\n" + settings.endpoint() + "\n" + settings.region() + "\n" + settings.accessKeyId() + "\n"
+            + describe(key);
+    }
+
+    @Override
     public String describe(String key) {
         return "s3://" + settings.bucket() + "/" + key;
     }

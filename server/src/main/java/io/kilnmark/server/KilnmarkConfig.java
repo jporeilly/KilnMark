@@ -67,6 +67,10 @@ public interface KilnmarkConfig {
         @WithDefault("30")
         int maxLegacyFileMb();
 
+        /** The most an Office file's shared strings, styles or workbook part may expand to, in MB. */
+        @WithDefault("64")
+        int maxPartMb();
+
         /** Text kept from one document, attachments included; the rest is not read. */
         @WithDefault("1000000")
         int maxCharacters();

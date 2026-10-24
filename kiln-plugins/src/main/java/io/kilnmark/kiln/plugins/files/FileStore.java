@@ -92,6 +92,14 @@ public interface FileStore extends Closeable {
         return Map.of();
     }
 
+    /**
+     * What identifies a file's content across stores, for sharing a local copy of it: two stores
+     * give the same key only for the same file seen with the same access.
+     */
+    default String copyKey(String path) {
+        return getClass().getName() + "\n" + describe(path);
+    }
+
     /** Where a path is, for people: an absolute path or an {@code s3://} URL. */
     String describe(String path);
 

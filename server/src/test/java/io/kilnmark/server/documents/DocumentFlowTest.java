@@ -58,6 +58,8 @@ class DocumentFlowTest {
                 }
             }
             Files.writeString(ROOT.resolve("meta/private-note.txt"), "The quarterly zebra census is kept private.\n");
+            Files.writeString(ROOT.resolve("docs/offices.txt"), "Our offices are in İSTANBUL, İzmir and Ankara. "
+                + "The İstanbul office opens first.\n");
         } catch (IOException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -114,7 +116,7 @@ class DocumentFlowTest {
     void aFolderOfDocumentsIsScanned() throws Exception {
         JsonPath run = scan("docs", Map.of("path", ROOT.resolve("docs").toString()));
         assertEquals("succeeded", run.getString("status"), run.getString("detail"));
-        assertEquals(8, run.getInt("assetsSeen"), run.getString("detail")); // 5 files and 3 sheets
+        assertEquals(9, run.getInt("assetsSeen"), run.getString("detail")); // 6 files and 3 sheets
     }
 
     @Test
@@ -258,11 +260,29 @@ class DocumentFlowTest {
             .body("hits.size()", equalTo(0));
         admin().queryParam("urn", note).get("/api/v1/documents/chunks").then().statusCode(200)
             .body("textKept", equalTo(false)).body("chunks.size()", equalTo(0));
+        assertFalse(a.getBoolean("document.textOnDemand"));
+        admin().queryParam("urn", note).get("/api/v1/documents/text").then().statusCode(409)
+            .body("error", containsString("keeps no text"));
+    }
+
+    @Test
+    @Order(9)
+    void stewardsCanReadTextOnDemandWhenTheSourceAllowsIt() throws Exception {
+        JsonPath run = scan("meta-od", Map.of("path", ROOT.resolve("meta").toString(), "keep_text", "false",
+            "read_text_on_demand", "true"));
+        assertEquals("succeeded", run.getString("status"), run.getString("detail"));
+        String note = "urn:kilnmark:meta-od:private-note.txt";
+        assertTrue(asset(note).getBoolean("document.textOnDemand"));
         admin().queryParam("urn", note).get("/api/v1/documents/text").then().statusCode(200)
             .body("extractedNow", equalTo(true)).body("text", containsString("zebra census"));
-        String attachment = "urn:kilnmark:meta:2025-04-delivery-schedule.eml#attachments/1/may-schedule.md";
+        String attachment = "urn:kilnmark:meta-od:2025-04-delivery-schedule.eml#attachments/1/may-schedule.md";
         admin().queryParam("urn", attachment).get("/api/v1/documents/text").then().statusCode(200)
             .body("text", containsString("May delivery schedule"));
+        String viewer = admin().contentType(ContentType.JSON).body(Map.of("name", "od-viewer", "role", "viewer"))
+            .post("/api/v1/tokens").then().statusCode(201).extract().jsonPath().getString("token");
+        Tokens.as(viewer).queryParam("urn", note).get("/api/v1/documents/text").then().statusCode(403);
+        assertEquals(0, count("SELECT count(*) FROM kilnmark.document_chunk WHERE asset_urn LIKE "
+            + "'urn:kilnmark:meta-od:%'"), "text read on demand is never stored");
     }
 
     @Test
@@ -278,7 +298,155 @@ class DocumentFlowTest {
     }
 
     @Test
+    @Order(10)
+    void findMatchesWhateverCaseChangesDo() {
+        for (String q : List.of("İstanbul", "istanbul", "İSTANBUL", "izmir")) {
+            JsonPath f = admin().queryParam("urn", DOCS + "offices.txt").queryParam("q", q)
+                .get("/api/v1/documents/find").then().statusCode(200).extract().jsonPath();
+            assertTrue(f.getInt("total") >= 1, q + ": " + f.prettify());
+            String text = f.getString("pages[0].snippet.text");
+            int at = f.getInt("pages[0].snippet.highlights[0].start");
+            int length = f.getInt("pages[0].snippet.highlights[0].length");
+            assertTrue(text.substring(at, at + length).toLowerCase(java.util.Locale.ROOT).contains("zmir")
+                || text.substring(at, at + length).toLowerCase(java.util.Locale.ROOT).contains("stanbul"), text);
+        }
+    }
+
+    @Inject
+    DocumentScan documentScan;
+
+    @Inject
+    io.kilnmark.graph.store.GraphStore graph;
+
+    @Test
+    @Order(10)
+    void aPassingFailureKeepsWhatAnEarlierScanStored() throws Exception {
+        String mail = DOCS + "2025-04-delivery-schedule.eml";
+        int chunks = count("SELECT count(*) FROM kilnmark.document_chunk WHERE asset_urn LIKE '" + mail + "%'");
+        assertTrue(chunks > 0);
+        long sourceId = graph.source("docs").orElseThrow().id();
+        long runId = graph.queueRun(sourceId, "scan");
+        // a reader whose read failed because every reader was busy: nothing learnt about the document
+        io.kilnmark.kiln.connect.Connector busy = new io.kilnmark.kiln.connect.Connector() {
+            @Override
+            public String kind() {
+                return "files";
+            }
+
+            @Override
+            public String displayName() {
+                return "busy";
+            }
+
+            @Override
+            public List<Setting> settings() {
+                return List.of();
+            }
+
+            @Override
+            public List<String> validate(io.kilnmark.kiln.connect.SourceConfig s) {
+                return List.of();
+            }
+
+            @Override
+            public List<io.kilnmark.kiln.connect.AssetInfo> catalog(io.kilnmark.kiln.connect.SourceConfig s) {
+                return List.of();
+            }
+
+            @Override
+            public io.kilnmark.kiln.StepSpec reader(io.kilnmark.kiln.connect.SourceConfig s,
+                                                    io.kilnmark.kiln.connect.AssetInfo a, ReadOptions read) {
+                return new io.kilnmark.kiln.StepSpec("read", new PassingFailure(read.assetUrn()), Map.of());
+            }
+        };
+        var asset = new io.kilnmark.kiln.connect.AssetInfo("2025-04-delivery-schedule.eml", "document", "",
+            "2025-04-delivery-schedule.eml", null, List.of(), List.of(), false, true, Map.of());
+        var r = documentScan.read(busy, new io.kilnmark.kiln.connect.SourceConfig("docs", "files", Map.of(), null),
+            asset, mail, sourceId, runId, () -> false);
+        graph.finishRun(runId, "succeeded", 1, 0, 0, "test"); // so the source can be scanned again
+        assertTrue(r.succeeded(), r.error());
+        JsonPath a = asset(mail);
+        assertTrue(a.getBoolean("document.readable"), "the earlier profile is kept");
+        assertTrue(a.getString("document.notes").contains("The last scan could not read it again"));
+        assertEquals(chunks, count("SELECT count(*) FROM kilnmark.document_chunk WHERE asset_urn LIKE '" + mail
+            + "%'"), "and its text, and its attachments' text");
+        assertEquals(2, count("SELECT count(*) FROM kilnmark.asset WHERE parent_urn = '" + mail
+            + "' AND last_seen_run = " + runId), "its attachments count as seen, so they are not marked removed");
+    }
+
+    /** A document reader that reports a passing failure and no text. */
+    static final class PassingFailure implements io.kilnmark.kiln.Step {
+        private final String urn;
+
+        PassingFailure(String urn) {
+            this.urn = urn;
+        }
+
+        @Override
+        public String type() {
+            return "passing-failure";
+        }
+
+        @Override
+        public void init(io.kilnmark.kiln.StepContext context) {
+        }
+
+        @Override
+        public boolean process(io.kilnmark.kiln.StepContext context) throws io.kilnmark.kiln.StepException {
+            context.metadata().emit(new io.kilnmark.kiln.MetadataEvent(urn, io.kilnmark.kiln.MetadataEvent.Kind.DOCUMENT,
+                Map.of("readable", "false", "passing", "true", "problem", "every document reader was busy"),
+                java.time.Instant.now()));
+            var batch = org.apache.arrow.vector.VectorSchemaRoot.create(
+                io.kilnmark.kiln.plugins.documents.DocumentEvents.CHUNK_SCHEMA, context.allocator());
+            batch.allocateNew();
+            batch.setRowCount(0);
+            try {
+                context.output().put(batch);
+            } catch (InterruptedException e) {
+                batch.close();
+                Thread.currentThread().interrupt();
+            }
+            return false;
+        }
+    }
+
+    @Test
+    @Order(10)
+    void searchStaysQuickWithManyChunks() throws Exception {
+        String urn = DOCS + "team-handbook.md";
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            s.execute("INSERT INTO kilnmark.document_chunk (asset_urn, seq, text, page, start_offset, end_offset) "
+                + "SELECT '" + urn + "', 1000 + n, 'filler paragraph number ' || n || ' about warehouse rotas and "
+                + "common words', NULL, 100000 + n * 100, 100000 + n * 100 + 60 FROM generate_series(1, 4000) n");
+            s.execute("ANALYZE kilnmark.document_chunk");
+        }
+        long started = System.nanoTime();
+        JsonPath hits = admin().queryParam("q", "warehouse").get("/api/v1/search").then().statusCode(200)
+            .extract().jsonPath();
+        long millis = (System.nanoTime() - started) / 1_000_000;
+        assertTrue(hits.getList("hits.urn").contains(urn));
+        assertTrue(millis < 3000, "search over 4,000 matching chunks took " + millis + " ms");
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            s.execute("DELETE FROM kilnmark.document_chunk WHERE asset_urn = '" + urn + "' AND seq >= 1000");
+        }
+    }
+
+    @Test
     @Order(11)
+    void turningKeepTextOffDeletesStoredTextAtTheNextScan() throws Exception {
+        assertTrue(count("SELECT count(*) FROM kilnmark.document_chunk WHERE asset_urn LIKE 'urn:kilnmark:docs:%'") > 0);
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            s.execute("UPDATE kilnmark.data_source SET settings = settings || '{\"keep_text\": \"false\"}' "
+                + "WHERE name = 'docs'");
+        }
+        long id = admin().post("/api/v1/sources/docs/scans").then().statusCode(202).extract().jsonPath().getLong("id");
+        assertEquals("succeeded", waitForRun(id).getString("status"));
+        assertEquals(0, count("SELECT count(*) FROM kilnmark.document_chunk WHERE asset_urn LIKE 'urn:kilnmark:docs:%'"));
+        assertFalse(asset(DOCS + "remote-working-policy.pdf").getBoolean("document.textKept"));
+    }
+
+    @Test
+    @Order(12)
     void deletingASourceLeavesNoTextBehind() throws Exception {
         try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
             s.execute("DELETE FROM kilnmark.data_source WHERE name = 'docs'");

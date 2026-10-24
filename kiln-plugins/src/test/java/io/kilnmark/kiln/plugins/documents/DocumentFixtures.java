@@ -86,10 +86,10 @@ public final class DocumentFixtures {
         + "<p onclick=\"steal()\">Closed on public holidays.</p></body></html>";
 
     public static final String XML = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<catalogue>"
-        + "<item><name>Copper kettle</name><price>24.50</price></item>"
+        + "<item><name>Brass lantern</name><price>24.50</price></item>"
         + "<item><name>Enamel teapot</name><price>18.00</price></item></catalogue>";
 
-    static Path write(Path p, String text) throws IOException {
+    public static Path write(Path p, String text) throws IOException {
         return Files.writeString(p, text, StandardCharsets.UTF_8);
     }
 
@@ -186,7 +186,7 @@ public final class DocumentFixtures {
         }
         Sheet products = wb.createSheet("Products");
         row(products, 0, "sku", "name", "price");
-        row(products, 1, "K-01", "Copper kettle", null);
+        row(products, 1, "K-01", "Brass lantern", null);
         products.getRow(1).createCell(2).setCellValue(24.5);
         row(products, 2, "T-07", "Enamel teapot", null);
         products.getRow(2).createCell(2).setCellValue(18);
@@ -317,18 +317,18 @@ public final class DocumentFixtures {
     /** A message with a plain body, a text attachment and an image attachment. */
     public static String eml() {
         String agenda = Base64.getMimeEncoder().encodeToString(("Agenda for the supplier call\n\n"
-            + "1. Delivery dates for the copper kettles\n2. Invoice queries\n").getBytes(StandardCharsets.UTF_8));
+            + "1. Delivery dates for the brass lanterns\n2. Invoice queries\n").getBytes(StandardCharsets.UTF_8));
         String png = Base64.getMimeEncoder().encodeToString(new byte[] {(byte) 0x89, 'P', 'N', 'G', 13, 10, 26, 10,
             0, 0, 0, 0});
         return "From: Alex Example <alex@example.com>\r\n"
             + "To: Sam Example <sam@example.org>\r\n"
             + "Cc: Purchasing <purchasing@example.net>\r\n"
-            + "Subject: Supplier query about kettles\r\n"
+            + "Subject: Supplier query about lanterns\r\n"
             + "Date: Tue, 01 Apr 2025 10:15:00 +0100\r\n"
             + "MIME-Version: 1.0\r\n"
             + "Content-Type: multipart/mixed; boundary=\"b1\"\r\n\r\n"
             + "--b1\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n"
-            + "Hello Sam,\r\n\r\nCould you confirm the delivery date for the copper kettles?\r\n\r\nThanks, Alex\r\n"
+            + "Hello Sam,\r\n\r\nCould you confirm the delivery date for the brass lanterns?\r\n\r\nThanks, Alex\r\n"
             + "--b1\r\nContent-Type: text/plain; charset=UTF-8; name=\"agenda.txt\"\r\n"
             + "Content-Disposition: attachment; filename=\"agenda.txt\"\r\nContent-Transfer-Encoding: base64\r\n\r\n"
             + agenda + "\r\n"

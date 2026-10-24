@@ -10,9 +10,11 @@ import java.util.Set;
  * Words and language of a document's text.
  *
  * <p>Language is found without a library: a text written mostly in a script that belongs to one
- * language (Greek, Hebrew, Thai, Korean's Hangul, Japanese kana, ...) is that language; otherwise
+ * language (Greek, Hebrew, Thai, Korean's Hangul, Japanese kana, ...) is that language; Arabic
+ * script is Arabic, Persian or Urdu only when letters only one of them uses say so, and Devanagari
+ * Hindi, Marathi or Nepali only when their common words do; otherwise
  * the language whose most common short words (articles, prepositions, conjunctions) make up the
- * largest part of the text, among fifteen European languages and Turkish. Function words are a
+ * largest part of the text, among sixteen European languages and Turkish. Function words are a
  * large share of any real text, so this is reliable for a paragraph or more and says nothing
  * (null) for a list, a table of numbers or a few words. Tika's own n-gram detector was tried first and named Spanish
  * text Catalan (see ADR 0017).
@@ -71,6 +73,9 @@ public final class TextStats {
         Map.entry("uk", Set.of("і", "в", "не", "на", "що", "з", "до", "це", "як", "та", "але", "у", "за", "від",
             "про", "так", "для", "же", "все", "він", "вона", "вони", "ми", "ви", "був", "була", "або", "є",
             "його", "тільки")),
+        Map.entry("ca", Set.of("els", "les", "amb", "per", "una", "del", "que", "és", "dels", "pel", "pels", "són",
+            "però", "també", "aquesta", "aquest", "fins", "seva", "seu", "molt", "i", "la", "el", "de", "al", "no",
+            "més", "com", "l", "d")),
         Map.entry("tr", Set.of("ve", "bir", "bu", "da", "de", "için", "ile", "olan", "çok", "daha", "gibi", "ama",
             "ne", "o", "sonra", "kadar", "olarak", "en", "her", "mi", "var", "yok")));
 
@@ -98,7 +103,7 @@ public final class TextStats {
         if (script != null) {
             return script;
         }
-        List<String> words = List.of(sample.toLowerCase(Locale.ROOT).split("[^\\p{L}]+"));
+        List<String> words = List.of(sample.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{M}]+"));
         int total = 0;
         Map<String, Integer> hits = new HashMap<>();
         for (String w : words) {
@@ -149,12 +154,12 @@ public final class TextStats {
             String lang = switch (Character.UnicodeScript.of(cp)) {
                 case GREEK -> "el";
                 case HEBREW -> "he";
-                case ARABIC -> "ar";
+                case ARABIC -> "arabic-script";
                 case THAI -> "th";
                 case HANGUL -> "ko";
                 case HIRAGANA, KATAKANA -> "ja";
                 case HAN -> "zh";
-                case DEVANAGARI -> "hi";
+                case DEVANAGARI -> "devanagari";
                 case ARMENIAN -> "hy";
                 case GEORGIAN -> "ka";
                 default -> null;
@@ -173,9 +178,86 @@ public final class TextStats {
         }
         for (var e : counts.entrySet()) {
             if (e.getValue() > letters / 2) {
-                return e.getKey();
+                return switch (e.getKey()) {
+                    case "arabic-script" -> arabicScript(s);
+                    case "devanagari" -> best(s, DEVANAGARI_WORDS);
+                    default -> e.getKey();
+                };
             }
         }
         return null;
+    }
+
+    /** Letters Urdu uses and Persian and Arabic do not. */
+    private static final String URDU = "\u0679\u0688\u0691\u06BA\u06D2\u06BE";
+    /** Letters Persian (and Urdu) use and Arabic does not, including Persian kaf and yeh. */
+    private static final String PERSIAN = "\u067E\u0686\u0698\u06AF\u06A9\u06CC";
+    /** Letters Arabic uses and Persian and Urdu do not: ta marbuta, Arabic kaf and yeh, alef maqsura. */
+    private static final String ARABIC = "\u0629\u0643\u064A\u0649";
+
+    /** Arabic, Persian or Urdu, from the letters only one of them uses; null when they do not say. */
+    private static String arabicScript(String s) {
+        int urdu = 0;
+        int persian = 0;
+        int arabic = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (URDU.indexOf(c) >= 0) {
+                urdu++;
+            } else if (PERSIAN.indexOf(c) >= 0) {
+                persian++;
+            } else if (ARABIC.indexOf(c) >= 0) {
+                arabic++;
+            }
+        }
+        if (urdu >= 3 && urdu * 2 > arabic) {
+            return "ur";
+        }
+        if (persian >= 3 && urdu == 0 && persian > arabic * 2) {
+            return "fa";
+        }
+        if (arabic >= 3 && persian == 0 && urdu == 0) {
+            return "ar";
+        }
+        return null;
+    }
+
+    /** Common short words of the languages written in Devanagari that Kilnmark tells apart. */
+    private static final Map<String, Set<String>> DEVANAGARI_WORDS = Map.of(
+        "hi", Set.of("है", "हैं", "के", "की", "में", "और", "से", "को", "का", "यह", "नहीं", "था", "पर", "भी"),
+        "mr", Set.of("आहे", "आणि", "च्या", "ला", "हे", "या", "आहेत", "नाही", "केले", "होते", "पण", "तर"),
+        "ne", Set.of("छ", "र", "मा", "हो", "गर्न", "लागि", "पनि", "छन्", "थियो", "भएको", "गरेको", "हुन्छ"));
+
+    /** The language whose words lead clearly in {@code s}, among {@code languages}; else null. */
+    private static String best(String s, Map<String, Set<String>> languages) {
+        Map<String, Integer> hits = new HashMap<>();
+        int total = 0;
+        for (String w : s.split("[^\\p{L}\\p{M}]+")) {
+            if (w.isEmpty()) {
+                continue;
+            }
+            total++;
+            for (var e : languages.entrySet()) {
+                if (e.getValue().contains(w)) {
+                    hits.merge(e.getKey(), 1, Integer::sum);
+                }
+            }
+        }
+        String top = null;
+        int first = 0;
+        int second = 0;
+        for (var e : hits.entrySet()) {
+            if (e.getValue() > first) {
+                second = first;
+                first = e.getValue();
+                top = e.getKey();
+            } else if (e.getValue() > second) {
+                second = e.getValue();
+            }
+        }
+        if (top == null || total < 8 || first < 3 || first * 10 < second * 15) {
+            return null;
+        }
+        return top;
     }
 }

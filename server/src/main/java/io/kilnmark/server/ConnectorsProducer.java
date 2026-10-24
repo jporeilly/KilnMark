@@ -32,6 +32,7 @@ public class ConnectorsProducer {
         KilnmarkConfig.Documents d = config.documents();
         s.put("kilnmark.documents.max-file-mb", Integer.toString(d.maxFileMb()));
         s.put("kilnmark.documents.max-legacy-file-mb", Integer.toString(d.maxLegacyFileMb()));
+        s.put("kilnmark.documents.max-part-mb", Integer.toString(d.maxPartMb()));
         s.put("kilnmark.documents.max-characters", Integer.toString(d.maxCharacters()));
         s.put("kilnmark.documents.timeout-seconds", Integer.toString(d.timeoutSeconds()));
         s.put("kilnmark.documents.max-depth", Integer.toString(d.maxDepth()));

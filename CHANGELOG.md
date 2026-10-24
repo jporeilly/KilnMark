@@ -201,6 +201,15 @@
   that notices.
 - **Lab:** synthetic documents (PDF, Word, Excel, mail, Markdown) in the share and the bucket, made
   by `lab/make-documents.py`. 27.4 MB of jars added (ADR 0017).
+- **Documents, after review:** Office files are checked for parts that really expand past
+  `kilnmark.documents.max-part-mb` (64 MB) before any parser opens them, and sheet rows stop at
+  16,384 cells. Healthy documents wait for a reader instead of failing; a read that fails for a
+  passing reason (busy, out of time, stopped, source not reachable) keeps what the last scan stored.
+  Sheet and attachment names lose control characters. `%` and `#` in file names are escaped in URNs,
+  so a file cannot pass for a sheet or attachment. `keep_text=false` now hides text too, unless
+  `read_text_on_demand=true` lets stewards read it from the source. Find copes with letters whose case
+  changes their length (Turkish İ). Persian, Urdu, Catalan, Marathi and Nepali are no longer
+  mistaken for their neighbours.
 
 ## 0.0.2 (24 October 2026)
 

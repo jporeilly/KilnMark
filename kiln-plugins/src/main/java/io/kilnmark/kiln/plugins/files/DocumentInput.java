@@ -52,6 +52,9 @@ public final class DocumentInput implements Step {
     private long size;
     private boolean keepText;
     private String owner;
+    private String version;
+    private String note;
+    private boolean onDemand;
     private int batchSize;
     private List<Row> rows;
     private int next;
@@ -76,6 +79,9 @@ public final class DocumentInput implements Step {
         size = Long.parseLong(context.setting("size", "-1"));
         keepText = !"false".equalsIgnoreCase(context.setting("keep-text", "true"));
         owner = context.setting("owner", null);
+        version = context.setting("version", null);
+        note = context.setting("note", null);
+        onDemand = "true".equals(context.setting("on-demand", "false"));
         batchSize = Integer.parseInt(context.setting("batch-size", "256"));
         try {
             store = opener.open();
@@ -86,7 +92,8 @@ public final class DocumentInput implements Step {
 
     /** The URN of a mail message's {@code n}th attachment (1-based). */
     public static String attachmentUrn(String documentUrn, int n, String name) {
-        String safe = name == null ? "attachment" : name.replaceAll("[\\p{Cntrl}/#\\\\]", "_");
+        String safe = name == null ? "attachment" : FileSourceConnector.urnPath(
+            io.kilnmark.kiln.plugins.documents.Names.clean(name, "attachment").replace('/', '_').replace('\\', '_'));
         return documentUrn + "#attachments/" + n + "/" + safe;
     }
 
@@ -162,17 +169,19 @@ public final class DocumentInput implements Step {
             if (size > max) {
                 throw LocalCopy.tooLarge(size, max);
             }
-            try (LocalCopy copy = LocalCopy.of(store, path, max)) {
-                x = DocumentRuntime.run(path, (AtomicBoolean cancelled) ->
-                    TextExtractor.extract(copy.path(), name, size, limits, cancelled));
+            // only workbooks are needed again in a scan (to list and read their sheets): share those copies
+            try (LocalCopy copy = LocalCopy.of(store, path, max, DocumentTypes.workbook(name) ? version : null)) {
+                DocumentRuntime.Work<Extraction> work = cancelled ->
+                    TextExtractor.extract(copy.path(), name, size, limits, cancelled);
+                x = onDemand ? DocumentRuntime.runOnDemand(path, work) : DocumentRuntime.run(path, work);
             }
         } catch (DocumentException e) {
-            emit(context, assetUrn, withSource(DocumentEvents.unreadable(name, format, type, size, e.getMessage()),
-                tags));
+            emit(context, assetUrn, failed(name, format, type, e.getMessage(), e.passing(), tags));
             return;
         } catch (IOException | RuntimeException e) {
-            emit(context, assetUrn, withSource(DocumentEvents.unreadable(name, format, type, size,
-                "it could not be fetched (" + e.getMessage() + ")"), tags));
+            // the source could not be reached or the file vanished: nothing is learnt about the document
+            emit(context, assetUrn, failed(name, format, type, "it could not be fetched (" + e.getMessage() + ")",
+                true, tags));
             return;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -181,8 +190,8 @@ public final class DocumentInput implements Step {
         Extraction.Part doc = x.document();
         List<Chunker.Chunk> chunks = keepText ? chunks(doc, limits) : List.of();
         chunks.forEach(c -> rows.add(new Row(assetUrn, c)));
-        emit(context, assetUrn, withSource(DocumentEvents.attributes(doc, format, keepText, chunks.size(), x.notes()),
-            tags));
+        emit(context, assetUrn, withSource(DocumentEvents.attributes(doc, format, keepText, chunks.size(),
+            withNote(x.notes())), tags));
         int n = 0;
         for (Extraction.Part a : x.attachments()) {
             n++;
@@ -194,6 +203,28 @@ public final class DocumentInput implements Step {
             attrs.put(DocumentEvents.PARENT, assetUrn);
             emit(context, urn, attrs);
         }
+    }
+
+    /** A failed read's event: {@code passing} when it says nothing about the document (see DocumentException). */
+    private Map<String, String> failed(String name, String format, String type, String reason, boolean passing,
+                                       Map<String, String> tags) {
+        Map<String, String> a = withSource(DocumentEvents.unreadable(name, format, type, size, reason), tags);
+        if (passing) {
+            a.put(DocumentEvents.PASSING, "true");
+        }
+        if (note != null) {
+            a.put(DocumentEvents.NOTES, DocumentEvents.jsonArray(List.of(note)));
+        }
+        return a;
+    }
+
+    private List<String> withNote(List<String> notes) {
+        if (note == null) {
+            return notes;
+        }
+        List<String> out = new ArrayList<>(notes);
+        out.add(note);
+        return out;
     }
 
     private static List<Chunker.Chunk> chunks(Extraction.Part p, DocumentLimits limits) {

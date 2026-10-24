@@ -99,7 +99,7 @@ public final class S3Connector extends FileSourceConnector {
                 false),
             new Setting("path_style", "Path-style addressing", false,
                 "true for most S3-compatible storage (VersityGW, MinIO); false (the default) for AWS", false),
-            ENCODING, DELIMITER, HEADER, KEEP_TEXT);
+            ENCODING, DELIMITER, HEADER, KEEP_TEXT, READ_TEXT_ON_DEMAND);
     }
 
     @Override
@@ -141,6 +141,7 @@ public final class S3Connector extends FileSourceConnector {
         checkEncoding(source, problems);
         checkText(source, problems);
         checkBoolean(source, "keep_text", problems);
+        checkBoolean(source, "read_text_on_demand", problems);
         return problems;
     }
 

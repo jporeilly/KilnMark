@@ -63,4 +63,15 @@ class ChunkerTest {
         assertEquals(List.of(), Chunker.chunks("", List.of(), 100, 10));
         assertEquals(List.of(), Chunker.chunks("  \n\n  ", List.of(), 100, 10));
     }
+
+    @Test
+    void theOverlapDoesNotDecideTheChunksPage() {
+        String one = "Words on page one. ".repeat(4).strip();
+        String two = "Words on page two. ".repeat(4).strip();
+        String text = one + "\n\n" + two;
+        List<Chunker.Chunk> c = Chunker.chunks(text, List.of(0, one.length() + 2), 80, 30);
+        assertEquals(2, c.size());
+        assertTrue(c.get(1).start() < one.length(), "the second chunk starts with the overlap from page one");
+        assertEquals(2, c.get(1).page(), "but its own text is on page two");
+    }
 }

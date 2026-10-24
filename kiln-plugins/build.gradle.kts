@@ -51,6 +51,10 @@ dependencies {
         exclude(group = "org.glassfish.jaxb")
         exclude(group = "com.github.albfernandez", module = "juniversalchardet")
     }
+    // Mail: one mime4j version everywhere, the one the Quarkus platform gives the server (Tika asks for
+    // a newer one), so the tests read mail with what the server ships.
+    "implementation"(libs.mime4j.core) { version { strictly(libs.versions.mime4j.get()) } }
+    "implementation"(libs.mime4j.dom) { version { strictly(libs.versions.mime4j.get()) } }
     // Excel sheets as tables, read with POI's streaming (event) API; the lite OOXML schemas suffice.
     "implementation"(libs.poi.ooxml)
     "implementation"(libs.poi.ooxml.lite)

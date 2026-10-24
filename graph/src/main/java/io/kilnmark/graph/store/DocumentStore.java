@@ -29,4 +29,25 @@ public interface DocumentStore {
 
     /** Chunks in order, from {@code offset}. */
     List<Chunk> chunks(String urn, int offset, int limit);
+
+    /** Chunks in order whose text overlaps characters {@code from} to {@code to} of the document. */
+    List<Chunk> chunksBetween(String urn, int from, int to);
+
+    /**
+     * A document could not be read again for a passing reason: keeps what an earlier scan stored
+     * (profile, chunks, and the assets inside it, which run {@code runId} counts as seen), and
+     * records {@code note} in place of any earlier note of the same kind.
+     *
+     * @return false when nothing was stored before (the caller records the failure instead)
+     */
+    boolean keepStored(String urn, long runId, String note);
+
+    /** Counts the assets of {@code kind} inside {@code urn} as seen by run {@code runId}, so they are kept. */
+    void keepParts(String urn, long runId, String kind);
+
+    /** Deletes the text of a document and of the assets inside it (keep_text turned off). */
+    void dropText(String urn);
+
+    /** Adds a note to a stored document. */
+    void addNote(String urn, String note);
 }

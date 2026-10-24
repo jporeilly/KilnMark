@@ -27,8 +27,12 @@ import io.kilnmark.kiln.plugins.documents.DocumentTypes;
  * has changed since the catalogue, the columns are worked out again. Cells that do not fit their
  * column's kind are read as null and counted ({@code unparsed} in {@code ROW_COUNT}).
  *
- * <p>Settings: {@code path} (the workbook), {@code sheet}, {@code size}, {@code asset-urn},
- * {@code row-limit} (0 for all), {@code batch-size}.
+ * <p>A sheet read holds one of the server's document readers for its whole length and has the
+ * same time limit as reading a document ({@link DocumentRuntime}); it stops when interrupted.
+ *
+ * <p>Settings: {@code path} (the workbook), {@code sheet}, {@code size}, {@code version} (to share
+ * a remote workbook's copy within a scan), {@code asset-urn}, {@code row-limit} (0 for all),
+ * {@code batch-size}.
  */
 public final class SheetInput implements Step {
 
@@ -50,6 +54,9 @@ public final class SheetInput implements Step {
     private long read;
     private long unparsed;
     private Sheets.SheetRow pending;
+    private AutoCloseable slot;
+    private long deadline;
+    private long seconds;
 
     public SheetInput(FileStore.Opener opener, List<FileColumn> columns) {
         this.opener = opener;
@@ -79,7 +86,10 @@ public final class SheetInput implements Step {
             if (size > max) {
                 throw LocalCopy.tooLarge(size, max);
             }
-            copy = LocalCopy.of(store, path, max);
+            slot = DocumentRuntime.acquire(() -> Thread.currentThread().isInterrupted());
+            seconds = limits.timeout().toSeconds();
+            deadline = System.nanoTime() + limits.timeout().toNanos();
+            copy = LocalCopy.of(store, path, max, context.setting("version", null));
             workbook = Sheets.open(copy.path(), path);
             Sheets.Layout layout;
             try (Sheets.SheetRows sample = workbook.rows(sheet)) {
@@ -100,6 +110,10 @@ public final class SheetInput implements Step {
         } catch (IOException | DocumentException | RuntimeException e) {
             close();
             throw new StepException("Cannot read " + label + ": " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            close();
+            Thread.currentThread().interrupt();
+            throw new StepException("Interrupted", e);
         }
         List<Field> fields = new ArrayList<>();
         for (FileColumn c : columns) {
@@ -124,6 +138,15 @@ public final class SheetInput implements Step {
                 if (rowLimit > 0 && read + n >= rowLimit) {
                     limitReached = true;
                     break;
+                }
+                if (((read + n) & 1023) == 0) {
+                    if (Thread.currentThread().isInterrupted()) {
+                        throw new IOException("the read was stopped");
+                    }
+                    if (System.nanoTime() > deadline) {
+                        throw new IOException("reading it took longer than the " + seconds + "-second limit "
+                            + "(kilnmark.documents.timeout-seconds)");
+                    }
                 }
                 Sheets.SheetRow r = nextRow();
                 if (r == null) {
@@ -194,7 +217,7 @@ public final class SheetInput implements Step {
 
     @Override
     public void close() {
-        for (AutoCloseable c : new AutoCloseable[] {rows, workbook, copy}) {
+        for (AutoCloseable c : new AutoCloseable[] {rows, workbook, copy, slot}) {
             if (c != null) {
                 try {
                     c.close();
@@ -206,6 +229,7 @@ public final class SheetInput implements Step {
         rows = null;
         workbook = null;
         copy = null;
+        slot = null;
         if (store != null) {
             store.cancel();
             try {

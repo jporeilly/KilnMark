@@ -48,7 +48,7 @@ class TextExtractorTest {
         "policy.pdf         | Staff may work from home up to three days a week | Remote working policy",
         "onboarding.docx    | a safety briefing and a tour of the warehouse    | Onboarding guide",
         "memo.doc           | stationery order for the Harbour Street office   | Legacy memo on stationery orders",
-        "budget.xlsx        | Copper kettle                                    | ",
+        "budget.xlsx        | Brass lantern                                    | ",
         "budget.xls         | Enamel teapot                                    | ",
         "review.pptx        | Open a second depot in the spring                | ",
         "review.ppt         | The towpath reopens in June                      | ",
@@ -59,7 +59,7 @@ class TextExtractorTest {
         "page.html          | The reading room opens at nine                   | Opening hours",
         "catalogue.xml      | Enamel teapot                                    | ",
         "guide.epub         | Hawthorn flowers in May and feeds many insects   | Field guide to hedgerows",
-        "supplier-query.eml | confirm the delivery date for the copper kettles | Supplier query about kettles",
+        "supplier-query.eml | confirm the delivery date for the brass lanterns | Supplier query about lanterns",
         "supplier-call.msg  | deliver the canal boat fenders next Tuesday      | Call notes about the canal boat order",
         "notes.txt          | Bring a warm coat: the gallery is windy          | ",
         "handbook.md        | Book holidays two weeks ahead                    | Team handbook",
@@ -115,7 +115,7 @@ class TextExtractorTest {
         assertTrue(p.get(Extraction.FROM).contains("alex@example.com"), p.toString());
         assertTrue(p.get(Extraction.TO).contains("sam@example.org"), p.toString());
         assertTrue(p.get(Extraction.CC).contains("purchasing@example.net"), p.toString());
-        assertEquals("Supplier query about kettles", p.get(Extraction.SUBJECT));
+        assertEquals("Supplier query about lanterns", p.get(Extraction.SUBJECT));
         assertEquals("2025-04-01T09:15:00Z", p.get(Extraction.DATE));
         assertFalse(x.document().text().contains("Invoice queries"), "attachments are not in the body's text");
         assertEquals(List.of("agenda.txt", "logo.png"), x.attachments().stream().map(Extraction.Part::name).toList());
@@ -153,13 +153,46 @@ class TextExtractorTest {
             + "Laptop aus, aber die Kosten für das Internet werden nicht erstattet."));
         assertEquals("ja", TextStats.language("在宅勤務は週に三日まで認められます。上司はチームの各メンバーと勤務の形を決めます。"));
         assertEquals(null, TextStats.language("too short"));
+        // the review's probe sentences
+        Map<String, String> more = Map.of(
+            "pt", "O pessoal pode trabalhar a partir de casa até três dias por semana e os responsáveis acordam o "
+                + "horário com cada membro da equipa. A empresa empresta um computador portátil, mas não paga a ligação à "
+                + "internet nem as despesas de electricidade.",
+            "it", "Il personale può lavorare da casa fino a tre giorni alla settimana e i responsabili concordano "
+                + "l'orario con ogni membro della squadra. L'azienda presta un computer portatile, ma non paga la "
+                + "connessione a internet né le spese della luce.",
+            "nl", "Het personeel mag tot drie dagen per week thuis werken en de leidinggevenden spreken het rooster af "
+                + "met elk lid van het team. Het bedrijf leent een laptop uit, maar de kosten van het internet worden niet "
+                + "vergoed.",
+            "sv", "Personalen får arbeta hemifrån upp till tre dagar i veckan och cheferna kommer överens om schemat med "
+                + "varje medlem i teamet. Företaget lånar ut en bärbar dator, men kostnaderna för internet ersätts inte "
+                + "av företaget.",
+            "pl", "Pracownicy mogą pracować z domu do trzech dni w tygodniu, a kierownicy ustalają harmonogram z każdym "
+                + "członkiem zespołu. Firma pożycza laptopa, ale nie zwraca kosztów internetu ani prądu, co jest ważne "
+                + "dla wielu osób.",
+            "ru", "Сотрудники могут работать из дома до трёх дней в неделю, и руководители согласуют график с каждым "
+                + "членом команды. Компания выдаёт ноутбук, но не оплачивает интернет и электричество, что важно для "
+                + "многих из них.",
+            "tr", "Personel haftada üç güne kadar evden çalışabilir ve yöneticiler her ekip üyesi ile çalışma düzenini "
+                + "belirler. Şirket bir dizüstü bilgisayar ve kulaklık verir, ama internet masrafları için bir ödeme "
+                + "yapmaz ve bu da çok önemli bir konudur.",
+            "fa", "کارکنان می‌توانند تا سه روز در هفته از خانه کار کنند و مدیران برنامه را با هر یک از اعضای تیم "
+                + "هماهنگ می‌کنند. شرکت یک لپ‌تاپ قرض می‌دهد اما هزینه اینترنت را پرداخت نمی‌کند.",
+            "ca", "El personal pot treballar des de casa fins a tres dies a la setmana i els responsables acorden "
+                + "l'horari amb cada membre de l'equip. L'empresa presta un ordinador portàtil, però no paga la connexió "
+                + "a internet ni les despeses de llum.",
+            "ar", "يمكن للموظفين العمل من المنزل حتى ثلاثة أيام في الأسبوع، ويتفق المديرون على الجدول مع كل عضو في "
+                + "الفريق. تقدم الشركة حاسوبا محمولا لكنها لا تدفع تكلفة الإنترنت.");
+        more.forEach((lang, text) -> assertEquals(lang, TextStats.language(text), text));
+        assertEquals(null, TextStats.language("Name Qty Price\nWidget 10 2.50\nGadget 5 3.75\nSprocket 7 1.20\n"
+            + "Bolt 100 0.05\nNut 200 0.02\nWasher 300 0.01\nGear 4 12.00\nCog 9 8.40\nSpring 50 0.30\n"));
         assertEquals(null, TextStats.language("1001 Customer 1 10.5 2025-01-01 FALSE ".repeat(10)));
     }
 
     @Test
     void characterLimitKeepsTheStart() throws Exception {
         DocumentLimits small = new DocumentLimits(100L << 20, 120, DocumentLimits.DEFAULTS.timeout(), 3, 100, 2, 100, 10,
-            30L << 20);
+            30L << 20, 64L << 20);
         Extraction x = extract(files.get("policy.pdf"), "policy.pdf", small);
         assertTrue(x.document().truncated());
         assertTrue(x.document().text().length() <= 120, x.document().text());
@@ -226,12 +259,31 @@ class TextExtractorTest {
             policy.setEncryptionKeyLength(128);
             doc.protect(policy);
             doc.save(p.toFile());
-        } catch (IOException | RuntimeException | LinkageError e) {
-            return; // PDFBox needs a cipher it may not have without Bouncy Castle: nothing to check then
         }
         DocumentException e = assertThrows(DocumentException.class, () -> extract(p, "locked.pdf",
             DocumentLimits.DEFAULTS));
         assertTrue(e.getMessage().contains("password") || e.getMessage().contains("could not be read"),
             e.getMessage());
+    }
+
+    @Test
+    void imagesInsideADocumentDoNotCountTowardsTheLimitOfFilesInside() throws Exception {
+        Path p = dir.resolve("pictures.docx");
+        try (var d = new org.apache.poi.xwpf.usermodel.XWPFDocument(); var out = Files.newOutputStream(p)) {
+            byte[] png = java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4"
+                + "nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg==");
+            for (int i = 0; i < 3; i++) {
+                var run = d.createParagraph().createRun();
+                run.setText("Picture " + i);
+                run.addPicture(new java.io.ByteArrayInputStream(png), org.apache.poi.common.usermodel.PictureType.PNG,
+                    "p" + i + ".png", 9525, 9525);
+            }
+            d.write(out);
+        }
+        DocumentLimits one = new DocumentLimits(100L << 20, 1_000_000, DocumentLimits.DEFAULTS.timeout(), 3, 1, 2, 1500,
+            150, 30L << 20, 64L << 20);
+        Extraction x = extract(p, "pictures.docx", one);
+        assertTrue(x.document().text().contains("Picture 2"));
+        assertFalse(String.join(" ", x.notes()).contains("Only the first"), x.notes().toString());
     }
 }
