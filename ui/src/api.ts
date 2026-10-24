@@ -312,6 +312,8 @@ export type DocumentProfile = {
   notes: string[];
   truncated: boolean;
   textKept: boolean;
+  /** No text is kept, but stewards may have it read from the source. */
+  textOnDemand: boolean;
   chunks: number;
   pageList: PageLabel[];
   readAt: string;

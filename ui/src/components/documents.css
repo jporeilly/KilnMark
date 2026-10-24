@@ -116,3 +116,8 @@
   font-weight: 400;
   overflow-wrap: anywhere;
 }
+
+button[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

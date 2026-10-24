@@ -19,7 +19,8 @@ public final class Chunker {
      * One chunk.
      *
      * @param sequence 0-based, in text order
-     * @param page     the page, slide or sheet it starts on (1-based), or null when not known
+     * @param page     the page, slide or sheet its own text starts on (1-based; the overlap repeated
+     *                 from the chunk before does not count), or null when not known
      */
     public record Chunk(int sequence, String text, Integer page, int start, int end) {
     }
@@ -45,7 +46,8 @@ public final class Chunker {
                 end = pieces.get(j)[1];
                 j++;
             }
-            out.add(new Chunk(out.size(), text.substring(start, end), page(pageStarts, start), start, end));
+            // the page is where the chunk's own text starts, not the overlap repeated from before
+            out.add(new Chunk(out.size(), text.substring(start, end), page(pageStarts, pieces.get(i)[0]), start, end));
             carry = -1;
             if (j < pieces.size() && overlap > 0) {
                 int from = wordStart(text, Math.max(end - overlap, start + 1), end);

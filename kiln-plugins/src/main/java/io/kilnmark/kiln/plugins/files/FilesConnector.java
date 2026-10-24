@@ -91,7 +91,8 @@ public final class FilesConnector extends FileSourceConnector {
                     + "Leave empty for every file", false),
             new Setting("recursive", "Include sub-folders", false, "true (the default) or false", false),
             ENCODING,
-            KEEP_TEXT);
+            KEEP_TEXT,
+            READ_TEXT_ON_DEMAND);
     }
 
     @Override
@@ -132,6 +133,7 @@ public final class FilesConnector extends FileSourceConnector {
         checkBoolean(source, "recursive", problems);
         checkEncoding(source, problems);
         checkBoolean(source, "keep_text", problems);
+        checkBoolean(source, "read_text_on_demand", problems);
         return problems;
     }
 

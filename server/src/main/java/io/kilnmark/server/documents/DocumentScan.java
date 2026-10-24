@@ -17,6 +17,7 @@ import io.kilnmark.graph.Urn;
 import io.kilnmark.graph.store.DocumentRecords;
 import io.kilnmark.graph.store.DocumentStore;
 import io.kilnmark.graph.store.GraphStore;
+import io.kilnmark.graph.store.JdbcDocumentStore;
 import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Pipeline;
@@ -39,6 +40,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 @ApplicationScoped
 public class DocumentScan {
 
+    private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(DocumentScan.class);
+
     /** Kind of the assets read as documents. */
     public static final String KIND = "document";
 
@@ -59,11 +62,17 @@ public class DocumentScan {
         return KIND.equals(a.kind()) && a.readable();
     }
 
-    /** After an asset is saved: an asset inside another (a sheet) is linked to it. */
-    public void recorded(String source, String urn, AssetInfo a) {
+    /**
+     * After an asset is saved: an asset inside another (a sheet) is linked to it, and when a
+     * workbook's sheets could not be listed this time, the sheets an earlier scan found are kept.
+     */
+    public void recorded(String source, long runId, String urn, AssetInfo a) {
         String parent = a.hints().get("parent");
         if (parent != null && !parent.isBlank()) {
             documents.setParent(urn, new Urn(source, parent).toString());
+        }
+        if (a.hints().containsKey("sheets-problem")) {
+            documents.keepParts(urn, runId, "sheet");
         }
     }
 
@@ -100,12 +109,32 @@ public class DocumentScan {
             }
             if (e.kind() == MetadataEvent.Kind.DOCUMENT) {
                 String parent = e.attributes().get(DocumentEvents.PARENT);
+                String name = e.attributes().getOrDefault(DocumentEvents.NAME, "attachment");
                 if (parent != null) {
-                    // an attachment: an asset of its own, inside the message
-                    String name = e.attributes().getOrDefault(DocumentEvents.NAME, "attachment");
-                    store.saveAsset(sourceId, runId, new Records.Asset(e.assetUrn(), KIND, container, name, null,
-                        List.of()), List.of());
-                    documents.setParent(e.assetUrn(), parent);
+                    // an attachment: an asset of its own, inside the message. One that cannot be
+                    // recorded is noted on the message; the rest of the scan goes on.
+                    try {
+                        store.saveAsset(sourceId, runId, new Records.Asset(e.assetUrn(), KIND, container, name, null,
+                            List.of()), List.of());
+                        documents.setParent(e.assetUrn(), parent);
+                        documents.saveDocument(document(e), runId);
+                        read.add(e.assetUrn());
+                    } catch (RuntimeException ex) {
+                        LOG.warnf("Attachment %s of %s could not be recorded: %s", name, parent, ex.getMessage());
+                        documents.addNote(parent, "An attachment, " + name + ", could not be recorded ("
+                            + ex.getMessage() + ")");
+                    }
+                    return;
+                }
+                if ("true".equals(e.attributes().get(DocumentEvents.PASSING))) {
+                    String note = JdbcDocumentStore.KEPT_NOTE + " (" + e.attributes().get(DocumentEvents.PROBLEM)
+                        + "); what is shown is from an earlier scan";
+                    if (documents.keepStored(e.assetUrn(), runId, note)) {
+                        if (!keepText) {
+                            documents.dropText(e.assetUrn());
+                        }
+                        return; // its text, sheets and attachments stay as they were
+                    }
                 }
                 documents.saveDocument(document(e), runId);
                 read.add(e.assetUrn());

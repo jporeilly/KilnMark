@@ -150,9 +150,16 @@ public class ScanService {
                     break;
                 }
                 String urn = new Urn(source.name(), a.path()).toString();
-                store.saveAsset(source.id(), runId, asset(urn, a), fields(a));
-                documents.recorded(source.name(), urn, a); // documents (ADR 0017): a sheet's workbook
                 seen.incrementAndGet();
+                try {
+                    store.saveAsset(source.id(), runId, asset(urn, a), fields(a));
+                    documents.recorded(source.name(), runId, urn, a); // documents (ADR 0017): a sheet's workbook
+                } catch (RuntimeException ex) {
+                    // one asset the database refuses (a name it cannot hold) must not end the scan
+                    failed.incrementAndGet();
+                    problems.add(a.path() + ": could not be recorded (" + ex.getMessage() + ")");
+                    continue;
+                }
                 if (!a.readable()) {
                     continue; // recorded, not read: a document, for example
                 }

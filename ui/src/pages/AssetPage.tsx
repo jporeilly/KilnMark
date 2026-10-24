@@ -100,7 +100,7 @@ export function AssetPage({ urn }: { urn: string }) {
       {(asset as DocumentAsset).parent && <PartOf parent={(asset as DocumentAsset).parent!} kind={asset.kind} />}
       {asset.kind === "document" && <DocumentDetails asset={asset as DocumentAsset} />}
       {asset.kind === "document" && (asset as DocumentAsset).document?.readable && (
-        <DocumentReader urn={asset.urn} name={asset.name} />
+        <DocumentReader urn={asset.urn} name={asset.name} profile={(asset as DocumentAsset).document!} />
       )}
       {asset.kind !== "document" && (
       <>

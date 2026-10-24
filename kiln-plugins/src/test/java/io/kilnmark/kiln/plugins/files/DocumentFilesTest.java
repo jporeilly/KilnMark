@@ -134,7 +134,7 @@ class DocumentFilesTest {
         assertTrue(r.result().succeeded(), r.result().error());
         assertEquals(3, r.documents().size());
         Map<String, String> mail = r.document();
-        assertEquals("Supplier query about kettles", mail.get(Extraction.SUBJECT));
+        assertEquals("Supplier query about lanterns", mail.get(Extraction.SUBJECT));
         Map<String, String> agenda = r.documents().get(1).attributes();
         String urn = "urn:kilnmark:docs:supplier-query.eml";
         assertEquals(urn + "#attachments/1/agenda.txt", r.documents().get(1).assetUrn());

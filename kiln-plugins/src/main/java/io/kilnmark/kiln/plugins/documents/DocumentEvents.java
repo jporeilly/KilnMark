@@ -35,6 +35,11 @@ public final class DocumentEvents {
     public static final String TAGS = "tags";
     public static final String READABLE = "readable";
     public static final String PROBLEM = "problem";
+    /**
+     * "true" when the read failed for a passing reason (busy, out of time, stopped, source not
+     * reachable): what an earlier scan stored about the document should be kept.
+     */
+    public static final String PASSING = "passing";
     public static final String TRUNCATED = "truncated";
     public static final String TEXT_KEPT = "text_kept";
     public static final String CHUNKS = "chunks";

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { documentsApi, type DocumentPage, type FindResult } from "../api";
+import { documentsApi, type DocumentPage, type DocumentProfile, type FindResult } from "../api";
 import { SnippetText } from "./SnippetText";
 import "./documents.css";
 
@@ -13,31 +13,56 @@ const KIND_NAME: Record<DocumentPage["pageKind"], string> = {
   part: "Part",
 };
 
+/** A pattern finding `find` in any case, on the text itself (lower-casing can change lengths). */
+function pattern(find: string) {
+  return new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
+}
+
 /** Plain text with every occurrence of `find` (any case) marked. Never markup. */
 function marked(text: string, find: string): ReactNode[] {
   if (!find) return [text];
-  const lower = text.toLowerCase();
-  const needle = find.toLowerCase();
   const out: ReactNode[] = [];
   let at = 0;
-  let i = lower.indexOf(needle);
   let n = 0;
-  while (i >= 0 && n < 2000) {
-    if (i > at) out.push(text.slice(at, i));
-    out.push(<mark key={n++}>{text.slice(i, i + needle.length)}</mark>);
-    at = i + needle.length;
-    i = lower.indexOf(needle, at);
+  for (const m of text.matchAll(pattern(find))) {
+    if (n >= 2000 || m.index === undefined || m[0].length === 0) break;
+    if (m.index > at) out.push(text.slice(at, m.index));
+    out.push(<mark key={n++}>{m[0]}</mark>);
+    at = m.index + m[0].length;
   }
   if (at < text.length) out.push(text.slice(at));
   return out;
+}
+
+/** Where `find` first occurs in `text`, in any case; -1 when it does not. */
+function firstMatch(text: string, find: string) {
+  const m = pattern(find).exec(text);
+  return m ? m.index : -1;
 }
 
 /**
  * A document's text to read: page by page (PDF), slide by slide, sheet by sheet (workbooks) or in
  * parts, with find. The text is shown as text, so nothing in a document can run in the browser.
  */
-export function DocumentReader({ urn, name }: { urn: string; name: string }) {
+export function DocumentReader({ urn, name, profile }: { urn: string; name: string; profile: DocumentProfile }) {
+  if (!profile.textKept && !profile.textOnDemand) {
+    return (
+      <section aria-labelledby="reader-h" className="panel">
+        <h2 id="reader-h">Text</h2>
+        <p>
+          Kilnmark keeps no text for documents in this source, so only their properties are shown. An administrator
+          can turn on <span className="mono">read_text_on_demand</span> for the source to let stewards read the text
+          from the source.
+        </p>
+      </section>
+    );
+  }
+  return <Reader urn={urn} name={name} />;
+}
+
+function Reader({ urn, name }: { urn: string; name: string }) {
   const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
   const [doc, setDoc] = useState<DocumentPage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [all, setAll] = useState(false);
@@ -56,10 +81,12 @@ export function DocumentReader({ urn, name }: { urn: string; name: string }) {
     let live = true;
     setError(null);
     setAll(false);
+    setLoading(true);
     documentsApi
       .text(urn, page)
       .then((d) => live && setDoc(d))
-      .catch((e: Error) => live && setError(e.message));
+      .catch((e: Error) => live && setError(e.message))
+      .finally(() => live && setLoading(false));
     return () => {
       live = false;
     };
@@ -73,6 +100,17 @@ export function DocumentReader({ urn, name }: { urn: string; name: string }) {
   const shown = doc && !all && doc.text.length > PREVIEW ? doc.text.slice(0, PREVIEW) : (doc?.text ?? "");
   const activeFind = found?.query ?? "";
   const body = useMemo(() => marked(shown, activeFind), [shown, activeFind]);
+
+  // a match past the preview: show the whole page, so the match can be seen
+  useEffect(() => {
+    if (doc && activeFind && !all && doc.text.length > PREVIEW && firstMatch(doc.text, activeFind) >= PREVIEW - activeFind.length) {
+      setAll(true);
+    }
+  }, [doc, activeFind, all]);
+
+  const go = (to: number) => {
+    if (doc && to >= 1 && to <= doc.pageCount) setPage(to);
+  };
 
   const onFind = (e: FormEvent) => {
     e.preventDefault();
@@ -150,7 +188,7 @@ export function DocumentReader({ urn, name }: { urn: string; name: string }) {
           )}
           {doc.pageCount > 1 && (
           <nav className="reader-bar" aria-label={`${kind}s of ${name}`}>
-            <button type="button" onClick={() => setPage(page - 1)} disabled={page <= 1}>
+            <button type="button" onClick={() => go(page - 1)} aria-disabled={page <= 1}>
               Previous {kind.toLowerCase()}
             </button>
             <label htmlFor="doc-page">{kind}</label>
@@ -162,12 +200,15 @@ export function DocumentReader({ urn, name }: { urn: string; name: string }) {
               ))}
             </select>
             <span className="muted small">of {doc.pageCount}</span>
-            <button type="button" onClick={() => setPage(page + 1)} disabled={page >= doc.pageCount}>
+            <button type="button" onClick={() => go(page + 1)} aria-disabled={page >= doc.pageCount}>
               Next {kind.toLowerCase()}
             </button>
           </nav>
           )}
-          <div className="doc-text" role="region" aria-label={`${label(doc.page)} of ${name}`} tabIndex={0}>
+          <p className="small muted" role="status" aria-live="polite">
+            {loading ? `Loading ${kind.toLowerCase()} ${page}…` : `Showing ${label(doc.page)} of ${doc.pageCount}`}
+          </p>
+          <div className="doc-text" role="region" aria-busy={loading} aria-label={`${label(doc.page)} of ${name}`} tabIndex={0}>
             {doc.text ? body : <span className="muted">This {kind.toLowerCase()} has no text.</span>}
           </div>
           {doc.text.length > PREVIEW && (

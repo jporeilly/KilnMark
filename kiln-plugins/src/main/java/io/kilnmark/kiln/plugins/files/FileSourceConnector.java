@@ -30,8 +30,20 @@ public abstract class FileSourceConnector implements Connector {
 
     /** Whether to keep the text of documents, or only their properties. */
     static final Setting KEEP_TEXT = new Setting("keep_text", "Keep document text", false,
-        "true (the default) keeps the text of documents for search and reading; false records only their "
-            + "properties (title, author, pages, language)", false);
+        "true (the default) stores documents' text in Kilnmark for search and reading. false stores only their "
+            + "properties (title, author, pages, language, words) and deletes text stored before at the next scan",
+        false);
+
+    /** With keep_text false, whether stewards may have a document's text read from the source to view it. */
+    static final Setting READ_TEXT_ON_DEMAND = new Setting("read_text_on_demand", "Read text on demand", false,
+        "Only when keep_text is false. true lets stewards view a document's text, read from the source when they "
+            + "open it and never stored; false (the default) shows only its properties", false);
+
+    /**
+     * A setting only the server sets, on its own copy of a source, for a read a person asked for:
+     * the read then uses the document reader kept for such reads, never one a scan needs.
+     */
+    public static final String ON_DEMAND = "_read_on_demand";
 
     /** Opens the folder or bucket a source names, after checking the server allows it. */
     protected abstract FileStore open(SourceConfig source) throws IOException;
@@ -51,9 +63,20 @@ public abstract class FileSourceConnector implements Connector {
             for (FileStore.Entry e : store.list()) {
                 String container = container(source, e.path());
                 try {
-                    out.add(FileInspector.inspect(store, e, container, encoding));
+                    AssetInfo a = FileInspector.inspect(store, e, container, encoding);
                     if (DocumentTypes.workbook(e.path())) {
-                        out.addAll(FileInspector.sheets(store, e, container)); // right after their workbook
+                        FileInspector.SheetList sheets = FileInspector.sheets(store, e, container);
+                        if (sheets.problem() != null) {
+                            // listing failed: the scan keeps the sheets it knew (hint sheets-problem)
+                            Map<String, String> hints = new HashMap<>(a.hints());
+                            hints.put("sheets-problem", sheets.problem());
+                            a = new AssetInfo(a.path(), a.kind(), a.container(), a.name(), a.description(), a.fields(),
+                                a.primaryKey(), a.bounded(), a.readable(), hints);
+                        }
+                        out.add(a);
+                        out.addAll(sheets.sheets()); // right after their workbook
+                    } else {
+                        out.add(a);
                     }
                 } catch (StackOverflowError | LinkageError | RuntimeException ex) {
                     // inspect records what it can; anything escaping it must not stop the catalogue
@@ -73,18 +96,27 @@ public abstract class FileSourceConnector implements Connector {
     public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
         if (FileInspector.KIND_DOCUMENT.equals(asset.kind())) {
             Map<String, String> d = new HashMap<>();
-            d.put("path", asset.path());
+            d.put("path", file(asset));
             d.put("asset-urn", read.assetUrn());
             d.put("size", asset.hints().getOrDefault("size", "-1"));
+            d.put("version", asset.hints().getOrDefault("size", "") + "|" + asset.hints().getOrDefault("modified", ""));
             d.put("keep-text", Boolean.toString(keepText(source)));
+            if ("true".equals(source.setting(ON_DEMAND))) {
+                d.put("on-demand", "true");
+            }
             if (asset.hints().containsKey("owner")) {
                 d.put("owner", asset.hints().get("owner"));
+            }
+            if (asset.hints().containsKey("sheets-problem")) {
+                d.put("note", "Its sheets could not be listed this time (" + asset.hints().get("sheets-problem")
+                    + "); the sheets shown are from an earlier scan");
             }
             return new StepSpec("read", new DocumentInput(() -> open(source)), d);
         }
         if (FileInspector.KIND_SHEET.equals(asset.kind())) {
             Map<String, String> d = new HashMap<>();
-            d.put("path", asset.hints().getOrDefault("parent", asset.path()));
+            d.put("path", asset.hints().getOrDefault("file", unescape(asset.hints().getOrDefault("parent", ""))));
+            d.put("version", asset.hints().getOrDefault("size", "") + "|" + asset.hints().getOrDefault("modified", ""));
             d.put("sheet", asset.hints().getOrDefault("sheet", asset.name()));
             d.put("size", asset.hints().getOrDefault("size", "-1"));
             d.put("asset-urn", read.assetUrn());
@@ -94,9 +126,9 @@ public abstract class FileSourceConnector implements Connector {
                 asset.fields().stream().map(FileColumn::of).toList()), d);
         }
         Map<String, String> s = new HashMap<>();
-        s.put("path", asset.path());
+        s.put("path", file(asset));
         String format = asset.hints().get("format");
-        s.put("format", format == null ? FileFormat.of(asset.path()).id() : format);
+        s.put("format", format == null ? FileFormat.of(file(asset)).id() : format);
         for (String hint : List.of("size", "delimiter", "quote", "sep-line", "encoding")) {
             if (asset.hints().containsKey(hint)) {
                 s.put(hint, asset.hints().get(hint));
@@ -110,6 +142,26 @@ public abstract class FileSourceConnector implements Connector {
         s.put("batch-size", Integer.toString(read.batchSize()));
         List<FileColumn> columns = asset.fields().stream().map(FileColumn::of).toList();
         return new StepSpec("read", new FileInput(() -> open(source), columns), s);
+    }
+
+    /**
+     * A file's path as an asset path: {@code %} and {@code #} escaped ({@code %25}, {@code %23}),
+     * so {@code #} in a URN only ever separates a file from something inside it (a sheet, an
+     * attachment) and a file named {@code book.xlsx#Data} cannot pass for a sheet.
+     */
+    public static String urnPath(String path) {
+        return path.replace("%", "%25").replace("#", "%23");
+    }
+
+    /** The file path an asset path names: {@link #urnPath} undone. */
+    public static String unescape(String path) {
+        return path.replace("%23", "#").replace("%25", "%");
+    }
+
+    /** The path in the store of the file an asset is (or is inside of, for a sheet: its workbook). */
+    static String file(AssetInfo asset) {
+        String file = asset.hints().get("file");
+        return file != null ? file : unescape(asset.path());
     }
 
     /** Whether a source keeps the text of its documents (setting {@code keep_text}, default true). */

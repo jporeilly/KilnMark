@@ -18,9 +18,12 @@ import io.kilnmark.kiln.connect.ConnectorContext;
  * @param chunkOverlap      characters a chunk repeats from the end of the one before
  * @param maxLegacyBytes    legacy Office files (.doc, .xls, .ppt, .msg) are read whole into memory,
  *                          so they have a lower limit
+ * @param maxPartBytes      the most an Office file's shared strings, styles or workbook part may
+ *                          hold once expanded: parsers keep these whole in memory
  */
 public record DocumentLimits(long maxBytes, int maxCharacters, Duration timeout, int maxDepth, int maxEmbedded,
-                             int threads, int chunkCharacters, int chunkOverlap, long maxLegacyBytes) {
+                             int threads, int chunkCharacters, int chunkOverlap, long maxLegacyBytes,
+                             long maxPartBytes) {
 
     /** Server settings, under {@code kilnmark.documents.}. */
     public static final String MAX_FILE_MB = "kilnmark.documents.max-file-mb";
@@ -31,15 +34,16 @@ public record DocumentLimits(long maxBytes, int maxCharacters, Duration timeout,
     public static final String CHUNK_CHARACTERS = "kilnmark.documents.chunk-characters";
     public static final String CHUNK_OVERLAP = "kilnmark.documents.chunk-overlap";
     public static final String MAX_LEGACY_MB = "kilnmark.documents.max-legacy-file-mb";
+    public static final String MAX_PART_MB = "kilnmark.documents.max-part-mb";
 
     /** The limits used when the server sets none. */
     public static final DocumentLimits DEFAULTS = new DocumentLimits(100L << 20, 1_000_000, Duration.ofSeconds(60), 3,
-        100, 2, 1500, 150, 30L << 20);
+        100, 2, 1500, 150, 30L << 20, 64L << 20);
 
     public DocumentLimits {
         if (maxBytes <= 0 || maxCharacters <= 0 || timeout.isNegative() || timeout.isZero() || maxDepth < 0
             || maxEmbedded < 0 || threads < 1 || chunkCharacters < 100 || chunkOverlap < 0
-            || chunkOverlap >= chunkCharacters || maxLegacyBytes <= 0) {
+            || chunkOverlap >= chunkCharacters || maxLegacyBytes <= 0 || maxPartBytes <= 0) {
             throw new IllegalArgumentException("Document limits out of range: " + maxBytes + " bytes, "
                 + maxCharacters + " characters, " + timeout + ", depth " + maxDepth + ", " + threads + " threads, "
                 + "chunks of " + chunkCharacters + " overlapping " + chunkOverlap);
@@ -58,7 +62,8 @@ public record DocumentLimits(long maxBytes, int maxCharacters, Duration timeout,
             context.integer(THREADS, d.threads),
             context.integer(CHUNK_CHARACTERS, d.chunkCharacters),
             context.integer(CHUNK_OVERLAP, d.chunkOverlap),
-            (long) context.integer(MAX_LEGACY_MB, (int) (d.maxLegacyBytes >> 20)) << 20);
+            (long) context.integer(MAX_LEGACY_MB, (int) (d.maxLegacyBytes >> 20)) << 20,
+            (long) context.integer(MAX_PART_MB, (int) (d.maxPartBytes >> 20)) << 20);
     }
 
     /** Megabytes, for messages. */

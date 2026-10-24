@@ -59,7 +59,8 @@ public class CatalogResource {
             a.rowCount(), a.rowCountComplete(), a.firstSeenAt(), a.lastScannedAt(), a.removedAt(),
             a.fields().stream().map(f -> new Views.Field(f.name(), f.position(), f.sourceType(), f.kind(), f.nullable(),
                 f.description(), parse(f.profileJson()), f.profiledAt())).toList(),
-            Views.DocumentProfile.of(documents.document(a.urn()).orElse(null)),
+            Views.DocumentProfile.of(documents.document(a.urn()).orElse(null), store.source(a.source())
+                .map(s -> DocumentTexts.onDemand(s.settings())).orElse(false)),
             Views.AssetLink.of(documents.parent(a.urn()).orElse(null)),
             documents.parts(a.urn()).stream().map(Views.AssetLink::of).toList());
     }

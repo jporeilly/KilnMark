@@ -221,16 +221,20 @@ Documents are untrusted input, so reading them is limited:
 | --- | --- | --- |
 | `kilnmark.documents.max-file-mb` | `100` | Larger documents are recorded, not read |
 | `kilnmark.documents.max-legacy-file-mb` | `30` | The same for .doc, .xls, .ppt and .msg, which are read whole into memory |
+| `kilnmark.documents.max-part-mb` | `64` | Office files whose shared strings, styles or workbook part really expand past this are not read |
 | `kilnmark.documents.max-characters` | `1000000` | Text kept from one document, attachments included |
-| `kilnmark.documents.timeout-seconds` | `60` | A document still being read after this is abandoned and marked not readable |
+| `kilnmark.documents.timeout-seconds` | `60` | A document (or sheet) still being read after this is abandoned; documents waiting for a reader are not timed |
 | `kilnmark.documents.max-depth` | `3` | How deep files inside files (attachments, embedded objects) are read |
 | `kilnmark.documents.threads` | `2` | Documents read at the same time across the server |
 | `kilnmark.documents.chunk-characters` | `1500` | Size of the chunks text is stored and searched in |
 | `kilnmark.documents.chunk-overlap` | `150` | Characters each chunk repeats from the one before |
 
-A source's setting `keep_text=false` keeps only documents' properties: no text is stored, and the
-asset page reads the text from the source again when someone opens it. Copies of S3 objects are
-made in a folder under `java.io.tmpdir` that only the server's user can read, and deleted after.
+A source's setting `keep_text=false` keeps only documents' properties: no text is stored (text
+stored before is deleted at the next scan) and none is shown. With `read_text_on_demand=true` as
+well, stewards can still read a document's text on its asset page: it is read from the source when
+they open it, on a reader of its own, at most six documents a minute each, and never stored.
+Copies of S3 objects are made in a folder under `java.io.tmpdir` that only the server's user can
+read, and deleted after (a workbook's copy is kept for ten minutes, so a scan fetches it once).
 
 ## Web UI
 

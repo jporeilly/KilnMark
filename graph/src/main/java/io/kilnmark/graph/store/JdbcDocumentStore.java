@@ -281,4 +281,99 @@ public final class JdbcDocumentStore implements DocumentStore {
             return out;
         });
     }
+
+    @Override
+    public List<Chunk> chunksBetween(String urn, int from, int to) {
+        return tx(c -> {
+            List<Chunk> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT seq, text, page, start_offset, end_offset "
+                + "FROM kilnmark.document_chunk WHERE asset_urn = ? AND end_offset > ? AND start_offset < ? "
+                + "ORDER BY seq")) {
+                ps.setString(1, urn);
+                ps.setInt(2, from);
+                ps.setInt(3, to);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new Chunk(rs.getInt(1), rs.getString(2), intOrNull(rs, 3), rs.getInt(4), rs.getInt(5)));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
+    /** Notes about a document that could not be read again start with this. */
+    public static final String KEPT_NOTE = "The last scan could not read it again";
+
+    @Override
+    public boolean keepStored(String urn, long runId, String note) {
+        return tx(c -> {
+            int n;
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.document SET notes = "
+                + "ARRAY(SELECT x FROM unnest(notes) x WHERE x NOT LIKE ?) || ARRAY[?]::text[] WHERE asset_urn = ?")) {
+                ps.setString(1, KEPT_NOTE + "%");
+                ps.setString(2, note);
+                ps.setString(3, urn);
+                n = ps.executeUpdate();
+            }
+            if (n == 0) {
+                return false;
+            }
+            keepParts(c, urn, runId, null);
+            return true;
+        });
+    }
+
+    @Override
+    public void keepParts(String urn, long runId, String kind) {
+        tx(c -> {
+            keepParts(c, urn, runId, kind);
+            return null;
+        });
+    }
+
+    private static void keepParts(Connection c, String urn, long runId, String kind) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.asset SET last_seen_run = ? "
+            + "WHERE parent_urn = ? AND removed_at IS NULL" + (kind == null ? "" : " AND kind = ?"))) {
+            ps.setLong(1, runId);
+            ps.setString(2, urn);
+            if (kind != null) {
+                ps.setString(3, kind);
+            }
+            ps.executeUpdate();
+        }
+    }
+
+    @Override
+    public void dropText(String urn) {
+        tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.document_chunk WHERE asset_urn = ? "
+                + "OR asset_urn IN (SELECT urn FROM kilnmark.asset WHERE parent_urn = ?)")) {
+                ps.setString(1, urn);
+                ps.setString(2, urn);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.document SET text_kept = false, "
+                + "chunk_count = 0 WHERE asset_urn = ? OR asset_urn IN "
+                + "(SELECT urn FROM kilnmark.asset WHERE parent_urn = ?)")) {
+                ps.setString(1, urn);
+                ps.setString(2, urn);
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public void addNote(String urn, String note) {
+        tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE kilnmark.document SET notes = notes || ARRAY[?]::text[] WHERE asset_urn = ?")) {
+                ps.setString(1, note);
+                ps.setString(2, urn);
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
 }

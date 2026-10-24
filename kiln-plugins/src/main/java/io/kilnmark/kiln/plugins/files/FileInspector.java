@@ -17,6 +17,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
 
 import io.kilnmark.kiln.connect.AssetInfo;
+import io.kilnmark.kiln.plugins.documents.DocumentException;
 import io.kilnmark.kiln.plugins.documents.DocumentLimits;
 import io.kilnmark.kiln.plugins.documents.DocumentRuntime;
 import io.kilnmark.kiln.plugins.documents.DocumentTypes;
@@ -63,8 +64,8 @@ public final class FileInspector {
         if (!format.readable()) {
             // documents whose text Kilnmark reads are readable: DocumentInput reads them (and says
             // why, when one turns out to be too large, damaged or protected); others are only recorded
-            return new AssetInfo(e.path(), KIND_DOCUMENT, container, name(e.path()), null, List.of(), List.of(), false,
-                DocumentTypes.readable(e.path()), hints(e, format));
+            return new AssetInfo(FileSourceConnector.urnPath(e.path()), KIND_DOCUMENT, container, name(e.path()), null,
+                List.of(), List.of(), false, DocumentTypes.readable(e.path()), hints(e, format));
         }
         try {
             Layout layout = layout(store, e.path(), e.size(), format, encoding);
@@ -74,8 +75,8 @@ public final class FileInspector {
             for (int i = 0; i < layout.columns().size(); i++) {
                 fields.add(layout.columns().get(i).fieldInfo(i + 1));
             }
-            return new AssetInfo(e.path(), KIND_FILE, container, name(e.path()), null, fields, List.of(), false, true,
-                hints);
+            return new AssetInfo(FileSourceConnector.urnPath(e.path()), KIND_FILE, container, name(e.path()), null,
+                fields, List.of(), false, true, hints);
         } catch (IOException | RuntimeException ex) {
             return unreadable(e, container, String.valueOf(ex.getMessage()));
         } catch (StackOverflowError ex) {
@@ -93,7 +94,7 @@ public final class FileInspector {
         FileFormat format = FileFormat.of(name(e.path()));
         Map<String, String> hints = hints(e, format);
         hints.put("error", reason);
-        return new AssetInfo(e.path(), KIND_FILE, container, name(e.path()),
+        return new AssetInfo(FileSourceConnector.urnPath(e.path()), KIND_FILE, container, name(e.path()),
             "Kilnmark could not read this " + format.id() + " file: " + reason, List.of(), List.of(), false, false,
             hints);
     }
@@ -105,6 +106,7 @@ public final class FileInspector {
     private static Map<String, String> hints(FileStore.Entry e, FileFormat format) {
         Map<String, String> hints = new HashMap<>();
         hints.put("format", format.id());
+        hints.put("file", e.path()); // the asset's path is this with % and # escaped (see FileSourceConnector.urnPath)
         hints.put("size", Long.toString(e.size()));
         if (e.modified() != null) {
             hints.put("modified", e.modified().toString());
@@ -119,40 +121,53 @@ public final class FileInspector {
     public static final String KIND_SHEET = "sheet";
 
     /**
+     * The sheets of a workbook, or why they could not be listed this time.
+     *
+     * @param problem null when {@code sheets} is the full list; else the reason, and the sheets an
+     *                earlier scan found should be kept
+     */
+    record SheetList(List<AssetInfo> sheets, String problem) {
+    }
+
+    /**
      * The sheets of an Excel workbook, as assets inside it: tables where a sheet has a header row,
-     * else recorded as not read, with the reason. A workbook that cannot be opened (too large,
-     * damaged, protected) has no sheets here; reading it as a document says why.
+     * else recorded as not read, with the reason. Listing them runs on a document reader, within
+     * the time limit. When it fails (the workbook is too large, damaged, protected, a zip bomb, or
+     * the server was busy) the reason is returned instead, so the scan keeps the sheets it knew.
      *
      * @param container where the workbook itself sits
      */
-    static List<AssetInfo> sheets(FileStore store, FileStore.Entry e, String container) {
+    static SheetList sheets(FileStore store, FileStore.Entry e, String container) {
         DocumentLimits limits = DocumentRuntime.limits();
         long max = DocumentTypes.legacy(e.path()) ? Math.min(limits.maxBytes(), limits.maxLegacyBytes())
             : limits.maxBytes();
         if (e.size() > max) {
-            return List.of();
+            return new SheetList(List.of(), LocalCopy.tooLarge(e.size(), max).getMessage());
         }
         List<Sheets.Layout> layouts;
-        try (LocalCopy copy = LocalCopy.of(store, e.path(), max)) {
+        try (LocalCopy copy = LocalCopy.of(store, e.path(), max, LocalCopy.version(e))) {
             layouts = DocumentRuntime.run(e.path(), cancelled -> {
                 try (Sheets.Workbook wb = Sheets.open(copy.path(), e.path())) {
-                    return Sheets.inspect(wb, SAMPLE_ROWS);
+                    return Sheets.inspect(wb, SAMPLE_ROWS, cancelled);
                 }
             });
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            return List.of();
-        } catch (Exception ex) {
-            return List.of();
+            return new SheetList(List.of(), "the scan was stopped");
+        } catch (DocumentException ex) {
+            return new SheetList(List.of(), ex.getMessage());
+        } catch (Exception | StackOverflowError ex) {
+            return new SheetList(List.of(), DocumentRuntime.explain(ex).getMessage());
         }
         String where = (container == null || container.isEmpty() ? "" : container + "/") + name(e.path());
+        String workbook = FileSourceConnector.urnPath(e.path());
         List<AssetInfo> out = new ArrayList<>();
         for (Sheets.Layout l : layouts) {
             Map<String, String> hints = hints(e, format(e));
             hints.put("format", KIND_SHEET);
             hints.put("sheet", l.name());
-            hints.put("parent", e.path());
-            String path = e.path() + "#" + l.name();
+            hints.put("parent", workbook);
+            String path = workbook + "#" + FileSourceConnector.urnPath(l.name());
             if (l.problem() != null) {
                 hints.put("error", l.problem());
                 out.add(new AssetInfo(path, KIND_SHEET, where, l.name(), "Not read as a table: " + l.problem(),
@@ -165,7 +180,7 @@ public final class FileInspector {
             }
             out.add(new AssetInfo(path, KIND_SHEET, where, l.name(), null, fields, List.of(), false, true, hints));
         }
-        return out;
+        return new SheetList(out, null);
     }
 
     private static FileFormat format(FileStore.Entry e) {

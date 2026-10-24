@@ -342,9 +342,11 @@ public final class JdbcGraphStore implements GraphStore {
                 ),
                 texts AS (
                     -- documents whose text has every word: below name and description matches (0.41 to 0.5)
-                    SELECT r.asset_urn, 0.41 + 0.09 * (r.best / (r.best + 1)) AS score
-                    FROM (SELECT c.asset_urn, max(ts_rank_cd(c.search, q.ts)) AS best
-                          FROM kilnmark.document_chunk c, q WHERE c.search @@ q.ts GROUP BY c.asset_urn) r
+                    -- at most TEXT_CANDIDATES matching chunks are ranked, so a common word costs a bounded amount
+                    SELECT r.asset_urn, 0.41 + 0.09 * (max(r.rank) / (max(r.rank) + 1)) AS score
+                    FROM (SELECT c.asset_urn, ts_rank_cd(c.search, q.ts) AS rank
+                          FROM kilnmark.document_chunk c, q WHERE c.search @@ q.ts LIMIT %d) r
+                    GROUP BY r.asset_urn
                 )
                 SELECT a.urn, s.name, a.kind, a.container, a.name, a.description, a.row_count,
                        coalesce(array_agg(f.name ORDER BY f.score DESC) FILTER (WHERE f.name IS NOT NULL), '{}'),
@@ -358,7 +360,7 @@ public final class JdbcGraphStore implements GraphStore {
                 GROUP BY a.urn, s.name, h.asset_score, t.asset_urn, t.score
                 HAVING greatest(h.asset_score, coalesce(max(f.score) * 0.9, 0), coalesce(t.score, 0)) >= 0.4
                 ORDER BY score DESC, h.asset_score DESC, a.container, a.name
-                LIMIT ?""")) {
+                LIMIT ?""".formatted(TEXT_CANDIDATES))) {
                 ps.setString(1, q);
                 ps.setString(2, q);
                 ps.setString(3, "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%");
@@ -378,6 +380,9 @@ public final class JdbcGraphStore implements GraphStore {
         });
     }
 
+    /** Matching chunks ranked for one search, at most; beyond them a document may be missed. */
+    static final int TEXT_CANDIDATES = 5000;
+
     /** Fills in the snippets of hits whose text matched: a passage of each one's best chunk. */
     private static List<SearchHit> snippets(Connection c, String q, List<SearchHit> hits) throws SQLException {
         List<String> urns = hits.stream().filter(h -> h.snippet() != null).map(SearchHit::urn).toList();
@@ -385,15 +390,20 @@ public final class JdbcGraphStore implements GraphStore {
             return hits;
         }
         java.util.Map<String, DocumentRecords.Snippet> found = new java.util.HashMap<>();
+        // the best chunk of each document first, then a headline for that one chunk only
         try (PreparedStatement ps = c.prepareStatement("""
-            WITH q AS (SELECT plainto_tsquery('simple', ?) AS ts)
-            SELECT DISTINCT ON (c.asset_urn) c.asset_urn,
-                   ts_headline('simple', c.text, q.ts,
+            WITH q AS (SELECT plainto_tsquery('simple', ?) AS ts),
+            best AS (
+                SELECT DISTINCT ON (c.asset_urn) c.asset_urn, c.text
+                FROM kilnmark.document_chunk c, q
+                WHERE c.asset_urn = ANY (?) AND c.search @@ q.ts
+                ORDER BY c.asset_urn, ts_rank_cd(c.search, q.ts) DESC, c.seq
+            )
+            SELECT b.asset_urn,
+                   ts_headline('simple', b.text, q.ts,
                                'StartSel=' || chr(57344) || ', StopSel=' || chr(57345)
                                || ', MaxWords=30, MinWords=12, ShortWord=2, MaxFragments=1')
-            FROM kilnmark.document_chunk c, q
-            WHERE c.asset_urn = ANY (?) AND c.search @@ q.ts
-            ORDER BY c.asset_urn, ts_rank_cd(c.search, q.ts) DESC, c.seq""")) {
+            FROM best b, q""")) {
             ps.setString(1, q);
             ps.setArray(2, c.createArrayOf("text", urns.toArray()));
             try (ResultSet rs = ps.executeQuery()) {

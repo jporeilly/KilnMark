@@ -2,8 +2,10 @@ package io.kilnmark.server.api;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,28 +27,38 @@ import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.SecretBox;
+import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.documents.ChunkRows;
+import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.ws.rs.core.Response;
 
 /**
- * A document's text for reading: put together from its stored chunks or, for a source that keeps
- * no text ({@code keep_text=false}), read again from the source for the person asking, through the
- * same reader and limits as a scan. Text read again is held in memory for a few minutes (a few
- * documents at most) so turning pages does not read the document each time; it is never stored.
+ * A document's text for reading, page by page: put together from the stored chunks that cover the
+ * page asked for. For a source that keeps no text ({@code keep_text=false}) the text is shown only
+ * when the source also has {@code read_text_on_demand=true}, and then only to stewards: it is read
+ * from the source for that person, on the server's one reader kept for such reads (never one a
+ * scan needs), at most {@value #PER_MINUTE} documents a minute per person, and held in memory for a
+ * few minutes (four documents at most), never stored.
  */
 @ApplicationScoped
 public class DocumentTexts {
 
-    /** Characters in a section of a document that has no pages. */
-    static final int SECTION = 20_000;
+    /** Chunks in a part of a document that has no pages. */
+    static final int PART_CHUNKS = 12;
+
+    /** Reads from sources one person may ask for in a minute. */
+    static final int PER_MINUTE = 6;
+
+    /** The source setting that allows reading text on demand. */
+    public static final String ON_DEMAND = "read_text_on_demand";
 
     private static final Duration HOLD = Duration.ofMinutes(5);
     private static final int HELD = 4;
 
-    /** A document's text and where its pages start. {@code pageKind}: page, slide, sheet or part. */
-    record Text(String text, List<DocumentRecords.Page> pages, String pageKind, boolean truncated,
-                boolean extractedNow) {
+    /** The pages of a document and how to find each one's chunks. {@code byChunks}: parts of chunks. */
+    record Layout(DocumentRecords.Document document, List<DocumentRecords.Page> pages, String pageKind,
+                  boolean byChunks, boolean onDemand) {
     }
 
     private record Held(Instant at, List<DocumentRecords.Chunk> chunks) {
@@ -57,15 +69,23 @@ public class DocumentTexts {
     private final Connectors connectors;
     private final SecretBox secrets;
     private final KilnmarkConfig config;
+    private final SecurityIdentity identity;
     private final Map<String, Held> held = new LinkedHashMap<>(16, 0.75f, true);
+    private final Map<String, Deque<Instant>> asked = new HashMap<>();
 
     public DocumentTexts(GraphStore store, DocumentStore documents, Connectors connectors, SecretBox secrets,
-                         KilnmarkConfig config) {
+                         KilnmarkConfig config, SecurityIdentity identity) {
         this.store = store;
         this.documents = documents;
         this.connectors = connectors;
         this.secrets = secrets;
         this.config = config;
+        this.identity = identity;
+    }
+
+    /** Whether a source lets its documents' text be read on demand (setting {@value #ON_DEMAND}). */
+    public static boolean onDemand(Map<String, String> settings) {
+        return "true".equalsIgnoreCase(settings.get(ON_DEMAND));
     }
 
     /** The document's profile, or the reason there is no text to show (as an API error). */
@@ -84,19 +104,32 @@ public class DocumentTexts {
         return d;
     }
 
-    /** The text of a readable document. */
-    Text text(String urn) {
+    /** How a readable document's text is divided, after checking the person may see it. */
+    Layout layout(String urn) {
         DocumentRecords.Document d = readable(urn);
         boolean now = !d.textKept();
-        List<DocumentRecords.Chunk> chunks = now ? extract(urn) : documents.chunks(urn, 0, Integer.MAX_VALUE);
-        String text = join(chunks);
-        List<DocumentRecords.Page> pages = d.pageList();
-        String kind = kind(d);
-        if (pages.isEmpty()) {
-            pages = sections(text);
-            kind = "part";
+        if (now) {
+            Records.Source source = source(urn);
+            if (!onDemand(source.settings())) {
+                throw ApiError.of(Response.Status.CONFLICT, "Kilnmark keeps no text for documents in "
+                    + source.name() + " (keep_text is off), so only their properties are shown. An administrator "
+                    + "can set " + ON_DEMAND + " on the source to let stewards read text from the source.");
+            }
+            if (!allowed(source)) {
+                throw ApiError.of(Response.Status.FORBIDDEN, "Only stewards may have text read from " + source.name()
+                    + ", because Kilnmark keeps none for it");
+            }
         }
-        return new Text(text, pages, kind, d.truncated(), now);
+        String kind = kind(d);
+        if (!d.pageList().isEmpty()) {
+            return new Layout(d, d.pageList(), kind, false, now);
+        }
+        int count = now ? extract(urn).size() : d.chunkCount();
+        List<DocumentRecords.Page> parts = new ArrayList<>();
+        for (int i = 0; i == 0 || i * PART_CHUNKS < count; i++) {
+            parts.add(new DocumentRecords.Page(i + 1, i * PART_CHUNKS, null));
+        }
+        return new Layout(d, parts, "part", true, now);
     }
 
     private static String kind(DocumentRecords.Document d) {
@@ -108,63 +141,102 @@ public class DocumentTexts {
         };
     }
 
-    /**
-     * The text the chunks came from: each chunk at its own offsets, the space between chunks
-     * (always white space) as line breaks, so page offsets still point at the right place.
-     */
-    static String join(List<DocumentRecords.Chunk> chunks) {
-        StringBuilder b = new StringBuilder();
-        List<DocumentRecords.Chunk> sorted = new ArrayList<>(chunks);
-        sorted.sort(Comparator.comparingInt(DocumentRecords.Chunk::sequence));
-        for (DocumentRecords.Chunk c : sorted) {
-            if (c.start() >= b.length()) {
-                b.append("\n".repeat(c.start() - b.length())).append(c.text());
-            } else if (c.end() > b.length()) {
-                b.append(c.text(), b.length() - c.start(), c.text().length());
+    /** The text of page {@code n} (1-based), loading only the chunks that cover it. */
+    String page(String urn, Layout l, int n) {
+        if (l.byChunks()) {
+            // part n is chunks [first, first + PART_CHUNKS); the chunk before is fetched to cut its overlap
+            int first = (n - 1) * PART_CHUNKS;
+            List<DocumentRecords.Chunk> chunks = l.onDemand()
+                ? slice(extract(urn), Math.max(0, first - 1), first + PART_CHUNKS)
+                : documents.chunks(urn, Math.max(0, first - 1), PART_CHUNKS + (first > 0 ? 1 : 0));
+            int from = first > 0 && !chunks.isEmpty() ? chunks.get(0).end() : 0;
+            List<DocumentRecords.Chunk> mine = first > 0 && !chunks.isEmpty() ? chunks.subList(1, chunks.size()) : chunks;
+            if (mine.isEmpty()) {
+                return "";
             }
+            int to = mine.get(mine.size() - 1).end();
+            return cut(mine, Math.max(from, mine.get(0).start()), to);
         }
-        return b.toString();
+        int from = l.pages().get(n - 1).start();
+        int to = n < l.pages().size() ? l.pages().get(n).start() : Integer.MAX_VALUE;
+        List<DocumentRecords.Chunk> chunks = l.onDemand()
+            ? extract(urn).stream().filter(c -> c.end() > from && c.start() < to).toList()
+            : documents.chunksBetween(urn, from, to);
+        return cut(chunks, from, to);
     }
 
-    /** Parts of about {@value #SECTION} characters, ending at a paragraph where possible. */
-    static List<DocumentRecords.Page> sections(String text) {
-        List<DocumentRecords.Page> out = new ArrayList<>();
-        int start = 0;
-        int n = 1;
-        do {
-            out.add(new DocumentRecords.Page(n++, start, null));
-            int end = start + SECTION;
-            if (end >= text.length()) {
-                break;
+    /** Every page's text, loading the chunks once (for find). */
+    List<String> pages(String urn, Layout l) {
+        List<DocumentRecords.Chunk> all = l.onDemand() ? extract(urn) : documents.chunks(urn, 0, Integer.MAX_VALUE);
+        List<String> out = new ArrayList<>();
+        for (int n = 1; n <= l.pages().size(); n++) {
+            if (l.byChunks()) {
+                int first = (n - 1) * PART_CHUNKS;
+                List<DocumentRecords.Chunk> mine = slice(all, first, first + PART_CHUNKS);
+                if (mine.isEmpty()) {
+                    out.add("");
+                    continue;
+                }
+                int from = first > 0 ? all.get(first - 1).end() : 0;
+                out.add(cut(mine, Math.max(from, mine.get(0).start()), mine.get(mine.size() - 1).end()));
+            } else {
+                int from = l.pages().get(n - 1).start();
+                int to = n < l.pages().size() ? l.pages().get(n).start() : Integer.MAX_VALUE;
+                out.add(cut(all.stream().filter(c -> c.end() > from && c.start() < to).toList(), from, to));
             }
-            int brk = text.lastIndexOf("\n\n", end);
-            start = brk > start + SECTION / 2 ? brk + 2 : end;
-        } while (start < text.length());
+        }
         return out;
     }
 
-    /** The text of page {@code number} (1-based). */
-    static String page(Text t, int number) {
-        int start = Math.min(t.pages().get(number - 1).start(), t.text().length());
-        int end = number < t.pages().size() ? Math.min(t.pages().get(number).start(), t.text().length())
-            : t.text().length();
-        return end <= start ? "" : t.text().substring(start, end).strip();
+    private static List<DocumentRecords.Chunk> slice(List<DocumentRecords.Chunk> all, int from, int to) {
+        return all.subList(Math.min(from, all.size()), Math.min(to, all.size()));
+    }
+
+    /**
+     * Characters {@code from} to {@code to} of the text the chunks came from: each chunk at its own
+     * offsets, the space between chunks (always white space) as line breaks.
+     */
+    static String cut(List<DocumentRecords.Chunk> chunks, int from, int to) {
+        if (chunks.isEmpty()) {
+            return "";
+        }
+        List<DocumentRecords.Chunk> sorted = new ArrayList<>(chunks);
+        sorted.sort(Comparator.comparingInt(DocumentRecords.Chunk::sequence));
+        int base = sorted.get(0).start();
+        StringBuilder b = new StringBuilder();
+        for (DocumentRecords.Chunk c : sorted) {
+            int at = c.start() - base;
+            if (at >= b.length()) {
+                b.append("\n".repeat(at - b.length())).append(c.text());
+            } else if (at + c.text().length() > b.length()) {
+                b.append(c.text(), b.length() - at, c.text().length());
+            }
+        }
+        int start = Math.max(0, Math.min(b.length(), from - base));
+        int end = (int) Math.max(start, Math.min((long) b.length(), (long) to - base));
+        return b.substring(start, end).strip();
+    }
+
+    /** The source a document belongs to. */
+    private Records.Source source(String urn) {
+        Urn u = Urn.parse(urn);
+        return store.source(u.source()).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND,
+            "The source " + u.source() + " no longer exists"));
     }
 
     /** Reads a document from its source again, keeping its chunks in memory only. */
-    private List<DocumentRecords.Chunk> extract(String urn) {
+    List<DocumentRecords.Chunk> extract(String urn) {
         synchronized (held) {
             Held h = held.get(urn);
             if (h != null && h.at().plus(HOLD).isAfter(Instant.now())) {
                 return h.chunks();
             }
         }
-        Urn u = Urn.parse(urn);
-        Records.Source source = store.source(u.source()).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND,
-            "The source " + u.source() + " no longer exists"));
-        if (!allowed(source)) {
-            throw ApiError.of(Response.Status.FORBIDDEN, "You may not read documents from " + source.name());
+        Records.Source source = source(urn);
+        if (!onDemand(source.settings()) || !allowed(source)) {
+            throw ApiError.of(Response.Status.FORBIDDEN, "Text from " + source.name() + " is not read on demand");
         }
+        limitRate();
         Connector connector = connectors.get(source.kind()).orElseThrow(() -> ApiError.of(Response.Status.CONFLICT,
             "This server has no connector for sources of kind '" + source.kind() + "'"));
         // an attachment is read from its message
@@ -173,6 +245,7 @@ public class DocumentTexts {
         String path = Urn.parse(readUrn).path();
         Map<String, String> settings = new HashMap<>(source.settings());
         settings.put("keep_text", "true"); // only for this read; nothing is stored
+        settings.put(io.kilnmark.kiln.plugins.files.FileSourceConnector.ON_DEMAND, "true");
         String secret = store.sourceSecret(source.name()).map(secrets::open).orElse(null);
         SourceConfig config = new SourceConfig(source.name(), source.kind(), settings, secret);
         String name = path.substring(path.lastIndexOf('/') + 1);
@@ -197,10 +270,11 @@ public class DocumentTexts {
         }
         List<DocumentRecords.Chunk> mine;
         synchronized (chunks) {
-            mine = List.copyOf(chunks.getOrDefault(urn, List.of()));
+            mine = new ArrayList<>(chunks.getOrDefault(urn, List.of()));
         }
+        mine.sort(Comparator.comparingInt(DocumentRecords.Chunk::sequence));
         synchronized (held) {
-            held.put(urn, new Held(Instant.now(), mine));
+            held.put(urn, new Held(Instant.now(), List.copyOf(mine)));
             while (held.size() > HELD) {
                 held.remove(held.keySet().iterator().next());
             }
@@ -208,11 +282,29 @@ public class DocumentTexts {
         return mine;
     }
 
+    /** At most {@value #PER_MINUTE} reads from sources per person per minute. */
+    private void limitRate() {
+        String who = identity == null || identity.isAnonymous() ? "anonymous" : identity.getPrincipal().getName();
+        Instant now = Instant.now();
+        synchronized (asked) {
+            Deque<Instant> times = asked.computeIfAbsent(who, k -> new ArrayDeque<>());
+            while (!times.isEmpty() && times.peekFirst().isBefore(now.minusSeconds(60))) {
+                times.pollFirst();
+            }
+            if (times.size() >= PER_MINUTE) {
+                throw ApiError.of(Response.Status.TOO_MANY_REQUESTS, "You have had " + PER_MINUTE + " documents read "
+                    + "from their sources in the last minute: wait a minute, then try again");
+            }
+            times.addLast(now);
+        }
+    }
+
     /**
-     * Whether the person asking may read documents from this source. Every viewer may read every
-     * source today; per-source access arrives with stream A's source settings, and goes here.
+     * Whether the person asking may have text read from this source. Until per-source access exists,
+     * stewards may and viewers may not.
      */
     boolean allowed(Records.Source source) {
-        return true;
+        // TODO(per-source access): check the person's access to this source here when sources get it
+        return identity != null && identity.hasRole(AccessRole.STEWARD_ROLE);
     }
 }

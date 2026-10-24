@@ -14,6 +14,8 @@ jackson = "2.21.7"
 awssdk = "2.55.16"
 tika = "3.3.3"
 poi = "5.5.1"
+# The Quarkus platform pins mime4j for the server; the plug-ins and their tests use the same version.
+mime4j = "0.8.12"
 
 [libraries]
 quarkus-bom = { module = "io.quarkus.platform:quarkus-bom", version.ref = "quarkus" }
@@ -34,6 +36,8 @@ tika-parser-pdf = { module = "org.apache.tika:tika-parser-pdf-module", version.r
 tika-parser-microsoft = { module = "org.apache.tika:tika-parser-microsoft-module", version.ref = "tika" }
 tika-parser-mail = { module = "org.apache.tika:tika-parser-mail-module", version.ref = "tika" }
 tika-parser-miscoffice = { module = "org.apache.tika:tika-parser-miscoffice-module", version.ref = "tika" }
+mime4j-core = { module = "org.apache.james:apache-mime4j-core", version.ref = "mime4j" }
+mime4j-dom = { module = "org.apache.james:apache-mime4j-dom", version.ref = "mime4j" }
 poi-ooxml = { module = "org.apache.poi:poi-ooxml", version.ref = "poi" }
 poi-ooxml-lite = { module = "org.apache.poi:poi-ooxml-lite", version.ref = "poi" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }

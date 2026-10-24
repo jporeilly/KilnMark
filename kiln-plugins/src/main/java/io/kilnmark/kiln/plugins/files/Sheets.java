@@ -34,7 +34,11 @@ import org.apache.poi.xssf.model.StylesTable;
 import org.apache.poi.xssf.usermodel.XSSFCellStyle;
 import org.apache.poi.xssf.usermodel.XSSFRelation;
 
+import io.kilnmark.kiln.plugins.documents.DocumentException;
+import io.kilnmark.kiln.plugins.documents.DocumentRuntime;
 import io.kilnmark.kiln.plugins.documents.DocumentTypes;
+import io.kilnmark.kiln.plugins.documents.Names;
+import io.kilnmark.kiln.plugins.documents.OfficeParts;
 import io.kilnmark.kiln.plugins.jdbc.JdbcColumn.Kind;
 
 /**
@@ -44,7 +48,10 @@ import io.kilnmark.kiln.plugins.jdbc.JdbcColumn.Kind;
  *
  * <p>.xlsx is read with POI's streaming (event) API: the package parts through
  * {@link XSSFReader}, each sheet's XML pulled row by row with StAX, so memory holds one row, plus
- * the workbook's shared strings (refused above {@value #MAX_SHARED_STRINGS_MB} MB). Legacy .xls is
+ * the workbook's shared strings, read through a stream that stops at
+ * {@code kilnmark.documents.max-part-mb} (and the whole file is checked by {@link OfficeParts}
+ * first: what a part really expands to, not what the archive declares). Rows stop at Excel's
+ * {@value #MAX_COLUMNS} columns. Legacy .xls is
  * read whole with POI's HSSF, so it is limited to {@code kilnmark.documents.max-legacy-file-mb}.
  *
  * <p>A column is typed when every sampled cell in it is: boolean, int64 (whole numbers), float64,
@@ -52,7 +59,8 @@ import io.kilnmark.kiln.plugins.jdbc.JdbcColumn.Kind;
  */
 final class Sheets {
 
-    static final int MAX_SHARED_STRINGS_MB = 128;
+    /** Excel's own most columns in a row (A to XFD); a row with more cells is refused. */
+    static final int MAX_COLUMNS = 16_384;
 
     /** A cell that holds an error (#DIV/0!, #N/A): read as null. */
     static final Object ERROR = new Object() {
@@ -108,14 +116,48 @@ final class Sheets {
 
     static Workbook open(Path file, String name) throws IOException {
         String ext = DocumentTypes.extension(name);
-        return ext.equals("xls") ? new Hssf(file) : new Xssf(file);
+        if (ext.equals("xls")) {
+            return new Hssf(file);
+        }
+        try {
+            OfficeParts.check(file, DocumentRuntime.limits().maxPartBytes());
+        } catch (DocumentException e) {
+            throw new IOException(e.getMessage(), e);
+        }
+        return new Xssf(file);
+    }
+
+    /**
+     * Sheet names made safe to store and show ({@link Names}), and unique: two names that clean to
+     * the same text get " (2)", " (3)", ...
+     */
+    static List<String> safeNames(List<String> raw) {
+        List<String> out = new ArrayList<>();
+        for (int i = 0; i < raw.size(); i++) {
+            String base = Names.clean(raw.get(i), "Sheet" + (i + 1));
+            String n = base;
+            for (int k = 2; out.contains(n); k++) {
+                n = base + " (" + k + ")";
+            }
+            out.add(n);
+        }
+        return out;
     }
 
     /** Inspects every sheet, sampling {@code sampleRows} rows below each header. */
     static List<Layout> inspect(Workbook wb, int sampleRows) throws IOException {
+        return inspect(wb, sampleRows, new java.util.concurrent.atomic.AtomicBoolean());
+    }
+
+    /** As {@link #inspect(Workbook, int)}, stopping between sheets once {@code cancelled} turns true. */
+    static List<Layout> inspect(Workbook wb, int sampleRows, java.util.concurrent.atomic.AtomicBoolean cancelled)
+        throws IOException {
         List<Layout> out = new ArrayList<>();
         List<String> names = wb.sheetNames();
         for (int i = 0; i < names.size(); i++) {
+            if (cancelled.get() || Thread.currentThread().isInterrupted()) {
+                throw new IOException("the read was stopped");
+            }
             try (SheetRows rows = wb.rows(names.get(i))) {
                 out.add(inspect(names.get(i), i, rows, sampleRows));
             }
@@ -312,23 +354,21 @@ final class Sheets {
                 throw new IOException("it is not a valid Excel workbook (" + e.getMessage() + ")", e);
             }
             try {
-                for (PackagePart p : pkg.getPartsByContentType(XSSFRelation.SHARED_STRINGS.getContentType())) {
-                    if (p.getSize() > ((long) MAX_SHARED_STRINGS_MB << 20)) {
-                        throw new IOException("its shared text is larger than " + MAX_SHARED_STRINGS_MB
-                            + " MB, more than Kilnmark reads to find tables");
-                    }
-                }
                 reader = new XSSFReader(pkg);
-                strings = new ReadOnlySharedStringsTable(pkg, false);
+                List<PackagePart> sst = pkg.getPartsByContentType(XSSFRelation.SHARED_STRINGS.getContentType());
+                strings = sst.isEmpty() ? null : new ReadOnlySharedStringsTable(OfficeParts.limited(
+                    sst.get(0).getInputStream(), DocumentRuntime.limits().maxPartBytes(), "its shared strings"), false);
                 styles = reader.getStylesTable();
                 date1904 = date1904(reader);
                 XSSFReader.SheetIterator it = reader.getSheetIterator();
-                while (it.hasNext()) {
+                List<String> raw = new ArrayList<>();
+                while (it.hasNext() && raw.size() < 10_000) {
                     InputStream sheet = it.next();
                     sheet.close(); // only its name and part are needed here
-                    names.add(it.getSheetName());
+                    raw.add(it.getSheetName());
                     parts.add(it.getSheetPart());
                 }
+                names.addAll(safeNames(raw));
             } catch (IOException e) {
                 pkg.revert();
                 throw e;
@@ -416,9 +456,10 @@ final class Sheets {
             }
 
             /** The cells of the row the reader is on, up to its end tag. */
-            private List<Object> cells() throws XMLStreamException {
+            private List<Object> cells() throws XMLStreamException, IOException {
                 List<Object> cells = new ArrayList<>();
                 int next = 0;
+                int seen = 0;
                 while (x.hasNext()) {
                     int ev = x.next();
                     if (ev == XMLStreamConstants.END_ELEMENT && x.getLocalName().equals("row")) {
@@ -428,6 +469,10 @@ final class Sheets {
                         int col = column(x.getAttributeValue(null, "r"));
                         if (col < 0) {
                             col = next;
+                        }
+                        if (col >= MAX_COLUMNS || ++seen > MAX_COLUMNS) {
+                            throw new IOException("a row has more than " + String.format("%,d", MAX_COLUMNS)
+                                + " cells, more than Excel allows, so Kilnmark stopped reading it");
                         }
                         next = col + 1;
                         Object v = cell(x.getAttributeValue(null, "t"), x.getAttributeValue(null, "s"));
@@ -482,7 +527,8 @@ final class Sheets {
                             return null;
                         }
                         try {
-                            return strings.getItemAt(Integer.parseInt(value.toString().strip())).getString();
+                            return strings == null ? ERROR
+                                : strings.getItemAt(Integer.parseInt(value.toString().strip())).getString();
                         } catch (RuntimeException e) {
                             return ERROR;
                         }
@@ -562,16 +608,17 @@ final class Sheets {
 
         @Override
         public List<String> sheetNames() {
-            List<String> out = new ArrayList<>();
+            List<String> raw = new ArrayList<>();
             for (int i = 0; i < wb.getNumberOfSheets(); i++) {
-                out.add(wb.getSheetName(i));
+                raw.add(wb.getSheetName(i));
             }
-            return out;
+            return safeNames(raw);
         }
 
         @Override
         public SheetRows rows(String sheet) throws IOException {
-            Sheet s = wb.getSheet(sheet);
+            int i = sheetNames().indexOf(sheet);
+            Sheet s = i < 0 ? null : wb.getSheetAt(i);
             if (s == null) {
                 throw new IOException("the workbook has no sheet called '" + sheet + "' any more: scan the source again");
             }

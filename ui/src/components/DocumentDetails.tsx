@@ -172,13 +172,19 @@ export function DocumentDetails({ asset }: { asset: DocumentAsset }) {
         )}
         <div>
           <dt>Text kept</dt>
-          <dd>{d.textKept ? "Yes, for search and reading" : "No: this source keeps only properties"}</dd>
+          <dd>
+            {d.textKept
+              ? "Yes, for search and reading"
+              : d.textOnDemand
+                ? "No: stewards can have it read from the source"
+                : "No: this source keeps only properties"}
+          </dd>
         </div>
       </dl>
       {d.notes.length > 0 && (
         <ul className="plain-list small">
-          {d.notes.map((n) => (
-            <li key={n}>{n}</li>
+          {d.notes.map((n, i) => (
+            <li key={`note-${i}`}>{n}</li>
           ))}
         </ul>
       )}

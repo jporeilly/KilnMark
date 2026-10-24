@@ -88,13 +88,17 @@ public final class Views {
                         AssetLink parent, List<AssetLink> parts) {
     }
 
-    /** What reading a document found. {@code mail} is null for documents that are not mail. */
+    /**
+     * What reading a document found. {@code mail} is null for documents that are not mail.
+     * {@code textOnDemand}: no text is kept, but stewards may have it read from the source.
+     */
     public record DocumentProfile(boolean readable, String problem, String format, String contentType, Long size,
                                   Integer pages, Long words, Long characters, String language, String title,
                                   String author, Instant created, Instant modified, String owner,
                                   Map<String, String> tags, Mail mail, List<String> notes, boolean truncated,
-                                  boolean textKept, int chunks, List<PageLabel> pageList, Instant readAt) {
-        static DocumentProfile of(io.kilnmark.graph.store.DocumentRecords.Document d) {
+                                  boolean textKept, boolean textOnDemand, int chunks, List<PageLabel> pageList,
+                                  Instant readAt) {
+        static DocumentProfile of(io.kilnmark.graph.store.DocumentRecords.Document d, boolean onDemand) {
             if (d == null) {
                 return null;
             }
@@ -102,7 +106,7 @@ public final class Views {
             return new DocumentProfile(d.readable(), d.problem(), d.format(), d.contentType(), d.sizeBytes(), d.pages(),
                 d.words(), d.characters(), d.language(), d.title(), d.author(), d.created(), d.modified(), d.owner(),
                 d.tags(), m.isEmpty() ? null : new Mail(m.get("from"), m.get("to"), m.get("cc"), m.get("subject"),
-                m.get("date")), d.notes(), d.truncated(), d.textKept(), d.chunkCount(),
+                m.get("date")), d.notes(), d.truncated(), d.textKept(), !d.textKept() && onDemand, d.chunkCount(),
                 d.pageList().stream().map(p -> new PageLabel(p.number(), p.label())).toList(), d.observedAt());
         }
     }
