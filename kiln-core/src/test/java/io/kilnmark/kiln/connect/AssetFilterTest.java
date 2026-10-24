@@ -111,6 +111,15 @@ class AssetFilterTest {
     }
 
     @Test
+    void theTotalSizeOfASettingsPatternsIsCapped() {
+        String many = String.join(",", java.util.Collections.nCopies(60, "a".repeat(90) + "*"));
+        assertTrue(assertThrows(IllegalArgumentException.class, () -> patterns(many, null)).getMessage()
+            .contains("too many or too long"));
+        String fine = String.join(",", java.util.Collections.nCopies(40, "a".repeat(90) + "*"));
+        assertTrue(patterns(fine, null).patterns("aaa", "aaa") == false);
+    }
+
+    @Test
     void listsSplitOutsideBraces() {
         assertEquals(List.of("*.{csv,tsv}", "raw/**", "x"), AssetFilter.split("*.{csv,tsv}, raw/** ;x;"));
     }

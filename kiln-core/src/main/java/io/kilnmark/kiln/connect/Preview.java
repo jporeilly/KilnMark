@@ -34,8 +34,8 @@ public record Preview(List<Column> columns, List<List<String>> rows, boolean tru
     public static final int MAX_VALUE = 500;
     /** The most rows a preview reads. */
     public static final int MAX_ROWS = 1000;
-    /** The most characters of values one preview holds, about 2 MB. */
-    public static final long MAX_CHARS = 2_000_000;
+    /** The most bytes (UTF-8) of values one preview holds: 2 MB. */
+    public static final long MAX_BYTES = 2_000_000;
 
     public Preview {
         columns = List.copyOf(columns);
@@ -89,7 +89,7 @@ public record Preview(List<Column> columns, List<List<String>> rows, boolean tru
         private final int limit;
         private final List<List<String>> rows = new ArrayList<>();
         private final List<String> names = new ArrayList<>();
-        private long chars;
+        private long bytes;
         private boolean truncated;
 
         Collector(int limit) {
@@ -127,10 +127,10 @@ public record Preview(List<Column> columns, List<List<String>> rows, boolean tru
                     List<String> row = new ArrayList<>(vectors.size());
                     for (FieldVector v : vectors) {
                         String text = text(v.isNull(r) ? null : v.getObject(r));
-                        chars += text == null ? 4 : text.length();
+                        bytes += text == null ? 4 : utf8Length(text);
                         row.add(text);
                     }
-                    if (chars > MAX_CHARS) {
+                    if (bytes > MAX_BYTES) {
                         truncated = true;
                     } else {
                         rows.add(row);
@@ -139,6 +139,25 @@ public record Preview(List<Column> columns, List<List<String>> rows, boolean tru
             }
             return true;
         }
+    }
+
+    /** The length of a string in UTF-8, without encoding it. */
+    static long utf8Length(String s) {
+        long n = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c < 0x80) {
+                n++;
+            } else if (c < 0x800) {
+                n += 2;
+            } else if (Character.isHighSurrogate(c)) {
+                n += 4;
+                i++;
+            } else {
+                n += 3;
+            }
+        }
+        return n;
     }
 
     /** A value as people read it: text cut at {@value #MAX_VALUE} characters, bytes as hex with their length. */

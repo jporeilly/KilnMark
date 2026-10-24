@@ -249,8 +249,12 @@ public class SourceService {
      * limit and places. Nothing is stored, logged or sent to a model; the rows go to the person
      * asking and nowhere else.
      *
+     * <p>A preview reads the asset named, whatever the source's include and exclude patterns say:
+     * they choose what a scan records, not what a steward may look at.
+     *
      * <p>TODO: when sensitive-column flags arrive (stream E), mask flagged columns here for people
-     * who may not unmask them, as every other view of the data must.
+     * who may not unmask them, as every other view of the data must. Until then previews are not
+     * masked.
      */
     Views.Preview preview(Connector connector, SourceConfig config, String asset, Integer rows) {
         if (asset == null || asset.isBlank()) {
@@ -267,6 +271,14 @@ public class SourceService {
         return new Views.Preview(asset, p.columns().stream()
             .map(c -> new Views.PreviewColumn(c.name(), c.kind(), c.sourceType())).toList(), p.rows(), p.rows().size(),
             p.truncated(), p.details());
+    }
+
+    /** A preview as a response no browser or proxy keeps: the rows are the source's data. */
+    static Response noStore(Views.Preview preview) {
+        jakarta.ws.rs.core.CacheControl none = new jakarta.ws.rs.core.CacheControl();
+        none.setNoStore(true);
+        none.setNoCache(true);
+        return Response.ok(preview).cacheControl(none).build();
     }
 
     private <T> T run(SourceConfig config, String doing, java.util.concurrent.Callable<T> work) {
