@@ -138,11 +138,15 @@ public class ScanService {
         BooleanSupplier stop = () -> halt.get() || cancelled.getAsBoolean();
         String status = "failed";
         String detail;
+        Connector ending = null; // documents (ADR 0017): told when the scan ends, however it ends
+        SourceConfig endingConfig = null;
         try {
             Connector connector = connectors.get(source.kind()).orElseThrow(() -> new ConnectorException(
                 "This server has no connector for sources of kind '" + source.kind() + "'"));
             String secret = store.sourceSecret(source.name()).map(secrets::open).orElse(null);
             SourceConfig config = new SourceConfig(source.name(), source.kind(), source.settings(), secret);
+            ending = connector;
+            endingConfig = config;
             List<AssetInfo> assets = connector.catalog(config);
             Semaphore slots = new Semaphore(Math.max(1, this.config.scan().parallelTables()));
             for (AssetInfo a : assets) {
@@ -189,7 +193,6 @@ public class ScanService {
                 }));
             }
             joinAll(work);
-            connector.finished(config); // documents (ADR 0017): shared copies of remote workbooks
             if (cancelled.getAsBoolean()) {
                 return false; // nothing final written: the worker puts the scan back in the queue
             }
@@ -208,6 +211,13 @@ public class ScanService {
         } finally {
             halt.set(true); // every exit: the assets still being profiled stop at their next event
             joinAll(work);
+            if (ending != null) {
+                try {
+                    ending.finished(endingConfig); // documents (ADR 0017): shared copies of remote workbooks
+                } catch (RuntimeException e) {
+                    LOG.warnf("Connector clean-up after scan %d of %s failed: %s", runId, source.name(), e.getMessage());
+                }
+            }
         }
         // A database call with the interrupt flag set may be refused, so clear it for the final write.
         boolean interrupted = Thread.interrupted();

@@ -185,11 +185,22 @@ final class LocalCopy implements AutoCloseable {
         }
     }
 
-    /** Drops every shared copy nobody is using: a scan has ended (and tests). */
+    /** Drops every shared copy nobody is using (tests). */
     static void dropIdle() {
+        dropIdle("");
+    }
+
+    /**
+     * Drops the shared copies nobody is using whose key starts with {@code prefix}: a store's
+     * {@link FileStore#copyScope}, when a scan of that source has ended. Other sources'
+     * copies stay for their own scans.
+     */
+    static void dropIdle(String prefix) {
         synchronized (KEPT) {
-            for (Kept k : KEPT.values()) {
-                k.lastUsed = 0;
+            for (var e : KEPT.entrySet()) {
+                if (e.getKey().startsWith(prefix)) {
+                    e.getValue().lastUsed = System.nanoTime() - Duration.ofMinutes(IDLE_MINUTES + 1).toNanos();
+                }
             }
             evict();
         }

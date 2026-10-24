@@ -275,6 +275,12 @@ public final class S3FileStore implements FileStore {
             + describe(key);
     }
 
+    /** This source's objects: those under its prefix (keys are whole object keys). */
+    @Override
+    public String copyScope() {
+        return copyKey(settings.prefix() == null ? "" : settings.prefix());
+    }
+
     @Override
     public String describe(String key) {
         return "s3://" + settings.bucket() + "/" + key;

@@ -120,7 +120,7 @@ final class Sheets {
             return new Hssf(file);
         }
         try {
-            OfficeParts.check(file, DocumentRuntime.limits().maxPartBytes());
+            OfficeParts.check(file, DocumentRuntime.limits().maxPartBytes(), true);
         } catch (DocumentException e) {
             throw new IOException(e.getMessage(), e);
         }

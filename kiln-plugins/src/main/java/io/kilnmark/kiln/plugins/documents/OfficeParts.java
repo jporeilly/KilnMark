@@ -3,39 +3,63 @@ package io.kilnmark.kiln.plugins.documents;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
+
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
 
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
+import org.apache.poi.util.XMLHelper;
 
 /**
- * Checks a ZIP-based document before any parser opens it. Parsers keep some parts of an Office
- * file whole in memory (shared strings, styles, the workbook, relationships, ...) and size them by
- * what the archive declares, which a hostile file can understate. So every part of an Office Open
- * XML file (an archive with {@code [Content_Types].xml}, whatever its file name) is expanded here
- * and its real size counted, stopping at the limit; only the parts parsers stream (worksheets,
- * slides, a Word document's body) and media are left out. The archive is read with Commons
- * Compress, the parser POI itself uses, and anything it cannot read is refused rather than let
- * through. Every archive, Office or not, is refused above {@value #MAX_ENTRIES} entries.
+ * Checks any ZIP archive before a parser opens it. Parsers keep many parts of an Office file whole
+ * in memory (shared strings, styles, comments, relationships, ...) and size them by what the
+ * archive declares, which a hostile file can understate; and they find parts by relationships and
+ * content types, not by names. So:
+ *
+ * <ul>
+ *   <li>whether a file is an archive is decided by opening it with Commons Compress, the reader POI
+ *       uses, which finds the central directory from the end (so a preamble before the archive does
+ *       not hide it), never by its name, first bytes or declared type;</li>
+ *   <li>every entry is expanded and its real size counted against the limit, except entries whose
+ *       content type in {@code [Content_Types].xml} is one parsers stream: worksheets, slides, a
+ *       Word document's main part, and images;</li>
+ *   <li>when the content types cannot be read, nothing is exempt;</li>
+ *   <li>an archive of more than {@value #MAX_ENTRIES} entries is refused.</li>
+ * </ul>
+ *
+ * Formats that are always archives (Office Open XML, OpenDocument, EPUB) must open and pass, or
+ * they are not read.
  */
 public final class OfficeParts {
 
     /** The most entries in an archive; real documents have tens to hundreds. */
     static final int MAX_ENTRIES = 10_000;
 
+    /** The most {@code [Content_Types].xml} may hold. */
+    static final int MAX_TYPES_BYTES = 1 << 20;
+
     private static final Set<String> OOXML = Set.of("docx", "docm", "dotx", "xlsx", "xlsm", "xltx", "pptx", "pptm",
         "potx");
 
-    /** Parts the parsers read as a stream, never whole: their size is not limited here. */
-    private static final Pattern STREAMED = Pattern.compile(
-        "xl/worksheets/[^/]+\\.xml|ppt/slides/[^/]+\\.xml|word/document\\d*\\.xml|.*/media/.*|.*/embeddings/.*");
+    /** Content types of parts parsers read as a stream, never whole: their size is not limited here. */
+    private static final Set<String> STREAMED = Set.of(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml",
+        "application/vnd.openxmlformats-officedocument.presentationml.slide+xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml",
+        "application/vnd.ms-word.document.macroenabled.main+xml",
+        "application/vnd.ms-word.template.macroenabledtemplate.main+xml");
 
     private OfficeParts() {
     }
@@ -45,25 +69,38 @@ public final class OfficeParts {
         return OOXML.contains(DocumentTypes.extension(name));
     }
 
-    /** Whether a file starts like a ZIP archive. */
-    public static boolean zip(Path file) {
-        try (InputStream in = Files.newInputStream(file)) {
-            byte[] b = in.readNBytes(4);
-            return b.length == 4 && b[0] == 'P' && b[1] == 'K' && b[2] == 3 && b[3] == 4;
-        } catch (IOException e) {
+    /** Whether a media type is a format that is always a ZIP archive. */
+    public static boolean archiveType(String mediaType) {
+        if (mediaType == null) {
             return false;
         }
+        String t = mediaType.toLowerCase(Locale.ROOT);
+        return t.contains("openxmlformats") || t.contains("macroenabled") || t.contains("opendocument")
+            || t.contains("epub") || t.endsWith("/zip");
     }
 
     /**
-     * @throws DocumentException when the archive cannot be read safely, holds too many entries, or
-     *                           is Office Open XML with a part (other than those parsers stream) that
-     *                           expands past {@code limit} bytes
+     * Checks a file that may be an archive.
+     *
+     * @param mustBeArchive true for formats that are always archives: one that does not open is
+     *                      refused rather than handed to a parser that might read it another way
+     * @throws DocumentException when the archive holds too many entries or a part that expands past
+     *                           {@code limit} bytes, or must be an archive and cannot be read as one
      */
-    public static void check(Path file, long limit) throws DocumentException {
-        try (ZipFile zip = ZipFile.builder().setPath(file).get()) {
+    public static void check(Path file, long limit, boolean mustBeArchive) throws DocumentException {
+        ZipFile zip;
+        try {
+            zip = ZipFile.builder().setPath(file).get();
+        } catch (IOException | RuntimeException e) {
+            if (mustBeArchive) {
+                throw new DocumentException("it is not a valid file of the kind its name says; it may be damaged "
+                    + "or named wrongly (" + DocumentRuntime.rootMessage(e) + ")", e);
+            }
+            return; // not an archive: nothing here for a ZIP reader to find
+        }
+        try (zip) {
             List<ZipArchiveEntry> entries = new ArrayList<>();
-            boolean office = false;
+            ZipArchiveEntry types = null;
             for (Enumeration<ZipArchiveEntry> e = zip.getEntries(); e.hasMoreElements(); ) {
                 ZipArchiveEntry entry = e.nextElement();
                 if (entries.size() >= MAX_ENTRIES) {
@@ -71,13 +108,13 @@ public final class OfficeParts {
                         + " parts, more than Kilnmark reads; the file may be made to exhaust memory");
                 }
                 entries.add(entry);
-                office |= entry.getName().equals("[Content_Types].xml");
+                if (entry.getName().equalsIgnoreCase("[Content_Types].xml")) {
+                    types = types == null ? entry : types;
+                }
             }
-            if (!office) {
-                return;
-            }
+            ContentTypes ct = types == null ? null : contentTypes(zip, types);
             for (ZipArchiveEntry entry : entries) {
-                if (entry.isDirectory() || STREAMED.matcher(entry.getName().toLowerCase(Locale.ROOT)).matches()) {
+                if (entry.isDirectory() || (ct != null && streamed(ct.of(entry.getName())))) {
                     continue;
                 }
                 long real;
@@ -94,8 +131,62 @@ public final class OfficeParts {
             throw e;
         } catch (IOException | RuntimeException e) {
             // what this reader cannot read safely, no parser may try
-            throw new DocumentException("it is not an archive Kilnmark can read safely (" + DocumentRuntime.rootMessage(e)
-                + "); it may be damaged", e);
+            throw new DocumentException("it is not an archive Kilnmark can read safely ("
+                + DocumentRuntime.rootMessage(e) + "); it may be damaged", e);
+        }
+    }
+
+    private static boolean streamed(String contentType) {
+        if (contentType == null) {
+            return false;
+        }
+        String t = contentType.toLowerCase(Locale.ROOT).strip();
+        return STREAMED.contains(t) || t.startsWith("image/");
+    }
+
+    /** Content types by part name and by extension, from {@code [Content_Types].xml}. */
+    record ContentTypes(Map<String, String> overrides, Map<String, String> defaults) {
+        /** The content type of an entry (OPC part names are case-insensitive), or null. */
+        String of(String entry) {
+            String name = "/" + entry.toLowerCase(Locale.ROOT);
+            String o = overrides.get(name);
+            if (o != null) {
+                return o;
+            }
+            int dot = name.lastIndexOf('.');
+            int slash = name.lastIndexOf('/');
+            return dot > slash ? defaults.get(name.substring(dot + 1)) : null;
+        }
+    }
+
+    /** The content types, or null when they cannot be read (then nothing is exempt). */
+    static ContentTypes contentTypes(ZipFile zip, ZipArchiveEntry entry) {
+        Map<String, String> overrides = new HashMap<>();
+        Map<String, String> defaults = new HashMap<>();
+        XMLInputFactory xml = XMLHelper.newXMLInputFactory();
+        try (InputStream in = limited(zip.getInputStream(entry), MAX_TYPES_BYTES, "[Content_Types].xml")) {
+            XMLStreamReader x = xml.createXMLStreamReader(in);
+            try {
+                while (x.hasNext()) {
+                    if (x.next() != XMLStreamConstants.START_ELEMENT) {
+                        continue;
+                    }
+                    String type = x.getAttributeValue(null, "ContentType");
+                    if (type == null) {
+                        continue;
+                    }
+                    if (x.getLocalName().equals("Override") && x.getAttributeValue(null, "PartName") != null) {
+                        overrides.put(x.getAttributeValue(null, "PartName").toLowerCase(Locale.ROOT), type);
+                    } else if (x.getLocalName().equals("Default") && x.getAttributeValue(null, "Extension") != null) {
+                        defaults.put(x.getAttributeValue(null, "Extension").toLowerCase(Locale.ROOT), type);
+                    }
+                }
+            } finally {
+                x.close();
+            }
+            return new ContentTypes(overrides, defaults);
+        } catch (IOException | XMLStreamException | RuntimeException e) {
+            return null;
         }
     }
 
