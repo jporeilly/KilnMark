@@ -34,6 +34,11 @@ import io.kilnmark.server.quality.RowChecks.Evaluation;
  * in its own read-only transaction (where the database enforces one) with a time limit, and
  * rolled back afterwards. What the database cannot run (regular expressions on SQL Server), and
  * every rule on files, is evaluated by Kiln in one streaming pass over the data.
+ *
+ * <p>Custom SQL runs only when the administrator turned it on, only on PostgreSQL, never under a
+ * login that is a superuser or a member of {@code pg_read_server_files},
+ * {@code pg_write_server_files}, {@code pg_execute_server_program} or {@code pg_signal_backend},
+ * and only when the generated query is exactly one statement.
  */
 public final class RuleRunner {
 
@@ -45,11 +50,57 @@ public final class RuleRunner {
     private final Duration queryTimeout;
     private final int keepFailing;
     private final long memoryLimitBytes;
+    private final boolean customSql;
 
     public RuleRunner(Duration queryTimeout, int keepFailing, long memoryLimitBytes) {
+        this(queryTimeout, keepFailing, memoryLimitBytes, false);
+    }
+
+    public RuleRunner(Duration queryTimeout, int keepFailing, long memoryLimitBytes, boolean customSql) {
         this.queryTimeout = queryTimeout;
         this.keepFailing = keepFailing;
         this.memoryLimitBytes = memoryLimitBytes;
+        this.customSql = customSql;
+    }
+
+    /** Why custom SQL may not run here, or null when it may (the login is checked separately). */
+    String customSqlRefusal(Rule rule, SqlDialect d, SqlRules.Plan plan) {
+        if (rule.type() != RuleType.CUSTOM_SQL) {
+            return null;
+        }
+        if (!customSql) {
+            return "Custom SQL rules are turned off on this server (kilnmark.quality.custom-sql).";
+        }
+        if (d != SqlDialect.POSTGRESQL) {
+            return "Custom SQL rules run only on PostgreSQL sources, where they can be held to a read-only "
+                + "transaction.";
+        }
+        // The steward's SQL (as filled in) must balance on its own, so it cannot close the query it is
+        // placed in, and the whole query must be one statement.
+        if (plan == null || !SqlTokens.isSingleStatement(plan.failingSql()) || !SqlTokens.isSingleStatement(plan.countSql())) {
+            return "The rule's SQL does not form a single query. Rewrite it as one SELECT.";
+        }
+        return null;
+    }
+
+    /** Roles of the login that make custom SQL unsafe however it is written. */
+    static final String PRIVILEGED_LOGIN = """
+        SELECT r.rolsuper OR pg_has_role(current_user, 'pg_read_server_files', 'MEMBER')
+            OR pg_has_role(current_user, 'pg_write_server_files', 'MEMBER')
+            OR pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')
+            OR pg_has_role(current_user, 'pg_signal_backend', 'MEMBER')
+        FROM pg_roles r WHERE r.rolname = current_user""";
+
+    static final String PRIVILEGED_REFUSAL = "Custom SQL does not run under this source's login: it is a superuser "
+        + "or may read or write the server's files, run programs or stop other sessions. Give the source a read-only "
+        + "login without those rights.";
+
+    private static boolean privileged(Connection c) throws SQLException {
+        try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery(PRIVILEGED_LOGIN)) {
+            return !rs.next() || rs.getBoolean(1);
+        } finally {
+            c.rollback();
+        }
     }
 
     /** One evaluation per rule, in the order given. */
@@ -69,6 +120,12 @@ public final class RuleRunner {
                     plans.add(null);
                     continue;
                 }
+                String refusal = customSqlRefusal(rules.get(i), d, p);
+                if (refusal != null) {
+                    out.put(i, Evaluation.error("sql", refusal));
+                    plans.add(null);
+                    continue;
+                }
                 plans.add(p);
                 if (p == null) {
                     streamed.add(i);
@@ -78,15 +135,27 @@ public final class RuleRunner {
                 try (Connection c = jdbc.connect(t.source())) {
                     c.setAutoCommit(false);
                     c.setReadOnly(true);
+                    Boolean unsafeLogin = null;
                     for (int i = 0; i < rules.size(); i++) {
-                        if (plans.get(i) != null) {
-                            out.put(i, sql(c, d, rules.get(i), plans.get(i), t, now));
+                        if (plans.get(i) == null) {
+                            continue;
                         }
+                        if (rules.get(i).type() == RuleType.CUSTOM_SQL) {
+                            if (unsafeLogin == null) {
+                                unsafeLogin = privileged(c);
+                            }
+                            if (unsafeLogin) {
+                                out.put(i, Evaluation.error("sql", PRIVILEGED_REFUSAL));
+                                continue;
+                            }
+                        }
+                        out.put(i, sql(c, d, rules.get(i), plans.get(i), t, now));
                     }
                 } catch (SQLException e) {
                     for (int i = 0; i < rules.size(); i++) {
                         if (plans.get(i) != null) {
-                            out.putIfAbsent(i, Evaluation.error("sql", "Cannot connect to the source: " + e.getMessage()));
+                            out.putIfAbsent(i, Evaluation.error("sql", "Cannot connect to the source to check the rule.",
+                                e.getMessage()));
                         }
                     }
                 }
@@ -112,7 +181,9 @@ public final class RuleRunner {
 
     private Evaluation sql(Connection c, SqlDialect d, Rule rule, SqlRules.Plan plan, Target t, Instant now) {
         try {
-            for (String s : d.readOnly()) {
+            List<String> setup = new ArrayList<>(d.readOnly());
+            setup.addAll(d.timeout(queryTimeout.toMillis()));
+            for (String s : setup) {
                 try (Statement st = c.createStatement()) {
                     st.execute(s);
                 }
@@ -122,7 +193,7 @@ public final class RuleRunner {
                 st.setQueryTimeout((int) Math.max(1, queryTimeout.toSeconds()));
                 try (ResultSet rs = st.executeQuery(plan.countSql())) {
                     if (!rs.next()) {
-                        return Evaluation.error("sql", "The check's query returned no row");
+                        return Evaluation.error("sql", "The check's query returned no row.");
                     }
                     e = switch (plan.shape()) {
                         case TOTAL_AND_FAILING -> new Evaluation(rs.getLong(1), rs.getLong(2), "sql", plan.failingSql(),
@@ -147,7 +218,7 @@ public final class RuleRunner {
                 return Evaluation.error("sql", "The check took longer than " + queryTimeout.toSeconds() + " seconds and "
                     + "was stopped. Narrow the rule, or raise kilnmark.quality.query-timeout.");
             }
-            return Evaluation.error("sql", "The check's query failed: " + ex.getMessage());
+            return Evaluation.error("sql", "The check's query failed in the database.", ex.getMessage());
         } finally {
             try {
                 c.rollback(); // nothing a check does is ever kept
@@ -172,7 +243,7 @@ public final class RuleRunner {
                     List<String> row = new ArrayList<>();
                     for (int i = 1; i <= columns.size(); i++) {
                         String v = rs.getString(i);
-                        row.add(v != null && v.length() > 1000 ? v.substring(0, 1000) + "…" : v);
+                        row.add(v != null && v.length() > RowChecks.CELL ? v.substring(0, RowChecks.CELL) + "…" : v);
                     }
                     rows.add(row);
                 }
@@ -204,12 +275,18 @@ public final class RuleRunner {
         String urn = new io.kilnmark.graph.Urn(t.source().name(), t.asset().path()).toString();
         StepSpec read = t.connector().reader(t.source(), t.asset(), new Connector.ReadOptions(urn, 0, 8192));
         Pipeline p = new Pipeline("quality-" + t.asset().path(), List.of(read, new StepSpec("rules", check, Map.of())));
-        RunResult r = new Runner(memoryLimitBytes, 4).run(p, event -> { });
+        java.util.concurrent.atomic.AtomicBoolean sampled = new java.util.concurrent.atomic.AtomicBoolean();
+        RunResult r = new Runner(memoryLimitBytes, 4).run(p, event -> {
+            if (event.kind() == io.kilnmark.kiln.MetadataEvent.Kind.ROW_COUNT
+                && Boolean.parseBoolean(event.attributes().get("sampled"))) {
+                sampled.set(true); // the reader went through TABLESAMPLE: results are estimates
+            }
+        });
         if (!r.succeeded()) {
             List<Evaluation> failed = new ArrayList<>();
-            rules.forEach(x -> failed.add(Evaluation.error("stream", "Reading the data failed: " + r.error())));
+            rules.forEach(x -> failed.add(Evaluation.error("stream", "Reading the data failed.", r.error())));
             return failed;
         }
-        return check.evaluations();
+        return check.evaluations().stream().map(e -> sampled.get() && e.error() == null ? e.asEstimate() : e).toList();
     }
 }

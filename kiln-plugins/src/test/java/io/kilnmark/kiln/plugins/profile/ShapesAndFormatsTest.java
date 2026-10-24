@@ -46,6 +46,7 @@ class ShapesAndFormatsTest {
         assertEquals("A+9+A 9+A+", ValueShape.collapse("AA9A 9AA"));
         assertEquals("9+-9+-9+", ValueShape.collapse("9999-99-99"));
         assertEquals("a+", ValueShape.collapse("a"));
+        assertEquals("\\+9+ 9+", ValueShape.collapse(ValueShape.of("+44 207")), "a literal plus is escaped");
     }
 
     @Test

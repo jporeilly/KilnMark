@@ -25,6 +25,11 @@ public class CatalogResource {
     private final GraphStore store;
     private final ObjectMapper json;
     private final io.kilnmark.kiln.connect.Connectors connectors;
+    /** Data quality: columns marked sensitive have their profile values masked (stream E). */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.QualityStore quality;
+    @jakarta.inject.Inject
+    io.quarkus.security.identity.SecurityIdentity identity;
 
     public CatalogResource(GraphStore store, ObjectMapper json, io.kilnmark.kiln.connect.Connectors connectors) {
         this.store = store;
@@ -48,10 +53,13 @@ public class CatalogResource {
     public Views.Asset asset(@PathParam("urn") String urn) {
         Records.AssetDetail a = store.asset(urn)
             .orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No asset " + urn));
+        java.util.Set<String> sensitive = quality.sensitive(urn);
+        boolean unmasked = identity.hasRole(AccessRole.ADMIN_ROLE);
         return new Views.Asset(a.urn(), a.source(), a.kind(), a.container(), a.name(), a.description(), a.primaryKey(),
             a.rowCount(), a.rowCountComplete(), a.firstSeenAt(), a.lastScannedAt(), a.removedAt(),
             a.fields().stream().map(f -> new Views.Field(f.name(), f.position(), f.sourceType(), f.kind(), f.nullable(),
-                f.description(), parse(f.profileJson()), f.profiledAt())).toList());
+                f.description(), io.kilnmark.server.quality.Masking.profile(f.name(), parse(f.profileJson()), sensitive,
+                unmasked), f.profiledAt())).toList());
     }
 
     /** The kinds of source this server can read, with the settings each takes. */

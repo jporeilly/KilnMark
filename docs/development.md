@@ -201,8 +201,40 @@ endpoints take `?urn=`, since file URNs hold slashes):
 | `kilnmark.quality.default-cadence` | `1d` | How often new data is expected until an asset's history says |
 
 Source settings, for any kind of source: `keep_samples` (`true` by default; `false` keeps no
-values at all), `sample_rows` (up to 10,000) and, for databases, `table_sample_above_rows`.
-Seeing values (samples, examples, failing rows, previews) needs the steward role.
+sample rows, example values, most common values or failing rows, though numeric statistics are
+kept), `sample_rows` (up to 10,000) and, for databases, `table_sample_above_rows`. Seeing values
+(samples, examples, failing rows, previews, and values in measures, drift and exports) needs the
+steward role; only admins unmask sensitive columns or unmark them.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `kilnmark.quality.custom-sql` | `false` | Whether admins may write and run custom SQL rules |
+| `kilnmark.quality.sample-max-mb` | `8` | The most memory one asset's sample may hold |
+
+Webhooks are called once per evaluation that warns, fails or recovers. There are no retries: a
+failed call is logged, and the next evaluation calls again while the rule still warns or fails.
+
+### Security: give every source a read-only login
+
+Kilnmark only reads sources, and runs rules in each check's own read-only transaction (on
+PostgreSQL) with a time limit. Still, **register sources with a read-only login that is not a
+superuser** and has no rights to server files, programs or other sessions:
+
+- Custom SQL rules (off by default; admins only) run as that login and **can read anything it can
+  see**, not only the schemas the source lists. They refuse to run when the login is a superuser
+  or a member of `pg_read_server_files`, `pg_write_server_files`, `pg_execute_server_program` or
+  `pg_signal_backend`, and on SQL Server, which has no read-only transactions.
+- PostgreSQL's read-only transactions do not stop functions that act outside the database
+  (reading files, advisory locks, signalling sessions), which is why such functions are refused
+  in custom SQL and why the login must not hold those rights.
+
+For PostgreSQL, for example:
+
+```
+CREATE ROLE kilnmark_reader LOGIN PASSWORD '...';
+GRANT USAGE ON SCHEMA sales TO kilnmark_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA sales TO kilnmark_reader;
+```
 
 ## Try it on the reference lab
 

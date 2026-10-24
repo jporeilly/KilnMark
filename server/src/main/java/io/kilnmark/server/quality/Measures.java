@@ -20,6 +20,11 @@ import io.kilnmark.server.quality.ProfileFacts.FieldFacts;
  * scan, with no rules, no model and no extra read of the data. Each measure has a score from 0 to
  * 1, its evidence, and a reason in words. A dimension a column cannot be judged on gets no
  * measure rather than a guess.
+ *
+ * <p>Reasons hold words, counts and shares only, never values from the data, so every role may
+ * read them. Values (fences, ranges, the usual values of a column, the latest timestamp) are in
+ * the evidence under the keys in {@link #VALUE_KEYS}, which the API removes for roles that may
+ * not see data.
  */
 public final class Measures {
 
@@ -35,7 +40,16 @@ public final class Measures {
     }
 
     private static final JsonNodeFactory J = JsonNodeFactory.instance;
-    private static final Pattern KEY_NAME = Pattern.compile("(?i)(?:^|_)(?:id|key|code|uuid|guid|ref)$|[a-z]Id$");
+    /** Evidence keys holding values from the data; shown only to roles that may see data. */
+    public static final java.util.Set<String> VALUE_KEYS = java.util.Set.of("domain", "min", "max", "fenceLow",
+        "fenceHigh", "latest", "detail", "medianFrom", "medianTo");
+
+    /**
+     * Names that say "key": {@code id}, {@code customer_id}, {@code order_code}, or camel case
+     * {@code customerId}. A whole word only, so {@code paid}, {@code valid} and {@code fluid} are not keys.
+     */
+    static final Pattern KEY_NAME = Pattern.compile(
+        "(?:^|_)(?i:id|key|code|uuid|guid|ref)$|[a-z0-9](?:Id|ID|Key|Code|Uuid|UUID|Ref)$");
     private static final Pattern NOT_NEGATIVE = Pattern.compile(
         "(?i)(?:^|_)(?:qty|quantity|age|count|price|units|stock|weight|height|length|width|duration)(?:$|_)");
     private static final Pattern BIRTH = Pattern.compile("(?i)birth|(?:^|_)dob(?:$|_)");
@@ -239,10 +253,12 @@ public final class Measures {
             ObjectNode e = J.objectNode().put("values", values).put("outliers", outliers)
                 .put("fenceLow", f.text("fence_low")).put("fenceHigh", f.text("fence_high"))
                 .put("min", f.text("min")).put("max", f.text("max"));
+            if (outliers > 0) {
+                e.put("detail", "Quartile fences " + f.text("fence_low") + " to " + f.text("fence_high"));
+            }
             out.add(new Measure(f.name(), Dimension.ACCURACY, score, e, outliers == 0
                 ? "No values beyond the quartile fences"
-                : "About " + count(outliers) + " values (" + percent(share) + ") lie beyond the quartile fences ("
-                    + f.text("fence_low") + " to " + f.text("fence_high") + ")"));
+                : "About " + count(outliers) + " values (" + percent(share) + ") lie beyond the quartile fences"));
             return;
         }
         List<Counted> top = f.top();
@@ -262,13 +278,20 @@ public final class Measures {
         }
     }
 
+    /**
+     * Timeliness, once the cadence is learned (at least two gaps between successive latest
+     * values); before that there is nothing fair to measure against.
+     */
     static void timeliness(ProfileFacts now, List<ProfileFacts> history, Duration defaultCadence, List<Measure> out) {
         FieldFacts recency = recencyField(now);
         if (recency == null) {
             return;
         }
         Instant latest = recency.latest();
-        Duration cadence = cadence(recency.name(), now, history, defaultCadence);
+        Duration cadence = learnedCadence(recency.name(), now, history);
+        if (cadence == null) {
+            return;
+        }
         Duration age = Duration.between(latest, now.observedAt());
         double score;
         if (age.isNegative()) {
@@ -303,6 +326,12 @@ public final class Measures {
 
     /** How often new data arrives: the median gap between successive latest values, or the default. */
     static Duration cadence(String field, ProfileFacts now, List<ProfileFacts> history, Duration fallback) {
+        Duration learned = learnedCadence(field, now, history);
+        return learned == null ? fallback : learned;
+    }
+
+    /** The cadence learned from history, or null with fewer than two gaps to learn from. */
+    static Duration learnedCadence(String field, ProfileFacts now, List<ProfileFacts> history) {
         List<Instant> points = new ArrayList<>();
         FieldFacts f = now.field(field);
         if (f != null && f.latest() != null) {
@@ -322,7 +351,7 @@ public final class Measures {
             }
         }
         if (gaps.size() < 2) {
-            return fallback;
+            return null;
         }
         long[] sorted = gaps.stream().mapToLong(Long::longValue).sorted().toArray();
         return Duration.ofSeconds(Math.max(60, sorted[sorted.length / 2]));
@@ -349,8 +378,8 @@ public final class Measures {
             : "Row count changed by " + percent(change) + " since the last scan; usually within " + percent(band)));
     }
 
-    /** The usual relative change: three standard deviations of past changes, at least 10%, or 50% without history. */
-    static double band(List<ProfileFacts> history) {
+    /** The band learned from at least three past changes in row count, or null. */
+    static Double learnedBand(List<ProfileFacts> history) {
         List<Double> changes = new ArrayList<>();
         for (int i = 0; i + 1 < history.size(); i++) {
             Long a = history.get(i).rowCount();
@@ -360,11 +389,17 @@ public final class Measures {
             }
         }
         if (changes.size() < 3) {
-            return DEFAULT_VOLUME_BAND;
+            return null;
         }
         double mean = changes.stream().mapToDouble(Double::doubleValue).average().orElse(0);
         double sd = Math.sqrt(changes.stream().mapToDouble(c -> (c - mean) * (c - mean)).sum() / changes.size());
         return Math.max(0.1, Math.abs(mean) + 3 * sd);
+    }
+
+    /** The usual relative change: three standard deviations of past changes, at least 10%, or 50% without history. */
+    static double band(List<ProfileFacts> history) {
+        Double learned = learnedBand(history);
+        return learned == null ? DEFAULT_VOLUME_BAND : learned;
     }
 
     static double clamp(double v) {

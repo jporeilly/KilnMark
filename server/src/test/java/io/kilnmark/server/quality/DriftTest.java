@@ -1,6 +1,7 @@
 package io.kilnmark.server.quality;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -71,6 +72,10 @@ class DriftTest {
         assertEquals("high", shift.severity());
         assertEquals(0.3, shift.evidence().get("ks").asDouble(), 0.01);
         assertEquals("medium", find(events, "top_values", "country").severity());
+        assertFalse(find(events, "top_values", "country").message().contains("US"), "messages quote no values");
+        assertTrue(find(events, "top_values", "country").detail().contains("US"), "the detail does");
+        assertFalse(shift.message().contains("80"));
+        assertEquals("Median 80, was 50", shift.detail());
         Drift.Event pattern = find(events, "pattern_share", "country");
         assertEquals("high", pattern.severity());
         assertTrue(pattern.message().contains("A new value shape Aaaaa makes up 30%"), pattern.message());
@@ -93,6 +98,17 @@ class DriftTest {
         Drift.Event fresh = find(events, "no_new_data", null);
         assertNotNull(fresh, events.toString());
         assertEquals("medium", fresh.severity(), "49 hours old, daily cadence: beyond two days, within three");
+    }
+
+    @Test
+    void aLearnedBandSetsTheVolumeThresholds() {
+        ProfileFacts before = Facts.version().rows(1000).build();
+        ProfileFacts after = Facts.version().rows(1300).build();
+        assertEquals("medium", find(Drift.compare(after, before, null, null), "row_count", null).severity(),
+            "30% with fixed thresholds");
+        assertNull(find(Drift.compare(after, before, null, 0.4), "row_count", null), "within a learned 40% band");
+        assertEquals("low", find(Drift.compare(after, before, null, 0.25), "row_count", null).severity());
+        assertNull(find(Drift.compare(after, before, null, null), "no_new_data", null), "no freshness without a cadence");
     }
 
     @Test

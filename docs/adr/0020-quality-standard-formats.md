@@ -51,3 +51,15 @@ needs no change to the tables.
   `kilnmark://<source>` until their conventions are added.
 - ODCS's dimension list is smaller than ours, so three of our dimensions export under a
   neighbouring ODCS dimension (with ours alongside).
+- Exports follow the caller's role: viewers get no allowed values, range bounds or custom SQL (an
+  ODCS `text` item stands in), and nobody but an admin who unmasks gets min, max, sum or quantiles
+  of a column marked sensitive. Custom SQL's `${table}` and `${column}` export as ODCS's
+  `{object}` and `{property}`.
+
+## Later work
+
+- **Join samples.** Row samples are bottom-k by key hash: two tables holding the same key values
+  choose the same keys, but a table that only refers to another (orders and customers) does not
+  choose matching rows, because each keeps its own smallest k. A sample that joins needs every
+  table to keep the rows whose key hash falls below one fixed threshold (so the size varies with
+  the table), hashing the key values the same way in both.

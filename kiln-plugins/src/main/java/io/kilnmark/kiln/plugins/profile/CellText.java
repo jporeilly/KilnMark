@@ -26,13 +26,11 @@ import org.apache.arrow.vector.VarCharVector;
  */
 public final class CellText {
 
-    /** Longest text kept for one cell; longer values are cut and end with an ellipsis. */
-    public static final int MAX = 1000;
 
     private CellText() {
     }
 
-    /** The cell's text, or null for a null. */
+    /** The cell's text, in full, or null for a null. */
     public static String of(FieldVector v, int row) {
         if (v.isNull(row)) {
             return null;
@@ -49,7 +47,12 @@ public final class CellText {
             case TimeStampVector x -> String.valueOf(x.get(row));
             default -> String.valueOf(v.getObject(row));
         };
-        return s.length() > MAX ? s.substring(0, MAX) + "…" : s;
+        return s;
+    }
+
+    /** {@code s} cut to at most {@code max} characters, ending with an ellipsis when cut; null stays null. */
+    public static String cut(String s, int max) {
+        return s == null || s.length() <= max ? s : s.substring(0, max) + "…";
     }
 
     private static Instant micros(long n) {

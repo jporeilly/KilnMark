@@ -127,6 +127,35 @@ class RowSamplerTest {
     }
 
     @Test
+    void samplesStayWithinTheirMemoryCapAndCutLongCells() {
+        Schema wide = new Schema(List.of(new Field("id", FieldType.nullable(new ArrowType.Int(64, true)), null),
+            new Field("text", FieldType.nullable(ArrowType.Utf8.INSTANCE), null)));
+        RowSampler key = new RowSampler(RowSampler.Mode.KEY, List.of("id"), 1000, 0, 64 * 1024);
+        RowSampler res = new RowSampler(RowSampler.Mode.RESERVOIR, List.of(), 1000, 1, 64 * 1024);
+        try (BufferAllocator alloc = new RootAllocator(); VectorSchemaRoot b = VectorSchemaRoot.create(wide, alloc)) {
+            b.allocateNew();
+            String big = "x".repeat(5000);
+            for (int i = 0; i < 2000; i++) {
+                ((BigIntVector) b.getVector(0)).setSafe(i, i);
+                ((VarCharVector) b.getVector(1)).setSafe(i, big.getBytes(StandardCharsets.UTF_8));
+            }
+            b.setRowCount(2000);
+            key.accept(b);
+            res.accept(b);
+        }
+        for (RowSampler s : List.of(key, res)) {
+            List<String[]> rows = s.rows();
+            assertTrue(rows.size() > 50 && rows.size() < 1000, "fewer rows, not more memory: " + rows.size());
+            assertEquals(RowSampler.CELL + 1, rows.get(0)[1].length(), "cut at 200 characters plus an ellipsis");
+        }
+        // The cap keeps the smallest hashes: a capped keyed sample is a prefix of the uncapped one.
+        RowSampler all = new RowSampler(RowSampler.Mode.KEY, List.of("id"), 1000, 0);
+        sample(all, range(0, 2000), k -> 1);
+        List<String> capped = key.rows().stream().map(r -> r[0]).toList();
+        assertEquals(all.rows().stream().map(r -> r[0]).toList().subList(0, capped.size()), capped);
+    }
+
+    @Test
     void rowsAreJson() {
         RowSampler s = sample(new RowSampler(RowSampler.Mode.RESERVOIR, List.of(), 1, 1), range(0, 1), k -> 1);
         assertEquals("[[\"0\",\"name-0-v1\"]]", s.rowsJson());

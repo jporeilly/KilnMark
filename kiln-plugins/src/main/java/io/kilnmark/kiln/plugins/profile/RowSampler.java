@@ -20,14 +20,24 @@ import org.apache.datasketches.hash.MurmurHash3;
  * <ul>
  * <li>{@link Mode#KEY} and {@link Mode#ROW}: a bottom-k sample. Each row's key (its key fields, or
  * the whole row) is hashed, and the {@code size} rows with the smallest hashes are kept. The hash
- * has a fixed seed, so the same rows are chosen on every scan, and tables sampled on the same key
- * values choose matching rows.</li>
+ * has a fixed seed, so the same rows are chosen on every scan. Two tables holding the same key
+ * values choose the same keys; a table that only refers to another (orders and customers) does
+ * not, because each keeps its own smallest k. A sample of matching rows across a join needs a
+ * fixed hash threshold instead of a fixed size: later work (ADR 0020).</li>
  * <li>{@link Mode#RESERVOIR}: reservoir sampling with Algorithm L (Li, 1994), for data without a
  * key such as files. The random numbers come from {@code seed}, so the same input in the same
  * order gives the same sample.</li>
  * </ul>
+ *
+ * <p>Cells are cut at {@value #CELL} characters, and the rows kept are capped at {@code maxBytes}
+ * (about two bytes per character): beyond it the sample keeps fewer rows rather than more memory.
  */
 public final class RowSampler {
+
+    /** Longest cell kept in a sample, in characters. */
+    public static final int CELL = 200;
+    /** Default cap on a sample's size in memory. */
+    public static final long DEFAULT_MAX_BYTES = 8L << 20;
 
     /** How rows are chosen. */
     public enum Mode {
@@ -54,7 +64,9 @@ public final class RowSampler {
 
     private final Mode mode;
     private final List<String> keyFields;
-    private final int size;
+    private int size;
+    private final long maxBytes;
+    private long bytes;
     private final SplittableRandom random;
     private List<String> columns;
     private int[] keyIndex;
@@ -66,12 +78,18 @@ public final class RowSampler {
     private long next;
 
     public RowSampler(Mode mode, List<String> keyFields, int size, long seed) {
+        this(mode, keyFields, size, seed, DEFAULT_MAX_BYTES);
+    }
+
+    public RowSampler(Mode mode, List<String> keyFields, int size, long seed, long maxBytes) {
+        this.maxBytes = Math.max(1024, maxBytes);
         this.mode = mode;
         this.keyFields = List.copyOf(keyFields == null ? List.of() : keyFields);
         this.size = Math.max(0, size);
         this.random = new SplittableRandom(seed);
         this.bottom = new PriorityQueue<>(Math.max(1, this.size), LARGEST_FIRST);
         this.reservoir = new Sampled[this.size];
+        // (size may shrink below the array's length when the memory cap is reached)
     }
 
     public Mode mode() {
@@ -127,34 +145,79 @@ public final class RowSampler {
         Sampled s = new Sampled(hash, index, cells(vectors, row));
         if (bottom.size() < size) {
             bottom.add(s);
+            bytes += weight(s);
         } else if (LARGEST_FIRST.compare(s, bottom.peek()) > 0) {
-            bottom.poll();
+            bytes -= weight(bottom.poll());
             bottom.add(s);
+            bytes += weight(s);
+        } else {
+            return;
+        }
+        // Over the memory cap: drop the largest hashes and keep that many rows from now on.
+        while (bytes > maxBytes && bottom.size() > 1) {
+            bytes -= weight(bottom.poll());
+            size = bottom.size();
         }
     }
 
+    /** Rough bytes a row holds: two per character, plus overhead per cell. */
+    private static long weight(Sampled s) {
+        long w = 32;
+        for (String c : s.cells()) {
+            w += 16 + (c == null ? 0 : 2L * c.length());
+        }
+        return w;
+    }
+
+    /** The row's key hash, cell by cell: each cell's own hash is mixed into the running one. */
     private long hash(List<FieldVector> vectors, int row) {
-        StringBuilder b = new StringBuilder();
+        long h = SEED;
         if (keyIndex != null) {
             for (int k : keyIndex) {
-                b.append(CellText.of(vectors.get(k), row)).append('\u001f');
+                h = mix(h, cellHash(vectors.get(k), row));
             }
         } else {
             for (FieldVector v : vectors) {
-                b.append(CellText.of(v, row)).append('\u001f');
+                h = mix(h, cellHash(v, row));
             }
         }
-        return MurmurHash3.hash(b.toString().getBytes(StandardCharsets.UTF_8), SEED)[0] >>> 1; // non-negative
+        return h >>> 1; // non-negative
+    }
+
+    private static long cellHash(FieldVector v, int row) {
+        String text = CellText.of(v, row);
+        return text == null ? 0x6E756C6CL : MurmurHash3.hash(text.getBytes(StandardCharsets.UTF_8), SEED)[0];
+    }
+
+    private static long mix(long h, long cell) {
+        long x = (h ^ cell) * 0x9E3779B97F4A7C15L;
+        x ^= x >>> 31;
+        x *= 0xBF58476D1CE4E5B9L;
+        return x ^ (x >>> 29);
     }
 
     /** Algorithm L: fill the reservoir, then jump straight to the next row that replaces one. */
     private void reservoir(List<FieldVector> vectors, int row, long index) {
         if (index < size) {
-            reservoir[(int) index] = new Sampled(0, index, cells(vectors, row));
+            Sampled s = new Sampled(0, index, cells(vectors, row));
+            if (bytes + weight(s) > maxBytes && index > 0) {
+                size = (int) index; // the cap is reached: the reservoir holds what it has
+                w = Math.exp(Math.log(uniform()) / size);
+                next = index + skip();
+                return;
+            }
+            reservoir[(int) index] = s;
+            bytes += weight(s);
             return;
         }
         if (index + 1 == next) {
-            reservoir[random.nextInt(size)] = new Sampled(0, index, cells(vectors, row));
+            Sampled s = new Sampled(0, index, cells(vectors, row));
+            int slot = random.nextInt(size);
+            long after = bytes - weight(reservoir[slot]) + weight(s);
+            if (after <= maxBytes) { // a row too big for the cap is skipped, the same way every time
+                reservoir[slot] = s;
+                bytes = after;
+            }
             w *= Math.exp(Math.log(uniform()) / size);
             next += skip();
         }
@@ -176,7 +239,7 @@ public final class RowSampler {
     private static String[] cells(List<FieldVector> vectors, int row) {
         String[] out = new String[vectors.size()];
         for (int c = 0; c < out.length; c++) {
-            out[c] = CellText.of(vectors.get(c), row);
+            out[c] = CellText.cut(CellText.of(vectors.get(c), row), CELL);
         }
         return out;
     }

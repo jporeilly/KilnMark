@@ -12,8 +12,10 @@ import io.kilnmark.server.quality.ProfileFacts.Counted;
  * covering a column's dominant shapes, with shapes that differ only in run lengths merged
  * ({@code A9 9AA} and {@code AA99 9AA} become {@code [A-Z]{1,2}[0-9]{1,2} [0-9][A-Z]{2}}).
  *
- * <p>The expressions use only what PostgreSQL, Java and ECMAScript read alike: character ranges,
- * counts in braces, backslash escapes and groups.
+ * <p>The expressions stay inside {@link Regexes}' common subset. Letters become {@code \p{Lu}} and
+ * {@code \p{Ll}}, so {@code Zoë} matches {@code Aa+} (PostgreSQL gets {@code [[:upper:]]} and
+ * {@code [[:lower:]]}). In a collapsed shape a {@code +} after a run means "one or more"; a literal
+ * plus sign is written {@code \+} there. In a detailed shape every {@code +} is literal.
  */
 public final class Patterns {
 
@@ -38,35 +40,40 @@ public final class Patterns {
     private Patterns() {
     }
 
-    /** The anchored expression matching exactly the values of one shape (detailed or collapsed). */
-    public static String regex(String shape) {
-        return "^" + body(tokens(shape), null) + "$";
+    /** The anchored expression matching exactly the values of one shape. */
+    public static String regex(String shape, boolean collapsed) {
+        return "^" + body(tokens(shape, collapsed), null) + "$";
     }
 
     /** A run of one class, or one literal character. {@code plus} for collapsed runs. */
-    private record Token(char c, int length, boolean plus) {
+    private record Token(char c, int length, boolean plus, boolean literal) {
         boolean run() {
-            return c == 'A' || c == 'a' || c == '9';
+            return !literal && (c == 'A' || c == 'a' || c == '9');
         }
     }
 
-    private static List<Token> tokens(String shape) {
+    private static List<Token> tokens(String shape, boolean collapsed) {
         List<Token> out = new ArrayList<>();
         int n = shape.length();
         for (int i = 0; i < n; ) {
             char c = shape.charAt(i);
             int j = i + 1;
+            if (collapsed && c == '\\' && j < n) {
+                out.add(new Token(shape.charAt(j), 1, false, true));
+                i = j + 1;
+                continue;
+            }
             if (c == 'A' || c == 'a' || c == '9') {
                 while (j < n && shape.charAt(j) == c) {
                     j++;
                 }
-                boolean plus = j < n && shape.charAt(j) == '+';
-                out.add(new Token(c, j - i, plus));
+                boolean plus = collapsed && j < n && shape.charAt(j) == '+';
+                out.add(new Token(c, j - i, plus, false));
                 if (plus) {
                     j++;
                 }
             } else {
-                out.add(new Token(c, 1, false));
+                out.add(new Token(c, 1, false, true));
             }
             i = j;
         }
@@ -89,8 +96,8 @@ public final class Patterns {
                 continue;
             }
             b.append(switch (t.c()) {
-                case 'A' -> "[A-Z]";
-                case 'a' -> "[a-z]";
+                case 'A' -> "\\p{Lu}";
+                case 'a' -> "\\p{Ll}";
                 default -> "[0-9]";
             });
             int min = ranges == null ? t.length() : ranges[i][0];
@@ -122,7 +129,7 @@ public final class Patterns {
      * A suggestion for a column: the canonical expression of a format that covers most values, or
      * else one built from the most frequent shapes until they cover {@value #COVERAGE} of values.
      */
-    public static Suggestion suggest(List<Counted> patterns, Map<String, Long> formats, long values) {
+    public static Suggestion suggest(List<Counted> patterns, Map<String, Long> formats, long values, boolean collapsed) {
         if (values <= 0 || patterns.isEmpty()) {
             return null;
         }
@@ -145,9 +152,9 @@ public final class Patterns {
         // Merge shapes with the same sequence of classes and literals, widening run lengths.
         Map<String, List<List<Token>>> groups = new LinkedHashMap<>();
         for (Counted p : chosen) {
-            List<Token> t = tokens(p.item());
+            List<Token> t = tokens(p.item(), collapsed);
             StringBuilder key = new StringBuilder();
-            t.forEach(x -> key.append(x.c()).append(x.plus() ? "+" : ""));
+            t.forEach(x -> key.append(x.literal() ? "\\" : "").append(x.c()).append(x.plus() ? "+" : ""));
             groups.computeIfAbsent(key.toString(), k -> new ArrayList<>()).add(t);
         }
         if (groups.size() > MAX_ALTERNATIVES) {

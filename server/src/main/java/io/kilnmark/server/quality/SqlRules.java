@@ -65,7 +65,7 @@ public final class SqlRules {
                 yield counting(from, c + " IS NOT NULL AND " + d.text(c) + " NOT IN (" + String.join(", ", values) + ")");
             }
             case MATCHES_PATTERN -> {
-                String match = d.regex(c, p.path("regex").asText());
+                String match = d.regex(c, Regexes.toPostgres(p.path("regex").asText()));
                 yield match == null ? null : counting(from, c + " IS NOT NULL AND NOT (" + match + ")");
             }
             case IN_RANGE -> {
@@ -95,13 +95,29 @@ public final class SqlRules {
                     "SELECT t.* FROM " + join + " WHERE " + cond, Shape.TOTAL_AND_FAILING);
             }
             case CUSTOM_SQL -> {
-                String sql = p.path("sql").asText()
-                    .replace("${table}", d.table(table.schema(), table.name()))
-                    .replace("${column}", rule.field() == null ? "${column}" : d.quote(rule.field()));
+                String sql = placeholders(p.path("sql").asText(), d.table(table.schema(), table.name()),
+                    rule.field() == null ? null : d.quote(rule.field()));
                 yield new Plan("SELECT (SELECT COUNT(*) FROM " + from + "), (SELECT COUNT(*) FROM (" + sql + ") f)", sql,
                     Shape.TOTAL_AND_FAILING);
             }
         };
+    }
+
+    private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\$\\{(table|column)}");
+
+    /**
+     * Custom SQL with {@code ${table}} and {@code ${column}} filled in, in one pass, so a name that
+     * itself holds {@code ${column}} is not filled in again.
+     */
+    static String placeholders(String sql, String table, String column) {
+        java.util.regex.Matcher m = PLACEHOLDER.matcher(sql);
+        StringBuilder b = new StringBuilder();
+        while (m.find()) {
+            String with = m.group(1).equals("table") ? table : column == null ? m.group() : column;
+            m.appendReplacement(b, java.util.regex.Matcher.quoteReplacement(with));
+        }
+        m.appendTail(b);
+        return b.toString();
     }
 
     private static Plan counting(String from, String failingCondition) {

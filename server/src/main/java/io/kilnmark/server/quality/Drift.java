@@ -21,9 +21,16 @@ import io.kilnmark.server.quality.ProfileFacts.FieldFacts;
  */
 public final class Drift {
 
-    /** One change worth recording. {@code field} is null for the asset as a whole. */
-    public record Event(String field, String kind, String change, String severity, String message,
+    /**
+     * One change worth recording. {@code field} is null for the asset as a whole. {@code message}
+     * holds words, counts and shares only; {@code detail}, when not null, says the same with the
+     * values involved and is shown only to roles that may see data.
+     */
+    public record Event(String field, String kind, String change, String severity, String message, String detail,
                         ObjectNode evidence) {
+        public Event(String field, String kind, String change, String severity, String message, ObjectNode evidence) {
+            this(field, kind, change, severity, message, null, evidence);
+        }
     }
 
     private static final JsonNodeFactory J = JsonNodeFactory.instance;
@@ -31,11 +38,20 @@ public final class Drift {
     private Drift() {
     }
 
-    /** Every change from {@code before} to {@code now}. */
+    /** Every change from {@code before} to {@code now}, with fixed volume thresholds and no freshness check. */
     public static List<Event> compare(ProfileFacts now, ProfileFacts before, Duration cadence) {
+        return compare(now, before, cadence, null);
+    }
+
+    /**
+     * Every change from {@code before} to {@code now}. {@code cadence} is how often new data is
+     * expected, once learned (null: freshness is not judged yet); {@code band} the usual relative
+     * change in row count, once learned (null: fixed thresholds of 10%, 20% and 50%).
+     */
+    public static List<Event> compare(ProfileFacts now, ProfileFacts before, Duration cadence, Double band) {
         List<Event> out = new ArrayList<>();
         schema(now, before, out);
-        volume(now, before, out);
+        volume(now, before, band, out);
         Map<String, FieldFacts> old = new HashMap<>();
         before.fields().forEach(f -> old.put(f.name(), f));
         for (FieldFacts f : now.fields()) {
@@ -45,7 +61,9 @@ public final class Drift {
             }
             distribution(f, o, out);
         }
-        freshness(now, before, cadence, out);
+        if (cadence != null) {
+            freshness(now, before, cadence, out);
+        }
         return out;
     }
 
@@ -106,18 +124,24 @@ public final class Drift {
         return Math.abs(na - nb) <= 0.1 && (Math.max(da, db) <= 0 || Math.abs(da - db) <= 0.1 * Math.max(da, db));
     }
 
-    static void volume(ProfileFacts now, ProfileFacts before, List<Event> out) {
+    static void volume(ProfileFacts now, ProfileFacts before, Double band, List<Event> out) {
         if (now.rowCount() == null || before.rowCount() == null) {
             return;
         }
         long a = before.rowCount();
         long b = now.rowCount();
         double change = a == 0 ? (b == 0 ? 0 : 1) : (double) (b - a) / a;
-        String severity = severity(Math.abs(change), 0.1, 0.2, 0.5);
+        // Once learned, the usual band sets the thresholds: beyond it, twice it, three times it.
+        String severity = band == null ? severity(Math.abs(change), 0.1, 0.2, 0.5)
+            : severity(Math.abs(change), band, 2 * band, 3 * band);
         if (severity != null) {
+            ObjectNode e = J.objectNode().put("from", a).put("to", b).put("change", Measures.round(change));
+            if (band != null) {
+                e.put("usualBand", Measures.round(band));
+            }
             out.add(new Event(null, "volume", "row_count", severity, "Row count changed by " + Measures.percent(change)
-                + ", from " + Measures.count(a) + " to " + Measures.count(b), J.objectNode().put("from", a).put("to", b)
-                .put("change", Measures.round(change))));
+                + ", from " + Measures.count(a) + " to " + Measures.count(b)
+                + (band == null ? "" : "; usually within " + Measures.percent(band)), e));
         }
     }
 
@@ -150,8 +174,8 @@ public final class Drift {
             String sev = severity(ks, 0.1, 0.2, 0.3);
             if (sev != null) {
                 out.add(new Event(f.name(), "distribution", "quantile_shift", sev, "The distribution of " + f.name()
-                    + " shifted: up to " + Measures.percent(ks) + " of values moved across the old quantiles "
-                    + "(median " + f.text("median") + ", was " + o.text("median") + ")",
+                    + " shifted: up to " + Measures.percent(ks) + " of values moved across the old quantiles",
+                    "Median " + f.text("median") + ", was " + o.text("median"),
                     J.objectNode().put("ks", Measures.round(ks)).put("medianFrom", o.text("median"))
                         .put("medianTo", f.text("median"))));
             }
@@ -171,8 +195,9 @@ public final class Drift {
             boolean leaderChanged = !tf.get(0).item().equals(to.get(0).item());
             if (jaccard < 0.5 || leaderChanged) {
                 out.add(new Event(f.name(), "distribution", "top_values", leaderChanged && jaccard < 0.5 ? "medium" : "low",
-                    "The most common values of " + f.name() + " changed" + (leaderChanged ? ": the commonest is now "
-                        + tf.get(0).item() + " (was " + to.get(0).item() + ")" : ""),
+                    "The most common values of " + f.name() + " changed" + (leaderChanged
+                        ? ", including the commonest" : ""),
+                    leaderChanged ? "The commonest is now " + tf.get(0).item() + " (was " + to.get(0).item() + ")" : null,
                     J.objectNode().put("overlap", Measures.round(jaccard))));
             }
         }
@@ -241,7 +266,7 @@ public final class Drift {
             String sev = age.compareTo(cadence.multipliedBy(3)) > 0 ? "high"
                 : age.compareTo(cadence.multipliedBy(2)) > 0 ? "medium" : "low";
             out.add(new Event(null, "freshness", "no_new_data", sev, "No new data since the previous scan: the latest "
-                + f.name() + " is still " + latest + " (" + Measures.hours(age) + " old)",
+                + f.name() + " is " + Measures.hours(age) + " old", "The latest " + f.name() + " is still " + latest,
                 J.objectNode().put("field", f.name()).put("latest", latest.toString())
                     .put("ageHours", Measures.round(age.toSeconds() / 3600.0))));
         }

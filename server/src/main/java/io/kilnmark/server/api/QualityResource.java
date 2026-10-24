@@ -21,6 +21,7 @@ import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.plugins.jdbc.JdbcConnector;
 import io.kilnmark.server.auth.AccessRole;
+import io.kilnmark.server.quality.Masking;
 import io.kilnmark.server.quality.Patterns;
 import io.kilnmark.server.quality.ProfileFacts;
 import io.kilnmark.server.quality.QualityService;
@@ -62,7 +63,7 @@ public class QualityResource {
     public static final String DATA_ROLE = AccessRole.STEWARD_ROLE;
     /** The least role that may see values of columns marked sensitive. */
     public static final String UNMASK_ROLE = AccessRole.ADMIN_ROLE;
-    static final String MASK = "••••";
+    static final String MASK = Masking.MASK;
 
     private final GraphStore graph;
     private final QualityStore store;
@@ -117,13 +118,14 @@ public class QualityResource {
             ObjectNode e = m.evidence() instanceof ObjectNode n ? n.deepCopy() : json.createObjectNode();
             o.put("reason", e.path("reason").asText(""));
             e.remove("reason");
-            o.set("evidence", e);
+            o.set("evidence", Masking.evidence(e, data));
         }));
         Set<String> sensitive = store.sensitive(urn);
         out.set("sensitive", json.valueToTree(sensitive));
         List<QualityStore.Accepted> accepted = store.accepted(urn);
         out.set("accepted", json.valueToTree(accepted));
-        JsonNode examples = data ? store.sample(urn).map(QualityStore.Sample::examples).orElse(null) : null;
+        JsonNode examples = data && quality.samplesAllowed(urn)
+            ? store.sample(urn).map(QualityStore.Sample::examples).orElse(null) : null;
         boolean showSensitive = unmask && identity.hasRole(UNMASK_ROLE);
         ArrayNode patterns = out.putArray("patterns");
         v.flatMap(x -> store.facts(x.id())).ifPresent(facts -> {
@@ -143,7 +145,7 @@ public class QualityResource {
                 for (ProfileFacts.Counted c : f.patterns()) {
                     ObjectNode s = shapes.addObject().put("shape", c.item()).put("count", c.count())
                         .put("share", Math.round(10_000.0 * c.count() / f.values()) / 10_000.0)
-                        .put("regex", Patterns.regex(c.item()))
+                        .put("regex", Patterns.regex(c.item(), "true".equals(f.text("patterns_collapsed"))))
                         .put("accepted", accepted.stream().anyMatch(x -> x.field().equals(f.name())
                             && x.shape().equals(c.item())));
                     if (fieldExamples != null && fieldExamples.has(c.item())) {
@@ -155,7 +157,8 @@ public class QualityResource {
                 }
                 ArrayNode formats = p.putArray("formats");
                 f.formats().forEach((k, n) -> formats.addObject().put("format", k).put("count", n));
-                Patterns.Suggestion sug = Patterns.suggest(f.patterns(), f.formats(), f.values());
+                Patterns.Suggestion sug = Patterns.suggest(f.patterns(), f.formats(), f.values(),
+                    "true".equals(f.text("patterns_collapsed")));
                 if (sug != null) {
                     p.set("suggestion", json.valueToTree(sug));
                 }
@@ -177,7 +180,12 @@ public class QualityResource {
     @Path("asset/drift")
     public List<QualityStore.DriftRow> drift(@QueryParam("urn") String urn, @QueryParam("limit") Integer limit) {
         asset(urn);
-        return store.drift(urn, limit == null ? 50 : Math.max(1, Math.min(limit, 500)));
+        boolean data = identity.hasRole(DATA_ROLE);
+        return store.drift(urn, limit == null ? 50 : Math.max(1, Math.min(limit, 500))).stream()
+            .map(d -> data ? d : new QualityStore.DriftRow(d.id(), d.assetUrn(), d.field(), d.kind(), d.change(),
+                d.severity(), d.message(), Masking.evidence(d.evidence(), false), d.versionId(), d.comparedWith(),
+                d.against(), d.detectedAt(), null))
+            .toList();
     }
 
     /** Profile versions, newest first. */
@@ -213,7 +221,7 @@ public class QualityResource {
     public ObjectNode samples(@QueryParam("urn") String urn, @QueryParam("unmask") boolean unmask) {
         asset(urn);
         ObjectNode out = json.createObjectNode().put("urn", urn);
-        Optional<QualityStore.Sample> s = store.sample(urn);
+        Optional<QualityStore.Sample> s = quality.samplesAllowed(urn) ? store.sample(urn) : Optional.empty();
         if (s.isEmpty()) {
             out.put("kept", false);
             out.put("message", "No sample is kept for this asset. Its source may have keep_samples off, or it has not "
@@ -272,6 +280,9 @@ public class QualityResource {
         asset(urn);
         if (body == null || body.field() == null || body.sensitive() == null) {
             throw new IllegalArgumentException("Send {\"field\": \"...\", \"sensitive\": true or false}");
+        }
+        if (!body.sensitive() && !identity.hasRole(UNMASK_ROLE)) {
+            throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can stop treating a column as sensitive.");
         }
         if (!store.setSensitive(urn, body.field(), body.sensitive())) {
             throw ApiError.of(Response.Status.NOT_FOUND, urn + " has no field called " + body.field());
@@ -347,6 +358,7 @@ public class QualityResource {
     @GET
     @Path("runs/{id}")
     public QualityStore.Run run(@PathParam("id") long id) {
+        store.failOrphanedRuns();
         return store.run(id).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No quality run " + id));
     }
 
@@ -363,9 +375,15 @@ public class QualityResource {
         List<RuleView> out = new ArrayList<>();
         for (Rule r : store.rules(blank(urn), blank(source), false)) {
             QualityStore.Result res = latest.computeIfAbsent(r.assetUrn(), store::latestResults).get(r.id());
-            out.add(new RuleView(r, withoutRows(res)));
+            out.add(view(r, res));
         }
         return out;
+    }
+
+    /** A rule and its latest result as the caller may see them: no values or query text for viewers. */
+    private RuleView view(Rule r, QualityStore.Result res) {
+        boolean data = identity.hasRole(DATA_ROLE);
+        return new RuleView(Masking.rule(r, data), withoutRows(res));
     }
 
     @POST
@@ -382,7 +400,7 @@ public class QualityResource {
     @Path("rules/{id}")
     public RuleView rule(@PathParam("id") long id) {
         Rule r = findRule(id);
-        return new RuleView(r, withoutRows(store.latestResults(r.assetUrn()).get(id)));
+        return view(r, store.latestResults(r.assetUrn()).get(id));
     }
 
     @PUT
@@ -391,6 +409,7 @@ public class QualityResource {
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Rule updateRule(@PathParam("id") long id, RuleDraft body) {
         Rule old = findRule(id);
+        adminForCustomSql(old.type());
         if (body != null && body.assetUrn() != null && !body.assetUrn().equals(old.assetUrn())) {
             throw new IllegalArgumentException("assetUrn: a rule cannot move to another asset; add a new rule there");
         }
@@ -408,6 +427,7 @@ public class QualityResource {
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Response deleteRule(@PathParam("id") long id) {
         Rule r = findRule(id);
+        adminForCustomSql(r.type());
         store.deleteRule(id);
         quality.rescore(r.assetUrn());
         return Response.noContent().build();
@@ -425,7 +445,7 @@ public class QualityResource {
                 + "on keep_samples for its source and scan again."));
         ObjectNode out = json.valueToTree(p);
         if (p.failingRows() != null) {
-            out.set("failingRows", rows(p.failingRows().columns(), p.failingRows().rows(), r.assetUrn(), unmask));
+            out.set("failingRows", rows(p.failingRows().columns(), p.failingRows().rows(), r.assetUrn(), unmask, false));
         }
         return out;
     }
@@ -435,6 +455,7 @@ public class QualityResource {
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Response runRule(@PathParam("id") long id) {
         Rule r = findRule(id);
+        adminForCustomSql(r.type());
         long run = quality.queueManual(r.assetUrn(), id, who());
         return Response.accepted(store.run(run).orElseThrow()).location(URI.create("/api/v1/quality/runs/" + run))
             .build();
@@ -448,6 +469,13 @@ public class QualityResource {
             .map(this::withoutRows).toList();
     }
 
+    /** Custom SQL rules are the admins' alone: they can read anything the source's login can see. */
+    private void adminForCustomSql(io.kilnmark.server.quality.RuleType type) {
+        if (type == io.kilnmark.server.quality.RuleType.CUSTOM_SQL && !identity.hasRole(AccessRole.ADMIN_ROLE)) {
+            throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can write, change or run custom SQL rules.");
+        }
+    }
+
     /** One result; its failing rows only for roles that may see data, masked where sensitive. */
     @GET
     @Path("results/{id}")
@@ -455,7 +483,8 @@ public class QualityResource {
         QualityStore.Result r = store.result(id).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND,
             "No result " + id));
         ObjectNode out = json.valueToTree(withoutRows(r));
-        if (identity.hasRole(DATA_ROLE) && r.failingRows() != null) {
+        Rule rule = store.rule(r.ruleId()).orElse(null);
+        if (identity.hasRole(DATA_ROLE) && r.failingRows() != null && quality.samplesAllowed(r.assetUrn())) {
             List<String> columns = new ArrayList<>();
             r.failingRows().path("columns").forEach(c -> columns.add(c.asText()));
             List<List<String>> rows = new ArrayList<>();
@@ -464,23 +493,59 @@ public class QualityResource {
                 row.forEach(c -> cells.add(c.isNull() ? null : c.asText()));
                 rows.add(cells);
             });
-            out.set("failingRows", rows(columns, rows, r.assetUrn(), unmask));
+            boolean custom = rule != null && rule.type() == io.kilnmark.server.quality.RuleType.CUSTOM_SQL;
+            out.set("failingRows", rows(columns, rows, r.assetUrn(), unmask, custom));
         }
         return out;
     }
 
-    private ObjectNode rows(List<String> columns, List<List<String>> rows, String urn, boolean unmask) {
+    /**
+     * Failing rows with sensitive columns masked: by name, and by position, since rows from the
+     * library's queries ({@code SELECT t.*}) hold the asset's columns in order. Rows from custom
+     * SQL can hold anything under any name, so when the asset has a sensitive column they are
+     * masked entirely unless an admin unmasks them.
+     */
+    private ObjectNode rows(List<String> columns, List<List<String>> rows, String urn, boolean unmask, boolean custom) {
         Set<String> sensitive = store.sensitive(urn);
         boolean show = unmask && identity.hasRole(UNMASK_ROLE);
+        Set<Integer> hide = new HashSet<>();
+        if (!show && !sensitive.isEmpty()) {
+            List<String> fields = graph.asset(urn).map(a -> a.fields().stream().map(Records.FieldDetail::name).toList())
+                .orElse(List.of());
+            for (int i = 0; i < columns.size(); i++) {
+                if (custom || sensitive.contains(columns.get(i))
+                    || (i < fields.size() && sensitive.contains(fields.get(i)))) {
+                    hide.add(i);
+                }
+            }
+        }
         ObjectNode o = json.createObjectNode();
         o.set("columns", json.valueToTree(columns));
-        o.set("rows", maskRows(json.valueToTree(columns), json.valueToTree(rows), sensitive, show));
+        ArrayNode out = o.putArray("rows");
+        for (List<String> row : rows) {
+            ArrayNode r = out.addArray();
+            for (int i = 0; i < row.size(); i++) {
+                String v = row.get(i);
+                if (v == null) {
+                    r.addNull();
+                } else {
+                    r.add(hide.contains(i) ? MASK : v);
+                }
+            }
+        }
+        o.set("masked", json.valueToTree(hide.stream().sorted().map(columns::get).toList()));
         return o;
     }
 
+    /** A result without its failing rows; viewers also get no failing-rows query and no database error text. */
     private QualityStore.Result withoutRows(QualityStore.Result r) {
-        return r == null ? null : new QualityStore.Result(r.id(), r.ruleId(), r.qualityRunId(), r.assetUrn(), r.status(),
-            r.total(), r.failing(), r.method(), r.failingQuery(), null, r.message(), r.observedAt(), r.origin());
+        if (r == null) {
+            return null;
+        }
+        boolean data = identity.hasRole(DATA_ROLE);
+        return new QualityStore.Result(r.id(), r.ruleId(), r.qualityRunId(), r.assetUrn(), r.status(), r.total(),
+            r.failing(), r.method(), data ? r.failingQuery() : null, null, r.message(), r.observedAt(), r.origin(),
+            data ? r.errorDetail() : null, r.estimate());
     }
 
     // ---- issues ----
@@ -531,24 +596,25 @@ public class QualityResource {
     /** The asset as an OpenLineage run event with schema, data quality metrics and assertions facets. */
     @GET
     @Path("export/openlineage")
-    public ObjectNode openLineage(@QueryParam("urn") String urn) {
-        return StandardFormats.openLineage(export(urn));
+    public ObjectNode openLineage(@QueryParam("urn") String urn, @QueryParam("unmask") boolean unmask) {
+        return StandardFormats.openLineage(export(urn, unmask));
     }
 
     /** The asset as an Open Data Contract Standard 3.1 contract: schema and quality rules. */
     @GET
     @Path("export/odcs")
-    public ObjectNode odcs(@QueryParam("urn") String urn) {
-        return StandardFormats.odcs(export(urn));
+    public ObjectNode odcs(@QueryParam("urn") String urn, @QueryParam("unmask") boolean unmask) {
+        return StandardFormats.odcs(export(urn, unmask));
     }
 
-    private StandardFormats.Export export(String urn) {
+    private StandardFormats.Export export(String urn, boolean unmask) {
         Records.AssetDetail a = asset(urn);
         Records.Source s = graph.source(a.source()).orElseThrow();
         Optional<QualityStore.Version> v = store.latestVersion(urn);
         ProfileFacts facts = v.flatMap(x -> store.facts(x.id())).orElse(null);
         return new StandardFormats.Export(a, s, v.orElse(null), facts, store.rules(urn, null, false),
-            store.latestResults(urn), store.sensitive(urn), "urn:kilnmark:server:" + version);
+            store.latestResults(urn), store.sensitive(urn), "urn:kilnmark:server:" + version,
+            identity.hasRole(DATA_ROLE), unmask && identity.hasRole(UNMASK_ROLE));
     }
 
     // ---- helpers ----
@@ -567,6 +633,9 @@ public class QualityResource {
     private Rule check(RuleDraft body) {
         if (body == null) {
             throw new IllegalArgumentException("Send the rule as JSON: assetUrn, type, field, params and thresholds");
+        }
+        if ("custom_sql".equalsIgnoreCase(String.valueOf(body.type()).trim())) {
+            adminForCustomSql(io.kilnmark.server.quality.RuleType.CUSTOM_SQL);
         }
         Records.AssetDetail a = asset(body.assetUrn());
         return body.check(context(a), who());
@@ -606,6 +675,11 @@ public class QualityResource {
             @Override
             public List<String> webhookAllowList() {
                 return allow;
+            }
+
+            @Override
+            public boolean customSqlEnabled() {
+                return quality.settings().customSql();
             }
         };
     }

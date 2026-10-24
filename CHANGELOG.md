@@ -11,11 +11,16 @@
 - **Samples:** every scan keeps a sample of whole rows (1,000 by default; source setting
   `sample_rows`), chosen by the hash of the primary key (or of the whole row), so the same rows
   are chosen every time; files use reservoir sampling seeded per asset. Samples are replaced on
-  each scan and deleted with the asset. Source setting `keep_samples=false` keeps no values at
-  all: no samples, examples, most common values or failing rows. Database tables larger than the
-  source setting `table_sample_above_rows` are profiled from a `TABLESAMPLE`, and the profile says
-  it is an estimate. Viewing samples, examples and failing rows needs the steward role; columns a
-  steward marks sensitive are masked unless an admin unmasks them.
+  each scan and deleted with the asset; cells are cut at 200 characters and a sample holds at most
+  `kilnmark.quality.sample-max-mb` (8 MiB). Source setting `keep_samples=false` keeps no sample
+  rows, example values, most common values or failing rows (numeric statistics such as min, max
+  and quantiles are still kept), and removes those already stored as soon as it is seen. Database
+  tables larger than the source setting `table_sample_above_rows` are profiled from a
+  `TABLESAMPLE`; the profile and any rule read through it say they are estimates, and the
+  catalogue keeps the database's row estimate. Viewing samples, examples, failing rows and the
+  values in measures, drift and exports needs the steward role; viewers get words, counts and
+  shares. Columns a steward marks sensitive are masked (in samples, examples, failing rows, the
+  asset's profile and exports) unless an admin unmasks them; only an admin can unmark one.
 - **Automatic pre-analysis** after each scan, with no extra read: measures for completeness,
   uniqueness, validity, consistency, accuracy (estimated), timeliness and volume, each with its
   evidence; suggested regular expressions for a column's dominant shapes; stewards accept shapes
@@ -25,10 +30,18 @@
   thresholds as a share or a count. Actions: status, a steward task (the new **Issues** list),
   and webhooks to URLs on the administrator's allow-list (`kilnmark.quality.webhook-allow-list`).
   They run after every scan and on demand through the job queue (jobs of kind `quality`): as SQL
-  in PostgreSQL and SQL Server (custom SQL read-only and stopped after
-  `kilnmark.quality.query-timeout`), and while streaming files. Results keep the query that lists
-  the failing rows and a few failing rows. Rules preview against the sample before saving, and
-  are recommended from the profile without AI.
+  in PostgreSQL and SQL Server, each check in its own transaction (read-only on PostgreSQL) with a
+  time limit (`kilnmark.quality.query-timeout`), and while streaming files (regular expressions
+  bounded in time and length). Regular expressions are limited to a subset Java and PostgreSQL read
+  alike. Results keep the query that lists the failing rows and a few failing rows; database error
+  text is shown to stewards only. Rules preview against the sample before saving, and are
+  recommended from the profile without AI.
+- **Custom SQL rules are off by default** (`kilnmark.quality.custom-sql=true` turns them on) and
+  only admins write, change or run them. They run only on PostgreSQL, never under a login that is
+  a superuser or may read server files, run programs or signal other sessions, as one checked
+  SELECT (no functions that touch files, locks, settings, sequences or other sessions) in a
+  read-only transaction with a statement timeout. They can still read anything the source's login
+  can see, beyond the source's schemas: give sources a read-only login.
 - **Profile versions and drift:** a version per asset per scan; each is compared with the one
   before and with a chosen baseline for schema, volume, distribution (quantile shift, nulls,
   distinct values, most common values, shape shares) and freshness. Drift events have a severity,

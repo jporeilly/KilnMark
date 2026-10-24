@@ -148,17 +148,24 @@ class QualityFlowTest {
             "CREATE TABLE qa.big (id integer, v integer)",
             "INSERT INTO qa.big SELECT n, n % 7 FROM generate_series(1, 30000) n",
             "ANALYZE qa.big",
-            "CREATE SEQUENCE qa.s");
+            "CREATE SEQUENCE qa.s",
+            // Sources should use a read-only login without superuser rights: custom SQL refuses to run otherwise.
+            "CREATE ROLE qa_reader LOGIN PASSWORD 'qa-reader-pw'",
+            "GRANT USAGE ON SCHEMA qa TO qa_reader",
+            "GRANT SELECT ON ALL TABLES IN SCHEMA qa TO qa_reader",
+            "GRANT USAGE ON SEQUENCE qa.s TO qa_reader");
         viewer = token("quality-viewer", "viewer");
         steward = token("quality-steward", "steward");
         loaded = true;
     }
 
-    private Map<String, Object> source(String name, Map<String, String> extra) {
-        Map<String, String> settings = new HashMap<>(Map.of("url", url, "username", user, "schemas", "qa",
-            "sample_rows", "200"));
+    /** A source on the test database: as the read-only qa_reader, or as the test's superuser. */
+    private Map<String, Object> source(String name, Map<String, String> extra, boolean reader) {
+        Map<String, String> settings = new HashMap<>(Map.of("url", url, "username", reader ? "qa_reader" : user,
+            "schemas", "qa", "sample_rows", "200"));
         settings.putAll(extra);
-        return Map.of("name", name, "kind", "postgresql", "password", password, "settings", settings);
+        return Map.of("name", name, "kind", "postgresql", "password", reader ? "qa-reader-pw" : password,
+            "settings", settings);
     }
 
     /** Scans a source and waits for the scan and the quality evaluation queued after it. */
@@ -208,7 +215,7 @@ class QualityFlowTest {
     @Test
     @Order(1)
     void aScanProfilesPatternsSamplesAndVersionsThenAnalysesThem() throws Exception {
-        admin().contentType(ContentType.JSON).body(source("quality-db", Map.of("table_sample_above_rows", "10000")))
+        admin().contentType(ContentType.JSON).body(source("quality-db", Map.of("table_sample_above_rows", "10000"), true))
             .post("/api/v1/sources").then().statusCode(201);
         scan("quality-db");
         assertEquals(1, count("SELECT count(*) FROM kilnmark.profile_version WHERE asset_urn = '" + CUSTOMERS + "'"));
@@ -223,6 +230,8 @@ class QualityFlowTest {
             assertTrue(rs.getLong(3) < 30_000, "read fewer rows than the table holds: " + rs.getLong(3));
             assertEquals(30_000, rs.getLong(5), "the planner's estimate");
         }
+        assertEquals(30_000, admin().get("/api/v1/assets/" + BIG).then().statusCode(200).extract().jsonPath()
+            .getLong("rowCount"), "the catalogue keeps the estimate, not the size of the sample");
         try (Connection c = db.getConnection(); Statement s = c.createStatement();
              ResultSet rs = s.executeQuery("SELECT estimate FROM kilnmark.profile_version WHERE asset_urn = '"
                  + CUSTOMERS + "'")) {
@@ -253,7 +262,14 @@ class QualityFlowTest {
             && m.get("dimension").equals("consistency") && ((Number) m.get("score")).doubleValue() < 1),
             "negative quantities are impossible values");
         assertTrue(measures.stream().anyMatch(m -> m.get("field").equals("id") && m.get("dimension").equals("uniqueness")));
-        assertTrue(measures.stream().anyMatch(m -> m.get("field").equals("") && m.get("dimension").equals("timeliness")));
+        assertTrue(measures.stream().noneMatch(m -> m.get("dimension").equals("timeliness")),
+            "no timeliness until the cadence is learned");
+        for (Map<String, Object> m : measures) {
+            Map<?, ?> evidence = (Map<?, ?>) m.get("evidence");
+            for (String key : List.of("min", "max", "domain", "fenceLow", "fenceHigh", "latest", "detail")) {
+                assertFalse(evidence.containsKey(key), "a viewer sees no values in evidence: " + m);
+            }
+        }
         assertTrue(v.getList("scores.asset.dimension").contains("overall"));
         assertTrue(v.getList("scores.fields.'e-mail'.dimension").contains("completeness"));
 
@@ -301,12 +317,22 @@ class QualityFlowTest {
             "params", Map.of("min", 0))));
         rules.put("orphans", rule(Map.of("assetUrn", ORDERS, "field", "customer_id", "type", "references",
             "params", Map.of("asset", CUSTOMERS, "field", "id"))));
-        rules.put("custom", rule(Map.of("assetUrn", CUSTOMERS, "field", "quantity", "type", "custom_sql",
-            "params", Map.of("sql", "SELECT * FROM ${table} WHERE ${column} < 0"))));
-        rules.put("writes", rule(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
-            "params", Map.of("sql", "SELECT nextval('qa.s') FROM ${table}"))));
-        rules.put("slow", rule(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
-            "params", Map.of("sql", "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT * FROM r"))));
+        // Custom SQL: admins only, never functions that act outside the query.
+        Map<String, Object> custom = Map.of("assetUrn", CUSTOMERS, "field", "quantity", "type", "custom_sql",
+            "params", Map.of("sql", "SELECT * FROM ${table} WHERE ${column} < 0"));
+        as(steward).contentType(ContentType.JSON).body(custom).post("/api/v1/quality/rules").then().statusCode(403);
+        rules.put("custom", admin().contentType(ContentType.JSON).body(custom).post("/api/v1/quality/rules").then()
+            .statusCode(201).extract().jsonPath().getLong("id"));
+        admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+            "params", Map.of("sql", "SELECT nextval('qa.s') FROM ${table}"))).post("/api/v1/quality/rules").then()
+            .statusCode(400).body("error", containsString("nextval"));
+        admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+            "params", Map.of("sql", "SELECT 1 AS a) f) DENY SELECT ON qa.t TO public COMMIT SELECT (SELECT 1 AS b FROM "
+                + "(SELECT 1 AS c"))).post("/api/v1/quality/rules").then().statusCode(400);
+        rules.put("slow", admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+            "params", Map.of("sql", "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT * FROM r")))
+            .post("/api/v1/quality/rules").then().statusCode(201).extract().jsonPath().getLong("id"));
+        as(steward).post("/api/v1/quality/rules/" + rules.get("slow") + "/run").then().statusCode(403);
         rules.put("rows", rule(Map.of("assetUrn", CUSTOMERS, "type", "row_count", "params", Map.of("min", 1000))));
         rules.put("fresh", rule(Map.of("assetUrn", CUSTOMERS, "field", "updated_at", "type", "freshness",
             "params", Map.of("maxAgeHours", 48))));
@@ -316,7 +342,7 @@ class QualityFlowTest {
             .post("/api/v1/quality/rules").then().statusCode(403);
         as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "nope", "type", "unique"))
             .post("/api/v1/quality/rules").then().statusCode(400).body("error", containsString("field"));
-        as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+        admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
             "params", Map.of("sql", "DELETE FROM qa.orders"))).post("/api/v1/quality/rules").then().statusCode(400)
             .body("error", containsString("params.sql"));
         as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "id", "type", "unique",
@@ -331,7 +357,7 @@ class QualityFlowTest {
         waitForQualityRun(customersRun);
         waitForQualityRun(ordersRun);
 
-        JsonPath r = as(viewer).queryParam("urn", CUSTOMERS).get("/api/v1/quality/rules").then().statusCode(200)
+        JsonPath r = as(steward).queryParam("urn", CUSTOMERS).get("/api/v1/quality/rules").then().statusCode(200)
             .extract().jsonPath();
         assertEquals("fail", latest(r, "email", "status"));
         assertEquals(40, ((Number) latest(r, "email", "failing")).longValue(), "20 nulls and 20 blanks");
@@ -345,13 +371,19 @@ class QualityFlowTest {
             failingQuery);
         assertEquals(8, ((Number) latest(r, "quantity", "failing")).longValue());
         assertEquals(8, ((Number) latest(r, "custom", "failing")).longValue());
-        assertEquals("error", latest(r, "writes", "status"));
-        assertTrue(((String) latest(r, "writes", "message")).contains("read-only"), (String) latest(r, "writes", "message"));
         assertEquals("error", latest(r, "slow", "status"));
         assertTrue(((String) latest(r, "slow", "message")).contains("longer than 5 seconds"));
         assertEquals("pass", latest(r, "rows", "status"));
         assertEquals("pass", latest(r, "fresh", "status"));
-        assertEquals(0, count("SELECT last_value FROM qa.s") > 1 ? 1 : 0, "the sequence never moved");
+
+        // Viewers see the rules and results, but no values, queries or database errors.
+        JsonPath v = as(viewer).queryParam("urn", CUSTOMERS).get("/api/v1/quality/rules").then().statusCode(200)
+            .extract().jsonPath();
+        String viewed = v.prettify();
+        assertFalse(viewed.contains("failingQuery\": \"SELECT"), "no failing-rows queries for viewers");
+        assertFalse(viewed.contains("${column} < 0"), "no custom SQL for viewers");
+        assertTrue(viewed.contains("\"hidden\": true"), "range bounds hidden");
+        assertFalse(viewed.contains("errorDetail\": \""), "no database error text for viewers");
 
         JsonPath o = as(viewer).queryParam("urn", ORDERS).get("/api/v1/quality/rules").then().statusCode(200).extract()
             .jsonPath();
@@ -426,7 +458,8 @@ class QualityFlowTest {
         JsonPath rule = as(viewer).get("/api/v1/quality/rules/" + id).then().statusCode(200).extract().jsonPath();
         assertEquals("matches_pattern", rule.getString("rule.type"));
         assertEquals("validity", rule.getString("rule.dimension"));
-        assertEquals("^([A-Z]{2}[0-9][A-Z] [0-9][A-Z]{2}|[A-Z][0-9] [0-9][A-Z]{2})$", rule.getString("rule.params.regex"));
+        assertEquals("^(\\p{Lu}{2}[0-9]\\p{Lu} [0-9]\\p{Lu}{2}|\\p{Lu}[0-9] [0-9]\\p{Lu}{2})$",
+            rule.getString("rule.params.regex"));
         JsonPath q = quality(viewer, CUSTOMERS);
         Map<String, Object> validity = q.<Map<String, Object>>getList("measures").stream()
             .filter(m -> m.get("field").equals("postcode") && m.get("dimension").equals("validity")).findFirst()
@@ -451,6 +484,22 @@ class QualityFlowTest {
         assertTrue(rows.stream().map(r -> r.get(col)).allMatch(v -> v == null || v.equals("••••")));
         String examples = quality(steward, CUSTOMERS).getString("patterns.find { it.field == 'e-mail' }.shapes[0].examples");
         assertTrue(examples.contains("••••") && !examples.contains("@"), examples);
+
+        // The catalogue's own profile masks the most common values of a sensitive column too.
+        as(steward).contentType(ContentType.JSON).queryParam("urn", CUSTOMERS)
+            .body(Map.of("field", "postcode", "sensitive", true)).put("/api/v1/quality/asset/sensitive").then()
+            .statusCode(204);
+        assertEquals(List.of("••••", "••••", "••••"), as(steward).get("/api/v1/assets/" + CUSTOMERS).then().statusCode(200)
+            .extract().jsonPath().getList("fields.find { it.name == 'postcode' }.profile.top.value"));
+        assertTrue(admin().get("/api/v1/assets/" + CUSTOMERS).then().statusCode(200).extract().jsonPath()
+            .getList("fields.find { it.name == 'postcode' }.profile.top.value").contains("SW1A 1AA"));
+        // Marking is for stewards; un-marking only for admins.
+        as(steward).contentType(ContentType.JSON).queryParam("urn", CUSTOMERS)
+            .body(Map.of("field", "postcode", "sensitive", false)).put("/api/v1/quality/asset/sensitive").then()
+            .statusCode(403);
+        admin().contentType(ContentType.JSON).queryParam("urn", CUSTOMERS)
+            .body(Map.of("field", "postcode", "sensitive", false)).put("/api/v1/quality/asset/sensitive").then()
+            .statusCode(204);
 
         JsonPath open = admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
             .get("/api/v1/quality/asset/samples").then().statusCode(200).extract().jsonPath();
@@ -502,8 +551,13 @@ class QualityFlowTest {
     @Test
     @Order(10)
     void exportsAreValidOpenLineageAndOdcs() throws Exception {
-        JsonNode event = JSON.readTree(as(viewer).queryParam("urn", CUSTOMERS).get("/api/v1/quality/export/openlineage")
-            .then().statusCode(200).extract().asString());
+        rule(Map.of("assetUrn", CUSTOMERS, "field", "postcode", "type", "allowed_values",
+            "params", Map.of("values", List.of("SW1A 1AA", "M1 1AE", "EC1A 1BB"))));
+        as(steward).contentType(ContentType.JSON).queryParam("urn", CUSTOMERS)
+            .body(Map.of("field", "quantity", "sensitive", true)).put("/api/v1/quality/asset/sensitive").then()
+            .statusCode(204);
+        JsonNode event = JSON.readTree(admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
+            .get("/api/v1/quality/export/openlineage").then().statusCode(200).extract().asString());
         assertEquals(Set.of(), validate("https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent", event,
             SpecVersion.VersionFlag.V202012));
         JsonNode input = event.get("inputs").get(0);
@@ -530,10 +584,13 @@ class QualityFlowTest {
         assertTrue(input.get("inputFacets").get("dataQualityAssertions").get("assertions").toString()
             .contains("\"assertion\":\"not_null\",\"success\":false"));
 
-        JsonNode contract = JSON.readTree(as(viewer).queryParam("urn", CUSTOMERS).get("/api/v1/quality/export/odcs")
+        JsonNode contract = JSON.readTree(as(steward).queryParam("urn", CUSTOMERS).get("/api/v1/quality/export/odcs")
             .then().statusCode(200).extract().asString());
-        assertEquals(Set.of(), validate("classpath:schemas/odcs/odcs-json-schema-v3.1.0.json", contract,
-            SpecVersion.VersionFlag.V201909), contract.toString());
+        assertTrue(contract.toString().contains("\"validValues\""), "stewards see allowed values");
+        assertTrue(contract.toString().contains("{property} < 0"), "custom SQL with ODCS placeholders");
+        Set<ValidationMessage> odcsErrors = validate("classpath:schemas/odcs/odcs-json-schema-v3.1.0.json", contract,
+            SpecVersion.VersionFlag.V201909);
+        assertEquals(Set.of(), odcsErrors, odcsErrors + " in " + contract);
         assertEquals("v3.1.0", contract.get("apiVersion").asText());
         com.fasterxml.jackson.databind.node.ObjectNode broken = contract.deepCopy();
         broken.remove("status");
@@ -551,12 +608,32 @@ class QualityFlowTest {
         assertEquals("missingValues", email.get("quality").get(0).get("metric").asText(), "blanks count as missing");
         assertTrue(contract.get("schema").get(0).get("quality").toString().contains("\"engine\":\"kilnmark\""),
             "row count and freshness checks travel as Kilnmark's own");
+
+        // Viewers get the same formats without values: no allowed values, range bounds or custom SQL,
+        // and no statistics of a sensitive column.
+        JsonNode viewerContract = JSON.readTree(as(viewer).queryParam("urn", CUSTOMERS)
+            .get("/api/v1/quality/export/odcs").then().statusCode(200).extract().asString());
+        Set<ValidationMessage> viewerErrors = validate("classpath:schemas/odcs/odcs-json-schema-v3.1.0.json",
+            viewerContract, SpecVersion.VersionFlag.V201909);
+        assertEquals(Set.of(), viewerErrors, viewerErrors + " in " + viewerContract);
+        String vc = viewerContract.toString();
+        assertFalse(vc.contains("SW1A 1AA") || vc.contains("\"validValues\""), vc);
+        assertFalse(vc.contains("< 0") || vc.contains("RECURSIVE"), "no custom SQL");
+        JsonNode viewerEvent = JSON.readTree(as(viewer).queryParam("urn", CUSTOMERS)
+            .get("/api/v1/quality/export/openlineage").then().statusCode(200).extract().asString());
+        JsonNode quantity = viewerEvent.get("inputs").get(0).get("inputFacets").get("dataQualityMetrics")
+            .get("columnMetrics").get("quantity");
+        assertNull(quantity.get("min"));
+        assertNull(quantity.get("quantiles"), "a sensitive column's statistics are left out");
+        assertNotNull(quantity.get("nullCount"), "counts stay");
+        assertEquals(Set.of(), validate("https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent", viewerEvent,
+            SpecVersion.VersionFlag.V202012));
     }
 
     @Test
     @Order(11)
     void withKeepSamplesOffNoValuesAreStored() throws Exception {
-        admin().contentType(ContentType.JSON).body(source("quality-plain", Map.of("keep_samples", "false")))
+        admin().contentType(ContentType.JSON).body(source("quality-plain", Map.of("keep_samples", "false"), false))
             .post("/api/v1/sources").then().statusCode(201);
         scan("quality-plain");
         String urn = "urn:kilnmark:quality-plain:qa.Customers";
@@ -579,6 +656,16 @@ class QualityFlowTest {
             "the failing rows query is kept, the rows are not");
         as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", urn, "field", "e-mail", "type", "not_null"))
             .post("/api/v1/quality/rules/preview").then().statusCode(409);
+
+        // This source logs in as the database's superuser: custom SQL refuses to run there.
+        long custom = admin().contentType(ContentType.JSON).body(Map.of("assetUrn", urn, "field", "quantity",
+            "type", "custom_sql", "params", Map.of("sql", "SELECT * FROM ${table} WHERE ${column} < 0")))
+            .post("/api/v1/quality/rules").then().statusCode(201).extract().jsonPath().getLong("id");
+        waitForQualityRun(admin().post("/api/v1/quality/rules/" + custom + "/run").then().statusCode(202).extract()
+            .jsonPath().getLong("id"));
+        JsonPath refused = admin().get("/api/v1/quality/rules/" + custom).then().statusCode(200).extract().jsonPath();
+        assertEquals("error", refused.getString("latest.status"));
+        assertTrue(refused.getString("latest.message").contains("superuser"), refused.getString("latest.message"));
     }
 
     @Test

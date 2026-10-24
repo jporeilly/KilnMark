@@ -46,10 +46,20 @@ public final class StandardFormats {
     private static final JsonNodeFactory J = JsonNodeFactory.instance;
     private static final Set<String> NUMERIC = Set.of("int16", "int32", "int64", "float32", "float64", "decimal");
 
-    /** Everything an export needs about one asset. */
+    /**
+     * Everything an export needs about one asset, and who asks: {@code data} for roles that may see
+     * data (otherwise allowed values, range bounds and custom SQL are left out), {@code unmasked}
+     * for an admin who asked to unmask (otherwise statistics that are values, such as min, max and
+     * quantiles, are left out for columns marked sensitive).
+     */
     public record Export(Records.AssetDetail asset, Records.Source source, QualityStore.Version version,
                          ProfileFacts facts, List<Rule> rules, Map<Long, QualityStore.Result> results,
-                         Set<String> sensitive, String producer) {
+                         Set<String> sensitive, String producer, boolean data, boolean unmasked) {
+        public Export(Records.AssetDetail asset, Records.Source source, QualityStore.Version version,
+                      ProfileFacts facts, List<Rule> rules, Map<Long, QualityStore.Result> results,
+                      Set<String> sensitive, String producer) {
+            this(asset, source, version, facts, rules, results, sensitive, producer, true, true);
+        }
     }
 
     private StandardFormats() {
@@ -100,7 +110,8 @@ public final class StandardFormats {
                     c.put("distinctCount", f.get("distinct"));
                 }
                 c.put("count", f.values());
-                if (NUMERIC.contains(f.kind())) {
+                boolean hidden = x.sensitive().contains(f.name()) && !x.unmasked();
+                if (NUMERIC.contains(f.kind()) && !hidden) {
                     putNumber(c, "sum", f.number("sum"));
                     putNumber(c, "min", f.number("min"));
                     putNumber(c, "max", f.number("max"));
@@ -225,7 +236,7 @@ public final class StandardFormats {
             ArrayNode quality = J.arrayNode();
             for (Rule r : x.rules()) {
                 if (f.name().equals(r.field())) {
-                    quality.add(quality(r, x.results().get(r.id())));
+                    quality.add(quality(r, x.results().get(r.id()), x.data()));
                 }
             }
             if (!quality.isEmpty()) {
@@ -235,7 +246,7 @@ public final class StandardFormats {
         ArrayNode tableQuality = J.arrayNode();
         for (Rule r : x.rules()) {
             if (r.field() == null || x.asset().fields().stream().noneMatch(f -> f.name().equals(r.field()))) {
-                tableQuality.add(quality(r, x.results().get(r.id())));
+                tableQuality.add(quality(r, x.results().get(r.id()), x.data()));
             }
         }
         if (!tableQuality.isEmpty()) {
@@ -271,6 +282,15 @@ public final class StandardFormats {
 
     /** One rule in ODCS's quality section: a library metric where ODCS has one, SQL, or Kilnmark's own. */
     static ObjectNode quality(Rule r, QualityStore.Result last) {
+        return quality(r, last, true);
+    }
+
+    /**
+     * One rule in ODCS's quality section; without {@code data}, no allowed values, range bounds
+     * or custom SQL. Custom SQL's {@code ${table}} and {@code ${column}} become ODCS's
+     * {@code {object}} and {@code {property}}.
+     */
+    static ObjectNode quality(Rule r, QualityStore.Result last, boolean data) {
         ObjectNode q = J.objectNode();
         q.put("id", "rule-" + r.id());
         q.put("name", r.name());
@@ -293,8 +313,11 @@ public final class StandardFormats {
                 library(q, "duplicateValues", share, limit, args);
             }
             case ALLOWED_VALUES -> {
-                ObjectNode args = J.objectNode();
-                args.set("validValues", p.get("values").deepCopy());
+                ObjectNode args = null;
+                if (data) {
+                    args = J.objectNode();
+                    args.set("validValues", p.get("values").deepCopy());
+                }
                 library(q, "invalidValues", share, limit, args);
             }
             case MATCHES_PATTERN -> library(q, "invalidValues", share, limit,
@@ -316,16 +339,18 @@ public final class StandardFormats {
                 }
             }
             case CUSTOM_SQL -> {
-                if (share) {
-                    kilnmark(q, r);
+                if (!data) {
+                    q.put("type", "text"); // the SQL itself may quote values
+                } else if (share) {
+                    kilnmark(q, r, true);
                 } else {
                     q.put("type", "sql");
-                    q.put("query", "SELECT COUNT(*) FROM (" + p.path("sql").asText() + ") failing");
+                    q.put("query", "SELECT COUNT(*) FROM (" + odcsPlaceholders(p.path("sql").asText()) + ") failing");
                     q.put("unit", "rows");
                     q.put("mustBeLessOrEqualTo", limit);
                 }
             }
-            default -> kilnmark(q, r);
+            default -> kilnmark(q, r, data);
         }
         ArrayNode custom = q.putArray("customProperties");
         custom.addObject().put("property", "kilnmarkRuleType").put("value", r.type().id());
@@ -362,14 +387,23 @@ public final class StandardFormats {
         q.put("mustBeLessOrEqualTo", limit);
     }
 
-    private static void kilnmark(ObjectNode q, Rule r) {
+    /** Kilnmark's {@code ${table}} and {@code ${column}} as ODCS writes them: {@code {object}} and {@code {property}}. */
+    static String odcsPlaceholders(String sql) {
+        return SqlRules.placeholders(sql, "{object}", "{property}");
+    }
+
+    private static void kilnmark(ObjectNode q, Rule r, boolean data) {
         q.put("type", "custom");
         q.put("engine", "kilnmark");
         ObjectNode impl = J.objectNode().put("type", r.type().id());
         if (r.field() != null) {
             impl.put("field", r.field());
         }
-        impl.set("params", r.params().deepCopy());
+        JsonNode params = Masking.params(r, data).deepCopy();
+        if (data && r.type() == RuleType.CUSTOM_SQL && params instanceof ObjectNode o && o.has("sql")) {
+            o.put("sql", odcsPlaceholders(o.get("sql").asText()));
+        }
+        impl.set("params", params);
         impl.put("thresholdUnit", r.thresholdUnit());
         impl.put("failAbove", r.failAbove());
         if (r.warnAbove() != null) {

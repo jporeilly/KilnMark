@@ -26,7 +26,7 @@ const TYPES: { type: RuleType; label: string; field: boolean; params: string; hi
   { type: "row_count", label: "Row count", field: false, params: '{"min": 1}', hint: "min, max or both" },
   { type: "row_count_change", label: "Row count change", field: false, params: '{"maxChange": 0.2}', hint: "maxChange: largest change since the last scan, as a share (0.2 is 20%)" },
   { type: "references", label: "References (foreign key)", field: true, params: '{"asset": "urn:kilnmark:source:schema.table", "field": "id"}', hint: "asset and field the values must appear in; same source" },
-  { type: "custom_sql", label: "Custom SQL", field: false, params: '{"sql": "SELECT * FROM ${table} WHERE amount < 0"}', hint: "sql: a SELECT listing the failing rows; ${table} and ${column} are filled in. Runs read-only, with a time limit" },
+  { type: "custom_sql", label: "Custom SQL (admins)", field: false, params: '{"sql": "SELECT * FROM ${table} WHERE amount < 0"}', hint: "sql: one SELECT listing the failing rows; ${table} and ${column} are filled in. PostgreSQL sources only, when the administrator has turned custom SQL on. It runs in a read-only transaction with a time limit, but can read anything the source's login can see, so give sources a read-only login" },
 ];
 
 /** Rules: every rule with its latest result; stewards add, preview, run, switch off and delete them. */
@@ -127,6 +127,8 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                     <td>
                       {latest ? <QualityStatusBadge status={latest.status} /> : <span className="badge badge-none">Not run</span>}
                       {latest && <div className="small muted">{formatTime(latest.observedAt)}</div>}
+                      {latest?.estimate && <span className="tag">estimate</span>}
+                      {latest?.errorDetail && <div className="small muted">{latest.errorDetail}</div>}
                     </td>
                     <td className="small">
                       {latest?.failing != null
@@ -172,6 +174,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
 
       {steward ? (
         <AddRule
+          admin={allows(role, "admin")}
           urn={filter}
           onAdded={(name) => {
             setNotice(`Rule "${name}" added. It runs after the next scan, or press Run now.`);
@@ -185,7 +188,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
   );
 }
 
-function AddRule({ urn, onAdded }: { urn: string; onAdded: (name: string) => void }) {
+function AddRule({ urn, admin, onAdded }: { urn: string; admin: boolean; onAdded: (name: string) => void }) {
   const [assetUrn, setAssetUrn] = useState(urn);
   const [type, setType] = useState<RuleType>("not_null");
   const [field, setField] = useState("");
@@ -287,7 +290,7 @@ function AddRule({ urn, onAdded }: { urn: string; onAdded: (name: string) => voi
               setParams(TYPES.find((x) => x.type === t)!.params);
               setPreview(null);
             }}>
-              {TYPES.map((t) => (
+              {TYPES.filter((t) => admin || t.type !== "custom_sql").map((t) => (
                 <option key={t.type} value={t.type}>{t.label}</option>
               ))}
             </select>

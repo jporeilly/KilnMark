@@ -49,6 +49,11 @@ public interface SqlDialect {
     /** Whether {@link #readOnly} is enforced by the database rather than only advised. */
     boolean enforcesReadOnly();
 
+    /** Statements that stop any statement of the current transaction after {@code millis}; empty if none. */
+    default List<String> timeout(long millis) {
+        return List.of();
+    }
+
     /** PostgreSQL. */
     SqlDialect POSTGRESQL = new SqlDialect() {
         @Override
@@ -61,7 +66,7 @@ public interface SqlDialect {
             if (value.indexOf('\0') >= 0) {
                 throw new IllegalArgumentException("Text holding a zero character cannot be sent to PostgreSQL");
             }
-            // standard_conforming_strings is on by default since 9.1; E'' strings are never used.
+            // Kilnmark turns standard_conforming_strings on in each transaction (readOnly); E'' strings are never used.
             return "'" + value.replace("'", "''") + "'";
         }
 
@@ -87,7 +92,13 @@ public interface SqlDialect {
 
         @Override
         public List<String> readOnly() {
-            return List.of("SET TRANSACTION READ ONLY");
+            // Literals are written with quotes doubled, which is only safe with standard strings.
+            return List.of("SET TRANSACTION READ ONLY", "SET LOCAL standard_conforming_strings = on");
+        }
+
+        @Override
+        public List<String> timeout(long millis) {
+            return List.of("SET LOCAL statement_timeout = " + Math.max(1, millis));
         }
 
         @Override

@@ -58,6 +58,8 @@ public class QualityService {
     private final SecretBox secrets;
     private final KilnmarkConfig config;
     private final ObjectMapper json;
+    /** One client for every webhook call. */
+    private final Webhooks hooks;
 
     public QualityService(GraphStore graph, QualityStore store, Connectors connectors, SecretBox secrets,
                           KilnmarkConfig config, ObjectMapper json) {
@@ -67,6 +69,47 @@ public class QualityService {
         this.secrets = secrets;
         this.config = config;
         this.json = json;
+        this.hooks = new Webhooks(config.quality().webhookAllowList().orElse(List.of()), config.quality().webhookTimeout());
+    }
+
+    /**
+     * The row count a scan should record for an asset: the database's estimate when the table was
+     * read through a sample, otherwise the rows read. For {@code ScanService} when it stores a
+     * {@code ROW_COUNT} event, so a sampled read never overwrites the catalogue's count with the
+     * size of the sample.
+     */
+    public static long reportedRows(Map<String, String> rowCount) {
+        long rows = Long.parseLong(rowCount.get("rows"));
+        if (Boolean.parseBoolean(rowCount.get("sampled")) && rowCount.containsKey("estimated_rows")) {
+            return Math.max(rows, Long.parseLong(rowCount.get("estimated_rows")));
+        }
+        return rows;
+    }
+
+    /**
+     * Whether values may be shown for an asset now: its source keeps samples. When the source's
+     * {@code keep_samples} has been turned off since the last scan, the stored sample and failing
+     * rows are removed at once. (When stream A's source update lands, it should call
+     * {@link #settingsChanged} as well.)
+     */
+    public boolean samplesAllowed(String urn) {
+        Optional<QualityStore.SourceRef> s = store.sourceOfAsset(urn);
+        if (s.isEmpty()) {
+            return false;
+        }
+        Optional<Records.Source> source = graph.source(s.get().name());
+        if (source.isPresent() && !keepSamples(source.get().settings())) {
+            store.purgeSamples(s.get().id(), true);
+            return false;
+        }
+        return true;
+    }
+
+    /** To call after a source's settings change: purges stored values at once if keep_samples went off. */
+    public void settingsChanged(Records.Source source) {
+        if (!keepSamples(source.settings())) {
+            store.purgeSamples(source.id(), true);
+        }
     }
 
     // ---- during a scan ----
@@ -104,6 +147,7 @@ public class QualityService {
             return s;
         }
         s.put("sample-size", Integer.toString(sampleRows(source.settings())));
+        s.put("sample-max-bytes", Long.toString((long) Math.max(1, config.quality().sampleMaxMb()) << 20));
         if (connector instanceof JdbcConnector) {
             s.put("sample-mode", a.primaryKey().isEmpty() ? "row" : "key");
             s.put("sample-key", String.join(",", a.primaryKey()));
@@ -178,6 +222,7 @@ public class QualityService {
 
     /** Runs the quality evaluation behind job {@code jobId}; called by a worker. */
     public ScanService.Result execute(long jobId, BooleanSupplier cancelled) {
+        store.failOrphanedRuns();
         Optional<Long> runId = store.runForJob(jobId);
         if (runId.isEmpty()) {
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Job " + jobId + " names no quality run");
@@ -202,7 +247,9 @@ public class QualityService {
             return new ScanService.Result(ScanService.Outcome.CANCELLED, null);
         } catch (RuntimeException e) {
             LOG.errorf(e, "Quality run %d failed", r.id());
-            store.finishRun(r.id(), "failed", "The quality evaluation failed: " + e.getMessage());
+            // The exception may carry a database's own text: it goes to the log, not to every role.
+            store.finishRun(r.id(), "failed", "The quality evaluation failed. The server log has the details; run the "
+                + "rules again once the cause is fixed.");
         }
         return new ScanService.Result(ScanService.Outcome.FINISHED, null);
     }
@@ -251,20 +298,19 @@ public class QualityService {
         List<Measures.Measure> measures = Measures.of(now, history, List.of(), config.quality().defaultCadence());
         store.saveMeasures(versionId, measures);
         int events = 0;
-        java.time.Duration cadence = config.quality().defaultCadence();
+        // Freshness and volume are judged against what the asset's history has taught, once it has.
         ProfileFacts.FieldFacts recency = Measures.recencyField(now);
-        if (recency != null) {
-            cadence = Measures.cadence(recency.name(), now, history, cadence);
-        }
+        java.time.Duration cadence = recency == null ? null : Measures.learnedCadence(recency.name(), now, history);
+        Double band = Measures.learnedBand(history);
         if (!history.isEmpty()) {
             ProfileFacts previous = history.get(0);
-            List<Drift.Event> found = Drift.compare(now, previous, cadence);
+            List<Drift.Event> found = Drift.compare(now, previous, cadence, band);
             List<Long> ids = store.saveDrift(now.assetUrn(), versionId, previous.versionId(), "previous", found);
             events += found.size();
             for (int i = 0; i < found.size(); i++) {
                 Drift.Event e = found.get(i);
                 if (!e.severity().equals("low")) {
-                    store.openDriftIssue(now.assetUrn(), e.field(), ids.get(i), "Drift: " + e.message(),
+                    store.openDriftIssue(now.assetUrn(), e.field(), e.change(), ids.get(i), "Drift: " + e.message(),
                         "Found when comparing with the previous scan (" + previous.observedAt() + ").", e.severity());
                 }
             }
@@ -273,7 +319,7 @@ public class QualityService {
         if (baseline.isPresent() && baseline.get().id() != versionId
             && (history.isEmpty() || history.get(0).versionId() != baseline.get().id())) {
             ProfileFacts base = store.facts(baseline.get().id()).orElseThrow();
-            List<Drift.Event> found = Drift.compare(now, base, cadence);
+            List<Drift.Event> found = Drift.compare(now, base, cadence, band);
             store.saveDrift(now.assetUrn(), versionId, base.versionId(), "baseline", found);
             events += found.size();
         }
@@ -311,12 +357,10 @@ public class QualityService {
         RuleRunner.Target target = new RuleRunner.Target(connector, cfg, assetInfo(asset), kinds, previousRows,
             other -> graph.asset(other).map(o -> new SqlRules.Table(o.container(), o.name())).orElse(null));
         RuleRunner runner = new RuleRunner(config.quality().queryTimeout(), keep ? config.quality().failingRows() : 0,
-            config.scan().memoryLimitMb() << 20);
+            config.scan().memoryLimitMb() << 20, config.quality().customSql());
         Map<Long, QualityStore.Result> before = store.latestResults(urn);
         List<RowChecks.Evaluation> evaluations = runner.run(rules, target, Instant.now());
         int failing = 0;
-        Webhooks hooks = new Webhooks(config.quality().webhookAllowList().orElse(List.of()),
-            config.quality().webhookTimeout());
         for (int i = 0; i < rules.size(); i++) {
             Rule rule = rules.get(i);
             RowChecks.Evaluation e = evaluations.get(i);
@@ -453,7 +497,9 @@ public class QualityService {
         if (shape == null || shape.isBlank() || shape.length() > 200) {
             throw new IllegalArgumentException("shape: the value shape to accept, as the profile shows it");
         }
-        String expression = regex == null || regex.isBlank() ? Patterns.regex(shape) : regex.trim();
+        boolean collapsed = latestFacts(urn).map(f -> f.field(field)).map(f -> "true".equals(f.text("patterns_collapsed")))
+            .orElse(false);
+        String expression = regex == null || regex.isBlank() ? Patterns.regex(shape, collapsed) : regex.trim();
         List<QualityStore.Accepted> already = store.accepted(urn).stream().filter(a -> a.field().equals(field)).toList();
         if (already.stream().anyMatch(a -> a.shape().equals(shape))) {
             throw new IllegalStateException("That pattern is already accepted for " + field);

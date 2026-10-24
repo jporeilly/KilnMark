@@ -415,7 +415,10 @@ function Rules({ rules, urn, steward, onRun }: { rules: RuleView[]; urn: string;
                     {!rule.enabled && <span className="tag">off</span>}
                   </th>
                   <td>{DIMENSIONS[rule.dimension] ?? rule.dimension}</td>
-                  <td>{latest ? <QualityStatusBadge status={latest.status} /> : <span className="badge badge-none">Not run</span>}</td>
+                  <td>
+                    {latest ? <QualityStatusBadge status={latest.status} /> : <span className="badge badge-none">Not run</span>}
+                    {latest?.estimate && <span className="tag">estimate</span>}
+                  </td>
                   <td>
                     {latest?.failing != null
                       ? `${formatNumber(latest.failing)} of ${formatNumber(latest.total)}`
@@ -452,7 +455,8 @@ function Drift({ events }: { events: DriftEvent[] }) {
         <ul className="plain-list drift">
           {events.map((e) => (
             <li key={e.id}>
-              <span className={`badge badge-sev-${e.severity}`}>{SEVERITY[e.severity]}</span> {e.message}{" "}
+              <span className={`badge badge-sev-${e.severity}`}>{SEVERITY[e.severity]}</span> {e.message}
+              {e.detail && <span className="small"> ({e.detail})</span>}{" "}
               <span className="small muted">
                 {formatTime(e.detectedAt)}
                 {e.against === "baseline" ? " · against the baseline" : ""}
@@ -512,11 +516,14 @@ function Samples({
       {steward && (
         <fieldset className="sensitive">
           <legend>Sensitive columns</legend>
+          <p id={`${id}-sens-hint`} className="hint">Stewards mark columns sensitive; only an admin can unmark one.</p>
           {asset.fields.map((f) => (
             <label key={f.name} className="check">
               <input
                 type="checkbox"
                 checked={quality.sensitive.includes(f.name)}
+                disabled={quality.sensitive.includes(f.name) && !quality.canUnmask}
+                aria-describedby={`${id}-sens-hint`}
                 onChange={(e) => onSensitive(f.name, e.target.checked)}
               />{" "}
               <span className="mono">{f.name}</span>

@@ -132,6 +132,17 @@ public interface KilnmarkConfig {
         @WithDefault("1000")
         int sampleRows();
 
+        /** The most memory one asset's sample may hold while a scan builds it, in MiB. */
+        @WithDefault("8")
+        int sampleMaxMb();
+
+        /**
+         * Whether custom SQL rules may be written (by admins) and run. Off by default: a query a
+         * person writes can read anything the source's login can see.
+         */
+        @WithDefault("false")
+        boolean customSql();
+
         /** Example values kept per value shape. */
         @WithDefault("5")
         int examples();

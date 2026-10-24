@@ -5,7 +5,8 @@ package io.kilnmark.kiln.plugins.profile;
  * digits {@code 9}; spaces and punctuation stay as they are. {@code SW1A 1AA} becomes
  * {@code AA9A 9AA}, {@code 2024-03-01} becomes {@code 9999-99-99}. The collapsed form writes each
  * run of lower-case letters or digits as {@code a+} or {@code 9+}, and runs of more than one
- * capital as {@code A+}: {@code Aa+ Aa+} for most two-word names, whatever their lengths.
+ * capital as {@code A+}: {@code Aa+ Aa+} for most two-word names, whatever their lengths. A
+ * literal {@code +} (or backslash) in a collapsed shape is written with a backslash before it.
  */
 public final class ValueShape {
 
@@ -49,6 +50,8 @@ public final class ValueShape {
                 if (c != 'A' || j - i > 1) {
                     b.append('+');
                 }
+            } else if (c == '+' || c == '\\') {
+                b.append('\\').append(c); // a literal plus sign is \+, so + after a run stays unambiguous
             } else {
                 b.append(c);
             }

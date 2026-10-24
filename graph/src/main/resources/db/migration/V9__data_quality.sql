@@ -115,7 +115,9 @@ CREATE TABLE quality_result (
     method          text NOT NULL,          -- sql, stream, sample (a preview), imported
     failing_query   text,                   -- SQL that lists the failing rows, for JDBC sources
     failing_rows    jsonb,                  -- {columns, rows}: a few failing rows, if samples are kept
-    message         text,
+    message         text,                   -- for everyone: never the database's own error text
+    error_detail    text,                   -- the database's error, for stewards and admins only
+    estimate        boolean NOT NULL DEFAULT false,  -- checked on a sample of the table (TABLESAMPLE)
     observed_at     timestamptz NOT NULL DEFAULT now(),
     origin          text NOT NULL DEFAULT 'kilnmark',
     origin_ref      text
@@ -152,7 +154,8 @@ CREATE TABLE drift_event (
     kind           text NOT NULL CHECK (kind IN ('schema', 'volume', 'distribution', 'freshness')),
     change         text NOT NULL,     -- column_added, null_rate, quantile_shift, ...
     severity       text NOT NULL CHECK (severity IN ('low', 'medium', 'high')),
-    message        text NOT NULL,
+    message        text NOT NULL,     -- words, counts and shares only: shown to every role
+    detail         text,              -- the same with the values involved: only for roles that may see data
     evidence       jsonb NOT NULL DEFAULT '{}',
     version_id     bigint NOT NULL REFERENCES profile_version (id) ON DELETE CASCADE,
     compared_with  bigint REFERENCES profile_version (id) ON DELETE SET NULL,
@@ -167,7 +170,8 @@ CREATE TABLE quality_issue (
     asset_urn       text NOT NULL REFERENCES asset (urn) ON DELETE CASCADE,
     field_name      text,
     rule_id         bigint REFERENCES quality_rule (id) ON DELETE CASCADE,
-    drift_event_id  bigint REFERENCES drift_event (id) ON DELETE CASCADE,
+    drift_event_id  bigint REFERENCES drift_event (id) ON DELETE SET NULL,  -- kept when old versions are pruned
+    issue_key       text NOT NULL,      -- rule:<id>, or drift:<change>:<field>: one open issue per asset and key
     title           text NOT NULL,
     detail          text,
     severity        text NOT NULL CHECK (severity IN ('low', 'medium', 'high')),
@@ -177,8 +181,9 @@ CREATE TABLE quality_issue (
     closed_by       text
 );
 CREATE INDEX quality_issue_open_idx ON quality_issue (status, created_at DESC);
--- One open issue per failing rule: a rule that keeps failing updates its issue instead of adding more.
-CREATE UNIQUE INDEX quality_issue_rule_open_idx ON quality_issue (rule_id) WHERE status = 'open' AND rule_id IS NOT NULL;
+-- One open issue per asset and key: a rule that keeps failing, or drift of the same kind on the same
+-- column, refreshes its open issue instead of adding more.
+CREATE UNIQUE INDEX quality_issue_open_key_idx ON quality_issue (asset_urn, issue_key) WHERE status = 'open';
 
 -- Quality evaluations go through the job queue as jobs of kind 'quality'. The constraint becomes a
 -- name pattern, so other kinds of job need no further migration (and any list an earlier migration

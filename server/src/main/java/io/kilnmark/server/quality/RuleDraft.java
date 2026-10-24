@@ -8,8 +8,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -45,18 +43,17 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
 
         /** URL prefixes webhooks may call; set by the administrator. */
         List<String> webhookAllowList();
+
+        /** Whether the administrator turned custom SQL rules on ({@code kilnmark.quality.custom-sql}). */
+        default boolean customSqlEnabled() {
+            return false;
+        }
     }
 
     static final int MAX_VALUES = 1000;
     static final int MAX_SQL = 10_000;
     private static final Set<String> TEMPORAL = Set.of("date", "timestamp", "timestamp_tz");
     private static final Set<String> NUMERIC = Set.of("int16", "int32", "int64", "float32", "float64", "decimal");
-    /** Words refused in custom SQL even where the database enforces read-only transactions. */
-    private static final Pattern FORBIDDEN = Pattern.compile(
-        "\\b(into|insert|update|delete|merge|drop|alter|create|truncate|grant|revoke|exec|execute|call|copy|"
-            + "openrowset|opendatasource|openquery|bulk|pg_sleep|dblink|lo_import|lo_export)\\b",
-        Pattern.CASE_INSENSITIVE);
-
     /** The rule this draft describes, checked; {@code id}, dates and author are left for the store. */
     public Rule check(Context context, String author) {
         if (assetUrn == null || assetUrn.isBlank()) {
@@ -121,7 +118,8 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
     /**
      * True when {@code url} is an http(s) URL starting with one of the allowed prefixes. The
      * comparison is on the parsed URL, so {@code https://hooks.example.com@evil.example/} does
-     * not pass for {@code https://hooks.example.com/}.
+     * not pass for {@code https://hooks.example.com/}, and paths with dot segments or encoded dots
+     * and slashes are refused ({@link #plainPath}).
      */
     public static boolean allowed(String url, List<String> allowList) {
         URI u;
@@ -132,6 +130,9 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
         }
         if (u.getScheme() == null || u.getHost() == null || u.getRawUserInfo() != null || u.getRawFragment() != null
             || !(u.getScheme().equalsIgnoreCase("http") || u.getScheme().equalsIgnoreCase("https"))) {
+            return false;
+        }
+        if (!plainPath(u.getRawPath())) {
             return false;
         }
         String normal = u.getScheme().toLowerCase(Locale.ROOT) + "://" + u.getHost().toLowerCase(Locale.ROOT)
@@ -160,6 +161,27 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
             }
         }
         return false;
+    }
+
+    /**
+     * A path with no dot segments ({@code .} or {@code ..}) and no encoded dots, slashes or
+     * backslashes, so it cannot climb out of an allowed prefix once the receiving server
+     * normalises it.
+     */
+    static boolean plainPath(String rawPath) {
+        if (rawPath == null || rawPath.isEmpty()) {
+            return true;
+        }
+        String lower = rawPath.toLowerCase(Locale.ROOT);
+        if (lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c") || lower.contains("\\")) {
+            return false;
+        }
+        for (String segment : rawPath.split("/", -1)) {
+            if (segment.equals(".") || segment.equals("..")) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private ObjectNode params(RuleType t, String f, Context context) {
@@ -195,11 +217,9 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
                 if (regex.isBlank() || regex.length() > 1000) {
                     throw new IllegalArgumentException("params.regex: a regular expression of 1 to 1000 characters");
                 }
-                try {
-                    Pattern.compile(regex);
-                } catch (PatternSyntaxException e) {
-                    throw new IllegalArgumentException("params.regex: " + e.getDescription() + " near position "
-                        + e.getIndex());
+                String problem = Regexes.problem(regex);
+                if (problem != null) {
+                    throw new IllegalArgumentException("params.regex: " + problem);
                 }
                 out.put("regex", regex);
             }
@@ -270,8 +290,15 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
                 out.put("field", targetField);
             }
             case CUSTOM_SQL -> {
-                if (!context.sql()) {
-                    throw new IllegalArgumentException("type: custom SQL rules need a database source");
+                if (!context.customSqlEnabled()) {
+                    throw new IllegalArgumentException("type: custom SQL rules are turned off on this server. An "
+                        + "administrator can turn them on with kilnmark.quality.custom-sql=true.");
+                }
+                if (!"postgresql".equals(context.sourceKind())) {
+                    throw new IllegalArgumentException("type: custom SQL rules run only on PostgreSQL sources, where "
+                        + "Kilnmark can hold them to a read-only transaction. " + (context.sql()
+                        ? "This database has no read-only transactions, so custom SQL could change data there. Use the "
+                            + "library's checks instead." : "This source is not a database."));
                 }
                 out.put("sql", customSql(in.path("sql").asText("")));
             }
@@ -279,86 +306,9 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
         return out;
     }
 
-    /**
-     * Checks custom SQL: one {@code SELECT} (or {@code WITH ... SELECT}) listing the failing rows,
-     * no statement separators and none of the words that change data or reach outside the database.
-     * It also runs in a read-only transaction with a time limit; this check is the first line, not
-     * the only one.
-     */
+    /** Checks custom SQL with {@link SqlTokens#checkCustomSql}; see there for what is refused. */
     static String customSql(String sql) {
-        String s = sql.strip();
-        while (s.endsWith(";")) {
-            s = s.substring(0, s.length() - 1).strip();
-        }
-        if (s.isEmpty() || s.length() > MAX_SQL) {
-            throw new IllegalArgumentException("params.sql: a SELECT listing the failing rows, at most " + MAX_SQL
-                + " characters");
-        }
-        String bare = withoutStringsAndComments(s);
-        if (bare.contains(";")) {
-            throw new IllegalArgumentException("params.sql: one statement only");
-        }
-        String head = bare.stripLeading().toLowerCase(Locale.ROOT);
-        if (!(head.startsWith("select") || head.startsWith("with"))) {
-            throw new IllegalArgumentException("params.sql: must start with SELECT or WITH");
-        }
-        java.util.regex.Matcher m = FORBIDDEN.matcher(bare);
-        if (m.find()) {
-            throw new IllegalArgumentException("params.sql: '" + m.group(1) + "' is not allowed; custom rules only "
-                + "read");
-        }
-        return s;
-    }
-
-    /** {@code sql} with string literals, quoted names and comments blanked, so checks see only the code. */
-    static String withoutStringsAndComments(String sql) {
-        StringBuilder b = new StringBuilder(sql.length());
-        int n = sql.length();
-        for (int i = 0; i < n; i++) {
-            char c = sql.charAt(i);
-            if (c == '\'' || c == '"' || c == '[') {
-                char close = c == '[' ? ']' : c;
-                int j = i + 1;
-                while (j < n) {
-                    if (sql.charAt(j) == close) {
-                        if (j + 1 < n && sql.charAt(j + 1) == close) {
-                            j += 2;
-                            continue;
-                        }
-                        break;
-                    }
-                    j++;
-                }
-                b.append(c == '"' || c == '[' ? " x " : " '' ");
-                i = j;
-            } else if (c == '-' && i + 1 < n && sql.charAt(i + 1) == '-') {
-                while (i < n && sql.charAt(i) != '\n') {
-                    i++;
-                }
-                b.append(' ');
-            } else if (c == '/' && i + 1 < n && sql.charAt(i + 1) == '*') {
-                int end = sql.indexOf("*/", i + 2);
-                i = end < 0 ? n : end + 1;
-                b.append(' ');
-            } else if (c == '$' && dollarQuote(sql, i) != null) {
-                String tag = dollarQuote(sql, i);
-                int end = sql.indexOf(tag, i + tag.length());
-                i = end < 0 ? n : end + tag.length() - 1;
-                b.append(" '' ");
-            } else {
-                b.append(c);
-            }
-        }
-        return b.toString();
-    }
-
-    /** PostgreSQL's {@code $tag$} quoting, if one starts at {@code i}. */
-    private static String dollarQuote(String sql, int i) {
-        int j = i + 1;
-        while (j < sql.length() && (Character.isLetterOrDigit(sql.charAt(j)) || sql.charAt(j) == '_')) {
-            j++;
-        }
-        return j < sql.length() && sql.charAt(j) == '$' ? sql.substring(i, j + 1) : null;
+        return SqlTokens.checkCustomSql(sql, MAX_SQL);
     }
 
     private static String bound(JsonNode v, String kind, String name) {

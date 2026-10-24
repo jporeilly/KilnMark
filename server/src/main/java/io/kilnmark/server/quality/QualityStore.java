@@ -49,7 +49,7 @@ public class QualityStore {
 
     public record Result(long id, long ruleId, Long qualityRunId, String assetUrn, Rule.Status status, Long total,
                          Long failing, String method, String failingQuery, JsonNode failingRows, String message,
-                         Instant observedAt, String origin) {
+                         Instant observedAt, String origin, String errorDetail, boolean estimate) {
     }
 
     public record Accepted(long id, String assetUrn, String field, String shape, String regex, Long ruleId,
@@ -58,7 +58,7 @@ public class QualityStore {
 
     public record DriftRow(long id, String assetUrn, String field, String kind, String change, String severity,
                            String message, JsonNode evidence, long versionId, Long comparedWith, String against,
-                           Instant detectedAt) {
+                           Instant detectedAt, String detail) {
     }
 
     public record Issue(long id, String assetUrn, String field, Long ruleId, Long driftEventId, String title,
@@ -167,18 +167,42 @@ public class QualityStore {
         });
     }
 
-    /** Versions older than the newest {@code keep}, except baselines, are removed with their measures. */
+    /**
+     * Keeps an asset's history bounded: versions older than the newest {@code keep} (except
+     * baselines) go with their measures and drift events (issues stay, unlinked), so do the column
+     * profiles of runs no version still refers to, and each rule keeps its newest {@code keep}
+     * results.
+     */
     public int pruneVersions(String urn, int keep) {
+        int k = Math.max(2, keep);
         return db.tx(c -> {
+            int n;
             try (PreparedStatement ps = c.prepareStatement("""
                 DELETE FROM kilnmark.profile_version WHERE asset_urn = ? AND NOT is_baseline AND id NOT IN (
                     SELECT id FROM kilnmark.profile_version WHERE asset_urn = ?
                     ORDER BY observed_at DESC, id DESC LIMIT ?)""")) {
                 ps.setString(1, urn);
                 ps.setString(2, urn);
-                ps.setInt(3, Math.max(2, keep));
-                return ps.executeUpdate();
+                ps.setInt(3, k);
+                n = ps.executeUpdate();
             }
+            try (PreparedStatement ps = c.prepareStatement("""
+                DELETE FROM kilnmark.profile p WHERE p.asset_urn = ? AND NOT EXISTS (
+                    SELECT 1 FROM kilnmark.profile_version v WHERE v.asset_urn = p.asset_urn AND v.run_id = p.run_id)
+                  AND EXISTS (SELECT 1 FROM kilnmark.profile_version v WHERE v.asset_urn = p.asset_urn)""")) {
+                ps.setString(1, urn);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement("""
+                DELETE FROM kilnmark.quality_result r WHERE r.asset_urn = ? AND r.id NOT IN (
+                    SELECT id FROM (SELECT id, row_number() OVER (PARTITION BY rule_id ORDER BY observed_at DESC, id DESC)
+                                    AS rn FROM kilnmark.quality_result WHERE asset_urn = ?) x WHERE x.rn <= ?)""")) {
+                ps.setString(1, urn);
+                ps.setString(2, urn);
+                ps.setInt(3, k);
+                ps.executeUpdate();
+            }
+            return n;
         });
     }
 
@@ -599,8 +623,8 @@ public class QualityStore {
     public long saveResult(Rule rule, Long runId, Rule.Status status, RowChecks.Evaluation e, boolean keepRows) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.quality_result (rule_id, quality_run_id, "
-                + "asset_urn, status, total, failing, method, failing_query, failing_rows, message) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?) RETURNING id")) {
+                + "asset_urn, status, total, failing, method, failing_query, failing_rows, message, error_detail, estimate) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?) RETURNING id")) {
                 ps.setLong(1, rule.id());
                 setLong(ps, 2, runId);
                 ps.setString(3, rule.assetUrn());
@@ -611,6 +635,8 @@ public class QualityStore {
                 ps.setString(8, e.failingQuery());
                 ps.setString(9, keepRows && e.failingRows() != null ? json.valueToTree(e.failingRows()).toString() : null);
                 ps.setString(10, e.error() != null ? e.error() : e.message());
+                ps.setString(11, e.errorDetail());
+                ps.setBoolean(12, e.estimate());
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     return rs.getLong(1);
@@ -620,12 +646,12 @@ public class QualityStore {
     }
 
     private static final String RESULT_COLUMNS = "id, rule_id, quality_run_id, asset_urn, status, total, failing, method, "
-        + "failing_query, failing_rows::text, message, observed_at, origin";
+        + "failing_query, failing_rows::text, message, observed_at, origin, error_detail, estimate";
 
     private Result result(ResultSet rs) throws SQLException {
         return new Result(rs.getLong(1), rs.getLong(2), getLong(rs, 3), rs.getString(4), Rule.Status.parse(rs.getString(5)),
             getLong(rs, 6), getLong(rs, 7), rs.getString(8), rs.getString(9), read(rs.getString(10)), rs.getString(11),
-            Db.instant(rs.getTimestamp(12)), rs.getString(13));
+            Db.instant(rs.getTimestamp(12)), rs.getString(13), rs.getString(14), rs.getBoolean(15));
     }
 
     public Optional<Result> result(long id) {
@@ -759,8 +785,8 @@ public class QualityStore {
             }
             List<Long> ids = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.drift_event (asset_urn, field_name, kind, "
-                + "change, severity, message, evidence, version_id, compared_with, against) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?) RETURNING id")) {
+                + "change, severity, message, evidence, version_id, compared_with, against, detail) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?) RETURNING id")) {
                 for (Drift.Event e : events) {
                     ps.setString(1, urn);
                     ps.setString(2, e.field());
@@ -772,6 +798,7 @@ public class QualityStore {
                     ps.setLong(8, versionId);
                     setLong(ps, 9, comparedWith);
                     ps.setString(10, against);
+                    ps.setString(11, e.detail());
                     try (ResultSet rs = ps.executeQuery()) {
                         rs.next();
                         ids.add(rs.getLong(1));
@@ -791,12 +818,12 @@ public class QualityStore {
         }
         return new DriftRow(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5),
             rs.getString(6), rs.getString(7), evidence, rs.getLong(9), getLong(rs, 10), rs.getString(11),
-            Db.instant(rs.getTimestamp(12)));
+            Db.instant(rs.getTimestamp(12)), rs.getString(13));
     }
 
     public List<DriftRow> drift(String urn, int limit) {
         return query("SELECT id, asset_urn, field_name, kind, change, severity, message, evidence::text, version_id, "
-            + "compared_with, against, detected_at FROM kilnmark.drift_event WHERE asset_urn = ? "
+            + "compared_with, against, detected_at, detail FROM kilnmark.drift_event WHERE asset_urn = ? "
             + "ORDER BY detected_at DESC, id DESC LIMIT ?", ps -> {
                 ps.setString(1, urn);
                 ps.setInt(2, limit);
@@ -806,9 +833,9 @@ public class QualityStore {
     /** Drift events of one version, back as {@link Drift.Event}s. */
     public List<Drift.Event> driftOf(long versionId) {
         return query("SELECT id, asset_urn, field_name, kind, change, severity, message, evidence::text, version_id, "
-            + "compared_with, against, detected_at FROM kilnmark.drift_event WHERE version_id = ? ORDER BY id",
+            + "compared_with, against, detected_at, detail FROM kilnmark.drift_event WHERE version_id = ? ORDER BY id",
             ps -> ps.setLong(1, versionId), rs -> drift(rs, json)).stream()
-            .map(d -> new Drift.Event(d.field(), d.kind(), d.change(), d.severity(), d.message(),
+            .map(d -> new Drift.Event(d.field(), d.kind(), d.change(), d.severity(), d.message(), d.detail(),
                 d.evidence() instanceof ObjectNode o ? o : json.createObjectNode()))
             .toList();
     }
@@ -819,17 +846,18 @@ public class QualityStore {
     public void openRuleIssue(Rule rule, String title, String detail, String severity) {
         db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("""
-                INSERT INTO kilnmark.quality_issue (asset_urn, field_name, rule_id, title, detail, severity)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT (rule_id) WHERE status = 'open' AND rule_id IS NOT NULL
+                INSERT INTO kilnmark.quality_issue (asset_urn, field_name, rule_id, issue_key, title, detail, severity)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (asset_urn, issue_key) WHERE status = 'open'
                 DO UPDATE SET title = EXCLUDED.title, detail = EXCLUDED.detail, severity = EXCLUDED.severity,
                     updated_at = now()""")) {
                 ps.setString(1, rule.assetUrn());
                 ps.setString(2, rule.field());
                 ps.setLong(3, rule.id());
-                ps.setString(4, title);
-                ps.setString(5, detail);
-                ps.setString(6, severity);
+                ps.setString(4, "rule:" + rule.id());
+                ps.setString(5, title);
+                ps.setString(6, detail);
+                ps.setString(7, severity);
                 ps.executeUpdate();
             }
             return null;
@@ -842,15 +870,25 @@ public class QualityStore {
             + "WHERE rule_id = ? AND status = 'open'", ps -> ps.setLong(1, ruleId));
     }
 
-    public void openDriftIssue(String urn, String field, long driftEventId, String title, String detail, String severity) {
-        update("INSERT INTO kilnmark.quality_issue (asset_urn, field_name, drift_event_id, title, detail, severity) "
-            + "VALUES (?, ?, ?, ?, ?, ?)", ps -> {
+    /**
+     * Opens an issue for drift, or refreshes the open one for the same kind of change on the same
+     * column (key {@code drift:<change>:<field>}), pointing it at the latest event.
+     */
+    public void openDriftIssue(String urn, String field, String change, long driftEventId, String title, String detail,
+                               String severity) {
+        update("""
+            INSERT INTO kilnmark.quality_issue (asset_urn, field_name, drift_event_id, issue_key, title, detail, severity)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (asset_urn, issue_key) WHERE status = 'open'
+            DO UPDATE SET drift_event_id = EXCLUDED.drift_event_id, title = EXCLUDED.title, detail = EXCLUDED.detail,
+                severity = EXCLUDED.severity, updated_at = now()""", ps -> {
                 ps.setString(1, urn);
                 ps.setString(2, field);
                 ps.setLong(3, driftEventId);
-                ps.setString(4, title);
-                ps.setString(5, detail);
-                ps.setString(6, severity);
+                ps.setString(4, "drift:" + change + ":" + (field == null ? "" : field));
+                ps.setString(5, title);
+                ps.setString(6, detail);
+                ps.setString(7, severity);
             });
     }
 
@@ -882,6 +920,20 @@ public class QualityStore {
             }
             ps.setInt(i, limit);
         }, QualityStore::issue);
+    }
+
+    /**
+     * Marks failed the quality runs whose job ran out of attempts (a worker died running them each
+     * time), so they do not stay "running" for ever. Returns how many.
+     */
+    public int failOrphanedRuns() {
+        return update("""
+            UPDATE kilnmark.quality_run r SET status = 'failed', finished_at = now(),
+                detail = 'The worker running this evaluation stopped each time it was tried. Check the workers, then '
+                    || 'run the rules again.'
+            FROM kilnmark.job j
+            WHERE j.kind = 'quality' AND j.status = 'failed' AND (j.payload ->> 'qualityRunId')::bigint = r.id
+              AND r.status IN ('queued', 'running')""", ps -> { });
     }
 
     public Optional<Issue> setIssueStatus(long id, String status, String by) {

@@ -158,6 +158,12 @@ reasons for them are in [ADR 0015](../adr/0015-file-formats.md).
 
 ## Sampling and data quality
 
+**Use a read-only login that is not a superuser for every database source.** Data quality rules
+run as that login; custom SQL rules (off by default, admins only) can read anything it can see,
+beyond the schemas the source lists, and refuse to run under a superuser or a login that may read
+server files, run programs or signal other sessions. See the security section of
+[the development guide](../development.md#security-give-every-source-a-read-only-login).
+
 The scan's profile step (`ProfileStep`) also keeps value shapes, formats and quantiles, and with
 values allowed a sample of rows: settings `keep-values`, `examples`, `sample-size`, `sample-mode`
 (`key`, `row` or `reservoir`), `sample-key` and `sample-seed`. It reports the rows and the example
@@ -171,7 +177,8 @@ values per shape as one `SAMPLE` metadata event, which the server stores under t
 - `estimateRowsSql` and `tableSampleClause`: with the source setting `table_sample_above_rows`, a
   table the database estimates above that many rows is read through `TABLESAMPLE SYSTEM`
   (repeatable) at the percentage that gives about that many rows, and its `ROW_COUNT` event says
-  `sampled`, `sample_percent` and `estimated_rows`.
+  `sampled`, `sample_percent` and `estimated_rows`. The scan stores the estimate as the asset's row
+  count, and rules streamed through such a reader are marked as estimates.
 
 ## Registering it
 

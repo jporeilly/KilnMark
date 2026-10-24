@@ -25,13 +25,36 @@ public final class RowChecks {
     /** Distinct keys a uniqueness check holds in memory before it gives up on being exact. */
     static final int UNIQUE_LIMIT = 1_000_000;
 
-    /** What one check found. {@code error} set means it could not run. */
+    /**
+     * What one check found. {@code error} set means it could not run: {@code error} is for every
+     * role, {@code errorDetail} (the database's own message, which may quote data) only for roles
+     * that may see data. {@code estimate} when the data was read through a sample of the table.
+     */
     public record Evaluation(long total, long failing, String method, String failingQuery, FailingRows failingRows,
-                             String message, String error) {
+                             String message, String error, String errorDetail, boolean estimate) {
+
+        public Evaluation(long total, long failing, String method, String failingQuery, FailingRows failingRows,
+                          String message, String error) {
+            this(total, failing, method, failingQuery, failingRows, message, error, null, false);
+        }
+
         static Evaluation error(String method, String error) {
-            return new Evaluation(0, 0, method, null, null, null, error);
+            return new Evaluation(0, 0, method, null, null, null, error, null, false);
+        }
+
+        static Evaluation error(String method, String error, String detail) {
+            return new Evaluation(0, 0, method, null, null, null, error, detail, false);
+        }
+
+        Evaluation asEstimate() {
+            return new Evaluation(total, failing, method, failingQuery, failingRows,
+                message == null ? "Estimated from a sample of the table" : message + " (estimated from a sample of the table)",
+                error, errorDetail, true);
         }
     }
+
+    /** Longest cell kept in failing rows, in characters. */
+    static final int CELL = 200;
 
     /** A few failing rows: column names and cell texts. */
     public record FailingRows(List<String> columns, List<List<String>> rows) {
@@ -87,10 +110,22 @@ public final class RowChecks {
             }
             case MATCHES_PATTERN -> {
                 Pattern regex = Pattern.compile(p.path("regex").asText());
-                yield new Counting(method, failing, r -> {
+                long[] unchecked = new long[1];
+                Counting c = new Counting(method, failing, r -> {
                     String v = r.cell(col);
-                    return v != null && !regex.matcher(v).find();
+                    if (v == null) {
+                        return false;
+                    }
+                    Boolean found = Regexes.find(regex, v);
+                    if (found == null) {
+                        unchecked[0]++;
+                        return true; // too long or too slow to match: counted as failing, and said so
+                    }
+                    return !found;
                 });
+                c.note = () -> unchecked[0] == 0 ? null : Measures.count(unchecked[0]) + " values were too long or too "
+                    + "slow to match and count as failing";
+                yield c;
             }
             case IN_RANGE -> {
                 Bound min = Bound.of(p.path("min"), kind);
@@ -155,7 +190,8 @@ public final class RowChecks {
             if (rows.size() < keep) {
                 List<String> cells = new ArrayList<>(columns.size());
                 for (int c = 0; c < columns.size(); c++) {
-                    cells.add(r.cell(c));
+                    String v = r.cell(c);
+                    cells.add(v == null || v.length() <= CELL ? v : v.substring(0, CELL) + "…");
                 }
                 rows.add(cells);
             }
@@ -172,6 +208,7 @@ public final class RowChecks {
         private final java.util.function.Predicate<Row> fails;
         private long total;
         private long count;
+        java.util.function.Supplier<String> note = () -> null;
 
         Counting(String method, Failing failing, java.util.function.Predicate<Row> fails) {
             this.method = method;
@@ -190,7 +227,7 @@ public final class RowChecks {
 
         @Override
         public Evaluation finish() {
-            return new Evaluation(total, count, method, null, failing.result(), null, null);
+            return new Evaluation(total, count, method, null, failing.result(), note.get(), null);
         }
     }
 
@@ -286,8 +323,8 @@ public final class RowChecks {
         }
         Duration age = Duration.between(latest, now);
         boolean stale = age.toSeconds() > maxAgeHours * 3600;
-        return new Evaluation(1, stale ? 1 : 0, method, null, null, "Latest value " + latest + ", "
-            + Measures.hours(age) + " old", null);
+        return new Evaluation(1, stale ? 1 : 0, method, null, null, "The latest value is " + Measures.hours(age)
+            + " old", null);
     }
 
     private static final class RowCount implements Check {

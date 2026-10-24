@@ -52,6 +52,11 @@ class RulesUnitTest {
             public List<String> webhookAllowList() {
                 return allow;
             }
+
+            @Override
+            public boolean customSqlEnabled() {
+                return true;
+            }
         };
     }
 
@@ -94,20 +99,6 @@ class RulesUnitTest {
             null, "custom_sql", null, json("{'sql':'SELECT 1'}"), null, null, null, null, null)
             .check(context(false, List.of()), "t"));
         assertTrue(files.getMessage().contains("database"));
-    }
-
-    @Test
-    void customSqlOnlyReads() {
-        assertEquals("SELECT * FROM ${table} WHERE amount < 0", RuleDraft.customSql(" SELECT * FROM ${table} WHERE amount < 0; "));
-        assertEquals("WITH x AS (SELECT 1 AS a) SELECT * FROM x", RuleDraft.customSql("WITH x AS (SELECT 1 AS a) SELECT * FROM x"));
-        for (String bad : List.of("DELETE FROM t", "SELECT 1; DROP TABLE t", "SELECT * INTO copy FROM t",
-            "WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", "SELECT pg_sleep(100)", "EXEC sp_who",
-            "SELECT * FROM t -- fine\n; DELETE FROM t")) {
-            assertThrows(IllegalArgumentException.class, () -> RuleDraft.customSql(bad), bad);
-        }
-        // Words inside strings, quoted names and comments are not code.
-        assertEquals("SELECT * FROM t WHERE note = 'delete me; now' AND \"update\" > 0 /* drop */",
-            RuleDraft.customSql("SELECT * FROM t WHERE note = 'delete me; now' AND \"update\" > 0 /* drop */"));
     }
 
     @Test
@@ -198,20 +189,29 @@ class RulesUnitTest {
         List<ProfileFacts.Counted> postcodes = List.of(new ProfileFacts.Counted("AA9 9AA", 400),
             new ProfileFacts.Counted("A9 9AA", 300), new ProfileFacts.Counted("AA99 9AA", 200),
             new ProfileFacts.Counted("AA9A 9AA", 99), new ProfileFacts.Counted("aaaa", 1));
-        Patterns.Suggestion s = Patterns.suggest(postcodes, Map.of(), 1000);
-        assertEquals("^([A-Z]{1,2}[0-9]{1,2} [0-9][A-Z]{2}|[A-Z]{2}[0-9][A-Z] [0-9][A-Z]{2})$", s.regex());
+        Patterns.Suggestion s = Patterns.suggest(postcodes, Map.of(), 1000, false);
+        assertEquals("^(\\p{Lu}{1,2}[0-9]{1,2} [0-9]\\p{Lu}{2}|\\p{Lu}{2}[0-9]\\p{Lu} [0-9]\\p{Lu}{2})$", s.regex());
         assertEquals(0.999, s.coverage(), 1e-9);
         Pattern p = Pattern.compile(s.regex());
         for (String ok : List.of("SW1A 1AA", "M1 1AE", "EC12 3AB", "B33 8TH")) {
             assertTrue(p.matcher(ok).matches(), ok);
         }
         assertFalse(p.matcher("abcd").matches());
-        assertEquals("^[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}$", Patterns.regex("9999-99-99"));
-        assertEquals("^[A-Z][a-z]+ [A-Z][a-z]+$", Patterns.regex("Aa+ Aa+"));
-        assertEquals("^[a-z]{4}\\.[a-z]{2}$", Patterns.regex("aaaa.aa"));
-        assertTrue(Pattern.compile(Patterns.regex("a… (cut)")).matcher("anything (cut)").find());
+        assertEquals("^[0-9]{4}\\-[0-9]{2}\\-[0-9]{2}$", Patterns.regex("9999-99-99", false));
+        assertEquals("^\\p{Lu}\\p{Ll}+ \\p{Lu}\\p{Ll}+$", Patterns.regex("Aa+ Aa+", true));
+        assertEquals("^\\p{Ll}{4}\\.\\p{Ll}{2}$", Patterns.regex("aaaa.aa", false));
+        assertTrue(Pattern.compile(Patterns.regex("a… (cut)", false)).matcher("anything (cut)").find());
+        // Letters of any alphabet: Zoë and Émile have the shape Aa+.
+        assertTrue(Pattern.compile(Patterns.regex("Aa+", true)).matcher("Zoë").matches());
+        assertTrue(Pattern.compile(Patterns.regex("Aaaaa", false)).matcher("Émile").matches());
+        assertEquals("[[:upper:]][[:lower:]]+", Regexes.toPostgres("\\p{Lu}\\p{Ll}+"));
+        // A plus sign in a detailed shape is a plus sign; in a collapsed one it is written \+.
+        assertEquals("^\\+[0-9]{2} [0-9]{4}$", Patterns.regex("+99 9999", false));
+        assertEquals("^[0-9]\\+[0-9]$", Patterns.regex("9+9", false));
+        assertEquals("^\\+[0-9]+$", Patterns.regex("\\+9+", true));
+        assertTrue(Pattern.compile(Patterns.regex("9+9", false)).matcher("1+1").matches());
         Patterns.Suggestion email = Patterns.suggest(List.of(new ProfileFacts.Counted("aaaa@aaaa.aaa", 10)),
-            Map.of("email", 99L), 100);
+            Map.of("email", 99L), 100, false);
         assertEquals("format email", email.basis());
         assertTrue(Pattern.compile(email.regex()).matcher("jane.doe@example.co.uk").matches());
     }

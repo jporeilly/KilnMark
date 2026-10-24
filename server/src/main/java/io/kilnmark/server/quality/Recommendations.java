@@ -61,7 +61,8 @@ public final class Recommendations {
                     + " is one of " + distinct + " values", p, "Only " + distinct + " different values occur"));
             }
             if (f.text() && f.has("patterns") && values >= 20 && !(distinct > 0 && distinct <= 12)) {
-                Patterns.Suggestion s = Patterns.suggest(f.patterns(), f.formats(), values);
+                Patterns.Suggestion s = Patterns.suggest(f.patterns(), f.formats(), values,
+                    "true".equals(f.text("patterns_collapsed")));
                 if (s != null && s.coverage() >= 0.99) {
                     add(out, existing, new Recommendation(f.name(), "matches_pattern", "validity", f.name()
                         + " matches its pattern", J.objectNode().put("regex", s.regex()), Measures.percent(s.coverage())

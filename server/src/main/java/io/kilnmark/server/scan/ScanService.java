@@ -247,7 +247,8 @@ public class ScanService {
             throw new Stopped();
         }
         switch (e.kind()) {
-            case ROW_COUNT -> store.saveRowCount(e.assetUrn(), Long.parseLong(e.attributes().get("rows")),
+            case ROW_COUNT -> store.saveRowCount(e.assetUrn(), io.kilnmark.server.quality.QualityService.reportedRows(
+                e.attributes()),
                 Boolean.parseBoolean(e.attributes().get("complete")), e.observedAt());
             case PROFILE -> store.saveProfile(e.assetUrn(), e.attributes().get("field"), runId, profileJson(e),
                 e.observedAt());

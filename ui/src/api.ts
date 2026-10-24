@@ -396,6 +396,8 @@ export type RuleResult = {
   failingQuery: string | null;
   failingRows?: FailingRows | null;
   message: string | null;
+  errorDetail?: string | null;
+  estimate?: boolean;
   observedAt: string;
 };
 
@@ -433,6 +435,7 @@ export type DriftEvent = {
   change: string;
   severity: Severity;
   message: string;
+  detail?: string | null;
   against: "previous" | "baseline";
   detectedAt: string;
 };

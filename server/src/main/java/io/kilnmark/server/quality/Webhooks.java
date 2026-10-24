@@ -12,7 +12,9 @@ import org.jboss.logging.Logger;
 /**
  * Posts rule results to webhooks. Only URLs on the administrator's allow-list are called, checked
  * again at send time in case the list changed since the rule was saved; redirects are not
- * followed, so an allowed URL cannot send the call elsewhere.
+ * followed, so an allowed URL cannot send the call elsewhere. One client serves every call.
+ * There are no retries: a call that fails is logged, and the next evaluation calls again if the
+ * rule still warns or fails.
  */
 public final class Webhooks {
 

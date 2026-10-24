@@ -36,7 +36,7 @@ import io.kilnmark.kiln.StepException;
  * and statistics), {@code examples} (example values per value shape, default 5),
  * {@code sample-size} (rows to sample, default 0: none), {@code sample-mode} ({@code key},
  * {@code row} or {@code reservoir}; see {@link RowSampler}), {@code sample-key} (key fields,
- * comma-separated) and {@code sample-seed} (for {@code reservoir}). With values kept, it also
+ * comma-separated), {@code sample-seed} (for {@code reservoir}) and {@code sample-max-bytes} (default 8 MiB). With values kept, it also
  * reports one {@code SAMPLE} event: attributes {@code method}, {@code key}, {@code seen},
  * {@code columns} and {@code rows} (JSON), and {@code examples} (JSON: per field, per shape).
  */
@@ -66,7 +66,8 @@ public final class ProfileStep implements Step {
                 List<String> key = java.util.Arrays.stream(context.setting("sample-key", "").split(","))
                     .map(String::trim).filter(k -> !k.isEmpty()).toList();
                 sampler = new RowSampler(RowSampler.Mode.parse(context.setting("sample-mode", "key")), key, size,
-                    Long.parseLong(context.setting("sample-seed", "0")));
+                    Long.parseLong(context.setting("sample-seed", "0")),
+                    Long.parseLong(context.setting("sample-max-bytes", Long.toString(RowSampler.DEFAULT_MAX_BYTES))));
             }
         } catch (IllegalArgumentException e) {
             throw new StepException("Step " + context.stepName() + " has a sample setting it cannot read: "

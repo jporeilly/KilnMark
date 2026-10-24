@@ -104,7 +104,8 @@ class MeasuresTest {
                 + "{'value':'closed','count':390}],'patterns':[]}"));
         Measures.Measure price = measure(ms, "price", Dimension.ACCURACY);
         assertEquals(0.9, price.score(), 1e-9, "6% beyond the fences: 1 - (0.06 - 0.01) * 2");
-        assertTrue(price.reason().contains("-5 to 95"));
+        assertFalse(price.reason().contains("95"), "reasons quote no values");
+        assertTrue(price.evidence().get("detail").asText().contains("-5 to 95"), "the values are in the evidence");
         Measures.Measure status = measure(ms, "status", Dimension.ACCURACY);
         assertEquals(0.99, status.score(), 1e-9);
         assertTrue(status.reason().startsWith("10 values lie outside"));
@@ -115,11 +116,8 @@ class MeasuresTest {
         Facts now = Facts.version().at("2026-10-10T00:00:00Z")
             .field("updated_at", "timestamp_tz", "{'rows':10,'nulls':0,'max':'2026-10-05T00:00:00Z'}")
             .field("birth_date", "date", "{'rows':10,'nulls':0,'max':'2026-10-09'}");
-        Measures.Measure fresh = measure(Measures.of(now.build(), List.of(), List.of(), Duration.ofDays(10)), "",
-            Dimension.TIMELINESS);
-        assertEquals(1.0, fresh.score(), "five days old, expected every ten");
-        assertEquals("updated_at", fresh.evidence().get("field").asText(), "a date of birth says nothing of recency");
-
+        assertNull(measure(Measures.of(now.build(), List.of(), List.of(), Duration.ofDays(10)), "", Dimension.TIMELINESS),
+            "no timeliness until the cadence is learned from history");
         List<ProfileFacts> history = List.of(
             Facts.version().id(3).field("updated_at", "timestamp_tz", "{'rows':10,'nulls':0,'max':'2026-10-04T00:00:00Z'}")
                 .build(),
@@ -127,6 +125,7 @@ class MeasuresTest {
                 .build());
         Measures.Measure stale = measure(Measures.of(now.build(), history, List.of(), Duration.ofDays(10)), "",
             Dimension.TIMELINESS);
+        assertEquals("updated_at", stale.evidence().get("field").asText(), "a date of birth says nothing of recency");
         assertEquals(24.0, stale.evidence().get("cadenceHours").asDouble(), "daily, from history");
         assertEquals(0.0, stale.score(), 1e-9, "five days old, expected daily: no score left");
     }
@@ -145,6 +144,16 @@ class MeasuresTest {
         List<ProfileFacts> history = List.of(Facts.version().rows(1000).build(), Facts.version().rows(1000).build(),
             Facts.version().rows(1000).build(), Facts.version().rows(1000).build());
         assertEquals(0.1, Measures.band(history), 1e-9);
+    }
+
+    @Test
+    void keyNamesNeedAWholeWord() {
+        for (String key : List.of("id", "ID", "customer_id", "order_code", "customerId", "customerID", "account_key")) {
+            assertTrue(Measures.KEY_NAME.matcher(key).find(), key);
+        }
+        for (String not : List.of("paid", "valid", "fluid", "squid", "barcode", "monkey", "solid_state")) {
+            assertFalse(Measures.KEY_NAME.matcher(not).find(), not);
+        }
     }
 
     @Test
