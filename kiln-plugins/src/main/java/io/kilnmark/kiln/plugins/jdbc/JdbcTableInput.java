@@ -27,13 +27,17 @@ import io.kilnmark.kiln.StepException;
  * <p>Settings: {@code url}, {@code user}, {@code password}, either {@code query} (with
  * {@code label} naming what it reads) or {@code schema} and {@code table}, {@code asset-urn}
  * (for the row count it reports), {@code batch-size} (default 8192) and {@code row-limit}
- * (default 0, every row; with {@code query}, the query must apply the limit itself). When it
- * finishes it reports the rows it read as a {@code ROW_COUNT} event, marked complete unless a row
- * limit cut the read short.
+ * (default 0, every row; with {@code query}, the query must apply the limit itself) and
+ * {@code transaction-isolation} (a {@link Connection} isolation level number; default the
+ * driver's). When it finishes it reports the rows it read as a {@code ROW_COUNT} event, marked
+ * complete unless a row limit cut the read short.
  */
 public final class JdbcTableInput implements Step {
 
     public static final String TYPE = "jdbc-table-input";
+
+    /** The setting holding the transaction isolation level the read runs at, as a JDBC level number. */
+    public static final String ISOLATION = "transaction-isolation";
 
     private Connection connection;
     private Statement statement;
@@ -71,6 +75,9 @@ public final class JdbcTableInput implements Step {
                 context.settings().get("password"));
             connection.setReadOnly(true);
             connection.setAutoCommit(false); // PostgreSQL streams with a cursor only inside a transaction
+            if (context.settings().containsKey(ISOLATION)) {
+                connection.setTransactionIsolation(Integer.parseInt(context.setting(ISOLATION)));
+            }
             statement = connection.createStatement();
             statement.setFetchSize(batchSize);
             rows = statement.executeQuery(sql);
@@ -130,6 +137,15 @@ public final class JdbcTableInput implements Step {
 
     @Override
     public void close() {
+        if (statement != null && !exhausted) {
+            // Stopped early (a failure, or a step after this one gave up). Without a cancel some
+            // drivers, SQL Server's among them, read every remaining row while closing the result.
+            try {
+                statement.cancel();
+            } catch (SQLException | RuntimeException e) {
+                // the query may already have ended; closing below still releases everything
+            }
+        }
         try {
             if (rows != null) rows.close();
             if (statement != null) statement.close();

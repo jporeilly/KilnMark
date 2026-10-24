@@ -27,8 +27,62 @@ class SqlServerConnectorTest {
     void theRegistryFindsSqlServerThroughServiceLoader() {
         Connector c = Connectors.load().get("sqlserver").orElseThrow();
         assertEquals("SQL Server", c.displayName());
-        assertEquals(List.of("url", "username", "schemas"), c.settings().stream().map(Connector.Setting::key).toList());
-        assertTrue(c.settings().get(0).hint().contains("jdbc:sqlserver://db.example.com:1433;databaseName=sales"));
+        assertEquals(List.of("url", "username", "schemas", "isolation"),
+            c.settings().stream().map(Connector.Setting::key).toList());
+        assertEquals("For example jdbc:sqlserver://db.example.com:1433;databaseName=sales;encrypt=true",
+            c.settings().get(0).hint());
+        assertTrue(!c.settings().get(0).hint().contains("trustServerCertificate"), "people copy the example");
+        assertTrue(c.settings().get(3).hint().startsWith("read-uncommitted (the default)"));
+    }
+
+    @Test
+    void aPasswordInTheUrlIsRefused() {
+        for (String url : new String[] {"jdbc:sqlserver://db:1433;databaseName=sales;password=hunter2",
+            "jdbc:sqlserver://db:1433;user=kiln;Password = hunter2;encrypt=true",
+            "jdbc:sqlserver://;serverName=db;PASSWORD=hunter2"}) {
+            List<String> problems = sql.validate(source(url));
+            assertEquals(1, problems.size(), url);
+            assertTrue(problems.get(0).startsWith("url: take the password out of the URL"), problems.get(0));
+            assertTrue(!problems.get(0).contains("hunter2"));
+        }
+        PostgresConnector pg = new PostgresConnector();
+        for (String url : new String[] {"jdbc:postgresql://db/sales?password=hunter2",
+            "jdbc:postgresql://db/sales?user=kiln&password=hunter2"}) {
+            assertTrue(pg.validate(new SourceConfig("x", "postgresql", Map.of("url", url), null)).get(0)
+                .startsWith("url: take the password out of the URL"), url);
+        }
+        assertTrue(pg.validate(new SourceConfig("x", "postgresql",
+            Map.of("url", "jdbc:postgresql://db/sales?user=kiln&sslpassword_file=x&ssl=true"), null)).isEmpty());
+        assertTrue(sql.validate(source("jdbc:sqlserver://db;databaseName=passwords;encrypt=true")).isEmpty());
+    }
+
+    @Test
+    void isolationIsOneOfThreeAndDefaultsToReadUncommitted() {
+        assertTrue(sql.validate(source("jdbc:sqlserver://db", "snapshot")).isEmpty());
+        assertTrue(sql.validate(source("jdbc:sqlserver://db", "READ-COMMITTED")).isEmpty());
+        List<String> problems = sql.validate(source("jdbc:sqlserver://db", "serializable"));
+        assertEquals(List.of("isolation: one of read-uncommitted, snapshot, read-committed, or leave it empty for "
+            + "read-uncommitted"), problems);
+
+        AssetInfo t = asset(field("id", 1, "int"));
+        Connector.ReadOptions read = new Connector.ReadOptions("urn:kilnmark:x:crm.sites", 0, 100);
+        assertEquals("1", sql.reader(source("jdbc:sqlserver://db"), t, read).settings()
+            .get(JdbcTableInput.ISOLATION));
+        assertEquals("4096", sql.reader(source("jdbc:sqlserver://db", "snapshot"), t, read).settings()
+            .get(JdbcTableInput.ISOLATION));
+        assertEquals("2", sql.reader(source("jdbc:sqlserver://db", "read-committed"), t, read).settings()
+            .get(JdbcTableInput.ISOLATION));
+        assertTrue(!new PostgresConnector().reader(new SourceConfig("x", "postgresql",
+            Map.of("url", "jdbc:postgresql://db/sales"), null), t, read).settings().containsKey(JdbcTableInput.ISOLATION),
+            "PostgreSQL reads as before");
+    }
+
+    @Test
+    void schemaPatternsEscapeLikeWildcardsWithBrackets() {
+        assertEquals("a[_]b", sql.schemaPattern(null, "a_b"));
+        assertEquals("s[[]1]", sql.schemaPattern(null, "s[1]"));
+        assertEquals("50[%] off", sql.schemaPattern(null, "50% off"));
+        assertEquals("dbo", sql.schemaPattern(null, "dbo"));
     }
 
     @Test
@@ -131,12 +185,24 @@ class SqlServerConnectorTest {
 
     @Test
     void systemSchemasAreSkippedWhateverTheirCase() {
-        for (String s : new String[] {"sys", "SYS", "INFORMATION_SCHEMA", "information_schema", "guest", "db_owner",
-            "DB_DataReader", "db_denydatawriter", "pg_catalog", "pg_toast", "pg_temp_3"}) {
-            assertTrue(JdbcCatalog.isSystemSchema(s), s);
+        for (String s : new String[] {"sys", "SYS", "INFORMATION_SCHEMA", "information_schema", "guest", "Guest",
+            "db_owner", "DB_DataReader", "db_denydatawriter"}) {
+            assertTrue(sql.isSystemSchema(s), s);
         }
-        for (String s : new String[] {"dbo", "crm", "Sales", "Sales Ops", "db", "public"}) {
-            assertFalse(JdbcCatalog.isSystemSchema(s), s);
+        for (String s : new String[] {"dbo", "crm", "Sales", "Sales Ops", "db", "public", "pg_catalog", "db_custom"}) {
+            assertFalse(sql.isSystemSchema(s), s);
+        }
+    }
+
+    @Test
+    void eachDatabaseSkipsOnlyItsOwnSystemSchemas() {
+        PostgresConnector pg = new PostgresConnector();
+        for (String s : new String[] {"pg_catalog", "information_schema", "pg_toast", "pg_toast_temp_1", "pg_temp_3",
+            "ag_catalog"}) {
+            assertTrue(pg.isSystemSchema(s), s);
+        }
+        for (String s : new String[] {"sys", "guest", "db_owner", "public", "crm", "INFORMATION_SCHEMA"}) {
+            assertFalse(pg.isSystemSchema(s), s);
         }
     }
 
@@ -160,6 +226,10 @@ class SqlServerConnectorTest {
 
     private static SourceConfig source(String url) {
         return new SourceConfig("x", "sqlserver", Map.of("url", url), null);
+    }
+
+    private static SourceConfig source(String url, String isolation) {
+        return new SourceConfig("x", "sqlserver", Map.of("url", url, "isolation", isolation), null);
     }
 
     private static AssetInfo.FieldInfo field(String name, int position, String type) {

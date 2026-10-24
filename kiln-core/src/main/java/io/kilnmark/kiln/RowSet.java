@@ -54,6 +54,10 @@ public final class RowSet {
      * @throws StepException if the next step has stopped, in which case the batch has been closed
      */
     public void put(VectorSchemaRoot batch) throws InterruptedException, StepException {
+        if (cancelled) { // fail fast even when there is room, or a source would read to its end for nothing
+            batch.close();
+            throw new CancelledException("the next step stopped reading " + name);
+        }
         while (!queue.offer(batch, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
             if (cancelled) {
                 batch.close();

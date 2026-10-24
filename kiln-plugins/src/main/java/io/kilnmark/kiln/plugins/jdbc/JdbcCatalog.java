@@ -9,7 +9,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -18,17 +17,24 @@ import java.util.TreeMap;
  */
 public final class JdbcCatalog {
 
-    /**
-     * Schemas that belong to the database itself, never to users, in lower case: PostgreSQL's, and
-     * SQL Server's (its {@code sys}, {@code INFORMATION_SCHEMA}, {@code guest} and fixed database
-     * role schemas). Compare with {@link #isSystemSchema}, which ignores case.
-     */
-    static final Set<String> SYSTEM_SCHEMAS = Set.of("pg_catalog", "information_schema", "pg_toast",
-        "ag_catalog", "sys", "guest", "db_owner", "db_accessadmin", "db_securityadmin", "db_ddladmin",
-        "db_backupoperator", "db_datareader", "db_datawriter", "db_denydatareader", "db_denydatawriter");
-
     private static final String[] TABLE_TYPES = {"TABLE", "VIEW", "MATERIALIZED VIEW", "PARTITIONED TABLE",
         "FOREIGN TABLE"};
+
+    /**
+     * What differs between databases when reading the catalogue: which schemas are the database's
+     * own, and how to write a schema name as a metadata search pattern that matches only itself.
+     */
+    public interface Dialect {
+
+        /** True for a schema that belongs to the database itself, never to users. */
+        boolean isSystemSchema(String schema);
+
+        /**
+         * {@code schema} as a pattern for {@link DatabaseMetaData#getTables} and
+         * {@link DatabaseMetaData#getColumns}, with its wildcard characters escaped.
+         */
+        String schemaPattern(DatabaseMetaData md, String schema) throws SQLException;
+    }
 
     public record Column(String name, int position, String sourceType, int jdbcType, int size, int scale,
                          boolean nullable, String comment, JdbcColumn.Kind kind) {
@@ -46,26 +52,34 @@ public final class JdbcCatalog {
     }
 
     /**
-     * Every table and view in {@code schemas}, or in every non-system schema when {@code schemas}
-     * is empty, with their columns and primary keys.
+     * Every table and view in {@code schemas}, or in every schema that is not a system schema when
+     * {@code schemas} is empty, with their columns and primary keys. A requested schema matches a
+     * schema of the same name, or failing that one that differs only in case.
      */
-    public static List<Table> read(Connection connection, List<String> schemas) throws SQLException {
+    public static List<Table> read(Connection connection, List<String> schemas, Dialect dialect) throws SQLException {
         DatabaseMetaData md = connection.getMetaData();
-        List<String> wanted = schemas.isEmpty() ? userSchemas(md) : schemas;
+        List<String> all = allSchemas(md);
+        List<String> wanted = schemas.isEmpty()
+            ? all.stream().filter(s -> !dialect.isSystemSchema(s)).toList()
+            : schemas.stream().map(s -> resolve(s, all)).distinct().toList();
         List<Table> tables = new ArrayList<>();
         for (String schema : wanted) {
+            // Patterns are a first filter; only rows of exactly this schema are kept.
+            String pattern = dialect.schemaPattern(md, schema);
             Map<String, String[]> found = new TreeMap<>();
-            try (ResultSet rs = md.getTables(null, schema, "%", TABLE_TYPES)) {
+            try (ResultSet rs = md.getTables(null, pattern, "%", TABLE_TYPES)) {
                 while (rs.next()) {
-                    found.put(rs.getString("TABLE_NAME"),
-                        new String[] {rs.getString("TABLE_TYPE"), rs.getString("REMARKS")});
+                    if (schema.equals(rs.getString("TABLE_SCHEM"))) {
+                        found.put(rs.getString("TABLE_NAME"),
+                            new String[] {rs.getString("TABLE_TYPE"), rs.getString("REMARKS")});
+                    }
                 }
             }
             Map<String, List<Column>> columns = new LinkedHashMap<>();
-            try (ResultSet rs = md.getColumns(null, schema, "%", "%")) {
+            try (ResultSet rs = md.getColumns(null, pattern, "%", "%")) {
                 while (rs.next()) {
                     String table = rs.getString("TABLE_NAME");
-                    if (!found.containsKey(table)) {
+                    if (!schema.equals(rs.getString("TABLE_SCHEM")) || !found.containsKey(table)) {
                         continue;
                     }
                     int jdbcType = rs.getInt("DATA_TYPE");
@@ -80,7 +94,7 @@ public final class JdbcCatalog {
                 }
             }
             for (var e : found.entrySet()) {
-                List<Column> cols = columns.getOrDefault(e.getKey(), List.of());
+                List<Column> cols = new ArrayList<>(columns.getOrDefault(e.getKey(), List.of()));
                 cols.sort((a, b) -> Integer.compare(a.position(), b.position()));
                 tables.add(new Table(schema, e.getKey(), e.getValue()[0].toLowerCase(Locale.ROOT), e.getValue()[1],
                     List.copyOf(cols), primaryKey(md, schema, e.getKey())));
@@ -89,23 +103,34 @@ public final class JdbcCatalog {
         return tables;
     }
 
-    private static List<String> userSchemas(DatabaseMetaData md) throws SQLException {
+    /**
+     * {@code name} with the driver's search-string escape before each wildcard ({@code _},
+     * {@code %}) and before the escape itself, as {@link DatabaseMetaData} documents.
+     */
+    public static String escapeWithDriver(DatabaseMetaData md, String name) throws SQLException {
+        String e = md.getSearchStringEscape();
+        if (e == null || e.isEmpty()) {
+            return name;
+        }
+        return name.replace(e, e + e).replace("_", e + "_").replace("%", e + "%");
+    }
+
+    private static List<String> allSchemas(DatabaseMetaData md) throws SQLException {
         List<String> out = new ArrayList<>();
         try (ResultSet rs = md.getSchemas()) {
             while (rs.next()) {
-                String s = rs.getString("TABLE_SCHEM");
-                if (!isSystemSchema(s)) {
-                    out.add(s);
-                }
+                out.add(rs.getString("TABLE_SCHEM"));
             }
         }
         return out;
     }
 
-    /** True for a schema that belongs to the database itself, whatever its case. */
-    static boolean isSystemSchema(String schema) {
-        return SYSTEM_SCHEMAS.contains(schema.toLowerCase(Locale.ROOT)) || schema.startsWith("pg_temp")
-            || schema.startsWith("pg_toast");
+    private static String resolve(String requested, List<String> all) {
+        if (all.contains(requested)) {
+            return requested;
+        }
+        List<String> sameButCase = all.stream().filter(s -> s.equalsIgnoreCase(requested)).toList();
+        return sameButCase.size() == 1 ? sameButCase.get(0) : requested;
     }
 
     private static List<String> primaryKey(DatabaseMetaData md, String schema, String table) throws SQLException {

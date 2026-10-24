@@ -1,6 +1,7 @@
 package io.kilnmark.kiln.plugins.jdbc;
 
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -8,6 +9,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import io.kilnmark.kiln.StepSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
@@ -21,6 +23,9 @@ import io.kilnmark.kiln.connect.SourceConfig;
  * prefix and the SQL that reads a table, with or without a row limit.
  */
 public abstract class JdbcConnector implements Connector {
+
+    /** A password written into a URL: {@code ;password=} (SQL Server) or {@code ?password=} / {@code &password=}. */
+    private static final Pattern PASSWORD_IN_URL = Pattern.compile("[;?&]\\s*password\\s*=", Pattern.CASE_INSENSITIVE);
 
     /** The JDBC URL prefix this database's driver accepts, for example {@code jdbc:postgresql://}. */
     protected abstract String urlPrefix();
@@ -45,7 +50,38 @@ public abstract class JdbcConnector implements Connector {
      * JDBC metadata; override to add what the driver does not report, such as comments.
      */
     protected List<JdbcCatalog.Table> readCatalog(Connection connection, List<String> schemas) throws SQLException {
-        return JdbcCatalog.read(connection, schemas);
+        return JdbcCatalog.read(connection, schemas, new JdbcCatalog.Dialect() {
+            @Override
+            public boolean isSystemSchema(String schema) {
+                return JdbcConnector.this.isSystemSchema(schema);
+            }
+
+            @Override
+            public String schemaPattern(DatabaseMetaData md, String schema) throws SQLException {
+                return JdbcConnector.this.schemaPattern(md, schema);
+            }
+        });
+    }
+
+    /**
+     * True for a schema that belongs to the database itself, which a scan of every schema skips.
+     * By default only {@code information_schema}; each database lists its own.
+     */
+    protected boolean isSystemSchema(String schema) {
+        return schema.equalsIgnoreCase("information_schema");
+    }
+
+    /**
+     * {@code schema} as a metadata search pattern matching only itself. By default its wildcards
+     * are escaped with the driver's search-string escape; override where the driver differs.
+     */
+    protected String schemaPattern(DatabaseMetaData md, String schema) throws SQLException {
+        return JdbcCatalog.escapeWithDriver(md, schema);
+    }
+
+    /** Extra settings for {@link JdbcTableInput} when reading from {@code source}; none by default. */
+    protected Map<String, String> readSettings(SourceConfig source) {
+        return Map.of();
     }
 
     /**
@@ -75,6 +111,9 @@ public abstract class JdbcConnector implements Connector {
         String url = source.setting("url");
         if (url == null || !url.startsWith(urlPrefix())) {
             problems.add("url: a " + displayName() + " JDBC URL, for example " + exampleUrl());
+        } else if (PASSWORD_IN_URL.matcher(url).find()) {
+            problems.add("url: take the password out of the URL and enter it as the source's password instead; "
+                + "the URL is stored and shown as plain text, the password is encrypted");
         }
         return problems;
     }
@@ -113,6 +152,7 @@ public abstract class JdbcConnector implements Connector {
         s.put("asset-urn", read.assetUrn());
         s.put("row-limit", Long.toString(read.rowLimit()));
         s.put("batch-size", Integer.toString(read.batchSize()));
+        s.putAll(readSettings(source));
         return new StepSpec("read", new JdbcTableInput(), s);
     }
 }

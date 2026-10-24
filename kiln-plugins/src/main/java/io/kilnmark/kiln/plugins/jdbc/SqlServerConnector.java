@@ -1,10 +1,14 @@
 package io.kilnmark.kiln.plugins.jdbc;
 
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -12,6 +16,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import io.kilnmark.kiln.connect.AssetInfo;
+import io.kilnmark.kiln.connect.SourceConfig;
 
 /**
  * Microsoft SQL Server, through Microsoft's JDBC driver.
@@ -21,8 +26,24 @@ import io.kilnmark.kiln.connect.AssetInfo;
  * where SQL Server Management Studio keeps them. Columns of type geography, geometry and
  * hierarchyid are read through their {@code ToString()} method, so they arrive as well-known text
  * and paths ({@code /1/2/}) rather than as the server's internal bytes.
+ *
+ * <p>Reads run at the isolation level in the {@code isolation} setting: {@code read-uncommitted}
+ * by default, so profiling a large table takes no shared locks and never blocks the
+ * application's writes; {@code snapshot} for a consistent view without locks, where the database
+ * allows snapshot isolation; or {@code read-committed}.
  */
 public final class SqlServerConnector extends JdbcConnector {
+
+    /** SQL Server's own schemas: sys, INFORMATION_SCHEMA, guest and the fixed database roles. */
+    private static final Set<String> SYSTEM_SCHEMAS = Set.of("sys", "information_schema", "guest", "db_owner",
+        "db_accessadmin", "db_securityadmin", "db_ddladmin", "db_backupoperator", "db_datareader", "db_datawriter",
+        "db_denydatareader", "db_denydatawriter");
+
+    /** Snapshot isolation, as Microsoft's driver numbers it ({@code SQLServerConnection.TRANSACTION_SNAPSHOT}). */
+    private static final int TRANSACTION_SNAPSHOT = 0x1000;
+
+    /** The {@code isolation} setting's values and the JDBC levels they set; the first is the default. */
+    private static final Map<String, Integer> ISOLATION = isolationLevels();
 
     /** Types whose readable form is their {@code ToString()} method rather than their bytes. */
     private static final Set<String> READ_THROUGH_TO_STRING = Set.of("geography", "geometry", "hierarchyid");
@@ -57,7 +78,58 @@ public final class SqlServerConnector extends JdbcConnector {
 
     @Override
     protected String exampleUrl() {
-        return "jdbc:sqlserver://db.example.com:1433;databaseName=sales;encrypt=true;trustServerCertificate=true";
+        return "jdbc:sqlserver://db.example.com:1433;databaseName=sales;encrypt=true";
+    }
+
+    @Override
+    public List<Setting> settings() {
+        List<Setting> settings = new ArrayList<>(super.settings());
+        settings.add(new Setting("isolation", "Read isolation", false, "read-uncommitted (the default) takes no "
+            + "shared locks, so reading never blocks the application's writes, but may see changes not yet "
+            + "committed; snapshot reads a consistent view without locks if the database allows snapshot "
+            + "isolation; read-committed takes shared locks and can block writers", false));
+        return List.copyOf(settings);
+    }
+
+    @Override
+    public List<String> validate(SourceConfig source) {
+        List<String> problems = new ArrayList<>(super.validate(source));
+        String isolation = source.setting("isolation");
+        if (isolation != null && !ISOLATION.containsKey(isolation.toLowerCase(Locale.ROOT))) {
+            problems.add("isolation: one of " + String.join(", ", ISOLATION.keySet())
+                + ", or leave it empty for read-uncommitted");
+        }
+        return problems;
+    }
+
+    @Override
+    protected Map<String, String> readSettings(SourceConfig source) {
+        String isolation = source.setting("isolation");
+        Integer level = ISOLATION.get(isolation == null ? "read-uncommitted" : isolation.toLowerCase(Locale.ROOT));
+        return Map.of(JdbcTableInput.ISOLATION, Integer.toString(level == null ? Connection.TRANSACTION_READ_UNCOMMITTED
+            : level));
+    }
+
+    private static Map<String, Integer> isolationLevels() {
+        Map<String, Integer> levels = new LinkedHashMap<>();
+        levels.put("read-uncommitted", Connection.TRANSACTION_READ_UNCOMMITTED);
+        levels.put("snapshot", TRANSACTION_SNAPSHOT);
+        levels.put("read-committed", Connection.TRANSACTION_READ_COMMITTED);
+        return Collections.unmodifiableMap(levels);
+    }
+
+    @Override
+    protected boolean isSystemSchema(String schema) {
+        return SYSTEM_SCHEMAS.contains(schema.toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * SQL Server's metadata procedures match schema names with {@code LIKE}, where {@code [}
+     * opens a character class: wildcards are escaped by bracketing them.
+     */
+    @Override
+    protected String schemaPattern(DatabaseMetaData md, String schema) {
+        return schema.replace("[", "[[]").replace("_", "[_]").replace("%", "[%]");
     }
 
     @Override
@@ -95,7 +167,7 @@ public final class SqlServerConnector extends JdbcConnector {
 
     @Override
     protected List<JdbcCatalog.Table> readCatalog(Connection connection, List<String> schemas) throws SQLException {
-        List<JdbcCatalog.Table> tables = JdbcCatalog.read(connection, schemas);
+        List<JdbcCatalog.Table> tables = super.readCatalog(connection, schemas);
         Map<String, String> descriptions = descriptions(connection);
         if (descriptions.isEmpty()) {
             return tables;

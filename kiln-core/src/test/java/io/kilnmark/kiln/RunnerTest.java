@@ -150,11 +150,12 @@ class RunnerTest {
 
     @Test
     void aFailingSinkStopsTheSourceInsteadOfHanging() throws Exception {
-        RunResult r = new Runner(64L << 20, 2).run(line(new Numbers(10_000, -1), new Count(0, true, false)),
-            e -> { });
+        Numbers source = new Numbers(10_000, -1);
+        RunResult r = new Runner(64L << 20, 2).run(line(source, new Count(0, true, false)), e -> { });
         assertEquals(RunResult.Status.FAILED, r.status());
         assertTrue(r.error().contains("sink broke"), r.error());
         assertNull(r.steps().get(0).error(), "the source was stopped, not failed");
+        assertTrue(source.sent < 10, "the source stopped soon after the sink, not at its end: sent " + source.sent);
     }
 
     @Test

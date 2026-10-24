@@ -6,7 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.Statement;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,7 +17,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import org.apache.arrow.vector.VectorSchemaRoot;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -25,6 +30,9 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
+import io.kilnmark.kiln.Step;
+import io.kilnmark.kiln.StepContext;
+import io.kilnmark.kiln.StepException;
 import io.kilnmark.kiln.StepSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
@@ -32,13 +40,18 @@ import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.profile.ProfileStep;
 
-/** The SQL Server connector against a real server: catalogue, a profiled read, a sample and a failure. */
+/**
+ * The SQL Server connector against a real server: catalogue, a profiled read, a sample and
+ * failures. Tagged {@code sqlserver}: the server needs about 2 GB of memory.
+ */
+@Tag("sqlserver")
 @Testcontainers
 class SqlServerIngestTest {
 
+    /** SQL Server 2022 CU27 GDR1, pinned so results do not change under us. */
     @Container
     static final MSSQLServerContainer DB = new MSSQLServerContainer(
-        DockerImageName.parse("mcr.microsoft.com/mssql/server:2022-latest"))
+        DockerImageName.parse("mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04"))
         .acceptLicense()
         .withEnv("MSSQL_MEMORY_LIMIT_MB", "2048");
 
@@ -53,6 +66,7 @@ class SqlServerIngestTest {
         try (Connection c = DriverManager.getConnection(DB.getJdbcUrl(), DB.getUsername(), DB.getPassword());
              Statement s = c.createStatement()) {
             s.execute("CREATE DATABASE sales");
+            s.execute("ALTER DATABASE sales SET ALLOW_SNAPSHOT_ISOLATION ON");
         }
         String url = DB.getJdbcUrl() + ";databaseName=sales";
         try (Connection c = DriverManager.getConnection(url, DB.getUsername(), DB.getPassword());
@@ -128,6 +142,24 @@ class SqlServerIngestTest {
                 + "WHERE segment = 'Premier'");
             s.execute("CREATE TABLE [Ops].[odd]]name] ([key] int, [value] nvarchar(10))");
             s.execute("INSERT INTO [Ops].[odd]]name] VALUES (1, N'één'), (2, NULL)");
+            s.execute("CREATE TABLE [Ops].[variants] (v sql_variant)");
+            // one row per statement: a multi-row VALUES would convert them all to one type
+            // twice each, so each is among the most common values profiled
+            for (String v : List.of("CAST(0xCAFE AS varbinary(2))", "CAST(12 AS int)", "CAST(N'text' AS nvarchar(10))",
+                "NULL")) {
+                s.execute("INSERT INTO [Ops].[variants] VALUES (" + v + "), (" + v + ")");
+            }
+            // the isolation level of the session reading it
+            s.execute("CREATE VIEW [Ops].[isolation_level] AS SELECT transaction_isolation_level AS level "
+                + "FROM sys.dm_exec_sessions WHERE session_id = @@SPID");
+            // _ and [ are LIKE wildcards in schema patterns: each schema must keep its own tables
+            s.execute("CREATE SCHEMA a_b");
+            s.execute("CREATE TABLE a_b.t (one int NOT NULL PRIMARY KEY)");
+            s.execute("CREATE SCHEMA axb");
+            s.execute("CREATE TABLE axb.t (two nvarchar(10), three nvarchar(10))");
+            s.execute("CREATE SCHEMA [s[1]]]");
+            s.execute("CREATE TABLE [s[1]]].[t] (four int NOT NULL PRIMARY KEY)");
+            s.execute("INSERT INTO [s[1]]].[t] VALUES (4)");
         }
         source = new SourceConfig("lab", "sqlserver", Map.of("url", url, "username", DB.getUsername()),
             DB.getPassword());
@@ -136,8 +168,9 @@ class SqlServerIngestTest {
 
     @Test
     void catalogListsUserTablesViewsColumnsKeysAndDescriptions() {
-        assertEquals(List.of("crm.customers", "crm.premier", "Ops.odd]name"), assets.keySet().stream().sorted(
-            String.CASE_INSENSITIVE_ORDER).toList(), "user schemas only: no sys, INFORMATION_SCHEMA, guest or db_*");
+        assertEquals(List.of("a_b.t", "axb.t", "crm.customers", "crm.premier", "Ops.isolation_level", "Ops.odd]name",
+            "Ops.variants", "s[1].t"), assets.keySet().stream().sorted(String.CASE_INSENSITIVE_ORDER).toList(),
+            "user schemas only: no sys, INFORMATION_SCHEMA, guest or db_*");
 
         AssetInfo customers = assets.get("crm.customers");
         assertEquals("table", customers.kind());
@@ -166,6 +199,35 @@ class SqlServerIngestTest {
         assertEquals("view", premier.kind());
         assertTrue(premier.bounded(), "views are sampled");
         assertEquals(3, premier.fields().size());
+    }
+
+    @Test
+    void schemasWhoseNamesHoldWildcardsKeepTheirOwnTables() throws Exception {
+        assertEquals(List.of("one"), columnNames(assets.get("a_b.t")));
+        assertEquals(List.of("one"), assets.get("a_b.t").primaryKey());
+        assertEquals(List.of("two", "three"), columnNames(assets.get("axb.t")));
+        assertEquals(List.of("four"), columnNames(assets.get("s[1].t")));
+        assertEquals(List.of("four"), assets.get("s[1].t").primaryKey());
+        assertEquals("1", rowCount(read(assets.get("s[1].t"), 0)).attributes().get("rows"));
+
+        SourceConfig some = new SourceConfig("lab", "sqlserver", Map.of("url", source.setting("url"), "username",
+            DB.getUsername(), "schemas", "a_b; S[1]"), DB.getPassword());
+        assertEquals(List.of("a_b.t", "s[1].t"), CONNECTOR.catalog(some).stream().map(AssetInfo::path).toList(),
+            "requested schemas match exactly, or failing that ignoring case");
+
+        // the escaped patterns themselves match only their own schema, so the server does the filtering
+        try (Connection c = DriverManager.getConnection(source.setting("url"), DB.getUsername(), DB.getPassword())) {
+            for (String schema : List.of("a_b", "s[1]")) {
+                List<String> found = new ArrayList<>();
+                try (ResultSet rs = c.getMetaData().getTables(null, CONNECTOR.schemaPattern(c.getMetaData(), schema),
+                    "%", new String[] {"TABLE"})) {
+                    while (rs.next()) {
+                        found.add(rs.getString("TABLE_SCHEM") + "." + rs.getString("TABLE_NAME"));
+                    }
+                }
+                assertEquals(List.of(schema + ".t"), found, schema);
+            }
+        }
     }
 
     @Test
@@ -215,6 +277,45 @@ class SqlServerIngestTest {
     }
 
     @Test
+    void aSqlVariantHoldingBytesIsReadAsHex() throws Exception {
+        Map<String, String> v = profile(read(assets.get("Ops.variants"), 0)).get("v");
+        assertEquals("text", v.get("shape"));
+        assertEquals("2", v.get("nulls"));
+        String top = v.get("top");
+        assertTrue(top.contains("\"0xCAFE\"") && top.contains("\"12\"") && top.contains("\"text\""), top);
+        assertTrue(!top.contains("[B@"), top);
+    }
+
+    @Test
+    void readsRunAtTheIsolationLevelChosen() throws Exception {
+        AssetInfo view = assets.get("Ops.isolation_level");
+        // sys.dm_exec_sessions numbers them 1 read uncommitted, 2 read committed, 5 snapshot
+        Map<String, String> levels = Map.of("", "1", "read-uncommitted", "1", "read-committed", "2", "snapshot", "5");
+        for (var e : levels.entrySet()) {
+            Map<String, String> settings = new HashMap<>(source.settings());
+            settings.put("isolation", e.getKey());
+            SourceConfig s = new SourceConfig("lab", "sqlserver", settings, DB.getPassword());
+            assertTrue(CONNECTOR.validate(s).isEmpty());
+            assertEquals(e.getValue(), profile(read(s, view, 0)).get("level").get("min"), "isolation " + e.getKey());
+        }
+    }
+
+    @Test
+    void aReadStoppedEarlyEndsAtOnce() throws Exception {
+        // 20 million rows: closing the result without cancelling the query first reads them all
+        Map<String, String> input = Map.of("url", source.setting("url"), "user", DB.getUsername(), "password",
+            DB.getPassword(), "query", "SELECT TOP (20000000) a.object_id, a.column_id, b.name "
+                + "FROM sys.all_columns a CROSS JOIN sys.all_columns b",
+            "label", "a big join", "asset-urn", URN, "batch-size", "1024");
+        RunResult r = new Runner(64L << 20, 2).run(new Pipeline("stop", List.of(
+            new StepSpec("read", new JdbcTableInput(), input),
+            new StepSpec("give-up", new GiveUpAfterOneBatch(), Map.of()))), e -> { });
+        assertEquals(RunResult.Status.FAILED, r.status());
+        assertTrue(r.error().contains("gave up"), r.error());
+        assertTrue(r.duration().compareTo(Duration.ofSeconds(5)) < 0, "took " + r.duration());
+    }
+
+    @Test
     void readsATableWhoseNameNeedsQuoting() throws Exception {
         List<MetadataEvent> events = read(assets.get("Ops.odd]name"), 0);
         assertEquals("2", rowCount(events).attributes().get("rows"));
@@ -246,18 +347,63 @@ class SqlServerIngestTest {
     }
 
     private static List<MetadataEvent> read(AssetInfo asset, long rowLimit) throws InterruptedException {
+        return read(source, asset, rowLimit);
+    }
+
+    private static List<MetadataEvent> read(SourceConfig from, AssetInfo asset, long rowLimit)
+        throws InterruptedException {
         List<MetadataEvent> events = new CopyOnWriteArrayList<>();
-        RunResult r = run(asset, rowLimit, events);
+        RunResult r = run(from, asset, rowLimit, events);
         assertTrue(r.succeeded(), r.error());
         return events;
     }
 
     private static RunResult run(AssetInfo asset, long rowLimit, List<MetadataEvent> events)
         throws InterruptedException {
-        StepSpec reader = CONNECTOR.reader(source, asset, new Connector.ReadOptions(URN, rowLimit, 4096));
+        return run(source, asset, rowLimit, events);
+    }
+
+    private static RunResult run(SourceConfig from, AssetInfo asset, long rowLimit, List<MetadataEvent> events)
+        throws InterruptedException {
+        StepSpec reader = CONNECTOR.reader(from, asset, new Connector.ReadOptions(URN, rowLimit, 4096));
         Pipeline p = new Pipeline("ingest", List.of(reader,
             new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", URN))));
         return new Runner(128L << 20, 2).run(p, events::add);
+    }
+
+    private static Map<String, Map<String, String>> profile(List<MetadataEvent> events) {
+        Map<String, Map<String, String>> profile = new HashMap<>();
+        events.stream().filter(e -> e.kind() == MetadataEvent.Kind.PROFILE)
+            .forEach(e -> profile.put(e.attributes().get("field"), e.attributes()));
+        return profile;
+    }
+
+    private static List<String> columnNames(AssetInfo asset) {
+        return asset.fields().stream().map(AssetInfo.FieldInfo::name).toList();
+    }
+
+    /** A step that takes one batch and fails, as a profiler or sink might part way through a table. */
+    private static final class GiveUpAfterOneBatch implements Step {
+
+        @Override
+        public String type() {
+            return "give-up";
+        }
+
+        @Override
+        public void init(StepContext context) {
+            // nothing to prepare
+        }
+
+        @Override
+        public boolean process(StepContext context) throws StepException {
+            try (VectorSchemaRoot batch = context.input().take(context.allocator())) {
+                throw new StepException("gave up after " + (batch == null ? 0 : batch.getRowCount()) + " rows");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new StepException("Interrupted", e);
+            }
+        }
     }
 
     private static MetadataEvent rowCount(List<MetadataEvent> events) {

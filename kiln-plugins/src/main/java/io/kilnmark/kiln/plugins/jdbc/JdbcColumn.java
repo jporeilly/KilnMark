@@ -13,6 +13,7 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Set;
 
@@ -69,6 +70,9 @@ public record JdbcColumn(String name, String sourceType, Kind kind, ArrowType ar
      * its types as {@code OTHER}, which is text already.)
      */
     private static final Set<String> TEXT_TYPE_NAMES = Set.of("geography", "geometry", "hierarchyid");
+
+    /** Bytes in a text column are written as SQL Server shows them: {@code 0xCAFE}. */
+    private static final HexFormat HEX = HexFormat.of().withUpperCase();
 
     public Field field() {
         return new Field(name, FieldType.nullable(arrowType), null);
@@ -149,7 +153,15 @@ public record JdbcColumn(String name, String sourceType, Kind kind, ArrowType ar
                 else ((DecimalVector) vector).setSafe(row, v.setScale(scale, RoundingMode.HALF_EVEN));
             }
             case TEXT -> {
-                String v = rs.getString(col);
+                // getObject first: a value with no text form of its own (bytes in a sql_variant)
+                // is written as hex rather than as a Java object reference
+                Object o = rs.getObject(col);
+                String v = switch (o) {
+                    case null -> null;
+                    case String text -> text;
+                    case byte[] bytes -> "0x" + HEX.formatHex(bytes);
+                    default -> rs.getString(col);
+                };
                 if (v == null) vector.setNull(row);
                 else ((VarCharVector) vector).setSafe(row, v.getBytes(StandardCharsets.UTF_8));
             }
