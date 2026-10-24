@@ -12,7 +12,7 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0005](0005-step-plugin-interface.md) | Step plugin interface stays provisional until sprint 3 | Accepted |
 | [0006](0006-kettle-10-2-no-hop.md) | Clean engine, selective Kettle 10.2 code, no Apache Hop | Accepted |
 | [0007](0007-dependency-policy.md) | Libraries yes, platforms no | Accepted |
-| [0008](0008-licence.md) | Licence model | Open |
+| [0008](0008-licence.md) | Business Source License 1.1 | Accepted |
 | [0009](0009-accessibility.md) | WCAG 2.2 AA | Accepted |
 | [0010](0010-repository-layout.md) | Docs in /docs, all build output in /dist | Accepted |
 | [0011](0011-container-runtime.md) | Podman first, any OCI runtime | Accepted |
