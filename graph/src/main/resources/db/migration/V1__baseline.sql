@@ -18,5 +18,6 @@ ON CONFLICT (key) DO NOTHING;
 
 LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
-SELECT create_graph('kilnmark')
-WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = 'kilnmark');
+-- AGE keeps each graph in a schema of the same name, so the graph cannot be called 'kilnmark'.
+SELECT create_graph('kilnmark_graph')
+WHERE NOT EXISTS (SELECT 1 FROM ag_catalog.ag_graph WHERE name = 'kilnmark_graph');

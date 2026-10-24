@@ -15,8 +15,22 @@ dependencies {
     "implementation"("io.quarkus:quarkus-flyway")
     "implementation"("org.flywaydb:flyway-database-postgresql")
     "implementation"(project(":kiln-core"))
+    "implementation"(project(":kiln-plugins"))
     "implementation"(project(":graph"))
 
     "testImplementation"("io.quarkus:quarkus-junit5")
     "testImplementation"("io.rest-assured:rest-assured")
+}
+
+// Arrow reads buffer addresses through java.nio; tests and dev mode need the same opening as the jar.
+tasks.withType<Test>().configureEach {
+    jvmArgs("--add-opens=java.base/java.nio=ALL-UNNAMED")
+    systemProperty("java.util.logging.manager", "org.jboss.logmanager.LogManager")
+}
+
+// The web UI, when built (cd ui && npm run build), is served by the server from /.
+tasks.named<ProcessResources>("processResources") {
+    from(rootProject.layout.projectDirectory.dir("dist/ui")) {
+        into("META-INF/resources")
+    }
 }
