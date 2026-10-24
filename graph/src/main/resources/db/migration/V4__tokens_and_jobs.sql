@@ -13,7 +13,8 @@ CREATE TABLE api_token (
     created_at    timestamptz NOT NULL DEFAULT now(),
     expires_at    timestamptz,        -- null: never expires
     last_used_at  timestamptz,        -- updated at most once a minute
-    revoked_at    timestamptz
+    revoked_at    timestamptz,
+    revoked_reason text               -- who revoked it, or 'environment-changed' (undone if the value returns)
 );
 
 -- Work for the worker role. A worker claims a job with SELECT ... FOR UPDATE SKIP LOCKED, marks it
@@ -38,6 +39,16 @@ CREATE INDEX job_ready_idx ON job (run_after, id) WHERE status = 'queued';
 CREATE INDEX job_running_idx ON job (heartbeat_at) WHERE status = 'running';
 -- One job per scan run, so a run cannot be queued twice.
 CREATE UNIQUE INDEX job_scan_run_idx ON job (((payload ->> 'runId')::bigint)) WHERE kind = 'scan';
+
+-- Before the queue, scans ran inside the server process. Runs it left waiting or running have no
+-- job and would never finish, which also keeps the UI's scan button disabled.
+UPDATE run SET status = 'failed', finished_at = now(),
+       detail = 'Stopped when Kilnmark was upgraded to the job queue. Start the scan again.'
+WHERE status IN ('queued', 'running');
+
+-- At most one waiting or running scan per source: asking again returns the one in progress, and
+-- two scans of a source never overlap (an earlier one would mark the later one's assets removed).
+CREATE UNIQUE INDEX run_one_active_per_source_idx ON run (source_id) WHERE status IN ('queued', 'running');
 
 INSERT INTO install_info (key, value) VALUES ('schema_catalog', '4')
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();

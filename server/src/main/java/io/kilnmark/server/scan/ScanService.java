@@ -6,6 +6,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -72,33 +74,66 @@ public class ScanService {
 
     private static final Set<String> UNFINISHED = Set.of("queued", "running");
 
+    /** What {@link #execute} did. */
+    public enum Outcome {
+        /** The scan ran and its run has its final status. */
+        FINISHED,
+        /** Nothing to do: the run or its source is gone, or the run had already finished. */
+        SKIPPED,
+        /** Stopped part-way because it was asked to; the run is left for the caller to requeue. */
+        CANCELLED
+    }
+
+    /** {@code note} says why a scan was skipped; null otherwise. */
+    public record Result(Outcome outcome, String note) {
+    }
+
+    /** Thrown inside a profiling pipeline to end it once the scan is stopped. */
+    private static final class Stopped extends RuntimeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        Stopped() {
+            super("The scan was stopped", null, false, false);
+        }
+    }
+
     /**
-     * Runs a queued scan; called by a worker holding the run's lock. Does nothing, and returns a
-     * reason, if the run no longer exists or has already finished.
+     * Runs a queued scan; called by a worker holding the source's scan lock. Stops at the next
+     * asset or profile once {@code cancelled} turns true, without interrupting threads that may be
+     * inside a database call.
      */
-    public Optional<String> execute(long runId) {
+    public Result execute(long runId, BooleanSupplier cancelled) {
         Optional<Records.Run> run = store.run(runId);
         if (run.isEmpty()) {
-            return Optional.of("Run " + runId + " no longer exists: its source was removed");
+            return new Result(Outcome.SKIPPED, "Run " + runId + " no longer exists: its source was removed");
         }
         if (!UNFINISHED.contains(run.get().status())) {
-            return Optional.of("Run " + runId + " had already finished (" + run.get().status() + ")");
+            return new Result(Outcome.SKIPPED, "Run " + runId + " had already finished (" + run.get().status() + ")");
         }
         Optional<Records.Source> source = store.source(run.get().source());
         if (source.isEmpty()) {
-            return Optional.of("Run " + runId + "'s source no longer exists");
+            return new Result(Outcome.SKIPPED, "Run " + runId + "'s source no longer exists");
         }
-        scan(source.get(), runId);
-        return Optional.empty();
+        return new Result(scan(source.get(), runId, cancelled) ? Outcome.FINISHED : Outcome.CANCELLED, null);
     }
 
-    void scan(Records.Source source, long runId) {
+    /**
+     * Scans a source for run {@code runId}.
+     *
+     * @return true when the run has its final status; false when {@code cancelled} stopped it first
+     */
+    boolean scan(Records.Source source, long runId, BooleanSupplier cancelled) {
         store.startRun(runId);
         AtomicInteger seen = new AtomicInteger();
         AtomicInteger failed = new AtomicInteger();
         AtomicLong rows = new AtomicLong();
         List<String> problems = java.util.Collections.synchronizedList(new ArrayList<>());
         List<Thread> work = new ArrayList<>();
+        AtomicBoolean halt = new AtomicBoolean();
+        BooleanSupplier stop = () -> halt.get() || cancelled.getAsBoolean();
+        String status = "failed";
+        String detail;
         try {
             Connector connector = connectors.get(source.kind()).orElseThrow(() -> new ConnectorException(
                 "This server has no connector for sources of kind '" + source.kind() + "'"));
@@ -107,6 +142,9 @@ public class ScanService {
             List<AssetInfo> assets = connector.catalog(config);
             Semaphore slots = new Semaphore(Math.max(1, this.config.scan().parallelTables()));
             for (AssetInfo a : assets) {
+                if (stop.getAsBoolean()) {
+                    break;
+                }
                 String urn = new Urn(source.name(), a.path()).toString();
                 store.saveAsset(source.id(), runId, asset(urn, a), fields(a));
                 seen.incrementAndGet();
@@ -114,9 +152,13 @@ public class ScanService {
                     continue; // recorded, not read: a document, for example
                 }
                 slots.acquire();
+                if (stop.getAsBoolean()) {
+                    slots.release();
+                    break;
+                }
                 work.add(Thread.ofVirtual().name("scan-" + runId + "-" + a.path()).start(() -> {
                     try {
-                        RunResult r = profile(connector, config, a, urn, runId);
+                        RunResult r = profile(connector, config, a, urn, runId, stop);
                         rows.addAndGet(r.steps().get(0).rowsOut());
                         if (!r.succeeded()) {
                             failed.incrementAndGet();
@@ -132,55 +174,69 @@ public class ScanService {
                     }
                 }));
             }
-            for (Thread t : work) {
-                t.join();
+            joinAll(work);
+            if (cancelled.getAsBoolean()) {
+                return false; // nothing final written: the worker puts the scan back in the queue
             }
             int removed = store.markUnseenRemoved(source.id(), runId);
-            String status = failed.get() == 0 ? "succeeded" : failed.get() < seen.get() ? "partial" : "failed";
-            String detail = summary(seen.get(), failed.get(), removed, problems);
-            store.finishRun(runId, status, seen.get(), failed.get(), rows.get(), detail);
+            status = failed.get() == 0 ? "succeeded" : failed.get() < seen.get() ? "partial" : "failed";
+            detail = summary(seen.get(), failed.get(), removed, problems);
             LOG.infof("Scan %d of %s: %s", runId, source.name(), detail);
         } catch (ConnectorException e) {
-            store.finishRun(runId, "failed", seen.get(), failed.get(), rows.get(), e.getMessage());
+            detail = e.getMessage();
         } catch (InterruptedException e) {
-            stopAll(work);
-            // Record the outcome first: a database call with the interrupt flag set may be refused.
-            store.finishRun(runId, "failed", seen.get(), failed.get(), rows.get(),
-                "The server stopped during the scan. Start the scan again.");
             Thread.currentThread().interrupt();
+            detail = "The server stopped during the scan. Start the scan again.";
         } catch (RuntimeException e) {
             LOG.errorf(e, "Scan %d of %s failed", runId, source.name());
-            store.finishRun(runId, "failed", seen.get(), failed.get(), rows.get(), "Scan failed: " + e.getMessage());
+            detail = "Scan failed: " + e.getMessage();
+        } finally {
+            halt.set(true); // every exit: the assets still being profiled stop at their next event
+            joinAll(work);
         }
+        // A database call with the interrupt flag set may be refused, so clear it for the final write.
+        boolean interrupted = Thread.interrupted();
+        try {
+            store.finishRun(runId, status, seen.get(), failed.get(), rows.get(), detail);
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return true;
     }
 
-    /** Stops the assets still being profiled, and waits a little for them to let go of the run. */
-    private static void stopAll(List<Thread> work) {
-        work.forEach(Thread::interrupt);
-        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+    /** Waits for every thread, even if this one is interrupted meanwhile (the flag is kept). */
+    private static void joinAll(List<Thread> work) {
+        boolean interrupted = false;
         for (Thread t : work) {
-            long left = deadline - System.nanoTime();
-            if (left <= 0) {
-                break;
+            while (t.isAlive()) {
+                try {
+                    t.join();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
             }
-            try {
-                t.join(java.time.Duration.ofNanos(left));
-            } catch (InterruptedException e) {
-                break; // already stopping; the caller restores the flag
-            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 
-    private RunResult profile(Connector connector, SourceConfig config, AssetInfo a, String urn, long runId)
-        throws InterruptedException {
+    private RunResult profile(Connector connector, SourceConfig config, AssetInfo a, String urn, long runId,
+                              BooleanSupplier stop) throws InterruptedException {
         long limit = a.bounded() ? this.config.scan().viewRowLimit() : 0;
         StepSpec read = connector.reader(config, a, new Connector.ReadOptions(urn, limit, 8192));
         Pipeline p = new Pipeline("scan-" + runId + "-" + a.path(), List.of(
             read, new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", urn))));
-        return new Runner(this.config.scan().memoryLimitMb() << 20, 4).run(p, event -> record(event, runId));
+        return new Runner(this.config.scan().memoryLimitMb() << 20, 4).run(p, event -> record(event, runId, stop));
     }
 
-    private void record(MetadataEvent e, long runId) {
+    /** Stores what a pipeline found; once the scan is stopped, ends the pipeline instead. */
+    private void record(MetadataEvent e, long runId, BooleanSupplier stop) {
+        if (stop.getAsBoolean()) {
+            throw new Stopped();
+        }
         switch (e.kind()) {
             case ROW_COUNT -> store.saveRowCount(e.assetUrn(), Long.parseLong(e.attributes().get("rows")),
                 Boolean.parseBoolean(e.attributes().get("complete")), e.observedAt());

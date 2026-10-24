@@ -21,10 +21,11 @@ import jakarta.enterprise.context.ApplicationScoped;
  * and notifies {@value #CHANNEL}; workers claim jobs with {@code SELECT ... FOR UPDATE SKIP LOCKED}
  * in a short transaction and run them outside it.
  *
- * <p>A run is never executed twice at once: while a worker runs one it holds a PostgreSQL advisory
- * lock on the run ({@link #lockRun}) on a connection of its own, which PostgreSQL releases if the
- * worker dies. Stale-job recovery only touches jobs whose heartbeat is old <em>and</em> whose run
- * lock nobody holds.
+ * <p>A source has at most one waiting or running scan (a partial unique index on {@code run}):
+ * asking again returns the scan already in progress. While a worker runs a scan it holds a
+ * PostgreSQL advisory lock on the source ({@link #lockSource}) on a connection of its own, which
+ * PostgreSQL releases if the worker dies, so two scans of one source never overlap. Stale-job
+ * recovery only touches jobs whose heartbeat is old <em>and</em> whose source lock nobody holds.
  */
 @ApplicationScoped
 public class JobQueue {
@@ -33,12 +34,13 @@ public class JobQueue {
 
     /** PostgreSQL notification channel: a job was queued. */
     public static final String CHANNEL = "kilnmark_jobs";
-    /** Advisory lock class for runs (objid is the run id). */
-    static final int RUN_LOCK_CLASS = 0x4B52;
+    /** Advisory lock class for scans of a source (objid is the source id). */
+    static final int SOURCE_LOCK_CLASS = 0x4B53;
     private static final long OID_RANGE = 1L << 32;
 
     /** A claimed job. {@code attempts} counts this one. */
-    public record Job(long id, String kind, long runId, int attempts, int maxAttempts, String workerId) {
+    public record Job(long id, String kind, long runId, long sourceId, int attempts, int maxAttempts,
+                      String workerId) {
     }
 
     /** What a recovery pass did. */
@@ -53,27 +55,52 @@ public class JobQueue {
         this.config = config;
     }
 
-    /** Queues a scan of a source: a queued run and its job, in one transaction. Returns the run id. */
+    /**
+     * Queues a scan of a source: a queued run and its job, in one transaction. If the source already
+     * has a scan waiting or running, returns that run instead of queueing another.
+     *
+     * @return the run id
+     */
     public long queueScan(long sourceId) {
         return db.tx(c -> {
-            long runId;
-            try (PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO kilnmark.run (source_id, kind, status) VALUES (?, 'scan', 'queued') RETURNING id")) {
-                ps.setLong(1, sourceId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    rs.next();
-                    runId = rs.getLong(1);
+            for (int tries = 0; tries < 5; tries++) {
+                try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.run (source_id, kind, status) "
+                    + "VALUES (?, 'scan', 'queued') "
+                    + "ON CONFLICT (source_id) WHERE status IN ('queued', 'running') DO NOTHING RETURNING id")) {
+                    ps.setLong(1, sourceId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            long runId = rs.getLong(1);
+                            addJob(c, runId, sourceId);
+                            notify(c);
+                            return runId;
+                        }
+                    }
                 }
+                try (PreparedStatement ps = c.prepareStatement("SELECT id FROM kilnmark.run "
+                    + "WHERE source_id = ? AND status IN ('queued', 'running')")) {
+                    ps.setLong(1, sourceId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            return rs.getLong(1);
+                        }
+                    }
+                }
+                // The scan in progress finished between the two statements: try again.
             }
-            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.job (kind, payload, max_attempts) "
-                + "VALUES ('scan', jsonb_build_object('runId', ?::bigint), ?)")) {
-                ps.setLong(1, runId);
-                ps.setInt(2, Math.max(1, config.worker().maxAttempts()));
-                ps.executeUpdate();
-            }
-            notify(c);
-            return runId;
+            throw new IllegalStateException("Could not queue a scan of source " + sourceId + ": scans of it keep "
+                + "starting and finishing. Try again.");
         });
+    }
+
+    private void addJob(Connection c, long runId, long sourceId) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.job (kind, payload, max_attempts) "
+            + "VALUES ('scan', jsonb_build_object('runId', ?::bigint, 'sourceId', ?::bigint), ?)")) {
+            ps.setLong(1, runId);
+            ps.setLong(2, sourceId);
+            ps.setInt(3, Math.max(1, config.worker().maxAttempts()));
+            ps.executeUpdate();
+        }
     }
 
     /** Wakes listening workers once the transaction commits. */
@@ -98,36 +125,35 @@ public class JobQueue {
             }
             try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.job SET status = 'running', "
                 + "attempts = attempts + 1, locked_by = ?, locked_at = now(), heartbeat_at = now() WHERE id = ? "
-                + "RETURNING kind, (payload ->> 'runId')::bigint, attempts, max_attempts")) {
+                + "RETURNING kind, coalesce((payload ->> 'runId')::bigint, -1), "
+                + "coalesce((payload ->> 'sourceId')::bigint, -1), attempts, max_attempts")) {
                 ps.setString(1, workerId);
                 ps.setLong(2, id);
                 try (ResultSet rs = ps.executeQuery()) {
-                    rs.next();
-                    long runId = rs.getLong(2);
-                    boolean noRun = rs.wasNull(); // a payload without a runId: the worker fails the job
-                    return Optional.of(new Job(id, rs.getString(1), noRun ? -1 : runId, rs.getInt(3), rs.getInt(4),
-                        workerId));
+                    rs.next(); // -1: missing from the payload, so the worker fails the job
+                    return Optional.of(new Job(id, rs.getString(1), rs.getLong(2), rs.getLong(3), rs.getInt(4),
+                        rs.getInt(5), workerId));
                 }
             }
         });
     }
 
     /**
-     * Takes the run's advisory lock on a connection of its own, held until the lease is closed.
-     * Empty if another worker holds it.
+     * Takes the source's scan lock (an advisory lock) on a connection of its own, held until the
+     * lease is closed. Empty if another worker holds it.
      */
-    public Optional<RunLease> lockRun(long runId) {
+    public Optional<ScanLease> lockSource(long sourceId) {
         Connection c = null;
         try {
             c = db.connection();
             c.setAutoCommit(true);
-            try (PreparedStatement ps = c.prepareStatement("SELECT pg_try_advisory_lock(?, ?)")) {
-                ps.setInt(1, RUN_LOCK_CLASS);
-                ps.setInt(2, (int) runId);
+            try (PreparedStatement ps = c.prepareStatement("SELECT pg_try_advisory_lock(?, ?), pg_backend_pid()")) {
+                ps.setInt(1, SOURCE_LOCK_CLASS);
+                ps.setInt(2, (int) sourceId);
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     if (rs.getBoolean(1)) {
-                        RunLease lease = new RunLease(c, runId);
+                        ScanLease lease = new ScanLease(c, sourceId, rs.getInt(2));
                         c = null;
                         return Optional.of(lease);
                     }
@@ -135,30 +161,38 @@ public class JobQueue {
                 }
             }
         } catch (SQLException e) {
-            throw new Db.DbException("Cannot lock run " + runId + ": " + e.getMessage(), e);
+            throw new Db.DbException("Cannot lock source " + sourceId + " for a scan: " + e.getMessage(), e);
         } finally {
             if (c != null) {
                 try {
                     c.close();
                 } catch (SQLException e) {
-                    LOG.debugf(e, "Closing a connection after a failed run lock");
+                    LOG.debugf(e, "Closing a connection after a failed source lock");
                 }
             }
         }
     }
 
     /**
-     * The right to run one run: an advisory lock on a connection held for the run's whole length.
-     * Heartbeats go over the same connection, so a lost connection (and with it the lock) is noticed.
+     * The right to scan one source: an advisory lock on a connection held for the scan's whole
+     * length. Heartbeats go over the same connection, so a lost connection (and with it the lock)
+     * is noticed.
      */
-    public static final class RunLease implements AutoCloseable {
+    public static final class ScanLease implements AutoCloseable {
         private final Connection c;
-        private final long runId;
+        private final long sourceId;
+        private final int backendPid;
         private boolean closed;
 
-        RunLease(Connection c, long runId) {
+        ScanLease(Connection c, long sourceId, int backendPid) {
             this.c = c;
-            this.runId = runId;
+            this.sourceId = sourceId;
+            this.backendPid = backendPid;
+        }
+
+        /** The PostgreSQL backend holding the lock (tests end it to play a dead worker). */
+        int backendPid() {
+            return backendPid;
         }
 
         /** Refreshes the job's heartbeat. False if the job is no longer this worker's, or the lock was lost. */
@@ -172,7 +206,7 @@ public class JobQueue {
                 ps.setString(2, workerId);
                 return ps.executeUpdate() == 1;
             } catch (SQLException e) {
-                LOG.warnf("Lost the database connection holding run %d: %s", runId, e.getMessage());
+                LOG.warnf("Lost the database connection holding source %d's scan lock: %s", sourceId, e.getMessage());
                 return false;
             }
         }
@@ -184,11 +218,11 @@ public class JobQueue {
             }
             closed = true;
             try (c; PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_unlock(?, ?)")) {
-                ps.setInt(1, RUN_LOCK_CLASS);
-                ps.setInt(2, (int) runId);
+                ps.setInt(1, SOURCE_LOCK_CLASS);
+                ps.setInt(2, (int) sourceId);
                 ps.execute();
             } catch (SQLException e) {
-                LOG.debugf(e, "Releasing run %d's lock; a closed connection releases it anyway", runId);
+                LOG.debugf(e, "Releasing source %d's scan lock; a closed connection releases it anyway", sourceId);
             }
         }
     }
@@ -222,9 +256,10 @@ public class JobQueue {
                 notify(c);
                 return true;
             }
-            fail(c, job.id(), error);
-            failRun(c, job.runId(), "The scan failed " + job.attempts() + " times. Last error: " + error
-                + ". Fix the cause, then start the scan again.");
+            if (fail(c, job.id(), job.workerId(), error)) {
+                failRun(c, job.runId(), "The scan failed " + job.attempts() + " times. Last error: " + error
+                    + ". Fix the cause, then start the scan again.");
+            }
             return false;
         });
     }
@@ -258,18 +293,21 @@ public class JobQueue {
         }
     }
 
-    private static void fail(Connection c, long jobId, String error) throws SQLException {
+    /** Marks the job failed if {@code workerId} still holds it; false if it does not. */
+    private static boolean fail(Connection c, long jobId, String workerId, String error) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.job SET status = 'failed', "
-            + "finished_at = now(), heartbeat_at = NULL, last_error = ? WHERE id = ?")) {
+            + "finished_at = now(), heartbeat_at = NULL, last_error = ? "
+            + "WHERE id = ? AND locked_by IS NOT DISTINCT FROM ? AND status = 'running'")) {
             ps.setString(1, error);
             ps.setLong(2, jobId);
-            ps.executeUpdate();
+            ps.setString(3, workerId);
+            return ps.executeUpdate() == 1;
         }
     }
 
     private static void requeueRun(Connection c, long runId, String detail) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.run SET status = 'queued', "
-            + "started_at = NULL, detail = ? WHERE id = ? AND status IN ('queued', 'running', 'failed')")) {
+            + "started_at = NULL, detail = ? WHERE id = ? AND status IN ('queued', 'running')")) {
             ps.setString(1, detail);
             ps.setLong(2, runId);
             ps.executeUpdate();
@@ -287,7 +325,7 @@ public class JobQueue {
 
     /**
      * Recovers jobs left running by a worker that stopped: heartbeat older than {@code staleAfter}
-     * and nobody holding the run's lock. Requeued while attempts remain; otherwise the job and its
+     * and nobody holding its source's scan lock. Requeued while attempts remain; otherwise the job and its
      * run are marked failed with a reason.
      */
     public Recovery recoverStale(Duration staleAfter) {
@@ -305,10 +343,10 @@ public class JobQueue {
                       WHERE l.locktype = 'advisory' AND l.objsubid = 2 AND l.granted
                         AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
                         AND l.classid = ?::bigint::oid
-                        AND l.objid = ((j.payload ->> 'runId')::bigint % ?)::oid)
+                        AND l.objid = ((j.payload ->> 'sourceId')::bigint % ?)::oid)
                 FOR UPDATE OF j SKIP LOCKED""")) {
                 ps.setDouble(1, staleAfter.toMillis() / 1000.0);
-                ps.setLong(2, RUN_LOCK_CLASS);
+                ps.setLong(2, SOURCE_LOCK_CLASS);
                 ps.setLong(3, OID_RANGE);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
@@ -325,8 +363,7 @@ public class JobQueue {
                     requeue(c, s.id(), s.worker(), Duration.ZERO, false, why);
                     requeueRun(c, s.runId(), "Queued again: the worker running this scan stopped responding");
                     requeued++;
-                } else {
-                    fail(c, s.id(), why);
+                } else if (fail(c, s.id(), s.worker(), why)) {
                     failRun(c, s.runId(), "The worker running this scan stopped responding, and the scan has now "
                         + "been tried " + s.attempts() + " times. Check that the workers are running and have enough "
                         + "memory (see their logs), then start the scan again.");

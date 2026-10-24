@@ -20,35 +20,39 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import io.agroal.api.AgroalDataSource;
 import io.kilnmark.graph.store.GraphStore;
 import io.kilnmark.graph.store.Records;
+import io.kilnmark.server.SecretBox;
+import io.kilnmark.server.scan.ScanService;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 
 /**
- * The job queue, on a server with only the api role, so no worker of its own takes the jobs:
- * claiming, the run lock, stale-job recovery, and a worker running a job it was handed.
+ * The job queue, on a server with only the api role, so no worker of its own takes the jobs
+ * (except where a test starts one): claiming, one scan per source, the source lock, stale-job
+ * recovery, cancellation, and the worker loop end to end.
  */
 @QuarkusTest
 @TestProfile(JobQueueTest.ApiOnly.class)
 class JobQueueTest {
 
-    /** The api role alone. */
+    /** The api role alone; a poll interval so long that only a notification can wake a worker. */
     public static class ApiOnly implements QuarkusTestProfile {
         @Override
         public Map<String, String> getConfigOverrides() {
-            return Map.of("kilnmark.roles", "api");
+            return Map.of("kilnmark.roles", "api", "kilnmark.worker.poll-interval", "10m");
         }
     }
 
-    private static final String SOURCE = "queue-test";
+    /** Every source this class creates starts with this, and is removed after each test. */
+    private static final String PREFIX = "queue-test";
 
     @Inject
     JobQueue queue;
@@ -57,26 +61,43 @@ class JobQueueTest {
     JobWorker worker;
 
     @Inject
+    ScanService scans;
+
+    @Inject
     GraphStore store;
+
+    @Inject
+    SecretBox secrets;
 
     @Inject
     AgroalDataSource db;
 
-    private long sourceId;
+    @ConfigProperty(name = "quarkus.datasource.jdbc.url")
+    String url;
 
-    @BeforeEach
-    void addSource() {
-        // Nothing listens on port 1, so a scan of this source fails at once with a reason.
-        sourceId = store.addSource(new Records.NewSource(SOURCE, "postgresql",
+    @ConfigProperty(name = "quarkus.datasource.username")
+    String user;
+
+    @ConfigProperty(name = "quarkus.datasource.password")
+    String password;
+
+    /** A source nothing listens for (port 1), so its scan fails at once with a reason. */
+    private long unreachable(String suffix) {
+        return store.addSource(new Records.NewSource(PREFIX + "-" + suffix, "postgresql",
             Map.of("url", "jdbc:postgresql://127.0.0.1:1/none"), null)).id();
     }
 
+    /** A source that can be read: this test's own database. */
+    private long reachable(String suffix) {
+        return store.addSource(new Records.NewSource(PREFIX + "-" + suffix, "postgresql",
+            Map.of("url", url, "username", user, "schemas", "kilnmark"), secrets.seal(password))).id();
+    }
+
     @AfterEach
-    void removeSource() throws Exception {
-        sql("DELETE FROM kilnmark.job WHERE (payload ->> 'runId')::bigint IN "
-            + "(SELECT r.id FROM kilnmark.run r JOIN kilnmark.data_source s ON s.id = r.source_id WHERE s.name = '"
-            + SOURCE + "')");
-        sql("DELETE FROM kilnmark.data_source WHERE name = '" + SOURCE + "'");
+    void removeSources() throws Exception {
+        sql("DELETE FROM kilnmark.job WHERE (payload ->> 'sourceId')::bigint IN "
+            + "(SELECT id FROM kilnmark.data_source WHERE name LIKE '" + PREFIX + "-%')");
+        sql("DELETE FROM kilnmark.data_source WHERE name LIKE '" + PREFIX + "-%'");
     }
 
     private void sql(String statement) throws Exception {
@@ -108,26 +129,62 @@ class JobQueueTest {
             + runId);
     }
 
+    /** Claims jobs until the one for {@code runId} comes up; any others go back to the queue untouched. */
+    private JobQueue.Job claimRun(long runId, String workerId) {
+        List<JobQueue.Job> others = new ArrayList<>();
+        try {
+            for (Optional<JobQueue.Job> j = queue.claim(workerId); j.isPresent(); j = queue.claim(workerId)) {
+                if (j.get().runId() == runId) {
+                    return j.get();
+                }
+                others.add(j.get());
+            }
+            throw new AssertionError("the job for run " + runId + " was not in the queue");
+        } finally {
+            for (JobQueue.Job o : others) {
+                queue.release(o, Duration.ZERO, null);
+            }
+        }
+    }
+
     @Test
     void aServerWithoutTheWorkerRoleLeavesScansQueued() throws Exception {
-        long runId = admin().post("/api/v1/sources/" + SOURCE + "/scans").then().statusCode(202)
+        unreachable("idle");
+        long runId = admin().post("/api/v1/sources/" + PREFIX + "-idle/scans").then().statusCode(202)
             .extract().jsonPath().getLong("id");
-        Thread.sleep(2500); // more than two poll intervals in the test profile
+        Thread.sleep(2500);
         assertEquals("queued", run(runId).status());
         JobRow j = job(runId);
         assertEquals("queued", j.status());
         assertEquals(0, j.attempts());
         assertNull(j.lockedBy());
-        assertNull(worker.id(), "the worker never started");
+    }
+
+    @Test
+    void askingAgainReturnsTheScanAlreadyInProgress() throws Exception {
+        long source = unreachable("twice");
+        long first = queue.queueScan(source);
+        assertEquals(first, queue.queueScan(source), "the same run, not a second one");
+        long viaApi = admin().post("/api/v1/sources/" + PREFIX + "-twice/scans").then().statusCode(202)
+            .extract().jsonPath().getLong("id");
+        assertEquals(first, viaApi);
+        try (Connection c = db.getConnection(); Statement s = c.createStatement();
+             ResultSet rs = s.executeQuery("SELECT count(*) FROM kilnmark.job WHERE (payload ->> 'sourceId')::bigint = "
+                 + source)) {
+            rs.next();
+            assertEquals(1, rs.getInt(1), "one job for the source");
+        }
+        sql("UPDATE kilnmark.run SET status = 'succeeded', finished_at = now() WHERE id = " + first);
+        assertTrue(queue.queueScan(source) != first, "once it has finished, a new scan is queued");
     }
 
     @Test
     void twoPollersNeverClaimTheSameJob() throws Exception {
-        int jobs = 30;
-        for (int i = 0; i < jobs; i++) {
-            queue.queueScan(sourceId);
+        Set<Long> mine = new HashSet<>();
+        for (int i = 0; i < 30; i++) {
+            mine.add(queue.queueScan(unreachable("poll-" + i)));
         }
-        ConcurrentLinkedQueue<Long> claimed = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<JobQueue.Job> claimed = new ConcurrentLinkedQueue<>();
         CountDownLatch go = new CountDownLatch(1);
         List<Thread> pollers = new ArrayList<>();
         for (String name : List.of("poller-a", "poller-b")) {
@@ -136,7 +193,7 @@ class JobQueueTest {
                     try {
                         go.await();
                         for (Optional<JobQueue.Job> j = queue.claim(name); j.isPresent(); j = queue.claim(name)) {
-                            claimed.add(j.get().id());
+                            claimed.add(j.get());
                         }
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -148,47 +205,43 @@ class JobQueueTest {
         for (Thread t : pollers) {
             t.join();
         }
-        Set<Long> unique = new HashSet<>(claimed);
-        assertEquals(claimed.size(), unique.size(), "no job was claimed twice");
-        assertTrue(unique.size() >= jobs, "every job was claimed");
-        try (Connection c = db.getConnection(); Statement s = c.createStatement();
-             ResultSet rs = s.executeQuery("SELECT count(*) FROM kilnmark.job j JOIN kilnmark.run r "
-                 + "ON r.id = (j.payload ->> 'runId')::bigint WHERE r.source_id = " + sourceId
-                 + " AND (j.status <> 'running' OR j.attempts <> 1 OR j.locked_by NOT IN ('poller-a', 'poller-b'))")) {
-            rs.next();
-            assertEquals(0, rs.getInt(1), "each job is running, once, for the poller that claimed it");
+        List<Long> ids = claimed.stream().map(JobQueue.Job::id).toList();
+        assertEquals(ids.size(), new HashSet<>(ids).size(), "no job was claimed twice");
+        Set<Long> runs = new HashSet<>();
+        for (JobQueue.Job j : claimed) {
+            if (mine.contains(j.runId())) {
+                runs.add(j.runId());
+                assertEquals(1, j.attempts());
+            } else {
+                queue.release(j, Duration.ZERO, null); // not this test's: put it back as it was
+            }
         }
+        assertEquals(mine, runs, "every job this test queued was claimed");
     }
 
     @Test
-    void aRunCanBeLockedByOneWorkerAtATime() {
-        long runId = queue.queueScan(sourceId);
-        try (JobQueue.RunLease first = queue.lockRun(runId).orElseThrow()) {
-            assertTrue(queue.lockRun(runId).isEmpty(), "a second worker cannot take the run");
-            assertTrue(first != null);
+    void aSourceCanBeScannedByOneWorkerAtATime() {
+        long source = unreachable("lock");
+        try (JobQueue.ScanLease first = queue.lockSource(source).orElseThrow()) {
+            assertTrue(queue.lockSource(source).isEmpty(), "a second worker cannot scan the source");
+            assertTrue(first.backendPid() > 0);
         }
-        Optional<JobQueue.RunLease> again = queue.lockRun(runId);
+        Optional<JobQueue.ScanLease> again = queue.lockSource(source);
         assertTrue(again.isPresent(), "the lock is free once released");
         again.get().close();
     }
 
     @Test
     void aStaleJobIsQueuedAgainWhileAttemptsRemain() throws Exception {
-        long runId = queue.queueScan(sourceId);
+        long source = unreachable("stale");
+        long runId = queue.queueScan(source);
         JobQueue.Job j = claimRun(runId, "dead-worker");
         sql("UPDATE kilnmark.run SET status = 'running', started_at = now() WHERE id = " + runId);
 
-        assertEquals("running", job(runId).status());
         queue.recoverStale(Duration.ofMinutes(2));
         assertEquals("running", job(runId).status(), "a fresh heartbeat is left alone");
 
         ageHeartbeat(runId);
-        try (JobQueue.RunLease held = queue.lockRun(runId).orElseThrow()) {
-            queue.recoverStale(Duration.ofMinutes(2));
-            assertEquals("running", job(runId).status(), "a job whose run lock is held is not stale");
-            assertTrue(held != null);
-        }
-
         JobQueue.Recovery r = queue.recoverStale(Duration.ofMinutes(2));
         assertTrue(r.requeued() >= 1, r.toString());
         JobRow row = job(runId);
@@ -200,8 +253,38 @@ class JobQueueTest {
     }
 
     @Test
+    void aDeadWorkersLockIsLetGoAndItsJobRecovered() throws Exception {
+        long source = unreachable("dead");
+        long runId = queue.queueScan(source);
+        claimRun(runId, "dying-worker");
+        JobQueue.ScanLease lease = queue.lockSource(source).orElseThrow();
+        ageHeartbeat(runId);
+
+        queue.recoverStale(Duration.ofMinutes(2));
+        assertEquals("running", job(runId).status(), "the worker still holds the source: it is slow, not dead");
+
+        // The worker dies: PostgreSQL ends its session, and with it the lock.
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            s.execute("SELECT pg_terminate_backend(" + lease.backendPid() + ")");
+        }
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (System.nanoTime() < deadline && queue.lockSource(source).map(l -> {
+            l.close();
+            return false;
+        }).orElse(true)) {
+            Thread.sleep(100);
+        }
+        JobQueue.Recovery r = queue.recoverStale(Duration.ofMinutes(2));
+        assertTrue(r.requeued() >= 1, r.toString());
+        assertEquals("queued", job(runId).status());
+        assertFalse(lease.beat(1, "dying-worker"), "the dead worker's heartbeat fails");
+        lease.close();
+    }
+
+    @Test
     void aStaleJobWithNoAttemptsLeftFailsWithItsRun() throws Exception {
-        long runId = queue.queueScan(sourceId);
+        long source = unreachable("spent");
+        long runId = queue.queueScan(source);
         claimRun(runId, "dead-worker");
         sql("UPDATE kilnmark.job SET attempts = max_attempts WHERE (payload ->> 'runId')::bigint = " + runId);
         sql("UPDATE kilnmark.run SET status = 'running', started_at = now() WHERE id = " + runId);
@@ -216,39 +299,56 @@ class JobQueueTest {
     }
 
     @Test
-    void aWorkerRunsAClaimedScanAndFinishesItsJob() throws Exception {
-        long runId = queue.queueScan(sourceId);
-        JobQueue.Job j = claimRun(runId, "test-worker");
-        worker.execute(j);
-        Records.Run done = run(runId);
-        assertEquals("failed", done.status(), "nothing listens on port 1");
-        assertTrue(done.detail().contains(SOURCE), done.detail());
-        JobRow row = job(runId);
-        assertEquals("done", row.status(), "the scan ran; its failure is the run's, not the job's");
-        assertEquals("test-worker", row.lockedBy());
-
-        assertTrue(queue.lockRun(runId).map(l -> {
-            l.close();
-            return true;
-        }).orElse(false), "the worker let go of the run");
-        assertFalse(queue.claim("test-worker").map(x -> x.runId() == runId).orElse(false));
+    void failingAJobNeedsTheWorkerThatHoldsIt() throws Exception {
+        long source = unreachable("guard");
+        long runId = queue.queueScan(source);
+        JobQueue.Job j = claimRun(runId, "first-worker");
+        JobQueue.Job other = new JobQueue.Job(j.id(), j.kind(), j.runId(), j.sourceId(), j.maxAttempts(),
+            j.maxAttempts(), "another-worker");
+        queue.retryOrFail(other, "boom");
+        assertEquals("running", job(runId).status(), "a worker that does not hold the job cannot fail it");
+        assertEquals("queued", run(runId).status());
     }
 
-    /** Claims jobs until the one for {@code runId} comes up; others go back to the queue untouched. */
-    private JobQueue.Job claimRun(long runId, String workerId) throws Exception {
-        List<JobQueue.Job> others = new ArrayList<>();
+    @Test
+    void aCancelledScanGoesBackWithoutUsingAnAttempt() throws Exception {
+        long source = reachable("cancel");
+        long runId = queue.queueScan(source);
+        JobQueue.Job j = claimRun(runId, "stopping-worker");
+        assertEquals(1, j.attempts());
+        ScanService.Result result = scans.execute(runId, () -> true);
+        assertEquals(ScanService.Outcome.CANCELLED, result.outcome());
+        assertEquals("running", run(runId).status(), "nothing final was written");
+        queue.release(j, Duration.ZERO, "Queued again: the worker running this scan was stopped.");
+        JobRow row = job(runId);
+        assertEquals("queued", row.status());
+        assertEquals(0, row.attempts(), "a shutdown does not count as an attempt");
+        assertEquals("queued", run(runId).status());
+    }
+
+    @Test
+    void aWorkerWakesOnANotificationAndRunsTheScan() throws Exception {
+        long source = unreachable("loop");
+        worker.start();
         try {
-            for (Optional<JobQueue.Job> j = queue.claim(workerId); j.isPresent(); j = queue.claim(workerId)) {
-                if (j.get().runId() == runId) {
-                    return j.get();
-                }
-                others.add(j.get());
+            Thread.sleep(1000); // let it start listening; its poll interval is 10 minutes
+            long runId = queue.queueScan(source);
+            long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+            while (System.nanoTime() < deadline && !"done".equals(job(runId).status())) {
+                Thread.sleep(100);
             }
-            throw new AssertionError("the job for run " + runId + " was not in the queue");
+            JobRow row = job(runId);
+            assertEquals("done", row.status(), "the worker ran the job after the notification");
+            assertEquals(worker.id(), row.lockedBy());
+            Records.Run done = run(runId);
+            assertEquals("failed", done.status(), "nothing listens on port 1");
+            assertTrue(done.detail().contains(PREFIX + "-loop"), done.detail());
+            assertTrue(queue.lockSource(source).map(l -> {
+                l.close();
+                return true;
+            }).orElse(false), "the worker let go of the source");
         } finally {
-            for (JobQueue.Job o : others) {
-                queue.release(o, Duration.ZERO, null);
-            }
+            worker.stop();
         }
     }
 }

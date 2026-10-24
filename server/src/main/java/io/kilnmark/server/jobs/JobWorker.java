@@ -12,6 +12,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.jboss.logging.Logger;
 import org.postgresql.PGConnection;
@@ -31,7 +32,8 @@ import jakarta.enterprise.event.Observes;
  * threads. It wakes on PostgreSQL {@code LISTEN/NOTIFY} and also polls, so a missed notification
  * only delays a job. Running jobs send heartbeats; on start, and every so often, jobs left by a
  * worker that stopped are recovered. On shutdown it stops claiming, lets running jobs finish for
- * {@code kilnmark.worker.shutdown-timeout}, then stops them and puts them back in the queue.
+ * {@code kilnmark.worker.shutdown-timeout}, then asks them to stop (at most {@value #CANCEL_GRACE_SECONDS}
+ * seconds more) and puts them back in the queue without counting the attempt.
  *
  * <p>A process without the worker role never starts this, so it never runs a job.
  */
@@ -41,9 +43,15 @@ public class JobWorker {
     private static final Logger LOG = Logger.getLogger(JobWorker.class);
     private static final Duration RECOVER_EVERY = Duration.ofSeconds(30);
     private static final Duration LOCKED_RETRY = Duration.ofSeconds(30);
+    /** After the shutdown timeout, how long cancelled scans get to wind down. */
+    static final int CANCEL_GRACE_SECONDS = 15;
 
-    /** A job this worker is running. */
-    private record Execution(JobQueue.Job job, JobQueue.RunLease lease, Thread thread) {
+    /**
+     * A job this worker is running. Setting {@code cancelled} stops its scan at the next asset or
+     * profile event; threads are never interrupted, since one inside a JDBC call would break its
+     * pooled connection.
+     */
+    private record Execution(JobQueue.Job job, JobQueue.ScanLease lease, AtomicBoolean cancelled) {
     }
 
     private final JobQueue queue;
@@ -148,39 +156,41 @@ public class JobWorker {
         }
     }
 
-    /** Runs one claimed job while holding its run's lock. */
+    /** Runs one claimed job while holding its source's scan lock. */
     void execute(JobQueue.Job job) {
-        if (!"scan".equals(job.kind()) || job.runId() < 0) {
-            queue.retryOrFail(new JobQueue.Job(job.id(), job.kind(), job.runId(), job.maxAttempts(), job.maxAttempts(),
-                job.workerId()), "This server cannot run jobs of kind '" + job.kind() + "' with this payload");
+        if (!"scan".equals(job.kind()) || job.runId() < 0 || job.sourceId() < 0) {
+            queue.retryOrFail(new JobQueue.Job(job.id(), job.kind(), job.runId(), job.sourceId(), job.maxAttempts(),
+                job.maxAttempts(), job.workerId()), "This server cannot run jobs of kind '" + job.kind()
+                + "' with this payload");
             return;
         }
-        Optional<JobQueue.RunLease> lease;
+        Optional<JobQueue.ScanLease> lease;
         try {
-            lease = queue.lockRun(job.runId());
+            lease = queue.lockSource(job.sourceId());
         } catch (RuntimeException e) {
             queue.retryOrFail(job, e.getMessage());
             return;
         }
         if (lease.isEmpty()) {
-            LOG.infof("Run %d is being run by another worker; job %d goes back in the queue", job.runId(), job.id());
+            LOG.infof("Source %d is being scanned by another worker; job %d goes back in the queue", job.sourceId(),
+                job.id());
             queue.release(job, LOCKED_RETRY, null);
             return;
         }
-        running.put(job.id(), new Execution(job, lease.get(), Thread.currentThread()));
+        AtomicBoolean cancelled = new AtomicBoolean();
+        running.put(job.id(), new Execution(job, lease.get(), cancelled));
         try {
-            Optional<String> skipped = scans.execute(job.runId());
-            boolean interrupted = Thread.interrupted();
+            ScanService.Result result = scans.execute(job.runId(), cancelled::get);
             if (lost.remove(job.id()) != null) {
-                LOG.warnf("Job %d lost its lock while running; another worker owns it now", job.id());
-            } else if (interrupted && stopping) {
+                LOG.warnf("Job %d lost its lock while running; another worker may own it now", job.id());
+            } else if (result.outcome() == ScanService.Outcome.CANCELLED) {
+                // Stopped by shutdown: not the job's fault, so the attempt is not counted.
                 queue.release(job, Duration.ZERO,
                     "Queued again: the worker running this scan was stopped. Another worker will run it.");
             } else {
-                queue.complete(job, skipped.orElse(null));
+                queue.complete(job, result.note());
             }
         } catch (RuntimeException e) {
-            Thread.interrupted();
             LOG.errorf(e, "Job %d (run %d) failed", job.id(), job.runId());
             if (lost.remove(job.id()) == null) {
                 queue.retryOrFail(job, String.valueOf(e.getMessage()));
@@ -237,7 +247,7 @@ public class JobWorker {
                     LOG.warnf("Job %d (run %d) is no longer held by this worker; stopping it", e.job().id(),
                         e.job().runId());
                     lost.put(e.job().id(), Boolean.TRUE);
-                    e.thread().interrupt();
+                    e.cancelled().set(true);
                 }
             }
             if (!stopping && System.nanoTime() - lastRecovery > RECOVER_EVERY.toNanos()) {
@@ -271,8 +281,8 @@ public class JobWorker {
         }
         if (!running.isEmpty()) {
             LOG.infof("Stopping %d jobs that did not finish in time; they go back in the queue", running.size());
-            running.values().forEach(e -> e.thread().interrupt());
-            long grace = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+            running.values().forEach(e -> e.cancelled().set(true));
+            long grace = System.nanoTime() + TimeUnit.SECONDS.toNanos(CANCEL_GRACE_SECONDS);
             while (!running.isEmpty() && System.nanoTime() < grace) {
                 if (!sleep(Duration.ofMillis(100))) {
                     break;
