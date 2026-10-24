@@ -13,6 +13,7 @@ import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.SourceConfig;
+import io.kilnmark.kiln.plugins.documents.DocumentTypes;
 
 /**
  * What the folder and bucket connectors share: every file is an asset whose path is its path in
@@ -26,6 +27,11 @@ public abstract class FileSourceConnector implements Connector {
     static final Setting ENCODING = new Setting("encoding", "Text encoding", false,
         "Leave empty to detect (UTF-8, or windows-1252 when a file is not valid UTF-8); for example ISO-8859-15",
         false);
+
+    /** Whether to keep the text of documents, or only their properties. */
+    static final Setting KEEP_TEXT = new Setting("keep_text", "Keep document text", false,
+        "true (the default) keeps the text of documents for search and reading; false records only their "
+            + "properties (title, author, pages, language)", false);
 
     /** Opens the folder or bucket a source names, after checking the server allows it. */
     protected abstract FileStore open(SourceConfig source) throws IOException;
@@ -46,6 +52,9 @@ public abstract class FileSourceConnector implements Connector {
                 String container = container(source, e.path());
                 try {
                     out.add(FileInspector.inspect(store, e, container, encoding));
+                    if (DocumentTypes.workbook(e.path())) {
+                        out.addAll(FileInspector.sheets(store, e, container)); // right after their workbook
+                    }
                 } catch (StackOverflowError | LinkageError | RuntimeException ex) {
                     // inspect records what it can; anything escaping it must not stop the catalogue
                     out.add(FileInspector.unreadable(e, container, "it could not be inspected (" + ex + ")"));
@@ -62,6 +71,28 @@ public abstract class FileSourceConnector implements Connector {
 
     @Override
     public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
+        if (FileInspector.KIND_DOCUMENT.equals(asset.kind())) {
+            Map<String, String> d = new HashMap<>();
+            d.put("path", asset.path());
+            d.put("asset-urn", read.assetUrn());
+            d.put("size", asset.hints().getOrDefault("size", "-1"));
+            d.put("keep-text", Boolean.toString(keepText(source)));
+            if (asset.hints().containsKey("owner")) {
+                d.put("owner", asset.hints().get("owner"));
+            }
+            return new StepSpec("read", new DocumentInput(() -> open(source)), d);
+        }
+        if (FileInspector.KIND_SHEET.equals(asset.kind())) {
+            Map<String, String> d = new HashMap<>();
+            d.put("path", asset.hints().getOrDefault("parent", asset.path()));
+            d.put("sheet", asset.hints().getOrDefault("sheet", asset.name()));
+            d.put("size", asset.hints().getOrDefault("size", "-1"));
+            d.put("asset-urn", read.assetUrn());
+            d.put("row-limit", Long.toString(read.rowLimit()));
+            d.put("batch-size", Integer.toString(read.batchSize()));
+            return new StepSpec("read", new SheetInput(() -> open(source),
+                asset.fields().stream().map(FileColumn::of).toList()), d);
+        }
         Map<String, String> s = new HashMap<>();
         s.put("path", asset.path());
         String format = asset.hints().get("format");
@@ -79,6 +110,11 @@ public abstract class FileSourceConnector implements Connector {
         s.put("batch-size", Integer.toString(read.batchSize()));
         List<FileColumn> columns = asset.fields().stream().map(FileColumn::of).toList();
         return new StepSpec("read", new FileInput(() -> open(source), columns), s);
+    }
+
+    /** Whether a source keeps the text of its documents (setting {@code keep_text}, default true). */
+    public static boolean keepText(SourceConfig source) {
+        return !"false".equalsIgnoreCase(source.setting("keep_text"));
     }
 
     /** The encoding a source's setting names, or null to detect it. */

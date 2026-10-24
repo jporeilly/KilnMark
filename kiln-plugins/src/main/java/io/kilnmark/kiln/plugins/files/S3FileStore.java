@@ -8,7 +8,9 @@ import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 import dev.hardwood.InputFile;
@@ -25,10 +27,13 @@ import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectTaggingRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.Owner;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.S3Object;
+import software.amazon.awssdk.services.s3.model.Tag;
 
 /**
  * Objects in an S3 bucket, on AWS or any S3-compatible store (VersityGW, MinIO, Ceph, ...).
@@ -97,7 +102,7 @@ public final class S3FileStore implements FileStore {
     @Override
     public List<Entry> list() throws IOException {
         List<Entry> out = new ArrayList<>();
-        ListObjectsV2Request.Builder req = ListObjectsV2Request.builder().bucket(settings.bucket());
+        ListObjectsV2Request.Builder req = ListObjectsV2Request.builder().bucket(settings.bucket()).fetchOwner(true);
         if (settings.prefix() != null) {
             req.prefix(settings.prefix());
         }
@@ -106,13 +111,43 @@ public final class S3FileStore implements FileStore {
                 if (o.key().endsWith("/")) {
                     continue; // a folder marker
                 }
-                out.add(new Entry(o.key(), o.size() == null ? 0 : o.size(), o.lastModified()));
+                out.add(new Entry(o.key(), o.size() == null ? 0 : o.size(), o.lastModified(), owner(o.owner())));
             }
         } catch (SdkException e) {
             throw explain(e, "list the bucket");
         }
         out.sort(java.util.Comparator.comparing(Entry::path));
         return out;
+    }
+
+    private static String owner(Owner o) {
+        if (o == null) {
+            return null;
+        }
+        String name = o.displayName();
+        if (name != null && !name.isBlank()) {
+            return name;
+        }
+        return o.id() == null || o.id().isBlank() ? null : o.id();
+    }
+
+    @Override
+    public Map<String, String> tags(String key) {
+        if (cancelled) {
+            return Map.of();
+        }
+        try {
+            Map<String, String> out = new TreeMap<>();
+            for (Tag t : s3.getObjectTagging(GetObjectTaggingRequest.builder().bucket(settings.bucket()).key(key)
+                .build()).tagSet()) {
+                if (t.key() != null) {
+                    out.put(t.key(), t.value() == null ? "" : t.value());
+                }
+            }
+            return out;
+        } catch (SdkException | UnsupportedOperationException e) {
+            return Map.of(); // no permission to read tags, or a store without tagging: not an error
+        }
     }
 
     @Override

@@ -11,6 +11,7 @@ import java.util.List;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorContext;
 import io.kilnmark.kiln.connect.SourceConfig;
+import io.kilnmark.kiln.plugins.documents.DocumentRuntime;
 
 /**
  * Files in a folder the server can read: a local disk or a mounted share. Settings {@code path}
@@ -45,6 +46,7 @@ public final class FilesConnector extends FileSourceConnector {
     @Override
     public Connector withContext(ConnectorContext context) {
         ParquetRuntime.configure(context);
+        DocumentRuntime.configure(context);
         List<Path> out = new ArrayList<>();
         for (String r : context.list(ROOTS)) {
             Path p;
@@ -88,7 +90,8 @@ public final class FilesConnector extends FileSourceConnector {
                 "Which files to record, as a glob: *.csv matches file names, exports/** matches paths. "
                     + "Leave empty for every file", false),
             new Setting("recursive", "Include sub-folders", false, "true (the default) or false", false),
-            ENCODING);
+            ENCODING,
+            KEEP_TEXT);
     }
 
     @Override
@@ -128,6 +131,7 @@ public final class FilesConnector extends FileSourceConnector {
         }
         checkBoolean(source, "recursive", problems);
         checkEncoding(source, problems);
+        checkBoolean(source, "keep_text", problems);
         return problems;
     }
 

@@ -111,7 +111,13 @@ class S3IngestTest {
         assertEquals(List.of("big/big.csv", "exports/customers_export_2025.csv", "finance/invoices_2024_2025.parquet",
             "gen/exports/customers.csv", "gen/finance/invoices.parquet", "gen/letters/complaint.txt",
             "gen/raw/invoices.json", "gen/raw/transactions.ndjson", "letters/2025-03-complaint-ref-4471.txt",
-            "raw/transactions/transactions_2025-q1.ndjson"), assets.keySet().stream().sorted().toList());
+            "raw/transactions/transactions_2025-q1.ndjson"), assets.keySet().stream()
+            .filter(k -> !k.startsWith("documents/")).sorted().toList());
+        assertEquals(List.of("documents/2025-04-delivery-schedule.eml", "documents/depot-budget-2025.xlsx",
+            "documents/depot-budget-2025.xlsx#Expenses", "documents/depot-budget-2025.xlsx#Headcount",
+            "documents/depot-budget-2025.xlsx#Notes", "documents/onboarding-guide.docx",
+            "documents/remote-working-policy.pdf", "documents/team-handbook.md"), assets.keySet().stream()
+            .filter(k -> k.startsWith("documents/")).sorted().toList());
 
         AssetInfo csv = assets.get("exports/customers_export_2025.csv");
         assertEquals("lab-raw/exports", csv.container());
@@ -125,7 +131,7 @@ class S3IngestTest {
 
         AssetInfo letter = assets.get("letters/2025-03-complaint-ref-4471.txt");
         assertEquals("document", letter.kind());
-        assertFalse(letter.readable());
+        assertTrue(letter.readable(), "its text is read");
         assertEquals("498", letter.hints().get("size"));
     }
 
@@ -240,5 +246,59 @@ class S3IngestTest {
         TestFiles.Read r = TestFiles.read(S3, source, gone, 0);
         assertFalse(r.result().succeeded());
         assertTrue(r.result().error().contains("scan the source again"), r.result().error());
+    }
+
+    @Test
+    void documentsAreCopiedReadAndTagged() throws Exception {
+        AssetInfo pdf = assets.get("documents/remote-working-policy.pdf");
+        assertTrue(pdf.readable());
+        boolean tagged = tag("documents/remote-working-policy.pdf", Map.of("department", "people", "review", "2026"));
+        DocumentReads.Read r = DocumentReads.read(S3, source, pdf);
+        assertTrue(r.result().succeeded(), r.result().error());
+        Map<String, String> d = r.document();
+        assertEquals("true", d.get(io.kilnmark.kiln.plugins.documents.DocumentEvents.READABLE), d.toString());
+        assertEquals("Remote working policy", d.get(io.kilnmark.kiln.plugins.documents.Extraction.TITLE));
+        assertEquals("2", d.get(io.kilnmark.kiln.plugins.documents.Extraction.PAGES));
+        assertFalse(r.chunks().isEmpty());
+        if (pdf.hints().containsKey("owner")) {
+            assertEquals(pdf.hints().get("owner"), d.get(io.kilnmark.kiln.plugins.documents.DocumentEvents.OWNER));
+        }
+        String tags = d.get(io.kilnmark.kiln.plugins.documents.DocumentEvents.TAGS);
+        if (tagged) {
+            assertEquals("{\"department\":\"people\",\"review\":\"2026\"}", tags);
+        }
+        // the copy made to read it is gone
+        try (var left = Files.list(io.kilnmark.kiln.plugins.documents.DocumentRuntime.tempDir())) {
+            assertEquals(0, left.count());
+        }
+    }
+
+    @Test
+    void workbookSheetsInABucketAreTables() throws Exception {
+        AssetInfo expenses = assets.get("documents/depot-budget-2025.xlsx#Expenses");
+        assertEquals("lab-raw/documents/depot-budget-2025.xlsx", expenses.container());
+        TestFiles.Read r = TestFiles.read(S3, source, expenses, 0);
+        assertTrue(r.result().succeeded(), r.result().error());
+        assertEquals(Map.of("rows", "18", "complete", "true", "unparsed", "0"), r.rowCount());
+        DocumentReads.Read mail = DocumentReads.read(S3, source, assets.get("documents/2025-04-delivery-schedule.eml"));
+        assertEquals(List.of("may-schedule.md", "remote-working-policy.pdf"), mail.documents().stream().skip(1)
+            .map(e -> e.attributes().get("name")).toList());
+    }
+
+    /** Tags an object; false when the gateway does not keep tags (it needs extended attributes). */
+    private static boolean tag(String key, Map<String, String> tags) {
+        try (var s3 = software.amazon.awssdk.services.s3.S3Client.builder()
+            .endpointOverride(java.net.URI.create(source.setting("endpoint")))
+            .region(software.amazon.awssdk.regions.Region.US_EAST_1).forcePathStyle(true)
+            .httpClient(software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient.create())
+            .credentialsProvider(software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
+                software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(KEY_ID, SECRET))).build()) {
+            s3.putObjectTagging(b -> b.bucket(BUCKET).key(key).tagging(t -> t.tagSet(tags.entrySet().stream()
+                .map(e -> software.amazon.awssdk.services.s3.model.Tag.builder().key(e.getKey()).value(e.getValue())
+                    .build()).toList())));
+            return true;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 }

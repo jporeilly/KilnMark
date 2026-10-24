@@ -26,6 +26,35 @@ dependencies {
     }
     "implementation"(libs.awssdk.url.connection.client)
 
+    // Documents (ADR 0017): Apache Tika's core and only the parser modules for the formats read.
+    // What they bring that those formats do not need is left out: Bouncy Castle (encrypted files
+    // and signed mail), Access and PST readers, PDF command-line tools, the full OOXML schemas (the
+    // lite set POI ships is enough), and juniversalchardet (MPL; our own encoding detection is used).
+    "implementation"(libs.tika.core)
+    "implementation"(libs.tika.parser.pdf) {
+        exclude(group = "org.bouncycastle")
+        exclude(group = "org.apache.pdfbox", module = "pdfbox-tools")
+        exclude(group = "org.apache.pdfbox", module = "jempbox")
+        exclude(group = "org.glassfish.jaxb")
+    }
+    "implementation"(libs.tika.parser.microsoft) {
+        exclude(group = "org.bouncycastle")
+        exclude(group = "com.healthmarketscience.jackcess")
+        exclude(group = "com.pff", module = "java-libpst")
+        exclude(group = "org.apache.poi", module = "poi-ooxml-full")
+        exclude(group = "com.github.albfernandez", module = "juniversalchardet")
+    }
+    "implementation"(libs.tika.parser.mail) {
+        exclude(group = "com.github.albfernandez", module = "juniversalchardet")
+    }
+    "implementation"(libs.tika.parser.miscoffice) {
+        exclude(group = "org.glassfish.jaxb")
+        exclude(group = "com.github.albfernandez", module = "juniversalchardet")
+    }
+    // Excel sheets as tables, read with POI's streaming (event) API; the lite OOXML schemas suffice.
+    "implementation"(libs.poi.ooxml)
+    "implementation"(libs.poi.ooxml.lite)
+
     "testImplementation"(libs.testcontainers.postgresql)
     "testImplementation"(libs.testcontainers.mssqlserver)
     "testImplementation"(libs.testcontainers.junit)

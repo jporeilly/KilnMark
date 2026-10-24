@@ -3,8 +3,10 @@ package io.kilnmark.kiln.plugins.files;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 import dev.hardwood.InputFile;
 
@@ -15,8 +17,15 @@ import dev.hardwood.InputFile;
  */
 public interface FileStore extends Closeable {
 
-    /** One file: its path within the store, its size in bytes and when it last changed. */
-    record Entry(String path, long size, Instant modified) {
+    /**
+     * One file: its path within the store, its size in bytes, when it last changed and, where the
+     * store reports it, its owner (S3's object owner); null when not known.
+     */
+    record Entry(String path, long size, Instant modified, String owner) {
+
+        public Entry(String path, long size, Instant modified) {
+            this(path, size, modified, null);
+        }
     }
 
     /** Opens a store; called when a catalogue or read starts, on the thread that does it. */
@@ -36,6 +45,22 @@ public interface FileStore extends Closeable {
 
     /** A file for the Parquet reader, which reads the ranges it needs. */
     InputFile parquet(String path, long size) throws IOException;
+
+    /**
+     * The file on this server's disk, when the store is a folder; null for remote stores, whose
+     * files are copied before a document is read. Checked as {@link #open} checks paths.
+     */
+    default Path localPath(String path) throws IOException {
+        return null;
+    }
+
+    /**
+     * The file's tags (S3 object tags), or empty. Never fails: tags the credentials may not read are
+     * simply not there.
+     */
+    default Map<String, String> tags(String path) {
+        return Map.of();
+    }
 
     /** Where a path is, for people: an absolute path or an {@code s3://} URL. */
     String describe(String path);

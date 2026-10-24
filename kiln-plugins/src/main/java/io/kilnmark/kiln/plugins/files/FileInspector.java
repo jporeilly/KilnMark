@@ -17,6 +17,9 @@ import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
 
 import io.kilnmark.kiln.connect.AssetInfo;
+import io.kilnmark.kiln.plugins.documents.DocumentLimits;
+import io.kilnmark.kiln.plugins.documents.DocumentRuntime;
+import io.kilnmark.kiln.plugins.documents.DocumentTypes;
 
 /**
  * Catalogues one file: its format, and for data files the fields with their kinds, inferred from
@@ -58,8 +61,10 @@ public final class FileInspector {
     public static AssetInfo inspect(FileStore store, FileStore.Entry e, String container, Charset encoding) {
         FileFormat format = FileFormat.of(name(e.path()));
         if (!format.readable()) {
+            // documents whose text Kilnmark reads are readable: DocumentInput reads them (and says
+            // why, when one turns out to be too large, damaged or protected); others are only recorded
             return new AssetInfo(e.path(), KIND_DOCUMENT, container, name(e.path()), null, List.of(), List.of(), false,
-                false, hints(e, format));
+                DocumentTypes.readable(e.path()), hints(e, format));
         }
         try {
             Layout layout = layout(store, e.path(), e.size(), format, encoding);
@@ -104,7 +109,67 @@ public final class FileInspector {
         if (e.modified() != null) {
             hints.put("modified", e.modified().toString());
         }
+        if (e.owner() != null) {
+            hints.put("owner", e.owner());
+        }
         return hints;
+    }
+
+    /** Asset kind of an Excel sheet. */
+    public static final String KIND_SHEET = "sheet";
+
+    /**
+     * The sheets of an Excel workbook, as assets inside it: tables where a sheet has a header row,
+     * else recorded as not read, with the reason. A workbook that cannot be opened (too large,
+     * damaged, protected) has no sheets here; reading it as a document says why.
+     *
+     * @param container where the workbook itself sits
+     */
+    static List<AssetInfo> sheets(FileStore store, FileStore.Entry e, String container) {
+        DocumentLimits limits = DocumentRuntime.limits();
+        long max = DocumentTypes.legacy(e.path()) ? Math.min(limits.maxBytes(), limits.maxLegacyBytes())
+            : limits.maxBytes();
+        if (e.size() > max) {
+            return List.of();
+        }
+        List<Sheets.Layout> layouts;
+        try (LocalCopy copy = LocalCopy.of(store, e.path(), max)) {
+            layouts = DocumentRuntime.run(e.path(), cancelled -> {
+                try (Sheets.Workbook wb = Sheets.open(copy.path(), e.path())) {
+                    return Sheets.inspect(wb, SAMPLE_ROWS);
+                }
+            });
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            return List.of();
+        } catch (Exception ex) {
+            return List.of();
+        }
+        String where = (container == null || container.isEmpty() ? "" : container + "/") + name(e.path());
+        List<AssetInfo> out = new ArrayList<>();
+        for (Sheets.Layout l : layouts) {
+            Map<String, String> hints = hints(e, format(e));
+            hints.put("format", KIND_SHEET);
+            hints.put("sheet", l.name());
+            hints.put("parent", e.path());
+            String path = e.path() + "#" + l.name();
+            if (l.problem() != null) {
+                hints.put("error", l.problem());
+                out.add(new AssetInfo(path, KIND_SHEET, where, l.name(), "Not read as a table: " + l.problem(),
+                    List.of(), List.of(), false, false, hints));
+                continue;
+            }
+            List<AssetInfo.FieldInfo> fields = new ArrayList<>();
+            for (int i = 0; i < l.columns().size(); i++) {
+                fields.add(l.columns().get(i).fieldInfo(i + 1));
+            }
+            out.add(new AssetInfo(path, KIND_SHEET, where, l.name(), null, fields, List.of(), false, true, hints));
+        }
+        return out;
+    }
+
+    private static FileFormat format(FileStore.Entry e) {
+        return FileFormat.of(name(e.path()));
     }
 
     /** Reads the columns and layout hints of a data file. */

@@ -1,0 +1,77 @@
+From: Planning Desk <planning@example.com>
+To: North Depot Stores <stores@example.org>
+Cc: Finance Team <finance@example.net>
+Subject: Delivery schedule for May
+Date: Tue, 29 Apr 2025 08:45:00 +0100
+Message-ID: <may-schedule-2025@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="lab-boundary-may-2025"
+
+--lab-boundary-may-2025
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hello stores team,
+
+The delivery schedule for May is attached. The first two weeks are confirmed;=
+ the rest may still move.
+
+The remote working policy is attached too, as asked.
+
+Planning Desk
+
+--lab-boundary-may-2025
+Content-Type: text/markdown; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Content-Disposition: attachment; filename="may-schedule.md"
+MIME-Version: 1.0
+
+# May delivery schedule
+
+| Week | Depot | Loads |
+| --- | --- | --- |
+| 1 | North | 42 |
+| 2 | North | 38 |
+| 3 | South | 35 |
+| 4 | South | 40 |
+
+--lab-boundary-may-2025
+Content-Type: application/pdf
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="remote-working-policy.pdf"
+MIME-Version: 1.0
+
+JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jh
+c2VGb250IC9IZWx2ZXRpY2EgL0VuY29kaW5nIC9XaW5BbnNpRW5jb2RpbmcgPj4KZW5kb2JqCjIg
+MCBvYmoKPDwgL0xlbmd0aCA0NTEgPj4Kc3RyZWFtCkJUIC9GMSAxNiBUZiA3MiA3MjAgVGQgKFJl
+bW90ZSB3b3JraW5nIHBvbGljeSkgVGogRVQKQlQgL0YxIDExIFRmIDcyIDY4NiBUZCAoU3RhZmYg
+YXQgSGFyYm91ciBMb2dpc3RpY3MgbWF5IHdvcmsgZnJvbSBob21lIGZvciB1cCB0byB0aHJlZSBk
+YXlzIGEgd2Vlay4gRWFjaCBtYW5hZ2VyKSBUaiBFVApCVCAvRjEgMTEgVGYgNzIgNjcxIFRkIChh
+Z3JlZXMgdGhlIHBhdHRlcm4gd2l0aCB0aGVpciB0ZWFtLCBhbmQgdGhlIHdhcmVob3VzZSByb3Rh
+IGFsd2F5cyBjb21lcyBmaXJzdC4pIFRqIEVUCkJUIC9GMSAxMSBUZiA3MiA2NDIgVGQgKEhvbWUg
+d29ya2luZyBpcyBhIHByaXZpbGVnZSwgbm90IGEgcmlnaHQuIEl0IGNhbiBiZSBwYXVzZWQgZHVy
+aW5nIHRoZSBidXN5IHNlYXNvbiBmcm9tKSBUaiBFVApCVCAvRjEgMTEgVGYgNzIgNjI3IFRkIChO
+b3ZlbWJlciB0byBKYW51YXJ5LikgVGogRVQKZW5kc3RyZWFtCmVuZG9iagozIDAgb2JqCjw8IC9U
+eXBlIC9QYWdlIC9QYXJlbnQgNiAwIFIgL01lZGlhQm94IFswIDAgNjEyIDc5Ml0gL0NvbnRlbnRz
+IDIgMCBSIC9SZXNvdXJjZXMgPDwgL0ZvbnQgPDwgL0YxIDEgMCBSID4+ID4+ID4+CmVuZG9iago0
+IDAgb2JqCjw8IC9MZW5ndGggMzgzID4+CnN0cmVhbQpCVCAvRjEgMTYgVGYgNzIgNzIwIFRkIChF
+cXVpcG1lbnQgYW5kIGV4cGVuc2VzKSBUaiBFVApCVCAvRjEgMTEgVGYgNzIgNjg2IFRkIChUaGUg
+Y29tcGFueSBsZW5kcyBldmVyeSBob21lIHdvcmtlciBhIGxhcHRvcCBhbmQgYSBoZWFkc2V0LiBC
+cm9hZGJhbmQgY29zdHMgYXJlIG5vdCkgVGogRVQKQlQgL0YxIDExIFRmIDcyIDY3MSBUZCAocmVw
+YWlkLikgVGogRVQKQlQgL0YxIDExIFRmIDcyIDY0MiBUZCAoS2VlcCBjb21wYW55IGVxdWlwbWVu
+dCBhd2F5IGZyb20gY2hpbGRyZW4gYW5kIHBldHMsIGFuZCByZXBvcnQgYW55IGRhbWFnZSB0byB0
+aGUgSVQgZGVzaykgVGogRVQKQlQgL0YxIDExIFRmIDcyIDYyNyBUZCAod2l0aGluIHR3byB3b3Jr
+aW5nIGRheXMuKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL1BhZ2Ug
+L1BhcmVudCA2IDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvQ29udGVudHMgNCAwIFIgL1Jl
+c291cmNlcyA8PCAvRm9udCA8PCAvRjEgMSAwIFIgPj4gPj4gPj4KZW5kb2JqCjYgMCBvYmoKPDwg
+L1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUiA1IDAgUl0gL0NvdW50IDIgPj4KZW5kb2JqCjcgMCBv
+YmoKPDwgL1R5cGUgL0NhdGFsb2cgL1BhZ2VzIDYgMCBSID4+CmVuZG9iago4IDAgb2JqCjw8IC9U
+aXRsZSAoUmVtb3RlIHdvcmtpbmcgcG9saWN5KSAvQXV0aG9yIChIYXJib3VyIExvZ2lzdGljcyBQ
+b2xpY3kgVGVhbSkgL0NyZWF0aW9uRGF0ZSAoRDoyMDI1MDMwMzA5MzAwMFopIC9Qcm9kdWNlciAo
+S2lsbm1hcmsgbGFiKSA+PgplbmRvYmoKeHJlZgowIDkKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAw
+MDAwMDE1IDAwMDAwIG4gCjAwMDAwMDAxMTIgMDAwMDAgbiAKMDAwMDAwMDYxNCAwMDAwMCBuIAow
+MDAwMDAwNzQwIDAwMDAwIG4gCjAwMDAwMDExNzQgMDAwMDAgbiAKMDAwMDAwMTMwMCAwMDAwMCBu
+IAowMDAwMDAxMzYzIDAwMDAwIG4gCjAwMDAwMDE0MTIgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6
+ZSA5IC9Sb290IDcgMCBSIC9JbmZvIDggMCBSID4+CnN0YXJ0eHJlZgoxNTYzCiUlRU9GCg==
+
+--lab-boundary-may-2025--
