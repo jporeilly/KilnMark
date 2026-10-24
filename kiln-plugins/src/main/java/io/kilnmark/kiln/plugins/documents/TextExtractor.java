@@ -86,7 +86,7 @@ public final class TextExtractor {
         Embedded embedded = new Embedded(parser, limits, budget, cancelled, main, DocumentTypes.mail(type));
         ParseContext context = context(parser, embedded);
         // whatever its name or first bytes say: anything a ZIP reader can open is checked
-        OfficeParts.check(file, limits.maxPartBytes(), OfficeParts.archiveType(type));
+        OfficeParts.check(file, limits.maxPartBytes(), type);
         Metadata metadata = new Metadata();
         metadata.set(TikaCoreProperties.RESOURCE_NAME_KEY, name);
         metadata.set(Metadata.CONTENT_TYPE, type);
@@ -402,8 +402,7 @@ public final class TextExtractor {
                 String refused = null;
                 if (readable) {
                     try {
-                        OfficeParts.check(in.getPath(), limits.maxPartBytes(),
-                            OfficeParts.archiveType(type.toString()));
+                        OfficeParts.check(in.getPath(), limits.maxPartBytes(), type.toString());
                     } catch (DocumentException e) {
                         refused = e.getMessage();
                     }

@@ -114,14 +114,19 @@ Documents are untrusted input. Every limit below is a server setting (`kilnmark.
 - **Office parts.** Every document, and every file attached to or embedded in one, is opened with
   Commons Compress (the ZIP reader POI uses, which finds the archive from its end) before a parser
   sees it. Whether it is an archive is decided only by whether it opens, never by its name, first
-  bytes or declared type, so a preamble before the archive does not hide it. Every entry of an
-  archive is expanded and its real size counted; a file where one expands past 64 MB
-  (`max-part-mb`) is not read. The only entries exempt are those whose content type in
-  `[Content_Types].xml` is one parsers stream: worksheets, slides, a Word document's main part and
-  images. Paths give no exemption. When the content types are missing or cannot be read, nothing is
-  exempt. What the archive declares is not trusted: parsers size parts by it and keep some whole in
-  memory. Formats that are always archives (Office Open XML, OpenDocument, EPUB) are refused when
-  they do not open, as is any archive of more than 10,000 entries.
+  bytes or declared type, so a preamble before the archive does not hide it. An archive is refused
+  when two entries share a name (ignoring case), when an entry's local header does not match the
+  central directory, when entries overlap, or when it has more than 10,000 entries. Every entry is
+  expanded and its real size counted; a file where one expands past 64 MB (`max-part-mb`) is not
+  read. Parsers find parts by relationships and content types, not by paths, so in Office Open XML
+  an entry is exempt only when both agree that parsers stream it: a worksheet or slide that the
+  main part's relationships name as one, a Word document's main part named by the package's
+  relationships, or an image named only as an image, each with the matching content type, and no
+  relationship of another kind to it. Content types and relationships are read with a hardened
+  XML reader and size caps; when either cannot be read exactly (encoded or duplicate names,
+  unresolvable targets), nothing is exempt. OpenDocument and EPUB have every entry counted. Formats
+  that are always archives (Office Open XML, OpenDocument, EPUB) are refused when they do not
+  open.
 - **Text.** At most 1,000,000 characters (`max-characters`) per document, attachments included;
   the collector stops the parser when the budget is spent.
 - **Time.** Each document is read on one of 2 (`threads`) threads of its own and abandoned after
