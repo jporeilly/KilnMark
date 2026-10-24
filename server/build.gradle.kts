@@ -77,8 +77,3 @@ tasks.named<ProcessResources>("processResources") {
         into("META-INF/resources")
     }
 }
-
-// Start each package from an empty folder, so a release never carries a previous version's jar.
-tasks.named("quarkusBuild") {
-    doFirst { delete(layout.buildDirectory.dir("quarkus-app")) }
-}

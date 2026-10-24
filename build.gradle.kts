@@ -45,7 +45,11 @@ tasks.register<Sync>("release") {
     description = "Assembles a release folder in dist/release."
     dependsOn(":server:quarkusBuild", ":server:checkLicense")
     into(distDir.dir("release/kilnmark-${project.version}"))
-    from(distDir.dir("build/server/quarkus-app")) { into("server") }
+    from(distDir.dir("build/server/quarkus-app")) {
+        into("server")
+        // Only this version's application jar: an earlier build's jar can linger in the build folder.
+        exclude { it.name.startsWith("server-") && it.name.endsWith(".jar") && it.name != "server-${project.version}.jar" }
+    }
     from("compose.yaml")
     from("containers") { into("containers") }
     from("LICENSE", "NOTICE")
