@@ -543,4 +543,313 @@ class HostileDocumentsTest {
         assertNotNull(problem);
         assertTrue(problem.contains("more than 2 MB"), problem);
     }
+
+    /** A workbook whose 5 MB shared strings say they are 1 KB, at {@code xl/<sstName>}. */
+    static Path lyingBook(String name, String sstName) throws IOException {
+        Path p = xlsx(name, null, sstRef(), manyStrings(5), sstName, 0);
+        lie(p, "xl/" + sstName, 1000);
+        return p;
+    }
+
+    static void limitTo2Mb() throws IOException {
+        TestFiles.files(dir); // before the limit: setting up a connector sets the limits
+        DocumentRuntime.configure(new ConnectorContext(Map.of(DocumentLimits.MAX_PART_MB, "2")));
+    }
+
+    @Test
+    void aPartIsNotExemptForItsPathUnderWorksheetsOrMedia() throws Exception {
+        limitTo2Mb();
+        for (String sstName : List.of("worksheets/ss.xml", "media/ss.xml")) {
+            Path p = lyingBook("in-" + sstName.replace('/', '-') + ".xlsx", sstName);
+            String got = read(p);
+            assertTrue(got.startsWith("refused: its part xl/" + sstName + " expands to more than 2 MB"), got);
+            IOException e = assertThrows(IOException.class, () -> Sheets.open(p, "book.xlsx"));
+            assertTrue(e.getMessage().contains("more than 2 MB"), e.getMessage());
+        }
+    }
+
+    @Test
+    void withoutReadableContentTypesNothingIsExempt() throws Exception {
+        limitTo2Mb();
+        Path book = xlsx("no-types-book.xlsx", null, out -> {
+            out.write(("<?xml version=\"1.0\"?><worksheet " + NS + "><sheetData>").getBytes());
+            java.util.Random r = new java.util.Random(3);
+            for (int i = 0; i < 80_000; i++) { // about 3 MB, varied so it does not look like a zip bomb
+                out.write(("<row><c><v>" + r.nextInt(1_000_000_000) + "</v></c></row>").getBytes());
+            }
+            out.write("</sheetData></worksheet>".getBytes());
+        }, null);
+        Path p = dir.resolve("no-types.xlsx");
+        try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(p));
+             java.util.zip.ZipFile src = new java.util.zip.ZipFile(book.toFile())) {
+            for (ZipEntry e : java.util.Collections.list(src.entries())) {
+                z.putNextEntry(new ZipEntry(e.getName()));
+                if (e.getName().equals("[Content_Types].xml")) {
+                    z.write("<Types><Override PartName=".getBytes()); // not XML
+                } else {
+                    src.getInputStream(e).transferTo(z);
+                }
+                z.closeEntry();
+            }
+        }
+        String got = read(p);
+        assertTrue(got.startsWith("refused: its part xl/worksheets/sheet1.xml expands to more than 2 MB"), got);
+        // the same sheet is streamed, not counted, when the content types say what it is
+        String ok = read(book);
+        assertFalse(ok.startsWith("refused"), ok);
+    }
+
+    /**
+     * The archive {@code zip} with {@code preamble} before it, as a self-extractor is made; with
+     * {@code adjust} the central directory's offsets are moved to match, as zip tools do.
+     */
+    static Path prefixed(Path zip, String name, int preamble, boolean adjust) throws IOException {
+        byte[] z = Files.readAllBytes(zip);
+        if (adjust) {
+            ByteBuffer b = ByteBuffer.wrap(z).order(ByteOrder.LITTLE_ENDIAN);
+            int eocd = z.length - 22;
+            while (b.getInt(eocd) != 0x06054b50) {
+                eocd--;
+            }
+            int at = b.getInt(eocd + 16);
+            b.putInt(eocd + 16, at + preamble);
+            for (int i = 0; i < Short.toUnsignedInt(b.getShort(eocd + 10)); i++) {
+                assertEquals(0x02014b50, b.getInt(at));
+                b.putInt(at + 42, b.getInt(at + 42) + preamble);
+                at += 46 + Short.toUnsignedInt(b.getShort(at + 28)) + Short.toUnsignedInt(b.getShort(at + 30))
+                    + Short.toUnsignedInt(b.getShort(at + 32));
+            }
+        }
+        byte[] junk = new byte[preamble];
+        junk[0] = 'M';
+        junk[1] = 'Z';
+        for (int i = 2; i < preamble; i++) {
+            junk[i] = (byte) (i * 31);
+        }
+        Path p = dir.resolve(name);
+        try (OutputStream out = Files.newOutputStream(p)) {
+            out.write(junk);
+            out.write(z);
+        }
+        return p;
+    }
+
+    @Test
+    void bytesBeforeTheArchiveDoNotHideIt() throws Exception {
+        limitTo2Mb();
+        Path book = lyingBook("pre-book.xlsx", "sharedStrings.xml");
+        // offsets moved to match: every ZIP reader opens it, so the check must find the part
+        Path adjusted = prefixed(book, "prefixed2.xlsx", 1024, true);
+        String got = read(adjusted);
+        assertTrue(got.startsWith("refused: its part xl/sharedStrings.xml expands to more than 2 MB"), got);
+        assertThrows(IOException.class, () -> Sheets.open(adjusted, "prefixed2.xlsx"));
+        // offsets left as they were: found or refused, never read unchecked
+        Path left = prefixed(book, "prefixed.xlsx", 64, false);
+        got = read(left);
+        assertTrue(got.startsWith("refused:"), got);
+        assertThrows(IOException.class, () -> Sheets.open(left, "prefixed.xlsx"));
+        // and a name that says nothing of a workbook
+        Files.copy(adjusted, dir.resolve("prefixed2.docx"));
+        got = read(dir.resolve("prefixed2.docx"));
+        assertTrue(got.startsWith("refused: its part xl/sharedStrings.xml expands"), got);
+    }
+
+    @Test
+    void anAttachmentWithBytesBeforeTheArchiveIsChecked() throws Exception {
+        limitTo2Mb();
+        Path book = prefixed(lyingBook("pre-attached.xlsx", "sharedStrings.xml"), "pre-attached2.xlsx", 1024, true);
+        String eml = "From: a@example.com\nTo: b@example.com\nSubject: nested\nMIME-Version: 1.0\n"
+            + "Content-Type: multipart/mixed; boundary=\"B\"\n\n--B\nContent-Type: text/plain\n\nbody\n--B\n"
+            + "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet; name=\"data.bin\"\n"
+            + "Content-Disposition: attachment; filename=\"data.bin\"\nContent-Transfer-Encoding: base64\n\n"
+            + Base64.getMimeEncoder().encodeToString(Files.readAllBytes(book)) + "\n--B--\n";
+        Path mail = Files.writeString(dir.resolve("nested2.eml"), eml);
+        Extraction x = TextExtractor.extract(mail, "nested2.eml", -1, DocumentRuntime.limits(), new AtomicBoolean());
+        assertEquals(1, x.attachments().size());
+        var a = x.attachments().get(0);
+        assertNotNull(a.problem(), "read unchecked");
+        assertTrue(a.problem().startsWith("its part xl/sharedStrings.xml expands to more than 2 MB"), a.problem());
+        assertFalse(a.text() != null && a.text().matches("(?s).*w\\d{4,}.*"));
+    }
+
+    /** A copy of {@code src} with entries edited, added at the end, or stored uncompressed. */
+    static Path copy(Path src, String name, java.util.function.BiFunction<String, byte[], byte[]> edit,
+                     Map<String, byte[]> extra, java.util.Set<String> stored) throws IOException {
+        Path p = dir.resolve(name);
+        try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(p));
+             java.util.zip.ZipFile in = new java.util.zip.ZipFile(src.toFile())) {
+            Map<String, byte[]> all = new LinkedHashMap<>();
+            for (ZipEntry e : java.util.Collections.list(in.entries())) {
+                all.put(e.getName(), edit.apply(e.getName(), in.getInputStream(e).readAllBytes()));
+            }
+            all.putAll(extra);
+            for (var e : all.entrySet()) {
+                ZipEntry ze = new ZipEntry(e.getKey());
+                if (stored.contains(e.getKey())) {
+                    java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+                    crc.update(e.getValue());
+                    ze.setMethod(ZipEntry.STORED);
+                    ze.setSize(e.getValue().length);
+                    ze.setCompressedSize(e.getValue().length);
+                    ze.setCrc(crc.getValue());
+                }
+                z.putNextEntry(ze);
+                z.write(e.getValue());
+                z.closeEntry();
+            }
+        }
+        return p;
+    }
+
+    static java.util.function.BiFunction<String, byte[], byte[]> replace(String entry, String from, String to) {
+        return (n, b) -> {
+            if (!n.equals(entry)) {
+                return b;
+            }
+            String s = new String(b, StandardCharsets.UTF_8);
+            assertTrue(s.contains(from), entry + " has " + from);
+            return s.replace(from, to).getBytes(StandardCharsets.UTF_8);
+        };
+    }
+
+    static final String SST_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml";
+    static final String SHEET_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
+
+    static void refusedForSize(Path p, String part) {
+        String got = read(p);
+        assertTrue(got.startsWith("refused: its part " + part + " expands to more than 2 MB"), got);
+        IOException e = assertThrows(IOException.class, () -> Sheets.open(p, "book.xlsx"));
+        assertTrue(e.getMessage().contains("more than 2 MB"), e.getMessage());
+    }
+
+    @Test
+    void aPartIsExemptOnlyWhenItsTypeAndEveryRelationshipToItAgree() throws Exception {
+        limitTo2Mb();
+        Path book = lyingBook("typed-book.xlsx", "worksheets/ss.xml");
+        // declared a worksheet, but found by POI as the shared strings
+        Path typed = copy(book, "typed.xlsx", replace("[Content_Types].xml", SST_TYPE, SHEET_TYPE), Map.of(),
+            java.util.Set.of());
+        refusedForSize(typed, "xl/worksheets/ss.xml");
+        // and named a worksheet by the workbook as well
+        Path both = copy(typed, "typed-both.xlsx", replace("xl/_rels/workbook.xml.rels", "</Relationships>",
+            "<Relationship Id=\"rId9\" Type=\"" + R + "/worksheet\" Target=\"worksheets/ss.xml\"/>"
+                + "</Relationships>"), Map.of(), java.util.Set.of());
+        refusedForSize(both, "xl/worksheets/ss.xml");
+        // declared an image
+        Path image = copy(lyingBook("image-book.xlsx", "media/ss.png"), "typed-image.xlsx",
+            replace("[Content_Types].xml", SST_TYPE, "image/png"), Map.of(), java.util.Set.of());
+        refusedForSize(image, "xl/media/ss.png");
+        // a worksheet's content type and relationship, but from a part that is not the workbook
+        Path elsewhere = copy(typed, "typed-elsewhere.xlsx", replace("xl/_rels/workbook.xml.rels",
+            "Type=\"" + R + "/sharedStrings\"", "Type=\"" + R + "/worksheet\""),
+            Map.of("docProps/_rels/app.xml.rels", ("<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas."
+                + "openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"" + R
+                + "/sharedStrings\" Target=\"../xl/worksheets/ss.xml\"/></Relationships>").getBytes()),
+            java.util.Set.of());
+        String got = read(elsewhere);
+        assertTrue(got.startsWith("refused: its part xl/worksheets/ss.xml expands"), got);
+    }
+
+    @Test
+    void aZip64ArchiveIsChecked() throws Exception {
+        limitTo2Mb();
+        Path book = lyingBook("zip64-book.xlsx", "sharedStrings.xml");
+        Path p = dir.resolve("zip64.xlsx");
+        try (var z = new org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream(p.toFile());
+             java.util.zip.ZipFile in = new java.util.zip.ZipFile(book.toFile())) {
+            z.setUseZip64(org.apache.commons.compress.archivers.zip.Zip64Mode.Always);
+            for (ZipEntry e : java.util.Collections.list(in.entries())) {
+                z.putArchiveEntry(new org.apache.commons.compress.archivers.zip.ZipArchiveEntry(e.getName()));
+                in.getInputStream(e).transferTo(z);
+                z.closeArchiveEntry();
+            }
+        }
+        refusedForSize(p, "xl/sharedStrings.xml");
+    }
+
+    @Test
+    void aStoredPartIsCountedByItsRealBytes() throws Exception {
+        limitTo2Mb();
+        Path book = xlsx("stored-book.xlsx", null, sstRef(), manyStrings(5));
+        Path p = copy(book, "stored.xlsx", (n, b) -> b, Map.of(), java.util.Set.of("xl/sharedStrings.xml"));
+        lie(p, "xl/sharedStrings.xml", 1000);
+        refusedForSize(p, "xl/sharedStrings.xml");
+    }
+
+    /** Renames an entry by its bytes, in its local header, its central directory record, or both. */
+    static void rename(Path zip, String from, String to, boolean local, boolean central) throws IOException {
+        byte[] b = Files.readAllBytes(zip);
+        ByteBuffer buf = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN);
+        byte[] name = from.getBytes(StandardCharsets.UTF_8);
+        byte[] next = to.getBytes(StandardCharsets.UTF_8);
+        assertEquals(name.length, next.length);
+        int patched = 0;
+        for (int i = 0; i + 46 < b.length; i++) {
+            int sig = buf.getInt(i);
+            int at = sig == 0x04034b50 && local ? i + 30 : sig == 0x02014b50 && central ? i + 46 : -1;
+            int length = at < 0 ? 0 : buf.getShort(sig == 0x04034b50 ? i + 26 : i + 28);
+            if (at > 0 && matches(b, at, length, name)) {
+                System.arraycopy(next, 0, b, at, next.length);
+                patched++;
+            }
+        }
+        assertEquals((local ? 1 : 0) + (central ? 1 : 0), patched);
+        Files.write(zip, b);
+    }
+
+    @Test
+    void duplicateNamesAndHeadersThatDisagreeAreRefused() throws Exception {
+        limitTo2Mb();
+        Path book = xlsx("dup-book.xlsx", null, sstRef(), manyStrings(5));
+        Path decoy = copy(book, "dup-decoy.xlsx", (n, b) -> b, Map.of("xl/sharedStringZ.xml",
+            ("<?xml version=\"1.0\"?><sst " + NS + "><si><t>a</t></si></sst>").getBytes()), java.util.Set.of());
+        record Case(String name, String to, boolean local, boolean central, String reason) { }
+        for (Case c : List.of(
+            new Case("dup-both.xlsx", "xl/sharedStrings.xml", true, true, "two parts named xl/sharedStrings.xml"),
+            new Case("dup-central.xlsx", "xl/sharedStrings.xml", false, true, "two parts named"),
+            new Case("dup-local.xlsx", "xl/sharedStrings.xml", true, false, "is named differently in its own header"),
+            new Case("dup-case.xlsx", "xl/SharedStrings.xml", true, true, "two parts named"))) {
+            Path p = Files.copy(decoy, dir.resolve(c.name()));
+            rename(p, "xl/sharedStringZ.xml", c.to(), c.local(), c.central());
+            String got = read(p);
+            assertTrue(got.startsWith("refused: ") && got.contains(c.reason()), c.name() + ": " + got);
+            assertThrows(IOException.class, () -> Sheets.open(p, "book.xlsx"), c.name());
+        }
+    }
+
+    @Test
+    void openDocumentAndEpubHaveEveryPartCounted() throws Exception {
+        limitTo2Mb();
+        StringBuilder body = new StringBuilder("<?xml version=\"1.0\"?><office:document-content xmlns:office=\""
+            + "urn:oasis:names:tc:opendocument:xmlns:office:1.0\" xmlns:text=\"urn:oasis:names:tc:opendocument:"
+            + "xmlns:text:1.0\"><office:body><office:text>");
+        java.util.Random r = new java.util.Random(4);
+        while (body.length() < 3 << 20) {
+            body.append("<text:p>w").append(r.nextInt(1_000_000_000)).append("</text:p>");
+        }
+        body.append("</office:text></office:body></office:document-content>");
+        Map<String, byte[]> e = new LinkedHashMap<>();
+        e.put("mimetype", "application/vnd.oasis.opendocument.text".getBytes());
+        // Office content types and relationships claiming the content is a worksheet change nothing
+        e.put("[Content_Types].xml", (CT + "<Override PartName=\"/content.xml\" ContentType=\"" + SHEET_TYPE
+            + "\"/><Override PartName=\"/book.xml\" ContentType=\"application/vnd.openxmlformats-officedocument."
+            + "spreadsheetml.sheet.main+xml\"/></Types>").getBytes());
+        e.put("_rels/.rels", ("<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/"
+            + "package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"" + R + "/officeDocument\" Target=\""
+            + "book.xml\"/></Relationships>").getBytes());
+        e.put("_rels/book.xml.rels", ("<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats."
+            + "org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"" + R + "/worksheet\" Target=\""
+            + "content.xml\"/></Relationships>").getBytes());
+        e.put("book.xml", "<workbook/>".getBytes());
+        e.put("content.xml", body.toString().getBytes(StandardCharsets.UTF_8));
+        e.put("META-INF/manifest.xml", ("<?xml version=\"1.0\"?><manifest:manifest xmlns:manifest=\"urn:oasis:names:"
+            + "tc:opendocument:xmlns:manifest:1.0\"><manifest:file-entry manifest:full-path=\"/\" manifest:media-type"
+            + "=\"application/vnd.oasis.opendocument.text\"/></manifest:manifest>").getBytes());
+        Path odt = DocumentFixtures.zip(dir.resolve("large.odt"), e);
+        String got = read(odt);
+        assertTrue(got.startsWith("refused: its part content.xml expands to more than 2 MB"), got);
+        Path epub = Files.copy(odt, dir.resolve("large.epub"));
+        got = read(epub);
+        assertTrue(got.startsWith("refused: its part content.xml expands to more than 2 MB"), got);
+    }
 }

@@ -104,6 +104,14 @@ public interface FileStore extends Closeable {
         return getClass().getName() + "\n" + describe(path);
     }
 
+    /**
+     * The start every {@link #copyKey} of this store's files shares, and no other source's files
+     * outside it: the copies dropped when a scan of this source ends.
+     */
+    default String copyScope() {
+        return copyKey("");
+    }
+
     /** Where a path is, for people: an absolute path or an {@code s3://} URL. */
     String describe(String path);
 

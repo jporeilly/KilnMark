@@ -360,7 +360,11 @@ public abstract class FileSourceConnector implements Connector {
     /** A scan of a source has ended: shared copies of its workbooks nobody is using are deleted. */
     @Override
     public void finished(SourceConfig source) {
-        LocalCopy.dropIdle();
+        try (FileStore store = open(source)) {
+            LocalCopy.dropIdle(store.copyScope());
+        } catch (IOException | RuntimeException e) {
+            // the copies go after ten minutes unused anyway
+        }
     }
 
     /** Whether a source keeps the text of its documents (setting {@code keep_text}, default true). */

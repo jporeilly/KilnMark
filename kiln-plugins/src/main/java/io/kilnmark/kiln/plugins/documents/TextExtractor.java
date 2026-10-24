@@ -85,9 +85,8 @@ public final class TextExtractor {
         Parser parser = parser();
         Embedded embedded = new Embedded(parser, limits, budget, cancelled, main, DocumentTypes.mail(type));
         ParseContext context = context(parser, embedded);
-        if (OfficeParts.zip(file)) { // whatever its name says: Office, OpenDocument, EPUB
-            OfficeParts.check(file, limits.maxPartBytes());
-        }
+        // whatever its name or first bytes say: anything a ZIP reader can open is checked
+        OfficeParts.check(file, limits.maxPartBytes(), type);
         Metadata metadata = new Metadata();
         metadata.set(TikaCoreProperties.RESOURCE_NAME_KEY, name);
         metadata.set(Metadata.CONTENT_TYPE, type);
@@ -398,11 +397,12 @@ public final class TextExtractor {
                 if (readable) {
                     metadata.set(Metadata.CONTENT_TYPE, type.toString());
                 }
-                // every archive inside is checked, decided by its bytes, not its name or declared type
+                // everything to be read is checked if a ZIP reader can open it, whatever its name,
+                // first bytes or declared type
                 String refused = null;
-                if (readable && zip(in)) {
+                if (readable) {
                     try {
-                        OfficeParts.check(in.getPath(), limits.maxPartBytes());
+                        OfficeParts.check(in.getPath(), limits.maxPartBytes(), type.toString());
                     } catch (DocumentException e) {
                         refused = e.getMessage();
                     }
@@ -417,14 +417,6 @@ public final class TextExtractor {
             } finally {
                 tmp.close();
             }
-        }
-
-        /** Whether the stream starts like a ZIP archive. */
-        private static boolean zip(TikaInputStream in) throws IOException {
-            in.mark(4);
-            byte[] b = in.readNBytes(4);
-            in.reset();
-            return b.length == 4 && b[0] == 'P' && b[1] == 'K' && b[2] == 3 && b[3] == 4;
         }
 
         private static boolean isAttachment(Metadata metadata) {

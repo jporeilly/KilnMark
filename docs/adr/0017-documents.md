@@ -111,13 +111,22 @@ Documents are untrusted input. Every limit below is a server setting (`kilnmark.
   when the scan ends or after ten minutes unused (at most 2 GB of such copies are kept). POI's temporary files go to the
   same folder; PDFBox's scratch file (past 64 MB of a PDF's working memory) goes to `java.io.tmpdir`,
   which Tika does not let us change.
-- **Office parts.** Before any parser opens a ZIP-based file (or one attached to or embedded in
-  another, recognised by its bytes, not its name or declared type), every part of an Office Open XML
-  archive (one with `[Content_Types].xml`) is expanded and its real size counted, except the parts
-  parsers stream (worksheets, slides, a Word document's body) and media; a file where one expands
-  past 64 MB (`max-part-mb`) is not read. What the archive declares is not trusted: parsers size
-  parts by it and keep some whole in memory. The check reads archives with Commons Compress, the
-  parser POI uses, and refuses any it cannot read, and any archive of more than 10,000 entries.
+- **Office parts.** Every document, and every file attached to or embedded in one, is opened with
+  Commons Compress (the ZIP reader POI uses, which finds the archive from its end) before a parser
+  sees it. Whether it is an archive is decided only by whether it opens, never by its name, first
+  bytes or declared type, so a preamble before the archive does not hide it. An archive is refused
+  when two entries share a name (ignoring case), when an entry's local header does not match the
+  central directory, when entries overlap, or when it has more than 10,000 entries. Every entry is
+  expanded and its real size counted; a file where one expands past 64 MB (`max-part-mb`) is not
+  read. Parsers find parts by relationships and content types, not by paths, so in Office Open XML
+  an entry is exempt only when both agree that parsers stream it: a worksheet or slide that the
+  main part's relationships name as one, a Word document's main part named by the package's
+  relationships, or an image named only as an image, each with the matching content type, and no
+  relationship of another kind to it. Content types and relationships are read with a hardened
+  XML reader and size caps; when either cannot be read exactly (encoded or duplicate names,
+  unresolvable targets), nothing is exempt. OpenDocument and EPUB have every entry counted. Formats
+  that are always archives (Office Open XML, OpenDocument, EPUB) are refused when they do not
+  open.
 - **Text.** At most 1,000,000 characters (`max-characters`) per document, attachments included;
   the collector stops the parser when the budget is spent.
 - **Time.** Each document is read on one of 2 (`threads`) threads of its own and abandoned after
