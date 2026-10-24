@@ -12,6 +12,8 @@ snappy-java = "1.1.10.8"
 lz4-java = "1.11.1"
 jackson = "2.21.7"
 awssdk = "2.55.16"
+# AI runtime (ADR 0016)
+langchain4j = "1.22.0"
 
 [libraries]
 quarkus-bom = { module = "io.quarkus.platform:quarkus-bom", version.ref = "quarkus" }
@@ -27,6 +29,11 @@ snappy-java = { module = "org.xerial.snappy:snappy-java", version.ref = "snappy-
 jackson-core = { module = "com.fasterxml.jackson.core:jackson-core", version.ref = "jackson" }
 awssdk-s3 = { module = "software.amazon.awssdk:s3", version.ref = "awssdk" }
 awssdk-url-connection-client = { module = "software.amazon.awssdk:url-connection-client", version.ref = "awssdk" }
+# AI runtime (ADR 0016): LangChain4j provider modules, and the MCP server through the Quarkus platform
+langchain4j-open-ai = { module = "dev.langchain4j:langchain4j-open-ai", version.ref = "langchain4j" }
+langchain4j-anthropic = { module = "dev.langchain4j:langchain4j-anthropic", version.ref = "langchain4j" }
+langchain4j-google-ai-gemini = { module = "dev.langchain4j:langchain4j-google-ai-gemini", version.ref = "langchain4j" }
+quarkus-mcp-server-bom = { module = "io.quarkus.platform:quarkus-mcp-server-bom", version.ref = "quarkus" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 mssql-jdbc = { module = "com.microsoft.sqlserver:mssql-jdbc", version.ref = "mssql-jdbc" }
 testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }

@@ -34,6 +34,16 @@ dependencies {
     "implementation"(project(":kiln-plugins"))
     "implementation"(project(":graph"))
 
+    // AI runtime (ADR 0016): models are chosen at run time, so plain LangChain4j provider modules,
+    // not the Quarkus extension. OpenAI's module also serves llama-server, vLLM, Ollama and Azure
+    // OpenAI's v1 API. jtokkit (token counting for OpenAI) is not used.
+    "implementation"(libs.langchain4j.open.ai) { exclude(group = "com.knuddels", module = "jtokkit") }
+    "implementation"(libs.langchain4j.anthropic)
+    "implementation"(libs.langchain4j.google.ai.gemini)
+    // Read-only MCP server for outside AI assistants (Streamable HTTP), versions from the Quarkus platform.
+    "implementation"(enforcedPlatform(libs.quarkus.mcp.server.bom))
+    "implementation"("io.quarkiverse.mcp:quarkus-mcp-server-http")
+
     "testImplementation"("io.quarkus:quarkus-junit5")
     "testImplementation"("io.rest-assured:rest-assured")
 }
@@ -42,6 +52,28 @@ dependencies {
 tasks.withType<Test>().configureEach {
     jvmArgs("--add-opens=java.base/java.nio=ALL-UNNAMED", "--enable-native-access=ALL-UNNAMED")
     systemProperty("java.util.logging.manager", "org.jboss.logmanager.LogManager")
+}
+
+// AI evaluation (ADR 0016): scores a running server's search and question answering against
+// tests/ai-eval/golden.json with the models it is configured to use. Never part of `build`:
+//   KILNMARK_TOKEN=km_... ./gradlew :server:aiEval [-Pkilnmark.eval.url=http://localhost:8780] [-Pkilnmark.eval.source=lab]
+tasks.named<Test>("test") {
+    useJUnitPlatform { excludeTags("ai-eval") }
+}
+
+tasks.register<Test>("aiEval") {
+    group = "verification"
+    description = "Scores a running Kilnmark's AI search against the golden set; results in dist/build/server/ai-eval."
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform { includeTags("ai-eval") }
+    outputs.upToDateWhen { false }
+    systemProperty("kilnmark.eval.golden", rootProject.file("tests/ai-eval/golden.json").absolutePath)
+    systemProperty("kilnmark.eval.out", layout.buildDirectory.dir("ai-eval").get().asFile.absolutePath)
+    listOf("kilnmark.eval.url", "kilnmark.eval.token", "kilnmark.eval.source").forEach { key ->
+        providers.gradleProperty(key).orNull?.let { systemProperty(key, it) }
+    }
+    testLogging { showStandardStreams = true }
 }
 
 // The web UI is built with npm and served by the server from /. Needs Node.js 22 or later on the

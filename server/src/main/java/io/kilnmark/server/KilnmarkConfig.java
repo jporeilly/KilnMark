@@ -45,6 +45,9 @@ public interface KilnmarkConfig {
     /** Settings for the {@code s3} connector. */
     S3 s3();
 
+    /** The AI runtime: model calls, embeddings and search by meaning (ADR 0016). */
+    Ai ai();
+
     /** API sign-in. */
     interface Auth {
         /**
@@ -122,5 +125,32 @@ public interface KilnmarkConfig {
         /** Arrow memory one table's pipeline may hold. */
         @WithDefault("512")
         long memoryLimitMb();
+    }
+
+    /** The AI runtime (ADR 0016). Models themselves are added at run time, as model profiles. */
+    interface Ai {
+        /**
+         * {@code allowed} (the default) or {@code forbidden}. Forbidden locks out every model not
+         * marked local, whatever an admin sets in the UI: for servers whose metadata must never
+         * leave the network.
+         */
+        @WithDefault("allowed")
+        String hostedModels();
+
+        /** Retries after a failed model call (timeouts, rate limits, server errors), with backoff. */
+        @WithDefault("2")
+        int maxRetries();
+
+        /** Assets sent to the embedding model in one request. */
+        @WithDefault("16")
+        int embedBatchSize();
+
+        /** Search by meaning ignores assets less similar than this (cosine similarity, 0 to 1). */
+        @WithDefault("0.3")
+        double minSimilarity();
+
+        /** Keep prompt and answer text in usage records. Off: only counts, times and outcomes. */
+        @WithDefault("false")
+        boolean keepUsageText();
     }
 }

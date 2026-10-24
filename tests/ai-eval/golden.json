@@ -1,0 +1,28 @@
+{
+  "about": "Synthetic golden set for Kilnmark's AI search, over the reference lab's PostgreSQL database (lab/README.md). {source} is the lab source's name in Kilnmark (default lab). Each search item lists every asset that answers the query; each ask item lists what a good plan names.",
+  "search": [
+    {"query": "customer contact details", "relevant": ["crm.customers"]},
+    {"query": "people who buy from us", "relevant": ["crm.customers"]},
+    {"query": "card payments", "relevant": ["billing.transactions"]},
+    {"query": "bills sent to customers", "relevant": ["billing.invoices"]},
+    {"query": "bank accounts", "relevant": ["crm.accounts"]},
+    {"query": "old customer records", "relevant": ["crm.customers_archive_2023"]},
+    {"query": "national insurance number", "relevant": ["crm.customers", "crm.customers_archive_2023"]},
+    {"query": "shop where the money was spent", "relevant": ["billing.transactions"]},
+    {"query": "date of birth", "relevant": ["crm.customers", "crm.customers_archive_2023"]},
+    {"query": "unpaid invoices", "relevant": ["billing.invoices"]},
+    {"query": "spending in pounds", "relevant": ["billing.transactions"]},
+    {"query": "dormant or closed accounts", "relevant": ["crm.accounts"]},
+    {"query": "postcode", "relevant": ["crm.customers", "crm.customers_archive_2023"]},
+    {"query": "marketing consent", "relevant": ["crm.customers", "crm.customers_archive_2023"]},
+    {"query": "last four digits of the card", "relevant": ["billing.transactions"]}
+  ],
+  "ask": [
+    {"question": "Which tables in {source} have an email column?", "kinds": ["table"], "sources": ["{source}"], "fields": ["email"]},
+    {"question": "Show me every view", "kinds": ["view"], "sources": [], "fields": []},
+    {"question": "tables with a customer_id field", "kinds": ["table"], "sources": [], "fields": ["customer_id"]},
+    {"question": "Where do we keep invoices?", "kinds": [], "sources": [], "fields": [], "text": "invoice"},
+    {"question": "Which tables hold a phone number?", "kinds": ["table"], "sources": [], "fields": ["phone"]},
+    {"question": "Find transactions in the {source} database", "kinds": [], "sources": ["{source}"], "fields": [], "text": "transaction"}
+  ]
+}

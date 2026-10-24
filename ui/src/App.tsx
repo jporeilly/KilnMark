@@ -7,6 +7,8 @@ import { AssetPage } from "./pages/AssetPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { SignInPage, type SignInNotice } from "./pages/SignInPage";
 import { TokensPage } from "./pages/TokensPage";
+import { AiPage } from "./pages/AiPage";
+import { AiUsagePage } from "./pages/AiUsagePage";
 
 /**
  * Checks who is signed in, then shows either the sign-in page or the app. Signing out (the
@@ -104,7 +106,8 @@ function Shell({ me }: { me: Me }) {
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (query.trim()) go(href.search(query.trim()));
+    // On the search page in "ask" mode, the search bar asks a question.
+    if (query.trim()) go(route.page === "search" && route.ask ? href.ask(query.trim()) : href.search(query.trim()));
   };
 
   const current = (page: string) => (route.page === page ? "page" : undefined);
@@ -169,13 +172,29 @@ function Shell({ me }: { me: Me }) {
                 </a>
               </li>
             )}
+            {allows(me.role, "admin") && (
+              <li>
+                <a href={href.ai()} aria-current={route.page === "ai" || route.page === "ai-usage" ? "page" : undefined}>
+                  AI models
+                </a>
+              </li>
+            )}
           </ul>
         </nav>
         <main id="main" tabIndex={-1}>
           {route.page === "home" && <HomePage />}
-          {route.page === "search" && <SearchPage q={route.q} />}
+          {route.page === "search" && <SearchPage q={route.q} ask={route.ask} />}
           {route.page === "asset" && <AssetPage urn={route.urn} />}
           {route.page === "sources" && <SourcesPage role={me.role} />}
+          {(route.page === "ai" || route.page === "ai-usage") &&
+            (allows(me.role, "admin") ? (
+              route.page === "ai" ? <AiPage /> : <AiUsagePage />
+            ) : (
+              <>
+                <h1 tabIndex={-1}>AI models</h1>
+                <p>Only admins can manage AI models. Ask an admin if a feature needs a model.</p>
+              </>
+            ))}
           {route.page === "tokens" &&
             (allows(me.role, "admin") ? (
               <TokensPage me={me} />

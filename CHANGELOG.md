@@ -52,6 +52,35 @@
   (`kilnmark.files.parquet-threads`, `kilnmark.files.parquet-chunk-mb`); nested values become JSON
   text. S3 through the AWS SDK's S3 module only (ADR 0015). 19.3 MB of jars added.
 - **Fixed:** profile statistics above about 9.2 trillion are no longer capped.
+- **AI models (ADR 0016):** admins add models under **AI models**: local ones (llama.cpp's
+  llama-server, vLLM, Ollama or any OpenAI-compatible server, marked local) and hosted ones with an
+  API key (OpenAI, Azure OpenAI, Anthropic, Google Gemini). No restart needed. API keys are
+  encrypted and never shown again (only their last four characters). **Test** says in plain words
+  whether a model works and what to fix. Each feature (search by meaning, asking in plain English,
+  describe, classify) uses the model an admin chooses, or is off and works without AI.
+- **What may leave the network:** every model call passes one check. A source's AI rule
+  (`ai_egress`: `local_only` by default, `allowed` or `none`) decides which models may see it, and
+  hosted models can be forbidden for the whole server (`KILNMARK_AI_HOSTED_MODELS=forbidden`, or
+  by an admin). A refused call never reaches the model and says why.
+- **AI usage:** every model call is recorded (feature, model, source, tokens, time, outcome, who
+  asked), refused ones too, without prompt or answer text; admins see totals by day and model.
+- **Search by meaning:** after each scan, assets (names, descriptions, fields and types, never
+  values) are embedded with the chosen embedding model into pgvector, skipping unchanged ones; the
+  scan's run says how many. Search combines words and meaning (reciprocal rank fusion), shows how
+  each result matched, and falls back to words, saying why.
+- **Ask a question:** the search page has an "Ask a question" mode. A chat model turns the
+  question into a search (words, kinds, sources, field names), which is shown with the results,
+  including anything it could not use. Without a chat model the question is searched as typed.
+- **MCP server:** outside AI assistants can search and read the catalogue at `/mcp` (Streamable
+  HTTP) with a viewer API token: `search_assets`, `get_asset`, `list_sources`. Sources whose AI
+  rule is `none` are hidden; values only for sources whose rule is `allowed`.
+- **Compose:** profiles `ai` (CPU) and `ai-cuda` (NVIDIA GPU) run llama-server with a small chat
+  model and an embedding model; `ai-download` fetches them into the `models` volume.
+- **AI evaluation:** `./gradlew :server:aiEval` scores a running server's search (recall, MRR)
+  and question answering against a synthetic golden set over the lab; not part of the build.
+- **Database:** migration V6 adds `model_profile`, `ai_route`, `ai_setting`, `ai_usage` and
+  `asset_embedding`. 2.7 MB of jars added (LangChain4j provider modules, Quarkus MCP server), all
+  Apache-2.0.
 
 ## 0.0.2 (24 October 2026)
 

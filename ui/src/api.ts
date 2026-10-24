@@ -276,3 +276,124 @@ export const formatNumber = (n: number | null | undefined) => (n == null ? "–"
 
 const times = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
 export const formatTime = (iso: string | null | undefined) => (iso ? times.format(new Date(iso)) : "–");
+
+// ---- AI models, search by meaning and asking in plain English (ADR 0016) ----
+
+export type AiProvider = { id: string; label: string; defaultBaseUrl: string | null; needsKey: boolean; embeds: boolean };
+
+export type AiPurpose = "chat" | "embedding";
+
+/** A model profile. The API key itself is never returned: only whether there is one and its last four characters. */
+export type AiProfile = {
+  name: string;
+  provider: string;
+  providerLabel: string;
+  baseUrl: string | null;
+  effectiveBaseUrl: string | null;
+  model: string;
+  purpose: AiPurpose;
+  dimensions: number | null;
+  contextSize: number | null;
+  local: boolean;
+  hasApiKey: boolean;
+  apiKeyHint: string | null;
+  timeoutSeconds: number;
+  maxConcurrent: number;
+  usedBy: string[];
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** What the admin sends. apiKey: undefined keeps the stored key, "" removes it. */
+export type AiProfileInput = {
+  name: string;
+  provider: string;
+  baseUrl: string | null;
+  model: string;
+  purpose: AiPurpose;
+  dimensions: number | null;
+  contextSize: number | null;
+  local: boolean;
+  apiKey?: string;
+  timeoutSeconds: number;
+  maxConcurrent: number;
+};
+
+export type AiFeature = { id: string; label: string; help: string; purpose: AiPurpose; profile: string | null };
+export type AiSettings = { hostedModels: "allowed" | "forbidden"; lockedByServer: boolean; hostedAllowed: boolean };
+export type AiTestResult = { ok: boolean; message: string; latencyMs: number; dimensions: number | null };
+export type AiStatus = {
+  searchByMeaning: boolean;
+  ask: boolean;
+  embeddings: { profile: string; embedded: number; assets: number; running: boolean } | null;
+};
+
+export type AiUsageTotal = {
+  day: string;
+  profile: string | null;
+  calls: number;
+  ok: number;
+  refused: number;
+  failed: number;
+  tokensIn: number;
+  tokensOut: number;
+  averageLatencyMs: number;
+};
+export type AiUsageRecent = {
+  id: number;
+  at: string;
+  feature: string;
+  profile: string | null;
+  model: string | null;
+  source: string | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  latencyMs: number;
+  outcome: "ok" | "refused" | "failed" | "timeout" | "busy" | "cancelled";
+  detail: string | null;
+  caller: string;
+};
+export type AiUsage = { days: number; totals: AiUsageTotal[]; recent: AiUsageRecent[] };
+
+/** A search result; matchedBy says whether it matched by words, by meaning, or by the question's filters. */
+export type HybridHit = SearchHit & { matchedBy: ("words" | "meaning" | "filters")[] };
+export type HybridResult = { query: string; mode: "hybrid" | "keyword"; note: string | null; hits: HybridHit[] };
+
+export type QueryPlan = { text: string; kinds: string[]; sources: string[]; fields: string[]; ignored: string[] };
+export type AskResult = {
+  question: string;
+  plan: QueryPlan | null;
+  interpretedBy: string | null;
+  note: string | null;
+  mode: "hybrid" | "keyword";
+  searchNote: string | null;
+  hits: HybridHit[];
+};
+
+const enc = encodeURIComponent;
+
+export const aiApi = {
+  status: () => call<AiStatus>("/api/v1/ai/status"),
+  providers: () => call<AiProvider[]>("/api/v1/ai/providers"),
+  profiles: () => call<AiProfile[]>("/api/v1/ai/profiles"),
+  createProfile: (p: AiProfileInput) =>
+    call<AiProfile>("/api/v1/ai/profiles", { method: "POST", body: JSON.stringify(p) }),
+  updateProfile: (name: string, p: AiProfileInput) =>
+    call<AiProfile>(`/api/v1/ai/profiles/${enc(name)}`, { method: "PUT", body: JSON.stringify(p) }),
+  deleteProfile: (name: string) => call<null>(`/api/v1/ai/profiles/${enc(name)}`, { method: "DELETE" }),
+  testProfile: (name: string) => call<AiTestResult>(`/api/v1/ai/profiles/${enc(name)}/test`, { method: "POST" }),
+  features: () => call<AiFeature[]>("/api/v1/ai/features"),
+  route: (feature: string, profile: string | null) =>
+    call<AiFeature>(`/api/v1/ai/features/${enc(feature)}`, { method: "PUT", body: JSON.stringify({ profile }) }),
+  settings: () => call<AiSettings>("/api/v1/ai/settings"),
+  saveSettings: (hostedModels: "allowed" | "forbidden") =>
+    call<AiSettings>("/api/v1/ai/settings", { method: "PUT", body: JSON.stringify({ hostedModels }) }),
+  usage: (days: number) => call<AiUsage>(`/api/v1/ai/usage?days=${days}`),
+  refreshEmbeddings: () =>
+    call<{ started: boolean; message: string }>("/api/v1/ai/embeddings/refresh", { method: "POST" }),
+  search: (q: string, mode: "hybrid" | "keyword" = "hybrid") =>
+    call<HybridResult>(`/api/v1/search?q=${enc(q)}&mode=${mode}`),
+  ask: (question: string) =>
+    call<AskResult>("/api/v1/search/ask", { method: "POST", body: JSON.stringify({ question }) }),
+};

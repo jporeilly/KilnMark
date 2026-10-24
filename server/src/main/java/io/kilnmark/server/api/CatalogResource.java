@@ -32,16 +32,33 @@ public class CatalogResource {
         this.connectors = connectors;
     }
 
-    /** Keyword search over asset names, descriptions and field names. */
+    /**
+     * Search over asset names, descriptions and field names, by words and, when an embedding model
+     * is set, by meaning (ADR 0016). {@code mode=keyword} matches words only.
+     */
     @GET
     @Path("search")
-    public Views.SearchResult search(@QueryParam("q") String q, @QueryParam("limit") Integer limit) {
+    public io.kilnmark.server.ai.AiViews.SearchResult search(@QueryParam("q") String q,
+                                                            @QueryParam("limit") Integer limit,
+                                                            @QueryParam("mode") String mode) {
         if (q == null || q.isBlank()) {
             throw new IllegalArgumentException("q: what to search for");
         }
+        if (mode != null && !mode.equals("keyword") && !mode.equals("hybrid")) {
+            throw new IllegalArgumentException("mode: hybrid (the default) or keyword");
+        }
         int n = limit == null ? 20 : Math.max(1, Math.min(limit, 100));
-        return new Views.SearchResult(q.trim(), store.search(q, n).stream().map(Views.SearchHit::of).toList());
+        return io.kilnmark.server.ai.AiViews.SearchResult.of(q.trim(), hybrid.search(q.trim(),
+            io.kilnmark.server.ai.HybridSearch.Filters.NONE, n, io.kilnmark.server.ai.Callers.of(identity),
+            !"keyword".equals(mode)));
     }
+
+    // Search by words and meaning (ADR 0016); field injection keeps the constructor as it is.
+    @jakarta.inject.Inject
+    io.kilnmark.server.ai.HybridSearch hybrid;
+
+    @jakarta.inject.Inject
+    io.quarkus.security.identity.SecurityIdentity identity;
 
     @GET
     @Path("assets/{urn: .+}")

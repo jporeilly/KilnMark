@@ -2,31 +2,38 @@ import { useEffect, useState } from "react";
 
 /** Routes live in the hash, so the server needs no rewrite rules. */
 export type Route =
-  | { page: "search"; q: string }
+  | { page: "search"; q: string; ask: boolean }
   | { page: "asset"; urn: string }
   | { page: "sources" }
   | { page: "tokens" }
   | { page: "signout" }
+  | { page: "ai" }
+  | { page: "ai-usage" }
   | { page: "home" };
 
 export function parse(hash: string): Route {
   const [path, query = ""] = hash.replace(/^#/, "").split("?");
   const params = new URLSearchParams(query);
-  if (path === "/search") return { page: "search", q: params.get("q") ?? "" };
+  if (path === "/search") return { page: "search", q: params.get("q") ?? "", ask: params.get("ask") === "1" };
   if (path.startsWith("/asset/")) return { page: "asset", urn: decodeURIComponent(path.slice("/asset/".length)) };
   if (path === "/sources") return { page: "sources" };
   if (path === "/tokens") return { page: "tokens" };
   if (path === "/sign-out") return { page: "signout" };
+  if (path === "/ai") return { page: "ai" };
+  if (path === "/ai/usage") return { page: "ai-usage" };
   return { page: "home" };
 }
 
 export const href = {
   home: () => "#/",
   search: (q: string) => `#/search?q=${encodeURIComponent(q)}`,
+  ask: (q: string) => `#/search?ask=1&q=${encodeURIComponent(q)}`,
   asset: (urn: string) => `#/asset/${encodeURIComponent(urn)}`,
   sources: () => "#/sources",
   tokens: () => "#/tokens",
   signOut: () => "#/sign-out",
+  ai: () => "#/ai",
+  aiUsage: () => "#/ai/usage",
 };
 
 export function go(to: string) {

@@ -115,7 +115,28 @@ public class ScanService {
         if (source.isEmpty()) {
             return new Result(Outcome.SKIPPED, "Run " + runId + "'s source no longer exists");
         }
-        return new Result(scan(source.get(), runId, cancelled) ? Outcome.FINISHED : Outcome.CANCELLED, null);
+        boolean finished = scan(source.get(), runId, cancelled);
+        if (finished) {
+            afterScan(source.get(), runId, cancelled);
+        }
+        return new Result(finished ? Outcome.FINISHED : Outcome.CANCELLED, null);
+    }
+
+    // After a scan (ADR 0016): observers of ScanFinished embed assets for search by meaning, and can
+    // add other follow-up work. Field injection keeps the constructor as it is.
+    @jakarta.inject.Inject
+    jakarta.enterprise.event.Event<ScanFinished> scanFinished;
+
+    private void afterScan(Records.Source source, long runId, BooleanSupplier cancelled) {
+        if (scanFinished == null) {
+            return;
+        }
+        try {
+            String status = store.run(runId).map(Records.Run::status).orElse("failed");
+            scanFinished.fire(new ScanFinished(source.id(), source.name(), runId, status, cancelled));
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "Work after scan %d of %s failed; the scan itself is complete", runId, source.name());
+        }
     }
 
     /**
