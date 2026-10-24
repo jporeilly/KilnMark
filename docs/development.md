@@ -39,6 +39,9 @@ Useful endpoints in dev mode (all but the first and the `/q` ones need an API to
 - `GET /api/v1/me`: who the token belongs to
 - `POST /api/v1/sources`, `POST /api/v1/sources/import`, `POST /api/v1/sources/{name}/scans`
 - `GET /api/v1/search?q=...`, `GET /api/v1/assets/{urn}`, `GET /api/v1/runs/{id}`
+- `GET /api/v1/documents/text?urn=...&page=N`, `GET /api/v1/documents/find?urn=...&q=...`,
+  `GET /api/v1/documents/chunks?urn=...&offset=0&limit=5`: a document's text (see
+  [Documents](#documents))
 - `POST /api/v1/tokens`, `GET /api/v1/tokens`, `DELETE /api/v1/tokens/{id}`: API tokens (admin)
 - `GET /q/health`: health checks
 - `GET /q/openapi`: the API specification
@@ -203,6 +206,31 @@ to `POST /api/v1/sources/import` (`?dryRun=true` only checks).
 Sign in first with the admin token from `admin-token` (see [Sign in](#sign-in)). API tokens are
 for machines and for the lab; people will sign in through OpenID Connect from v0.2
 ([ADR 0014](adr/0014-authentication.md)).
+
+## Documents
+
+The `files` and `s3` connectors read the text of PDF, Office, OpenDocument, EPUB, RTF, HTML, XML,
+mail, plain text and Markdown files ([ADR 0017](adr/0017-documents.md)). Each document's asset page
+shows what was found (pages, words, language, title, author, dates, mail headers), its text page by
+page with find, a workbook's sheets (read as tables where they have a header row) and a message's
+attachments. Search finds words in documents' text and shows a snippet.
+
+Documents are untrusted input, so reading them is limited:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `kilnmark.documents.max-file-mb` | `100` | Larger documents are recorded, not read |
+| `kilnmark.documents.max-legacy-file-mb` | `30` | The same for .doc, .xls, .ppt and .msg, which are read whole into memory |
+| `kilnmark.documents.max-characters` | `1000000` | Text kept from one document, attachments included |
+| `kilnmark.documents.timeout-seconds` | `60` | A document still being read after this is abandoned and marked not readable |
+| `kilnmark.documents.max-depth` | `3` | How deep files inside files (attachments, embedded objects) are read |
+| `kilnmark.documents.threads` | `2` | Documents read at the same time across the server |
+| `kilnmark.documents.chunk-characters` | `1500` | Size of the chunks text is stored and searched in |
+| `kilnmark.documents.chunk-overlap` | `150` | Characters each chunk repeats from the one before |
+
+A source's setting `keep_text=false` keeps only documents' properties: no text is stored, and the
+asset page reads the text from the source again when someone opens it. Copies of S3 objects are
+made in a folder under `java.io.tmpdir` that only the server's user can read, and deleted after.
 
 ## Web UI
 

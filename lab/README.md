@@ -47,6 +47,21 @@ source of kind **files** with path `/srv/files`. Running the server outside a co
 **File share** (`lab/files/share`): a complaint letter full of personal data, and a campaign plan
 with none.
 
+**Documents** (`documents/` in both the share and the bucket, the same five files in each), made by
+`python3 lab/make-documents.py` (standard library only; run it again after changing it):
+
+| File | What it is |
+| --- | --- |
+| `remote-working-policy.pdf` | Two pages, with title, author and creation date |
+| `onboarding-guide.docx` | A Word document with headings, title and author |
+| `depot-budget-2025.xlsx` | Sheets `Expenses` (18 rows) and `Headcount` (4 rows) are tables; `Notes` is not |
+| `2025-04-delivery-schedule.eml` | A message with from, to and cc, and two attachments: a Markdown schedule and the policy PDF |
+| `team-handbook.md` | Markdown with a `#` title |
+
+`python3 lab/make-documents.py --fixtures` also remakes the legacy Word file the tests use
+(`kiln-plugins/src/test/resources/documents/memo.doc`); it needs LibreOffice, since nothing in the
+standard library writes .doc.
+
 ## What discovery should find (the answer key)
 
 | Finding | Where |
@@ -56,6 +71,8 @@ with none.
 | Renamed key: `cust_ref` holds customer ids as text | `billing.invoices`, the Parquet file |
 | Duplicates of customer data | `crm.customers_archive_2023`, `exports/customers_export_2025.csv` |
 | No personal data | `marketing/2024-q4-campaign-plan.md` |
+| Duplicate documents | Each file in `share/documents` is also in the bucket's `documents/`; the policy PDF is also attached to the message |
+| Business contacts only (example.com, .org, .net addresses) | `documents/2025-04-delivery-schedule.eml` |
 
 ## Synthetic identifiers
 

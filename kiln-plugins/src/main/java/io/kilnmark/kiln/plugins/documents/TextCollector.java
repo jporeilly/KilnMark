@@ -193,7 +193,7 @@ final class TextCollector extends DefaultHandler {
         } else if (LINES.contains(n)) {
             line();
         } else if (CELLS.contains(n)) {
-            space();
+            cell();
         }
     }
 
@@ -219,7 +219,7 @@ final class TextCollector extends DefaultHandler {
             if (c == '\n' && endsWithBlankLine()) {
                 continue;
             }
-            if ((c == ' ' || c == '\t') && (text.isEmpty() || endsWith(' ') || endsWith('\n'))) {
+            if ((c == ' ' || c == '\t') && (text.isEmpty() || endsWith(' ') || endsWith('\t') || endsWith('\n'))) {
                 continue; // runs of spaces, and spaces at the start of a line
             }
             if (budget.left <= 0) {
@@ -231,9 +231,25 @@ final class TextCollector extends DefaultHandler {
         }
     }
 
+    /**
+     * The parsers' own layout white space. Paragraph breaks come from the elements, but PDF line
+     * ends arrive this way, and words either side of one must not run together.
+     */
     @Override
-    public void ignorableWhitespace(char[] ch, int start, int length) {
-        // the parsers' own layout white space; breaks come from the elements
+    public void ignorableWhitespace(char[] ch, int start, int length) throws SAXException {
+        check();
+        if (hidden > 0 || text.isEmpty()) {
+            return;
+        }
+        boolean newline = false;
+        for (int i = start; i < start + length; i++) {
+            newline |= ch[i] == '\n';
+        }
+        if (newline) {
+            line();
+        } else {
+            space();
+        }
     }
 
     private boolean endsWith(char c) {
@@ -277,6 +293,16 @@ final class TextCollector extends DefaultHandler {
         trimSpaces();
         if (!text.isEmpty() && !endsWith('\n')) {
             append('\n');
+        }
+    }
+
+    /** Table cells are separated by a tab, so a sheet's columns stay apart when read. */
+    private void cell() {
+        while (endsWith(' ')) {
+            text.setLength(text.length() - 1);
+        }
+        if (!text.isEmpty() && !endsWith('\t') && !endsWith('\n')) {
+            append('\t');
         }
     }
 

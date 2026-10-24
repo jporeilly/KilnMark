@@ -113,7 +113,8 @@ reasons for them are in [ADR 0015](../adr/0015-file-formats.md).
 - **Assets.** Every file is an asset. Its path is the path within the folder (with `/`) or the
   object key; its container is the folder, or the bucket and folder. CSV, TSV, JSON, JSON lines
   (`.jsonl`, `.ndjson`) and Parquet have kind `file` and are read; anything else has kind
-  `document` and `readable=false`, with `size` and `modified` in its hints. Files are never
+  `document`, with `size`, `modified` and (S3) `owner` in its hints. Documents whose text Kilnmark
+  reads (see [Documents](#documents)) are `readable`; others (images, archives) are not. Files are never
   `bounded`: the reader streams them. A file that cannot be catalogued (corrupt, nested too deeply,
   a Parquet codec this server lacks, a first JSON line longer than the sample) is recorded as not
   readable with the reason as its description; it does not stop the scan.
@@ -155,6 +156,30 @@ reasons for them are in [ADR 0015](../adr/0015-file-formats.md).
   the rest of the object.
 - **Changed files.** If a CSV header no longer matches the catalogue, the reader infers the
   columns again rather than misreading them.
+
+### Documents
+
+Libraries, limits and the reasons for them are in [ADR 0017](../adr/0017-documents.md).
+
+- **Formats.** PDF, Word, Excel and PowerPoint (OOXML and legacy), OpenDocument, EPUB, RTF, HTML,
+  XML, mail (`.eml`, `.msg`), plain text and Markdown, by extension (`DocumentTypes`).
+- **Reading.** For a `document` asset, `reader` returns `DocumentInput`: it copies a remote file to a
+  private temporary folder (local files are read in place), reads it with Tika on a document thread
+  within the limits (`DocumentRuntime`), and reports one `DOCUMENT` event (`DocumentEvents`
+  attributes: content type, pages, words, characters, language, title, author, dates, owner, tags,
+  mail headers, page boundaries, notes, or `readable=false` with a `problem`) and the text's chunks
+  as Arrow rows (`DocumentEvents.CHUNK_SCHEMA`). A document that cannot be read is never a failed
+  step.
+- **Attachments.** A mail message's attachments get `DOCUMENT` events of their own, with URN
+  `<message urn>#attachments/<n>/<file name>` and the attribute `parent`; the scan records each as
+  an asset inside the message.
+- **Sheets.** The catalogue opens each workbook (`.xlsx`, `.xlsm`, `.xls`) and adds one asset of
+  kind `sheet` per sheet, right after the workbook: path `<workbook>#<sheet>`, container the
+  workbook, hint `parent`. Sheets with a header row have fields and are read by `SheetInput` like
+  any table; others are `readable=false` with the reason as their description.
+- **Setting `keep_text`** (both connectors, default `true`): `false` reads documents for their
+  profile but sends no chunks, so no text is stored.
+- **Server settings** (`kilnmark.documents.*`) reach the connectors through the `ConnectorContext`.
 
 ## Registering it
 

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { api, formatNumber, type SearchHit } from "../api";
+import { api, formatNumber, type SearchHit, type SearchHitWithSnippet } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
+import { KindIcon } from "../components/KindIcon";
+import { SnippetText } from "../components/SnippetText";
 
 export function SearchPage({ q }: { q: string }) {
   useTitle(q ? `Search: ${q}` : "Search");
@@ -25,7 +27,7 @@ export function SearchPage({ q }: { q: string }) {
   return (
     <>
       <h1 tabIndex={-1}>{q ? <>Results for “{q}”</> : "Search"}</h1>
-      {!q && <p>Type in the search bar above: a table name, a column name, or words from a description.</p>}
+      {!q && <p>Type in the search bar above: a table or file name, a column name, or words from a description or a document.</p>}
       <div role="status" className="result-count">
         {error ? "" : q && hits === null ? "Searching…" : hits ? `${hits.length} ${hits.length === 1 ? "result" : "results"}` : ""}
       </div>
@@ -46,10 +48,20 @@ export function SearchPage({ q }: { q: string }) {
                 </a>
               </h2>
               <p className="meta">
-                <span className="tag">{h.kind}</span> in <strong>{h.source}</strong>
+                <span className="tag">
+                  <KindIcon kind={h.kind} name={h.name} />
+                  {h.kind}
+                </span>{" "}
+                in <strong>{h.source}</strong>
                 {h.rowCount != null && <> · {formatNumber(h.rowCount)} rows</>}
               </p>
               {h.description && <p>{h.description}</p>}
+              {(h as SearchHitWithSnippet).snippet && (
+                <p>
+                  <span className="visually-hidden">From its text: </span>
+                  <SnippetText snippet={(h as SearchHitWithSnippet).snippet!} />
+                </p>
+              )}
               {h.matchedFields.length > 0 && (
                 <p className="meta">
                   Matching columns:{" "}

@@ -1,0 +1,118 @@
+/* Documents: profile, reader and search snippets (ADR 0017). Uses the tokens in tokens.css. */
+
+.doc-icon {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+  margin-right: 4px;
+  color: var(--km-muted);
+}
+
+.doc-problem {
+  border: 1px solid var(--km-bad);
+  border-left-width: 4px;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 12px 0;
+  background: var(--km-surface);
+}
+
+.doc-problem strong {
+  color: var(--km-bad);
+}
+
+.mail-headers {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0 0 16px;
+}
+
+.mail-headers dt {
+  font-weight: 600;
+  color: var(--km-muted);
+}
+
+.mail-headers dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.parts {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.parts li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--km-border);
+}
+
+.parts li:last-child {
+  border-bottom: 0;
+}
+
+.reader-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.reader-bar label {
+  font-weight: 600;
+}
+
+.doc-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  max-width: 80ch;
+  padding: 16px;
+  border: 1px solid var(--km-border);
+  border-radius: 8px;
+  background: var(--km-surface);
+}
+
+.doc-text mark,
+.snippet mark {
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--km-accent);
+}
+
+.doc-text mark.current {
+  outline: 2px solid var(--km-accent);
+  outline-offset: 1px;
+}
+
+.find-results {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 16px;
+}
+
+.find-results li + li {
+  margin-top: 6px;
+}
+
+.find-results button {
+  text-align: left;
+  width: 100%;
+}
+
+.snippet {
+  color: var(--km-ink);
+}
+
+.doc-ctype {
+  display: block;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}

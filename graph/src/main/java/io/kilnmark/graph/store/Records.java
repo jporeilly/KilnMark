@@ -41,8 +41,16 @@ public final class Records {
                         String description) {
     }
 
+    /**
+     * {@code snippet}: for documents whose text matched, a short passage around the match; else null.
+     */
     public record SearchHit(String urn, String source, String kind, String container, String name, String description,
-                            Long rowCount, List<String> matchedFields, double score) {
+                            Long rowCount, List<String> matchedFields, double score, DocumentRecords.Snippet snippet) {
+
+        public SearchHit(String urn, String source, String kind, String container, String name, String description,
+                         Long rowCount, List<String> matchedFields, double score) {
+            this(urn, source, kind, container, name, description, rowCount, matchedFields, score, null);
+        }
     }
 
     public record FieldDetail(String name, int position, String sourceType, String kind, boolean nullable,

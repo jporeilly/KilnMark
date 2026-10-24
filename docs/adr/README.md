@@ -20,3 +20,4 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0013](0013-java-25.md) | Java 25 LTS | Accepted |
 | [0014](0014-authentication.md) | Sign-in through OpenID Connect; Keycloak optional | Accepted |
 | [0015](0015-file-formats.md) | File formats: Parquet through Hardwood, S3 through the AWS SDK | Accepted |
+| [0017](0017-documents.md) | Documents: Tika's parsers, POI's streaming reader for sheets, text in chunks | Accepted |

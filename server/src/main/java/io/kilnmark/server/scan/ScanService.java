@@ -56,6 +56,10 @@ public class ScanService {
     private final Connectors connectors;
     private final JobQueue jobs;
 
+    /** Reads documents' text (ADR 0017); injected here so the constructor stays as other streams know it. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.documents.DocumentScan documents;
+
     public ScanService(GraphStore store, SecretBox secrets, KilnmarkConfig config, ObjectMapper json,
                        Connectors connectors, JobQueue jobs) {
         this.store = store;
@@ -147,6 +151,7 @@ public class ScanService {
                 }
                 String urn = new Urn(source.name(), a.path()).toString();
                 store.saveAsset(source.id(), runId, asset(urn, a), fields(a));
+                documents.recorded(source.name(), urn, a); // documents (ADR 0017): a sheet's workbook
                 seen.incrementAndGet();
                 if (!a.readable()) {
                     continue; // recorded, not read: a document, for example
@@ -158,7 +163,9 @@ public class ScanService {
                 }
                 work.add(Thread.ofVirtual().name("scan-" + runId + "-" + a.path()).start(() -> {
                     try {
-                        RunResult r = profile(connector, config, a, urn, runId, stop);
+                        RunResult r = documents.handles(a)
+                            ? documents.read(connector, config, a, urn, source.id(), runId, stop)
+                            : profile(connector, config, a, urn, runId, stop);
                         rows.addAndGet(r.steps().get(0).rowsOut());
                         if (!r.succeeded()) {
                             failed.incrementAndGet();

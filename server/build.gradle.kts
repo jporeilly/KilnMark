@@ -33,6 +33,8 @@ dependencies {
     "implementation"(project(":kiln-core"))
     "implementation"(project(":kiln-plugins"))
     "implementation"(project(":graph"))
+    // POI (documents, ADR 0017) logs through the Log4j API: send it to the server's own log.
+    "runtimeOnly"("org.jboss.logmanager:log4j2-jboss-logmanager")
 
     "testImplementation"("io.quarkus:quarkus-junit5")
     "testImplementation"("io.rest-assured:rest-assured")

@@ -45,6 +45,44 @@ public interface KilnmarkConfig {
     /** Settings for the {@code s3} connector. */
     S3 s3();
 
+    /** Limits for reading documents (PDF, Office, mail, ...); see docs/adr/0017-documents.md. */
+    Documents documents();
+
+    /** Documents are untrusted input: how much of each one is read, and for how long. */
+    interface Documents {
+        /** Documents larger than this are recorded but not read, in MB. */
+        @WithDefault("100")
+        int maxFileMb();
+
+        /** Legacy Office files (.doc, .xls, .ppt, .msg) are read whole into memory: their own limit, in MB. */
+        @WithDefault("30")
+        int maxLegacyFileMb();
+
+        /** Text kept from one document, attachments included; the rest is not read. */
+        @WithDefault("1000000")
+        int maxCharacters();
+
+        /** Time one document may take to read before it is abandoned. */
+        @WithDefault("60")
+        int timeoutSeconds();
+
+        /** How deep documents inside documents are read. */
+        @WithDefault("3")
+        int maxDepth();
+
+        /** Documents read at the same time across the server. */
+        @WithDefault("2")
+        int threads();
+
+        /** The size a chunk of text aims for, in characters. */
+        @WithDefault("1500")
+        int chunkCharacters();
+
+        /** Characters a chunk repeats from the one before. */
+        @WithDefault("150")
+        int chunkOverlap();
+    }
+
     /** API sign-in. */
     interface Auth {
         /**

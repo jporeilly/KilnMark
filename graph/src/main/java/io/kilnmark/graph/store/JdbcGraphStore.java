@@ -262,12 +262,20 @@ public final class JdbcGraphStore implements GraphStore {
     @Override
     public int markUnseenRemoved(long sourceId, long runId) {
         return tx(c -> {
+            int n;
             try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.asset SET removed_at = now() "
                 + "WHERE source_id = ? AND removed_at IS NULL AND last_seen_run IS DISTINCT FROM ?")) {
                 ps.setLong(1, sourceId);
                 ps.setLong(2, runId);
-                return ps.executeUpdate();
+                n = ps.executeUpdate();
             }
+            // the text of a document no longer in its source is not kept (V7)
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.document_chunk c USING kilnmark.asset a "
+                + "WHERE a.urn = c.asset_urn AND a.source_id = ? AND a.removed_at IS NOT NULL")) {
+                ps.setLong(1, sourceId);
+                ps.executeUpdate();
+            }
+            return n;
         });
     }
 
@@ -331,16 +339,24 @@ public final class JdbcGraphStore implements GraphStore {
                     SELECT f.asset_urn, f.name, public.word_similarity(q.t, lower(f.name)) AS score
                     FROM kilnmark.field f, q
                     WHERE lower(f.name) LIKE q.like_t OR public.word_similarity(q.t, lower(f.name)) >= 0.5
+                ),
+                texts AS (
+                    -- documents whose text has every word: below name and description matches (0.41 to 0.5)
+                    SELECT r.asset_urn, 0.41 + 0.09 * (r.best / (r.best + 1)) AS score
+                    FROM (SELECT c.asset_urn, max(ts_rank_cd(c.search, q.ts)) AS best
+                          FROM kilnmark.document_chunk c, q WHERE c.search @@ q.ts GROUP BY c.asset_urn) r
                 )
                 SELECT a.urn, s.name, a.kind, a.container, a.name, a.description, a.row_count,
                        coalesce(array_agg(f.name ORDER BY f.score DESC) FILTER (WHERE f.name IS NOT NULL), '{}'),
-                       greatest(h.asset_score, coalesce(max(f.score) * 0.9, 0)) AS score
+                       greatest(h.asset_score, coalesce(max(f.score) * 0.9, 0), coalesce(t.score, 0)) AS score,
+                       t.asset_urn IS NOT NULL
                 FROM hits h
                 JOIN kilnmark.asset a ON a.urn = h.urn
                 JOIN kilnmark.data_source s ON s.id = a.source_id
                 LEFT JOIN fields f ON f.asset_urn = a.urn
-                GROUP BY a.urn, s.name, h.asset_score
-                HAVING greatest(h.asset_score, coalesce(max(f.score) * 0.9, 0)) >= 0.4
+                LEFT JOIN texts t ON t.asset_urn = a.urn
+                GROUP BY a.urn, s.name, h.asset_score, t.asset_urn, t.score
+                HAVING greatest(h.asset_score, coalesce(max(f.score) * 0.9, 0), coalesce(t.score, 0)) >= 0.4
                 ORDER BY score DESC, h.asset_score DESC, a.container, a.name
                 LIMIT ?""")) {
                 ps.setString(1, q);
@@ -353,12 +369,45 @@ public final class JdbcGraphStore implements GraphStore {
                         Long rowCount = rs.wasNull() ? null : rows;
                         out.add(new SearchHit(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4),
                             rs.getString(5), rs.getString(6), rowCount, strings(rs.getArray(8)),
-                            Math.round(rs.getDouble(9) * 1000) / 1000.0));
+                            Math.round(rs.getDouble(9) * 1000) / 1000.0, rs.getBoolean(10)
+                            ? new DocumentRecords.Snippet("", List.of()) : null));
                     }
                 }
             }
-            return out;
+            return snippets(c, q, out);
         });
+    }
+
+    /** Fills in the snippets of hits whose text matched: a passage of each one's best chunk. */
+    private static List<SearchHit> snippets(Connection c, String q, List<SearchHit> hits) throws SQLException {
+        List<String> urns = hits.stream().filter(h -> h.snippet() != null).map(SearchHit::urn).toList();
+        if (urns.isEmpty()) {
+            return hits;
+        }
+        java.util.Map<String, DocumentRecords.Snippet> found = new java.util.HashMap<>();
+        try (PreparedStatement ps = c.prepareStatement("""
+            WITH q AS (SELECT plainto_tsquery('simple', ?) AS ts)
+            SELECT DISTINCT ON (c.asset_urn) c.asset_urn,
+                   ts_headline('simple', c.text, q.ts,
+                               'StartSel=' || chr(57344) || ', StopSel=' || chr(57345)
+                               || ', MaxWords=30, MinWords=12, ShortWord=2, MaxFragments=1')
+            FROM kilnmark.document_chunk c, q
+            WHERE c.asset_urn = ANY (?) AND c.search @@ q.ts
+            ORDER BY c.asset_urn, ts_rank_cd(c.search, q.ts) DESC, c.seq""")) {
+            ps.setString(1, q);
+            ps.setArray(2, c.createArrayOf("text", urns.toArray()));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    found.put(rs.getString(1), DocumentRecords.snippet(rs.getString(2)));
+                }
+            }
+        }
+        List<SearchHit> out = new ArrayList<>();
+        for (SearchHit h : hits) {
+            out.add(h.snippet() == null ? h : new SearchHit(h.urn(), h.source(), h.kind(), h.container(), h.name(),
+                h.description(), h.rowCount(), h.matchedFields(), h.score(), found.get(h.urn())));
+        }
+        return out;
     }
 
     @Override

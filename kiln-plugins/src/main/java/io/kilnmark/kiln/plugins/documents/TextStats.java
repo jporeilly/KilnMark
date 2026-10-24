@@ -12,9 +12,9 @@ import java.util.Set;
  * <p>Language is found without a library: a text written mostly in a script that belongs to one
  * language (Greek, Hebrew, Thai, Korean's Hangul, Japanese kana, ...) is that language; otherwise
  * the language whose most common short words (articles, prepositions, conjunctions) make up the
- * largest part of the text, among sixteen European languages. Function words are a large share of
- * any real text, so this is reliable for a paragraph or more and says nothing (null) for a list,
- * a table of numbers or a few words. Tika's own n-gram detector was tried first and named Spanish
+ * largest part of the text, among fifteen European languages and Turkish. Function words are a
+ * large share of any real text, so this is reliable for a paragraph or more and says nothing
+ * (null) for a list, a table of numbers or a few words. Tika's own n-gram detector was tried first and named Spanish
  * text Catalan (see ADR 0017).
  */
 public final class TextStats {

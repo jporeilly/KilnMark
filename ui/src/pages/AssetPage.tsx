@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
-import { api, formatNumber, formatTime, type Asset, type Field } from "../api";
+import { api, formatNumber, formatTime, type Asset, type DocumentAsset, type Field } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
+import { DocumentDetails, PartOf } from "../components/DocumentDetails";
+import { DocumentReader } from "../components/DocumentReader";
+import { KindIcon } from "../components/KindIcon";
 
 const percent = new Intl.NumberFormat("en-GB", { style: "percent", maximumFractionDigits: 1 });
 
@@ -87,10 +90,20 @@ export function AssetPage({ urn }: { urn: string }) {
         {asset.name}
       </h1>
       <p className="meta">
-        <span className="tag">{asset.kind}</span>
+        <span className="tag">
+          <KindIcon kind={asset.kind} name={asset.name} />
+          {asset.kind}
+        </span>
         {asset.removedAt && <span className="badge badge-failed">No longer in the source</span>}
       </p>
       {asset.description ? <p className="lead">{asset.description}</p> : <p className="muted">No description yet.</p>}
+      {(asset as DocumentAsset).parent && <PartOf parent={(asset as DocumentAsset).parent!} kind={asset.kind} />}
+      {asset.kind === "document" && <DocumentDetails asset={asset as DocumentAsset} />}
+      {asset.kind === "document" && (asset as DocumentAsset).document?.readable && (
+        <DocumentReader urn={asset.urn} name={asset.name} />
+      )}
+      {asset.kind !== "document" && (
+      <>
 
       <dl className="facts">
         <div>
@@ -180,6 +193,8 @@ export function AssetPage({ urn }: { urn: string }) {
           </table>
         </div>
       </section>
+      </>
+      )}
       <p className="muted small">
         Identifier <span className="mono">{asset.urn}</span> · first seen {formatTime(asset.firstSeenAt)} ·{" "}
         <a href={href.search(asset.name)}>search for similar names</a>

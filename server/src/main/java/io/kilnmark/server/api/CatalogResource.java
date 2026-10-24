@@ -26,13 +26,20 @@ public class CatalogResource {
     private final ObjectMapper json;
     private final io.kilnmark.kiln.connect.Connectors connectors;
 
+    /** Documents' profiles and the assets inside others (ADR 0017). */
+    @jakarta.inject.Inject
+    io.kilnmark.graph.store.DocumentStore documents;
+
     public CatalogResource(GraphStore store, ObjectMapper json, io.kilnmark.kiln.connect.Connectors connectors) {
         this.store = store;
         this.json = json;
         this.connectors = connectors;
     }
 
-    /** Keyword search over asset names, descriptions and field names. */
+    /**
+     * Keyword search over asset names, descriptions and field names, and the text of documents
+     * (ranked below name matches; such hits carry a snippet).
+     */
     @GET
     @Path("search")
     public Views.SearchResult search(@QueryParam("q") String q, @QueryParam("limit") Integer limit) {
@@ -51,7 +58,10 @@ public class CatalogResource {
         return new Views.Asset(a.urn(), a.source(), a.kind(), a.container(), a.name(), a.description(), a.primaryKey(),
             a.rowCount(), a.rowCountComplete(), a.firstSeenAt(), a.lastScannedAt(), a.removedAt(),
             a.fields().stream().map(f -> new Views.Field(f.name(), f.position(), f.sourceType(), f.kind(), f.nullable(),
-                f.description(), parse(f.profileJson()), f.profiledAt())).toList());
+                f.description(), parse(f.profileJson()), f.profiledAt())).toList(),
+            Views.DocumentProfile.of(documents.document(a.urn()).orElse(null)),
+            Views.AssetLink.of(documents.parent(a.urn()).orElse(null)),
+            documents.parts(a.urn()).stream().map(Views.AssetLink::of).toList());
     }
 
     /** The kinds of source this server can read, with the settings each takes. */
