@@ -52,6 +52,8 @@ Useful endpoints in dev mode (all but the first and the `/q` ones need an API to
 - `GET /api/v1/search?q=...`, `GET /api/v1/assets/{urn}`, `GET /api/v1/runs/{id}`
 - `POST /api/v1/tokens`, `GET /api/v1/tokens`, `DELETE /api/v1/tokens/{id}`: API tokens (admin)
 - `GET /q/health/ready`, `GET /q/health/live`: readiness and liveness (see [Health](#health))
+- `POST /api/v1/search/ask`: ask in plain English; `/api/v1/ai/...`: AI models (see [AI models](#ai-models))
+- `/mcp`: the read-only MCP server for outside AI assistants
 - `GET /q/openapi`: the API specification
 
 ## Run the stack
@@ -99,7 +101,7 @@ for that browser tab. A token has one role, and each role includes the ones befo
 | --- | --- |
 | `viewer` | search, and read assets, sources, runs and connectors |
 | `steward` | also edit, test and delete sources, list what they hold, and start scans |
-| `admin` | also add and import sources, and create, list and revoke tokens |
+| `admin` | also add and import sources, create, list and revoke tokens, and manage AI models |
 
 **The first admin token.** On first start, when no admin token is usable, the server creates
 one and writes it to a file called `admin-token` in the same folder as the secret key file
@@ -334,6 +336,91 @@ readiness probe at `/q/health/ready` and the liveness probe at `/q/health/live`.
 Sign in first with the admin token from `admin-token` (see [Sign in](#sign-in)). API tokens are
 for machines and for the lab; people will sign in through OpenID Connect from v0.2
 ([ADR 0014](adr/0014-authentication.md)).
+
+## AI models
+
+AI is optional at every step: each feature works without a model and says so
+([ADR 0012](adr/0012-ai-runtime.md), [ADR 0016](adr/0016-ai-runtime-choices.md)). Admins add
+models under **AI models**, press **Test**, and choose which model each feature uses.
+
+**Run the bundled models.** llama.cpp's `llama-server` in Compose, on CPU or an NVIDIA GPU:
+
+```
+podman compose --profile ai-download run --rm ai-download   # once: about 1.2 GB, checked by SHA-256
+podman compose --profile ai up -d                           # CPU: services ai and ai-embed
+podman compose --profile ai-cuda up -d                      # or GPU: services ai-cuda and ai-embed
+```
+
+The defaults are Qwen2.5-1.5B-Instruct (Q4_K_M, Apache 2.0) for chat and bge-small-en-v1.5 (Q8_0,
+MIT, 384 dimensions) for embeddings. For an offline install, copy the `.gguf` files into the
+`models` volume instead of downloading, and set `KILNMARK_AI_CHAT_MODEL` or
+`KILNMARK_AI_EMBED_MODEL` to use other files. Each file comes from a fixed revision and is kept
+only if its SHA-256 matches (sources, revisions and checksums are in ADR 0016). GPU: Docker needs the NVIDIA Container Toolkit;
+Podman needs a CDI specification (`sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`),
+and if your compose tool ignores the GPU reservation, run the CUDA image with
+`--device nvidia.com/gpu=all`.
+
+**Add them in Kilnmark** under **AI models > Add a model**, then **Test** each:
+
+| Field | Chat | Embeddings |
+| --- | --- | --- |
+| Provider | OpenAI-compatible server | OpenAI-compatible server |
+| Base URL | `http://ai:8080/v1` (GPU: `http://ai-cuda:8080/v1`) | `http://ai-embed:8080/v1` |
+| Model name | `qwen2.5-1.5b-instruct` | `bge-small-en-v1.5` |
+| Purpose | Chat | Embedding, dimensions `384`, context size `512` |
+| Local | ticked (on your network) | ticked (on your network) |
+
+A server outside Compose (`./gradlew :server:quarkusDev`) reaches them at
+`http://localhost:8781/v1` and `http://localhost:8782/v1`. Then, under **Features**, choose the
+embedding model for **Search by meaning** (every source is embedded in the background, and again
+after each scan) and the chat model for **Ask in plain English**.
+
+**Other models.** Ollama: `http://HOST:11434/v1`. vLLM: `http://HOST:8000/v1`. Hosted providers
+need an API key: OpenAI (no base URL needed), Azure OpenAI
+(`https://RESOURCE.openai.azure.com/openai/v1`, model = the deployment name), Anthropic and Google
+Gemini (chat only for Anthropic). Only an OpenAI-compatible server you run can be ticked local, and
+the box starts unticked. With a hosted embedding model, the text of every search is sent to that
+provider; with a hosted chat model, every question asked in plain English is.
+
+Changing a profile's address to another host clears **local** and asks for the API key again: a
+stored key is only sent where it was entered for. Addresses on link-local networks
+(169.254.0.0/16, fe80::/10) and cloud metadata names are refused, unless whoever runs the server
+sets `kilnmark.ai.allow-metadata-addresses=true`.
+
+**What may leave the network.** Each source has an AI rule, `ai_egress` in its settings:
+`local_only` (the default) lets only local models see its metadata, `allowed` any model, `none`
+no model. The admin's rule under **AI models** can refuse every model that is not local. Whoever
+runs the server can go further with `KILNMARK_AI_HOSTED_MODELS=forbidden`: admins cannot undo it,
+and a model then counts as local only if its address is on one of the networks in
+`KILNMARK_AI_LOCAL_HOSTS` (default: loopback and private networks), checked when it is saved and
+before every call; ticking **local** is not enough. A refused call never reaches the model; usage
+shows it.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `kilnmark.ai.hosted-models` | `allowed` | `forbidden` locks out every model that is not local; admins cannot undo it. Other values stop the server |
+| `kilnmark.ai.local-hosts` | loopback and private networks | While hosted models are forbidden, where a local model must be: CIDRs and host names, comma-separated |
+| `kilnmark.ai.allow-metadata-addresses` | `false` | Allow link-local and cloud metadata addresses as model addresses |
+| `kilnmark.ai.usage-retention` | `90d` | Usage records older than this are deleted |
+| `kilnmark.ai.max-retries` | `2` | Retries after timeouts, rate limits and server errors, with backoff (scans; a search waits about 10 seconds at most) |
+| `kilnmark.ai.embed-batch-size` | `16` | Assets per embedding request |
+| `kilnmark.ai.min-similarity` | `0.3` | Search by meaning ignores less similar assets (cosine, 0 to 1) |
+| `kilnmark.ai.keep-usage-text` | `false` | Keep prompts and answers in usage records |
+
+**Usage.** **AI models > See usage** shows calls, tokens and time by day and model, and the
+latest calls with their outcome and who asked (`GET /api/v1/ai/usage?days=30`).
+
+A model's **Calls at the same time** limit applies per Kilnmark process: with separate api and
+worker processes, the model server can get that many from each.
+
+**MCP server.** Outside AI assistants (MCP clients) can search and read the catalogue at
+`http://HOST:8780/mcp` (Streamable HTTP only), sending a viewer token as
+`Authorization: Bearer km_...`. Tools: `search_assets`, `get_asset`, `list_sources`. An assistant
+sees only sources whose AI rule is `allowed`. If its model runs on your own network, an admin can
+tick **Local AI assistant** for its token on the **API tokens** page; it then also sees sources
+whose rule is `local_only`. Sources whose rule is `none` are never shown. Create a dedicated
+viewer token for each assistant, so it can be revoked on its own. With sign-in off, `/mcp`
+answers only requests addressed to `localhost`.
 
 ## Web UI
 

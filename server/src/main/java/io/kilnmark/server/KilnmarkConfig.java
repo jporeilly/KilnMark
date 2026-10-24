@@ -51,6 +51,9 @@ public interface KilnmarkConfig {
     /** The catalogue of connectors shown when adding a connection. */
     ConnectorList connectors();
 
+    /** The AI runtime: model calls, embeddings and search by meaning (ADR 0016). */
+    Ai ai();
+
     /** API sign-in. */
     interface Auth {
         /**
@@ -161,5 +164,56 @@ public interface KilnmarkConfig {
         /** Whether the "Add connection" gallery also lists connectors that are planned but not built. */
         @WithDefault("true")
         boolean showPlanned();
+    }
+
+    /** The AI runtime (ADR 0016). Models themselves are added at run time, as model profiles. */
+    interface Ai {
+        /**
+         * {@code allowed} (the default) or {@code forbidden}. Forbidden locks out every model that
+         * is not local, whatever an admin sets in the UI: for servers whose metadata must never
+         * leave the network. Any other value stops the server.
+         */
+        @WithDefault("allowed")
+        HostedModels hostedModels();
+
+        /**
+         * While hosted models are forbidden, the hosts and networks (CIDR) a model marked local
+         * must be on. Unset: loopback and private networks (10.0.0.0/8, 172.16.0.0/12,
+         * 192.168.0.0/16, fc00::/7). Set it to narrow them, for example {@code 10.20.0.0/16,ai}.
+         */
+        Optional<List<String>> localHosts();
+
+        /**
+         * Lets model profiles use link-local addresses (169.254.0.0/16, fe80::/10) and cloud
+         * metadata names, which are refused by default so a profile cannot reach a cloud
+         * provider's metadata service.
+         */
+        @WithDefault("false")
+        boolean allowMetadataAddresses();
+
+        /** Retries after a failed model call (timeouts, rate limits, server errors), with backoff. */
+        @WithDefault("2")
+        int maxRetries();
+
+        /** Assets sent to the embedding model in one request. */
+        @WithDefault("16")
+        int embedBatchSize();
+
+        /** Search by meaning ignores assets less similar than this (cosine similarity, 0 to 1). */
+        @WithDefault("0.3")
+        double minSimilarity();
+
+        /** Keep prompt and answer text in usage records. Off: only counts, times and outcomes. */
+        @WithDefault("false")
+        boolean keepUsageText();
+
+        /** How long usage records are kept. Older ones are deleted every few hours. */
+        @WithDefault("90d")
+        Duration usageRetention();
+
+        /** {@code kilnmark.ai.hosted-models}. */
+        enum HostedModels {
+            ALLOWED, FORBIDDEN
+        }
     }
 }

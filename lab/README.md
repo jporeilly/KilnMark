@@ -73,6 +73,23 @@ with none.
 | Duplicates of customer data | `crm.customers_archive_2023`, `exports/customers_export_2025.csv` |
 | No personal data | `marketing/2024-q4-campaign-plan.md` |
 
+## AI evaluation
+
+`tests/ai-eval/golden.json` is a small synthetic golden set over the lab's PostgreSQL tables: 15
+search queries with the tables that answer them, and 6 questions with the search plan they should
+give. To score a running Kilnmark with the models it is configured to use, add the lab as a source
+called `lab`, choose the AI models (see "AI models" in [docs/development.md](../docs/development.md)),
+scan it, then:
+
+```
+KILNMARK_TOKEN=km_... ./gradlew :server:aiEval                      # server on http://localhost:8780
+./gradlew :server:aiEval -Pkilnmark.eval.url=http://host:8780 -Pkilnmark.eval.source=lab
+```
+
+It writes `results.json` and `results.md` to `dist/build/server/ai-eval`: recall at 5 and mean
+reciprocal rank (MRR) for keyword and hybrid search, and plan accuracy for asking in plain English.
+It is not part of the normal build. The lab has only five tables, so MRR says more than recall.
+
 ## Synthetic identifiers
 
 Phone numbers use Ofcom's 07700 900xxx range reserved for drama, National Insurance numbers use

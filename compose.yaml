@@ -70,6 +70,88 @@ services:
       # 8780, not 8080, which Tomcat and many Java servers use. Change the host side with KILNMARK_PORT.
       - "${KILNMARK_PORT:-8780}:8780"
 
+  # AI models (ADR 0016), started only when asked for. llama.cpp's llama-server serves GGUF model
+  # files from the models volume through the OpenAI API, inside the kilnmark network. Download the
+  # models first (docs/development.md, "AI models"):
+  #   podman compose --profile ai-download run --rm ai-download
+  # then start one of:
+  #   podman compose --profile ai up -d          # CPU: chat on ai, embeddings on ai-embed
+  #   podman compose --profile ai-cuda up -d     # NVIDIA GPU: chat on ai-cuda, embeddings on ai-embed
+  # and add them in Kilnmark under AI models (base URLs http://ai:8080/v1 or http://ai-cuda:8080/v1,
+  # and http://ai-embed:8080/v1). Images are pinned by tag and digest.
+  # Slots: chat has 2 (--parallel 2) sharing 8,192 tokens, so 4,096 each, matching Kilnmark's
+  # default of 2 calls at a time per model; embeddings have 2 slots of 512 tokens, bge's maximum.
+  ai:
+    image: ghcr.io/ggml-org/llama.cpp:server-b11429@sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1
+    profiles: ["ai"]
+    command: ["-m", "/models/${KILNMARK_AI_CHAT_MODEL:-qwen2.5-1.5b-instruct-q4_k_m.gguf}",
+              "--alias", "${KILNMARK_AI_CHAT_ALIAS:-qwen2.5-1.5b-instruct}",
+              "--host", "0.0.0.0", "--port", "8080", "--ctx-size", "8192", "--parallel", "2", "--jinja"]
+    volumes:
+      - models:/models:ro
+    ports:
+      # On this machine only, for a server run outside Compose (./gradlew :server:quarkusDev).
+      - "127.0.0.1:${KILNMARK_AI_PORT:-8781}:8080"
+
+  ai-cuda:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b11429@sha256:883915ea20a4b350e98f7284098f4d400c21e9b366e248d397cd42d90602a84c
+    profiles: ["ai-cuda"]
+    command: ["-m", "/models/${KILNMARK_AI_CHAT_MODEL:-qwen2.5-1.5b-instruct-q4_k_m.gguf}",
+              "--alias", "${KILNMARK_AI_CHAT_ALIAS:-qwen2.5-1.5b-instruct}",
+              "--host", "0.0.0.0", "--port", "8080", "--ctx-size", "8192", "--parallel", "2", "--jinja",
+              "--n-gpu-layers", "999"]
+    volumes:
+      - models:/models:ro
+    ports:
+      - "127.0.0.1:${KILNMARK_AI_PORT:-8781}:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            # Docker: NVIDIA Container Toolkit. Podman: CDI (nvidia-ctk cdi generate), see docs/development.md.
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Embeddings are small and fast on a CPU, so one service serves both profiles.
+  ai-embed:
+    image: ghcr.io/ggml-org/llama.cpp:server-b11429@sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1
+    profiles: ["ai", "ai-cuda"]
+    command: ["-m", "/models/${KILNMARK_AI_EMBED_MODEL:-bge-small-en-v1.5-q8_0.gguf}",
+              "--alias", "${KILNMARK_AI_EMBED_ALIAS:-bge-small-en-v1.5}",
+              "--embeddings", "--host", "0.0.0.0", "--port", "8080", "--ctx-size", "1024", "--parallel", "2"]
+    volumes:
+      - models:/models:ro
+    ports:
+      - "127.0.0.1:${KILNMARK_AI_EMBED_PORT:-8782}:8080"
+
+  # Downloads the default models into the models volume (about 1.2 GB), once. Each file is pinned to
+  # a commit of its repository and checked against its SHA-256 before it is kept; a file already
+  # there is checked, not trusted. For an offline install, copy the .gguf files into the volume.
+  ai-download:
+    image: docker.io/curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    profiles: ["ai-download"]
+    user: "0:0"    # a new volume is owned by root; the image's own user could not write to it
+    volumes:
+      - models:/models
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -e; cd /models;
+        get() {
+          if test -f "$$1" && echo "$$3  $$1" | sha256sum -c -s; then echo "$$1: present and verified"; return; fi;
+          curl -fL --retry 3 -o "$$1.part" "$$2";
+          echo "$$3  $$1.part" | sha256sum -c -s || { echo "$$1: checksum mismatch, not kept"; rm -f "$$1.part"; exit 1; };
+          mv "$$1.part" "$$1"; echo "$$1: downloaded and verified";
+        };
+        get qwen2.5-1.5b-instruct-q4_k_m.gguf
+        https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf
+        6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e;
+        get bge-small-en-v1.5-q8_0.gguf
+        https://huggingface.co/ggml-org/bge-small-en-v1.5-Q8_0-GGUF/resolve/f2068edd9b54f2a369549ccc71f70ed273a2a801/bge-small-en-v1.5-q8_0.gguf
+        f046db1dc724cf4f6f0a0c5917e922823b73eb1d27b8f9a9c2797f7866974804;
+        ls -l /models
+
 # A fixed network name, so the reference lab (lab/compose.yaml) can join it and Kilnmark reaches
 # the lab's services by name (lab-postgres, lab-s3), whatever the container runtime.
 networks:
@@ -79,3 +161,4 @@ networks:
 volumes:
   pgdata:
   keys:
+  models:     # GGUF model files for the AI profiles

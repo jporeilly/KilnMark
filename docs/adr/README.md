@@ -21,3 +21,4 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0014](0014-authentication.md) | Sign-in through OpenID Connect; Keycloak optional | Accepted |
 | [0015](0015-file-formats.md) | File formats: Parquet through Hardwood, S3 through the AWS SDK | Accepted |
 | [0021](0021-pipeline-first.md) | Pipeline-first: a data integration engine, not a catalogue | Accepted |
+| [0016](0016-ai-runtime-choices.md) | AI runtime: LangChain4j modules, model profiles, one egress gate, embeddings in one table | Accepted |
