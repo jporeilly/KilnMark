@@ -48,7 +48,7 @@ class CatalogueUnitTest {
             assertEquals(null, c.driver(), c.kind() + " needs nothing installed");
         }
         Connector files = Connectors.load().get("files").orElseThrow();
-        assertEquals(List.of("csv", "tsv", "json", "jsonl", "parquet", "documents"), files.formats());
+        assertEquals(List.of("csv", "tsv", "json", "jsonl", "parquet", "excel", "documents"), files.formats());
         assertEquals("databases", Connectors.load().get("sqlserver").orElseThrow().category());
         assertEquals("bucket", Connectors.load().get("s3").orElseThrow().icon());
     }
