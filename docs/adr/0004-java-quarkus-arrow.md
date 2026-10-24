@@ -9,6 +9,8 @@ Status: Accepted (22 October 2026)
 - **Apache Arrow** columnar batches between steps (sprint 2), with a fallback to row objects
   behind the same interface if the spike in sprint 0 shows problems.
 - **Python** only in an optional AI sidecar from v0.4, connected over gRPC and Arrow.
+  *Superseded by [0012](0012-ai-runtime.md): AI runs in the Java server from v0.1, and the sidecar
+  is used only if a model has no HTTP-served route.*
 - **Gradle** (Kotlin DSL) multi-module build with the wrapper checked in.
 
 ## Why
