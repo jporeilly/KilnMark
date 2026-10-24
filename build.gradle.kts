@@ -45,7 +45,7 @@ tasks.register<Sync>("release") {
     dependsOn(":server:quarkusBuild")
     into(distDir.dir("release/kilnmark-${project.version}"))
     from(distDir.dir("build/server/quarkus-app")) { into("server") }
-    from("docker-compose.yml")
-    from("docker") { into("docker") }
+    from("compose.yaml")
+    from("containers") { into("containers") }
     from("LICENSE", "NOTICE")
 }

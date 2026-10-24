@@ -15,7 +15,8 @@ Requirements: Java 21. The Gradle wrapper downloads Gradle itself.
 ./gradlew release        # assemble dist/release/kilnmark-<version>
 ```
 
-The server needs PostgreSQL with Apache AGE and pgvector; `docker compose up` starts both.
+The server needs PostgreSQL with Apache AGE and pgvector; `podman compose up --build` starts both
+(Docker works too).
 See the [development guide](docs/development.md).
 
 ## Layout
@@ -28,7 +29,7 @@ See the [development guide](docs/development.md).
 | `server/` | The one server image (roles: api, scheduler, worker) |
 | `ui/` | Web UI: React and TypeScript |
 | `sidecar-python/` | AI sidecar (from v0.4) |
-| `docker/` | PostgreSQL and server images |
+| `containers/` | PostgreSQL and server images (Containerfiles) |
 | `lab/` | Reference lab with synthetic data |
 | `pipelines/` | Built-in pipeline definitions |
 | `tests/regression/` | End-to-end suite against the lab |

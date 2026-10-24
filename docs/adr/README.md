@@ -15,3 +15,4 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0008](0008-licence.md) | Licence model | Open |
 | [0009](0009-accessibility.md) | WCAG 2.2 AA | Accepted |
 | [0010](0010-repository-layout.md) | Docs in /docs, all build output in /dist | Accepted |
+| [0011](0011-container-runtime.md) | Podman first, any OCI runtime | Accepted |

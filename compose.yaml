@@ -1,8 +1,11 @@
 # Kilnmark, small topology: two containers on one Linux VM.
+# Works with Podman (podman compose up --build) and Docker (docker compose up --build).
 # Build the server first: ./gradlew :server:quarkusBuild
 services:
   postgres:
-    build: docker/postgres
+    build:
+      context: containers/postgres
+      dockerfile: Containerfile
     environment:
       POSTGRES_DB: kilnmark
       POSTGRES_USER: kilnmark
@@ -19,7 +22,7 @@ services:
   kilnmark:
     build:
       context: .
-      dockerfile: docker/server/Dockerfile
+      dockerfile: containers/server/Containerfile
     environment:
       KILNMARK_ROLES: api,scheduler,worker
       QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/kilnmark
