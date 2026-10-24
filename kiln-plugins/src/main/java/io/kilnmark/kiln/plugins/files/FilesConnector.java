@@ -142,6 +142,7 @@ public final class FilesConnector extends FileSourceConnector {
         checkText(source, problems);
         checkBoolean(source, "keep_text", problems);
         checkBoolean(source, "read_text_on_demand", problems);
+        checkReserved(source, problems);
         return problems;
     }
 

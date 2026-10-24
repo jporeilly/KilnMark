@@ -432,6 +432,42 @@ class DocumentFlowTest {
     }
 
     @Test
+    @Order(10)
+    void aCommonWordDoesNotHideTheNewestDocuments() throws Exception {
+        long sourceId = graph.source("docs").orElseThrow().id();
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            // 260 older documents with 20 chunks each that mention the word once: 5,200 matching chunks
+            s.execute("INSERT INTO kilnmark.asset (urn, source_id, kind, container, name) SELECT "
+                + "'urn:kilnmark:docs:bulk/old-' || n || '.txt', " + sourceId + ", 'document', 'bulk', 'old-' || n "
+                + "|| '.txt' FROM generate_series(1, 260) n");
+            s.execute("INSERT INTO kilnmark.document_chunk (asset_urn, seq, text, start_offset, end_offset) SELECT "
+                + "'urn:kilnmark:docs:bulk/old-' || n || '.txt', k, 'Paragraph ' || k || ' of an older note that "
+                + "mentions a sprocket once among many other ordinary words about rotas', k * 100, k * 100 + 90 "
+                + "FROM generate_series(1, 260) n, generate_series(0, 19) k");
+            // the newest document, added last, about the word above all
+            s.execute("INSERT INTO kilnmark.asset (urn, source_id, kind, container, name) VALUES "
+                + "('urn:kilnmark:docs:bulk/newest.txt', " + sourceId + ", 'document', 'bulk', 'newest.txt')");
+            s.execute("INSERT INTO kilnmark.document_chunk (asset_urn, seq, text, start_offset, end_offset) SELECT "
+                + "'urn:kilnmark:docs:bulk/newest.txt', k, 'sprocket sprocket sprocket: the sprocket order, sprocket "
+                + "sizes and sprocket prices', k * 100, k * 100 + 80 FROM generate_series(0, 24) k");
+            s.execute("ANALYZE kilnmark.document_chunk");
+        }
+        try {
+            long started = System.nanoTime();
+            JsonPath hits = admin().queryParam("q", "sprocket").get("/api/v1/search").then().statusCode(200)
+                .extract().jsonPath();
+            long millis = (System.nanoTime() - started) / 1_000_000;
+            assertEquals("urn:kilnmark:docs:bulk/newest.txt", hits.getString("hits[0].urn"), hits.prettify());
+            assertEquals(20, hits.getList("hits").size(), "older documents still fill the rest");
+            assertTrue(millis < 3000, "search over 5,225 matching chunks took " + millis + " ms");
+        } finally {
+            try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+                s.execute("DELETE FROM kilnmark.asset WHERE urn LIKE 'urn:kilnmark:docs:bulk/%'");
+            }
+        }
+    }
+
+    @Test
     @Order(11)
     void turningKeepTextOffDeletesStoredTextAtTheNextScan() throws Exception {
         assertTrue(count("SELECT count(*) FROM kilnmark.document_chunk WHERE asset_urn LIKE 'urn:kilnmark:docs:%'") > 0);

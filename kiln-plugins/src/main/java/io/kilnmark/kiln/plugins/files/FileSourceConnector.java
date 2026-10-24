@@ -282,7 +282,7 @@ public abstract class FileSourceConnector implements Connector {
             d.put("path", file(asset));
             d.put("asset-urn", read.assetUrn());
             d.put("size", asset.hints().getOrDefault("size", "-1"));
-            d.put("version", asset.hints().getOrDefault("size", "") + "|" + asset.hints().getOrDefault("modified", ""));
+            putVersion(d, asset);
             d.put("keep-text", Boolean.toString(keepText(source)));
             if ("true".equals(source.setting(ON_DEMAND))) {
                 d.put("on-demand", "true");
@@ -299,7 +299,7 @@ public abstract class FileSourceConnector implements Connector {
         if (FileInspector.KIND_SHEET.equals(asset.kind())) {
             Map<String, String> d = new HashMap<>();
             d.put("path", asset.hints().getOrDefault("file", unescape(asset.hints().getOrDefault("parent", ""))));
-            d.put("version", asset.hints().getOrDefault("size", "") + "|" + asset.hints().getOrDefault("modified", ""));
+            putVersion(d, asset);
             d.put("sheet", asset.hints().getOrDefault("sheet", asset.name()));
             d.put("size", asset.hints().getOrDefault("size", "-1"));
             d.put("asset-urn", read.assetUrn());
@@ -349,6 +349,20 @@ public abstract class FileSourceConnector implements Connector {
         return file != null ? file : unescape(asset.path());
     }
 
+    private static void putVersion(Map<String, String> settings, AssetInfo asset) {
+        String v = LocalCopy.version(asset.hints().getOrDefault("size", ""), asset.hints().get("modified"),
+            asset.hints().get("etag"));
+        if (v != null) {
+            settings.put("version", v);
+        }
+    }
+
+    /** A scan of a source has ended: shared copies of its workbooks nobody is using are deleted. */
+    @Override
+    public void finished(SourceConfig source) {
+        LocalCopy.dropIdle();
+    }
+
     /** Whether a source keeps the text of its documents (setting {@code keep_text}, default true). */
     public static boolean keepText(SourceConfig source) {
         return !"false".equalsIgnoreCase(source.setting("keep_text"));
@@ -380,6 +394,13 @@ public abstract class FileSourceConnector implements Connector {
     static String folder(String path) {
         int slash = path.lastIndexOf('/');
         return slash < 0 ? "" : path.substring(0, slash);
+    }
+
+    /** The server's own settings ({@link #ON_DEMAND}) may not be given by people adding sources. */
+    static void checkReserved(SourceConfig source, List<String> problems) {
+        if (source.setting(ON_DEMAND) != null) {
+            problems.add(ON_DEMAND + ": reserved for the server; use read_text_on_demand");
+        }
     }
 
     /** Problems with a true/false setting. */

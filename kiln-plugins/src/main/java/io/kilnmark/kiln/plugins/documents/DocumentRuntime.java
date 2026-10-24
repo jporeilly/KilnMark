@@ -39,7 +39,18 @@ public final class DocumentRuntime {
 
     private static final AtomicInteger THREADS = new AtomicInteger();
     private static volatile DocumentLimits limits = DocumentLimits.DEFAULTS;
-    private static volatile Semaphore slots = new Semaphore(DocumentLimits.DEFAULTS.threads());
+    /** A set of readers: how many, which are free, and how many are held by abandoned reads. */
+    private record Pool(Semaphore slots, int total, AtomicInteger abandoned) {
+        Pool(int total) {
+            this(new Semaphore(total), total, new AtomicInteger());
+        }
+    }
+
+    private static volatile Pool scans = new Pool(DocumentLimits.DEFAULTS.threads());
+
+    /** Reads people ask for (keep_text off): one at a time, apart from scans. */
+    private static final Pool ON_DEMAND = new Pool(1);
+
     private static volatile Path temp;
 
     static {
@@ -55,6 +66,13 @@ public final class DocumentRuntime {
         }
         ZipSecureFile.setMinInflateRatio(0.01);
         ZipSecureFile.setMaxEntrySize(1L << 30);
+        // POI's temporary files go to the private folder from its very first use, whichever path
+        // (text, sheets) gets there first: both go through this class
+        try {
+            tempDir();
+        } catch (IOException e) {
+            // no private folder: POI keeps its default; each copy still tries again when it is made
+        }
     }
 
     private DocumentRuntime() {
@@ -65,7 +83,7 @@ public final class DocumentRuntime {
         DocumentLimits l = DocumentLimits.of(context);
         if (!l.equals(limits)) {
             if (l.threads() != limits.threads()) {
-                slots = new Semaphore(l.threads());
+                scans = new Pool(l.threads()); // reads on the old pool count against it until they end
             }
             limits = l;
         }
@@ -75,13 +93,6 @@ public final class DocumentRuntime {
     public static DocumentLimits limits() {
         return limits;
     }
-
-    /** Reads that ran past their time and have not ended yet, by lane. */
-    private static final AtomicInteger ABANDONED = new AtomicInteger();
-    private static final AtomicInteger ABANDONED_ON_DEMAND = new AtomicInteger();
-
-    /** Reads asked for by a person (keep_text off): one at a time, apart from scans. */
-    private static final Semaphore ON_DEMAND = new Semaphore(1);
 
     /** How long to wait between checks while waiting for a free reader. */
     private static final long POLL_MILLIS = 250;
@@ -101,8 +112,7 @@ public final class DocumentRuntime {
      */
     public static <T> T run(String what, BooleanSupplier stop, Work<T> work)
         throws DocumentException, InterruptedException {
-        DocumentLimits l = limits;
-        return run(slots, l.threads(), ABANDONED, l, stop, work);
+        return run(scans, limits, stop, work);
     }
 
     /** {@link #run(String, BooleanSupplier, Work)}, stopping only when the thread is interrupted. */
@@ -115,12 +125,12 @@ public final class DocumentRuntime {
      * never takes a reader from a scan, within the same time limit.
      */
     public static <T> T runOnDemand(String what, Work<T> work) throws DocumentException, InterruptedException {
-        return run(ON_DEMAND, 1, ABANDONED_ON_DEMAND, limits, () -> Thread.currentThread().isInterrupted(), work);
+        return run(ON_DEMAND, limits, () -> Thread.currentThread().isInterrupted(), work);
     }
 
     /** Reads abandoned past their time that have not ended yet (for tests and health checks). */
     public static int abandoned() {
-        return ABANDONED.get();
+        return scans.abandoned().get();
     }
 
     /**
@@ -128,20 +138,20 @@ public final class DocumentRuntime {
      * against {@link DocumentLimits#threads()} like any read. Close it to free the reader.
      */
     public static AutoCloseable acquire(BooleanSupplier stop) throws DocumentException, InterruptedException {
-        DocumentLimits l = limits;
-        Semaphore s = slots;
-        await(s, l.threads(), ABANDONED, stop);
+        Pool p = scans;
+        await(p, stop);
         AtomicBoolean released = new AtomicBoolean();
         return () -> {
             if (released.compareAndSet(false, true)) {
-                s.release();
+                p.slots().release();
             }
         };
     }
 
-    private static void await(Semaphore s, int total, AtomicInteger abandoned, BooleanSupplier stop)
-        throws DocumentException, InterruptedException {
-        while (!s.tryAcquire(POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+    private static void await(Pool p, BooleanSupplier stop) throws DocumentException, InterruptedException {
+        AtomicInteger abandoned = p.abandoned();
+        int total = p.total();
+        while (!p.slots().tryAcquire(POLL_MILLIS, TimeUnit.MILLISECONDS)) {
             if (stop.getAsBoolean()) {
                 throw new DocumentException("the scan was stopped before it could be read", true, null);
             }
@@ -153,10 +163,12 @@ public final class DocumentRuntime {
         }
     }
 
-    private static <T> T run(Semaphore s, int total, AtomicInteger abandoned, DocumentLimits l, BooleanSupplier stop,
-                             Work<T> work) throws DocumentException, InterruptedException {
+    private static <T> T run(Pool p, DocumentLimits l, BooleanSupplier stop, Work<T> work)
+        throws DocumentException, InterruptedException {
         long seconds = l.timeout().toSeconds();
-        await(s, total, abandoned, stop);
+        Semaphore s = p.slots();
+        AtomicInteger abandoned = p.abandoned();
+        await(p, stop);
         AtomicBoolean cancelled = new AtomicBoolean();
         CompletableFuture<T> result = new CompletableFuture<>();
         // 0 running, 1 ended in time, 2 abandoned: whoever moves it first decides who counts what

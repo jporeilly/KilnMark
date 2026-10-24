@@ -85,7 +85,7 @@ public final class TextExtractor {
         Parser parser = parser();
         Embedded embedded = new Embedded(parser, limits, budget, cancelled, main, DocumentTypes.mail(type));
         ParseContext context = context(parser, embedded);
-        if (OfficeParts.ooxml(name)) {
+        if (OfficeParts.zip(file)) { // whatever its name says: Office, OpenDocument, EPUB
             OfficeParts.check(file, limits.maxPartBytes());
         }
         Metadata metadata = new Metadata();
@@ -398,8 +398,9 @@ public final class TextExtractor {
                 if (readable) {
                     metadata.set(Metadata.CONTENT_TYPE, type.toString());
                 }
+                // every archive inside is checked, decided by its bytes, not its name or declared type
                 String refused = null;
-                if (readable && OfficeParts.ooxml(name == null ? "x." + extension(type) : name)) {
+                if (readable && zip(in)) {
                     try {
                         OfficeParts.check(in.getPath(), limits.maxPartBytes());
                     } catch (DocumentException e) {
@@ -418,11 +419,12 @@ public final class TextExtractor {
             }
         }
 
-        /** The usual extension of an Office Open XML media type, else empty. */
-        private static String extension(MediaType type) {
-            String t = type == null ? "" : type.getBaseType().toString();
-            return t.contains("wordprocessingml") ? "docx" : t.contains("spreadsheetml") ? "xlsx"
-                : t.contains("presentationml") ? "pptx" : "";
+        /** Whether the stream starts like a ZIP archive. */
+        private static boolean zip(TikaInputStream in) throws IOException {
+            in.mark(4);
+            byte[] b = in.readNBytes(4);
+            in.reset();
+            return b.length == 4 && b[0] == 'P' && b[1] == 'K' && b[2] == 3 && b[3] == 4;
         }
 
         private static boolean isAttachment(Metadata metadata) {

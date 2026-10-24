@@ -134,6 +134,9 @@ public final class FileInspector {
         if (e.owner() != null) {
             hints.put("owner", e.owner());
         }
+        if (e.etag() != null) {
+            hints.put("etag", e.etag());
+        }
         return hints;
     }
 

@@ -133,7 +133,7 @@ public final class S3FileStore implements FileStore {
                 if (o.key().endsWith("/")) {
                     continue; // a folder marker
                 }
-                out.add(new Entry(o.key(), o.size() == null ? 0 : o.size(), o.lastModified(), owner(o.owner())));
+                out.add(new Entry(o.key(), o.size() == null ? 0 : o.size(), o.lastModified(), owner(o.owner()), o.eTag()));
             }
         } catch (SdkException e) {
             throw explain(e, "list the bucket");

@@ -574,11 +574,14 @@ public final class JdbcGraphStore implements GraphStore {
                 ),
                 texts AS (
                     -- documents whose text has every word: below name and description matches (0.41 to 0.5)
-                    -- at most TEXT_CANDIDATES matching chunks are ranked, so a common word costs a bounded amount
-                    SELECT r.asset_urn, 0.41 + 0.09 * (max(r.rank) / (max(r.rank) + 1)) AS score
-                    FROM (SELECT c.asset_urn, ts_rank_cd(c.search, q.ts) AS rank
-                          FROM kilnmark.document_chunk c, q WHERE c.search @@ q.ts LIMIT %d) r
-                    GROUP BY r.asset_urn
+                    -- candidates first: the documents with the most matching chunks (counted through the
+                    -- index, nothing ranked yet; ties by name, never by age), then each one's best chunk
+                    SELECT d.asset_urn, 0.41 + 0.09 * (r.best / (r.best + 1)) AS score
+                    FROM (SELECT c.asset_urn FROM kilnmark.document_chunk c, q WHERE c.search @@ q.ts
+                          GROUP BY c.asset_urn ORDER BY count(*) DESC, c.asset_urn LIMIT %d) d
+                    CROSS JOIN LATERAL (SELECT max(ts_rank_cd(c.search, q.ts)) AS best
+                                        FROM kilnmark.document_chunk c, q
+                                        WHERE c.asset_urn = d.asset_urn AND c.search @@ q.ts) r
                 )
                 SELECT a.urn, s.name, a.kind, a.container, a.name, a.description, a.row_count,
                        coalesce(array_agg(f.name ORDER BY f.score DESC) FILTER (WHERE f.name IS NOT NULL), '{}'),
@@ -612,8 +615,11 @@ public final class JdbcGraphStore implements GraphStore {
         });
     }
 
-    /** Matching chunks ranked for one search, at most; beyond them a document may be missed. */
-    static final int TEXT_CANDIDATES = 5000;
+    /**
+     * Documents whose text is ranked for one search, at most: those with the most matching chunks.
+     * A document is missed only when this many others match the words more often.
+     */
+    static final int TEXT_CANDIDATES = 200;
 
     /** Fills in the snippets of hits whose text matched: a passage of each one's best chunk. */
     private static List<SearchHit> snippets(Connection c, String q, List<SearchHit> hits) throws SQLException {

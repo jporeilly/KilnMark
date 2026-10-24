@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { documentsApi, type DocumentPage, type DocumentProfile, type FindResult } from "../api";
 import { SnippetText } from "./SnippetText";
 import "./documents.css";
@@ -50,8 +50,8 @@ export function DocumentReader({ urn, name, profile }: { urn: string; name: stri
       <section aria-labelledby="reader-h" className="panel">
         <h2 id="reader-h">Text</h2>
         <p>
-          Kilnmark keeps no text for documents in this source, so only their properties are shown. An administrator
-          can turn on <span className="mono">read_text_on_demand</span> for the source to let stewards read the text
+          Kilnmark keeps no text for documents in this source, so only their properties are shown. A steward or
+          administrator can turn on <span className="mono">read_text_on_demand</span> for the source to let stewards read the text
           from the source.
         </p>
       </section>
@@ -101,12 +101,17 @@ function Reader({ urn, name }: { urn: string; name: string }) {
   const activeFind = found?.query ?? "";
   const body = useMemo(() => marked(shown, activeFind), [shown, activeFind]);
 
-  // a match past the preview: show the whole page, so the match can be seen
+  // a match past the preview: show the whole page once, so the match can be seen ("Show less" then stays)
+  const expandedFor = useRef("");
   useEffect(() => {
-    if (doc && activeFind && !all && doc.text.length > PREVIEW && firstMatch(doc.text, activeFind) >= PREVIEW - activeFind.length) {
+    if (!doc || !activeFind || doc.text.length <= PREVIEW) return;
+    const key = `${doc.urn}|${doc.page}|${activeFind}`;
+    if (expandedFor.current === key) return;
+    if (firstMatch(doc.text, activeFind) >= PREVIEW - activeFind.length) {
+      expandedFor.current = key;
       setAll(true);
     }
-  }, [doc, activeFind, all]);
+  }, [doc, activeFind]);
 
   const go = (to: number) => {
     if (doc && to >= 1 && to <= doc.pageCount) setPage(to);
