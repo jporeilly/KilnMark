@@ -38,9 +38,20 @@ Useful endpoints in dev mode (all but the first and the `/q` ones need an API to
 - `GET /api/v1/info`: product, version and roles
 - `GET /api/v1/me`: who the token belongs to
 - `POST /api/v1/sources`, `POST /api/v1/sources/import`, `POST /api/v1/sources/{name}/scans`
+- `PUT /api/v1/sources/{name}`, `DELETE /api/v1/sources/{name}`: edit and delete (steward)
+- `POST /api/v1/sources/{name}/test`, `GET /api/v1/sources/{name}/containers`: test the connection,
+  list schemas or folders with counts (steward); `POST /api/v1/drafts/test` and
+  `POST /api/v1/drafts/containers` do the same for settings not yet saved
+- `GET /api/v1/sources/{name}/history`: runs with their jobs; `GET /api/v1/common-settings`
+- `GET /api/v1/imports/{id}`: progress of an import's tests and scans (admin)
+- `GET /api/v1/connectors/catalogue`: connectors by category, with planned ones;
+  `GET /api/v1/connectors/{kind}/address?host=&port=&database=`: the URL those build
+- `GET /api/v1/sources/{name}/assets?container=` and `GET /api/v1/sources/{name}/preview?asset=&rows=`:
+  a container's tables or files, and the first rows of one (steward); `POST /api/v1/drafts/assets`
+  and `POST /api/v1/drafts/preview` for settings not yet saved
 - `GET /api/v1/search?q=...`, `GET /api/v1/assets/{urn}`, `GET /api/v1/runs/{id}`
 - `POST /api/v1/tokens`, `GET /api/v1/tokens`, `DELETE /api/v1/tokens/{id}`: API tokens (admin)
-- `GET /q/health`: health checks
+- `GET /q/health/ready`, `GET /q/health/live`: readiness and liveness (see [Health](#health))
 - `GET /q/openapi`: the API specification
 
 ## Run the stack
@@ -87,7 +98,7 @@ for that browser tab. A token has one role, and each role includes the ones befo
 | Role | Can |
 | --- | --- |
 | `viewer` | search, and read assets, sources, runs and connectors |
-| `steward` | also start scans |
+| `steward` | also edit, test and delete sources, list what they hold, and start scans |
 | `admin` | also add and import sources, and create, list and revoke tokens |
 
 **The first admin token.** On first start, when no admin token is usable, the server creates
@@ -198,7 +209,127 @@ run) takes about 15 seconds. Then search for `customer` and open `crm.customers`
 
 To register many sources at once, import a CSV (header row `name, url, username, password,
 password_ref, schemas`) or a JSON array under **Sources > Import sources from a file**, or post it
-to `POST /api/v1/sources/import` (`?dryRun=true` only checks).
+to `POST /api/v1/sources/import` (`?dryRun=true` only checks). See [Sources](#sources) for the
+other columns and options; `lab/sources.csv` registers the whole lab (see `lab/README.md`).
+
+## Sources
+
+**Adding a connection.** **Sources > Add a connection** shows every kind of source by category
+(Databases, NoSQL, Files, Streaming, Applications, Lakehouse), with what each can do. Connectors
+that are planned but not built are shown greyed out with their wave; set
+`kilnmark.connectors.show-planned=false` (`KILNMARK_CONNECTORS_SHOW_PLANNED`) to hide them. Choosing
+one opens its panel beside the gallery, in four steps you can move between: **Connect** (a
+database's host, port and database build its URL; the full URL is under Advanced), **Test**,
+**Choose what to scan** (schemas or folders with counts, patterns, and a preview of any table or
+file), and **Save** (display name, description, AI rule; Save, or Save and scan). Edit on a
+source's page opens the same panel. Escape closes it.
+
+**Preview.** The first rows of a table or file (100 by default, at most 1,000), read live through
+the connector with the same time limit and places as connection tests, and never stored, logged
+or sent to a model. Values longer than 500 characters are cut, bytes are shown as hex with their
+length, and a preview stops at about 2 MB. For files it also shows what was detected (format,
+delimiter, header row, encoding); if that is wrong, set `delimiter`, `header` (false when the
+first row is data) or `encoding` on the source: they apply to every file of it, in previews and
+scans.
+
+**Name and display name.** A source's name is its ID: it is part of every asset's reference
+(`urn:kilnmark:<name>:<path>`), so it is set when the source is added and never changes. An edit
+that tries to change it is refused; add a new source instead. People see the display name, which
+can change at any time (by default it is the name).
+
+**Settings every source has**, whatever its kind, stored beside the connector's own settings and
+listed by `GET /api/v1/common-settings`:
+
+| Setting | Meaning |
+| --- | --- |
+| `description` | Free text for people |
+| `ai_egress` | Which AI models may see the source's metadata and data: `local_only` (the default) only models on servers marked local, `allowed` any configured model, `none` no model |
+| `include` | Only tables or files matching these patterns (see below); empty for all |
+| `exclude` | Leave out tables or files matching these patterns |
+
+Patterns are globs, matched ignoring case: `*` (not across `/`), `**` (across `/`), `?`, `[abc]`,
+`{a,b}`, `\` before a character to take it literally; up to 100 per setting, each up to 200
+characters. Matching never backtracks, so no pattern can be slow. For a database, a pattern without
+a `.` matches table names (`cust*` matches `crm.customers`) and one with a `.` matches
+`schema.table` (`crm.*` every table in `crm`). For files, a pattern without a `/` matches file names
+(`*.csv`) and one with a `/` matches paths (`raw/**`). Every kind of source applies them the same way.
+
+**Choosing what to scan.** A database source scans the schemas in `schemas`; a folder or bucket
+source the top-level folders in `containers` (`/` stands for files at the top). Empty means all.
+The form's **Choose from the source** lists them with how many tables or files each holds, read
+from database metadata or a listing, never by reading data. Before every scan the UI asks the
+same question, and warns before a scan that would find nothing.
+
+**Editing.** Leaving the password empty keeps the stored one, unless the edit changes where it
+would go (the JDBC URL or user name, the S3 endpoint or access key): then enter it again, so a
+stored password is never sent somewhere new. **Delete** is refused while a scan is waiting or
+running; otherwise it removes the source with its assets, fields, profiles, run history and
+graph nodes, in one transaction.
+
+**Connection tests** and listings answer within `kilnmark.sources.check-timeout` (15 s), and at
+most `kilnmark.sources.check-concurrency` (4) run at once (more get 429, "try again"). A check
+keeps its place until it has really ended, so a source that never answers cannot get round the
+limit: the drivers get connect, login and socket timeouts a second under the limit, S3 requests the
+same time limit and listings a deadline, and a check still running at the limit is interrupted.
+They answer in plain words and never repeat the password.
+
+**Bulk import** is re-runnable, keyed by name: each row creates its source, updates it, or leaves
+it unchanged, and the report says which. An update changes only the settings the file has (its
+CSV columns, a JSON object's keys); an empty value removes that setting, and everything else, such
+as a steward's later edits, stays. `ai_egress` is never loosened by an empty value, and a row that
+sets a looser one says so in its notes. The stored password stays unless the row gives one or
+moves it; a row with a password always counts as updated, since comparing it with the stored one
+would let anyone running imports test guesses. Columns: `name`, `kind`,
+`display_name`, `password` or `password_ref`, the connector's settings, the common ones above, and,
+for databases, `host`, `port` and `database` instead of `url`. Options on
+`POST /api/v1/sources/import`:
+
+| Option | Effect |
+| --- | --- |
+| `dryRun=true` | Check only; nothing changes |
+| `onError=skip` | Apply the rows that are right even if others are wrong (default `stop`: nothing changes) |
+| `remapHosts=true` | Rewrite host names in URLs and the `host` column with `kilnmark.sources.host-map` |
+| `test=true` | Afterwards, test each source's connection |
+| `scan=true` | Afterwards, queue a scan of each source (only those that connected, with `test`) |
+
+With `test` or `scan` the report has a `batchId`; `GET /api/v1/imports/{id}` shows each row's
+progress (the UI polls it). The host map, `KILNMARK_SOURCES_HOST_MAP`, is a list of `from=to` pairs
+set by an administrator, for example `localhost=host.docker.internal,127.0.0.1=host.docker.internal`:
+sources written down from a desktop then work from inside a container. Only whole host names in
+the host part of address settings (a JDBC `url`, an S3 `endpoint`, the `host` column) are
+replaced, never other settings, and only when an import asks for it. The compose stack sets
+that example by default.
+
+## Security of sources
+
+Stewards can edit, test and list sources, and test settings that are not saved. Each of those
+makes the Kilnmark server open a connection to a host the steward chooses, from the server's
+network: treat the steward role as able to probe what the server can reach (server-side request
+forgery). To limit it:
+
+- **Allowed hosts.** `kilnmark.sources.allowed-hosts` (`KILNMARK_SOURCES_ALLOWED_HOSTS`) lists the
+  hosts sources may reach: names, addresses or `*.example.com`, comma-separated. Every host a
+  source names is checked (each host of a PostgreSQL host list, SQL Server's `serverName` and
+  `failoverPartner`, S3 endpoints, and AWS's S3 host when there is none) whenever a source is added,
+  edited, imported, tested or listed. Empty, the default, allows any host.
+- **The server's own identity and files.** JDBC URL properties that make the driver act as the
+  server or touch its files are refused when a source is checked or scanned: SQL Server
+  `integratedSecurity`, `authentication=ActiveDirectory...`, `authenticationScheme`, `trustStore`,
+  `keyStoreLocation`, `serverCertificate`; PostgreSQL `sslkey`, `sslcert`, `sslrootcert`,
+  `sslfactory`, `sslpasswordcallback`, `socketFactory`, `loggerFile`, Kerberos and GSS options; and
+  any property whose name ends in File, Path, Factory, Class or ClassName.
+- **Stored passwords stay put.** An edit, check or import that changes where a password goes (URL,
+  user name, S3 endpoint or access key) needs the password again. The check is repeated on the
+  locked row when the change is saved, so two edits at once cannot slip past it.
+
+## Health
+
+`GET /q/health/ready` (readiness) is up when the database answers, every migration is applied and,
+in a process with the worker role, the worker is taking jobs. `GET /q/health/live` (liveness) is up
+while the process runs. Both are public and say only UP or DOWN per check (`database`,
+`migrations`, `worker`, `server`): no host names, users or errors, which go to the log instead.
+`compose.yaml` uses readiness as the `kilnmark` service's health check; in Kubernetes, point the
+readiness probe at `/q/health/ready` and the liveness probe at `/q/health/live`.
 
 Sign in first with the admin token from `admin-token` (see [Sign in](#sign-in)). API tokens are
 for machines and for the lab; people will sign in through OpenID Connect from v0.2

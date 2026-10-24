@@ -52,7 +52,7 @@ class SqlServerConnectorTest {
                 .startsWith("url: take the password out of the URL"), url);
         }
         assertTrue(pg.validate(new SourceConfig("x", "postgresql",
-            Map.of("url", "jdbc:postgresql://db/sales?user=kiln&sslpassword_file=x&ssl=true"), null)).isEmpty());
+            Map.of("url", "jdbc:postgresql://db/sales?user=kiln&application_name=password_app&ssl=true"), null)).isEmpty());
         assertTrue(sql.validate(source("jdbc:sqlserver://db;databaseName=passwords;encrypt=true")).isEmpty());
     }
 

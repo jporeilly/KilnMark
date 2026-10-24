@@ -17,6 +17,36 @@ line in a services file; nothing in the server changes.
 | `catalog(source)` | Every asset the source holds, with its fields; throws `ConnectorException` with a message a person can act on |
 | `reader(source, asset, read)` | The first pipeline step that reads one asset as Arrow batches |
 | `withContext(context)` | Optional (default: unchanged). Returns the connector set up with server-wide settings |
+| `containerKind()` | Optional. The list setting holding the containers chosen for scanning, what they are called and what their counts count (default `containers`) |
+| `containers(source)` | Optional. Every container with how many assets in it the patterns keep; cheap (metadata, a listing). The default reads the full catalogue, so override it |
+| `containerOf(source, asset)` | Optional. The container an asset belongs to, as `containers` names it (default: the asset's `container`) |
+| `test(source)` | Optional. Checks the source can be reached, as cheaply as possible (default: `containers`) |
+| `test(source, timeout)`, `containers(source, timeout)` | Optional. The same, bounding the connector's own network waits by `timeout` (default: ignore it) |
+| `addressKeys()` | Optional. The settings holding the network address (`url`, `endpoint`); the only ones bulk import's host map rewrites |
+| `category()`, `family()`, `capabilities()`, `formats()`, `icon()`, `docsAnchor()` | Optional. Where the connector sits in the catalogue and gallery, and what it can do today (default: other, other, discover and read, none, the category, the kind) |
+| `driver()` | Optional. A driver the customer must install; null (the default) means bundled. Installing drivers arrives with wave 1 |
+| `example(key)` | Optional. A sample value for a setting, shown in forms |
+| `assets(source, container)` | Optional. A container's tables or files without fields, cheaply (default: the full catalogue) |
+| `asset(source, path)` | Optional. One asset with its fields, as the catalogue records it (default: the full catalogue) |
+| `preview(source, asset, rows)` | Optional. The first rows, built on `reader` with a row limit, so every connector has it; override only to add details |
+| `hosts(source)` | Optional. Every host the source would reach, for the server's allowed-hosts list (default: the hosts in `addressKeys` URLs) |
+| `secretScope()` | Optional. Settings that decide where the secret goes; changing one needs the secret again (default: every setting) |
+| `addressSettings(host, port, database)` | Optional. Settings built from a host, port and database, for bulk import (default: none) |
+
+**Choosing assets.** `AssetFilter` (in `kiln-core`) holds the containers chosen and the `include`
+and `exclude` patterns every source has. Use `AssetFilter.of(this, source)` while reading the
+catalogue to skip what is not wanted before doing work (the JDBC connectors read columns and keys
+only for tables kept; the file connectors never open a file left out). The server applies the
+same filter to whatever `catalog` returns, so a connector that ignores it still scans only what
+was chosen. Patterns holding the kind's separator (`ContainerKind.separator()`: `.` for
+`schema.table`, `/` for files) match whole paths, others names only; matching never backtracks.
+
+**Checks.** The server runs `test` and `containers` on a virtual thread with a time limit, and
+interrupts it at the limit; it keeps the check's place until the thread ends. So bound your own
+waits from the `timeout` you are given: the JDBC connectors pass connect, login and socket timeouts
+to the driver, S3 a per-request timeout and a listing deadline. Never put the secret in a message.
+`validate` should refuse settings that make a driver use the server's own identity or files (the
+JDBC connectors refuse such URL properties).
 
 Server-wide settings that people adding sources must not control (which folders may be read,
 whether the server's own cloud identity may be used) reach a connector as a `ConnectorContext`:
@@ -51,7 +81,8 @@ microseconds. Types with no Arrow equivalent are read as text rather than droppe
 ## JDBC databases
 
 A database with a JDBC driver extends `JdbcConnector`, which supplies the `url`, `username` and
-`schemas` settings, the catalogue from JDBC metadata and the reader. It must give its URL prefix,
+`schemas` settings, the catalogue from JDBC metadata, the reader, the schema listing (two metadata
+calls), a connection test, and `addressSettings` from its `addressUrl`. It must give its URL prefix,
 an example URL and the SQL that reads a table (`selectSql`), and may override:
 
 - `quote` for its identifier quoting (SQL Server: `[name]`, `]` doubled);
@@ -99,7 +130,8 @@ holding up a production database.
 ## Files and object storage
 
 Two connectors share `io.kilnmark.kiln.plugins.files`: `files` (a folder the server can read:
-`path`, `include` glob, `recursive`, `encoding`) and `s3` (`endpoint`, `region`, `bucket`, `prefix`,
+`path`, `recursive`, `encoding`, `delimiter`, `header`; which files comes from the common `include` and `exclude` settings
+and the chosen top-level folders) and `s3` (`endpoint`, `region`, `bucket`, `prefix`,
 `access_key_id`, `path_style`, `encoding`; the secret is the secret access key). Libraries and the
 reasons for them are in [ADR 0015](../adr/0015-file-formats.md).
 

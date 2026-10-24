@@ -28,6 +28,36 @@ public interface FileStore extends Closeable {
     /** Every file to record, sorted by path. */
     List<Entry> list() throws IOException;
 
+    /**
+     * Every file to record, as {@link #list()}, but giving up with an {@link IOException} once
+     * {@code deadline} has passed (null: no deadline). By default the deadline is not checked.
+     */
+    default List<Entry> list(java.time.Instant deadline) throws IOException {
+        return list();
+    }
+
+    /**
+     * One file by its path. By default found in {@link #list()}; stores override it with one lookup.
+     *
+     * @throws IOException when there is no such file
+     */
+    default Entry entry(String path) throws IOException {
+        for (Entry e : list()) {
+            if (e.path().equals(path)) {
+                return e;
+            }
+        }
+        throw new IOException("There is no file " + path + ": list the folder again");
+    }
+
+    /**
+     * Checks the store can be read, as cheaply as it can: by default by listing it. Throws with a
+     * message a person can act on.
+     */
+    default void probe() throws IOException {
+        list();
+    }
+
     /** Streams a whole file. Closing the stream before its end stops the transfer. */
     InputStream open(String path) throws IOException;
 

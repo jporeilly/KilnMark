@@ -26,10 +26,14 @@ public class CatalogResource {
     private final ObjectMapper json;
     private final io.kilnmark.kiln.connect.Connectors connectors;
 
-    public CatalogResource(GraphStore store, ObjectMapper json, io.kilnmark.kiln.connect.Connectors connectors) {
+    private final io.kilnmark.server.KilnmarkConfig config;
+
+    public CatalogResource(GraphStore store, ObjectMapper json, io.kilnmark.kiln.connect.Connectors connectors,
+                           io.kilnmark.server.KilnmarkConfig config) {
         this.store = store;
         this.json = json;
         this.connectors = connectors;
+        this.config = config;
     }
 
     /** Keyword search over asset names, descriptions and field names. */
@@ -58,9 +62,60 @@ public class CatalogResource {
     @GET
     @Path("connectors")
     public java.util.List<Views.Connector> connectors() {
-        return connectors.all().stream().map(c -> new Views.Connector(c.kind(), c.displayName(),
-            c.settings().stream().map(s -> new Views.Setting(s.key(), s.label(), s.required(), s.hint(), s.multiple()))
-                .toList())).toList();
+        return connectors.all().stream().map(CatalogResource::view).toList();
+    }
+
+    /** A connector as the form needs it: its settings, plus its container setting if it does not list it. */
+    static Views.Connector view(io.kilnmark.kiln.connect.Connector c) {
+        var kind = c.containerKind();
+        java.util.List<Views.Setting> settings = new java.util.ArrayList<>(c.settings().stream()
+            .map(s -> new Views.Setting(s.key(), s.label(), s.required(), s.hint(), s.multiple(), c.example(s.key())))
+            .toList());
+        if (settings.stream().noneMatch(s -> s.key().equals(kind.setting()))) {
+            settings.add(new Views.Setting(kind.setting(), kind.label(), false, "Leave empty to scan them all, or "
+                + "choose them from a list", true, null));
+        }
+        java.util.List<String> capabilities = java.util.Arrays.stream(io.kilnmark.kiln.connect.Connector.Capability
+            .values()).filter(c.capabilities()::contains).map(x -> x.name().toLowerCase(java.util.Locale.ROOT)).toList();
+        return new Views.Connector(c.kind(), c.displayName(), java.util.List.copyOf(settings), kind.setting(),
+            kind.label(), kind.counted(), c.category(), c.family(), capabilities, c.formats(), c.icon(),
+            c.docsAnchor(), !c.addressSettings("db.example.com", null, "db").isEmpty(), c.driver() == null);
+    }
+
+    /**
+     * The catalogue for the "Add connection" gallery: every category in order, each with its built
+     * connectors and, unless {@code kilnmark.connectors.show-planned} is false, the planned ones.
+     */
+    @GET
+    @Path("connectors/catalogue")
+    public Views.ConnectorCatalogue catalogue() {
+        boolean planned = config.connectors().showPlanned();
+        java.util.List<Views.ConnectorCategory> out = new java.util.ArrayList<>();
+        for (String[] cat : PlannedConnectors.CATEGORIES) {
+            java.util.List<Views.Connector> built = connectors.all().stream()
+                .filter(c -> c.category().equals(cat[0])).map(CatalogResource::view).toList();
+            java.util.List<Views.PlannedConnector> later = planned
+                ? PlannedConnectors.ALL.stream().filter(p -> p.category().equals(cat[0])).toList() : java.util.List.of();
+            if (cat[0].equals("other") && built.isEmpty()) {
+                continue;
+            }
+            out.add(new Views.ConnectorCategory(cat[0], cat[1], built, later));
+        }
+        return new Views.ConnectorCatalogue(planned, out);
+    }
+
+    /**
+     * The settings that point a source of {@code kind} at a host, port and database (for example a
+     * JDBC URL), as the connection panel's host fields build them.
+     */
+    @GET
+    @Path("connectors/{kind}/address")
+    public java.util.Map<String, String> address(@PathParam("kind") String kind, @QueryParam("host") String host,
+                                                 @QueryParam("port") String port,
+                                                 @QueryParam("database") String database) {
+        io.kilnmark.kiln.connect.Connector c = connectors.get(kind).orElseThrow(() -> ApiError.of(
+            Response.Status.NOT_FOUND, "No connector of kind " + kind));
+        return SourceService.address(c, host, port, database);
     }
 
     @GET

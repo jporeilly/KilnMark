@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -17,25 +18,40 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.kilnmark.graph.store.GraphStore;
-import io.kilnmark.kiln.connect.Connectors;
-import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.graph.store.Records;
+import io.kilnmark.kiln.connect.AssetFilter;
+import io.kilnmark.kiln.connect.Connector;
+import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.SecretBox;
+import io.kilnmark.server.sources.CommonSettings;
+import io.kilnmark.server.sources.HostRemap;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
- * Bulk registration of data sources from a CSV or JSON file. Every row is checked first; if any
- * row is wrong nothing is created, and the report says what to fix on which line. A dry run
- * checks without creating anything.
+ * Bulk registration of data sources from a CSV or JSON file, re-runnable: each row creates the
+ * source it names, or updates the source of that name to match the row, or leaves it unchanged.
+ * Every row is checked first. By default, if any row is wrong nothing changes and the report says
+ * what to fix on which line; with {@code onError=skip} the right rows are applied anyway. A dry run
+ * changes nothing.
  *
  * <p>CSV (header row required, any column order): {@code name}, optionally {@code kind} (default
- * {@code postgresql}), {@code password} or {@code password_ref}, and one column per connector
- * setting, for example {@code url}, {@code username} and {@code schemas} (lists separated by
- * semicolons). JSON: an array of objects with the same keys, or with the settings in a
- * {@code settings} object.
- * {@code password_ref} keeps passwords out of the file: {@code env:VARIABLE} reads the server's
- * environment, {@code secret:NAME} reads a file in the configured secrets folder.
+ * {@code postgresql}, or the existing source's kind), {@code password} or {@code password_ref}, and
+ * one column per setting: the connector's (for example {@code url}, {@code username},
+ * {@code schemas}; lists separated by semicolons) and the common ones ({@code description},
+ * {@code ai_egress}, {@code include}, {@code exclude}). Database kinds may give {@code host},
+ * {@code port} and {@code database} instead of {@code url}. JSON: an array of objects with the same
+ * keys, or with the settings in a {@code settings} object. {@code display_name} sets the name people
+ * see; the {@code name} is the source's fixed key. {@code password_ref} keeps passwords
+ * out of the file: {@code env:VARIABLE} reads the server's environment, {@code secret:NAME} reads
+ * a file in the configured secrets folder.
+ *
+ * <p>An update changes only the settings the file has (its CSV columns, or a JSON object's keys);
+ * an empty value removes that setting, and every other setting, such as a steward's later edits,
+ * stays. {@code ai_egress} is never loosened by an empty value; a row that sets a looser one says
+ * so in its notes. A row without a password keeps the stored one, unless it changes where the
+ * password would go (the URL or user name), which needs the password again. A row with a password
+ * always counts as updated: the stored one is never compared with it.
  */
 @ApplicationScoped
 public class SourceImporter {
@@ -44,17 +60,56 @@ public class SourceImporter {
     private static final Pattern ENV = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final Pattern SECRET = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
 
+    /**
+     * One row of the file. {@code present} names the settings the file has for it (its CSV columns
+     * or JSON keys, plus {@code display_name} if given), even where a value is empty: an update
+     * changes only those.
+     */
     public record Row(int line, String name, String kind, Map<String, String> settings, String password,
-                      String passwordRef) {
+                      String passwordRef, String host, String port, String database, String displayName,
+                      Set<String> present) {
+
+        public Row {
+            present = Set.copyOf(present == null ? settings.keySet() : present);
+        }
+
+        public Row(int line, String name, String kind, Map<String, String> settings, String password,
+                   String passwordRef) {
+            this(line, name, kind, settings, password, passwordRef, null, null, null, null, null);
+        }
     }
 
     private static final Set<String> RESERVED = Set.of("name", "kind", "password", "password_ref", "passwordref",
-        "settings");
+        "settings", "host", "port", "database", "display_name", "displayname");
 
-    public record RowResult(int line, String name, String status, String error) {
+    /**
+     * How to run an import. {@code skipErrors}: apply the right rows even if others are wrong.
+     * {@code remapHosts}: rewrite host names with the server's host map. {@code test} and
+     * {@code scan}: afterwards, test each source's connection and queue a scan of each (only of
+     * those whose test passed, when testing), reported in a batch the UI polls.
+     */
+    public record Options(boolean dryRun, boolean skipErrors, boolean remapHosts, boolean test, boolean scan) {
     }
 
-    public record Report(boolean dryRun, int created, int errors, List<RowResult> rows) {
+    /**
+     * One row's outcome. {@code status}: created, updated, unchanged or failed (in a dry run, what
+     * would happen). {@code notes} says what the import changed on its own, such as a remapped host.
+     */
+    public record RowResult(int line, String name, String status, String error, List<String> notes) {
+    }
+
+    /**
+     * {@code applied} is false when nothing was changed: a dry run, or a row was wrong and errors
+     * were not skipped. {@code errors} is {@code failed} under its earlier name. {@code batchId}
+     * names the follow-up tests and scans, if any were asked for.
+     */
+    public record Report(boolean dryRun, boolean applied, int created, int updated, int unchanged, int failed,
+                         int errors, List<RowResult> rows, Long batchId) {
+    }
+
+    /** A row checked and ready to apply. */
+    private record Plan(RowResult result, Records.NewSource create, Long updateId, Records.SourceChange update,
+                        SourceService.Draft draft) {
     }
 
     private final GraphStore store;
@@ -62,67 +117,217 @@ public class SourceImporter {
     private final KilnmarkConfig config;
     private final ObjectMapper json;
     private final Connectors connectors;
+    private final SourceService sources;
+    private final ImportBatches batches;
 
     public SourceImporter(GraphStore store, SecretBox secrets, KilnmarkConfig config, ObjectMapper json,
-                          Connectors connectors) {
+                          Connectors connectors, SourceService sources, ImportBatches batches) {
         this.store = store;
         this.secrets = secrets;
         this.config = config;
         this.json = json;
         this.connectors = connectors;
+        this.sources = sources;
+        this.batches = batches;
     }
 
+    /** The import as version 1 ran it: check every row, create all or nothing. */
     public Report run(List<Row> rows, boolean dryRun) {
+        return run(rows, new Options(dryRun, false, false, false, false), "import");
+    }
+
+    public Report run(List<Row> rows, Options options, String who) {
         if (rows.isEmpty()) {
             throw new IllegalArgumentException("The file has no sources in it");
         }
         if (rows.size() > MAX_ROWS) {
             throw new IllegalArgumentException("At most " + MAX_ROWS + " sources per import; this file has " + rows.size());
         }
-        Set<String> existing = new HashSet<>();
-        store.sources().forEach(s -> existing.add(s.name()));
+        HostRemap remap = options.remapHosts() ? hostMap() : null;
+        Map<String, Records.Source> existing = new HashMap<>();
+        store.sources().forEach(s -> existing.put(s.name(), s));
         Set<String> inFile = new HashSet<>();
-        List<RowResult> results = new ArrayList<>();
-        List<Records.NewSource> ready = new ArrayList<>();
-        int errors = 0;
+        List<Plan> plans = new ArrayList<>();
+        int failed = 0;
         for (Row r : rows) {
-            String kind = r.kind() == null || r.kind().isBlank() ? "postgresql" : r.kind().trim();
-            String error = r.name() == null ? "name: missing"
-                : SourceRules.check(connectors, new SourceConfig(r.name(), kind, r.settings(), null));
-            if (error == null && existing.contains(r.name())) {
-                error = "a source called " + r.name() + " already exists";
+            Plan p;
+            try {
+                if (r.name() != null && !inFile.add(r.name())) {
+                    throw new IllegalArgumentException("the name " + r.name() + " appears more than once in the file");
+                }
+                p = plan(r, existing.get(r.name()), remap);
+            } catch (IllegalArgumentException e) {
+                p = new Plan(new RowResult(r.line(), r.name(), "failed", e.getMessage(), List.of()), null, null, null,
+                    null);
+                failed++;
             }
-            if (error == null && !inFile.add(r.name())) {
-                error = "the name " + r.name() + " appears more than once in the file";
+            plans.add(p);
+        }
+        boolean apply = !options.dryRun() && (failed == 0 || options.skipErrors());
+        Map<String, Long> ids = new HashMap<>();
+        existing.values().forEach(s -> ids.put(s.name(), s.id()));
+        if (apply) {
+            List<Records.NewSource> creates = plans.stream().filter(p -> p.create() != null).map(Plan::create).toList();
+            Map<Long, Records.SourceChange> updates = new LinkedHashMap<>();
+            plans.stream().filter(p -> p.update() != null).forEach(p -> updates.put(p.updateId(), p.update()));
+            if (!creates.isEmpty() || !updates.isEmpty()) {
+                store.saveSources(creates, updates).forEach(s -> ids.put(s.name(), s.id()));
             }
-            String password = null;
-            if (error == null) {
-                try {
-                    password = password(r);
-                } catch (IllegalArgumentException e) {
-                    error = e.getMessage();
+        }
+        int created = count(plans, "created");
+        int updated = count(plans, "updated");
+        int unchanged = count(plans, "unchanged");
+        Long batch = null;
+        boolean follow = (options.test() || options.scan() && !options.dryRun()) && (apply || options.dryRun()
+            && failed < plans.size());
+        if (follow) {
+            List<ImportBatches.Item> items = plans.stream().filter(p -> p.draft() != null)
+                .map(p -> new ImportBatches.Item(p.result().line(), p.result().name(), p.draft().connector(),
+                    p.draft().config(), options.dryRun() ? null : ids.get(p.result().name()))).toList();
+            if (!items.isEmpty()) {
+                batch = batches.start(who, options.dryRun(), options.test(), options.scan(), items);
+            }
+        }
+        return new Report(options.dryRun(), apply, apply ? created : 0, apply ? updated : 0, unchanged, failed, failed,
+            plans.stream().map(Plan::result).toList(), batch);
+    }
+
+    private static int count(List<Plan> plans, String status) {
+        return (int) plans.stream().filter(p -> p.result().status().equals(status)).count();
+    }
+
+    /** The server's host map, which an import may only use when an administrator has set one. */
+    private HostRemap hostMap() {
+        HostRemap map = HostRemap.parse(config.sources().hostMap().orElse(List.of()));
+        if (map.isEmpty()) {
+            throw new IllegalArgumentException("remapHosts: this server has no host map. An administrator sets one in "
+                + HostRemap.SETTING + " (KILNMARK_SOURCES_HOST_MAP), for example localhost=host.docker.internal");
+        }
+        return map;
+    }
+
+    /**
+     * Checks one row and works out what applying it does.
+     *
+     * @throws IllegalArgumentException with what to fix
+     */
+    private Plan plan(Row r, Records.Source existing, HostRemap remap) {
+        if (r.name() == null || r.name().isBlank()) {
+            throw new IllegalArgumentException("name: missing");
+        }
+        String rowKind = r.kind() == null || r.kind().isBlank() ? null : r.kind().trim();
+        if (existing != null && rowKind != null && !rowKind.equals(existing.kind())) {
+            throw new IllegalArgumentException("kind: a source called " + r.name() + " already exists, of kind "
+                + existing.kind() + ". A source's kind cannot change: delete it first, or use another name");
+        }
+        String kind = rowKind != null ? rowKind : existing != null ? existing.kind() : "postgresql";
+        Connector connector = sources.connector(kind);
+        Map<String, String> row = new HashMap<>(r.settings());
+        Set<String> present = new HashSet<>(r.present());
+        List<String> notes = new ArrayList<>();
+        address(r, connector, row, remap, notes, present);
+        if (remap != null) {
+            for (String key : connector.addressKeys()) { // the host map rewrites addresses only
+                String v = row.get(key);
+                String to = remap.apply(v);
+                if (v != null && !to.equals(v)) {
+                    notes.add(key + ": host changed for this server, to " + to);
+                    row.put(key, to);
                 }
             }
-            if (error != null) {
-                errors++;
-                results.add(new RowResult(r.line(), r.name(), "error", error));
-                continue;
+        }
+        String password = password(r);
+        if (existing == null) {
+            SourceService.Draft d = sources.draft(new SourceForm(r.name(), rowKind, row, password, null, null,
+                r.displayName()), null, true);
+            RowResult res = new RowResult(r.line(), r.name(), "created", null, notes);
+            return new Plan(res, new Records.NewSource(r.name(), kind, d.config().settings(),
+                d.newSecret() == null ? null : secrets.seal(d.newSecret()), d.displayName()), null, null, d);
+        }
+        Map<String, String> merged = merge(existing.settings(), row, present, notes);
+        String displayName = present.contains("display_name") ? r.displayName()
+            : existing.displayName().equals(existing.name()) ? null : existing.displayName();
+        SourceService.Draft d = sources.draft(new SourceForm(r.name(), rowKind, merged, password, null, null,
+            displayName), existing, true);
+        String shown = d.displayName() == null ? existing.name() : d.displayName();
+        // A supplied password always counts as a change: comparing it with the stored one would
+        // tell whoever runs imports whether they had guessed it.
+        if (!d.replaceSecret() && existing.settings().equals(d.config().settings())
+            && shown.equals(existing.displayName())) {
+            return new Plan(new RowResult(r.line(), r.name(), "unchanged", null, notes), null, null, null, d);
+        }
+        Records.SourceChange change = new Records.SourceChange(d.displayName(), d.config().settings(),
+            d.replaceSecret(), d.replaceSecret() && d.newSecret() != null ? secrets.seal(d.newSecret()) : null,
+            d.keepSecretIf());
+        return new Plan(new RowResult(r.line(), r.name(), "updated", null, notes), null, existing.id(), change, d);
+    }
+
+    /** How freely a source may reach AI models, from strictest (0) to most open. */
+    private static int openness(CommonSettings.AiEgress e) {
+        return switch (e) {
+            case NONE -> 0;
+            case LOCAL_ONLY -> 1;
+            case ALLOWED -> 2;
+        };
+    }
+
+    /**
+     * The stored settings with the file's changes: only the keys the file has (its CSV columns or
+     * JSON keys) change, a present but empty one is removed, and every other setting, such as a
+     * steward's later edits, stays. {@code ai_egress} is never loosened unless the row says so: an
+     * empty value keeps the stored one, and an explicit looser value is applied with a note.
+     */
+    static Map<String, String> merge(Map<String, String> stored, Map<String, String> row, Set<String> present,
+                                     List<String> notes) {
+        Map<String, String> merged = new HashMap<>(stored);
+        for (String key : present) {
+            String v = row.get(key);
+            if (key.equals(CommonSettings.AI_EGRESS)) {
+                if (v == null || v.isBlank()) {
+                    continue; // never loosened by an empty cell
+                }
+                CommonSettings.AiEgress was = CommonSettings.AiEgress.of(stored);
+                CommonSettings.AiEgress now = CommonSettings.AiEgress.parse(v);
+                if (now != null && openness(now) > openness(was)) {
+                    notes.add("ai_egress: loosened from " + was.id() + " to " + now.id() + ", as the file says");
+                }
             }
-            results.add(new RowResult(r.line(), r.name(), dryRun ? "ok" : "created", null));
-            if (!dryRun) {
-                ready.add(new Records.NewSource(r.name(), kind, r.settings(),
-                    password == null ? null : secrets.seal(password)));
+            if (v == null || v.isBlank()) {
+                merged.remove(key);
+            } else {
+                merged.put(key, v);
             }
         }
-        if (errors > 0) {
-            List<RowResult> notCreated = results.stream()
-                .map(x -> x.status().equals("created") ? new RowResult(x.line(), x.name(), "ok", null) : x).toList();
-            return new Report(dryRun, 0, errors, notCreated);
+        return merged;
+    }
+
+    /** Builds the connector's address settings (a JDBC URL) from host, port and database columns. */
+    private static void address(Row r, Connector connector, Map<String, String> settings, HostRemap remap,
+                                List<String> notes, Set<String> present) {
+        String host = blank(r.host());
+        if (host == null) {
+            if (blank(r.port()) != null || blank(r.database()) != null) {
+                throw new IllegalArgumentException("host: give the host too, or a url instead of port and database");
+            }
+            return;
         }
-        if (!dryRun) {
-            store.addSources(ready);
+        if (settings.containsKey("url")) {
+            throw new IllegalArgumentException("url: give a url, or host, port and database, not both");
         }
-        return new Report(dryRun, dryRun ? 0 : ready.size(), 0, results);
+        if (remap != null && HostRemap.validHost(host)) {
+            String to = remap.host(host);
+            if (!to.equals(host)) {
+                notes.add("host: changed for this server, from " + host + " to " + to);
+                host = to;
+            }
+        }
+        Map<String, String> address = SourceService.address(connector, host, r.port(), r.database());
+        settings.putAll(address);
+        present.addAll(address.keySet());
+    }
+
+    private static String blank(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     private String password(Row r) {
@@ -181,14 +386,24 @@ public class SourceImporter {
         for (JsonNode n : root) {
             i++;
             Map<String, String> settings = new HashMap<>();
-            n.path("settings").properties().forEach(e -> put(settings, e.getKey(), e.getValue()));
+            Set<String> present = new HashSet<>();
+            n.path("settings").properties().forEach(e -> {
+                present.add(e.getKey());
+                put(settings, e.getKey(), e.getValue());
+            });
             n.properties().forEach(e -> {
                 if (!RESERVED.contains(e.getKey().toLowerCase(Locale.ROOT))) {
+                    present.add(e.getKey());
                     put(settings, e.getKey(), e.getValue());
                 }
             });
+            if (n.has("display_name") || n.has("displayName")) {
+                present.add("display_name");
+            }
             rows.add(new Row(i, text(n, "name"), text(n, "kind"), SourceResource.clean(settings), text(n, "password"),
-                n.hasNonNull("password_ref") ? text(n, "password_ref") : text(n, "passwordRef")));
+                n.hasNonNull("password_ref") ? text(n, "password_ref") : text(n, "passwordRef"), text(n, "host"),
+                text(n, "port"), text(n, "database"),
+                n.hasNonNull("display_name") ? text(n, "display_name") : text(n, "displayName"), present));
         }
         return rows;
     }
@@ -224,6 +439,12 @@ public class SourceImporter {
         if (!header.containsKey("name")) {
             throw new IllegalArgumentException("The header row needs a 'name' column");
         }
+        Set<String> present = new HashSet<>();
+        header.keySet().forEach(k -> {
+            if (!RESERVED.contains(k) || k.equals("display_name")) {
+                present.add(k);
+            }
+        });
         List<Row> rows = new ArrayList<>();
         for (int r = 1; r < records.size(); r++) {
             List<String> rec = records.get(r);
@@ -235,12 +456,16 @@ public class SourceImporter {
                 if (!RESERVED.contains(h.getKey())) {
                     String v = cell(rec, header, h.getKey());
                     if (v != null) {
-                        settings.put(h.getKey(), v.replace(';', ','));
+                        // include and exclude keep their semicolons: a pattern may hold {a,b}
+                        boolean patterns = h.getKey().equals(AssetFilter.INCLUDE) || h.getKey().equals(AssetFilter.EXCLUDE);
+                        settings.put(h.getKey(), patterns ? v : v.replace(';', ','));
                     }
                 }
             }
             rows.add(new Row(r + 1, cell(rec, header, "name"), cell(rec, header, "kind"),
-                SourceResource.clean(settings), cell(rec, header, "password"), cell(rec, header, "password_ref")));
+                SourceResource.clean(settings), cell(rec, header, "password"), cell(rec, header, "password_ref"),
+                cell(rec, header, "host"), cell(rec, header, "port"), cell(rec, header, "database"),
+                cell(rec, header, "display_name"), present));
         }
         return rows;
     }

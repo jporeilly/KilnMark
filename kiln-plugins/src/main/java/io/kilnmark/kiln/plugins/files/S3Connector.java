@@ -5,6 +5,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorContext;
@@ -48,6 +49,30 @@ public final class S3Connector extends FileSourceConnector {
     }
 
     @Override
+    public String family() {
+        return "object storage";
+    }
+
+    @Override
+    public String icon() {
+        return "bucket";
+    }
+
+    @Override
+    public String example(String settingKey) {
+        return switch (settingKey) {
+            case "endpoint" -> "http://storage.example.com:9000";
+            case "region" -> "eu-west-2";
+            case "bucket" -> "lab-raw";
+            case "prefix" -> "raw/";
+            case "access_key_id" -> "AK1234EXAMPLE";
+            case "path_style" -> "true";
+            case "delimiter" -> ";";
+            default -> null;
+        };
+    }
+
+    @Override
     public String kind() {
         return "s3";
     }
@@ -72,7 +97,7 @@ public final class S3Connector extends FileSourceConnector {
                 false),
             new Setting("path_style", "Path-style addressing", false,
                 "true for most S3-compatible storage (VersityGW, MinIO); false (the default) for AWS", false),
-            ENCODING);
+            ENCODING, DELIMITER, HEADER);
     }
 
     @Override
@@ -112,6 +137,7 @@ public final class S3Connector extends FileSourceConnector {
         }
         checkBoolean(source, "path_style", problems);
         checkEncoding(source, problems);
+        checkText(source, problems);
         return problems;
     }
 
@@ -124,6 +150,38 @@ public final class S3Connector extends FileSourceConnector {
         return new S3FileStore.Settings(source.setting("endpoint"), source.setting("region"),
             source.setting("bucket"), source.setting("prefix"), source.setting("access_key_id"), source.secret(),
             Boolean.parseBoolean(source.setting("path_style")));
+    }
+
+    @Override
+    protected FileStore open(SourceConfig source, java.time.Duration timeout) throws IOException {
+        return new S3FileStore(settings(source), allowDefaultCredentials, timeout);
+    }
+
+    @Override
+    public Set<String> addressKeys() {
+        return Set.of("endpoint");
+    }
+
+    /** The endpoint's host, or AWS's S3 host for the region when there is no endpoint. */
+    @Override
+    public List<String> hosts(SourceConfig source) {
+        if (source.setting("endpoint") != null) {
+            return io.kilnmark.kiln.connect.UrlHosts.hosts(source.setting("endpoint"));
+        }
+        String region = source.setting("region") == null ? S3FileStore.DEFAULT_REGION : source.setting("region");
+        return List.of("s3." + region + ".amazonaws.com");
+    }
+
+    @Override
+    protected String prefix(SourceConfig source) {
+        String prefix = source.setting("prefix");
+        return prefix == null ? "" : prefix;
+    }
+
+    /** The endpoint and access key decide who the secret signs requests for. */
+    @Override
+    public Set<String> secretScope() {
+        return Set.of("endpoint", "access_key_id");
     }
 
     @Override

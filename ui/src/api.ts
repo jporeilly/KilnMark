@@ -104,6 +104,7 @@ export type Run = {
   detail: string | null;
 };
 
+/** name is the source's fixed key, part of every asset reference; people see displayName. */
 export type Source = {
   name: string;
   kind: string;
@@ -111,10 +112,54 @@ export type Source = {
   hasPassword: boolean;
   createdAt: string;
   lastRun: Run | null;
+  displayName: string;
+  assets: number;
+  category: string;
+  /** For file sources: how many current files have each extension. */
+  formats: Record<string, number>;
 };
 
-export type ConnectorSetting = { key: string; label: string; required: boolean; hint: string; multiple: boolean };
-export type Connector = { kind: string; displayName: string; settings: ConnectorSetting[] };
+export type ConnectorSetting = {
+  key: string;
+  label: string;
+  required: boolean;
+  hint: string;
+  multiple: boolean;
+  example: string | null;
+};
+export type Capability = "discover" | "read" | "write" | "stream";
+/** containerSetting holds the containers (schemas, folders) chosen for scanning. */
+export type Connector = {
+  kind: string;
+  displayName: string;
+  settings: ConnectorSetting[];
+  containerSetting: string;
+  containerLabel: string;
+  containerCounted: string;
+  category: string;
+  family: string;
+  capabilities: Capability[];
+  formats: string[];
+  icon: string;
+  docsAnchor: string;
+  /** Whether host, port and database fields can build its address. */
+  addressFields: boolean;
+  driverBundled: boolean;
+};
+export type PlannedConnector = { name: string; category: string; family: string; capabilities: Capability[]; wave: string };
+export type ConnectorCategory = { id: string; label: string; connectors: Connector[]; planned: PlannedConnector[] };
+export type ConnectorCatalogue = { showPlanned: boolean; categories: ConnectorCategory[] };
+export type AssetItem = { path: string; name: string; kind: string; readable: boolean };
+export type AssetList = { container: string; total: number; offset: number; items: AssetItem[] };
+export type PreviewColumn = { name: string; kind: string | null; sourceType: string | null };
+export type Preview = {
+  asset: string;
+  columns: PreviewColumn[];
+  rows: (string | null)[][];
+  rowCount: number;
+  truncated: boolean;
+  details: Record<string, string>;
+};
 
 export type SearchHit = {
   urn: string;
@@ -178,10 +223,83 @@ export type NewSource = {
   kind: string;
   settings: Record<string, string>;
   password: string;
+  displayName?: string;
 };
 
-export type ImportRow = { line: number; name: string | null; status: "ok" | "created" | "error"; error: string | null };
-export type ImportReport = { dryRun: boolean; created: number; errors: number; rows: ImportRow[] };
+/** A setting every source has; choices is empty for free text. */
+export type CommonSetting = {
+  key: string;
+  label: string;
+  hint: string;
+  multiple: boolean;
+  choices: string[];
+  defaultValue: string | null;
+};
+
+/** A source as the add and edit forms send it. source names the saved source a check is for. */
+export type SourceForm = {
+  name?: string;
+  kind?: string;
+  displayName?: string;
+  settings: Record<string, string>;
+  password?: string;
+  clearPassword?: boolean;
+  source?: string;
+};
+
+export type TestResult = { ok: boolean; problem: string | null; millis: number };
+export type ContainerItem = { name: string; count: number; selected: boolean };
+export type ContainerList = {
+  setting: string;
+  label: string;
+  counted: string;
+  containers: ContainerItem[];
+  selected: string[];
+  missing: string[];
+  total: number;
+  nothingToScan: boolean;
+  warnings: string[];
+};
+export type HistoryRun = { run: Run; attempts: number | null; jobError: string | null };
+export type Deleted = { name: string; assets: number; runs: number };
+
+export type ImportRow = {
+  line: number;
+  name: string | null;
+  status: "created" | "updated" | "unchanged" | "failed";
+  error: string | null;
+  notes: string[];
+};
+export type ImportReport = {
+  dryRun: boolean;
+  applied: boolean;
+  created: number;
+  updated: number;
+  unchanged: number;
+  failed: number;
+  errors: number;
+  rows: ImportRow[];
+  batchId: number | null;
+};
+export type ImportOptions = { dryRun: boolean; skipErrors: boolean; remapHosts: boolean; test: boolean; scan: boolean };
+export type ImportBatchRow = {
+  line: number;
+  name: string;
+  test: "waiting" | "testing" | "ok" | "failed" | "skipped";
+  problem: string | null;
+  scan: "waiting" | "queued" | "skipped" | "failed";
+  runId: number | null;
+};
+export type ImportBatch = {
+  id: number;
+  status: "running" | "finished" | "stopped";
+  dryRun: boolean;
+  test: boolean;
+  scan: boolean;
+  createdAt: string;
+  finishedAt: string | null;
+  rows: ImportBatchRow[];
+};
 
 export class ApiError extends Error {
   constructor(
@@ -210,7 +328,7 @@ async function call<T>(path: string, init?: RequestInit, contentType = "applicat
   } catch {
     body = null;
   }
-  if (response.status === 422 && body?.rows) {
+  if ((response.status === 422 && body?.rows) || response.status === 204) {
     return body as T; // an import report listing what to fix
   }
   if (response.status === 401) {
@@ -259,12 +377,47 @@ export const api = {
   sources: () => call<Source[]>("/api/v1/sources"),
   connectors: () => call<Connector[]>("/api/v1/connectors"),
   addSource: (s: NewSource) => call<Source>("/api/v1/sources", { method: "POST", body: JSON.stringify(s) }),
-  importSources: (text: string, format: "csv" | "json", dryRun: boolean) =>
+  importSources: (text: string, format: "csv" | "json", o: ImportOptions) =>
     call<ImportReport>(
-      `/api/v1/sources/import?dryRun=${dryRun}`,
+      `/api/v1/sources/import?dryRun=${o.dryRun}&onError=${o.skipErrors ? "skip" : "stop"}` +
+        `&remapHosts=${o.remapHosts}&test=${o.test}&scan=${o.scan}`,
       { method: "POST", body: text },
       format === "csv" ? "text/csv" : "application/json",
     ),
+  importBatch: (id: number) => call<ImportBatch>(`/api/v1/imports/${id}`),
+  source: (name: string) => call<Source>(`/api/v1/sources/${encodeURIComponent(name)}`),
+  updateSource: (name: string, form: SourceForm) =>
+    call<Source>(`/api/v1/sources/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(form) }),
+  deleteSource: (name: string) => call<Deleted>(`/api/v1/sources/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  testSource: (name: string) => call<TestResult>(`/api/v1/sources/${encodeURIComponent(name)}/test`, { method: "POST" }),
+  testDraft: (form: SourceForm) => call<TestResult>("/api/v1/drafts/test", { method: "POST", body: JSON.stringify(form) }),
+  containers: (name: string) => call<ContainerList>(`/api/v1/sources/${encodeURIComponent(name)}/containers`),
+  draftContainers: (form: SourceForm) =>
+    call<ContainerList>("/api/v1/drafts/containers", { method: "POST", body: JSON.stringify(form) }),
+  history: (name: string) => call<HistoryRun[]>(`/api/v1/sources/${encodeURIComponent(name)}/history`),
+  commonSettings: () => call<CommonSetting[]>("/api/v1/common-settings"),
+  catalogue: () => call<ConnectorCatalogue>("/api/v1/connectors/catalogue"),
+  address: (kind: string, host: string, port: string, database: string) =>
+    call<Record<string, string>>(
+      `/api/v1/connectors/${encodeURIComponent(kind)}/address?host=${encodeURIComponent(host)}` +
+        `&port=${encodeURIComponent(port)}&database=${encodeURIComponent(database)}`,
+    ),
+  assets: (name: string, container: string, offset: number) =>
+    call<AssetList>(
+      `/api/v1/sources/${encodeURIComponent(name)}/assets?container=${encodeURIComponent(container)}&offset=${offset}`,
+    ),
+  draftAssets: (form: SourceForm, container: string, offset: number) =>
+    call<AssetList>(`/api/v1/drafts/assets?container=${encodeURIComponent(container)}&offset=${offset}`, {
+      method: "POST",
+      body: JSON.stringify(form),
+    }),
+  preview: (name: string, asset: string, rows: number) =>
+    call<Preview>(`/api/v1/sources/${encodeURIComponent(name)}/preview?asset=${encodeURIComponent(asset)}&rows=${rows}`),
+  draftPreview: (form: SourceForm, asset: string, rows: number) =>
+    call<Preview>(`/api/v1/drafts/preview?asset=${encodeURIComponent(asset)}&rows=${rows}`, {
+      method: "POST",
+      body: JSON.stringify(form),
+    }),
   scan: (name: string) => call<Run>(`/api/v1/sources/${encodeURIComponent(name)}/scans`, { method: "POST" }),
   run: (id: number) => call<Run>(`/api/v1/runs/${id}`),
   search: (q: string) => call<{ query: string; hits: SearchHit[] }>(`/api/v1/search?q=${encodeURIComponent(q)}`),
@@ -276,3 +429,12 @@ export const formatNumber = (n: number | null | undefined) => (n == null ? "–"
 
 const times = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
 export const formatTime = (iso: string | null | undefined) => (iso ? times.format(new Date(iso)) : "–");
+
+/** How long a run took, in words; "–" until it has started and finished. */
+export function formatDuration(run: Run): string {
+  if (!run.startedAt || !run.finishedAt) return "–";
+  const seconds = Math.max(0, Math.round((Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes < 60 ? `${minutes} min ${seconds % 60} s` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}

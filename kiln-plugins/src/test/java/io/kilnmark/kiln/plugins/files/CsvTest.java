@@ -115,7 +115,7 @@ class CsvTest {
             int n = r.read(buf);
             assertEquals("id,name\n", new String(buf, 0, n));
         }
-        FileInspector.Layout layout = FileInspector.csv(utf8, FileFormat.CSV, false, null);
+        FileInspector.Layout layout = FileInspector.csv(utf8, FileFormat.CSV, false, (java.nio.charset.Charset) null);
         assertEquals("id", layout.columns().get(0).name(), "the BOM is not part of the first name");
     }
 
@@ -126,7 +126,7 @@ class CsvTest {
             1,07700 900001,1968-01-09,10.5,2023-03-29 11:14:08.325687+01,true
             2,07700 900002,1962-01-23,-3,2019-02-08 23:01:28.839127+00,false
             """;
-        FileInspector.Layout layout = FileInspector.csv(csv.getBytes(StandardCharsets.UTF_8), FileFormat.CSV, false, null);
+        FileInspector.Layout layout = FileInspector.csv(csv.getBytes(StandardCharsets.UTF_8), FileFormat.CSV, false, (java.nio.charset.Charset) null);
         assertEquals(List.of("int64", "text", "date", "decimal(38,1)", "timestamp_tz", "boolean"),
             layout.columns().stream().map(FileColumn::sourceType).toList());
         assertEquals(",", layout.hints().get("delimiter"));

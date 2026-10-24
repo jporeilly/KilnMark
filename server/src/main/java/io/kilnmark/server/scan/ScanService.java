@@ -139,7 +139,9 @@ public class ScanService {
                 "This server has no connector for sources of kind '" + source.kind() + "'"));
             String secret = store.sourceSecret(source.name()).map(secrets::open).orElse(null);
             SourceConfig config = new SourceConfig(source.name(), source.kind(), source.settings(), secret);
-            List<AssetInfo> assets = connector.catalog(config);
+            // Containers and include/exclude patterns, applied to every connector's catalogue alike.
+            List<AssetInfo> assets = io.kilnmark.kiln.connect.AssetFilter.of(connector, config)
+                .apply(connector, config, connector.catalog(config));
             Semaphore slots = new Semaphore(Math.max(1, this.config.scan().parallelTables()));
             for (AssetInfo a : assets) {
                 if (stop.getAsBoolean()) {
