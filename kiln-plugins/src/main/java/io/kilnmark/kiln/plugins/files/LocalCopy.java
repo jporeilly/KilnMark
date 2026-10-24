@@ -65,7 +65,18 @@ final class LocalCopy implements AutoCloseable {
 
     /** The version of a listed file: its size and time, enough to tell a changed object apart. */
     static String version(FileStore.Entry e) {
-        return e.size() + "|" + (e.modified() == null ? "" : e.modified().toString());
+        return version(Long.toString(e.size()), e.modified() == null ? null : e.modified().toString(), e.etag());
+    }
+
+    /**
+     * A version from a file's size, time and entity tag (any may be null). Without a time a copy is
+     * not shared: nothing would tell a changed file apart.
+     */
+    static String version(String size, String modified, String etag) {
+        if (modified == null || modified.isEmpty()) {
+            return null;
+        }
+        return size + "|" + modified + "|" + (etag == null ? "" : etag);
     }
 
     /** A copy used only by the caller. */
@@ -88,7 +99,7 @@ final class LocalCopy implements AutoCloseable {
             }
             return new LocalCopy(local, false, null);
         }
-        boolean share = version != null && !version.endsWith("|");
+        boolean share = version != null;
         String key = store.copyKey(path) + "\n" + version;
         if (share) {
             synchronized (KEPT) {
@@ -174,7 +185,7 @@ final class LocalCopy implements AutoCloseable {
         }
     }
 
-    /** Drops every shared copy nobody is using (tests). */
+    /** Drops every shared copy nobody is using: a scan has ended (and tests). */
     static void dropIdle() {
         synchronized (KEPT) {
             for (Kept k : KEPT.values()) {
@@ -211,6 +222,7 @@ final class LocalCopy implements AutoCloseable {
             synchronized (KEPT) {
                 kept.users--;
                 kept.lastUsed = System.nanoTime();
+                evict(); // copies idle too long go now, not only when the next copy is made
             }
         } else if (temporary) {
             Files.deleteIfExists(path);

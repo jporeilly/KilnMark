@@ -110,12 +110,24 @@ class HostileDocumentsTest {
 
     /** A one-sheet workbook; {@code sheet} writes the sheet's XML, {@code sst} the shared strings (or null). */
     static Path xlsx(String name, String workbook, Writer sheet, Writer sst) throws IOException {
+        return xlsx(name, workbook, sheet, sst, "sharedStrings.xml", 0);
+    }
+
+    /**
+     * @param sstName shared strings part under xl/, named in the content types and relationships
+     * @param dummies small entries written before everything else
+     */
+    static Path xlsx(String name, String workbook, Writer sheet, Writer sst, String sstName, int dummies)
+        throws IOException {
         Path p = dir.resolve(name);
         try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(p))) {
+            for (int i = 0; i < dummies; i++) {
+                put(z, "docProps/d" + i + ".txt", "x");
+            }
             put(z, "[Content_Types].xml", CT + "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd."
                 + "openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/"
                 + "sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+"
-                + "xml\"/>" + (sst == null ? "" : "<Override PartName=\"/xl/sharedStrings.xml\" ContentType=\""
+                + "xml\"/>" + (sst == null ? "" : "<Override PartName=\"/xl/" + sstName + "\" ContentType=\""
                 + "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml\"/>") + "</Types>");
             put(z, "_rels/.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/"
                 + "package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"" + R + "/officeDocument\" Target=\""
@@ -126,12 +138,12 @@ class HostileDocumentsTest {
             put(z, "xl/_rels/workbook.xml.rels", "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas."
                 + "openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"" + R + "/worksheet\""
                 + " Target=\"worksheets/sheet1.xml\"/>" + (sst == null ? "" : "<Relationship Id=\"rId2\" Type=\"" + R
-                + "/sharedStrings\" Target=\"sharedStrings.xml\"/>") + "</Relationships>");
+                + "/sharedStrings\" Target=\"" + sstName + "\"/>") + "</Relationships>");
             z.putNextEntry(new ZipEntry("xl/worksheets/sheet1.xml"));
             sheet.write(z);
             z.closeEntry();
             if (sst != null) {
-                z.putNextEntry(new ZipEntry("xl/sharedStrings.xml"));
+                z.putNextEntry(new ZipEntry("xl/" + sstName));
                 sst.write(z);
                 z.closeEntry();
             }
@@ -447,5 +459,88 @@ class HostileDocumentsTest {
         assertTrue(r.chunks().get(0).text().contains("a percent in a name"));
         DocumentReads.Read fake = DocumentReads.read(files, s, found.get("m.eml%23attachments/1/a.txt"));
         assertTrue(fake.chunks().get(0).text().contains("not an attachment"));
+    }
+
+    static Writer sstRef() {
+        return text(SHEET_OK.replace("t=\"inlineStr\"><is><t>a</t></is>", "t=\"s\"><v>0</v>"));
+    }
+
+    @Test
+    void aRenamedSharedStringsPartIsStillMeasured() throws Exception {
+        TestFiles.files(dir);
+        DocumentRuntime.configure(new ConnectorContext(Map.of(DocumentLimits.MAX_PART_MB, "2")));
+        Path p = xlsx("renamed.xlsx", null, sstRef(), manyStrings(5), "strings.xml", 0);
+        lie(p, "xl/strings.xml", 1000);
+        String got = read(p);
+        assertTrue(got.startsWith("refused: its part xl/strings.xml expands to more than 2 MB"), got);
+        assertThrows(IOException.class, () -> Sheets.open(p, "renamed.xlsx"));
+    }
+
+    @Test
+    void anArchiveTheCheckCannotReadIsRefusedNotLetThrough() throws Exception {
+        TestFiles.files(dir);
+        DocumentRuntime.configure(new ConnectorContext(Map.of(DocumentLimits.MAX_PART_MB, "2")));
+        // an entry name flagged UTF-8 that is not valid UTF-8 (the JDK's reader refuses it)
+        Path book = xlsx("badname-book.xlsx", null, sstRef(), manyStrings(5));
+        // copy the book's entries in after the bad one
+        Path both = dir.resolve("badname2.xlsx");
+        try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(both));
+             java.util.zip.ZipFile src = new java.util.zip.ZipFile(book.toFile())) {
+            put(z, "docProps/BADNAME.txt", "x");
+            for (ZipEntry e : java.util.Collections.list(src.entries())) {
+                z.putNextEntry(new ZipEntry(e.getName()));
+                src.getInputStream(e).transferTo(z);
+                z.closeEntry();
+            }
+        }
+        byte[] b = Files.readAllBytes(both);
+        byte[] name = "docProps/BADNAME.txt".getBytes(StandardCharsets.US_ASCII);
+        ByteBuffer buf = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN);
+        int patched = 0;
+        for (int i = 0; i + 46 < b.length; i++) {
+            int sig = buf.getInt(i);
+            int flag = sig == 0x04034b50 ? 6 : sig == 0x02014b50 ? 8 : -1;
+            int nameAt = sig == 0x04034b50 ? 30 : 46;
+            int lenAt = sig == 0x04034b50 ? 26 : 28;
+            if (flag > 0 && matches(b, i + nameAt, buf.getShort(i + lenAt), name)) {
+                buf.putShort(i + flag, (short) (buf.getShort(i + flag) | 0x800));
+                b[i + nameAt + 9] = (byte) 0xff;
+                b[i + nameAt + 10] = (byte) 0xfe;
+                b[i + nameAt + 11] = (byte) 0xfd;
+                patched++;
+            }
+        }
+        assertEquals(2, patched);
+        Files.write(both, b);
+        String got = read(both);
+        assertTrue(got.startsWith("refused:"), "either the check reads it and finds the big part, or refuses it: "
+            + got);
+        assertThrows(IOException.class, () -> Sheets.open(both, "badname2.xlsx"));
+    }
+
+    @Test
+    void tooManyEntriesAreRefused() throws Exception {
+        Path p = xlsx("dummies.xlsx", null, text(SHEET_OK), null, "sharedStrings.xml", 10_001);
+        String got = read(p);
+        assertTrue(got.startsWith("refused: it holds more than 10,000 parts"), got);
+    }
+
+    @Test
+    void anOfficeAttachmentIsCheckedWhateverItIsCalled() throws Exception {
+        TestFiles.files(dir);
+        DocumentRuntime.configure(new ConnectorContext(Map.of(DocumentLimits.MAX_PART_MB, "2")));
+        Path book = xlsx("attached.xlsx", null, sstRef(), manyStrings(5));
+        lie(book, "xl/sharedStrings.xml", 1000);
+        String eml = "From: a@example.com\nTo: b@example.com\nSubject: nested\nMIME-Version: 1.0\n"
+            + "Content-Type: multipart/mixed; boundary=\"B\"\n\n--B\nContent-Type: text/plain\n\nbody\n--B\n"
+            + "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet; name=\"data.bin\"\n"
+            + "Content-Disposition: attachment; filename=\"data.bin\"\nContent-Transfer-Encoding: base64\n\n"
+            + Base64.getMimeEncoder().encodeToString(Files.readAllBytes(book)) + "\n--B--\n";
+        Path mail = Files.writeString(dir.resolve("nested.eml"), eml);
+        Extraction x = TextExtractor.extract(mail, "nested.eml", -1, DocumentRuntime.limits(), new AtomicBoolean());
+        assertEquals(1, x.attachments().size());
+        String problem = x.attachments().get(0).problem();
+        assertNotNull(problem);
+        assertTrue(problem.contains("more than 2 MB"), problem);
     }
 }

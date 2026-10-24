@@ -54,8 +54,9 @@ sheets are recorded with the reason they are not tables. .xlsx is read with POI'
 `XSSFReader` for the parts and StAX pulling one row at a time, so memory holds a row (at most
 16,384 cells, Excel's own limit; a wider row stops the sheet) plus the shared strings, which are
 read through a stream that stops at `max-part-mb`. Legacy .xls is read whole with HSSF, which is
-why legacy files have their own size limit. Sheet reads take one of the document readers and have
-the document time limit.
+why legacy files have their own size limit. Sheet reads take one of the document readers; the
+document time limit applies to progress (every 1,024 rows), so a large sheet may take as long as it
+needs while a stalled one stops.
 
 Sheet names and attachment names come from inside files: control and formatting characters (NUL,
 U+202E and the like) become `_` and they are cut at 200 characters, so a name can neither break the
@@ -80,8 +81,9 @@ last 150 characters (`chunk-overlap`) of the one before, from a word start. Each
 page (or slide, or sheet) and its character offsets in the extracted text. They are stored in
 `document_chunk` (migration V7), replaced whenever the document is read again, deleted with the
 asset, and searched through a `tsvector` (`simple` configuration, like asset names) ranked below
-name and description matches; at most 5,000 matching chunks are ranked per search, and a snippet is
-made only from each document's best chunk. A source with `keep_text=false` keeps none: its
+name and description matches. A search ranks the 200 documents with the most matching chunks
+(counted through the index; ties by name, never by age), and makes a snippet only from each one's
+best chunk. A source with `keep_text=false` keeps none: its
 documents' profiles are still worked out from the text, which is then dropped, and text stored
 before is deleted at the next scan. Its text is not shown either, unless the source also has
 `read_text_on_demand=true`: then stewards (not viewers, until sources have their own access rules)
@@ -106,13 +108,16 @@ Documents are untrusted input. Every limit below is a server setting (`kilnmark.
   `java.io.tmpdir`; folders left by a server that is no longer running are deleted at start),
   stopping at the limit. A copy is deleted when its read ends, except workbooks: a scan needs one
   to list its sheets, to read each sheet and to read its text, so that copy is shared and deleted
-  after ten minutes unused (at most 2 GB of such copies are kept). POI's temporary files go to the
+  when the scan ends or after ten minutes unused (at most 2 GB of such copies are kept). POI's temporary files go to the
   same folder; PDFBox's scratch file (past 64 MB of a PDF's working memory) goes to `java.io.tmpdir`,
   which Tika does not let us change.
-- **Office parts.** Before any parser opens an Office Open XML file (or one attached to a message),
-  its shared strings, styles and workbook parts are expanded and their real size counted; a file
-  where one expands past 64 MB (`max-part-mb`) is not read. What the archive declares is not
-  trusted: parsers size these parts by it and keep them whole in memory.
+- **Office parts.** Before any parser opens a ZIP-based file (or one attached to or embedded in
+  another, recognised by its bytes, not its name or declared type), every part of an Office Open XML
+  archive (one with `[Content_Types].xml`) is expanded and its real size counted, except the parts
+  parsers stream (worksheets, slides, a Word document's body) and media; a file where one expands
+  past 64 MB (`max-part-mb`) is not read. What the archive declares is not trusted: parsers size
+  parts by it and keep some whole in memory. The check reads archives with Commons Compress, the
+  parser POI uses, and refuses any it cannot read, and any archive of more than 10,000 entries.
 - **Text.** At most 1,000,000 characters (`max-characters`) per document, attachments included;
   the collector stops the parser when the budget is spent.
 - **Time.** Each document is read on one of 2 (`threads`) threads of its own and abandoned after
@@ -194,16 +199,15 @@ Re-embedding after a model change can read stored chunks (`GET /api/v1/documents
 - 27.4 MB of jars, most of it POI (its schemas and formula library come along).
 - Turning POI's zip-bomb check back on is JVM-wide: a genuine workbook that compresses more than
   100 to 1 (very repetitive XML) is refused, and any other POI use in the server gets the same check.
-- From S3 a workbook is fetched once per scan, and its copy stays on disk (private) for up to ten
-  minutes after.
+- From S3 a workbook is fetched once per scan (its copy is found again by size, time and ETag), and
+  deleted when the scan ends, or after ten minutes unused.
 - An abandoned read keeps its thread until the parser notices; a parser stuck in a loop that never
   produces text holds one of the `threads` slots until the server restarts, and when all are held,
   documents are not read until then.
 - With 64 MB of shared strings, POI's read-only table can need a few hundred MB of heap; lower
   `max-part-mb` on small servers.
 - Paths of files whose names hold `%` or `#` changed URN with this record.
-- A sheet read longer than the document time limit fails; raise `timeout-seconds` for very large
-  sheets.
+
 - `MetadataEvent.Kind` gained `DOCUMENT`; `AssetInfo.readable` now also means "read as text" for
   documents.
 - Reading the text of a `keep_text=false` source on demand re-reads the document from the source, for

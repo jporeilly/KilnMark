@@ -189,6 +189,7 @@ public class ScanService {
                 }));
             }
             joinAll(work);
+            connector.finished(config); // documents (ADR 0017): shared copies of remote workbooks
             if (cancelled.getAsBoolean()) {
                 return false; // nothing final written: the worker puts the scan back in the queue
             }

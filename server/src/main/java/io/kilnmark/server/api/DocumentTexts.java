@@ -112,7 +112,7 @@ public class DocumentTexts {
             Records.Source source = source(urn);
             if (!onDemand(source.settings())) {
                 throw ApiError.of(Response.Status.CONFLICT, "Kilnmark keeps no text for documents in "
-                    + source.name() + " (keep_text is off), so only their properties are shown. An administrator "
+                    + source.name() + " (keep_text is off), so only their properties are shown. A steward or administrator "
                     + "can set " + ON_DEMAND + " on the source to let stewards read text from the source.");
             }
             if (!allowed(source)) {

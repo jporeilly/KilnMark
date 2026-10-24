@@ -58,6 +58,14 @@ public interface Connector {
         return this;
     }
 
+    /**
+     * A scan of {@code source} has ended, however it ended: the connector may release what it kept
+     * for the scan (local copies of remote files, say). The default does nothing.
+     */
+    default void finished(SourceConfig source) {
+        // most connectors keep nothing between reads
+    }
+
     /** How much of an asset to read. {@code rowLimit} 0 reads everything. */
     record ReadOptions(String assetUrn, long rowLimit, int batchSize) {
     }

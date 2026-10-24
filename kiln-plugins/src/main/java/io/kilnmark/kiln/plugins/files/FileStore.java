@@ -19,12 +19,16 @@ public interface FileStore extends Closeable {
 
     /**
      * One file: its path within the store, its size in bytes, when it last changed and, where the
-     * store reports it, its owner (S3's object owner); null when not known.
+     * store reports them, its owner and entity tag (S3's object owner and ETag); null when not known.
      */
-    record Entry(String path, long size, Instant modified, String owner) {
+    record Entry(String path, long size, Instant modified, String owner, String etag) {
 
         public Entry(String path, long size, Instant modified) {
-            this(path, size, modified, null);
+            this(path, size, modified, null, null);
+        }
+
+        public Entry(String path, long size, Instant modified, String owner) {
+            this(path, size, modified, owner, null);
         }
     }
 

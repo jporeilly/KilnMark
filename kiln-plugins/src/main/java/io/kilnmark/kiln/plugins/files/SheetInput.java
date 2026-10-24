@@ -27,8 +27,10 @@ import io.kilnmark.kiln.plugins.documents.DocumentTypes;
  * has changed since the catalogue, the columns are worked out again. Cells that do not fit their
  * column's kind are read as null and counted ({@code unparsed} in {@code ROW_COUNT}).
  *
- * <p>A sheet read holds one of the server's document readers for its whole length and has the
- * same time limit as reading a document ({@link DocumentRuntime}); it stops when interrupted.
+ * <p>A sheet read holds one of the server's document readers for its whole length. A large sheet
+ * may take long to profile, so the document time limit applies to progress, not the whole read:
+ * every 1,024 rows must come within that time, or the read stops as stalled. It also stops when
+ * interrupted.
  *
  * <p>Settings: {@code path} (the workbook), {@code sheet}, {@code size}, {@code version} (to share
  * a remote workbook's copy within a scan), {@code asset-urn}, {@code row-limit} (0 for all),
@@ -55,7 +57,8 @@ public final class SheetInput implements Step {
     private long unparsed;
     private Sheets.SheetRow pending;
     private AutoCloseable slot;
-    private long deadline;
+    private long lastCheck;
+    private long allowed;
     private long seconds;
 
     public SheetInput(FileStore.Opener opener, List<FileColumn> columns) {
@@ -88,7 +91,8 @@ public final class SheetInput implements Step {
             }
             slot = DocumentRuntime.acquire(() -> Thread.currentThread().isInterrupted());
             seconds = limits.timeout().toSeconds();
-            deadline = System.nanoTime() + limits.timeout().toNanos();
+            allowed = limits.timeout().toNanos();
+            lastCheck = System.nanoTime();
             copy = LocalCopy.of(store, path, max, context.setting("version", null));
             workbook = Sheets.open(copy.path(), path);
             Sheets.Layout layout;
@@ -143,10 +147,12 @@ public final class SheetInput implements Step {
                     if (Thread.currentThread().isInterrupted()) {
                         throw new IOException("the read was stopped");
                     }
-                    if (System.nanoTime() > deadline) {
-                        throw new IOException("reading it took longer than the " + seconds + "-second limit "
-                            + "(kilnmark.documents.timeout-seconds)");
+                    long now = System.nanoTime();
+                    if (now - lastCheck > allowed) {
+                        throw new IOException("it stalled: 1,024 rows took longer than the " + seconds
+                            + "-second limit (kilnmark.documents.timeout-seconds)");
                     }
+                    lastCheck = now;
                 }
                 Sheets.SheetRow r = nextRow();
                 if (r == null) {

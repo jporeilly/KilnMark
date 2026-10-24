@@ -90,7 +90,8 @@ public class SourceResource {
         Map<String, String> out = new HashMap<>();
         if (settings != null) {
             settings.forEach((k, v) -> {
-                if (k != null && v != null && !v.isBlank()) {
+                // keys starting with _ are the server's own, set only on its copies (ADR 0017): dropped
+                if (k != null && v != null && !v.isBlank() && !k.trim().startsWith("_")) {
                     out.put(k.trim(), v.trim());
                 }
             });
