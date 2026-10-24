@@ -78,7 +78,9 @@ for example `KILNMARK_ROLES=worker`.
 
 ## Sign in
 
-Every API call except `GET /api/v1/info` and `/q/health` needs an API token:
+Every API call needs an API token except three public ones: `GET /api/v1/info`, the health
+checks under `/q/health`, and the API description at `/q/openapi` (it lists endpoints, never
+data). The token goes in a header:
 `Authorization: Bearer km_...`. The web UI asks for one on its sign-in page and keeps it only
 for that browser tab. A token has one role, and each role includes the ones before it:
 
@@ -93,9 +95,12 @@ one and writes it to a file called `admin-token` in the same folder as the secre
 (`kilnmark.secret-key-file`): `~/.kilnmark/admin-token` in dev mode, and
 `/var/lib/kilnmark/admin-token` in the container (the `keys` volume). The file is readable only by
 the server's user; the log says where it is, never what it holds. Read it with, for example,
-`podman compose exec kilnmark cat /var/lib/kilnmark/admin-token`. Sign in with it, create your
-own tokens under **API tokens**, then delete the file. If every admin token is later revoked or
-expired, the next start writes a new one in the same place.
+`podman compose exec kilnmark cat /var/lib/kilnmark/admin-token`.
+
+This token **works for 24 hours only**. Sign in with it, open **API tokens**, and create a
+permanent admin token for yourself (role admin, expires never), and keep that somewhere safe.
+The file can then be deleted. If every admin token is later revoked or expired, the next start
+writes a new 24-hour one in the same place, so restarting the server is how to get back in.
 
 **Or set it yourself.** `KILNMARK_ADMIN_TOKEN` (or `kilnmark.admin-token`) gives the server an
 admin token, stored hashed on start; no file is written. It must be `km_` followed by at least 43
@@ -105,8 +110,13 @@ letters, digits, `-` or `_`:
 export KILNMARK_ADMIN_TOKEN=km_$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')
 ```
 
-Changing or removing the variable revokes the previous value on the next start. Give every api
-instance the same value.
+Changing or removing the variable sets the previous value aside on the next start; setting it
+back brings that token back. A token an admin revoked under **API tokens** stays revoked even if
+the variable still holds it (choose a new value). If that leaves no usable admin token, the
+server writes a 24-hour `admin-token` file as above. Give every api instance the same value.
+
+Token names may not hold line breaks or other control characters, and are written to the log
+only with such characters replaced, so a name cannot forge a log line.
 
 **Tokens for scripts.** Create them under **API tokens** in the UI, or:
 
@@ -119,8 +129,11 @@ curl -X POST http://localhost:8780/api/v1/tokens -H "Authorization: Bearer $KILN
 The response holds the token once; only its SHA-256 is stored. `DELETE /api/v1/tokens/{id}`
 revokes one at once.
 
-**Lab use only:** `KILNMARK_AUTH_ENABLED=false` turns sign-in off, and anyone who can reach the
-server is an admin. The server logs a warning on every start while it is off.
+**Lab use only:** `KILNMARK_AUTH_MODE=off` turns sign-in off: anyone who can reach the server
+is an admin, and no tokens can be created. The server only starts this way when it listens on a
+loopback address (`QUARKUS_HTTP_HOST=127.0.0.1`), and logs a warning on every start. The setting
+takes `tokens` (the default) or `off`; any other value, a typo for example, stops the server
+rather than guessing.
 
 ## Workers and the job queue
 
@@ -138,10 +151,24 @@ worker is running, scans stay `queued`.
 | `kilnmark.worker.max-attempts` | `3` | Tries before a job and its run are marked failed |
 | `kilnmark.worker.shutdown-timeout` | `30s` | On shutdown, how long running scans may take before they are requeued |
 
-Workers wake at once on a PostgreSQL notification and poll as a fallback. While a worker runs a
-scan it holds a lock on that run, so no two workers ever run the same scan. If a worker dies, the
-next worker to check (on start, then every 30 seconds) puts its jobs back in the queue, or marks
-them failed once they have been tried `max-attempts` times. Each scan also profiles
+Workers wake at once on a PostgreSQL notification and poll as a fallback. A source has at most
+one scan waiting or running: asking for another returns the one in progress. While a worker scans
+a source it holds a lock on that source, so two scans of one source never overlap. If a worker
+dies, the next worker to check (on start, then every 30 seconds) puts its jobs back in the queue,
+or marks them failed once they have been tried `max-attempts` times.
+
+**Stopping a worker.** On shutdown a worker stops taking jobs and lets running scans finish for
+up to `shutdown-timeout` (30 s). Scans still running are then asked to stop, which takes up to
+15 s more, and go back in the queue without using up an attempt; another worker starts them
+again. Give the container time for this, or it is killed first and its scans wait for stale-job
+recovery (`stale-after`, 2 minutes) instead:
+
+- Compose: `compose.yaml` sets `stop_grace_period: 60s` on the `kilnmark` service (the default is
+  10 s).
+- Kubernetes: set `terminationGracePeriodSeconds: 60` in the worker's pod spec (the default is
+  30 s).
+
+With a shorter grace period, lower `KILNMARK_WORKER_SHUTDOWN_TIMEOUT` to leave 15 s or more. Each scan also profiles
 `kilnmark.scan.parallel-tables` tables at a time, so one worker reads up to
 `concurrency × parallel-tables` tables at once.
 

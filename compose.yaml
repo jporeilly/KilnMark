@@ -47,6 +47,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # On stop, running scans get 30 s to finish and 15 s to hand back to the queue
+    # (kilnmark.worker.shutdown-timeout); the default 10 s would cut them off.
+    stop_grace_period: 60s
     ports:
       # 8780, not 8080, which Pentaho and Tomcat use. Change the host side with KILNMARK_PORT.
       - "${KILNMARK_PORT:-8780}:8780"
