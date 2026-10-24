@@ -109,6 +109,19 @@ export function DiagramSection({ scope, title }: { scope: DiagramScope; title: s
                   "Solid lines are declared or accepted; dashed lines are proposals."}
           </p>
           {diagram.tables.length > 0 && (
+            <p>
+              <a
+                href="#rel-list-h"
+                onClick={(e) => {
+                  e.preventDefault();
+                  document.getElementById("rel-list-h")?.focus();
+                }}
+              >
+                Skip to the relationship table
+              </a>
+            </p>
+          )}
+          {diagram.tables.length > 0 && (
             <Suspense fallback={<p role="status">Loading the diagram…</p>}>
               <SchemaDiagram
                 tables={diagram.tables}
@@ -118,7 +131,9 @@ export function DiagramSection({ scope, title }: { scope: DiagramScope; title: s
               />
             </Suspense>
           )}
-          <h3>Relationships</h3>
+          <h3 id="rel-list-h" tabIndex={-1}>
+            Relationships
+          </h3>
           <RelationshipTable
             relationships={diagram.relationships}
             caption={`Relationships in ${title}`}

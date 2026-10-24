@@ -9,8 +9,10 @@ Kilnmark records relationships between assets at field level in one table, `rela
 with a kind, a status, a confidence, its evidence, and who decided and when.
 
 - **Declared** relationships are the foreign keys a source declares. The JDBC catalogue reads them
-  with `DatabaseMetaData.getImportedKeys`, one table at a time, keeping a multi-column key together
-  in key order (`KEY_SEQ`). Keys between schemas of one source are kept when both schemas are
+  with `DatabaseMetaData.getImportedKeys`: one call per schema on PostgreSQL (its driver accepts no
+  table name), one per table elsewhere. A multi-column key stays together in key order
+  (`KEY_SEQ`); a nameless one is grouped by `KEY_SEQ` starting again at 1. If the keys cannot be
+  read, the scan records the catalogue without them and says so in the run's detail. Keys between schemas of one source are kept when both schemas are
   scanned. They are always `accepted`; a rescan replaces them with what the source declares now.
 - **Inferred** relationships are proposals: a column whose name says it refers to another
   table's key, whose type matches, whose target is unique, and whose values lie inside the
@@ -38,27 +40,38 @@ a whole, not of one asset, so they sit beside the assets rather than inside them
 ## How inference works, and what bounds it
 
 1. **Sketches kept with profiles.** Profiling already builds a HyperLogLog sketch (lgK 14) of
-   every column for its distinct count. For integer, number and text columns it now also emits the
-   sketch, serialised compact with 4-bit buckets (at most about 8 KiB), and the scan stores it in
-   `profile.hll`. Only a field's latest profile keeps one. Containment of A in B is then
-   `(|A| + |B| - |A ∪ B|) / |A|`, from a union of the two sketches, with no second read of either
-   source. Values hash alike only within a type family (whole numbers, other numbers, text), so
-   only those pairs are compared.
+   every column for its distinct count. For key-like integer, number and text columns (an
+   identifier-like name, or the whole single-column primary key: the columns inference can use)
+   it now also emits the sketch, serialised compact with 4-bit buckets (at most about 8 KiB), and
+   the scan stores it in `profile.hll`. Only a field's latest profile keeps one. Containment of A
+   in B is then `(|A| + |B| - |A ∪ B|) / |A|`, from a union of the two sketches, with no second
+   read of either source. All three counts are composite estimates: mixing them with the HIP
+   estimate a sketch keeps while it is built biased `|A ∪ B| - |B|` by several hundred on a large
+   B and hid real keys under about 13% of B. With one estimator a true subset leaves B's buckets
+   unchanged, so it scores exactly 1 at any size; on a 100,000-value key, subsets of 2%, 5% and
+   10% score 1, half-overlaps 0.47 to 0.50, and disjoint sets under 0.07. The margin is about 10%
+   of the values A adds to B plus two standard errors of A's own count (both measured), relative
+   to A. Values hash alike only within a type family (whole numbers, other numbers, text), so only
+   those pairs are compared.
 2. **Candidates from names only.** Targets are key-like columns of current assets: a single-column
    primary key, or an identifier-like name (`id`, `..._id`, `key`, `code`, `ref`, `no`, `number`,
    `uuid`) with no nulls and distinct values equal to rows (98% above 1,000 rows, for the sketch's
    error). A referring column must have an identifier-like name other than a bare `id`. Rules,
    strongest first: `customer_id` to `customers.id` (table name and id), `customer_id` to
    `customers.customer_id` (same name as the table's key), `billing_customer_id` to `customers.id`
-   (a prefix), and the same column name elsewhere. Names compare without case or punctuation, and
+   (a prefix, on word boundaries: names are split at underscores and camelCase humps, and the
+   words after the prefix must be the table's name, so `account_id` never matches `counts` nor
+   `address_id` `dresses`), and the same column name elsewhere. Names compare without case or punctuation, and
    table names in the singular (`customers`, `categories`, `addresses`, file extensions dropped).
 3. **Bounded.** At most 200,000 key-like columns are read, 5,000 candidate pairs scored (strongest
    names first; the rest are counted and logged), and three proposals kept for one column.
    Sketches are loaded only for the columns of the pairs scored. After a scan of source S, only
    pairs with at least one end in S are scored, across every source.
-4. **Score.** With a conclusive containment estimate (its two-sigma error below 0.25):
+4. **Score.** With a conclusive containment estimate (margin up to 0.25):
    `0.3 × name + 0.1 × uniqueness + 0.6 × containment`, the containment counting less below ten
-   distinct values; under half contained says no. Without one, names alone give at most 0.5.
+   distinct values; under half contained says no, and under 0.9 caps the confidence at 0.7, so a
+   join that leaves a tenth of its values unmatched is never a strong proposal. Without a
+   conclusive estimate, names alone give at most 0.5.
    Proposals of 0.75 or more are kept, capped at 0.99. Of two copies of one key referring to each
    other, only the stronger direction is kept. Evidence (rule, containment, its margin, distinct
    counts, types) is stored as JSON with each proposal.
@@ -92,10 +105,25 @@ table beside the diagram, so keyboard and screen-reader users lose nothing (ADR 
 
 ## Costs
 
-- About 8 KiB per profiled integer, number or text column in `profile.hll`.
-- Inference after each scan reads every key-like column's latest counts: one indexed query, then
-  sketches for at most 5,000 pairs. Two scans finishing at once each refresh proposals touching
-  their own source; a pair between them is computed by both from the same data.
+- About 8 KiB per profiled key-like column in `profile.hll`.
+- Inference after each scan reads every key-like column's latest counts (the scanned source's
+  first, so the 200,000 cap never cuts it), then sketches for at most 5,000 pairs.
+- Refreshes run one at a time across every server process, under a PostgreSQL advisory lock held
+  for the whole step (declared keys, inference, inferred rows), and write rows in one sorted
+  order. Two scans finishing together therefore never deadlock, and the second sees the first's
+  result. A large estate's refresh holds up others' for its length.
+- Responses are bounded: relationships come a page at a time (100 for an asset), and a diagram
+  reads at most 1,000 relationships, one query per neighbourhood level.
+
+## Limits of the evidence
+
+- **Small columns.** Below ten distinct values the containment counts for less, and below about
+  a hundred a few stray values move it a lot; such columns rarely make strong proposals.
+- **Whole-number surrogate keys are weak evidence.** Sequences 1..N overlap: any column of small
+  integers lies inside any larger key's range. The name rules carry most of the weight there, and
+  containment only rules pairs out; a steward still decides.
+- **Estimates.** Distinct counts and containment are HyperLogLog estimates (about 1% error); a
+  key with a few orphan values may score just under the 0.9 bar.
 - Name rules miss renamed keys (`billing.invoices.cust_ref`, text, holds customer ids): finding
   those needs comparing sketches across all pairs of compatible columns, which is left for later.
 - Inferred relationships are single-column; composite keys are only found when declared.

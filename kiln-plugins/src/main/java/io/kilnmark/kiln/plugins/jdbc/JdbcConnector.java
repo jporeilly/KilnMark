@@ -120,6 +120,8 @@ public abstract class JdbcConnector implements Connector {
         return problems;
     }
 
+    // ---- Relationships: the catalogue with its declared foreign keys ----
+
     /**
      * The foreign keys declared on {@code tables}. By default standard JDBC metadata
      * ({@code getImportedKeys}); override where a driver reports them differently or too slowly.
@@ -136,7 +138,9 @@ public abstract class JdbcConnector implements Connector {
 
     /**
      * The catalogue and its foreign keys, on one connection. Keys to tables outside the schemas
-     * read are left out, since those tables are not in the catalogue.
+     * read are left out, since those tables are not in the catalogue. If the keys cannot be read
+     * (a restricted account, say), the catalogue is still returned, without relationships and with
+     * a warning for the run.
      */
     @Override
     public CatalogInfo catalogWithRelationships(SourceConfig source) throws ConnectorException {
@@ -147,18 +151,26 @@ public abstract class JdbcConnector implements Connector {
             java.util.Set<String> paths = new java.util.HashSet<>();
             assets.forEach(a -> paths.add(a.path()));
             List<RelationshipInfo> relationships = new ArrayList<>();
-            for (JdbcCatalog.ForeignKey k : readForeignKeys(c, tables)) {
-                String from = k.fromSchema() + "." + k.fromTable();
-                String to = k.toSchema() + "." + k.toTable();
-                if (paths.contains(from) && paths.contains(to)) {
-                    relationships.add(new RelationshipInfo(from, k.fromColumns(), to, k.toColumns(), k.name()));
+            List<String> warnings = new ArrayList<>();
+            try {
+                for (JdbcCatalog.ForeignKey k : readForeignKeys(c, tables)) {
+                    String from = k.fromSchema() + "." + k.fromTable();
+                    String to = k.toSchema() + "." + k.toTable();
+                    if (paths.contains(from) && paths.contains(to)) {
+                        relationships.add(new RelationshipInfo(from, k.fromColumns(), to, k.toColumns(), k.name()));
+                    }
                 }
+            } catch (SQLException e) {
+                relationships.clear();
+                warnings.add("Foreign keys could not be read, so none were recorded: " + explain(e));
             }
-            return new CatalogInfo(assets, relationships);
+            return new CatalogInfo(assets, relationships, warnings);
         } catch (SQLException e) {
             throw new ConnectorException("Cannot read the catalogue of " + source.name() + ": " + explain(e), e);
         }
     }
+
+    // ---- end of relationships ----
 
     private static List<AssetInfo> assets(List<JdbcCatalog.Table> tables) {
         List<AssetInfo> out = new ArrayList<>();

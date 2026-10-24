@@ -96,6 +96,9 @@ public final class KeyInference {
         }
     }
 
+    /** Containment (after the small-sample discount) a proposal needs to score above 0.7. */
+    static final double STRONG_CONTAINMENT = 0.9;
+
     private final Limits limits;
 
     public KeyInference(Limits limits) {
@@ -132,13 +135,19 @@ public final class KeyInference {
                     consider(candidates, from, to, Rule.SAME_NAME_AS_TABLE_KEY, inScope);
                 }
             }
-            // A prefix before the table name: billing_customer_id, parent_customer_id.
-            for (int i = 1; i <= stem.length() - 3; i++) {
-                String tail = stem.substring(i);
-                for (Column to : byEntity.getOrDefault(tail, List.of())) {
-                    String toName = KeyNames.normal(to.field());
-                    if (toName.equals("id") || toName.equals(suffix) || toName.equals(tail + suffix)) {
-                        consider(candidates, from, to, Rule.PREFIXED, inScope);
+            // A prefix before the table name, on word boundaries: billing_customer_id, parentCustomerId.
+            // Only whole words count, so account_id is never "a" + "count" and address_id never "ad" + "dress".
+            List<String> words = KeyNames.words(from.field());
+            if (words.size() >= 3 && KeyNames.SUFFIXES.contains(words.get(words.size() - 1))) {
+                String word = words.get(words.size() - 1);
+                List<String> stemWords = words.subList(0, words.size() - 1);
+                for (int k = 1; k < stemWords.size(); k++) {
+                    String tail = KeyNames.singular(String.join("", stemWords.subList(k, stemWords.size())));
+                    for (Column to : byEntity.getOrDefault(tail, List.of())) {
+                        String toName = KeyNames.normal(to.field());
+                        if (toName.equals("id") || toName.equals(word) || toName.equals(tail + word)) {
+                            consider(candidates, from, to, Rule.PREFIXED, inScope);
+                        }
                     }
                 }
             }
@@ -258,6 +267,10 @@ public final class KeyInference {
                 values *= distinct / 10.0; // a handful of values fits inside almost anything
             }
             confidence = 0.3 * c.rule.score + 0.1 * unique + 0.6 * values;
+            if (values < STRONG_CONTAINMENT) {
+                // A join that leaves a tenth of the values without a match is never a strong proposal.
+                confidence = Math.min(confidence, 0.7);
+            }
         }
         confidence = Math.min(0.99, round(confidence));
         Evidence e = new Evidence(c.rule.label, c.rule.score, fraction, margin, from.distinct(), to.distinct(),

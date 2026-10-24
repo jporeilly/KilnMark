@@ -1,8 +1,6 @@
 package io.kilnmark.server.api;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -41,6 +39,8 @@ public class BrowseResource {
     static final int DIAGRAM_MAX = 150;
     /** Related tables outside a container added to its diagram at most. */
     static final int EXTERNAL_MAX = 20;
+    /** Relationships a diagram reads at most. */
+    static final int DIAGRAM_RELATIONSHIPS = 1_000;
 
     private final BrowseStore browse;
     private final RelationshipStore relationships;
@@ -121,7 +121,8 @@ public class BrowseResource {
         if (urns != null && !urns.isEmpty()) {
             List<String> chosen = urns.stream().filter(u -> u != null && !u.isBlank()).distinct().toList();
             List<BrowseStore.Table> tables = browse.tables(chosen.subList(0, Math.min(n, chosen.size())));
-            return diagram(tables, Set.of(), relationships.among(urnsOf(tables), false), chosen.size(), n);
+            return diagram(tables, Set.of(), relationships.among(urnsOf(tables), false, DIAGRAM_RELATIONSHIPS),
+                chosen.size(), n);
         }
         if (source == null || container == null) {
             throw new IllegalArgumentException(
@@ -131,7 +132,7 @@ public class BrowseResource {
         BrowseStore.Page<BrowseStore.Table> page = browse.containerTables(source, container, q, n);
         List<BrowseStore.Table> tables = new ArrayList<>(page.items());
         List<String> inside = urnsOf(tables);
-        List<RelationshipStore.Relationship> rels = relationships.among(inside, true);
+        List<RelationshipStore.Relationship> rels = relationships.among(inside, true, DIAGRAM_RELATIONSHIPS);
         // Tables in other containers or sources that these refer to, or that refer to them.
         Set<String> outside = new LinkedHashSet<>();
         for (RelationshipStore.Relationship r : rels) {
@@ -149,18 +150,18 @@ public class BrowseResource {
         return diagram(tables, outside, rels, page.total(), n);
     }
 
+    /** {@code start} and the assets related to it, level by level: one query per level, capped. */
     private BrowseViews.Diagram neighbourhood(String start, int depth, int limit) {
         Set<String> seen = new LinkedHashSet<>(List.of(start));
-        Deque<String> frontier = new ArrayDeque<>(List.of(start));
+        List<String> frontier = List.of(start);
         boolean more = false;
         for (int level = 0; level < depth && !frontier.isEmpty(); level++) {
-            Deque<String> next = new ArrayDeque<>();
-            for (String u : frontier) {
-                for (RelationshipStore.Relationship r : relationships.forAsset(u)) {
-                    if (r.status().equals("rejected")) {
-                        continue;
-                    }
-                    String other = r.from().urn().equals(u) ? r.to().urn() : r.from().urn();
+            List<String> next = new ArrayList<>();
+            for (RelationshipStore.Relationship r : relationships.among(frontier, true, DIAGRAM_RELATIONSHIPS)) {
+                if (r.status().equals("rejected")) {
+                    continue;
+                }
+                for (String other : List.of(r.from().urn(), r.to().urn())) {
                     if (seen.contains(other)) {
                         continue;
                     }
@@ -176,7 +177,7 @@ public class BrowseResource {
         }
         List<BrowseStore.Table> tables = browse.tables(seen);
         int total = more ? seen.size() + 1 : seen.size();
-        return diagram(tables, Set.of(), relationships.among(seen, false), total, limit);
+        return diagram(tables, Set.of(), relationships.among(seen, false, DIAGRAM_RELATIONSHIPS), total, limit);
     }
 
     private BrowseViews.Diagram diagram(List<BrowseStore.Table> tables, Set<String> external,
@@ -196,8 +197,8 @@ public class BrowseResource {
     }
 
     /**
-     * Relationships: of one asset (into and out of it, {@code asset}), or a page of all of them,
-     * filtered by {@code source} (either end), {@code status} and {@code kind}.
+     * A page of relationships, filtered by {@code asset} (into and out of it), {@code source}
+     * (either end), {@code status} and {@code kind}. 100 to a page for an asset, 50 otherwise; at most 500.
      */
     @GET
     @Path("relationships")
@@ -213,21 +214,16 @@ public class BrowseResource {
         if (kind != null && !List.of("declared", "inferred").contains(kind)) {
             throw new IllegalArgumentException("kind: declared or inferred");
         }
-        if (asset != null && !asset.isBlank()) {
-            if (store.asset(asset).isEmpty()) {
-                throw ApiError.of(Response.Status.NOT_FOUND, "No asset " + asset);
-            }
-            List<BrowseViews.Relationship> all = relationships.forAsset(asset).stream()
-                .filter(r -> status == null || r.status().equals(status))
-                .filter(r -> kind == null || r.kind().equals(kind)).map(this::view).toList();
-            return new BrowseViews.Page<>(all, all.size(), 0, all.size());
+        boolean byAsset = asset != null && !asset.isBlank();
+        if (byAsset && store.asset(asset).isEmpty()) {
+            throw ApiError.of(Response.Status.NOT_FOUND, "No asset " + asset);
         }
         if (source != null) {
             requireSource(source);
         }
         int o = offset(offset);
-        int n = limit(limit, 50, 500);
-        RelationshipStore.Page page = relationships.list(source, status, kind, o, n);
+        int n = limit(limit, byAsset ? 100 : 50, 500);
+        RelationshipStore.Page page = relationships.list(byAsset ? asset : null, source, status, kind, o, n);
         return new BrowseViews.Page<>(page.items().stream().map(this::view).toList(), page.total(), o, n);
     }
 

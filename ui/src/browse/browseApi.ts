@@ -109,7 +109,8 @@ export const browseApi = {
         ? `/api/v1/diagram?${qs({ source: scope.source, q: scope.q })}&container=${enc(scope.container)}`
         : `/api/v1/diagram?${qs({ asset: scope.urn, depth: scope.depth })}`,
     ),
-  relationshipsOf: (urn: string) => call<Page<Relationship>>(`/api/v1/relationships?asset=${enc(urn)}`),
+  relationshipsOf: (urn: string, offset = 0, limit = 100) =>
+    call<Page<Relationship>>(`/api/v1/relationships?${qs({ asset: urn, offset, limit })}`),
   relationships: (filter: { source?: string; status?: string; kind?: string; offset?: number; limit?: number }) =>
     call<Page<Relationship>>(`/api/v1/relationships?${qs(filter)}`),
   decide: (id: number, decision: "accept" | "reject") =>

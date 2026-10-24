@@ -292,8 +292,10 @@ export function BrowseTree({
     else refs.current.delete(id);
   };
 
-  const rowProps = (id: string, level: number, setsize: number, posinset: number, name: string) => ({
+  const rowProps = (id: string, level: number, setsize: number, posinset: number, name: string, meta = true) => ({
     id: domId(id),
+    // The name is the row's own label (and its counts), not everything nested inside it.
+    "aria-labelledby": meta ? `${domId(id)}-label ${domId(id)}-meta` : `${domId(id)}-label`,
     ref: register(id),
     role: "treeitem",
     "aria-level": level,
@@ -388,8 +390,10 @@ export function BrowseTree({
                   }}
                 >
                   <Icon name={sourceIcon(s.kind)} />
-                  <span className="tree-label">{s.label}</span>
-                  <span className="tree-meta">
+                  <span className="tree-label" id={`${domId(sid)}-label`}>
+                    {s.label}
+                  </span>
+                  <span className="tree-meta" id={`${domId(sid)}-meta`}>
                     {words.kind} · {formatNumber(s.assets)} {s.assets === 1 ? "asset" : "assets"}
                   </span>
                 </TreeRow>
@@ -401,7 +405,7 @@ export function BrowseTree({
                       const copen = expanded.has(cid);
                       const as = assets[cid];
                       const csel = selectedSource === s.name && selectedContainer === c.name;
-                      const setsize = cs!.total;
+                      const setsize = cs!.items.length + (cs!.items.length < cs!.total ? 1 : 0);
                       return (
                         <li
                           key={cid}
@@ -422,8 +426,12 @@ export function BrowseTree({
                             }}
                           >
                             <Icon name={containerIcon(s.kind)} />
-                            <span className="tree-label mono">{c.name || "(top level)"}</span>
-                            <span className="tree-meta">{formatNumber(c.assets)}</span>
+                            <span className="tree-label mono" id={`${domId(cid)}-label`}>
+                              {c.name || "(top level)"}
+                            </span>
+                            <span className="tree-meta" id={`${domId(cid)}-meta`}>
+                              {formatNumber(c.assets)} {c.assets === 1 ? "asset" : "assets"}
+                            </span>
                           </TreeRow>
                           {copen && (
                             <ul role="group">
@@ -431,7 +439,10 @@ export function BrowseTree({
                               {(as?.items ?? []).map((a, ai) => {
                                 const aid = assetId(a.urn);
                                 return (
-                                  <li key={aid} {...rowProps(aid, 3, as!.total, ai + 1, a.name)}>
+                                  <li
+                                    key={aid}
+                                    {...rowProps(aid, 3, as!.items.length + (as!.items.length < as!.total ? 1 : 0), ai + 1, a.name)}
+                                  >
                                     <TreeRow
                                       onChoose={() => {
                                         setFocused(aid);
@@ -439,15 +450,20 @@ export function BrowseTree({
                                       }}
                                     >
                                       <Icon name={a.format} />
-                                      <span className="tree-label mono">{a.name}</span>
-                                      <span className="tree-meta">{formatLabel(a.format)}</span>
+                                      <span className="tree-label mono" id={`${domId(aid)}-label`}>
+                                        {a.name}
+                                      </span>
+                                      <span className="tree-meta" id={`${domId(aid)}-meta`}>
+                                        {formatLabel(a.format)}
+                                      </span>
                                     </TreeRow>
                                   </li>
                                 );
                               })}
                               {as && !as.loading && as.items.length < as.total && (
                                 <MoreRow
-                                  {...rowProps(moreId(cid), 3, as.total, as.items.length + 1, "")}
+                                  {...rowProps(moreId(cid), 3, as.items.length + 1, as.items.length + 1, "", false)}
+                                  labelId={`${domId(moreId(cid))}-label`}
                                   shown={as.items.length}
                                   total={as.total}
                                   onChoose={() => loadAssets(s.name, c.name, as.items.length)}
@@ -465,7 +481,8 @@ export function BrowseTree({
                     })}
                     {cs && !cs.loading && cs.items.length < cs.total && (
                       <MoreRow
-                        {...rowProps(moreId(sid), 2, cs.total, cs.items.length + 1, "")}
+                        {...rowProps(moreId(sid), 2, cs.items.length + 1, cs.items.length + 1, "", false)}
+                        labelId={`${domId(moreId(sid))}-label`}
                         shown={cs.items.length}
                         total={cs.total}
                         onChoose={() => loadContainers(s.name, cs.items.length)}
@@ -522,17 +539,21 @@ function MoreRow({
   shown,
   total,
   onChoose,
+  labelId,
   ...props
 }: {
   shown: number;
   total: number;
   onChoose: () => void;
+  labelId: string;
 } & Record<string, unknown>) {
   return (
     <li {...props}>
       <div className="tree-row tree-more" onClick={onChoose}>
         <span className="tree-toggle" aria-hidden="true" />
-        Show more ({formatNumber(shown)} of {formatNumber(total)} shown)
+        <span id={labelId}>
+          Show more ({formatNumber(shown)} of {formatNumber(total)} shown)
+        </span>
       </div>
     </li>
   );

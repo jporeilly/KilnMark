@@ -13,6 +13,7 @@ import "../browse/browse.css";
  */
 export function TableDetails({ asset }: { asset: Asset }) {
   const [relationships, setRelationships] = useState<Relationship[] | null>(null);
+  const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -20,7 +21,11 @@ export function TableDetails({ asset }: { asset: Asset }) {
     setRelationships(null);
     browseApi
       .relationshipsOf(asset.urn)
-      .then((p) => live && setRelationships(p.items))
+      .then((p) => {
+        if (!live) return;
+        setRelationships(p.items);
+        setTotal(p.total);
+      })
       .catch((e: Error) => live && setError(e.message));
     return () => {
       live = false;
@@ -38,6 +43,15 @@ export function TableDetails({ asset }: { asset: Asset }) {
   );
   const outgoing = (relationships ?? []).filter((r) => r.from.urn === asset.urn && r.status !== "rejected").length;
   const incoming = (relationships ?? []).filter((r) => r.to.urn === asset.urn && r.status !== "rejected").length;
+  const more = () =>
+    relationships &&
+    browseApi
+      .relationshipsOf(asset.urn, relationships.length)
+      .then((p) => {
+        setRelationships([...relationships, ...p.items]);
+        setTotal(p.total);
+      })
+      .catch((e: Error) => setError(e.message));
   const onChange = (updated: Relationship) =>
     setRelationships((rs) => rs && rs.map((r) => (r.id === updated.id ? updated : r)));
 
@@ -92,7 +106,8 @@ export function TableDetails({ asset }: { asset: Asset }) {
           <>
             {relationships.length > 0 && (
               <p className="muted">
-                Refers to {outgoing} {outgoing === 1 ? "asset" : "assets"}; referred to by {incoming}.
+                Refers to {outgoing} {outgoing === 1 ? "asset" : "assets"}; referred to by {incoming}
+                {relationships.length < total ? ` (of the first ${formatNumber(relationships.length)} shown)` : ""}.
               </p>
             )}
             <RelationshipTable
@@ -101,6 +116,11 @@ export function TableDetails({ asset }: { asset: Asset }) {
               perspective={asset.urn}
               onChange={onChange}
             />
+            {relationships.length < total && (
+              <button type="button" onClick={more}>
+                Show more relationships ({formatNumber(relationships.length)} of {formatNumber(total)} shown)
+              </button>
+            )}
           </>
         )}
       </section>

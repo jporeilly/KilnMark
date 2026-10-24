@@ -52,7 +52,11 @@ public final class JdbcRelationshipStore implements RelationshipStore {
     }
 
     @Override
-    public int saveDeclared(long sourceId, List<Declared> keys) {
+    public int saveDeclared(long sourceId, List<Declared> unsorted) {
+        // Rows in one order everywhere, so concurrent writers wait rather than deadlock.
+        List<Declared> keys = unsorted.stream().sorted(java.util.Comparator.comparing(Declared::fromUrn)
+            .thenComparing(k -> String.join("\u0000", k.fromFields())).thenComparing(Declared::toUrn)
+            .thenComparing(k -> String.join("\u0000", k.toFields()))).toList();
         return tx(c -> {
             List<Long> kept = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("""
@@ -113,7 +117,7 @@ public final class JdbcRelationshipStore implements RelationshipStore {
     }
 
     @Override
-    public List<KeyColumn> keyColumns(int limit) {
+    public List<KeyColumn> keyColumns(long firstSourceId, int limit) {
         return tx(c -> {
             List<KeyColumn> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("""
@@ -132,9 +136,10 @@ public final class JdbcRelationshipStore implements RelationshipStore {
                   AND f.kind IN ('int16', 'int32', 'int64', 'decimal', 'float32', 'float64', 'text')
                   AND (lower(regexp_replace(f.name, '[^[:alnum:]]', '', 'g')) ~ '(number|uuid|code|key|ref|num|id|no)$'
                        OR (cardinality(a.primary_key) = 1 AND a.primary_key[1] = f.name))
-                ORDER BY a.urn, f.position
+                ORDER BY (a.source_id = ?) DESC, a.urn, f.position
                 LIMIT ?""")) {
-                ps.setInt(1, limit);
+                ps.setLong(1, firstSourceId);
+                ps.setInt(2, limit);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         out.add(new KeyColumn(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4),
@@ -173,7 +178,10 @@ public final class JdbcRelationshipStore implements RelationshipStore {
     }
 
     @Override
-    public Refresh refreshInferred(long sourceId, List<Inferred> found) {
+    public Refresh refreshInferred(long sourceId, List<Inferred> unsorted) {
+        // Rows in one order everywhere, so concurrent writers wait rather than deadlock.
+        List<Inferred> found = unsorted.stream().sorted(java.util.Comparator.comparing(Inferred::fromUrn)
+            .thenComparing(Inferred::fromField).thenComparing(Inferred::toUrn).thenComparing(Inferred::toField)).toList();
         return tx(c -> {
             int added = 0;
             List<Long> kept = new ArrayList<>();
@@ -254,10 +262,10 @@ public final class JdbcRelationshipStore implements RelationshipStore {
             instant(rs.getTimestamp(8)), instant(rs.getTimestamp(9)), instant(rs.getTimestamp(10)));
     }
 
-    private List<Relationship> query(String where, Binder binder) {
+    private List<Relationship> query(String where, String tail, Binder binder) {
         return tx(c -> {
             List<Relationship> out = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement(SELECT + where + " " + ORDER)) {
+            try (PreparedStatement ps = c.prepareStatement(SELECT + where + " " + ORDER + tail)) {
                 binder.bind(c, ps);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
@@ -275,38 +283,35 @@ public final class JdbcRelationshipStore implements RelationshipStore {
     }
 
     @Override
-    public List<Relationship> forAsset(String urn) {
-        return query("WHERE r.from_urn = ? OR r.to_urn = ?", (c, ps) -> {
-            ps.setString(1, urn);
-            ps.setString(2, urn);
-        });
-    }
-
-    @Override
-    public List<Relationship> among(Collection<String> urns, boolean touching) {
+    public List<Relationship> among(Collection<String> urns, boolean touching, int limit) {
         if (urns.isEmpty()) {
             return List.of();
         }
         String op = touching ? " OR " : " AND ";
-        return query("WHERE r.from_urn = ANY (?)" + op + "r.to_urn = ANY (?)", (c, ps) -> {
-            Array a = c.createArrayOf("text", urns.toArray());
-            ps.setArray(1, a);
-            ps.setArray(2, a);
-        });
+        return query("WHERE (r.from_urn = ANY (?)" + op + "r.to_urn = ANY (?))", " LIMIT " + Math.max(0, limit),
+            (c, ps) -> {
+                Array a = c.createArrayOf("text", urns.toArray());
+                ps.setArray(1, a);
+                ps.setArray(2, a);
+            });
     }
 
     @Override
-    public Page list(String source, String status, String kind, int offset, int limit) {
-        String where = "WHERE (?::text IS NULL OR fs.name = ? OR ts.name = ?) AND (?::text IS NULL OR r.status = ?) "
+    public Page list(String asset, String source, String status, String kind, int offset, int limit) {
+        String where = "WHERE (?::text IS NULL OR r.from_urn = ? OR r.to_urn = ?) "
+            + "AND (?::text IS NULL OR fs.name = ? OR ts.name = ?) AND (?::text IS NULL OR r.status = ?) "
             + "AND (?::text IS NULL OR r.kind = ?)";
         Binder bind = (c, ps) -> {
-            ps.setString(1, source);
-            ps.setString(2, source);
-            ps.setString(3, source);
-            ps.setString(4, status);
-            ps.setString(5, status);
-            ps.setString(6, kind);
-            ps.setString(7, kind);
+            ps.setString(1, asset);
+            ps.setString(2, asset);
+            ps.setString(3, asset);
+            ps.setString(4, source);
+            ps.setString(5, source);
+            ps.setString(6, source);
+            ps.setString(7, status);
+            ps.setString(8, status);
+            ps.setString(9, kind);
+            ps.setString(10, kind);
         };
         return tx(c -> {
             int total;
@@ -320,8 +325,8 @@ public final class JdbcRelationshipStore implements RelationshipStore {
             List<Relationship> items = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement(SELECT + where + " " + ORDER + " LIMIT ? OFFSET ?")) {
                 bind.bind(c, ps);
-                ps.setInt(8, limit);
-                ps.setInt(9, offset);
+                ps.setInt(11, limit);
+                ps.setInt(12, offset);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         items.add(relationship(rs));
@@ -332,9 +337,34 @@ public final class JdbcRelationshipStore implements RelationshipStore {
         });
     }
 
+    /** Key of the relationship lock (any constant, the same in every process): "kmrel" in ASCII. */
+    static final long LOCK_KEY = 0x6b6d72656cL;
+
+    @Override
+    public <T> T serialised(java.util.function.Supplier<T> work) {
+        // A session lock on a connection of its own, held while work runs its own transactions; it
+        // is released when the work ends, or by PostgreSQL if this connection is lost.
+        try (Connection c = db.getConnection()) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_lock(?)")) {
+                ps.setLong(1, LOCK_KEY);
+                ps.execute();
+            }
+            try {
+                return work.get();
+            } finally {
+                try (PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_unlock(?)")) {
+                    ps.setLong(1, LOCK_KEY);
+                    ps.execute();
+                }
+            }
+        } catch (SQLException e) {
+            throw new JdbcGraphStore.StoreException(e.getMessage(), e);
+        }
+    }
+
     @Override
     public Optional<Relationship> get(long id) {
-        return query("WHERE r.id = ?", (c, ps) -> ps.setLong(1, id)).stream().findFirst();
+        return query("WHERE r.id = ?", "", (c, ps) -> ps.setLong(1, id)).stream().findFirst();
     }
 
     @Override

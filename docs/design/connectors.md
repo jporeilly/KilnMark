@@ -74,8 +74,10 @@ an example URL and the SQL that reads a table (`selectSql`), and may override:
   geography, geometry and hierarchyid through `ToString()`, so they arrive as text people can
   read);
 - `readForeignKeys` to read declared keys differently; by default `getImportedKeys` table by
-  table, multi-column keys kept together in `KEY_SEQ` order, keys to tables outside the schemas
-  read left out (`catalogWithRelationships` reads tables and keys on one connection);
+  table (PostgreSQL: once per schema), multi-column keys kept together in `KEY_SEQ` order, keys to
+  tables outside the schemas read left out. `catalogWithRelationships` reads tables and keys on
+  one connection; if the keys cannot be read, the catalogue comes back without them and with a
+  warning (`CatalogInfo.warnings`) that the scan adds to the run's detail;
 - `readCatalog` to add what the driver's metadata leaves out (SQL Server's driver reports no
   comments, so its connector reads `MS_Description` extended properties in one query);
 - `readSettings` for extra `JdbcTableInput` settings, such as the transaction isolation level;

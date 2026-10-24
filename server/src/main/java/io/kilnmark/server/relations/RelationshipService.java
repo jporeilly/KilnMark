@@ -48,6 +48,19 @@ public class RelationshipService {
         return ProfileStep.SKETCH.equals(attribute);
     }
 
+    /**
+     * The fields of {@code asset} whose sketch is worth keeping: those inference can use, either
+     * end of a relationship. An identifier-like name ({@code id}, {@code customer_id}, {@code order_no})
+     * or the asset's whole single-column primary key. As {@link ProfileStep#SKETCH_FIELDS} wants them.
+     */
+    public static String sketchFields(io.kilnmark.kiln.connect.AssetInfo asset) {
+        List<String> fields = asset.fields().stream().map(io.kilnmark.kiln.connect.AssetInfo.FieldInfo::name)
+            .filter(f -> io.kilnmark.kiln.plugins.relate.KeyNames.idLike(f)
+                || asset.primaryKey().size() == 1 && asset.primaryKey().get(0).equals(f))
+            .toList();
+        return ProfileStep.sketchFields(fields);
+    }
+
     /** Stores the sketch a {@code PROFILE} event carries, if any, with the profile of run {@code runId}. */
     public void saveSketch(MetadataEvent e, long runId) {
         String encoded = e.attributes().get(ProfileStep.SKETCH);
@@ -70,9 +83,13 @@ public class RelationshipService {
      * inferred relationships with at least one end in it.
      */
     public Outcome afterScan(Records.Source source, List<RelationshipInfo> declared) {
+        return store.serialised(() -> refresh(source, declared));
+    }
+
+    private Outcome refresh(Records.Source source, List<RelationshipInfo> declared) {
         int saved = store.saveDeclared(source.id(), declared.stream().map(r -> new RelationshipStore.Declared(
             urn(source, r.fromPath()), r.fromFields(), urn(source, r.toPath()), r.toFields(), r.name())).toList());
-        List<RelationshipStore.KeyColumn> columns = store.keyColumns(MAX_KEY_COLUMNS);
+        List<RelationshipStore.KeyColumn> columns = store.keyColumns(source.id(), MAX_KEY_COLUMNS);
         if (columns.size() == MAX_KEY_COLUMNS) {
             LOG.warnf("Relationship discovery read only the first %d key-like columns of the catalogue", MAX_KEY_COLUMNS);
         }

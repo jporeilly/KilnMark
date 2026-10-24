@@ -22,6 +22,19 @@ public final class KeyNames {
         return b.toString();
     }
 
+    private static final java.util.regex.Pattern WORD_BREAK = java.util.regex.Pattern.compile(
+        "[^\\p{L}\\p{N}]+|(?<=[\\p{Ll}\\p{N}])(?=\\p{Lu})|(?<=\\p{Lu})(?=\\p{Lu}\\p{Ll})");
+
+    /**
+     * The words of a name, in lower case: split at punctuation and at camelCase humps, so
+     * {@code billing_customer_id}, {@code billingCustomerId} and {@code BillingCustomerID} all give
+     * {@code [billing, customer, id]}.
+     */
+    public static List<String> words(String name) {
+        return java.util.Arrays.stream(WORD_BREAK.split(name)).filter(w -> !w.isEmpty())
+            .map(w -> w.toLowerCase(Locale.ROOT)).toList();
+    }
+
     /** The identifier ending of a normalised name ({@code id}, {@code key}, ...), or null. */
     public static String suffix(String normal) {
         for (String s : SUFFIXES) {

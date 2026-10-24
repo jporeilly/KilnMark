@@ -75,9 +75,18 @@ public interface RelationshipStore {
 
     /**
      * Columns of current (not removed) assets, in every source, that could be either end of an
-     * inferred relationship, at most {@code limit} of them.
+     * inferred relationship, at most {@code limit} of them: those of source {@code firstSourceId}
+     * first, so a cap never cuts the source just scanned.
      */
-    List<KeyColumn> keyColumns(int limit);
+    List<KeyColumn> keyColumns(long firstSourceId, int limit);
+
+    /**
+     * Runs {@code work} while holding the relationship lock, a PostgreSQL advisory lock shared by
+     * every server process: one source's relationship refresh at a time, each seeing the last one's
+     * committed result. Concurrent refreshes would otherwise lock the same rows in different
+     * orders.
+     */
+    <T> T serialised(java.util.function.Supplier<T> work);
 
     /** The latest sketch of each column that has one. */
     Map<FieldRef, byte[]> sketches(Collection<FieldRef> fields);
@@ -90,17 +99,17 @@ public interface RelationshipStore {
      */
     Refresh refreshInferred(long sourceId, List<Inferred> found);
 
-    /** Relationships into and out of {@code urn}, between current assets. */
-    List<Relationship> forAsset(String urn);
-
-    /** Relationships whose two ends are both among {@code urns}, or (when {@code touching}) either end is. */
-    List<Relationship> among(Collection<String> urns, boolean touching);
+    /**
+     * Relationships whose two ends are both among {@code urns}, or (when {@code touching}) either end
+     * is; at most {@code limit}, proposals and the most confident first.
+     */
+    List<Relationship> among(Collection<String> urns, boolean touching, int limit);
 
     /**
-     * A page of relationships between current assets, filtered by source (either end; null for
-     * all), status and kind (null for any), newest proposals and highest confidence first.
+     * A page of relationships between current assets, filtered by asset (either end), source
+     * (either end), status and kind (each null for any): proposals first, then the most confident.
      */
-    Page list(String source, String status, String kind, int offset, int limit);
+    Page list(String asset, String source, String status, String kind, int offset, int limit);
 
     Optional<Relationship> get(long id);
 

@@ -205,6 +205,8 @@ class RelationshipsTest {
                 org.hamcrest.Matchers.hasKey("hll")));
         assertEquals(1, count("SELECT count(*) FROM kilnmark.profile WHERE asset_urn = '" + TRANSACTIONS
             + "' AND field_name = 'customer_id' AND hll IS NOT NULL"));
+        assertEquals(0, count("SELECT count(*) FROM kilnmark.profile WHERE asset_urn = '" + TRANSACTIONS
+            + "' AND field_name = 'amount' AND hll IS NOT NULL"), "only key-like columns keep a sketch");
     }
 
     private int count(String query) throws Exception {
@@ -316,6 +318,12 @@ class RelationshipsTest {
         Tokens.as(viewer).queryParam("kind", "declared").queryParam("source", SOURCE)
             .get("/api/v1/relationships").then().statusCode(200).body("total", equalTo(3));
         Tokens.as(viewer).queryParam("status", "maybe").get("/api/v1/relationships").then().statusCode(400);
+        int all = Tokens.as(viewer).queryParam("asset", CUSTOMERS).get("/api/v1/relationships").then().statusCode(200)
+            .extract().jsonPath().getInt("total");
+        assertTrue(all >= 4, "customers has several relationships: " + all);
+        Tokens.as(viewer).queryParam("asset", CUSTOMERS).queryParam("limit", 1).queryParam("offset", 1)
+            .get("/api/v1/relationships").then().statusCode(200)
+            .body("total", equalTo(all)).body("items.size()", equalTo(1)).body("offset", equalTo(1));
         io.restassured.RestAssured.given().get("/api/v1/relationships").then().statusCode(401);
     }
 
@@ -347,5 +355,73 @@ class RelationshipsTest {
         assertFalse(around.getList("tables.name").contains("transactions"));
         assertEquals(1, count("SELECT count(*) FROM kilnmark.profile WHERE asset_urn = '" + TRANSACTIONS
             + "' AND field_name = 'customer_id' AND hll IS NOT NULL"), "only the latest profile keeps its sketch");
+    }
+
+    @Inject
+    RelationshipService service;
+
+    @Inject
+    io.kilnmark.graph.store.RelationshipStore store;
+
+    @Inject
+    io.kilnmark.graph.store.GraphStore graph;
+
+    @Test
+    @Order(7)
+    void refreshesRunOneAtATimeAndConcurrentOnesDoNotDeadlock() throws Exception {
+        // The lock: a second holder waits for the first.
+        java.util.concurrent.atomic.AtomicLong firstOut = new java.util.concurrent.atomic.AtomicLong();
+        java.util.concurrent.atomic.AtomicLong secondIn = new java.util.concurrent.atomic.AtomicLong();
+        java.util.concurrent.CountDownLatch inside = new java.util.concurrent.CountDownLatch(1);
+        Thread first = Thread.ofVirtual().start(() -> store.serialised(() -> {
+            inside.countDown();
+            try {
+                Thread.sleep(400);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            firstOut.set(System.nanoTime());
+            return null;
+        }));
+        inside.await();
+        store.serialised(() -> {
+            secondIn.set(System.nanoTime());
+            return null;
+        });
+        first.join();
+        assertTrue(secondIn.get() >= firstOut.get(), "the second refresh waited for the first");
+
+        // Two sources over the same tables, refreshed at the same time, again and again.
+        admin().contentType(ContentType.JSON).body(Map.of("name", "rel-db2", "kind", "postgresql", "password", password,
+                "settings", Map.of("url", url, "username", user, "schemas", "rel_billing")))
+            .post("/api/v1/sources").then().statusCode(201);
+        long id = admin().post("/api/v1/sources/rel-db2/scans").then().statusCode(202).extract().jsonPath().getLong("id");
+        for (int i = 0; i < 240 && Set.of("queued", "running").contains(
+            admin().get("/api/v1/runs/" + id).then().extract().jsonPath().getString("status")); i++) {
+            Thread.sleep(250);
+        }
+        var one = graph.source(SOURCE).orElseThrow();
+        var two = graph.source("rel-db2").orElseThrow();
+        List<Throwable> failures = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        List<Thread> threads = new java.util.ArrayList<>();
+        for (var s : List.of(one, two, one, two)) {
+            threads.add(Thread.ofVirtual().start(() -> {
+                try {
+                    for (int i = 0; i < 3; i++) {
+                        service.afterScan(s, List.of());
+                    }
+                } catch (Throwable t) {
+                    failures.add(t);
+                }
+            }));
+        }
+        for (Thread t : threads) {
+            t.join();
+        }
+        assertTrue(failures.isEmpty(), failures.toString());
+        // The rejected proposal is still rejected, and rel-db2's copy of transactions is proposed too.
+        assertEquals("rejected", find(relationshipsOf(TRANSACTIONS), TRANSACTIONS, "customer_id", CUSTOMERS).get("status"));
+        assertNotNull(find(relationshipsOf(CUSTOMERS), "urn:kilnmark:rel-db2:rel_billing.transactions", "customer_id",
+            CUSTOMERS));
     }
 }

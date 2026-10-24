@@ -233,7 +233,9 @@ public class ScanService {
         long limit = a.bounded() ? this.config.scan().viewRowLimit() : 0;
         StepSpec read = connector.reader(config, a, new Connector.ReadOptions(urn, limit, 8192));
         Pipeline p = new Pipeline("scan-" + runId + "-" + a.path(), List.of(
-            read, new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", urn))));
+            read, new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", urn,
+                // Relationships: keep the distinct-value sketch of key-like fields only.
+                ProfileStep.SKETCH_FIELDS, RelationshipService.sketchFields(a)))));
         return new Runner(this.config.scan().memoryLimitMb() << 20, 4).run(p, event -> record(event, runId, stop));
     }
 
@@ -287,13 +289,14 @@ public class ScanService {
      * summary. A failure here never fails the scan: what was catalogued and profiled stays.
      */
     private String relate(Records.Source source, CatalogInfo catalog) {
+        String warnings = catalog.warnings().isEmpty() ? "" : ". " + String.join("; ", catalog.warnings());
         try {
             RelationshipService.Outcome r = relationships.afterScan(source, catalog.relationships());
-            return r.proposed() > 0 ? ". " + r.proposed() + (r.proposed() == 1 ? " relationship" : " relationships")
-                + " proposed for review" : "";
+            return warnings + (r.proposed() > 0 ? ". " + r.proposed()
+                + (r.proposed() == 1 ? " relationship" : " relationships") + " proposed for review" : "");
         } catch (RuntimeException e) {
             LOG.errorf(e, "Relationship discovery for %s failed", source.name());
-            return ". Relationship discovery failed: " + e.getMessage();
+            return warnings + ". Relationship discovery failed: " + e.getMessage();
         }
     }
 

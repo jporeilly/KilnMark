@@ -58,7 +58,8 @@ export function RelationshipsPage({ status }: { status: string }) {
           ? "Accept the proposals that are real joins and reject the rest; your decisions are kept on every scan."
           : "A steward accepts or rejects the proposals."}
       </p>
-      <div className="dg-controls">
+      {/* Changing a filter changes the address; keep focus on the control rather than the heading. */}
+      <div className="dg-controls" data-keeps-focus>
         <div className="field">
           <label htmlFor="rel-status">Show</label>
           <select id="rel-status" value={status} onChange={(e) => go(href.relationships(e.target.value))}>

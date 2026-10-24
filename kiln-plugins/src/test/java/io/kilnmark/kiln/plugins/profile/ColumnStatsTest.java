@@ -42,6 +42,31 @@ class ColumnStatsTest {
         same.addDouble(2.5);
         same.addDouble(2.5);
         assertEquals("[{\"from\":\"2.5\",\"to\":\"2.5\",\"count\":2}]", same.histogram());
-        assertEquals(true, same.attributes().containsKey("hll"), "number columns carry their sketch");
+        assertEquals(false, same.attributes().containsKey("hll"), "no sketch unless asked for");
+        same.keepSketch = true;
+        assertEquals(true, same.attributes().containsKey("hll"), "number columns carry their sketch when asked");
+    }
+
+    @Test
+    void histogramsSurviveRangesAFewUlpsWideAndRangesThatOverflow() {
+        ColumnStats ulps = new ColumnStats("u", ColumnStats.Shape.NUMBER);
+        ulps.addDouble(0.3);
+        ulps.addDouble(0.1 + 0.2);
+        String h = ulps.histogram();
+        assertEquals(true, h != null && h.contains("\"count\""), String.valueOf(h));
+        assertEquals(true, ulps.attributes().containsKey("min"), "the rest of the profile stands");
+
+        ColumnStats huge = new ColumnStats("h", ColumnStats.Shape.NUMBER);
+        huge.addDouble(-Double.MAX_VALUE);
+        huge.addDouble(Double.MAX_VALUE);
+        String hh = huge.histogram();
+        assertEquals(true, hh != null && hh.startsWith("[{"), String.valueOf(hh));
+        assertEquals(true, huge.attributes().containsKey("max"));
+    }
+
+    @Test
+    void sketchFieldNamesSurviveCommas() {
+        String s = ProfileStep.sketchFields(java.util.List.of("id", "a,b", "naïve id"));
+        assertEquals(3, s.split(",").length);
     }
 }

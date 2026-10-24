@@ -76,11 +76,13 @@
   `.../browse/sources/{name}/assets?container=`, `GET /api/v1/diagram` (a container, an asset and
   its neighbours, or chosen assets), `GET /api/v1/relationships`, `GET /api/v1/relationships/{id}`,
   and `POST /api/v1/relationships/{id}/accept` or `/reject` (steward).
-- **Profiles:** numbers, dates and times gain a ten-bin histogram; integer, number and text
-  columns keep their distinct-value sketch (about 8 KiB) beside the profile for discovery.
+- **Profiles:** numbers, dates and times gain a ten-bin histogram; key-like columns (identifier
+  names and single-column primary keys) keep their distinct-value sketch (about 8 KiB) beside the
+  profile for discovery.
 - **Database:** migration V8 adds the `relationship` table and `profile.hll`.
 - **Connectors:** `Connector.catalogWithRelationships` (a default method) returns the catalogue
-  with the relationships a source declares; `AssetInfo` is unchanged.
+  with the relationships a source declares, and warnings; `AssetInfo` is unchanged. Foreign keys
+  that cannot be read leave the scan going, with a warning in its detail.
 
 ## 0.0.2 (24 October 2026)
 

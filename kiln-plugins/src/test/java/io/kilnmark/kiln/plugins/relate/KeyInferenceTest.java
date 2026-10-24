@@ -78,8 +78,10 @@ class KeyInferenceTest {
         byte[] big = sketch(LongStream.rangeClosed(1, 1_000_000));
         Containment large = Containment.of(sketch(LongStream.rangeClosed(1, 200_000).map(n -> n * 5)), big);
         assertTrue(large.fraction() > 0.9, "large subset: " + large);
-        // A few values next to a million cannot be judged from sketches.
-        assertFalse(Containment.of(sketch(LongStream.rangeClosed(1, 50)), big).conclusive());
+        // A few values inside a million leave its buckets as they were: still judged, as contained.
+        Containment few = Containment.of(sketch(LongStream.rangeClosed(1, 50)), big);
+        assertEquals(1.0, few.fraction(), 0.0, few.toString());
+        assertTrue(Containment.of(sketch(LongStream.rangeClosed(5_000_001, 5_000_050)), big).fraction() < 0.2);
     }
 
     @Test
@@ -215,5 +217,66 @@ class KeyInferenceTest {
         }
         long fromX = infer(many).proposals().stream().filter(p -> p.from() == from).count();
         assertEquals(3, fromX);
+    }
+
+    @Test
+    void smallSubsetsOfALargeKeyAreFullyContained() {
+        byte[] keys = sketch(LongStream.rangeClosed(1, 100_000));
+        for (int share : new int[] {2, 5, 10}) {
+            long n = 100_000L * share / 100;
+            // Spread through the key range, as real foreign keys are.
+            Containment c = Containment.of(sketch(LongStream.rangeClosed(1, n).map(v -> v * (100 / share))), keys);
+            assertTrue(c.fraction() >= 0.98, share + "%: " + c);
+            assertTrue(c.conclusive(), share + "%: " + c);
+            Containment half = Containment.of(sketch(LongStream.rangeClosed(1, n)
+                .map(v -> v % 2 == 0 ? v * (100 / share) : 1_000_000 + v)), keys);
+            assertEquals(0.5, half.fraction(), 0.08, share + "% half: " + half);
+            Containment none = Containment.of(sketch(LongStream.rangeClosed(1, n).map(v -> 1_000_000 + v)), keys);
+            assertTrue(none.fraction() < 0.08, share + "% disjoint: " + none);
+        }
+    }
+
+    @Test
+    void namesSplitIntoWords() {
+        assertEquals(List.of("billing", "customer", "id"), KeyNames.words("billing_customer_id"));
+        assertEquals(List.of("billing", "customer", "id"), KeyNames.words("billingCustomerId"));
+        assertEquals(List.of("billing", "customer", "id"), KeyNames.words("BillingCustomerID"));
+        assertEquals(List.of("account", "id"), KeyNames.words("account_id"));
+    }
+
+    @Test
+    void prefixesOnlyOnWordBoundaries() {
+        Column users = col("urn:kilnmark:a:s.users", "account_id", "int64", false, 100, 100);
+        Column counts = col("urn:kilnmark:a:s.counts", "id", "int64", true, 100, 100);
+        Column orders = col("urn:kilnmark:a:s.orders", "address_id", "int64", false, 100, 100);
+        Column dresses = col("urn:kilnmark:a:s.dresses", "id", "int64", true, 100, 100);
+        Column flights = col("urn:kilnmark:a:s.flights", "airport_id", "int64", false, 100, 100);
+        Column ports = col("urn:kilnmark:a:s.ports", "id", "int64", true, 100, 100);
+        Column refunds = col("urn:kilnmark:a:s.refunds", "billing_customer_id", "int64", false, 100, 100);
+        Column notes = col("urn:kilnmark:a:s.notes", "parentCustomerId", "int64", false, 100, 100);
+        Column customers = col("urn:kilnmark:a:s.customers", "customer_id", "int64", true, 100, 100);
+        List<Column> all = List.of(users, counts, orders, dresses, flights, ports, refunds, notes, customers);
+        for (Column c : all) {
+            sketches.put(c.ref(), sketch(LongStream.rangeClosed(1, 100)));
+        }
+        Set<String> found = Set.copyOf(infer(all).proposals().stream()
+            .map(p -> p.from().assetName() + "." + p.from().field() + ">" + p.to().assetName()).toList());
+        assertFalse(found.contains("s.users.account_id>s.counts"), found.toString());
+        assertFalse(found.contains("s.orders.address_id>s.dresses"), found.toString());
+        assertFalse(found.contains("s.flights.airport_id>s.ports"), found.toString());
+        assertTrue(found.contains("s.refunds.billing_customer_id>s.customers"), found.toString());
+        assertTrue(found.contains("s.notes.parentCustomerId>s.customers"), found.toString());
+    }
+
+    @Test
+    void aJoinMissingATenthOfItsValuesIsNotStrong() {
+        Column orders = col("urn:kilnmark:a:s.orders", "customer_id", "int64", false, 1_000, 1_000);
+        Column customers = col("urn:kilnmark:a:s.customers", "id", "int64", true, 5_000, 5_000);
+        sketches.put(orders.ref(), sketch(LongStream.rangeClosed(1, 1_000).map(v -> v <= 800 ? v : 90_000 + v)));
+        sketches.put(customers.ref(), sketch(LongStream.rangeClosed(1, 5_000)));
+        assertTrue(infer(List.of(orders, customers)).proposals().isEmpty(), "80% contained");
+        var weak = new KeyInference(new KeyInference.Limits(100, 3, 0)).infer(List.of(orders, customers), c -> true,
+            refs -> sketches).proposals();
+        assertTrue(weak.get(0).confidence() <= 0.7, weak.toString());
     }
 }

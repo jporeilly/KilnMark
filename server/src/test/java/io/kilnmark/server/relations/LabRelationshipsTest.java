@@ -47,6 +47,8 @@ class LabRelationshipsTest {
     @SuppressWarnings("unchecked")
     void theLabsUndeclaredJoinIsAStrongProposal() throws Exception {
         try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            // A reused test database may hold the lab from an earlier run: start again.
+            s.execute("DROP DATABASE IF EXISTS rel_lab WITH (FORCE)");
             s.execute("CREATE DATABASE rel_lab");
         }
         String labUrl = url.replaceFirst("/[^/?]+(\\?|$)", "/rel_lab$1");
@@ -57,7 +59,7 @@ class LabRelationshipsTest {
         }
         admin().contentType(ContentType.JSON).body(Map.of("name", "rel-lab", "kind", "postgresql", "password", password,
                 "settings", Map.of("url", labUrl, "username", user, "schemas", "crm,billing")))
-            .post("/api/v1/sources").then().statusCode(201);
+            .post("/api/v1/sources").then().statusCode(org.hamcrest.Matchers.oneOf(201, 409));
         long id = admin().post("/api/v1/sources/rel-lab/scans").then().statusCode(202).extract().jsonPath().getLong("id");
         JsonPath run = null;
         for (int i = 0; i < 480; i++) {
