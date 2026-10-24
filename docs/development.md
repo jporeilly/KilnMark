@@ -8,7 +8,7 @@ a container.
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| Java (JDK) | 21 | Building and running the server |
+| Java (JDK) | 25 | Building and running the server; run Gradle on it too (`JAVA_HOME`) |
 | Git | any recent | Source control |
 | Node.js | 22 or later | The web UI |
 | Podman (Podman Desktop with a WSL 2 machine on Windows), or Docker | Podman 5 or later | PostgreSQL and the full stack |

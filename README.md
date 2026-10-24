@@ -7,7 +7,7 @@ Status: sprint 0 (scaffolding). Version 0.0.1.
 
 ## Quick start
 
-Requirements: Java 21. The Gradle wrapper downloads Gradle itself.
+Requirements: Java 25 (run Gradle on it too: set JAVA_HOME to a JDK 25). The Gradle wrapper downloads Gradle itself.
 
 ```
 ./gradlew build          # compile and test everything (Windows: gradlew.bat build)

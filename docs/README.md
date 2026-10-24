@@ -11,6 +11,10 @@ All project documentation lives in this folder.
 The live, editable versions of these three documents are in Claude; the copies here were exported
 on 24 October 2026. Diagrams embedded in the originals appear as placeholders here.
 
+## Spikes
+
+- [0001 Arrow row sets](spikes/0001-arrow-row-sets.md): Arrow between steps, measured against row objects
+
 ## Design
 
 - [UI mockups](design/mockups.md): asset page, steward inbox, relationship explorer, pipeline designer

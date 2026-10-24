@@ -17,3 +17,4 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0010](0010-repository-layout.md) | Docs in /docs, all build output in /dist | Accepted |
 | [0011](0011-container-runtime.md) | Podman first, any OCI runtime | Accepted |
 | [0012](0012-ai-runtime.md) | AI is core, local by default, and people approve | Accepted |
+| [0013](0013-java-25.md) | Java 25 LTS | Accepted |

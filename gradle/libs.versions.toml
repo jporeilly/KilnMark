@@ -8,6 +8,9 @@ junit = "5.14.4"
 [libraries]
 quarkus-bom = { module = "io.quarkus.platform:quarkus-bom", version.ref = "quarkus" }
 arrow-vector = { module = "org.apache.arrow:arrow-vector", version.ref = "arrow" }
+arrow-memory-netty = { module = "org.apache.arrow:arrow-memory-netty", version.ref = "arrow" }
+arrow-memory-unsafe = { module = "org.apache.arrow:arrow-memory-unsafe", version.ref = "arrow" }
+arrow-jdbc = { module = "org.apache.arrow:arrow-jdbc", version.ref = "arrow" }
 datasketches = { module = "org.apache.datasketches:datasketches-java", version.ref = "datasketches" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
