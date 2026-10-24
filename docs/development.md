@@ -8,10 +8,20 @@ a container.
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| Java (JDK) | 25 | Building and running the server; run Gradle on it too (`JAVA_HOME`) |
+| Java (JDK) | 25 | Building and running the server; Gradle must run on it too (see below) |
 | Git | any recent | Source control |
 | Node.js | 22 or later | The web UI |
 | Podman (Podman Desktop with a WSL 2 machine on Windows), or Docker | Podman 5 or later | PostgreSQL and the full stack |
+
+**JDK 25 without disturbing Pentaho.** Pentaho and its Tomcat expect their own Java, so do not
+change the system-wide `JAVA_HOME`. Install a JDK 25 (on Windows:
+`winget install EclipseAdoptium.Temurin.25.JDK`) and point only the current terminal at it before
+building:
+
+```
+$env:JAVA_HOME = (Resolve-Path "C:\Program Files\Eclipse Adoptium\jdk-25*").Path   # PowerShell
+export JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64                                  # Linux
+```
 
 Gradle is not needed: use the wrapper (`./gradlew`, or `gradlew.bat` on Windows).
 
@@ -19,9 +29,13 @@ Gradle is not needed: use the wrapper (`./gradlew`, or `gradlew.bat` on Windows)
 
 ```
 ./gradlew build                 # compile, test, write output to dist/build
-./gradlew :server:quarkusDev    # live-reload server on http://localhost:8080
+./gradlew :server:quarkusDev    # live-reload server on http://localhost:8780
 ./gradlew release               # assemble dist/release/kilnmark-<version>
 ```
+
+Ports: Kilnmark listens on **8780** (8080 is left for Pentaho, Tomcat and the like) and its
+PostgreSQL is published on **5442**. Change them with `KILNMARK_PORT` and `KILNMARK_DB_PORT` for
+Compose, or `QUARKUS_HTTP_PORT` for the server on its own.
 
 Useful endpoints in dev mode:
 
@@ -64,10 +78,10 @@ With the stack and the lab both running:
 
 ```
 podman compose -f lab/compose.yaml up -d      # the lab's PostgreSQL on :5433
-podman compose up --build                     # Kilnmark on http://localhost:8080
+podman compose up --build                     # Kilnmark on http://localhost:8780
 ```
 
-Open http://localhost:8080, go to **Sources**, and add the lab. From inside the Kilnmark container
+Open http://localhost:8780, go to **Sources**, and add the lab. From inside the Kilnmark container
 the host is `host.containers.internal` under Podman (`host.docker.internal` under Docker):
 
 | Field | Value |
@@ -90,7 +104,7 @@ There is no sign-in yet ([ADR 0014](adr/0014-authentication.md)): run it only on
 ```
 cd ui
 npm install
-npm run dev        # http://localhost:5173, calls the server on :8080
+npm run dev        # http://localhost:5173, calls the server on :8780
 npm run build      # writes dist/ui
 ```
 

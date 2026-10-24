@@ -9,7 +9,7 @@ WORKDIR /opt/kilnmark
 COPY --chown=1001:1001 dist/build/server/quarkus-app/ ./
 
 USER 1001
-EXPOSE 8080
+EXPOSE 8780
 ENV KILNMARK_ROLES=api,scheduler,worker \
     KILNMARK_SECRET_KEY_FILE=/var/lib/kilnmark/secret.key
 # The key that encrypts stored source passwords; keep this volume, and back it up apart from the database.

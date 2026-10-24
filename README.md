@@ -13,7 +13,7 @@ Requirements: Java 25 (run Gradle on it too: set JAVA_HOME to a JDK 25). The Gra
 
 ```
 ./gradlew build          # compile and test everything (Windows: gradlew.bat build)
-./gradlew :server:quarkusDev   # run the server in dev mode on http://localhost:8080
+./gradlew :server:quarkusDev   # run the server in dev mode on http://localhost:8780
 ./gradlew release        # assemble dist/release/kilnmark-<version>
 ```
 

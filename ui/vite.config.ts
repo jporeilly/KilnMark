@@ -10,8 +10,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://localhost:8080",
-      "/q": "http://localhost:8080",
+      "/api": "http://localhost:8780",
+      "/q": "http://localhost:8780",
     },
   },
 });

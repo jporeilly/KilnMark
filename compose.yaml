@@ -17,7 +17,9 @@ services:
       interval: 5s
       retries: 20
     ports:
-      - "5432:5432"
+      # Published on 5442 so it never clashes with another PostgreSQL on this machine
+      # (a Pentaho repository often uses 5432). Change with KILNMARK_DB_PORT.
+      - "${KILNMARK_DB_PORT:-5442}:5432"
 
   kilnmark:
     build:
@@ -36,7 +38,8 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      # 8780, not 8080, which Pentaho and Tomcat use. Change the host side with KILNMARK_PORT.
+      - "${KILNMARK_PORT:-8780}:8780"
 
 volumes:
   pgdata:
