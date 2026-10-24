@@ -9,3 +9,8 @@ release 10.2 or earlier, Copyright (C) 2002-2023 Hitachi Vantara, licensed under
 the Apache License, Version 2.0. Each adapted file keeps its original licence
 header and is listed in docs/legal/provenance.md. Kettle, PDI and Pentaho are
 trademarks of their respective owners and are not used to name this product.
+
+Third-party libraries shipped with Kilnmark keep their own licences. THIRD-PARTY-NOTICES.md,
+generated at build time and included in every release, lists each one with its licence and
+copyright notices. Dependencies are limited to the licences in config/allowed-licenses.json
+(see docs/adr/0007-dependency-policy.md); the build fails on any other.

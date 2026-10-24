@@ -1,0 +1,3 @@
+# Only the built server goes into the image; keep everything else out of the build context.
+*
+!dist/build/server/quarkus-app/

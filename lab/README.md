@@ -14,7 +14,7 @@ podman compose -f lab/compose.yaml down -v   # stop and wipe
 | Source | Where | Credentials |
 | --- | --- | --- |
 | PostgreSQL 18 | `localhost:5433`, database `lab` | `lab` / `lab` |
-| S3-compatible (MinIO) | `localhost:9000`, bucket `lab-raw`; console on `:9001` | `labadmin` / `labadmin123` |
+| S3-compatible (VersityGW) | `localhost:9000`, bucket `lab-raw`, path-style addressing | `labadmin` / `labadmin123` |
 | File share | `lab/files/share` on disk | none |
 
 These are lab-only credentials for local testing.
@@ -33,7 +33,7 @@ These are lab-only credentials for local testing.
 
 `SELECT lab.make_big_table(10000000);` creates a 10 million-row table for the profiling memory test.
 
-**Bucket** (`lab/files/bucket`, uploaded to `lab-raw`):
+**Bucket** (`lab/files/bucket`, served as bucket `lab-raw`):
 
 - `exports/customers_export_2025.csv`: a CSV export of 2,000 customers (a copy of database data)
 - `raw/transactions/transactions_2025-q1.ndjson`: 5,000 transactions as JSON lines
@@ -59,5 +59,7 @@ the QQ prefix that HMRC never issues, and emails use example.com, .org and .net.
 
 ## Licences
 
-MinIO is AGPLv3. It is used only as a local test tool and is never shipped with Kilnmark
+VersityGW, the S3 server, is Apache 2.0. It serves `lab/files/bucket` as a bucket directly, so
+there is nothing to upload. (MinIO's images stopped being publicly available in 2026.) It is a
+local test tool and is never shipped with Kilnmark
 ([ADR 0007](../docs/adr/0007-dependency-policy.md)).
