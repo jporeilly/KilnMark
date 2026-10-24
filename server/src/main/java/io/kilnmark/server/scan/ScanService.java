@@ -180,7 +180,7 @@ public class ScanService {
             keptTop.forEach(a -> parents.add(a.path()));
             List<AssetInfo> assets = found.assets().stream().filter(a -> {
                 String parent = a.hints().get("parent");
-                return parent == null ? keptTop.contains(a) : parents.contains(parent);
+                return parents.contains(parent == null ? a.path() : parent);
             }).toList();
             java.util.Set<String> kept = new java.util.HashSet<>();
             assets.forEach(a -> kept.add(a.path()));
