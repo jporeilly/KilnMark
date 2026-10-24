@@ -14,6 +14,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Locale;
+import java.util.Set;
 
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
@@ -41,8 +42,9 @@ import org.apache.arrow.vector.types.pojo.FieldType;
  *
  * <p>Kilnmark reads JDBC itself rather than through Arrow's JDBC adapter, which failed on
  * PostgreSQL's unconstrained {@code numeric} and turns {@code timestamptz} into milliseconds (see
- * docs/spikes/0001-arrow-row-sets.md). Types with no Arrow equivalent (json, uuid, arrays, ranges
- * and the like) are read as text, so nothing is dropped.
+ * docs/spikes/0001-arrow-row-sets.md). Types with no Arrow equivalent (json, uuid, arrays, ranges,
+ * SQL Server's spatial types, hierarchyid, sql_variant and the like) are read as text, so nothing
+ * is dropped.
  */
 public record JdbcColumn(String name, String sourceType, Kind kind, ArrowType arrowType, int scale) {
 
@@ -53,6 +55,20 @@ public record JdbcColumn(String name, String sourceType, Kind kind, ArrowType ar
     /** Precision and scale for a numeric column declared without them. */
     static final int UNCONSTRAINED_PRECISION = 38;
     static final int UNCONSTRAINED_SCALE = 10;
+
+    /**
+     * SQL Server's {@code datetimeoffset} as Microsoft's driver reports it
+     * ({@code microsoft.sql.Types.DATETIMEOFFSET}), in result and catalogue metadata alike.
+     */
+    static final int SQLSERVER_DATETIMEOFFSET = -155;
+
+    /**
+     * Type names read as text whatever JDBC type the driver reports. SQL Server reports
+     * {@code geography}, {@code geometry} and {@code hierarchyid} as {@code VARBINARY} in its
+     * catalogue but as its own codes in results; both must give the same kind. (PostGIS reports
+     * its types as {@code OTHER}, which is text already.)
+     */
+    private static final Set<String> TEXT_TYPE_NAMES = Set.of("geography", "geometry", "hierarchyid");
 
     public Field field() {
         return new Field(name, FieldType.nullable(arrowType), null);
@@ -67,8 +83,12 @@ public record JdbcColumn(String name, String sourceType, Kind kind, ArrowType ar
     /** Maps a column from its JDBC type, database type name, precision and scale. */
     public static JdbcColumn map(String name, int jdbcType, String typeName, int precision, int scale) {
         String type = typeName == null ? "" : typeName.toLowerCase(Locale.ROOT);
-        if (type.equals("timestamptz") || jdbcType == Types.TIMESTAMP_WITH_TIMEZONE) {
+        if (type.equals("timestamptz") || type.equals("datetimeoffset") || jdbcType == Types.TIMESTAMP_WITH_TIMEZONE
+            || jdbcType == SQLSERVER_DATETIMEOFFSET) {
             return new JdbcColumn(name, typeName, Kind.TIMESTAMP_TZ, new ArrowType.Timestamp(TimeUnit.MICROSECOND, "UTC"), 0);
+        }
+        if (TEXT_TYPE_NAMES.contains(type)) {
+            return new JdbcColumn(name, typeName, Kind.TEXT, ArrowType.Utf8.INSTANCE, 0);
         }
         return switch (jdbcType) {
             case Types.BIT, Types.BOOLEAN -> new JdbcColumn(name, typeName, Kind.BOOLEAN, ArrowType.Bool.INSTANCE, 0);

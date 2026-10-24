@@ -31,6 +31,31 @@ public abstract class JdbcConnector implements Connector {
     /** SQL reading every column of {@code schema.table}, at most {@code rowLimit} rows when above 0. */
     protected abstract String selectSql(String schema, String table, long rowLimit);
 
+    /**
+     * SQL reading {@code asset}, at most {@code rowLimit} rows when above 0. By default
+     * {@link #selectSql(String, String, long)} on the schema and table hints; override to choose
+     * how particular columns are read.
+     */
+    protected String selectSql(AssetInfo asset, long rowLimit) {
+        return selectSql(asset.hints().get("schema"), asset.hints().get("table"), rowLimit);
+    }
+
+    /**
+     * The tables and views in {@code schemas} (every user schema when empty). By default standard
+     * JDBC metadata; override to add what the driver does not report, such as comments.
+     */
+    protected List<JdbcCatalog.Table> readCatalog(Connection connection, List<String> schemas) throws SQLException {
+        return JdbcCatalog.read(connection, schemas);
+    }
+
+    /**
+     * What a person should read when connecting or reading the catalogue fails: by default the
+     * driver's message; override to add what to do about failures this database is known for.
+     */
+    protected String explain(SQLException e) {
+        return e.getMessage();
+    }
+
     /** Quotes an identifier the standard way; override for databases that differ. */
     protected String quote(String identifier) {
         return "\"" + identifier.replace("\"", "\"\"") + "\"";
@@ -59,7 +84,7 @@ public abstract class JdbcConnector implements Connector {
         try (Connection c = DriverManager.getConnection(source.setting("url"), source.setting("username"),
             source.secret())) {
             List<AssetInfo> out = new ArrayList<>();
-            for (JdbcCatalog.Table t : JdbcCatalog.read(c, source.list("schemas"))) {
+            for (JdbcCatalog.Table t : readCatalog(c, source.list("schemas"))) {
                 List<AssetInfo.FieldInfo> fields = t.columns().stream().map(col -> new AssetInfo.FieldInfo(col.name(),
                     col.position(), col.sourceType(), col.kind().name().toLowerCase(Locale.ROOT), col.nullable(),
                     col.comment())).toList();
@@ -69,7 +94,7 @@ public abstract class JdbcConnector implements Connector {
             }
             return out;
         } catch (SQLException e) {
-            throw new ConnectorException("Cannot read the catalogue of " + source.name() + ": " + e.getMessage(), e);
+            throw new ConnectorException("Cannot read the catalogue of " + source.name() + ": " + explain(e), e);
         }
     }
 
@@ -83,7 +108,7 @@ public abstract class JdbcConnector implements Connector {
         if (source.secret() != null) {
             s.put("password", source.secret());
         }
-        s.put("query", selectSql(asset.hints().get("schema"), asset.hints().get("table"), read.rowLimit()));
+        s.put("query", selectSql(asset, read.rowLimit()));
         s.put("label", asset.path());
         s.put("asset-urn", read.assetUrn());
         s.put("row-limit", Long.toString(read.rowLimit()));

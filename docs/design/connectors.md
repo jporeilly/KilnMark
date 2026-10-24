@@ -41,6 +41,25 @@ float64, decimal, text, binary, date, time, timestamp, timestamp_tz) and the Arr
 `JdbcColumn` maps them to, so the profiler treats every source alike. Timestamps are
 microseconds. Types with no Arrow equivalent are read as text rather than dropped.
 
+## JDBC databases
+
+A database with a JDBC driver extends `JdbcConnector`, which supplies the `url`, `username` and
+`schemas` settings, the catalogue from JDBC metadata and the reader. It must give its URL prefix,
+an example URL and the SQL that reads a table (`selectSql`), and may override:
+
+- `quote` for its identifier quoting (SQL Server: `[name]`, `]` doubled);
+- `selectSql(AssetInfo, rowLimit)` to read particular columns differently (SQL Server reads
+  geography, geometry and hierarchyid through `ToString()`, so they arrive as text people can
+  read);
+- `readCatalog` to add what the driver's metadata leaves out (SQL Server's driver reports no
+  comments, so its connector reads `MS_Description` extended properties in one query);
+- `explain` to add what to do about connection failures the database is known for.
+
+Check what the driver actually reports, in result metadata and in `getColumns`, before mapping
+types: they can differ (Microsoft's driver reports geography as `VARBINARY` in the catalogue and
+as its own code in results), so `JdbcColumn.map` matches type names where codes are not enough.
+System schemas are listed in `JdbcCatalog.SYSTEM_SCHEMAS` and matched ignoring case.
+
 ## Registering it
 
 List the class in `kiln-plugins/src/main/resources/META-INF/services/io.kilnmark.kiln.connect.Connector`.

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Sources:** SQL Server (kind `sqlserver`): tables and views in user schemas,
+  with `MS_Description` descriptions and primary keys; every SQL Server type read, with
+  `datetimeoffset` as a UTC timestamp, `money` as an exact decimal, and geography, geometry and
+  hierarchyid as text. Uses Microsoft's JDBC driver (MIT).
+
 ## 0.0.2 (24 October 2026)
 
 The first working slice: point Kilnmark at PostgreSQL databases, scan them, and search what it

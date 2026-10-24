@@ -18,7 +18,11 @@ import java.util.TreeMap;
  */
 public final class JdbcCatalog {
 
-    /** Schemas that belong to the database itself, never to users. */
+    /**
+     * Schemas that belong to the database itself, never to users, in lower case: PostgreSQL's, and
+     * SQL Server's (its {@code sys}, {@code INFORMATION_SCHEMA}, {@code guest} and fixed database
+     * role schemas). Compare with {@link #isSystemSchema}, which ignores case.
+     */
     static final Set<String> SYSTEM_SCHEMAS = Set.of("pg_catalog", "information_schema", "pg_toast",
         "ag_catalog", "sys", "guest", "db_owner", "db_accessadmin", "db_securityadmin", "db_ddladmin",
         "db_backupoperator", "db_datareader", "db_datawriter", "db_denydatareader", "db_denydatawriter");
@@ -90,13 +94,18 @@ public final class JdbcCatalog {
         try (ResultSet rs = md.getSchemas()) {
             while (rs.next()) {
                 String s = rs.getString("TABLE_SCHEM");
-                if (!SYSTEM_SCHEMAS.contains(s.toLowerCase(Locale.ROOT)) && !s.startsWith("pg_temp")
-                    && !s.startsWith("pg_toast")) {
+                if (!isSystemSchema(s)) {
                     out.add(s);
                 }
             }
         }
         return out;
+    }
+
+    /** True for a schema that belongs to the database itself, whatever its case. */
+    static boolean isSystemSchema(String schema) {
+        return SYSTEM_SCHEMAS.contains(schema.toLowerCase(Locale.ROOT)) || schema.startsWith("pg_temp")
+            || schema.startsWith("pg_toast");
     }
 
     private static List<String> primaryKey(DatabaseMetaData md, String schema, String table) throws SQLException {
