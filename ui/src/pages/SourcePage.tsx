@@ -13,7 +13,7 @@ import {
 } from "../api";
 import { Status } from "../components/Status";
 import { ScanAction } from "../components/ScanAction";
-import { SourceForm } from "../components/SourceForm";
+import { ConnectionPanel } from "../components/ConnectionPanel";
 import { splitList } from "../components/ContainerPicker";
 import { useTitle } from "../components/useTitle";
 import { go, href } from "../router";
@@ -35,6 +35,7 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
   const [editing, setEditing] = useState(false);
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<TestResult | null>(null);
+  const editButton = useRef<HTMLButtonElement>(null);
   const canChange = allows(role, "steward");
   useTitle(source?.displayName ?? name);
 
@@ -128,7 +129,7 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
 
       {canChange && !editing && (
         <div className="buttons actions">
-          <button type="button" onClick={() => setEditing(true)}>
+          <button type="button" ref={editButton} onClick={() => setEditing(true)} disabled={!connector}>
             Edit
           </button>
           <button type="button" onClick={runTest} disabled={testing}>
@@ -156,19 +157,22 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
           ))}
       </div>
 
-      {editing ? (
-        <section aria-labelledby="edit-h" className="panel">
-          <h2 id="edit-h">Edit {source.displayName}</h2>
-          <SourceForm
-            existing={source}
-            onCancel={() => setEditing(false)}
-            onSaved={(s) => {
-              setSource(s);
-              setEditing(false);
-              setNotice("Changes saved. Scan again to apply new choices to the catalogue.");
-            }}
-          />
-        </section>
+      {editing && connector ? (
+        <ConnectionPanel
+          connector={connector}
+          existing={source}
+          onClose={() => {
+            setEditing(false);
+            window.setTimeout(() => editButton.current?.focus(), 0);
+          }}
+          onSaved={(s, queued) => {
+            setSource(s);
+            setEditing(false);
+            setNotice(queued ? "Changes saved, and a scan queued." : "Changes saved. Scan again to apply new choices to the catalogue.");
+            load();
+            window.setTimeout(() => editButton.current?.focus(), 0);
+          }}
+        />
       ) : (
         <section aria-labelledby="settings-h" className="panel">
           <h2 id="settings-h">Settings</h2>

@@ -114,9 +114,20 @@ export type Source = {
   lastRun: Run | null;
   displayName: string;
   assets: number;
+  category: string;
+  /** For file sources: how many current files have each extension. */
+  formats: Record<string, number>;
 };
 
-export type ConnectorSetting = { key: string; label: string; required: boolean; hint: string; multiple: boolean };
+export type ConnectorSetting = {
+  key: string;
+  label: string;
+  required: boolean;
+  hint: string;
+  multiple: boolean;
+  example: string | null;
+};
+export type Capability = "discover" | "read" | "write" | "stream";
 /** containerSetting holds the containers (schemas, folders) chosen for scanning. */
 export type Connector = {
   kind: string;
@@ -125,6 +136,29 @@ export type Connector = {
   containerSetting: string;
   containerLabel: string;
   containerCounted: string;
+  category: string;
+  family: string;
+  capabilities: Capability[];
+  formats: string[];
+  icon: string;
+  docsAnchor: string;
+  /** Whether host, port and database fields can build its address. */
+  addressFields: boolean;
+  driverBundled: boolean;
+};
+export type PlannedConnector = { name: string; category: string; family: string; capabilities: Capability[]; wave: string };
+export type ConnectorCategory = { id: string; label: string; connectors: Connector[]; planned: PlannedConnector[] };
+export type ConnectorCatalogue = { showPlanned: boolean; categories: ConnectorCategory[] };
+export type AssetItem = { path: string; name: string; kind: string; readable: boolean };
+export type AssetList = { container: string; total: number; offset: number; items: AssetItem[] };
+export type PreviewColumn = { name: string; kind: string | null; sourceType: string | null };
+export type Preview = {
+  asset: string;
+  columns: PreviewColumn[];
+  rows: (string | null)[][];
+  rowCount: number;
+  truncated: boolean;
+  details: Record<string, string>;
 };
 
 export type SearchHit = {
@@ -362,6 +396,28 @@ export const api = {
     call<ContainerList>("/api/v1/drafts/containers", { method: "POST", body: JSON.stringify(form) }),
   history: (name: string) => call<HistoryRun[]>(`/api/v1/sources/${encodeURIComponent(name)}/history`),
   commonSettings: () => call<CommonSetting[]>("/api/v1/common-settings"),
+  catalogue: () => call<ConnectorCatalogue>("/api/v1/connectors/catalogue"),
+  address: (kind: string, host: string, port: string, database: string) =>
+    call<Record<string, string>>(
+      `/api/v1/connectors/${encodeURIComponent(kind)}/address?host=${encodeURIComponent(host)}` +
+        `&port=${encodeURIComponent(port)}&database=${encodeURIComponent(database)}`,
+    ),
+  assets: (name: string, container: string, offset: number) =>
+    call<AssetList>(
+      `/api/v1/sources/${encodeURIComponent(name)}/assets?container=${encodeURIComponent(container)}&offset=${offset}`,
+    ),
+  draftAssets: (form: SourceForm, container: string, offset: number) =>
+    call<AssetList>(`/api/v1/drafts/assets?container=${encodeURIComponent(container)}&offset=${offset}`, {
+      method: "POST",
+      body: JSON.stringify(form),
+    }),
+  preview: (name: string, asset: string, rows: number) =>
+    call<Preview>(`/api/v1/sources/${encodeURIComponent(name)}/preview?asset=${encodeURIComponent(asset)}&rows=${rows}`),
+  draftPreview: (form: SourceForm, asset: string, rows: number) =>
+    call<Preview>(`/api/v1/drafts/preview?asset=${encodeURIComponent(asset)}&rows=${rows}`, {
+      method: "POST",
+      body: JSON.stringify(form),
+    }),
   scan: (name: string) => call<Run>(`/api/v1/sources/${encodeURIComponent(name)}/scans`, { method: "POST" }),
   run: (id: number) => call<Run>(`/api/v1/runs/${id}`),
   search: (q: string) => call<{ query: string; hits: SearchHit[] }>(`/api/v1/search?q=${encodeURIComponent(q)}`),

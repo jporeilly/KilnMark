@@ -69,6 +69,30 @@ public class SourceDraftResource {
         return sources.containers(d.connector(), d.config());
     }
 
+    /** A page of the tables or files in one container of a source as a form describes it. */
+    @POST
+    @Path("drafts/assets")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    public Views.AssetList assets(SourceForm form, @jakarta.ws.rs.QueryParam("container") String container,
+                                  @jakarta.ws.rs.QueryParam("offset") Integer offset,
+                                  @jakarta.ws.rs.QueryParam("limit") Integer limit) {
+        SourceService.Draft d = sources.draft(form, existing(form), false);
+        return sources.assets(d.connector(), d.config(), container, offset == null ? 0 : offset,
+            limit == null ? 50 : limit);
+    }
+
+    /** The first rows of one table or file of a source as a form describes it, read live and never stored. */
+    @POST
+    @Path("drafts/preview")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    public Views.Preview preview(SourceForm form, @jakarta.ws.rs.QueryParam("asset") String asset,
+                                 @jakarta.ws.rs.QueryParam("rows") Integer rows) {
+        SourceService.Draft d = sources.draft(form, existing(form), false);
+        return sources.preview(d.connector(), d.config(), asset, rows);
+    }
+
     private Records.Source existing(SourceForm form) {
         return form == null || form.source() == null || form.source().isBlank() ? null : sources.find(form.source());
     }

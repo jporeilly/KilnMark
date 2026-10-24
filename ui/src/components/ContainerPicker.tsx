@@ -1,5 +1,6 @@
 import { useId, useMemo, useState } from "react";
-import { formatNumber, type ContainerList } from "../api";
+import { formatNumber, type AssetList, type ContainerList, type Preview } from "../api";
+import { AssetBrowser } from "./AssetBrowser";
 
 /** The names in a comma- or semicolon-separated setting. */
 export const splitList = (value: string | undefined) =>
@@ -18,12 +19,18 @@ export function ContainerPicker({
   value,
   onChange,
   load,
+  loadAssets,
+  loadPreview,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   load: () => Promise<ContainerList>;
+  /** When given, each container can be opened to list its tables or files and preview them. */
+  loadAssets?: (container: string, offset: number) => Promise<AssetList>;
+  loadPreview?: (path: string, rows: number) => Promise<Preview>;
 }) {
+  const [open, setOpen] = useState<string | null>(null);
   const id = useId();
   const [list, setList] = useState<ContainerList | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -144,6 +151,20 @@ export function ContainerPicker({
                         </span>
                       )}
                     </label>
+                    {loadAssets && loadPreview && c.count > 0 && (
+                      <button
+                        type="button"
+                        className="link-button"
+                        aria-expanded={open === c.name}
+                        onClick={() => setOpen(open === c.name ? null : c.name)}
+                      >
+                        {open === c.name ? "Hide" : "Show"} {list.counted}
+                        <span className="visually-hidden"> in {display(c.name)}</span>
+                      </button>
+                    )}
+                    {open === c.name && loadAssets && loadPreview && (
+                      <AssetBrowser container={c.name} load={loadAssets} preview={loadPreview} />
+                    )}
                   </li>
                 );
               })}

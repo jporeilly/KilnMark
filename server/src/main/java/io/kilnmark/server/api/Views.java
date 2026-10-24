@@ -24,10 +24,12 @@ public final class Views {
 
     /** A source. {@code name} is its fixed key, part of every asset URN; people see {@code displayName}. */
     public record Source(String name, String kind, Map<String, String> settings, boolean hasPassword,
-                         Instant createdAt, Run lastRun, String displayName, int assets) {
+                         Instant createdAt, Run lastRun, String displayName, int assets, String category,
+                         Map<String, Integer> formats) {
     }
 
-    public record Setting(String key, String label, boolean required, String hint, boolean multiple) {
+    /** One setting of a kind of source. {@code example} is a sample value for forms, or null. */
+    public record Setting(String key, String label, boolean required, String hint, boolean multiple, String example) {
     }
 
     /**
@@ -36,7 +38,42 @@ public final class Views {
      * {@code containerCounted} what their counts count.
      */
     public record Connector(String kind, String displayName, List<Setting> settings, String containerSetting,
-                            String containerLabel, String containerCounted) {
+                            String containerLabel, String containerCounted, String category, String family,
+                            List<String> capabilities, List<String> formats, String icon, String docsAnchor,
+                            boolean addressFields, boolean driverBundled) {
+    }
+
+    /** A connector that is planned, not built: shown greyed out. */
+    public record PlannedConnector(String name, String category, String family, List<String> capabilities,
+                                   String wave) {
+    }
+
+    /** One category of the catalogue, with its built connectors and, unless hidden, the planned ones. */
+    public record ConnectorCategory(String id, String label, List<Connector> connectors,
+                                    List<PlannedConnector> planned) {
+    }
+
+    /** The catalogue of connectors, by category. */
+    public record ConnectorCatalogue(boolean showPlanned, List<ConnectorCategory> categories) {
+    }
+
+    /** A page of the tables or files in one container. */
+    public record AssetList(String container, int total, int offset, List<AssetItem> items) {
+    }
+
+    /** A table or file, without its fields. {@code readable} is false for documents, which have no rows. */
+    public record AssetItem(String path, String name, String kind, boolean readable) {
+    }
+
+    /**
+     * The first rows of an asset, read live and never stored. {@code truncated}: the size cap
+     * stopped it early; {@code details}: what was detected about a file.
+     */
+    public record Preview(String asset, List<PreviewColumn> columns, List<List<String>> rows, int rowCount,
+                          boolean truncated, Map<String, String> details) {
+    }
+
+    public record PreviewColumn(String name, String kind, String sourceType) {
     }
 
     /** A setting every source has. {@code choices} lists the values allowed; empty for free text. */

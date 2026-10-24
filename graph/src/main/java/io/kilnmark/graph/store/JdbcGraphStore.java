@@ -324,6 +324,23 @@ public final class JdbcGraphStore implements GraphStore {
     }
 
     @Override
+    public Map<Long, Map<String, Integer>> fileFormats() {
+        return tx(c -> {
+            Map<Long, Map<String, Integer>> out = new java.util.HashMap<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT source_id, "
+                + "coalesce(lower(substring(name from '\\.([^./]+)$')), '(none)') AS ext, count(*) "
+                + "FROM kilnmark.asset WHERE kind IN ('file', 'document') AND removed_at IS NULL "
+                + "GROUP BY source_id, ext");
+                 ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.computeIfAbsent(rs.getLong(1), k -> new java.util.TreeMap<>()).put(rs.getString(2), rs.getInt(3));
+                }
+            }
+            return out;
+        });
+    }
+
+    @Override
     public boolean hasActiveRun(long sourceId) {
         return tx(c -> activeRun(c, sourceId));
     }

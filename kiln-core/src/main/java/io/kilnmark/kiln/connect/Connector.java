@@ -190,6 +190,120 @@ public interface Connector {
     record ContainerInfo(String name, long count) {
     }
 
+    // ------------------------------------------------------------------ the catalogue of connectors
+
+    /**
+     * The group people find this kind of source under: {@code databases}, {@code nosql},
+     * {@code files}, {@code streaming}, {@code applications} or {@code lakehouse}. The default,
+     * {@code other}, is listed only under All.
+     */
+    default String category() {
+        return "other";
+    }
+
+    /** A sub-group within the category, such as relational, object storage, message broker. */
+    default String family() {
+        return "other";
+    }
+
+    /** What the connector can do today. The default: discover and profile, and read. */
+    default Set<Capability> capabilities() {
+        return Set.of(Capability.DISCOVER, Capability.READ);
+    }
+
+    /** For file and stream connectors, the formats it reads (for example csv, parquet); none by default. */
+    default List<String> formats() {
+        return List.of();
+    }
+
+    /** A name from the UI's own icon set (never a vendor logo); the category by default. */
+    default String icon() {
+        return category();
+    }
+
+    /** The section of the connector documentation about this kind; its kind by default. */
+    default String docsAnchor() {
+        return kind();
+    }
+
+    /**
+     * The driver this connector needs that does not ship with Kilnmark, or null when everything it
+     * needs is bundled (the default). Installing drivers arrives with the first connector wave.
+     */
+    default Driver driver() {
+        return null;
+    }
+
+    /** An example value for a setting, for forms; null when the setting's hint is enough (the default). */
+    default String example(String settingKey) {
+        return null;
+    }
+
+    /** What a connector can do with a source. */
+    enum Capability {
+        /** List and profile what it holds. */
+        DISCOVER,
+        /** Read rows in pipelines. */
+        READ,
+        /** Write rows in pipelines. */
+        WRITE,
+        /** Read continuously as data arrives. */
+        STREAM
+    }
+
+    /**
+     * A driver to be installed by the customer.
+     *
+     * @param coordinates Maven coordinates, group:artifact
+     * @param version     the pinned version
+     * @param sha256      the jar's checksum
+     * @param licence     the licence's name
+     * @param licenceUrl  where to read it
+     * @param bundleable  whether Kilnmark may ship it
+     */
+    record Driver(String coordinates, String version, String sha256, String licence, String licenceUrl,
+                  boolean bundleable) {
+    }
+
+    // ------------------------------------------------------------------ looking before scanning
+
+    /**
+     * The tables, views or files in one container (as {@link #containers} names it), without their
+     * fields, for people to pick one to preview. The default reads the full catalogue, so
+     * connectors override it with metadata or a listing.
+     */
+    default List<AssetInfo> assets(SourceConfig source, String container) throws ConnectorException {
+        Map<String, String> every = new HashMap<>(source.settings());
+        every.remove(containerKind().setting());
+        SourceConfig all = new SourceConfig(source.name(), source.kind(), every, source.secret());
+        return catalog(all).stream().filter(a -> containerOf(all, a).equals(container)).toList();
+    }
+
+    /**
+     * One asset as the catalogue would record it, with its fields, by its path. The default reads
+     * the full catalogue, so connectors override it.
+     *
+     * @throws ConnectorException when there is no such asset, or the source cannot be read
+     */
+    default AssetInfo asset(SourceConfig source, String path) throws ConnectorException {
+        Map<String, String> every = new HashMap<>(source.settings());
+        every.remove(containerKind().setting());
+        every.remove(AssetFilter.INCLUDE);
+        every.remove(AssetFilter.EXCLUDE);
+        SourceConfig all = new SourceConfig(source.name(), source.kind(), every, source.secret());
+        return catalog(all).stream().filter(a -> a.path().equals(path)).findFirst()
+            .orElseThrow(() -> new ConnectorException("There is no table or file " + path + " in " + source.name()));
+    }
+
+    /**
+     * The first {@code rows} rows of an asset (at most {@value Preview#MAX_ROWS}), read live with
+     * {@link #reader} and a row limit, so every connector has a preview without writing one.
+     * Override only to add {@link Preview#details()}.
+     */
+    default Preview preview(SourceConfig source, AssetInfo asset, int rows) throws ConnectorException {
+        return Preview.read(this, source, asset, rows);
+    }
+
     /** How much of an asset to read. {@code rowLimit} 0 reads everything. */
     record ReadOptions(String assetUrn, long rowLimit, int batchSize) {
     }

@@ -44,6 +44,11 @@ Useful endpoints in dev mode (all but the first and the `/q` ones need an API to
   `POST /api/v1/drafts/containers` do the same for settings not yet saved
 - `GET /api/v1/sources/{name}/history`: runs with their jobs; `GET /api/v1/common-settings`
 - `GET /api/v1/imports/{id}`: progress of an import's tests and scans (admin)
+- `GET /api/v1/connectors/catalogue`: connectors by category, with planned ones;
+  `GET /api/v1/connectors/{kind}/address?host=&port=&database=`: the URL those build
+- `GET /api/v1/sources/{name}/assets?container=` and `GET /api/v1/sources/{name}/preview?asset=&rows=`:
+  a container's tables or files, and the first rows of one (steward); `POST /api/v1/drafts/assets`
+  and `POST /api/v1/drafts/preview` for settings not yet saved
 - `GET /api/v1/search?q=...`, `GET /api/v1/assets/{urn}`, `GET /api/v1/runs/{id}`
 - `POST /api/v1/tokens`, `GET /api/v1/tokens`, `DELETE /api/v1/tokens/{id}`: API tokens (admin)
 - `GET /q/health/ready`, `GET /q/health/live`: readiness and liveness (see [Health](#health))
@@ -208,6 +213,24 @@ to `POST /api/v1/sources/import` (`?dryRun=true` only checks). See [Sources](#so
 other columns and options; `lab/sources.csv` registers the whole lab (see `lab/README.md`).
 
 ## Sources
+
+**Adding a connection.** **Sources > Add a connection** shows every kind of source by category
+(Databases, NoSQL, Files, Streaming, Applications, Lakehouse), with what each can do. Connectors
+that are planned but not built are shown greyed out with their wave; set
+`kilnmark.connectors.show-planned=false` (`KILNMARK_CONNECTORS_SHOW_PLANNED`) to hide them. Choosing
+one opens its panel beside the gallery, in four steps you can move between: **Connect** (a
+database's host, port and database build its URL; the full URL is under Advanced), **Test**,
+**Choose what to scan** (schemas or folders with counts, patterns, and a preview of any table or
+file), and **Save** (display name, description, AI rule; Save, or Save and scan). Edit on a
+source's page opens the same panel. Escape closes it.
+
+**Preview.** The first rows of a table or file (100 by default, at most 1,000), read live through
+the connector with the same time limit and places as connection tests, and never stored, logged
+or sent to a model. Values longer than 500 characters are cut, bytes are shown as hex with their
+length, and a preview stops at about 2 MB. For files it also shows what was detected (format,
+delimiter, header row, encoding); if that is wrong, set `delimiter`, `header` (false when the
+first row is data) or `encoding` on the source: they apply to every file of it, in previews and
+scans.
 
 **Name and display name.** A source's name is its ID: it is part of every asset's reference
 (`urn:kilnmark:<name>:<path>`), so it is set when the source is added and never changes. An edit

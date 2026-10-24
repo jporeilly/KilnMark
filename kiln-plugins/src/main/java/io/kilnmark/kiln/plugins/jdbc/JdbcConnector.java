@@ -258,6 +258,77 @@ public abstract class JdbcConnector implements Connector {
         return Set.of("url");
     }
 
+    @Override
+    public String category() {
+        return "databases";
+    }
+
+    @Override
+    public String family() {
+        return "relational";
+    }
+
+    @Override
+    public String icon() {
+        return "database";
+    }
+
+    @Override
+    public String example(String settingKey) {
+        return switch (settingKey) {
+            case "url" -> exampleUrl();
+            case "username" -> "kilnmark_reader";
+            case "schemas" -> "sales, crm";
+            default -> null;
+        };
+    }
+
+    /** The tables and views in one schema, from one metadata call; no columns are read. */
+    @Override
+    public List<AssetInfo> assets(SourceConfig source, String container) throws ConnectorException {
+        checkValid(source);
+        try (Connection c = connect(source)) {
+            List<AssetInfo> out = new ArrayList<>();
+            for (String[] t : JdbcCatalog.tables(c, container, dialect())) {
+                boolean table = t[1].equals("table") || t[1].equals("partitioned table");
+                out.add(new AssetInfo(container + "." + t[0], t[1], container, t[0], null, List.of(), List.of(),
+                    !table, true, Map.of("schema", container, "table", t[0])));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new ConnectorException("Cannot list the tables of " + container + " in " + source.name() + ": "
+                + explain(e), e);
+        }
+    }
+
+    /** One table or view with its columns: the catalogue of its schema only, kept to that table. */
+    @Override
+    public AssetInfo asset(SourceConfig source, String path) throws ConnectorException {
+        checkValid(source);
+        try (Connection c = connect(source)) {
+            for (int dot = path.indexOf('.'); dot > 0; dot = path.indexOf('.', dot + 1)) {
+                String schema = path.substring(0, dot);
+                for (JdbcCatalog.Table t : readCatalog(c, AssetFilter.of(List.of(schema), null, null, "."))) {
+                    if (t.path().equals(path)) {
+                        return info(t);
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            throw new ConnectorException("Cannot read " + path + " in " + source.name() + ": " + explain(e), e);
+        }
+        throw new ConnectorException("There is no table or view " + path + " in " + source.name());
+    }
+
+    private static AssetInfo info(JdbcCatalog.Table t) {
+        List<AssetInfo.FieldInfo> fields = t.columns().stream().map(col -> new AssetInfo.FieldInfo(col.name(),
+            col.position(), col.sourceType(), col.kind().name().toLowerCase(Locale.ROOT), col.nullable(),
+            col.comment())).toList();
+        boolean table = t.type().equals("table") || t.type().equals("partitioned table");
+        return new AssetInfo(t.path(), t.type(), t.schema(), t.name(), t.comment(), fields, t.primaryKey(),
+            !table, true, Map.of("schema", t.schema(), "table", t.name()));
+    }
+
     /** The URL's hosts, and any other host its properties name (SQL Server's serverName, failoverPartner). */
     @Override
     public List<String> hosts(SourceConfig source) {
@@ -310,12 +381,7 @@ public abstract class JdbcConnector implements Connector {
         try (Connection c = connect(source)) {
             List<AssetInfo> out = new ArrayList<>();
             for (JdbcCatalog.Table t : readCatalog(c, filter)) {
-                List<AssetInfo.FieldInfo> fields = t.columns().stream().map(col -> new AssetInfo.FieldInfo(col.name(),
-                    col.position(), col.sourceType(), col.kind().name().toLowerCase(Locale.ROOT), col.nullable(),
-                    col.comment())).toList();
-                boolean table = t.type().equals("table") || t.type().equals("partitioned table");
-                out.add(new AssetInfo(t.path(), t.type(), t.schema(), t.name(), t.comment(), fields, t.primaryKey(),
-                    !table, true, Map.of("schema", t.schema(), "table", t.name())));
+                out.add(info(t));
             }
             return out;
         } catch (SQLException e) {

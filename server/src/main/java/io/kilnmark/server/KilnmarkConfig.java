@@ -48,6 +48,9 @@ public interface KilnmarkConfig {
     /** Managing sources: connection tests, container discovery and bulk import. */
     Sources sources();
 
+    /** The catalogue of connectors shown when adding a connection. */
+    ConnectorList connectors();
+
     /** API sign-in. */
     interface Auth {
         /**
@@ -151,5 +154,12 @@ public interface KilnmarkConfig {
          * is added, edited, imported or checked. None (the default) allows any host.
          */
         Optional<List<String>> allowedHosts();
+    }
+
+    /** The catalogue of connectors. */
+    interface ConnectorList {
+        /** Whether the "Add connection" gallery also lists connectors that are planned but not built. */
+        @WithDefault("true")
+        boolean showPlanned();
     }
 }

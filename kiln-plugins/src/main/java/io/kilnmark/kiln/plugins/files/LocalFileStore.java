@@ -164,6 +164,17 @@ public final class LocalFileStore implements FileStore {
         return real;
     }
 
+    /** One file, checked to be inside the folder like every read. */
+    @Override
+    public Entry entry(String path) throws IOException {
+        Path real = resolve(path);
+        BasicFileAttributes attrs = Files.readAttributes(real, BasicFileAttributes.class);
+        if (!attrs.isRegularFile()) {
+            throw new IOException(path + " is not a file");
+        }
+        return new Entry(path, attrs.size(), attrs.lastModifiedTime().toInstant());
+    }
+
     /** The constructor already checked the folder exists and can be read. */
     @Override
     public void probe() {

@@ -59,7 +59,6 @@ public class SourceImporter {
     static final int MAX_ROWS = 1000;
     private static final Pattern ENV = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final Pattern SECRET = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
-    private static final Pattern DATABASE = Pattern.compile("[A-Za-z0-9_$.-]{1,128}");
 
     /**
      * One row of the file. {@code present} names the settings the file has for it (its CSV columns
@@ -315,36 +314,14 @@ public class SourceImporter {
         if (settings.containsKey("url")) {
             throw new IllegalArgumentException("url: give a url, or host, port and database, not both");
         }
-        if (!HostRemap.validHost(host)) {
-            throw new IllegalArgumentException("host: '" + host + "' is not a host name or address");
-        }
-        Integer port = null;
-        if (blank(r.port()) != null) {
-            try {
-                port = Integer.parseInt(r.port().trim());
-            } catch (NumberFormatException e) {
-                port = -1;
-            }
-            if (port < 1 || port > 65535) {
-                throw new IllegalArgumentException("port: a number from 1 to 65535, not '" + r.port().trim() + "'");
-            }
-        }
-        String database = blank(r.database());
-        if (database != null && !DATABASE.matcher(database).matches()) {
-            throw new IllegalArgumentException("database: letters, digits and _ $ . - only, not '" + database + "'");
-        }
-        if (remap != null) {
+        if (remap != null && HostRemap.validHost(host)) {
             String to = remap.host(host);
             if (!to.equals(host)) {
                 notes.add("host: changed for this server, from " + host + " to " + to);
                 host = to;
             }
         }
-        Map<String, String> address = connector.addressSettings(host, port, database);
-        if (address.isEmpty()) {
-            throw new IllegalArgumentException("host: sources of kind " + connector.kind() + " do not take host, port "
-                + "and database; use their own settings");
-        }
+        Map<String, String> address = SourceService.address(connector, host, r.port(), r.database());
         settings.putAll(address);
         present.addAll(address.keySet());
     }

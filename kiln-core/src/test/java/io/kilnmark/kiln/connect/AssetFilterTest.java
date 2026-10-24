@@ -176,7 +176,8 @@ class AssetFilterTest {
         @Override
         public List<AssetInfo> catalog(SourceConfig source) {
             assertFalse(source.settings().containsKey("containers"), "the default listing asks for everything");
-            return List.of(asset("a", "x1"), asset("a", "x2"), asset("b", "x3"));
+            return List.of(AssetFilterTest.asset("a", "x1"), AssetFilterTest.asset("a", "x2"),
+                AssetFilterTest.asset("b", "x3"));
         }
 
         @Override

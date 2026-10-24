@@ -88,6 +88,16 @@
   of failing. An update changes only the columns in the file.
 - **Changed:** `include` and `exclude` patterns without a `.` match database table names only (with
   a `.`, `schema.table`); without a `/`, file names only.
+- **Add a connection:** a gallery of connectors by category, with tabs, search and what each can
+  do (discover, read; write and stream to come), including planned connectors and their wave
+  (`kilnmark.connectors.show-planned`). Choosing one opens a four-step panel beside it: connect
+  (host, port and database build a database URL), test, choose what to scan, save or save and
+  scan. Edit uses the same panel. Connectors declare their category, family, capabilities,
+  formats, icon and docs section, and a driver descriptor (all bundled today).
+- **Preview** any table or file before scanning: the first 100 rows (up to 1,000), read live and
+  never stored. Files show what was detected; new file settings `delimiter` and `header` correct
+  it for previews and scans.
+- **Sources list:** filter and group by category; file sources show the formats found, with counts.
 - **Database:** migration V5 adds `data_source.display_name` and the import batch tables.
 - **Fixed:** an S3 source with its own access key can be added through the API, the form and bulk
   import; the check that the secret goes with the key no longer misses the secret.

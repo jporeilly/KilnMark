@@ -29,7 +29,8 @@ import io.kilnmark.kiln.StepException;
  *
  * <p>The store and the columns come from the connector; settings: {@code path}, {@code format},
  * {@code size}, {@code encoding} (CSV and JSON; detected when absent), {@code delimiter},
- * {@code quote} and {@code sep-line} (CSV), {@code asset-urn}, {@code batch-size} (default 8192)
+ * {@code quote}, {@code sep-line} and {@code header} ({@code false}: the first row is data) (CSV),
+ * {@code asset-urn}, {@code batch-size} (default 8192)
  * and {@code row-limit} (default 0, every row).
  *
  * <p>CSV and JSON are read with the column kinds the catalogue inferred; if the header has changed
@@ -116,8 +117,12 @@ public final class FileInput implements Step {
         char delimiter = Csv.Dialect.parse(context.settings().get("delimiter"), format == FileFormat.TSV ? '\t' : ',');
         char quote = Csv.Dialect.parse(context.settings().get("quote"), '"');
         boolean sepLine = Boolean.parseBoolean(context.settings().get("sep-line"));
+        boolean hasHeader = !"false".equalsIgnoreCase(context.settings().get("header"));
         Charset charset = charset(context, path);
         columns = catalogued;
+        if (!hasHeader) {
+            return noHeader(context, path, format, delimiter, quote, sepLine, charset);
+        }
         Reader reader = null;
         try {
             reader = TextInput.reader(store.open(path), charset);
@@ -146,6 +151,28 @@ public final class FileInput implements Step {
             return new CsvRows(reader, parser, columns);
         } catch (IOException | RuntimeException e) {
             closeQuietly(reader); // stops the transfer of a remote file
+            throw e;
+        }
+    }
+
+    /** A file whose first row is data: columns are column_1, column_2, ... and nothing is skipped but sep=. */
+    private Rows noHeader(StepContext context, String path, FileFormat format, char delimiter, char quote,
+                          boolean sepLine, Charset charset) throws IOException {
+        if (columns.isEmpty()) {
+            byte[] head = store.head(path, FileInspector.SAMPLE_BYTES);
+            columns = FileInspector.csv(head, format, head.length >= FileInspector.SAMPLE_BYTES,
+                new FileInspector.TextOptions(charset, delimiter, false)).columns();
+        }
+        Reader reader = null;
+        try {
+            reader = TextInput.reader(store.open(path), charset);
+            Csv.Parser parser = new Csv.Parser(reader, delimiter, quote);
+            if (sepLine) {
+                parser.next();
+            }
+            return new CsvRows(reader, parser, columns);
+        } catch (IOException | RuntimeException e) {
+            closeQuietly(reader);
             throw e;
         }
     }

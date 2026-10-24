@@ -57,6 +57,12 @@ public interface GraphStore {
     /** How many assets each source has recorded (including ones no longer found), by source id. */
     Map<Long, Integer> assetCounts();
 
+    /**
+     * For each source with files, how many of its current files have each extension (lower case,
+     * {@code (none)} without one), by source id.
+     */
+    Map<Long, Map<String, Integer>> fileFormats();
+
     /** Whether a scan of the source is queued or running. */
     boolean hasActiveRun(long sourceId);
 

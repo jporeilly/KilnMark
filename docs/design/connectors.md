@@ -23,6 +23,12 @@ line in a services file; nothing in the server changes.
 | `test(source)` | Optional. Checks the source can be reached, as cheaply as possible (default: `containers`) |
 | `test(source, timeout)`, `containers(source, timeout)` | Optional. The same, bounding the connector's own network waits by `timeout` (default: ignore it) |
 | `addressKeys()` | Optional. The settings holding the network address (`url`, `endpoint`); the only ones bulk import's host map rewrites |
+| `category()`, `family()`, `capabilities()`, `formats()`, `icon()`, `docsAnchor()` | Optional. Where the connector sits in the catalogue and gallery, and what it can do today (default: other, other, discover and read, none, the category, the kind) |
+| `driver()` | Optional. A driver the customer must install; null (the default) means bundled. Installing drivers arrives with wave 1 |
+| `example(key)` | Optional. A sample value for a setting, shown in forms |
+| `assets(source, container)` | Optional. A container's tables or files without fields, cheaply (default: the full catalogue) |
+| `asset(source, path)` | Optional. One asset with its fields, as the catalogue records it (default: the full catalogue) |
+| `preview(source, asset, rows)` | Optional. The first rows, built on `reader` with a row limit, so every connector has it; override only to add details |
 | `hosts(source)` | Optional. Every host the source would reach, for the server's allowed-hosts list (default: the hosts in `addressKeys` URLs) |
 | `secretScope()` | Optional. Settings that decide where the secret goes; changing one needs the secret again (default: every setting) |
 | `addressSettings(host, port, database)` | Optional. Settings built from a host, port and database, for bulk import (default: none) |
@@ -124,7 +130,7 @@ holding up a production database.
 ## Files and object storage
 
 Two connectors share `io.kilnmark.kiln.plugins.files`: `files` (a folder the server can read:
-`path`, `recursive`, `encoding`; which files comes from the common `include` and `exclude` settings
+`path`, `recursive`, `encoding`, `delimiter`, `header`; which files comes from the common `include` and `exclude` settings
 and the chosen top-level folders) and `s3` (`endpoint`, `region`, `bucket`, `prefix`,
 `access_key_id`, `path_style`, `encoding`; the secret is the secret access key). Libraries and the
 reasons for them are in [ADR 0015](../adr/0015-file-formats.md).

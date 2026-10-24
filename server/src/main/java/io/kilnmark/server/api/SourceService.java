@@ -18,6 +18,7 @@ import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.SecretBox;
 import io.kilnmark.server.sources.CommonSettings;
 import io.kilnmark.server.sources.HostPolicy;
+import io.kilnmark.server.sources.HostRemap;
 import io.kilnmark.server.sources.SourceChecks;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.ws.rs.core.Response;
@@ -83,6 +84,43 @@ public class SourceService {
     SourceConfig config(Records.Source s) {
         String secret = s.hasSecret() ? store.sourceSecret(s.name()).map(secrets::open).orElse(null) : null;
         return new SourceConfig(s.name(), s.kind(), s.settings(), secret);
+    }
+
+    private static final java.util.regex.Pattern DATABASE = java.util.regex.Pattern.compile("[A-Za-z0-9_$.-]{1,128}");
+
+    /**
+     * The settings that point a source at a host, port and database, checked first: a host name or
+     * address, a port from 1 to 65535, a database name of letters, digits and _ $ . -.
+     *
+     * @throws IllegalArgumentException naming the field at fault, for a 400 answer
+     */
+    static Map<String, String> address(Connector connector, String host, String port, String database) {
+        String h = host == null ? "" : host.trim();
+        if (!HostRemap.validHost(h)) {
+            throw new IllegalArgumentException("host: '" + h + "' is not a host name or address, such as "
+                + "db.example.com or 10.0.4.12");
+        }
+        Integer p = null;
+        if (port != null && !port.isBlank()) {
+            try {
+                p = Integer.parseInt(port.trim());
+            } catch (NumberFormatException e) {
+                p = -1;
+            }
+            if (p < 1 || p > 65535) {
+                throw new IllegalArgumentException("port: a number from 1 to 65535, not '" + port.trim() + "'");
+            }
+        }
+        String db = database == null || database.isBlank() ? null : database.trim();
+        if (db != null && !DATABASE.matcher(db).matches()) {
+            throw new IllegalArgumentException("database: letters, digits and _ $ . - only, not '" + db + "'");
+        }
+        Map<String, String> address = connector.addressSettings(h, p, db);
+        if (address.isEmpty()) {
+            throw new IllegalArgumentException("host: sources of kind " + connector.kind() + " do not take host, port "
+                + "and database; use their own settings");
+        }
+        return address;
     }
 
     /** Settings as sent, trimmed, without blanks, with common values written their one way. */
@@ -189,6 +227,55 @@ public class SourceService {
                 e.getMessage());
         }
         return containerList(connector.containerKind(), config, found);
+    }
+
+    /** A page of the tables or files in one container, listed cheaply (metadata, a listing). */
+    Views.AssetList assets(Connector connector, SourceConfig config, String container, int offset, int limit) {
+        if (container == null) {
+            throw new IllegalArgumentException("container: which schema or folder to list");
+        }
+        int from = Math.max(0, offset);
+        int size = Math.max(1, Math.min(limit, 500));
+        List<io.kilnmark.kiln.connect.AssetInfo> all = run(config, "list " + container,
+            () -> connector.assets(config, container));
+        List<Views.AssetItem> page = all.stream().skip(from).limit(size)
+            .map(a -> new Views.AssetItem(a.path(), a.name() == null ? a.path() : a.name(), a.kind(), a.readable()))
+            .toList();
+        return new Views.AssetList(container, all.size(), from, page);
+    }
+
+    /**
+     * The first rows of one asset, read live through the connector's reader under the check time
+     * limit and places. Nothing is stored, logged or sent to a model; the rows go to the person
+     * asking and nowhere else.
+     *
+     * <p>TODO: when sensitive-column flags arrive (stream E), mask flagged columns here for people
+     * who may not unmask them, as every other view of the data must.
+     */
+    Views.Preview preview(Connector connector, SourceConfig config, String asset, Integer rows) {
+        if (asset == null || asset.isBlank()) {
+            throw new IllegalArgumentException("asset: the path of the table or file to preview");
+        }
+        int n = rows == null ? 100 : rows;
+        if (n < 1 || n > io.kilnmark.kiln.connect.Preview.MAX_ROWS) {
+            throw new IllegalArgumentException("rows: from 1 to " + io.kilnmark.kiln.connect.Preview.MAX_ROWS);
+        }
+        io.kilnmark.kiln.connect.Preview p = run(config, "preview " + asset, () -> {
+            io.kilnmark.kiln.connect.AssetInfo info = connector.asset(config, asset);
+            return connector.preview(config, info, n);
+        });
+        return new Views.Preview(asset, p.columns().stream()
+            .map(c -> new Views.PreviewColumn(c.name(), c.kind(), c.sourceType())).toList(), p.rows(), p.rows().size(),
+            p.truncated(), p.details());
+    }
+
+    private <T> T run(SourceConfig config, String doing, java.util.concurrent.Callable<T> work) {
+        try {
+            return checks.forPerson(config, doing, work);
+        } catch (SourceChecks.CheckFailed e) {
+            throw ApiError.of(e.busy() ? Response.Status.TOO_MANY_REQUESTS : Response.Status.BAD_GATEWAY,
+                e.getMessage());
+        }
     }
 
     static Views.ContainerList containerList(Connector.ContainerKind kind, SourceConfig config,

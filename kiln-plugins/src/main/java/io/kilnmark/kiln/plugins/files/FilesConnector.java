@@ -68,6 +68,26 @@ public final class FilesConnector extends FileSourceConnector {
     }
 
     @Override
+    public String family() {
+        return "local or network folder";
+    }
+
+    @Override
+    public String icon() {
+        return "folder";
+    }
+
+    @Override
+    public String example(String settingKey) {
+        return switch (settingKey) {
+            case "path" -> "/srv/files/exports";
+            case "delimiter" -> ";";
+            case "encoding" -> "windows-1252";
+            default -> null;
+        };
+    }
+
+    @Override
     public String kind() {
         return "files";
     }
@@ -85,7 +105,7 @@ public final class FilesConnector extends FileSourceConnector {
                     + "allows" + (roots.isEmpty() ? "" : " (" + String.join(", ", roots.stream().map(Path::toString)
                     .toList()) + ")"), false),
             new Setting("recursive", "Include sub-folders", false, "true (the default) or false", false),
-            ENCODING);
+            ENCODING, DELIMITER, HEADER);
     }
 
     @Override
@@ -117,6 +137,7 @@ public final class FilesConnector extends FileSourceConnector {
         }
         checkBoolean(source, "recursive", problems);
         checkEncoding(source, problems);
+        checkText(source, problems);
         return problems;
     }
 

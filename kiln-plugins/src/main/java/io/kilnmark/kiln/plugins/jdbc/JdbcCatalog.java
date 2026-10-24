@@ -116,6 +116,22 @@ public final class JdbcCatalog {
         return tables;
     }
 
+    /** The tables and views in one schema, as name and lower-case type, sorted by name: one metadata call. */
+    public static List<String[]> tables(Connection connection, String schema, Dialect dialect) throws SQLException {
+        DatabaseMetaData md = connection.getMetaData();
+        Map<String, String> found = new TreeMap<>();
+        try (ResultSet rs = md.getTables(null, dialect.schemaPattern(md, schema), "%", TABLE_TYPES)) {
+            while (rs.next()) {
+                if (schema.equals(rs.getString("TABLE_SCHEM"))) {
+                    found.put(rs.getString("TABLE_NAME"), rs.getString("TABLE_TYPE").toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        List<String[]> out = new ArrayList<>();
+        found.forEach((name, type) -> out.add(new String[] {name, type}));
+        return out;
+    }
+
     /**
      * Every schema that is not a system schema, with how many tables and views in it
      * {@code patterns} keep: two metadata calls, whatever the number of schemas.

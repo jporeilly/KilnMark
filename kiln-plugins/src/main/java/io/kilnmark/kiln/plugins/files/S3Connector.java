@@ -49,6 +49,30 @@ public final class S3Connector extends FileSourceConnector {
     }
 
     @Override
+    public String family() {
+        return "object storage";
+    }
+
+    @Override
+    public String icon() {
+        return "bucket";
+    }
+
+    @Override
+    public String example(String settingKey) {
+        return switch (settingKey) {
+            case "endpoint" -> "http://storage.example.com:9000";
+            case "region" -> "eu-west-2";
+            case "bucket" -> "lab-raw";
+            case "prefix" -> "raw/";
+            case "access_key_id" -> "AK1234EXAMPLE";
+            case "path_style" -> "true";
+            case "delimiter" -> ";";
+            default -> null;
+        };
+    }
+
+    @Override
     public String kind() {
         return "s3";
     }
@@ -73,7 +97,7 @@ public final class S3Connector extends FileSourceConnector {
                 false),
             new Setting("path_style", "Path-style addressing", false,
                 "true for most S3-compatible storage (VersityGW, MinIO); false (the default) for AWS", false),
-            ENCODING);
+            ENCODING, DELIMITER, HEADER);
     }
 
     @Override
@@ -113,6 +137,7 @@ public final class S3Connector extends FileSourceConnector {
         }
         checkBoolean(source, "path_style", problems);
         checkEncoding(source, problems);
+        checkText(source, problems);
         return problems;
     }
 

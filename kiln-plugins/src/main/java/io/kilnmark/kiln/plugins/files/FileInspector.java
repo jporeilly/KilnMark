@@ -44,6 +44,21 @@ public final class FileInspector {
     private FileInspector() {
     }
 
+    /**
+     * How to read text files, as a source's settings say; null in a field means detect it.
+     *
+     * @param header false when the first row is data, not column names
+     */
+    public record TextOptions(Charset encoding, Character delimiter, Boolean header) {
+
+        /** Detect everything. */
+        public static final TextOptions DETECT = new TextOptions(null, null, null);
+
+        boolean noHeader() {
+            return Boolean.FALSE.equals(header);
+        }
+    }
+
     /** What inspecting a data file found: its columns and the hints the reader needs. */
     record Layout(List<FileColumn> columns, Map<String, String> hints) {
     }
@@ -56,13 +71,18 @@ public final class FileInspector {
      * @param encoding the source's {@code encoding} setting, or null to detect it
      */
     public static AssetInfo inspect(FileStore store, FileStore.Entry e, String container, Charset encoding) {
+        return inspect(store, e, container, new TextOptions(encoding, null, null));
+    }
+
+    /** As {@link #inspect(FileStore, FileStore.Entry, String, Charset)}, with a source's text options. */
+    public static AssetInfo inspect(FileStore store, FileStore.Entry e, String container, TextOptions options) {
         FileFormat format = FileFormat.of(name(e.path()));
         if (!format.readable()) {
             return new AssetInfo(e.path(), KIND_DOCUMENT, container, name(e.path()), null, List.of(), List.of(), false,
                 false, hints(e, format));
         }
         try {
-            Layout layout = layout(store, e.path(), e.size(), format, encoding);
+            Layout layout = layout(store, e.path(), e.size(), format, options);
             Map<String, String> hints = hints(e, format);
             hints.putAll(layout.hints());
             List<AssetInfo.FieldInfo> fields = new ArrayList<>();
@@ -108,16 +128,20 @@ public final class FileInspector {
     }
 
     /** Reads the columns and layout hints of a data file. */
-    static Layout layout(FileStore store, String path, long size, FileFormat format, Charset encoding)
+    static Layout layout(FileStore store, String path, long size, FileFormat format, TextOptions options)
         throws IOException {
         return switch (format) {
             case CSV, TSV -> {
                 byte[] head = store.head(path, SAMPLE_BYTES);
-                yield csv(head, format, head.length >= SAMPLE_BYTES, encoding);
+                yield csv(head, format, head.length >= SAMPLE_BYTES, options);
             }
             case JSON, JSON_LINES -> {
                 byte[] head = store.head(path, SAMPLE_BYTES);
-                yield json(head, format, head.length >= SAMPLE_BYTES, encoding);
+                Layout json = json(head, format, head.length >= SAMPLE_BYTES, options.encoding());
+                Map<String, String> hints = new HashMap<>(json.hints());
+                hints.put("records", format == FileFormat.JSON_LINES ? "one object per line"
+                    : "the objects of the top-level array (or the single object)");
+                yield new Layout(json.columns(), hints);
             }
             case PARQUET -> parquet(store.parquet(path, size));
             case DOCUMENT -> throw new IllegalArgumentException("Documents are not read");
@@ -134,6 +158,16 @@ public final class FileInspector {
     }
 
     static Layout csv(byte[] head, FileFormat format, boolean truncated, Charset setting) throws IOException {
+        return csv(head, format, truncated, new TextOptions(setting, null, null));
+    }
+
+    /**
+     * The layout of a delimited file: the delimiter and quote found (or the one the options give),
+     * and the columns, named from the header row, or {@code column_1...} when the options say the
+     * first row is data.
+     */
+    static Layout csv(byte[] head, FileFormat format, boolean truncated, TextOptions options) throws IOException {
+        Charset setting = options.encoding();
         Charset charset = encoding(head, truncated, setting);
         String sample = TextInput.sample(head, charset);
         if (truncated) {
@@ -143,23 +177,36 @@ public final class FileInspector {
             }
         }
         Csv.Dialect d = Csv.detect(sample, format);
+        if (options.delimiter() != null) {
+            d = new Csv.Dialect(options.delimiter(), d.quote(), d.sepLine());
+        }
         Csv.Parser p = new Csv.Parser(new StringReader(sample), d.delimiter(), d.quote());
         if (d.sepLine()) {
             p.next();
         }
         List<String> header = p.next();
         Map<String, String> hints = new HashMap<>(Map.of("delimiter", d.delimiterName(),
-            "quote", String.valueOf(d.quote()), "encoding", charset.name()));
+            "quote", String.valueOf(d.quote()), "encoding", charset.name(), "header",
+            Boolean.toString(!options.noHeader())));
         if (d.sepLine()) {
             hints.put("sep-line", "true");
         }
         if (header == null) {
             return new Layout(List.of(), hints);
         }
+        List<String> first = header;
+        if (options.noHeader()) {
+            header = java.util.Collections.nCopies(first.size(), ""); // named column_1, column_2, ...
+        }
         List<String> names = Csv.names(header);
         List<TypeGuess> guesses = new ArrayList<>();
         for (int i = 0; i < names.size(); i++) {
             guesses.add(new TypeGuess());
+        }
+        if (options.noHeader()) {
+            for (int c = 0; c < names.size() && c < first.size(); c++) {
+                guesses.get(c).offer(first.get(c), TypeGuess.Origin.TEXT);
+            }
         }
         List<String> row;
         for (int n = 0; n < SAMPLE_ROWS && (row = p.next()) != null; n++) {

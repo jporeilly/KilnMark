@@ -66,7 +66,8 @@ public class SourceResource {
     @GET
     public List<Views.Source> list() {
         Map<Long, Integer> assets = store.assetCounts();
-        return store.sources().stream().map(s -> view(s, assets)).toList();
+        Map<Long, Map<String, Integer>> formats = store.fileFormats();
+        return store.sources().stream().map(s -> view(s, assets, formats)).toList();
     }
 
     @GET
@@ -160,6 +161,34 @@ public class SourceResource {
         SourceConfig config = sources.config(s);
         sources.checkHosts(sources.connector(s.kind()), config);
         return sources.containers(sources.connector(s.kind()), config);
+    }
+
+    /** A page of the tables or files in one of the saved source's containers, for picking one to preview. */
+    @GET
+    @Path("{name}/assets")
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    public Views.AssetList assets(@PathParam("name") String name, @QueryParam("container") String container,
+                                  @QueryParam("offset") Integer offset, @QueryParam("limit") Integer limit) {
+        Records.Source s = find(name);
+        SourceConfig config = sources.config(s);
+        sources.checkHosts(sources.connector(s.kind()), config);
+        return sources.assets(sources.connector(s.kind()), config, container, offset == null ? 0 : offset,
+            limit == null ? 50 : limit);
+    }
+
+    /**
+     * The first rows of one table or file of the saved source (100 by default, at most 1,000), read
+     * live and never stored.
+     */
+    @GET
+    @Path("{name}/preview")
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    public Views.Preview preview(@PathParam("name") String name, @QueryParam("asset") String asset,
+                                 @QueryParam("rows") Integer rows) {
+        Records.Source s = find(name);
+        SourceConfig config = sources.config(s);
+        sources.checkHosts(sources.connector(s.kind()), config);
+        return sources.preview(sources.connector(s.kind()), config, asset, rows);
     }
 
     /** The source's latest runs with their jobs' attempts and errors, newest first. */
@@ -292,12 +321,13 @@ public class SourceResource {
     }
 
     private Views.Source view(Records.Source s) {
-        return view(s, store.assetCounts());
+        return view(s, store.assetCounts(), store.fileFormats());
     }
 
-    private Views.Source view(Records.Source s, Map<Long, Integer> assets) {
+    private Views.Source view(Records.Source s, Map<Long, Integer> assets, Map<Long, Map<String, Integer>> formats) {
         Records.Run last = store.runs(s.name(), 1).stream().findFirst().orElse(null);
+        String category = connectors.get(s.kind()).map(io.kilnmark.kiln.connect.Connector::category).orElse("other");
         return new Views.Source(s.name(), s.kind(), s.settings(), s.hasSecret(), s.createdAt(), Views.Run.of(last),
-            s.displayName(), assets.getOrDefault(s.id(), 0));
+            s.displayName(), assets.getOrDefault(s.id(), 0), category, formats.getOrDefault(s.id(), Map.of()));
     }
 }

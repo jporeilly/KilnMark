@@ -37,6 +37,20 @@ public interface FileStore extends Closeable {
     }
 
     /**
+     * One file by its path. By default found in {@link #list()}; stores override it with one lookup.
+     *
+     * @throws IOException when there is no such file
+     */
+    default Entry entry(String path) throws IOException {
+        for (Entry e : list()) {
+            if (e.path().equals(path)) {
+                return e;
+            }
+        }
+        throw new IOException("There is no file " + path + ": list the folder again");
+    }
+
+    /**
      * Checks the store can be read, as cheaply as it can: by default by listing it. Throws with a
      * message a person can act on.
      */

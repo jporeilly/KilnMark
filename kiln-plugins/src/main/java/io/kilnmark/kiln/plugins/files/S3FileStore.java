@@ -137,6 +137,18 @@ public final class S3FileStore implements FileStore {
         return out;
     }
 
+    /** One object, by a HEAD request. */
+    @Override
+    public Entry entry(String key) throws IOException {
+        try {
+            var head = s3.headObject(software.amazon.awssdk.services.s3.model.HeadObjectRequest.builder()
+                .bucket(settings.bucket()).key(key).build());
+            return new Entry(key, head.contentLength() == null ? 0 : head.contentLength(), head.lastModified());
+        } catch (SdkException e) {
+            throw explain(e, "find " + describe(key));
+        }
+    }
+
     /** One listing request for at most one key: checks the endpoint, bucket, key and permission. */
     @Override
     public void probe() throws IOException {

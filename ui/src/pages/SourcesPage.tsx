@@ -10,11 +10,22 @@ import {
   type ImportReport,
   type Source,
 } from "../api";
+import { AddConnection } from "../components/AddConnection";
 import { ScanAction } from "../components/ScanAction";
-import { SourceForm } from "../components/SourceForm";
 import { Status } from "../components/Status";
 import { useTitle } from "../components/useTitle";
 import { href } from "../router";
+
+const ORDER = ["databases", "nosql", "files", "streaming", "applications", "lakehouse", "other"];
+const CATEGORY: Record<string, string> = {
+  databases: "Databases",
+  nosql: "NoSQL",
+  files: "Files",
+  streaming: "Streaming",
+  applications: "Applications",
+  lakehouse: "Lakehouse",
+  other: "Other",
+};
 
 const busy = (s: Source) => s.lastRun?.status === "queued" || s.lastRun?.status === "running";
 
@@ -26,6 +37,8 @@ export function SourcesPage({ role }: { role: AccessRole }) {
   const [sources, setSources] = useState<Source[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [category, setCategory] = useState("all");
+  const [grouped, setGrouped] = useState(false);
 
   const load = useCallback(() => {
     api
@@ -46,6 +59,84 @@ export function SourcesPage({ role }: { role: AccessRole }) {
     return () => window.clearInterval(t);
   }, [sources, load]);
 
+  const categories = [...new Set((sources ?? []).map((s) => s.category))].sort(
+    (a, b) => ORDER.indexOf(a) - ORDER.indexOf(b),
+  );
+
+  const table = (list: Source[], label: string) => (
+    <div className="table-scroll" role="region" aria-label={`${label} (scrolls sideways on small screens)`} tabIndex={0}>
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Where</th>
+            <th scope="col">Last scan</th>
+            {canScan && (
+              <th scope="col">
+                <span className="visually-hidden">Actions</span>
+              </th>
+            )}
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((s) => (
+            <tr key={s.name}>
+              <th scope="row">
+                <a href={href.source(s.name)}>{s.displayName}</a>
+                {s.displayName !== s.name && <div className="small muted mono">{s.name}</div>}
+              </th>
+              <td className="small">
+                <div className="muted">
+                  {CATEGORY[s.category] ?? s.category} · {s.kind}
+                </div>
+                <div className="mono">{s.settings.url ?? s.settings.path ?? s.settings.bucket ?? "–"}</div>
+                {s.settings.schemas && <div className="muted">schemas: {s.settings.schemas}</div>}
+                {s.settings.containers && <div className="muted">folders: {s.settings.containers}</div>}
+                {Object.keys(s.formats).length > 0 && (
+                  <div>
+                    Formats found:{" "}
+                    {Object.entries(s.formats)
+                      .map(([f, n]) => `${f} ${formatNumber(n)}`)
+                      .join(", ")}
+                  </div>
+                )}
+              </td>
+              <td>
+                <Status run={s.lastRun} />
+                {s.lastRun && (
+                  <div className="small muted">
+                    {formatTime(s.lastRun.finishedAt ?? s.lastRun.startedAt ?? s.lastRun.requestedAt)}
+                    {s.lastRun.status !== "queued" && (
+                      <>
+                        {" · "}
+                        {s.lastRun.assetsSeen} assets, {formatNumber(s.lastRun.rowsRead)} rows
+                      </>
+                    )}
+                  </div>
+                )}
+                {s.lastRun?.detail && s.lastRun.status !== "succeeded" && (
+                  <div className="small">{s.lastRun.detail}</div>
+                )}
+              </td>
+              {canScan && (
+                <td>
+                  <ScanAction
+                    source={s}
+                    onQueued={(m) => {
+                      setNotice(m);
+                      load();
+                    }}
+                    onError={setError}
+                  />
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
   return (
     <>
       <h1 tabIndex={-1}>Sources</h1>
@@ -63,68 +154,36 @@ export function SourcesPage({ role }: { role: AccessRole }) {
         {sources === null && !error && <p>Loading…</p>}
         {sources?.length === 0 && <p>None yet. Add one below.</p>}
         {sources && sources.length > 0 && (
-          <div className="table-scroll" role="region" aria-label="Sources table (scrolls sideways on small screens)" tabIndex={0}>
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Name</th>
-                  <th scope="col">Where</th>
-                  <th scope="col">Last scan</th>
-                  {canScan && (
-                    <th scope="col">
-                      <span className="visually-hidden">Actions</span>
-                    </th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {sources.map((s) => (
-                  <tr key={s.name}>
-                    <th scope="row">
-                      <a href={href.source(s.name)}>{s.displayName}</a>
-                      {s.displayName !== s.name && <div className="small muted mono">{s.name}</div>}
-                    </th>
-                    <td className="small">
-                      <div className="muted">{s.kind}</div>
-                      <div className="mono">{s.settings.url ?? s.settings.path ?? s.settings.bucket ?? "–"}</div>
-                      {s.settings.schemas && <div className="muted">schemas: {s.settings.schemas}</div>}
-                      {s.settings.containers && <div className="muted">folders: {s.settings.containers}</div>}
-                    </td>
-                    <td>
-                      <Status run={s.lastRun} />
-                      {s.lastRun && (
-                        <div className="small muted">
-                          {formatTime(s.lastRun.finishedAt ?? s.lastRun.startedAt ?? s.lastRun.requestedAt)}
-                          {s.lastRun.status !== "queued" && (
-                            <>
-                              {" · "}
-                              {s.lastRun.assetsSeen} assets, {formatNumber(s.lastRun.rowsRead)} rows
-                            </>
-                          )}
-                        </div>
-                      )}
-                      {s.lastRun?.detail && s.lastRun.status !== "succeeded" && (
-                        <div className="small">{s.lastRun.detail}</div>
-                      )}
-                    </td>
-                    {canScan && (
-                      <td>
-                        <ScanAction
-                          source={s}
-                          onQueued={(m) => {
-                            setNotice(m);
-                            load();
-                          }}
-                          onError={setError}
-                        />
-                      </td>
-                    )}
-                  </tr>
+          <div className="field-row list-controls">
+            <div className="field">
+              <label htmlFor="src-category">Show</label>
+              <select id="src-category" value={category} onChange={(e) => setCategory(e.target.value)}>
+                <option value="all">Every category</option>
+                {categories.map((c) => (
+                  <option key={c} value={c}>
+                    {CATEGORY[c] ?? c}
+                  </option>
                 ))}
-              </tbody>
-            </table>
+              </select>
+            </div>
+            <div className="check">
+              <input id="src-group" type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
+              <label htmlFor="src-group">Group by category</label>
+            </div>
           </div>
         )}
+        {sources &&
+          sources.length > 0 &&
+          (grouped
+            ? categories
+                .filter((c) => category === "all" || c === category)
+                .map((c) => (
+                  <section key={c} aria-labelledby={`cat-${c}`}>
+                    <h3 id={`cat-${c}`}>{CATEGORY[c] ?? c}</h3>
+                    {table(sources.filter((s) => s.category === c), CATEGORY[c] ?? c)}
+                  </section>
+                ))
+            : table(sources.filter((s) => category === "all" || s.category === category), "Sources"))}
       </section>
 
       {!canScan && (
@@ -132,15 +191,16 @@ export function SourcesPage({ role }: { role: AccessRole }) {
       )}
       {canAdd ? (
         <>
-          <section aria-labelledby="add-h" className="panel">
-            <h2 id="add-h">Add a source</h2>
-            <SourceForm
-              onSaved={(s) => {
-                setNotice(`Source ${s.displayName} added. Scan it to fill the catalogue.`);
-                load();
-              }}
-            />
-          </section>
+          <AddConnection
+            onSaved={(s, queued) => {
+              setNotice(
+                queued
+                  ? `Source ${s.displayName} added, and its scan queued.`
+                  : `Source ${s.displayName} added. Scan it to fill the catalogue.`,
+              );
+              load();
+            }}
+          />
           <ImportSources onImported={load} />
         </>
       ) : (

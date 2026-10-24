@@ -125,6 +125,14 @@ public class SourceChecks {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
     }
 
+    /**
+     * Runs other work for a person waiting on it (listing a container's assets, a preview) under
+     * the same time limit and places as checks.
+     */
+    public <T> T forPerson(SourceConfig source, String doing, Callable<T> work) throws CheckFailed {
+        return limited(source, doing, true, work);
+    }
+
     /** Places in use now, for tests. */
     int placesInUse() {
         return maxPlaces - people.availablePermits();
