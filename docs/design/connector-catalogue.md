@@ -147,6 +147,50 @@ coming. An admin setting hides the planned list.
 - The sources list can be filtered and grouped by category, and file sources show the formats they
   found with counts.
 
+## From tile to scanning: the connection panel
+
+Clicking a tile opens that connector's connection panel beside the gallery, and the gallery
+stays visible. The panel guides the person through four steps, each of which can be revisited:
+
+1. **Connect:** the connector's fields, with help text and an example for each. Database
+   connectors offer host, port and database fields and build the URL, with the full URL as an
+   advanced option.
+2. **Test:** test the connection before anything is saved, with a plain-English result.
+3. **Choose what to scan:** the schema or folder picker with counts, plus include and exclude
+   patterns and, for files, formats.
+4. **Save:** save only, or save and scan now. Common settings (display name, description, AI
+   rule) are set here.
+
+If the connector needs a driver that is not installed, the panel starts with the driver step.
+
+## Drivers
+
+Some database drivers cannot ship with Kilnmark because their licences do not allow it
+(Oracle's), or are copyleft (MySQL Connector/J is GPL). Kilnmark helps the customer install
+these themselves:
+
+- **Each connector declares its driver:** Maven coordinates, a pinned version, its SHA-256, the
+  licence name and link, and whether Kilnmark may bundle it. Bundled drivers (PostgreSQL, SQL
+  Server, and any others whose licence allows) need nothing.
+- **Download (admin, online servers):** the panel shows the driver's licence and asks the admin
+  to accept it on the organisation's behalf. The server then downloads that exact version from
+  Maven Central, or from the organisation's own Maven mirror if configured, and refuses the
+  file unless the checksum matches. It never downloads from an address typed by a person. The
+  acceptance is recorded: who, when, which licence and version.
+- **Upload (admin, offline servers):** the admin uploads the jar fetched elsewhere. Kilnmark
+  checks it against the pinned checksum when the version is known. Otherwise it shows the file's
+  checksum and the driver class it found, and asks the admin to confirm. A **generic JDBC**
+  connection takes any uploaded driver plus its class name.
+- **Where drivers live:** a `drivers` volume, one folder per driver and version. Each driver loads
+  in its own class loader, so two versions cannot clash and a driver cannot replace Kilnmark's
+  own classes. Workers in other processes pick up new drivers without a restart.
+- **Managing them:** a Drivers page lists installed drivers, versions, checksums, licences, who
+  added each and which sources use it. It offers updates to newer pinned versions, and removes
+  a driver only when no source uses it.
+- **Security:** a driver is code running inside the server, so only admins add drivers, every
+  change is audited, and checksums are always shown. The offline install bundle can include
+  every driver whose licence allows redistribution.
+
 ## Waves
 
 - **Round 2:** categories, capabilities and the gallery for the connectors that exist; Excel and
