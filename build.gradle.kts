@@ -4,6 +4,7 @@
 
 plugins {
     alias(libs.plugins.quarkus) apply false
+    id("com.github.jk1.dependency-license-report") version "3.1.4" apply false
 }
 
 val distDir = layout.projectDirectory.dir("dist")
@@ -42,10 +43,11 @@ subprojects {
 tasks.register<Sync>("release") {
     group = "distribution"
     description = "Assembles a release folder in dist/release."
-    dependsOn(":server:quarkusBuild")
+    dependsOn(":server:quarkusBuild", ":server:checkLicense")
     into(distDir.dir("release/kilnmark-${project.version}"))
     from(distDir.dir("build/server/quarkus-app")) { into("server") }
     from("compose.yaml")
     from("containers") { into("containers") }
     from("LICENSE", "NOTICE")
+    from(distDir.dir("licenses")) { include("THIRD-PARTY-NOTICES.md") }
 }

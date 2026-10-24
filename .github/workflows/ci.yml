@@ -14,18 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The UI is built first so the server packages it and serves it from /.
+      # Gradle builds the web UI with npm and packages it in the server.
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: ui/package-lock.json
-
-      - name: Build web UI
-        working-directory: ui
-        run: |
-          npm ci
-          npm run build
 
       # Integration tests run against the same PostgreSQL image Kilnmark ships with.
       - name: Build the PostgreSQL image (AGE, pgvector)
@@ -37,7 +31,7 @@ jobs:
           java-version: "25"
           cache: gradle
 
-      - name: Build and test (Java)
+      - name: Build, test and check licences
         run: ./gradlew build release --no-daemon
 
       - name: Keep the release
