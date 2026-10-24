@@ -16,7 +16,9 @@ import jakarta.enterprise.context.ApplicationScoped;
  * <ul>
  *   <li>The server-wide rule: {@code kilnmark.ai.hosted-models} (set by whoever runs the server)
  *       and the admin's {@code hosted_models} setting. Either one set to {@code forbidden} refuses
- *       every model not marked local.</li>
+ *       every model that is not local. While the operator's setting is {@code forbidden}, a
+ *       profile marked local counts as local only if {@link ModelHosts} finds its address on a
+ *       local network.</li>
  *   <li>The source's {@code ai_egress} setting: {@code local_only} (the default, also used for a
  *       value this version does not know) lets only local models see it, {@code none} no model at
  *       all, and {@code allowed} any configured model.</li>
@@ -62,15 +64,22 @@ public class EgressPolicy {
 
     private final KilnmarkConfig config;
     private final ModelProfiles profiles;
+    private final ModelHosts hosts;
 
-    public EgressPolicy(KilnmarkConfig config, ModelProfiles profiles) {
+    public EgressPolicy(KilnmarkConfig config, ModelProfiles profiles, ModelHosts hosts) {
         this.config = config;
         this.profiles = profiles;
+        this.hosts = hosts;
     }
 
     /** Whether whoever runs the server forbade hosted models in its configuration. Admins cannot undo it. */
     public boolean hostedLockedOff() {
-        return "forbidden".equalsIgnoreCase(config.ai().hostedModels().trim());
+        return config.ai().hostedModels() == KilnmarkConfig.Ai.HostedModels.FORBIDDEN;
+    }
+
+    /** Whether a profile counts as local now: marked local and, under the operator lock, on a local network. */
+    public boolean local(ModelProfile p) {
+        return p.local() && hosts.mayBeLocal(p.effectiveBaseUrl());
     }
 
     /** Whether models not marked local may be used at all, by the configuration and the admin's setting. */
@@ -81,7 +90,7 @@ public class EgressPolicy {
 
     /** Why {@code profile} may not see {@code source} (null for a call about no source), or empty if it may. */
     public Optional<String> refusal(ModelProfile profile, Records.Source source) {
-        return Optional.ofNullable(decide(profile.local(), profile.name(), hostedAllowed(),
+        return Optional.ofNullable(decide(local(profile), profile.name(), hostedAllowed(),
             source == null ? null : source.name(), source == null ? null : SourceRule.of(source)));
     }
 
@@ -93,8 +102,8 @@ public class EgressPolicy {
     static String decide(boolean local, String profileName, boolean hostedAllowed, String sourceName,
                          SourceRule rule) {
         if (!local && !hostedAllowed) {
-            return "This server allows only models marked local, and " + profileName + " is not marked local. "
-                + "An admin can mark a model local, or allow hosted models, under AI models.";
+            return "Only local models may be used on this server, and " + profileName + " is not a local model. "
+                + "Choose a model that runs on your own network for this feature.";
         }
         if (sourceName == null || rule == null) {
             return null;
@@ -102,8 +111,8 @@ public class EgressPolicy {
         return switch (rule) {
             case NONE -> "Source " + sourceName + " does not allow AI (ai_egress is none), so no model may see it.";
             case LOCAL_ONLY -> local ? null : "Source " + sourceName + " allows only local models (ai_egress is "
-                + "local_only), and " + profileName + " is not marked local. A steward can change the source's AI "
-                + "rule, or an admin can choose a local model for this feature.";
+                + "local_only), and " + profileName + " is not a local model. Choose a model that runs on your own "
+                + "network for this feature, or change the source's AI rule if its metadata may leave the network.";
             case ALLOWED -> null;
         };
     }

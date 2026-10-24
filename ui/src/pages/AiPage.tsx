@@ -122,6 +122,9 @@ export function AiPage() {
               </select>
               <p id={`feature-${f.id}-hint`} className="hint">
                 {f.help} Needs {f.purpose === "chat" ? "a chat" : "an embedding"} model.
+                {f.id === "embed" &&
+                  " With a hosted model, the text of every search is sent to that provider to be embedded."}
+                {f.id === "search_nl" && " With a hosted model, every question is sent to that provider."}
               </p>
             </div>
           ))}
@@ -158,7 +161,7 @@ export function AiPage() {
         {profiles?.length === 0 && (
           <p>
             No models yet. Add one below: for example the bundled llama-server (Compose profile <code>ai</code>) at{" "}
-            <code>http://ai:8080/v1</code>.
+            <code>http://ai:8080/v1</code>, ticked as local.
           </p>
         )}
         {profiles && profiles.length > 0 && (
@@ -237,6 +240,7 @@ export function AiPage() {
           key={editing === "new" ? "new" : editing.name}
           profile={editing === "new" ? null : editing}
           providers={providers}
+          locked={settings?.lockedByServer ?? false}
           onCancel={() => setEditing(null)}
           onSaved={(p, isNew) => {
             setEditing(null);
@@ -308,14 +312,25 @@ type FormState = {
   maxConcurrent: string;
 };
 
+/** The host part of an address, or "" when it is not one yet. */
+function hostOf(url: string | null | undefined): string {
+  try {
+    return url ? new URL(url).hostname.toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+
 function ProfileForm({
   profile,
   providers,
+  locked,
   onCancel,
   onSaved,
 }: {
   profile: AiProfile | null;
   providers: AiProvider[];
+  locked: boolean;
   onCancel: () => void;
   onSaved: (p: AiProfile, isNew: boolean) => void;
 }) {
@@ -327,7 +342,7 @@ function ProfileForm({
     purpose: profile?.purpose ?? "chat",
     dimensions: profile?.dimensions?.toString() ?? "",
     contextSize: profile?.contextSize?.toString() ?? "",
-    local: profile?.local ?? true,
+    local: profile?.local ?? false,
     apiKey: "",
     removeKey: false,
     timeoutSeconds: String(profile?.timeoutSeconds ?? 60),
@@ -341,6 +356,14 @@ function ProfileForm({
 
   const provider = providers.find((p) => p.id === f.provider);
   const compatible = f.provider === "openai-compatible";
+  const effective = (baseUrl: string) => baseUrl.trim() || provider?.defaultBaseUrl || "";
+  // A stored key is only sent to the host it was entered for, and "local" is about one server.
+  const hostChanged = profile !== null && hostOf(effective(f.baseUrl)) !== hostOf(profile.effectiveBaseUrl);
+  const changeUrl = (url: string) =>
+    setF((s) => {
+      const moved = hostOf(effective(url)) !== hostOf(effective(s.baseUrl));
+      return { ...s, baseUrl: url, local: moved ? false : s.local };
+    });
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setF((s) => ({ ...s, [k]: v }));
   const num = (s: string) => (s.trim() === "" ? null : Number(s));
 
@@ -420,7 +443,7 @@ function ProfileForm({
         </div>
         <div className="field">
           <label htmlFor="ai-url">Base URL{provider?.defaultBaseUrl ? " (optional)" : ""}</label>
-          <input id="ai-url" type="url" value={f.baseUrl} onChange={(e) => set("baseUrl", e.target.value)}
+          <input id="ai-url" type="url" value={f.baseUrl} onChange={(e) => changeUrl(e.target.value)}
             required={!provider?.defaultBaseUrl} placeholder={provider?.defaultBaseUrl ?? "http://ai:8080/v1"}
             autoComplete="off" aria-describedby="ai-url-hint" />
           <p id="ai-url-hint" className="hint">
@@ -440,19 +463,23 @@ function ProfileForm({
             </label>
             <p id="ai-local-hint" className="hint">
               Sources with the default AI rule let only local models see their metadata. Tick this only if no data
-              sent to this server leaves your network.
+              sent to this server leaves your network. Changing the address clears it.
+              {locked && " This server accepts a model as local only if its address is on one of its own networks."}
             </p>
           </div>
         )}
         <div className="field">
           <label htmlFor="ai-key">API key{provider?.needsKey ? "" : " (if the server needs one)"}</label>
           <input id="ai-key" type="password" value={f.apiKey} onChange={(e) => set("apiKey", e.target.value)}
-            autoComplete="new-password" required={!!provider?.needsKey && !profile?.hasApiKey && !f.removeKey}
+            autoComplete="new-password"
+            required={!f.removeKey && ((!!provider?.needsKey && !profile?.hasApiKey) || (!!profile?.hasApiKey && hostChanged))}
             disabled={f.removeKey} aria-describedby="ai-key-hint" />
           <p id="ai-key-hint" className="hint">
-            {profile?.hasApiKey
-              ? "A key is stored. Leave this empty to keep it. Kilnmark never shows a stored key."
-              : "Stored encrypted. Kilnmark never shows it again."}
+            {profile?.hasApiKey && hostChanged
+              ? "The address points at another server now, so enter the key again (a stored key is only sent where it was entered for)."
+              : profile?.hasApiKey
+                ? "A key is stored. Leave this empty to keep it. Kilnmark never shows a stored key."
+                : "Stored encrypted. Kilnmark never shows it again."}
           </p>
           {profile?.hasApiKey && !provider?.needsKey && (
             <label className="choice">
@@ -482,7 +509,8 @@ function ProfileForm({
           <div className="field">
             <label htmlFor="ai-conc">Calls at the same time</label>
             <input id="ai-conc" type="number" min={1} max={64} value={f.maxConcurrent}
-              onChange={(e) => set("maxConcurrent", e.target.value)} required />
+              onChange={(e) => set("maxConcurrent", e.target.value)} required aria-describedby="ai-conc-hint" />
+            <p id="ai-conc-hint" className="hint">Per Kilnmark process: with separate api and worker processes, the server can get more.</p>
           </div>
         </div>
         <div className="buttons">

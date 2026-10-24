@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, formatTime, type AccessRole, type ApiToken, type CreatedToken, type Me } from "../api";
+import { aiApi, api, formatTime, type AccessRole, type ApiToken, type CreatedToken, type Me } from "../api";
 import { useTitle } from "../components/useTitle";
 
 const ROLES: { value: AccessRole; label: string }[] = [
@@ -29,6 +29,7 @@ export function TokensPage({ me }: { me: Me }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [created, setCreated] = useState<CreatedToken | null>(null);
+  const [assistants, setAssistants] = useState<number[]>([]);
 
   const load = useCallback(() => {
     api
@@ -38,7 +39,21 @@ export function TokensPage({ me }: { me: Me }) {
         setError(null);
       })
       .catch((e: Error) => setError(e.message));
+    aiApi
+      .assistantTokens()
+      .then((a) => setAssistants(a.tokenIds))
+      .catch(() => setAssistants([]));
   }, []);
+
+  const setAssistant = async (t: ApiToken, on: boolean) => {
+    try {
+      await aiApi.setAssistantToken(t.id, on);
+      setNotice(on ? `${t.name} is marked as used by a local AI assistant.` : `${t.name} is no longer marked as a local AI assistant.`);
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   useEffect(load, [load]);
 
@@ -106,6 +121,7 @@ export function TokensPage({ me }: { me: Me }) {
                   <th scope="col">Created</th>
                   <th scope="col">Expires</th>
                   <th scope="col">Last used</th>
+                  <th scope="col">Local AI assistant</th>
                   <th scope="col">
                     <span className="visually-hidden">Actions</span>
                   </th>
@@ -130,6 +146,17 @@ export function TokensPage({ me }: { me: Me }) {
                     <td className="small">{t.expiresAt ? formatTime(t.expiresAt) : "Never"}</td>
                     <td className="small">{t.lastUsedAt ? formatTime(t.lastUsedAt) : "Not yet"}</td>
                     <td>
+                      <label className="choice small">
+                        <input
+                          type="checkbox"
+                          checked={assistants.includes(t.id)}
+                          onChange={(e) => setAssistant(t, e.target.checked)}
+                          aria-describedby="assistant-hint"
+                        />
+                        <span className="visually-hidden">{t.name}: </span>Yes
+                      </label>
+                    </td>
+                    <td>
                       {t.status !== "revoked" && (
                         <button type="button" onClick={() => revoke(t)} aria-label={`Revoke ${t.name}`}>
                           Revoke
@@ -142,6 +169,11 @@ export function TokensPage({ me }: { me: Me }) {
             </table>
           </div>
         )}
+        <p id="assistant-hint" className="hint">
+          Local AI assistant: tick only for a token used by an AI assistant whose model runs on your own network. Through
+          the MCP server it then also sees sources that allow only local models; other tokens see only sources that allow
+          any model.
+        </p>
       </section>
     </>
   );

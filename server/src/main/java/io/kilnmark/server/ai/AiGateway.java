@@ -6,6 +6,7 @@ import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
 import java.nio.channels.UnresolvedAddressException;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -32,33 +33,57 @@ import io.kilnmark.server.ai.AiFeature.Purpose;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
- * Every model call goes through here, in this order: find the feature's profile, check the egress
- * rule ({@link EgressPolicy}), wait for a free slot (the profile's {@code max_concurrent}), call
- * with the profile's timeout and up to {@code kilnmark.ai.max-retries} retries with backoff, stop
- * if cancelled, and write a usage record whatever happened.
+ * Every model call goes through here, in this order: check the model's address
+ * ({@link ModelHosts}), check the egress rule ({@link EgressPolicy}), wait for a free slot (the
+ * profile's {@code max_concurrent}, per process), call within the {@link Budget}, retrying with
+ * backoff, stop if cancelled, and write a usage record whatever happened.
  *
  * <p>Clients are built from the stored profile and rebuilt when its version changes, so adding or
  * changing a model needs no restart, in this process or any other.
+ *
+ * <p>Messages in {@link AiException} can hold the model's address and the server's reply: they
+ * are for admins (usage records, the profile test). Anything shown to viewers uses its own words.
  */
 @ApplicationScoped
 public class AiGateway {
 
     private static final Logger LOG = Logger.getLogger(AiGateway.class);
     private static final long CANCEL_POLL_MS = 200;
+    /** After a timeout or an unreachable server, interactive calls skip the model this long. */
+    static final long DOWN_FOR_MS = 30_000;
 
     private final ModelProfiles profiles;
     private final EgressPolicy egress;
+    private final ModelHosts hosts;
     private final UsageLog usage;
     private final KilnmarkConfig config;
     private final Map<Long, Built> clients = new ConcurrentHashMap<>();
+    /** Profile id to the time until which interactive calls skip it. */
+    private final Map<Long, Long> downUntil = new ConcurrentHashMap<>();
 
     /** A client for one version of a profile, with that profile's concurrency limit. */
     private record Built(int version, ModelClient client, Semaphore slots, int maxConcurrent) {
     }
 
-    public AiGateway(ModelProfiles profiles, EgressPolicy egress, UsageLog usage, KilnmarkConfig config) {
+    /**
+     * How long a call may take. Interactive calls (a search, a question) wait briefly for a slot,
+     * do not retry a timeout, give up after about ten seconds, and skip a model that failed in the
+     * last 30 seconds. Background calls (embedding at scan, the profile test) use the profile's
+     * timeout and the configured retries.
+     *
+     * @param slotWaitMs most time waiting for a free slot; 0 means the profile's timeout
+     * @param totalMs    most time for the whole call, retries included; 0 means no overall limit
+     */
+    public record Budget(long slotWaitMs, boolean retryTimeouts, long totalMs, boolean skipIfDown) {
+        public static final Budget INTERACTIVE = new Budget(2_000, false, 10_000, true);
+        public static final Budget BACKGROUND = new Budget(0, true, 0, false);
+    }
+
+    public AiGateway(ModelProfiles profiles, EgressPolicy egress, ModelHosts hosts, UsageLog usage,
+                     KilnmarkConfig config) {
         this.profiles = profiles;
         this.egress = egress;
+        this.hosts = hosts;
         this.usage = usage;
         this.config = config;
     }
@@ -74,53 +99,65 @@ public class AiGateway {
 
     /**
      * Chat for {@code feature}, about {@code source} (null when the prompt carries no source's
-     * metadata).
+     * metadata), within the background budget.
      *
      * @throws AiException when the feature is off, the call is refused, fails, times out or is cancelled
      */
     public Result<ModelClient.ChatAnswer> chat(AiFeature feature, Records.Source source, ModelClient.ChatCall call,
                                                String caller, BooleanSupplier cancelled) {
-        ModelProfile p = routed(feature, source, caller);
-        return chatWith(p, feature.id(), source, call, caller, cancelled);
+        return chatWith(routed(feature), feature.id(), source, call, caller, cancelled, Budget.BACKGROUND);
     }
 
     /** Embeddings for {@code feature} (see {@link #chat}). */
     public Result<ModelClient.EmbedAnswer> embed(AiFeature feature, Records.Source source, List<String> texts,
                                                  String caller, BooleanSupplier cancelled) {
-        ModelProfile p = routed(feature, source, caller);
-        return embedWith(p, feature.id(), source, texts, caller, cancelled);
+        return embedWith(routed(feature), feature.id(), source, texts, caller, cancelled, Budget.BACKGROUND);
     }
 
-    private ModelProfile routed(AiFeature feature, Records.Source source, String caller) {
-        Optional<ModelProfile> p = profiles.route(feature);
-        if (p.isEmpty()) {
-            // Not recorded: an unrouted feature is off, not a failed call.
-            throw new AiException(Kind.UNAVAILABLE, "No model is set for " + feature.label().toLowerCase(java.util.Locale.ROOT)
-                + ". An admin can choose one under AI models.");
-        }
-        return p.get();
+    private ModelProfile routed(AiFeature feature) {
+        return profiles.route(feature).orElseThrow(() -> new AiException(Kind.UNAVAILABLE, "No model is set for "
+            + feature.label().toLowerCase(Locale.ROOT) + ". An admin can choose one under AI models."));
     }
 
-    /** Chat with a given profile, under the same rules: used by routed features and by the profile test. */
+    /** Chat with a given profile, under the same rules. */
     public Result<ModelClient.ChatAnswer> chatWith(ModelProfile p, String feature, Records.Source source,
-                                                   ModelClient.ChatCall call, String caller, BooleanSupplier cancelled) {
+                                                   ModelClient.ChatCall call, String caller, BooleanSupplier cancelled,
+                                                   Budget budget) {
         if (p.purpose() != Purpose.CHAT) {
             throw new AiException(Kind.FAILED, "Profile " + p.name() + " is an embedding model; this needs a chat model.");
         }
         String prompt = call.system() + "\n\n" + call.user();
-        return run(p, feature, source, caller, cancelled, prompt, c -> c.chat(call),
-            a -> new long[] {nz(a.tokensIn()), nz(a.tokensOut())}, ModelClient.ChatAnswer::text);
+        return run(p, feature, source, caller, cancelled, budget, prompt, c -> c.chat(call),
+            a -> new long[] {nz(a.tokensIn()), nz(a.tokensOut())}, ModelClient.ChatAnswer::text, a -> null);
     }
 
-    /** Embeddings with a given profile (see {@link #chatWith}). */
+    /**
+     * Embeddings with a given profile. An answer with the wrong number of vectors, or vectors of
+     * another size than the profile's dimensions, is a failure (and recorded as one).
+     */
     public Result<ModelClient.EmbedAnswer> embedWith(ModelProfile p, String feature, Records.Source source,
-                                                     List<String> texts, String caller, BooleanSupplier cancelled) {
+                                                     List<String> texts, String caller, BooleanSupplier cancelled,
+                                                     Budget budget) {
         if (p.purpose() != Purpose.EMBEDDING) {
             throw new AiException(Kind.FAILED, "Profile " + p.name() + " is a chat model; this needs an embedding model.");
         }
-        Result<ModelClient.EmbedAnswer> r = run(p, feature, source, caller, cancelled, String.join("\n---\n", texts),
-            c -> c.embed(texts), a -> new long[] {nz(a.tokensIn()), -1}, a -> null);
-        return r;
+        return run(p, feature, source, caller, cancelled, budget, String.join("\n---\n", texts),
+            c -> c.embed(texts), a -> new long[] {nz(a.tokensIn()), -1}, a -> null,
+            a -> wrongShape(p, texts.size(), a));
+    }
+
+    /** Why an embedding answer does not fit the profile, or null. */
+    static String wrongShape(ModelProfile p, int expected, ModelClient.EmbedAnswer a) {
+        if (a.vectors().size() != expected) {
+            return "Model " + p.model() + " returned " + a.vectors().size() + " embeddings for " + expected + " texts.";
+        }
+        for (float[] v : a.vectors()) {
+            if (v.length != p.dimensions()) {
+                return "Model " + p.model() + " returns " + v.length + " numbers per text, but profile " + p.name()
+                    + " says " + p.dimensions() + ". Set the profile's dimensions to " + v.length + ".";
+            }
+        }
+        return null;
     }
 
     private static long nz(Integer i) {
@@ -128,14 +165,20 @@ public class AiGateway {
     }
 
     private <T> Result<T> run(ModelProfile p, String feature, Records.Source source, String caller,
-                              BooleanSupplier cancelled, String prompt, Function<ModelClient, T> call,
-                              Function<T, long[]> tokens, Function<T, String> answerText) {
+                              BooleanSupplier cancelled, Budget budget, String prompt, Function<ModelClient, T> call,
+                              Function<T, long[]> tokens, Function<T, String> answerText, Function<T, String> check) {
         long start = System.nanoTime();
-        Optional<String> refusal = egress.refusal(p, source);
+        Optional<String> refusal = hosts.forbidden(p.effectiveBaseUrl()).or(() -> egress.refusal(p, source));
         if (refusal.isPresent()) {
             usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, "refused", refusal.get(), caller, null,
                 null));
             throw new AiException(Kind.REFUSED, refusal.get());
+        }
+        if (budget.skipIfDown() && downUntil.getOrDefault(p.id(), 0L) > System.currentTimeMillis()) {
+            String msg = "Model " + p.name() + " failed or did not answer in the last " + DOWN_FOR_MS / 1000
+                + " seconds, so it was not tried again yet.";
+            usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, "failed", msg, caller, null, null));
+            throw new AiException(Kind.FAILED, msg);
         }
         Built built;
         try {
@@ -145,21 +188,31 @@ public class AiGateway {
             usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, "failed", msg, caller, null, null));
             throw new AiException(Kind.FAILED, msg);
         }
+        long deadline = budget.totalMs() > 0 ? System.currentTimeMillis() + budget.totalMs() : Long.MAX_VALUE;
         boolean acquired = false;
         try {
-            acquired = acquire(built.slots(), p.timeoutSeconds() * 1000L, cancelled);
+            long wait = budget.slotWaitMs() > 0 ? budget.slotWaitMs() : p.timeoutSeconds() * 1000L;
+            acquired = acquire(built.slots(), wait, cancelled);
             if (!acquired) {
                 throw new AiException(Kind.BUSY, "Model " + p.name() + " is busy: " + p.maxConcurrent()
-                    + " calls were already running for " + p.timeoutSeconds() + " seconds. Try again shortly, or raise "
-                    + "the profile's limit if its server can take more.");
+                    + " calls were already running in this process for " + wait / 1000.0 + " seconds. Try again "
+                    + "shortly, or raise the profile's limit if its server can take more.");
             }
-            T answer = withRetries(p, () -> call.apply(built.client()), cancelled);
+            T answer = withRetries(p, budget, deadline, () -> call.apply(built.client()), cancelled);
+            String wrong = check.apply(answer);
+            if (wrong != null) {
+                throw new AiException(Kind.FAILED, wrong);
+            }
             long ms = (System.nanoTime() - start) / 1_000_000;
             long[] t = tokens.apply(answer);
+            downUntil.remove(p.id());
             usage.record(new UsageLog.Entry(feature, p, source, t[0] < 0 ? null : (int) t[0],
                 t[1] < 0 ? null : (int) t[1], ms, "ok", null, caller, prompt, answerText.apply(answer)));
             return new Result<>(answer, p, ms);
         } catch (AiException e) {
+            if (e.kind() == Kind.TIMEOUT || e.unreachable()) {
+                downUntil.put(p.id(), System.currentTimeMillis() + DOWN_FOR_MS);
+            }
             usage.record(new UsageLog.Entry(feature, p, source, null, null, (System.nanoTime() - start) / 1_000_000,
                 e.outcome(), e.getMessage(), caller, prompt, null));
             throw e;
@@ -173,7 +226,7 @@ public class AiGateway {
     private static boolean acquire(Semaphore slots, long waitMs, BooleanSupplier cancelled) {
         long deadline = System.currentTimeMillis() + waitMs;
         try {
-            while (System.currentTimeMillis() < deadline) {
+            do {
                 if (cancelled.getAsBoolean()) {
                     throw new AiException(Kind.CANCELLED, "The call was cancelled.");
                 }
@@ -181,7 +234,7 @@ public class AiGateway {
                     TimeUnit.MILLISECONDS)) {
                     return true;
                 }
-            }
+            } while (System.currentTimeMillis() < deadline);
             return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -205,13 +258,15 @@ public class AiGateway {
                 : new Semaphore(p.maxConcurrent(), true);
             Built fresh = new Built(p.version(), client, slots, p.maxConcurrent());
             clients.put(p.id(), fresh);
+            downUntil.remove(p.id());
             return fresh;
         }
     }
 
-    /** Drops a deleted profile's client. */
+    /** Drops a deleted or changed profile's client. */
     void forget(long profileId) {
         clients.remove(profileId);
+        downUntil.remove(profileId);
     }
 
     @FunctionalInterface
@@ -219,25 +274,34 @@ public class AiGateway {
         T run();
     }
 
-    private <T> T withRetries(ModelProfile p, Attempt<T> attempt, BooleanSupplier cancelled) {
+    private <T> T withRetries(ModelProfile p, Budget budget, long deadline, Attempt<T> attempt,
+                              BooleanSupplier cancelled) {
         int retries = Math.max(0, config.ai().maxRetries());
         for (int n = 0; ; n++) {
+            long attemptMs = Math.min(p.timeoutSeconds() * 1000L + 5000, deadline - System.currentTimeMillis());
+            if (attemptMs <= 0) {
+                throw new AiException(Kind.TIMEOUT, timeoutMessage(p, budget));
+            }
             try {
-                return once(p, attempt, cancelled);
+                return once(p, budget, attemptMs, attempt, cancelled);
             } catch (AiException e) {
-                throw e;
+                if (e.kind() != Kind.TIMEOUT || !budget.retryTimeouts() || n >= retries) {
+                    throw e;
+                }
             } catch (RuntimeException e) {
-                if (n >= retries || !retryable(e)) {
-                    throw new AiException(timedOut(e) ? Kind.TIMEOUT : Kind.FAILED, explain(e, p));
+                boolean timedOut = timedOut(e);
+                if (n >= retries || !retryable(e) || timedOut && !budget.retryTimeouts()) {
+                    throw new AiException(timedOut ? Kind.TIMEOUT : Kind.FAILED, explain(e, p), unreachable(e));
                 }
                 LOG.debugf("Model %s: attempt %d failed (%s); retrying", p.name(), n + 1, e.getClass().getSimpleName());
-                backoff(n, cancelled);
             }
+            backoff(n, deadline, cancelled);
         }
     }
 
     /** One attempt on a virtual thread, so a cancelled or overdue call is abandoned at once. */
-    private static <T> T once(ModelProfile p, Attempt<T> attempt, BooleanSupplier cancelled) {
+    private static <T> T once(ModelProfile p, Budget budget, long limitMs, Attempt<T> attempt,
+                              BooleanSupplier cancelled) {
         CompletableFuture<T> f = new CompletableFuture<>();
         Thread t = Thread.ofVirtual().name("kilnmark-ai-" + p.name()).start(() -> {
             try {
@@ -246,8 +310,8 @@ public class AiGateway {
                 f.completeExceptionally(e);
             }
         });
-        // The client has the same timeout; this is the backstop for a server that trickles bytes.
-        long deadline = System.currentTimeMillis() + p.timeoutSeconds() * 1000L + 5000;
+        // The client has the profile's own timeout; this also covers the budget and a server that trickles bytes.
+        long deadline = System.currentTimeMillis() + limitMs;
         try {
             while (true) {
                 if (cancelled.getAsBoolean()) {
@@ -256,7 +320,7 @@ public class AiGateway {
                 }
                 if (System.currentTimeMillis() > deadline) {
                     t.interrupt();
-                    throw new AiException(Kind.TIMEOUT, timeoutMessage(p));
+                    throw new AiException(Kind.TIMEOUT, timeoutMessage(p, budget));
                 }
                 try {
                     return f.get(CANCEL_POLL_MS, TimeUnit.MILLISECONDS);
@@ -277,9 +341,9 @@ public class AiGateway {
         }
     }
 
-    private static void backoff(int attempt, BooleanSupplier cancelled) {
+    private static void backoff(int attempt, long deadline, BooleanSupplier cancelled) {
         long ms = (long) (500 * Math.pow(2, attempt)) + ThreadLocalRandom.current().nextLong(250);
-        long until = System.currentTimeMillis() + ms;
+        long until = Math.min(deadline, System.currentTimeMillis() + ms);
         try {
             while (System.currentTimeMillis() < until) {
                 if (cancelled.getAsBoolean()) {
@@ -304,6 +368,11 @@ public class AiGateway {
         return has(e, ConnectException.class);
     }
 
+    private static boolean unreachable(Throwable e) {
+        return has(e, ConnectException.class) || has(e, UnknownHostException.class)
+            || has(e, UnresolvedAddressException.class) || has(e, HttpConnectTimeoutException.class);
+    }
+
     private static boolean timedOut(Throwable e) {
         return e instanceof TimeoutException || has(e, HttpTimeoutException.class)
             || has(e, java.net.SocketTimeoutException.class);
@@ -323,29 +392,28 @@ public class AiGateway {
             if (type.isInstance(t)) {
                 return true;
             }
-            if (t.getCause() == t) {
-                break;
-            }
         }
         return false;
     }
 
-    private static String timeoutMessage(ModelProfile p) {
-        return "Model " + p.name() + " did not answer within " + p.timeoutSeconds() + " seconds. Try again, raise the "
-            + "profile's timeout, or choose a smaller model.";
+    private static String timeoutMessage(ModelProfile p, Budget budget) {
+        return budget.totalMs() > 0 && budget.totalMs() < p.timeoutSeconds() * 1000L
+            ? "Model " + p.name() + " did not answer within " + budget.totalMs() / 1000 + " seconds, the most a search "
+                + "waits. Check the model server's load, or choose a faster model."
+            : "Model " + p.name() + " did not answer within " + p.timeoutSeconds() + " seconds. Try again, raise the "
+                + "profile's timeout, or choose a smaller model.";
     }
 
-    /** A failure in plain English, saying what to check. Never includes the API key. */
+    /** A failure in plain English, saying what to check, for admins. Never includes the API key. */
     String explain(Throwable e, ModelProfile p) {
         String url = p.effectiveBaseUrl();
         Integer status = status(e);
         String msg;
-        if (has(e, ConnectException.class) || has(e, UnknownHostException.class)
-            || has(e, UnresolvedAddressException.class) || has(e, HttpConnectTimeoutException.class)) {
+        if (unreachable(e)) {
             msg = "Cannot reach " + url + ". Check the address, and that the model server is running and reachable "
                 + "from the Kilnmark server.";
         } else if (timedOut(e)) {
-            msg = timeoutMessage(p);
+            msg = timeoutMessage(p, Budget.BACKGROUND);
         } else if (e instanceof AuthenticationException || status != null && (status == 401 || status == 403)) {
             msg = p.provider().label() + " refused the API key for model " + p.model() + ". Check the key, and that "
                 + "it may use this model.";

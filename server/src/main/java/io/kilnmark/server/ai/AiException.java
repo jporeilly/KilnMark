@@ -23,14 +23,38 @@ public final class AiException extends RuntimeException {
     }
 
     private final Kind kind;
+    private final boolean unreachable;
 
     public AiException(Kind kind, String message) {
+        this(kind, message, false);
+    }
+
+    /** {@code unreachable}: the model's server could not be reached at all. */
+    public AiException(Kind kind, String message, boolean unreachable) {
         super(message, null, false, false);
         this.kind = kind;
+        this.unreachable = unreachable;
     }
 
     public Kind kind() {
         return kind;
+    }
+
+    boolean unreachable() {
+        return unreachable;
+    }
+
+    /**
+     * Words safe to show anyone who can search: no address, model name or server reply. Refusals
+     * by the egress rule name only the source and the profile, so they are shown as they are.
+     */
+    public String publicMessage() {
+        return switch (kind) {
+            case REFUSED -> getMessage();
+            case UNAVAILABLE -> "No model is set for this.";
+            case CANCELLED -> "The call was cancelled.";
+            default -> "The AI model is unavailable right now. An admin can see why under AI usage.";
+        };
     }
 
     /** The outcome stored in the usage record. */

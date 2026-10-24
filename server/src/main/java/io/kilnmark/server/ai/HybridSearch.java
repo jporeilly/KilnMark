@@ -29,6 +29,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 @ApplicationScoped
 public class HybridSearch {
 
+    private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(HybridSearch.class);
+
     /** The usual constant for reciprocal rank fusion: rank 1 scores 1/61. */
     static final int RRF_K = 60;
     private static final int CANDIDATES = 100;
@@ -94,24 +96,25 @@ public class HybridSearch {
             if (p.isEmpty()) {
                 note = "Search by meaning is off: no embedding model is set. Results match words only.";
             } else {
+                // Notes are shown to every viewer (and to MCP clients): never the model's address or reply.
                 try {
-                    float[] v = gateway.embedWith(p.get(), AiFeature.EMBED.id(), null, List.of(q), caller, () -> false)
-                        .answer().vectors().get(0);
-                    if (v.length != p.get().dimensions()) {
-                        note = "Search by meaning is unavailable: the embedding model returns " + v.length
-                            + " numbers per text, but its profile says " + p.get().dimensions()
-                            + ". An admin can fix the profile. Results match words only.";
-                    } else {
-                        Nearest n = nearest(p.get(), v);
-                        vectorUrns = n.urns();
-                        meaning = true;
-                        if (n.stored() == 0) {
-                            note = "No assets have been embedded with " + p.get().name() + " yet, so results match "
-                                + "words only. Scan a source to embed its assets.";
-                        }
+                    float[] v = gateway.embedWith(p.get(), AiFeature.EMBED.id(), null, List.of(q), caller, () -> false,
+                        AiGateway.Budget.INTERACTIVE).answer().vectors().get(0);
+                    Nearest n = nearest(p.get(), v, filters, Math.max(limit, CANDIDATES));
+                    vectorUrns = n.urns();
+                    meaning = true;
+                    if (n.stored() == 0) {
+                        note = "No assets have been embedded for search by meaning yet, so results match words only. "
+                            + "Scan a source to embed its assets.";
                     }
                 } catch (AiException e) {
-                    note = "Search by meaning is unavailable: " + e.getMessage() + " Results match words only.";
+                    note = "Search by meaning is unavailable right now, so results match words only. "
+                        + (e.kind() == AiException.Kind.REFUSED ? e.publicMessage()
+                            : "An admin can see why under AI usage.");
+                } catch (Db.DbException e) {
+                    LOG.warnf("Search by meaning failed in the database; searching words only: %s", e.getMessage());
+                    note = "Search by meaning is unavailable right now, so results match words only. "
+                        + "An admin can see why in the server log.";
                 }
             }
         }
@@ -193,29 +196,71 @@ public class HybridSearch {
     private record Nearest(List<String> urns, long stored) {
     }
 
-    /** The assets nearest to {@code v}, at least {@code kilnmark.ai.min-similarity} alike, best first. */
-    private Nearest nearest(ModelProfile p, float[] v) {
-        String cast = Embeddings.cast(p.dimensions());
+    /** Whether pgvector can keep scanning an HNSW index until filters are met (0.8 and later); asked once. */
+    private volatile Boolean iterativeScan;
+
+    private boolean iterativeScan(Connection c) throws SQLException {
+        if (iterativeScan == null) {
+            try (PreparedStatement ps = c.prepareStatement(
+                "SELECT extversion FROM pg_extension WHERE extname = 'vector'"); ResultSet rs = ps.executeQuery()) {
+                iterativeScan = rs.next() && atLeast(rs.getString(1), 0, 8);
+            }
+        }
+        return iterativeScan;
+    }
+
+    static boolean atLeast(String version, int major, int minor) {
+        String[] v = version.split("\\.");
+        try {
+            int a = Integer.parseInt(v[0]);
+            int b = v.length > 1 ? Integer.parseInt(v[1]) : 0;
+            return a > major || a == major && b >= minor;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    /**
+     * The assets nearest to {@code v}, at least {@code kilnmark.ai.min-similarity} alike, best first,
+     * within the filters. The profile id and dimensions go into the SQL as numbers, matching the
+     * profile's partial index (Embeddings.ensureIndex) even under generic plans; rows of another
+     * size are never compared. {@code hnsw.ef_search} is raised to the number wanted, and with
+     * filters pgvector keeps scanning the index until enough rows pass (relaxed order, sorted again
+     * here).
+     */
+    private Nearest nearest(ModelProfile p, float[] v, Filters filters, int k) {
+        int dims = p.dimensions();
+        String cast = Embeddings.cast(dims);
         String literal = Embeddings.literal(v);
         double min = config.ai().minSimilarity();
+        String where = "e.profile_id = " + p.id() + " AND e.dimensions = " + dims;
         return db.tx(c -> {
             long stored;
-            try (PreparedStatement ps = c.prepareStatement(
-                "SELECT count(*) FROM (SELECT 1 FROM kilnmark.asset_embedding WHERE profile_id = ? LIMIT 1) x")) {
-                ps.setLong(1, p.id());
-                try (ResultSet rs = ps.executeQuery()) {
-                    rs.next();
-                    stored = rs.getLong(1);
+            try (PreparedStatement ps = c.prepareStatement("SELECT count(*) FROM (SELECT 1 FROM kilnmark.asset_embedding e "
+                + "WHERE " + where + " LIMIT 1) x"); ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                stored = rs.getLong(1);
+            }
+            try (java.sql.Statement st = c.createStatement()) {
+                st.execute("SET LOCAL hnsw.ef_search = " + Math.min(1000, Math.max(40, k)));
+                if (filters.any() && iterativeScan(c)) {
+                    st.execute("SET LOCAL hnsw.iterative_scan = relaxed_order");
                 }
             }
+            String join = filters.any() ? " JOIN kilnmark.asset a ON a.urn = e.asset_urn JOIN kilnmark.data_source s "
+                + "ON s.id = a.source_id" : "";
+            String filter = filters.any() ? " " + FILTERS : "";
             List<String> out = new ArrayList<>();
-            // The cast matches the profile's partial index (Embeddings.ensureIndex), so the index is used.
-            try (PreparedStatement ps = c.prepareStatement("SELECT asset_urn, 1 - (embedding::" + cast + " <=> ?::"
-                + cast + ") FROM kilnmark.asset_embedding WHERE profile_id = ? ORDER BY embedding::" + cast
-                + " <=> ?::" + cast + " LIMIT " + CANDIDATES)) {
+            try (PreparedStatement ps = c.prepareStatement("WITH nn AS MATERIALIZED (SELECT e.asset_urn, e.embedding::"
+                + cast + " <=> ?::" + cast + " AS d FROM kilnmark.asset_embedding e" + join + " WHERE " + where + filter
+                + " ORDER BY e.embedding::" + cast + " <=> ?::" + cast + " LIMIT " + k + ") "
+                + "SELECT asset_urn, 1 - d FROM nn ORDER BY d")) {
                 ps.setString(1, literal);
-                ps.setLong(2, p.id());
-                ps.setString(3, literal);
+                int next = 2;
+                if (filters.any()) {
+                    next = bindFilterArrays(c, ps, filters, next);
+                }
+                ps.setString(next, literal);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         if (rs.getDouble(2) >= min) {
@@ -226,6 +271,27 @@ public class HybridSearch {
             }
             return new Nearest(out, stored);
         });
+    }
+
+    /** The filters on asset {@code a} and source {@code s}, as in {@link #SELECT}. */
+    private static final String FILTERS = """
+         AND a.removed_at IS NULL
+          AND (cardinality(?::text[]) = 0 OR lower(a.kind) = ANY (?::text[]))
+          AND (cardinality(?::text[]) = 0 OR s.name = ANY (?::text[]))
+          AND (cardinality(?::text[]) = 0 OR EXISTS (SELECT 1 FROM kilnmark.field f
+                   WHERE f.asset_urn = a.urn AND lower(f.name) LIKE ANY (?::text[])))""";
+
+    private static int bindFilterArrays(Connection c, PreparedStatement ps, Filters f, int from) throws SQLException {
+        Array patterns = c.createArrayOf("text", f.fields().stream().map(HybridSearch::pattern).toArray());
+        Array kinds = c.createArrayOf("text", f.kinds().toArray());
+        Array sources = c.createArrayOf("text", f.sources().toArray());
+        ps.setArray(from, kinds);
+        ps.setArray(from + 1, kinds);
+        ps.setArray(from + 2, sources);
+        ps.setArray(from + 3, sources);
+        ps.setArray(from + 4, patterns);
+        ps.setArray(from + 5, patterns);
+        return from + 6;
     }
 
     private record Row(String source, String kind, String container, String name, String description, Long rowCount,

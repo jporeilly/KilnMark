@@ -15,6 +15,7 @@ import io.kilnmark.server.ai.Callers;
 import io.kilnmark.server.ai.EgressPolicy;
 import io.kilnmark.server.ai.Embeddings;
 import io.kilnmark.server.ai.ModelClient;
+import io.kilnmark.server.ai.ModelHosts;
 import io.kilnmark.server.ai.ModelProfile;
 import io.kilnmark.server.ai.ModelProfiles;
 import io.kilnmark.server.ai.Provider;
@@ -49,16 +50,32 @@ public class AiResource {
     private final EgressPolicy egress;
     private final Embeddings embeddings;
     private final UsageLog usage;
+    private final ModelHosts hosts;
     private final SecurityIdentity identity;
 
     public AiResource(ModelProfiles profiles, AiGateway gateway, EgressPolicy egress, Embeddings embeddings,
-                      UsageLog usage, SecurityIdentity identity) {
+                      UsageLog usage, ModelHosts hosts, SecurityIdentity identity) {
         this.profiles = profiles;
         this.gateway = gateway;
         this.egress = egress;
         this.embeddings = embeddings;
         this.usage = usage;
+        this.hosts = hosts;
         this.identity = identity;
+    }
+
+    /** The operator's address rules (ADR 0016), checked on every save and again on every call. */
+    private ModelProfile.Valid checkAddress(ModelProfile.Valid v) {
+        String url = v.effectiveBaseUrl();
+        hosts.forbidden(url).ifPresent(reason -> {
+            throw new IllegalArgumentException("baseUrl: " + reason);
+        });
+        if (v.local() && !hosts.mayBeLocal(url)) {
+            throw new IllegalArgumentException("local: this server allows only local models, and " + url + " is not on "
+                + "one of its local networks (kilnmark.ai.local-hosts, set by whoever runs the server). Use a model "
+                + "server on your own network, or leave local unticked.");
+        }
+        return v;
     }
 
     /** Which AI search features are on, for any signed-in user. No model details. */
@@ -94,7 +111,7 @@ public class AiResource {
     @Path("profiles")
     @Consumes(MediaType.APPLICATION_JSON)
     public Response create(ModelProfile.Input body) {
-        ModelProfile p = profiles.create(ModelProfile.validate(body, false), Callers.of(identity));
+        ModelProfile p = profiles.create(checkAddress(ModelProfile.validate(body, false)), Callers.of(identity));
         return Response.created(URI.create("/api/v1/ai/profiles/" + p.name())).entity(view(p, profiles.routes()))
             .build();
     }
@@ -105,8 +122,14 @@ public class AiResource {
     @Consumes(MediaType.APPLICATION_JSON)
     public AiViews.Profile update(@PathParam("name") String name, ModelProfile.Input body) {
         ModelProfile before = find(name);
-        ModelProfiles.Updated u = profiles.update(before, ModelProfile.validate(body, before.hasKey()),
-            Callers.of(identity));
+        ModelProfile.Valid v = checkAddress(ModelProfile.validate(body, before.hasKey()));
+        // A stored key goes only to the host it was entered for: a new host needs the key again.
+        if (before.hasKey() && body.apiKey() == null
+            && !ModelHosts.host(before.effectiveBaseUrl()).equals(ModelHosts.host(v.effectiveBaseUrl()))) {
+            throw new IllegalArgumentException("apiKey: the address now points at another server, so enter the API key "
+                + "again (or send an empty key to remove it). A stored key is only sent where it was entered for.");
+        }
+        ModelProfiles.Updated u = profiles.update(before, v, Callers.of(identity));
         if (u.reembed()) {
             embeddings.forgetProfile(u.profile().id());
             if (profiles.route(AiFeature.EMBED).map(p -> p.id() == u.profile().id()).orElse(false)) {
@@ -133,21 +156,19 @@ public class AiResource {
         String caller = Callers.of(identity);
         try {
             if (p.purpose() == AiFeature.Purpose.EMBEDDING) {
+                // A model returning another size than the profile says fails here, with the size to set.
                 AiGateway.Result<ModelClient.EmbedAnswer> r = gateway.embedWith(p, "test", null,
-                    List.of("Kilnmark connection test: customer orders"), caller, () -> false);
-                int dims = r.answer().vectors().isEmpty() ? 0 : r.answer().vectors().get(0).length;
-                if (!Objects.equals(dims, p.dimensions())) {
-                    return new AiViews.TestResult(false, "The model answered, but returns " + dims + " numbers per "
-                        + "text and this profile says " + p.dimensions() + ". Set dimensions to " + dims + ".",
-                        r.latencyMs(), dims);
-                }
+                    List.of("Kilnmark connection test: customer orders"), caller, () -> false,
+                    AiGateway.Budget.BACKGROUND);
+                int dims = r.answer().vectors().get(0).length;
                 return new AiViews.TestResult(true, "Model " + p.model() + " answered in " + seconds(r.latencyMs())
                     + " with " + dims + " numbers per text, as the profile says.", r.latencyMs(), dims);
             }
             AiGateway.Result<ModelClient.ChatAnswer> r = gateway.chatWith(p, "test", null, new ModelClient.ChatCall(
                 "You are a connection test. Answer with the JSON object {\"ok\": true} and nothing else.",
                 "Are you there?", "{\"type\": \"object\", \"properties\": {\"ok\": {\"type\": \"boolean\"}}, "
-                    + "\"required\": [\"ok\"], \"additionalProperties\": false}", 20), caller, () -> false);
+                    + "\"required\": [\"ok\"], \"additionalProperties\": false}", 20), caller, () -> false,
+                AiGateway.Budget.BACKGROUND);
             String text = r.answer().text() == null ? "" : r.answer().text();
             if (text.isBlank()) {
                 return new AiViews.TestResult(false, "The model answered with nothing. Check the model name, and that "
@@ -229,7 +250,7 @@ public class AiResource {
         boolean started = embeddings.reembedAllInBackground("refresh by " + Callers.of(identity));
         return Response.accepted(Map.of("started", started, "message", started
             ? "Embedding every source in the background. Unchanged assets are skipped."
-            : "Embedding is already running.")).build();
+            : "Embedding is already running; it will go round once more when it ends.")).build();
     }
 
     private ModelProfile find(String name) {

@@ -57,6 +57,8 @@ tasks.withType<Test>().configureEach {
 // AI evaluation (ADR 0016): scores a running server's search and question answering against
 // tests/ai-eval/golden.json with the models it is configured to use. Never part of `build`:
 //   KILNMARK_TOKEN=km_... ./gradlew :server:aiEval [-Pkilnmark.eval.url=http://localhost:8780] [-Pkilnmark.eval.source=lab]
+// It fails when a score falls below tests/ai-eval/baseline.json (less its tolerance), the release
+// gate of ADR 0012; -Pkilnmark.eval.update-baseline=true accepts the new scores instead.
 tasks.named<Test>("test") {
     useJUnitPlatform { excludeTags("ai-eval") }
 }
@@ -70,7 +72,8 @@ tasks.register<Test>("aiEval") {
     outputs.upToDateWhen { false }
     systemProperty("kilnmark.eval.golden", rootProject.file("tests/ai-eval/golden.json").absolutePath)
     systemProperty("kilnmark.eval.out", layout.buildDirectory.dir("ai-eval").get().asFile.absolutePath)
-    listOf("kilnmark.eval.url", "kilnmark.eval.token", "kilnmark.eval.source").forEach { key ->
+    systemProperty("kilnmark.eval.baseline", rootProject.file("tests/ai-eval/baseline.json").absolutePath)
+    listOf("kilnmark.eval.url", "kilnmark.eval.token", "kilnmark.eval.source", "kilnmark.eval.update-baseline").forEach { key ->
         providers.gradleProperty(key).orNull?.let { systemProperty(key, it) }
     }
     testLogging { showStandardStreams = true }

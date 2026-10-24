@@ -33,10 +33,11 @@ import jakarta.inject.Inject;
  * {@code /mcp} (Streamable HTTP), signed in with an API token (viewer or above; see
  * {@code quarkus.http.auth.permission.mcp} in application.properties).
  *
- * <p>An assistant is a model of unknown location, so sources whose AI rule is {@code none} are
- * invisible here, and value statistics (minimum, maximum, most common values) are given only for
- * sources whose rule is {@code allowed}. There is no lineage in the catalogue yet, so there is no
- * lineage tool.
+ * <p>An assistant is a model of unknown location, so by default it sees only sources whose AI
+ * rule is {@code allowed}. A token an admin flagged "used by a local assistant"
+ * ({@code api_token.local_assistant}) also sees {@code local_only} sources. Sources whose rule is
+ * {@code none} are never visible. There is no lineage in the catalogue yet, so there is no lineage
+ * tool.
  */
 @ApplicationScoped
 public class CatalogTools {
@@ -67,6 +68,9 @@ public class CatalogTools {
             defaultValue = "10") int limit) {
         if (query == null || query.isBlank()) {
             return ToolResponse.ofError("query: say what to search for");
+        }
+        if (query.length() > 500) {
+            return ToolResponse.ofError("query: 500 characters at most");
         }
         Set<String> hidden = hiddenSources();
         int n = Math.max(1, Math.min(limit, 50));
@@ -113,8 +117,6 @@ public class CatalogTools {
             return ToolResponse.ofError("No asset " + urn + ". Use search_assets to find URNs.");
         }
         Records.AssetDetail a = found.get();
-        boolean values = store.source(a.source()).map(s -> EgressPolicy.SourceRule.of(s)
-            == EgressPolicy.SourceRule.ALLOWED).orElse(false);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("urn", a.urn());
         out.put("source", a.source());
@@ -136,14 +138,10 @@ public class CatalogTools {
             m.put("kind", f.kind());
             m.put("nullable", f.nullable());
             m.put("description", f.description());
-            m.put("profile", profile(f.profileJson(), values));
+            m.put("profile", profile(f.profileJson()));
             fields.add(m);
         }
         out.put("fields", fields);
-        if (!values) {
-            out.put("note", "Value statistics (minimum, maximum, common values) are withheld: this source's AI rule "
-                + "does not allow outside models to see values.");
-        }
         return text(out);
     }
 
@@ -152,6 +150,7 @@ public class CatalogTools {
         annotations = @Tool.Annotations(title = "List sources", readOnlyHint = true, destructiveHint = false,
             idempotentHint = true, openWorldHint = false))
     public ToolResponse listSources() {
+        Set<String> hidden = hiddenSources();
         List<Map<String, Object>> out = db.tx(c -> {
             List<Map<String, Object>> rows = new ArrayList<>();
             // display_name may be a column (added by another migration) or a setting; read whichever exists.
@@ -162,10 +161,12 @@ public class CatalogTools {
                 FROM kilnmark.data_source s
                 LEFT JOIN LATERAL (SELECT status, finished_at FROM kilnmark.run WHERE source_id = s.id
                                    ORDER BY id DESC LIMIT 1) r ON true
-                WHERE coalesce(lower(s.settings ->> 'ai_egress'), '') <> 'none'
                 ORDER BY s.name""");
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
+                    if (hidden.contains(rs.getString(1))) {
+                        continue;
+                    }
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("name", rs.getString(1));
                     m.put("displayName", rs.getString(2));
@@ -181,18 +182,48 @@ public class CatalogTools {
         return text(Map.of("sources", out));
     }
 
-    /** Names of sources whose AI rule is {@code none}: invisible to assistants. */
+    /**
+     * Names of the sources this caller may not see: {@code none} always, {@code local_only} unless
+     * the token is flagged as used by a local assistant. The same rule ({@link EgressPolicy.SourceRule#of})
+     * as every other AI path.
+     */
     private Set<String> hiddenSources() {
+        boolean localAssistant = localAssistant();
         Set<String> out = new HashSet<>();
         for (Records.Source s : store.sources()) {
-            if (EgressPolicy.SourceRule.of(s) == EgressPolicy.SourceRule.NONE) {
+            EgressPolicy.SourceRule rule = EgressPolicy.SourceRule.of(s);
+            if (rule == EgressPolicy.SourceRule.NONE
+                || rule == EgressPolicy.SourceRule.LOCAL_ONLY && !localAssistant) {
                 out.add(s.name());
             }
         }
         return out;
     }
 
-    private Map<String, Object> profile(String stats, boolean values) {
+    /** Whether the calling token is flagged "used by a local assistant" by an admin. */
+    private boolean localAssistant() {
+        Long id;
+        try {
+            id = identity.getAttribute(io.kilnmark.server.auth.ApiTokenIdentityProvider.TOKEN_ID);
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (id == null || id == 0) {
+            return false;
+        }
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                "SELECT local_assistant FROM kilnmark.api_token WHERE id = ?")) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() && rs.getBoolean(1);
+                }
+            }
+        });
+    }
+
+    /** A field's profile: counts, and value statistics, for sources the caller may see. */
+    private Map<String, Object> profile(String stats) {
         if (stats == null) {
             return null;
         }
@@ -204,15 +235,13 @@ public class CatalogTools {
                     m.put(k, n.get(k).asLong());
                 }
             }
-            if (values) {
-                for (String k : List.of("min", "max", "median", "mean")) {
-                    if (n.has(k)) {
-                        m.put(k, n.get(k).asText());
-                    }
+            for (String k : List.of("min", "max", "median", "mean")) {
+                if (n.has(k)) {
+                    m.put(k, n.get(k).asText());
                 }
-                if (n.has("top")) {
-                    m.put("top", json.convertValue(n.get("top"), Object.class));
-                }
+            }
+            if (n.has("top")) {
+                m.put("top", json.convertValue(n.get("top"), Object.class));
             }
             return m;
         } catch (JsonProcessingException e) {

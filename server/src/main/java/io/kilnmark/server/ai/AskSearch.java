@@ -56,28 +56,40 @@ public class AskSearch {
                 + "An admin can choose one under AI models.");
         }
         ModelProfile p = profile.get();
-        List<String> kinds = kinds();
-        // Only sources this model may see are named in the prompt (the egress rule, per source).
-        List<String> sources = store.sources().stream().filter(s -> egress.refusal(p, s).isEmpty())
-            .map(Records.Source::name).toList();
-        List<String> allSources = store.sources().stream().map(Records.Source::name).toList();
-        ModelClient.ChatCall call = new ModelClient.ChatCall(system(kinds, sources), q, QueryPlan.SCHEMA, 300);
-        String failure = null;
-        for (int attempt = 0; attempt < ATTEMPTS; attempt++) {
+        // Only what this model may see goes into the prompt (the egress rule, per source): those
+        // sources' names, and the kinds of asset found in them.
+        List<Records.Source> all = store.sources();
+        List<Records.Source> visible = all.stream().filter(s -> egress.refusal(p, s).isEmpty()).toList();
+        List<String> kinds = kinds(visible.stream().map(Records.Source::id).toList());
+        List<String> allSources = all.stream().map(Records.Source::name).toList();
+        String system = system(kinds, visible.stream().map(Records.Source::name).toList());
+        String user = q;
+        String failure;
+        for (int attempt = 0; ; attempt++) {
+            String text;
             try {
-                String text = gateway.chatWith(p, AiFeature.SEARCH_NL.id(), null, call, caller, () -> false).answer()
-                    .text();
-                Optional<JsonNode> raw = QueryPlan.parse(json, text);
-                if (raw.isPresent()) {
-                    QueryPlan plan = QueryPlan.validate(raw.get(), q, kinds, allSources);
-                    HybridSearch.Result r = search.search(plan.text(), plan.filters(), limit, caller, true);
-                    return new Answer(q, plan, p.name(), null, r);
-                }
-                failure = "the model's answer was not a search plan";
+                text = gateway.chatWith(p, AiFeature.SEARCH_NL.id(), null,
+                    new ModelClient.ChatCall(system, user, QueryPlan.SCHEMA, 300), caller, () -> false,
+                    AiGateway.Budget.INTERACTIVE).answer().text();
             } catch (AiException e) {
-                failure = e.getMessage();
+                // The reason, with the model's address or reply, is in the usage records for admins.
+                failure = e.kind() == AiException.Kind.REFUSED ? e.publicMessage()
+                    : "the model is unavailable right now. An admin can see why under AI usage.";
                 break;
             }
+            Optional<JsonNode> raw = QueryPlan.parse(json, text);
+            if (raw.isPresent()) {
+                QueryPlan plan = QueryPlan.validate(raw.get(), q, kinds, allSources);
+                HybridSearch.Result r = search.search(plan.text(), plan.filters(), limit, caller, true);
+                return new Answer(q, plan, p.name(), null, r);
+            }
+            failure = "the model's answer was not a search plan.";
+            if (attempt + 1 >= ATTEMPTS) {
+                break;
+            }
+            // ADR 0012: one more try, saying what was wrong.
+            user = q + "\n\nYour previous answer was not a JSON object matching the schema. Answer again with only "
+                + "that JSON object: text, kinds, sources, fields and tags.";
         }
         return asTyped(q, limit, caller, "Searched as typed, because the question could not be interpreted: "
             + failure);
@@ -98,14 +110,20 @@ public class AskSearch {
             + "Keep text short: the subject words of the question.";
     }
 
-    private List<String> kinds() {
+    /** Kinds of asset in the given sources only. */
+    private List<String> kinds(List<Long> sourceIds) {
+        if (sourceIds.isEmpty()) {
+            return List.of();
+        }
         return db.tx(c -> {
             List<String> out = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement(
-                "SELECT DISTINCT lower(kind) FROM kilnmark.asset WHERE removed_at IS NULL ORDER BY 1 LIMIT 50");
-                 ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    out.add(rs.getString(1));
+            try (PreparedStatement ps = c.prepareStatement("SELECT DISTINCT lower(kind) FROM kilnmark.asset "
+                + "WHERE removed_at IS NULL AND source_id = ANY (?) ORDER BY 1 LIMIT 50")) {
+                ps.setArray(1, c.createArrayOf("bigint", sourceIds.toArray()));
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(rs.getString(1));
+                    }
                 }
             }
             return out;

@@ -44,6 +44,9 @@ public class CatalogResource {
         if (q == null || q.isBlank()) {
             throw new IllegalArgumentException("q: what to search for");
         }
+        if (q.length() > 500) {
+            throw new IllegalArgumentException("q: 500 characters at most");
+        }
         if (mode != null && !mode.equals("keyword") && !mode.equals("hybrid")) {
             throw new IllegalArgumentException("mode: hybrid (the default) or keyword");
         }

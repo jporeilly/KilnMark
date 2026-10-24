@@ -43,6 +43,9 @@ class AiEval {
     private final String source = System.getProperty("kilnmark.eval.source", "lab");
     private final Path golden = Path.of(System.getProperty("kilnmark.eval.golden", "../tests/ai-eval/golden.json"));
     private final Path out = Path.of(System.getProperty("kilnmark.eval.out", "build/ai-eval"));
+    private final Path baseline = Path.of(System.getProperty("kilnmark.eval.baseline",
+        "../tests/ai-eval/baseline.json"));
+    private final boolean updateBaseline = Boolean.getBoolean("kilnmark.eval.update-baseline");
     private static final int K = 5;
 
     private JsonNode get(String path) throws IOException, InterruptedException {
@@ -151,11 +154,51 @@ class AiEval {
         report.put("ask", Map.of("interpretedBy", String.valueOf(interpretedBy), "planAccuracy",
             EvalMetrics.mean(planScores), "items", asks));
 
+        Map<String, Double> scores = new LinkedHashMap<>();
+        scores.put("keyword.mrr", (Double) ((Map<?, ?>) search.get("keyword")).get("mrr"));
+        scores.put("hybrid.mrr", (Double) ((Map<?, ?>) search.get("hybrid")).get("mrr"));
+        scores.put("ask.planAccuracy", EvalMetrics.mean(planScores));
+        List<String> worse = compare(scores);
+        report.put("scores", scores);
+        report.put("regressions", worse);
+
         Files.createDirectories(out);
         Files.writeString(out.resolve("results.json"), json.writeValueAsString(report));
-        Files.writeString(out.resolve("results.md"), markdown(report, search, interpretedBy, planScores));
-        assertTrue(Files.exists(out.resolve("results.json")));
+        Files.writeString(out.resolve("results.md"), markdown(report, search, interpretedBy, planScores)
+            + (worse.isEmpty() ? "\nNo score fell below the baseline.\n" : "\nBelow the baseline: " + String.join("; ", worse)
+                + ".\n"));
         System.out.println("AI evaluation written to " + out.toAbsolutePath());
+        if (updateBaseline) {
+            JsonNode old = Files.exists(baseline) ? json.readTree(baseline.toFile()) : json.createObjectNode();
+            Map<String, Object> b = new LinkedHashMap<>();
+            b.put("about", old.path("about").asText("Scores the next run must not fall below (ADR 0012 rule 5)."));
+            b.put("tolerance", old.path("tolerance").asDouble(0.02));
+            Map<String, Double> rounded = new LinkedHashMap<>();
+            scores.forEach((k, v) -> rounded.put(k, Math.round(v * 1000) / 1000.0));
+            b.put("scores", rounded);
+            Files.writeString(baseline, json.writeValueAsString(b) + "\n");
+            System.out.println("Baseline updated: " + baseline.toAbsolutePath());
+            return;
+        }
+        assertTrue(worse.isEmpty(), "Scores fell below the baseline (" + baseline + "): " + String.join("; ", worse)
+            + ". Fix the regression, or accept the new scores with -Pkilnmark.eval.update-baseline=true.");
+    }
+
+    /** The scores that fell below the baseline by more than its tolerance, in words. */
+    private List<String> compare(Map<String, Double> scores) throws IOException {
+        List<String> worse = new ArrayList<>();
+        if (!Files.exists(baseline)) {
+            return worse;
+        }
+        JsonNode b = json.readTree(baseline.toFile());
+        double tolerance = b.path("tolerance").asDouble(0.02);
+        scores.forEach((k, v) -> {
+            JsonNode base = b.path("scores").path(k);
+            if (base.isNumber() && v < base.asDouble() - tolerance) {
+                worse.add(String.format(Locale.ROOT, "%s %.3f (baseline %.3f)", k, v, base.asDouble()));
+            }
+        });
+        return worse;
     }
 
     @SuppressWarnings("unchecked")

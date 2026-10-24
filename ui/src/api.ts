@@ -396,4 +396,11 @@ export const aiApi = {
     call<HybridResult>(`/api/v1/search?q=${enc(q)}&mode=${mode}`),
   ask: (question: string) =>
     call<AskResult>("/api/v1/search/ask", { method: "POST", body: JSON.stringify({ question }) }),
+  /** Tokens an admin flagged as used by a local AI assistant: through MCP they also see local_only sources. */
+  assistantTokens: () => call<{ tokenIds: number[] }>("/api/v1/ai/assistant-tokens"),
+  setAssistantToken: (id: number, localAssistant: boolean) =>
+    call<{ localAssistant: boolean }>(`/api/v1/ai/assistant-tokens/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ localAssistant }),
+    }),
 };

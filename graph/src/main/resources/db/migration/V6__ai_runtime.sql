@@ -70,8 +70,8 @@ CREATE INDEX ai_usage_at_idx ON ai_usage (at DESC);
 
 -- Asset embeddings for search by meaning, one per asset and embedding profile. The column has no
 -- fixed size, so profiles with different dimensions share the table; each profile gets its own
--- partial HNSW index on embedding::vector(n) (or halfvec(n) above 2,000), created by the server
--- when the profile is first used. text_hash says what was embedded, so unchanged assets are skipped.
+-- partial HNSW index on embedding::vector(n) (or halfvec(n) above 2,000) for its rows of that size,
+-- created by the server (CREATE INDEX CONCURRENTLY) when the profile is first used. text_hash says what was embedded, so unchanged assets are skipped.
 CREATE TABLE asset_embedding (
     profile_id   bigint NOT NULL REFERENCES model_profile (id) ON DELETE CASCADE,
     asset_urn    text NOT NULL REFERENCES asset (urn) ON DELETE CASCADE,
@@ -83,6 +83,10 @@ CREATE TABLE asset_embedding (
     PRIMARY KEY (profile_id, asset_urn)
 );
 CREATE INDEX asset_embedding_asset_idx ON asset_embedding (asset_urn);
+
+-- API tokens (V4): an admin can flag a token as used by a local AI assistant. Through the MCP
+-- server, such a token also sees sources whose AI rule is local_only; others see only allowed ones.
+ALTER TABLE api_token ADD COLUMN local_assistant boolean NOT NULL DEFAULT false;
 
 INSERT INTO install_info (key, value) VALUES ('schema_ai', '6')
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();

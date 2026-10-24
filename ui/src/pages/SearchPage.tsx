@@ -15,6 +15,15 @@ export function SearchPage({ q, ask }: { q: string; ask: boolean }) {
   const [note, setNote] = useState<string | null>(null);
   const [answer, setAnswer] = useState<AskResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [meaning, setMeaning] = useState(true);
+
+  // Say "and meaning" only when an embedding model is set.
+  useEffect(() => {
+    aiApi
+      .status()
+      .then((s) => setMeaning(s.searchByMeaning))
+      .catch(() => setMeaning(false));
+  }, []);
 
   useEffect(() => {
     if (!q) return;
@@ -46,7 +55,7 @@ export function SearchPage({ q, ask }: { q: string; ask: boolean }) {
       <h1 tabIndex={-1}>{q ? <>{ask ? "Answers for" : "Results for"} “{q}”</> : "Search"}</h1>
       <div className="search-mode" role="group" aria-label="How to search">
         <button type="button" aria-pressed={!ask} onClick={() => go(href.search(q))}>
-          Search names and meaning
+          {meaning ? "Search names and meaning" : "Search names"}
         </button>
         <button type="button" aria-pressed={ask} onClick={() => go(href.ask(q))}>
           Ask a question

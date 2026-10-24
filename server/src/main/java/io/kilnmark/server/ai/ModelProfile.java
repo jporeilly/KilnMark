@@ -30,12 +30,31 @@ public record ModelProfile(long id, String name, Provider provider, String baseU
     public record Input(String name, String provider, String baseUrl, String model, String purpose, Integer dimensions,
                         Integer contextSize, Boolean local, String apiKey, Integer timeoutSeconds,
                         Integer maxConcurrent) {
+        /** Never shows the key, so a logged input cannot leak it. */
+        @Override
+        public String toString() {
+            return "Input[name=" + name + ", provider=" + provider + ", baseUrl=" + baseUrl + ", model=" + model
+                + ", purpose=" + purpose + ", local=" + local + ", apiKey=" + (apiKey == null ? "unchanged" : "[hidden]")
+                + "]";
+        }
     }
 
     /** An input that passed every check, normalised. */
     public record Valid(String name, Provider provider, String baseUrl, String model, Purpose purpose,
                         Integer dimensions, Integer contextSize, boolean local, String apiKey, int timeoutSeconds,
                         int maxConcurrent) {
+        /** The address calls go to: the profile's own, or the provider's. */
+        public String effectiveBaseUrl() {
+            return baseUrl != null ? baseUrl : provider.defaultBaseUrl();
+        }
+
+        /** Never shows the key, so a logged input cannot leak it. */
+        @Override
+        public String toString() {
+            return "Valid[name=" + name + ", provider=" + provider.id() + ", baseUrl=" + effectiveBaseUrl() + ", model="
+                + model + ", purpose=" + purpose.id() + ", local=" + local + ", apiKey="
+                + (apiKey == null ? "unchanged" : "[hidden]") + "]";
+        }
     }
 
     private static final Pattern NAME = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");

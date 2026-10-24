@@ -50,6 +50,7 @@ public final class FakeModelServer {
     private final List<Seen> seen = new CopyOnWriteArrayList<>();
     private final AtomicInteger failures = new AtomicInteger();
     private volatile int failStatus = 500;
+    private volatile long delayMs;
     private volatile Function<String, String> chat = user -> "{\"ok\": true}";
 
     private FakeModelServer() throws IOException {
@@ -82,6 +83,11 @@ public final class FakeModelServer {
         this.chat = reply;
     }
 
+    /** Every answer waits this long first (0: none). */
+    public void delay(long ms) {
+        delayMs = ms;
+    }
+
     /** The next {@code times} requests fail with {@code status}. */
     public void failNext(int status, int times) {
         failStatus = status;
@@ -95,10 +101,18 @@ public final class FakeModelServer {
     public void clear() {
         seen.clear();
         failures.set(0);
+        delayMs = 0;
         chat = user -> "{\"ok\": true}";
     }
 
     private boolean fail(HttpExchange x) throws IOException {
+        if (delayMs > 0) {
+            try {
+                Thread.sleep(delayMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         if (failures.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
             send(x, failStatus, "{\"error\": {\"message\": \"injected failure\", \"type\": \"server_error\"}}");
             return true;

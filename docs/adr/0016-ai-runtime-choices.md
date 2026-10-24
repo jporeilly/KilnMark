@@ -27,18 +27,41 @@ In all, 2.7 MB of jars. All pass `:server:checkLicense`.
   The Azure SDK module (`langchain4j-azure-open-ai`) is not used: it brings the Azure core SDK,
   Netty and Reactor, tens of megabytes for an API the OpenAI module already speaks. Ollama is not a
   special case. Bedrock and Mistral (named in 0012) are left for later; Mistral speaks the OpenAI API.
-- LangChain4j 1.22.0 wants mutiny-zero 1.3.1; the Quarkus platform pins 1.2.1. Only streaming
-  uses it, and Kilnmark does not stream. The tests and a run against a real llama-server pass.
+- **Versions held back by the Quarkus platform.** LangChain4j 1.22.0 asks for Jackson 2.22.1 and
+  mutiny-zero 1.3.1; the enforced Quarkus platform (3.40.1) keeps Jackson at 2.21.7 and
+  mutiny-zero at 1.2.1. Only streaming uses mutiny-zero, and Kilnmark does not stream. The tests
+  and a run against a real llama-server pass with these versions; a LangChain4j upgrade must be
+  checked the same way.
+- **A beta artifact.** `langchain4j-reactive-streaming` is published as `1.22.0-beta32`, pulled in
+  by the OpenAI and Anthropic modules. It is unused here (no streaming), but it ships.
+- **A dev-mode client that ships.** `quarkus-mcp-server-http` depends on
+  `quarkus-mcp-server-sse-client` (8 KB, for its dev UI), so it is in the server too, unused.
 
 ### Model profiles and routing
 
 - A **model profile** (table `model_profile`, migration V6) holds provider, base URL, model name,
   purpose (`chat` or `embedding`), dimensions for embeddings, context size, timeout, concurrency
   limit, and a `local` flag: the administrator's assertion that the server is on their network.
-  Only an OpenAI-compatible server can be marked local; hosted providers cannot.
+  Only an OpenAI-compatible server can be marked local; hosted providers cannot. The UI leaves it
+  unticked, and clears it when the address's host changes.
+- **The operator lock and the local flag.** With `kilnmark.ai.hosted-models=forbidden` (set by
+  whoever runs the server, not an admin), the admin's tick is not enough: a profile counts as local
+  only if its host is in `kilnmark.ai.local-hosts`, by name, or with every address it resolves to
+  inside a listed network. The default list is loopback and private networks (127.0.0.0/8, ::1,
+  10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7) and `localhost`; the operator can narrow
+  it. It is checked when a profile is saved and again, with a fresh name lookup, before every call
+  (`ModelHosts`, `EgressPolicy.local`). A name that resolves differently between the check and the
+  connection (DNS rebinding) is not caught; list addresses, not names, where that matters.
+- **No metadata services.** Base URLs on link-local addresses (169.254.0.0/16, fe80::/10), the
+  Alibaba and AWS IPv6 metadata addresses, and cloud metadata names (`metadata.google.internal`
+  and the like) are refused on save and at call time, unless the operator sets
+  `kilnmark.ai.allow-metadata-addresses=true`. Admins can still point a profile at any other
+  internal address: they are trusted with that, as with source URLs.
 - API keys are sealed with `SecretBox` (AES-256-GCM, the server's key) and only the model client
   opens them. The API returns `hasApiKey` and, for keys of 16 characters or more, the last four
-  (0012); shorter keys show nothing. Failure messages are scrubbed of the key.
+  (0012); shorter keys show nothing. Failure messages are scrubbed of the key, the input records
+  hide it in `toString`, and a test captures the log while keys are used and refused. A stored key
+  goes only to the host it was entered for: changing the address's host needs the key again.
 - A profile carries a `version` that goes up on every change. Each process caches one client per
   profile and rebuilds it when the stored version differs, so a change takes effect at once in
   every api and worker process, without a restart.
@@ -49,12 +72,24 @@ In all, 2.7 MB of jars. All pass `:server:checkLicense`.
 
 ### One gate for every call
 
-`AiGateway` is the only way to call a model. For every call it: finds the profile, asks
-`EgressPolicy`, waits for a slot (the profile's `max_concurrent`, a fair semaphore, waiting at
-most the timeout; else "busy"), calls on a virtual thread with the profile's timeout, retries
-timeouts, 408, 429, 5xx and refused connections up to `kilnmark.ai.max-retries` (default 2) with
-exponential backoff and jitter, stops when the caller cancels, and writes a usage record whatever
-the outcome. LangChain4j's own retries are off.
+`AiGateway` is the only way to call a model. For every call it: checks the address
+(`ModelHosts`), asks `EgressPolicy`, waits for a slot (the profile's `max_concurrent`, a fair
+semaphore; the limit is per process, so separate api and worker processes can together exceed
+it), calls on a virtual thread, retries 408, 429, 5xx, refused connections and (in the background)
+timeouts with exponential backoff and jitter, stops when the caller cancels, and writes a usage
+record whatever the outcome. LangChain4j's own retries are off.
+
+**Two budgets.** Interactive calls (a search, a question, an MCP search) wait at most 2 seconds
+for a slot, never retry a timeout, and give up after 10 seconds in all; for 30 seconds after a
+model timed out or could not be reached, they skip it at once (recorded as `failed`, "not tried
+again yet"), so an outage does not hold every search. Background calls (embedding at scan, the
+profile test) use the profile's timeout and up to `kilnmark.ai.max-retries` (default 2).
+
+**What viewers see.** An `AiException`'s message can name the model's address and quote the
+server: it goes to usage records and the profile test, which are admin-only. Search notes, ask
+notes, scan run details and MCP answers use fixed words ("unavailable right now; an admin can see
+why under AI usage"); only egress refusals, which name the source and the profile, are shown as
+they are.
 
 **Egress.** `EgressPolicy.refusal(profile, source)` is the one rule:
 
@@ -65,33 +100,42 @@ the outcome. LangChain4j's own retries are off.
    what any unknown value means) admits only local models, `none` admits none, `allowed` admits
    any model the server allows.
 
-Calls about no source (a search query, a test) are checked against rule 1 only. A prompt that
-names several sources (asking in plain English) lists only the sources the model may see. A
-refused call never reaches the model, is recorded with outcome `refused`, and the message says
+Calls about no source (a search query, a test) are checked against rule 1 only: with a hosted
+embedding model, the text of every search goes to that provider, and with a hosted chat model,
+every question does (the AI models page says so). A prompt that names several sources (asking in
+plain English) lists only the sources the model may see, and only the kinds of asset found in
+them. A refused call never reaches the model, is recorded with outcome `refused`, and the message says
 which rule refused it and what to change. There is no "metadata only versus sample values" split
 yet (0012): every AI feature here sends metadata only, never values.
 
 **Usage records** (`ai_usage`): feature, profile (name kept after deletion), provider, model,
 local flag, source (name kept after the source is deleted), tokens in and out, latency, outcome
 (`ok`, `refused`, `failed`, `timeout`, `busy`, `cancelled`), a plain-English detail and the
-caller (`token 12 (name)`, `scan 34`, `mcp: token 12 (name)`). Prompt and answer text are kept
-only with `kilnmark.ai.keep-usage-text=true`.
+caller (`token 12 (name)`, `scan 34`, `mcp: token 12 (name)`). An embedding answer with the wrong
+number or size of vectors is recorded as `failed`. Prompt and answer text are kept only with
+`kilnmark.ai.keep-usage-text=true`. Records older than `kilnmark.ai.usage-retention` (default 90
+days) are deleted every six hours by processes with the scheduler role.
 
 **Structured answers.** OpenAI-compatible servers, OpenAI and Azure get the JSON schema as
 `response_format` (llama-server turns it into a grammar); Gemini is asked for JSON; Anthropic gets
 the schema in the prompt. Every answer is parsed and checked; a plan that does not parse is asked
-for once more, then the feature falls back. Temperature is 0, except for hosted OpenAI and Azure,
+for once more, with what was wrong added to the question, then the feature falls back. Temperature is 0, except for hosted OpenAI and Azure,
 whose reasoning models refuse a temperature.
 
 ### Embeddings
 
 - **When.** `ScanService` fires a CDI event, `ScanFinished(sourceId, sourceName, runId, status,
   cancelled)`, synchronously on the worker after the run's final status is written, while the
-  worker still holds the source's scan lock. `Embeddings` observes it and embeds the source's
-  assets that are new or changed, then adds a sentence to the run's detail ("Search by meaning: 12
-  assets embedded with local-embed (40 unchanged).", or why nothing was embedded). Choosing or
-  changing the embedding model re-embeds every source in the background, one process at a time
-  (PostgreSQL advisory lock); admins can also start it (`POST /api/v1/ai/embeddings/refresh`).
+  worker still holds the source's scan lock. `Embeddings` observes it (not after a failed scan) and
+  embeds the source's assets that are new or changed, reading them 500 at a time, then adds a
+  sentence to the run's detail ("Search by meaning: 12 assets embedded with local-embed (40
+  unchanged).", or why nothing was embedded). Before each batch it reads the source and the
+  embedding profile again, so a change to the source's AI rule or to the model applies at once.
+- **Re-embedding.** Choosing or changing the embedding model re-embeds every source in the
+  background; admins can also start it (`POST /api/v1/ai/embeddings/refresh`). A request made
+  while one runs is not dropped: the run goes round once more. Across processes a PostgreSQL
+  advisory lock makes the second process wait for the first, then run (finding most assets
+  unchanged).
 - **What.** `AssetText`: kind, location and name (also split into words), source name and
   description, asset description, and every field with its type and description. Never values or
   profile statistics. Cut to about three characters per token of the profile's context size
@@ -104,9 +148,16 @@ whose reasoning models refuse a temperature.
   `asset_embedding(profile_id, asset_urn, model, dimensions, text_hash, embedding vector)` with a
   check that `vector_dims(embedding) = dimensions`. The server creates, per profile,
   `asset_embedding_hnsw_p{id}_d{n} USING hnsw ((embedding::vector(n)) vector_cosine_ops) WHERE
-  profile_id = {id}`; above 2,000 dimensions (pgvector's HNSW limit for `vector`) it indexes
-  `embedding::halfvec(n)`, up to 4,000; above that, searches scan without an index. Searches use
-  exactly the same cast, so the planner uses the index. We chose this over a table per dimension
+  profile_id = {id} AND dimensions = {n}`, with `CREATE INDEX CONCURRENTLY` outside a transaction,
+  after checking `pg_index` for a valid one (a half-built, invalid index is dropped and built
+  again). Above 2,000 dimensions (pgvector's HNSW limit for `vector`) it indexes
+  `embedding::halfvec(n)`, up to 4,000; above that, searches scan without an index. Searches put
+  the profile id and size into the SQL as numbers and use the same cast, so the partial index
+  matches even under a generic plan, and rows of another size are never compared.
+- **Changing a profile's size mid-scan.** Vectors are saved only while the profile is still the
+  version they were made with: the profile row is share-locked in the same transaction as the
+  insert. Searches also filter on `dimensions`, and a database error in the vector half of a
+  search falls back to words with a note. We chose this over a table per dimension
   because there is one place to query, one foreign key to cascade, and swapping models never
   needs DDL beyond an index.
 - Rows cascade away with their asset (`asset_urn REFERENCES asset ON DELETE CASCADE`), so
@@ -115,9 +166,13 @@ whose reasoning models refuse a temperature.
 
 ### Search
 
-- **Hybrid.** `GET /api/v1/search` merges the existing keyword and trigram ranking (top 100) with
-  the 100 nearest assets by cosine similarity (at least `kilnmark.ai.min-similarity`, default 0.3)
-  by reciprocal rank fusion (k = 60). Each hit says whether it matched by `words`, `meaning` or
+- **Hybrid.** `GET /api/v1/search` (`q` at most 500 characters) merges the existing keyword and
+  trigram ranking (top 100) with the 100 nearest assets by cosine similarity (at least
+  `kilnmark.ai.min-similarity`, default 0.3) by reciprocal rank fusion (k = 60). The vector query
+  runs with `SET LOCAL hnsw.ef_search` at least the number wanted; with filters (from a question)
+  they go into the vector query itself, and with pgvector 0.8 or later
+  `hnsw.iterative_scan = relaxed_order` keeps the index scan going until enough rows pass (the
+  rows are sorted again after). Each hit says whether it matched by `words`, `meaning` or
   both. Without an embedding model, or if the query cannot be embedded (refused, server down),
   it is the keyword search alone with a `note` saying why; `mode=keyword` asks for that.
 - **Asking.** `POST /api/v1/search/ask` sends the question, the asset kinds in the catalogue and
@@ -131,30 +186,62 @@ whose reasoning models refuse a temperature.
 ### MCP server
 
 The Quarkiverse MCP server (Apache-2.0, 1.1 MB with its API, in the Quarkus platform) serves
-Streamable HTTP at `/mcp` (and the older SSE transport at `/mcp/sse`). An HTTP permission puts
-both behind the API token mechanism with the viewer role. Three read-only tools:
-`search_assets`, `get_asset` (fields with a profile summary) and `list_sources` (with stream A's
-display name when there is one). An assistant is a model of unknown location, so sources whose
-rule is `none` are invisible, and minimum, maximum and most common values are given only for
-sources whose rule is `allowed`. There is no lineage in the catalogue yet, so no lineage tool.
+Streamable HTTP at `/mcp`, behind the API token mechanism with the viewer role (an HTTP
+permission). The extension's older SSE transport (`/mcp/sse`, `/mcp/messages`) has no switch, so
+an HTTP permission denies it. With sign-in off (loopback only), `/mcp` also answers only requests
+whose Host is `localhost`, `127.0.0.1` or `[::1]`, against DNS rebinding. Three read-only tools:
+`search_assets` (query at most 500 characters), `get_asset` (fields with a profile summary) and
+`list_sources` (with stream A's display name when there is one).
+
+An assistant is a model of unknown location, so by default it sees only sources whose AI rule is
+`allowed`. An admin can flag a token as used by a local assistant (`api_token.local_assistant`,
+added in V6; `PUT /api/v1/ai/assistant-tokens/{id}`, and a tick on the Tokens page); MCP calls
+with it also see `local_only` sources. Sources whose rule is `none` are never visible. There is no
+lineage in the catalogue yet, so no lineage tool.
 
 ### Bundled models (Compose)
 
 `compose.yaml` gains profiles `ai` (llama-server CPU image) and `ai-cuda` (CUDA image with an
-NVIDIA GPU reservation), both `ghcr.io/ggml-org/llama.cpp` build b11429, plus `ai-embed` (CPU, in
-both) and a one-off `ai-download` (curl 8.22.0) that fetches the default models into the `models`
-volume: Qwen2.5-1.5B-Instruct Q4_K_M (Apache-2.0, about 1.1 GB) for chat and bge-small-en-v1.5
-Q8_0 (MIT, 37 MB, 384 dimensions) for embeddings. They are not added to Kilnmark automatically:
-the admin adds the profiles and marks them local.
+NVIDIA GPU reservation), plus `ai-embed` (CPU, in both) and a one-off `ai-download` that fetches
+the default models into the `models` volume. Images are pinned by tag and digest:
+
+| Image | Tag | Digest |
+| --- | --- | --- |
+| `ghcr.io/ggml-org/llama.cpp` | `server-b11429` (5 October 2026) | `sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1` |
+| `ghcr.io/ggml-org/llama.cpp` | `server-cuda-b11429` | `sha256:883915ea20a4b350e98f7284098f4d400c21e9b366e248d397cd42d90602a84c` |
+| `docker.io/curlimages/curl` | `8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` |
+
+Each model file is downloaded from a fixed commit and kept only if its SHA-256 matches; a file
+already in the volume is checked, not trusted:
+
+| Model | Source (Hugging Face) | Revision | SHA-256 | Licence |
+| --- | --- | --- | --- | --- |
+| Qwen2.5-1.5B-Instruct, Q4_K_M, 1.12 GB | `Qwen/Qwen2.5-1.5B-Instruct-GGUF`, file `qwen2.5-1.5b-instruct-q4_k_m.gguf` | `91cad51170dc346986eccefdc2dd33a9da36ead9` | `6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e` | Apache-2.0 |
+| bge-small-en-v1.5, Q8_0, 37 MB, 384 dimensions | `ggml-org/bge-small-en-v1.5-Q8_0-GGUF`, file `bge-small-en-v1.5-q8_0.gguf` | `f2068edd9b54f2a369549ccc71f70ed273a2a801` | `f046db1dc724cf4f6f0a0c5917e922823b73eb1d27b8f9a9c2797f7866974804` | MIT |
+
+Qwen publishes its own GGUF files, so the chat model comes from the publisher. BAAI publishes
+bge-small-en-v1.5 as PyTorch, safetensors and ONNX, not GGUF, so the embedding model is the
+conversion published by ggml-org, the llama.cpp project itself, rather than a third party's.
+
+Slots: chat runs `--parallel 2` over 8,192 tokens (4,096 per slot, matching the default of two
+calls at a time per model); embeddings run `--parallel 2` over 1,024 tokens, so each slot has the
+512 tokens bge-small accepts. The models are not added to Kilnmark automatically: the admin adds
+the profiles and ticks them local.
 
 ### Evaluation
 
 `tests/ai-eval/golden.json` (synthetic, over the reference lab) holds 15 search queries with the
 assets that answer them and 6 questions with the plan they should give. `./gradlew :server:aiEval`
 runs it against a running server with its configured models and writes `results.json` and
-`results.md` to `dist/build/server/ai-eval`. It is not part of `build`. The first run, against
-the lab with bge-small-en-v1.5 and Qwen2.5-0.5B-Instruct on two CPU cores: keyword MRR 0.333,
-hybrid MRR 0.917, plan accuracy 0.514. With only five lab tables, recall at 5 is not yet a useful
+`results.md` to `dist/build/server/ai-eval`. It is not part of `build`. It fails when a score falls
+below `tests/ai-eval/baseline.json` by more than its tolerance (0.02), which makes 0012's rule 5
+("a release that scores worse does not ship") a command to run;
+`-Pkilnmark.eval.update-baseline=true` accepts new scores.
+
+The baseline is the first run, against the lab with bge-small-en-v1.5 and **Qwen2.5-0.5B-Instruct**
+(smaller than the shipped 1.5B chat model, to fit the build machine) on two CPU cores: keyword MRR
+0.333, hybrid MRR 0.917, plan accuracy 0.514. A new baseline should be taken with the shipped
+models before the first release. With only five lab tables, recall at 5 is not yet a useful
 number.
 
 ## Why
@@ -176,6 +263,8 @@ without a migration.
   queued job: the job table's kinds are shared with other work, and a second kind would collide
   with other branches' migrations. It survives nothing: if that process stops, the next scan of
   each source catches up, or an admin presses "Embed again".
+- Concurrency limits are per process; the model server should be sized for api and worker
+  processes together.
 - Every search with an embedding model costs one embedding call and one usage row.
 - The `local` flag is the administrator's word. Kilnmark does not check where a server is.
 - Hosted calls go straight out; there is no HTTP proxy setting yet.

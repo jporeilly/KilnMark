@@ -167,4 +167,97 @@ class AiRulesTest {
         assertEquals("public.vector(768)", Embeddings.cast(768));
         assertEquals("public.halfvec(3072)", Embeddings.cast(3072));
     }
+
+    @Test
+    void profileInputsNeverShowTheirKey() {
+        ModelProfile.Input in = new ModelProfile.Input("p", "openai", null, "m", "chat", null, null, false,
+            "sk-very-secret-key-123456", null, null);
+        assertFalse(in.toString().contains("sk-very-secret"), in.toString());
+        ModelProfile.Valid v = ModelProfile.validate(in, false);
+        assertFalse(v.toString().contains("sk-very-secret"), v.toString());
+        assertTrue(v.toString().contains("[hidden]"));
+    }
+
+    private static io.smallrye.config.SmallRyeConfig config(String... pairs) {
+        io.smallrye.config.SmallRyeConfigBuilder b = new io.smallrye.config.SmallRyeConfigBuilder()
+            .addDefaultInterceptors().withMapping(io.kilnmark.server.KilnmarkConfig.class)
+            .withConverter(java.time.Duration.class, 200, new io.quarkus.runtime.configuration.DurationConverter())
+            .withDefaultValue("kilnmark.secret-key-file", "/tmp/unused.key");
+        for (int i = 0; i < pairs.length; i += 2) {
+            b.withDefaultValue(pairs[i], pairs[i + 1]);
+        }
+        return b.build();
+    }
+
+    @Test
+    void anUnknownHostedModelsValueStopsTheServer() {
+        assertThrows(RuntimeException.class, () -> config("kilnmark.ai.hosted-models", "sometimes"));
+        assertEquals(io.kilnmark.server.KilnmarkConfig.Ai.HostedModels.FORBIDDEN,
+            config("kilnmark.ai.hosted-models", "forbidden").getConfigMapping(io.kilnmark.server.KilnmarkConfig.class)
+                .ai().hostedModels());
+    }
+
+    @Test
+    void localHostsAreCheckedByNameAndNetwork() {
+        io.kilnmark.server.KilnmarkConfig locked = config("kilnmark.ai.hosted-models", "forbidden")
+            .getConfigMapping(io.kilnmark.server.KilnmarkConfig.class);
+        ModelHosts hosts = new ModelHosts(locked);
+        assertTrue(hosts.mayBeLocal("http://127.0.0.1:8080/v1"));
+        assertTrue(hosts.mayBeLocal("http://10.1.2.3/v1"));
+        assertTrue(hosts.mayBeLocal("http://192.168.0.9/v1"));
+        assertTrue(hosts.mayBeLocal("http://[::1]:8080/v1"));
+        assertTrue(hosts.mayBeLocal("http://localhost:8080/v1"));
+        assertFalse(hosts.mayBeLocal("http://203.0.113.7/v1"));
+        assertFalse(hosts.mayBeLocal("http://172.32.0.1/v1"), "just outside 172.16.0.0/12");
+        assertTrue(hosts.mayBeLocal("http://172.31.255.255/v1"));
+        assertFalse(hosts.mayBeLocal("http://no-such-host.invalid/v1"));
+        ModelHosts narrow = new ModelHosts(config("kilnmark.ai.hosted-models", "forbidden",
+            "kilnmark.ai.local-hosts", "10.20.0.0/16,ai").getConfigMapping(io.kilnmark.server.KilnmarkConfig.class));
+        assertTrue(narrow.mayBeLocal("http://10.20.3.4/v1"));
+        assertTrue(narrow.mayBeLocal("http://ai:8080/v1"));
+        assertFalse(narrow.mayBeLocal("http://10.21.0.1/v1"));
+        assertFalse(narrow.mayBeLocal("http://127.0.0.1/v1"));
+        // Without the lock, the admin's word stands.
+        assertTrue(new ModelHosts(config().getConfigMapping(io.kilnmark.server.KilnmarkConfig.class))
+            .mayBeLocal("http://203.0.113.7/v1"));
+    }
+
+    @Test
+    void metadataAddressesAreRefused() {
+        ModelHosts hosts = new ModelHosts(config().getConfigMapping(io.kilnmark.server.KilnmarkConfig.class));
+        assertTrue(hosts.forbidden("http://169.254.169.254/latest").isPresent());
+        assertTrue(hosts.forbidden("http://metadata.google.internal/v1").isPresent());
+        assertTrue(hosts.forbidden("http://[fe80::1]/v1").isPresent());
+        assertFalse(hosts.forbidden("http://127.0.0.1:8080/v1").isPresent());
+        assertFalse(new ModelHosts(config("kilnmark.ai.allow-metadata-addresses", "true")
+            .getConfigMapping(io.kilnmark.server.KilnmarkConfig.class)).forbidden("http://169.254.169.254/").isPresent());
+    }
+
+    @Test
+    void theMcpHostGuardKnowsLocalNames() {
+        assertTrue(io.kilnmark.server.ai.mcp.McpHostGuardAccess.local("localhost:8780"));
+        assertTrue(io.kilnmark.server.ai.mcp.McpHostGuardAccess.local("127.0.0.1"));
+        assertTrue(io.kilnmark.server.ai.mcp.McpHostGuardAccess.local("[::1]:8780"));
+        assertFalse(io.kilnmark.server.ai.mcp.McpHostGuardAccess.local("evil.example:8780"));
+        assertFalse(io.kilnmark.server.ai.mcp.McpHostGuardAccess.local("localhost.evil.example"));
+        assertFalse(io.kilnmark.server.ai.mcp.McpHostGuardAccess.local(null));
+    }
+
+    @Test
+    void anEmbeddingOfTheWrongShapeIsAFailure() {
+        ModelProfile p = new ModelProfile(1, "e", Provider.OPENAI_COMPATIBLE, "http://h/v1", "m",
+            AiFeature.Purpose.EMBEDDING, 3, null, true, false, null, 5, 1, 1, "t", null, null);
+        assertNull(AiGateway.wrongShape(p, 1, new ModelClient.EmbedAnswer(List.of(new float[3]), null)));
+        assertTrue(AiGateway.wrongShape(p, 1, new ModelClient.EmbedAnswer(List.of(new float[4]), null))
+            .contains("Set the profile's dimensions to 4"));
+        assertNotNull(AiGateway.wrongShape(p, 2, new ModelClient.EmbedAnswer(List.of(new float[3]), null)));
+    }
+
+    @Test
+    void pgvectorVersionsAreCompared() {
+        assertTrue(HybridSearch.atLeast("0.8.0", 0, 8));
+        assertTrue(HybridSearch.atLeast("1.0", 0, 8));
+        assertFalse(HybridSearch.atLeast("0.7.4", 0, 8));
+        assertFalse(HybridSearch.atLeast("x", 0, 8));
+    }
 }

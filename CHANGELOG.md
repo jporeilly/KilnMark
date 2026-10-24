@@ -55,31 +55,38 @@
 - **AI models (ADR 0016):** admins add models under **AI models**: local ones (llama.cpp's
   llama-server, vLLM, Ollama or any OpenAI-compatible server, marked local) and hosted ones with an
   API key (OpenAI, Azure OpenAI, Anthropic, Google Gemini). No restart needed. API keys are
-  encrypted and never shown again (only their last four characters). **Test** says in plain words
+  encrypted and never shown again (only their last four characters), and are asked for again when
+  a model's address moves to another host. Link-local and cloud metadata addresses are refused. **Test** says in plain words
   whether a model works and what to fix. Each feature (search by meaning, asking in plain English,
   describe, classify) uses the model an admin chooses, or is off and works without AI.
 - **What may leave the network:** every model call passes one check. A source's AI rule
   (`ai_egress`: `local_only` by default, `allowed` or `none`) decides which models may see it, and
-  hosted models can be forbidden for the whole server (`KILNMARK_AI_HOSTED_MODELS=forbidden`, or
-  by an admin). A refused call never reaches the model and says why.
+  hosted models can be forbidden for the whole server by an admin, or by whoever runs it
+  (`KILNMARK_AI_HOSTED_MODELS=forbidden`); then a model counts as local only if its address is on
+  a local network (`KILNMARK_AI_LOCAL_HOSTS`). A refused call never reaches the model and says why.
 - **AI usage:** every model call is recorded (feature, model, source, tokens, time, outcome, who
   asked), refused ones too, without prompt or answer text; admins see totals by day and model.
+  Records are kept 90 days (`kilnmark.ai.usage-retention`).
 - **Search by meaning:** after each scan, assets (names, descriptions, fields and types, never
   values) are embedded with the chosen embedding model into pgvector, skipping unchanged ones; the
   scan's run says how many. Search combines words and meaning (reciprocal rank fusion), shows how
-  each result matched, and falls back to words, saying why.
+  each result matched, and falls back to words, saying why (without naming the model). A search
+  waits about 10 seconds at most for the model, and skips one that failed in the last 30 seconds.
 - **Ask a question:** the search page has an "Ask a question" mode. A chat model turns the
   question into a search (words, kinds, sources, field names), which is shown with the results,
   including anything it could not use. Without a chat model the question is searched as typed.
 - **MCP server:** outside AI assistants can search and read the catalogue at `/mcp` (Streamable
-  HTTP) with a viewer API token: `search_assets`, `get_asset`, `list_sources`. Sources whose AI
-  rule is `none` are hidden; values only for sources whose rule is `allowed`.
+  HTTP) with a viewer API token: `search_assets`, `get_asset`, `list_sources`. Assistants see
+  sources whose AI rule is `allowed`; tokens an admin marks as used by a local assistant also see
+  `local_only` ones; `none` sources are never shown.
 - **Compose:** profiles `ai` (CPU) and `ai-cuda` (NVIDIA GPU) run llama-server with a small chat
-  model and an embedding model; `ai-download` fetches them into the `models` volume.
+  model and an embedding model; `ai-download` fetches them into the `models` volume from fixed
+  revisions, checked by SHA-256. Images pinned by tag and digest.
 - **AI evaluation:** `./gradlew :server:aiEval` scores a running server's search (recall, MRR)
-  and question answering against a synthetic golden set over the lab; not part of the build.
+  and question answering against a synthetic golden set over the lab, and fails if a score falls
+  below the baseline; not part of the build.
 - **Database:** migration V6 adds `model_profile`, `ai_route`, `ai_setting`, `ai_usage` and
-  `asset_embedding`. 2.7 MB of jars added (LangChain4j provider modules, Quarkus MCP server), all
+  `asset_embedding`, and `api_token.local_assistant`. 2.7 MB of jars added (LangChain4j provider modules, Quarkus MCP server), all
   Apache-2.0.
 
 ## 0.0.2 (24 October 2026)

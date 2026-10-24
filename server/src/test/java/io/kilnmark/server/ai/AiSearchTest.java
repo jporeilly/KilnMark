@@ -45,6 +45,15 @@ class AiSearchTest {
     @Inject
     AgroalDataSource db;
 
+    @Inject
+    Embeddings embeddings;
+
+    @Inject
+    ModelProfiles profiles;
+
+    @Inject
+    AiGateway gateway;
+
     @ConfigProperty(name = "quarkus.datasource.jdbc.url")
     String url;
 
@@ -240,7 +249,7 @@ class AiSearchTest {
             .then().statusCode(200);
         as(viewer).queryParam("q", "buyers").get("/api/v1/search").then().statusCode(200)
             .body("mode", equalTo("keyword"))
-            .body("note", containsString("only models marked local"));
+            .body("note", containsString("Only local models may be used"));
         admin().contentType(ContentType.JSON).body(Map.of("hostedModels", "allowed")).put("/api/v1/ai/settings")
             .then().statusCode(200);
         route("embed", "s-embed");
@@ -352,6 +361,12 @@ class AiSearchTest {
         for (String t : List.of("search_assets", "get_asset", "list_sources")) {
             assertTrue(tools.contains(t), tools);
         }
+        // The older SSE transport is refused, even with a valid token.
+        RestAssured.given().header("Authorization", "Bearer " + viewer).accept("text/event-stream").get("/mcp/sse")
+            .then().statusCode(403);
+        RestAssured.given().header("Authorization", "Bearer " + viewer).contentType(ContentType.JSON).body("{}")
+            .post("/mcp/messages/x").then().statusCode(403);
+
         String search = payload(mcp(viewer, session, "{\"jsonrpc\": \"2.0\", \"id\": 3, \"method\": \"tools/call\", "
             + "\"params\": {\"name\": \"search_assets\", \"arguments\": {\"query\": \"buyers\"}}}"));
         assertTrue(search.contains("aishop.customers") || search.contains("urn:kilnmark:ai-shop:aishop.customers"),
@@ -366,9 +381,34 @@ class AiSearchTest {
         assertTrue(hidden.contains("No asset"), hidden);
         String sources = payload(mcp(viewer, session, "{\"jsonrpc\": \"2.0\", \"id\": 6, \"method\": \"tools/call\", "
             + "\"params\": {\"name\": \"list_sources\", \"arguments\": {}}}"));
-        assertTrue(sources.contains("ai-shop") && sources.contains("ai-locked"), sources);
+        // By default an assistant sees only sources whose AI rule is allowed.
+        assertTrue(sources.contains("ai-shop"), sources);
+        assertFalse(sources.contains("ai-locked"), sources);
         assertFalse(sources.contains("ai-none"), sources);
-        assertFalse(sources.contains(password) && !password.isBlank() && sources.contains("\"password"), sources);
+        String lockedAsset = payload(mcp(viewer, session, "{\"jsonrpc\": \"2.0\", \"id\": 7, \"method\": "
+            + "\"tools/call\", \"params\": {\"name\": \"get_asset\", \"arguments\": {\"urn\": "
+            + "\"urn:kilnmark:ai-locked:ailocked.clients\"}}}"));
+        assertTrue(lockedAsset.contains("No asset"), lockedAsset);
+
+        // A token an admin flags as used by a local assistant also sees local_only sources, never none.
+        long tokenId = as(viewer).get("/api/v1/me").then().extract().jsonPath().getLong("tokenId");
+        as(viewer).contentType(ContentType.JSON).body(Map.of("localAssistant", true))
+            .put("/api/v1/ai/assistant-tokens/" + tokenId).then().statusCode(403);
+        admin().contentType(ContentType.JSON).body(Map.of("localAssistant", true))
+            .put("/api/v1/ai/assistant-tokens/" + tokenId).then().statusCode(200);
+        admin().get("/api/v1/ai/assistant-tokens").then().statusCode(200)
+            .body("tokenIds", hasItem((int) tokenId));
+        sources = payload(mcp(viewer, session, "{\"jsonrpc\": \"2.0\", \"id\": 8, \"method\": \"tools/call\", "
+            + "\"params\": {\"name\": \"list_sources\", \"arguments\": {}}}"));
+        assertTrue(sources.contains("ai-locked"), sources);
+        assertFalse(sources.contains("ai-none"), sources);
+        String tooLong = payload(mcp(viewer, session, "{\"jsonrpc\": \"2.0\", \"id\": 9, \"method\": \"tools/call\", "
+            + "\"params\": {\"name\": \"search_assets\", \"arguments\": {\"query\": \"" + "x".repeat(501) + "\"}}}"));
+        assertTrue(tooLong.contains("500 characters"), tooLong);
+        admin().contentType(ContentType.JSON).body(Map.of("localAssistant", false))
+            .put("/api/v1/ai/assistant-tokens/" + tokenId).then().statusCode(200);
+        admin().contentType(ContentType.JSON).body(Map.of("localAssistant", true))
+            .put("/api/v1/ai/assistant-tokens/999999").then().statusCode(404);
     }
 
     @Test
@@ -395,6 +435,196 @@ class AiSearchTest {
             }
         }
         return b.toString();
+    }
+
+    @Test
+    @Order(8)
+    void viewersNeverSeeAModelsAddressOrReply() throws Exception {
+        profile("s-embed-gone", "embedding", "fake-embed-64", true, 64);
+        Map<String, Object> gone = new HashMap<>();
+        gone.put("name", "s-embed-gone");
+        gone.put("provider", "openai-compatible");
+        gone.put("baseUrl", "http://127.0.0.1:1/v1");
+        gone.put("model", "fake-embed-64");
+        gone.put("purpose", "embedding");
+        gone.put("dimensions", 64);
+        gone.put("local", true);
+        gone.put("timeoutSeconds", 5);
+        admin().contentType(ContentType.JSON).body(gone).put("/api/v1/ai/profiles/s-embed-gone").then().statusCode(200);
+        route("embed", "s-embed-gone");
+        waitForBackground();
+
+        long start = System.currentTimeMillis();
+        String note = as(viewer).queryParam("q", "buyers").get("/api/v1/search").then().statusCode(200)
+            .body("mode", equalTo("keyword")).extract().path("note");
+        assertTrue(note.contains("An admin can see why under AI usage"), note);
+        assertFalse(note.contains("127.0.0.1") || note.contains("Cannot reach") || note.contains("fake-embed"), note);
+        // The model failed moments ago, so the next search does not wait for it again.
+        start = System.currentTimeMillis();
+        as(viewer).queryParam("q", "buyers").get("/api/v1/search").then().statusCode(200).body("mode", equalTo("keyword"));
+        assertTrue(System.currentTimeMillis() - start < 1500, "skipped the model that is down");
+
+        String detail = scan("ai-shop").getString("detail");
+        assertFalse(detail.contains("127.0.0.1") || detail.contains("Cannot reach"), detail);
+        assertTrue(detail.contains("An admin can see why under AI usage"), detail);
+        // Admins see the reason in the usage records.
+        List<String> details = admin().get("/api/v1/ai/usage").then().extract().jsonPath().getList("recent.detail");
+        assertTrue(details.stream().anyMatch(d -> d != null && d.contains("Cannot reach http://127.0.0.1:1/v1")),
+            details::toString);
+        assertTrue(details.stream().anyMatch(d -> d != null && d.contains("not tried again yet")), details::toString);
+        route("embed", "s-embed");
+        waitForBackground();
+    }
+
+    @Test
+    @Order(9)
+    void vectorsOfAnotherSizeNeverBreakSearch() throws Exception {
+        // A row of another size under the profile, as an edit during a scan could once leave behind.
+        String v32 = Embeddings.literal(FakeModelServer.vector("buyers", 32));
+        sql("INSERT INTO kilnmark.asset_embedding (profile_id, asset_urn, model, dimensions, text_hash, embedding) "
+            + "SELECT id, 'urn:kilnmark:ai-none:ainone.secret_buyers', 'old', 32, '\\x00', '" + v32 + "' "
+            + "FROM kilnmark.model_profile WHERE name = 's-embed'");
+        JsonPath r = as(viewer).queryParam("q", "buyers").get("/api/v1/search").then().statusCode(200)
+            .extract().jsonPath();
+        assertEquals("hybrid", r.getString("mode"), r.prettify());
+        assertTrue(r.getList("hits.findAll { it.matchedBy.contains('meaning') }.urn")
+            .contains("urn:kilnmark:ai-shop:aishop.customers"), r.prettify());
+        assertFalse(r.getList("hits.findAll { it.matchedBy.contains('meaning') }.urn")
+            .contains("urn:kilnmark:ai-none:ainone.secret_buyers"), "the row of another size is never compared");
+        sql("DELETE FROM kilnmark.asset_embedding WHERE dimensions = 32");
+
+        // Vectors made with an older version of the profile are not saved.
+        ModelProfile p = profiles.find("s-embed").orElseThrow();
+        ModelProfile stale = new ModelProfile(p.id(), p.name(), p.provider(), p.baseUrl(), p.model(), p.purpose(),
+            p.dimensions(), p.contextSize(), p.local(), p.hasKey(), p.keyHint(), p.timeoutSeconds(), p.maxConcurrent(),
+            p.version() - 1, p.createdBy(), p.createdAt(), p.updatedAt());
+        assertFalse(embeddings.saveIfCurrent(stale, List.of("urn:kilnmark:ai-none:ainone.secret_buyers"),
+            List.of(new byte[] {1}), List.of(FakeModelServer.vector("x", 64))));
+        assertEquals(0, count("SELECT count(*) FROM kilnmark.asset_embedding WHERE asset_urn = "
+            + "'urn:kilnmark:ai-none:ainone.secret_buyers'"));
+        assertTrue(embeddings.saveIfCurrent(p, List.of("urn:kilnmark:ai-none:ainone.secret_buyers"),
+            List.of(new byte[] {1}), List.of(FakeModelServer.vector("x", 64))));
+        sql("DELETE FROM kilnmark.asset_embedding WHERE asset_urn = 'urn:kilnmark:ai-none:ainone.secret_buyers'");
+    }
+
+    @Test
+    @Order(10)
+    void reEmbedRequestsAreCoalescedNotDropped() throws Exception {
+        waitForBackground();
+        // Something to embed, so the first pass calls the (slowed) model and is still running.
+        sql("DELETE FROM kilnmark.asset_embedding e USING kilnmark.asset a WHERE a.urn = e.asset_urn "
+            + "AND a.urn LIKE 'urn:kilnmark:ai-shop:%'");
+        int before = embeddings.passes();
+        fake.delay(600);
+        try {
+            assertTrue(embeddings.reembedAllInBackground("test one"));
+            Thread.sleep(150);
+            assertFalse(embeddings.reembedAllInBackground("test two"), "joins the running one");
+            waitForBackground();
+        } finally {
+            fake.delay(0);
+        }
+        assertTrue(embeddings.passes() >= before + 2, "the second request made a second pass");
+        // The search's query shape (numbers in the SQL, same cast) can use the profile's partial index.
+        long id = profiles.find("s-embed").orElseThrow().id();
+        String v = Embeddings.literal(FakeModelServer.vector("buyers", 64));
+        StringBuilder plan = new StringBuilder();
+        try (Connection c = db.getConnection(); Statement st = c.createStatement()) {
+            c.setAutoCommit(false);
+            st.execute("SET LOCAL enable_seqscan = off");
+            try (ResultSet rs = st.executeQuery("EXPLAIN SELECT e.asset_urn FROM kilnmark.asset_embedding e WHERE "
+                + "e.profile_id = " + id + " AND e.dimensions = 64 ORDER BY e.embedding::public.vector(64) <=> '" + v
+                + "'::public.vector(64) LIMIT 100")) {
+                while (rs.next()) {
+                    plan.append(rs.getString(1)).append('\n');
+                }
+            }
+            c.rollback();
+        }
+        assertTrue(plan.toString().contains("asset_embedding_hnsw_p" + id + "_d64"), plan.toString());
+        assertEquals(1, count("SELECT count(*) FROM pg_index i JOIN pg_class x ON x.oid = i.indexrelid "
+            + "WHERE x.relname = 'asset_embedding_hnsw_p' || (SELECT id FROM kilnmark.model_profile "
+            + "WHERE name = 's-embed') || '_d64' AND i.indisvalid"));
+    }
+
+    @Test
+    @Order(11)
+    void aHostedChatModelNeverHearsOfLocalOnlySources() {
+        profile("s-chat-hosted", "chat", "fake-chat", false, null);
+        route("search_nl", "s-chat-hosted");
+        fake.clear();
+        fake.chatReplies(q -> "{\"text\": \"clients\", \"kinds\": [], \"sources\": [], \"fields\": [], \"tags\": []}");
+        as(viewer).contentType(ContentType.JSON).body(Map.of("question", "where are clients kept?"))
+            .post("/api/v1/search/ask").then().statusCode(200).body("interpretedBy", equalTo("s-chat-hosted"));
+        String prompt = fake.seen().stream().filter(x -> x.path().endsWith("/chat/completions")).findFirst()
+            .orElseThrow().body();
+        assertTrue(prompt.contains("ai-shop"), prompt);
+        assertFalse(prompt.contains("ai-locked"), "a local_only source is not named to a hosted model: " + prompt);
+        assertFalse(prompt.contains("ai-none"), prompt);
+        route("search_nl", "s-chat");
+        fake.clear();
+    }
+
+    @Test
+    @Order(12)
+    void slowBusyAndCancelledCallsEndClearly() throws Exception {
+        Map<String, Object> m = new HashMap<>();
+        m.put("name", "s-slow");
+        m.put("provider", "openai-compatible");
+        m.put("baseUrl", fake.baseUrl());
+        m.put("model", "fake-chat");
+        m.put("purpose", "chat");
+        m.put("local", true);
+        m.put("timeoutSeconds", 1);
+        m.put("maxConcurrent", 1);
+        admin().contentType(ContentType.JSON).body(m).post("/api/v1/ai/profiles").then().statusCode(201);
+        ModelClient.ChatCall call = new ModelClient.ChatCall("Say ok.", "ok?", null, 5);
+        fake.delay(2500);
+        try {
+            ModelProfile slow = profiles.find("s-slow").orElseThrow();
+            AiException t = org.junit.jupiter.api.Assertions.assertThrows(AiException.class, () -> gateway.chatWith(slow,
+                "test", null, call, "test", () -> false, AiGateway.Budget.BACKGROUND));
+            assertEquals(AiException.Kind.TIMEOUT, t.kind(), t.getMessage());
+
+            m.put("timeoutSeconds", 10);
+            admin().contentType(ContentType.JSON).body(m).put("/api/v1/ai/profiles/s-slow").then().statusCode(200);
+            ModelProfile patient = profiles.find("s-slow").orElseThrow();
+            Thread first = Thread.ofVirtual().start(() -> {
+                try {
+                    gateway.chatWith(patient, "test", null, call, "test", () -> false, AiGateway.Budget.BACKGROUND);
+                } catch (AiException e) {
+                    // not the point here
+                }
+            });
+            Thread.sleep(300);
+            long start = System.currentTimeMillis();
+            AiException busy = org.junit.jupiter.api.Assertions.assertThrows(AiException.class, () -> gateway.chatWith(
+                patient, "test", null, call, "test", () -> false, AiGateway.Budget.INTERACTIVE));
+            assertEquals(AiException.Kind.BUSY, busy.kind(), busy.getMessage());
+            assertTrue(System.currentTimeMillis() - start < 2600, "a search waits about 2 seconds for a slot");
+            first.join();
+
+            java.util.concurrent.atomic.AtomicBoolean cancel = new java.util.concurrent.atomic.AtomicBoolean();
+            Thread.ofVirtual().start(() -> {
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                cancel.set(true);
+            });
+            start = System.currentTimeMillis();
+            AiException cancelled = org.junit.jupiter.api.Assertions.assertThrows(AiException.class, () ->
+                gateway.chatWith(patient, "test", null, call, "test", cancel::get, AiGateway.Budget.BACKGROUND));
+            assertEquals(AiException.Kind.CANCELLED, cancelled.kind());
+            assertTrue(System.currentTimeMillis() - start < 1500, "stopped at once");
+        } finally {
+            fake.delay(0);
+        }
+        for (String outcome : List.of("timeout", "busy", "cancelled")) {
+            assertTrue(count("SELECT count(*) FROM kilnmark.ai_usage WHERE profile_name = 's-slow' AND outcome = '"
+                + outcome + "'") >= 1, outcome);
+        }
     }
 
     @Test

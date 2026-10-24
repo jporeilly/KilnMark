@@ -9,9 +9,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 import org.jboss.logging.Logger;
@@ -36,7 +35,10 @@ import jakarta.enterprise.event.Observes;
  *
  * <p>Vectors of every size share one table; each profile gets a partial HNSW index on
  * {@code embedding::vector(n)} ({@code halfvec(n)} from 2,001 to 4,000 dimensions; above that,
- * searches scan without an index).
+ * searches scan without an index), limited to rows of that profile and that size.
+ *
+ * <p>Notes written to a scan's run are seen by every viewer, so they never hold a model's address
+ * or a server's reply; the details are in the usage records, for admins.
  */
 @ApplicationScoped
 public class Embeddings {
@@ -44,6 +46,8 @@ public class Embeddings {
     private static final Logger LOG = Logger.getLogger(Embeddings.class);
     /** pg_advisory_lock key for a full re-embed, so only one process runs it at a time. */
     private static final long REEMBED_LOCK = 0x6b6d_6169_656dL;
+    /** Assets read from the catalogue at a time, so a large source never sits in memory at once. */
+    static final int PAGE = 500;
 
     private final Db db;
     private final ModelProfiles profiles;
@@ -53,8 +57,10 @@ public class Embeddings {
     private final GraphStore store;
     private final KilnmarkConfig config;
     private final ObjectMapper json;
-    private final Set<String> indexes = ConcurrentHashMap.newKeySet();
-    private final AtomicBoolean reembedding = new AtomicBoolean();
+    private final AtomicBoolean running = new AtomicBoolean();
+    private final AtomicBoolean again = new AtomicBoolean();
+    /** Full passes finished by this process (for tests and the log). */
+    private final AtomicInteger passes = new AtomicInteger();
 
     public Embeddings(Db db, ModelProfiles profiles, AiGateway gateway, EgressPolicy egress, UsageLog usage,
                       GraphStore store, KilnmarkConfig config, ObjectMapper json) {
@@ -88,7 +94,7 @@ public class Embeddings {
             }
         } catch (RuntimeException ex) {
             LOG.warnf(ex, "Embedding after scan %d of %s failed", e.runId(), e.sourceName());
-            appendToRun(e.runId(), "Search by meaning: embedding failed (" + ex.getMessage() + ").");
+            appendToRun(e.runId(), "Search by meaning: embedding failed. An admin can see why in the server log.");
         }
     }
 
@@ -110,53 +116,82 @@ public class Embeddings {
         }
         ensureIndex(p);
         int maxChars = AssetText.maxChars(p);
-        List<Pending> todo = new ArrayList<>();
-        int unchanged = 0;
-        for (Candidate c : candidates(source, p)) {
-            String text = AssetText.of(source.name(), source.settings().get("description"), c.kind(), c.container(),
-                c.name(), c.description(), c.fields(), maxChars);
-            byte[] hash = AssetText.hash(text, p);
-            if (c.storedHash() != null && Arrays.equals(c.storedHash(), hash)) {
-                unchanged++;
-            } else {
-                todo.add(new Pending(c.urn(), text, hash));
-            }
-        }
-        int batch = Math.max(1, config.ai().embedBatchSize());
+        int batchSize = Math.max(1, config.ai().embedBatchSize());
         int embedded = 0;
-        for (int i = 0; i < todo.size(); i += batch) {
-            if (cancelled.getAsBoolean()) {
-                return new Outcome(embedded, unchanged, todo.size() - embedded, "Search by meaning: stopped after "
-                    + embedded + " assets; the rest are embedded at the next scan.");
+        int unchanged = 0;
+        int seen = 0;
+        String after = "";
+        List<Pending> batch = new ArrayList<>();
+        while (true) {
+            List<Candidate> page = candidates(source, p, after);
+            for (Candidate c : page) {
+                seen++;
+                String text = AssetText.of(source.name(), source.settings().get("description"), c.kind(),
+                    c.container(), c.name(), c.description(), c.fields(), maxChars);
+                byte[] hash = AssetText.hash(text, p);
+                if (c.storedHash() != null && Arrays.equals(c.storedHash(), hash)) {
+                    unchanged++;
+                } else {
+                    batch.add(new Pending(c.urn(), text, hash));
+                }
+                if (batch.size() >= batchSize) {
+                    String stop = embedBatch(source, p, batch, caller, cancelled);
+                    if (stop != null) {
+                        return new Outcome(embedded, unchanged, 0, "Search by meaning: " + embedded
+                            + " changed assets embedded, then it stopped: " + stop);
+                    }
+                    embedded += batch.size();
+                    batch.clear();
+                }
             }
-            List<Pending> part = todo.subList(i, Math.min(todo.size(), i + batch));
-            try {
-                List<float[]> vectors = gateway.embedWith(p, AiFeature.EMBED.id(), source,
-                    part.stream().map(Pending::text).toList(), caller, cancelled).answer().vectors();
-                check(p, part.size(), vectors);
-                save(p, part, vectors);
-                embedded += part.size();
-            } catch (AiException e) {
-                return new Outcome(embedded, unchanged, todo.size() - embedded, "Search by meaning: "
-                    + embedded + " of " + todo.size() + " changed assets embedded, then it stopped: " + e.getMessage());
+            if (page.size() < PAGE) {
+                break;
             }
+            after = page.getLast().urn();
+        }
+        if (!batch.isEmpty()) {
+            String stop = embedBatch(source, p, batch, caller, cancelled);
+            if (stop != null) {
+                return new Outcome(embedded, unchanged, 0, "Search by meaning: " + embedded
+                    + " changed assets embedded, then it stopped: " + stop);
+            }
+            embedded += batch.size();
         }
         String note = "Search by meaning: " + embedded + (embedded == 1 ? " asset" : " assets") + " embedded with "
             + p.name() + (unchanged > 0 ? " (" + unchanged + " unchanged)" : "") + ".";
-        return new Outcome(embedded, unchanged, 0, note);
+        return new Outcome(embedded, unchanged, seen - embedded - unchanged, note);
     }
 
-    private static void check(ModelProfile p, int expected, List<float[]> vectors) {
-        if (vectors.size() != expected) {
-            throw new AiException(AiException.Kind.FAILED, "the model returned " + vectors.size() + " embeddings for "
-                + expected + " texts");
+    /**
+     * Embeds and saves one batch, after reading the source and the embedding profile again, so a
+     * change to either (the source's AI rule, the profile's address or size) applies at once.
+     *
+     * @return why embedding must stop (words safe for viewers), or null
+     */
+    private String embedBatch(Records.Source source, ModelProfile p, List<Pending> batch, String caller,
+                              BooleanSupplier cancelled) {
+        if (cancelled.getAsBoolean()) {
+            return "the server is stopping; the rest are embedded at the next scan.";
         }
-        for (float[] v : vectors) {
-            if (v.length != p.dimensions()) {
-                throw new AiException(AiException.Kind.FAILED, "model " + p.model() + " returns " + v.length
-                    + " numbers per text, but profile " + p.name() + " says " + p.dimensions()
-                    + ". Set the profile's dimensions to " + v.length + ".");
+        Optional<Records.Source> fresh = store.source(source.name());
+        Optional<ModelProfile> current = profiles.route(AiFeature.EMBED);
+        if (fresh.isEmpty()) {
+            return "the source was removed.";
+        }
+        if (current.isEmpty() || current.get().id() != p.id() || current.get().version() != p.version()) {
+            return "the embedding model changed meanwhile; the new one embeds every source again.";
+        }
+        try {
+            List<float[]> vectors = gateway.embedWith(current.get(), AiFeature.EMBED.id(), fresh.get(),
+                batch.stream().map(Pending::text).toList(), caller, cancelled, AiGateway.Budget.BACKGROUND)
+                .answer().vectors();
+            if (!saveIfCurrent(p, batch.stream().map(Pending::urn).toList(),
+                batch.stream().map(Pending::hash).toList(), vectors)) {
+                return "the embedding model changed meanwhile; the new one embeds every source again.";
             }
+            return null;
+        } catch (AiException e) {
+            return e.publicMessage();
         }
     }
 
@@ -167,7 +202,8 @@ public class Embeddings {
                              List<AssetText.Field> fields, byte[] storedHash) {
     }
 
-    private List<Candidate> candidates(Records.Source source, ModelProfile p) {
+    /** One page of a source's assets, by URN after {@code after}, with what was last embedded for each. */
+    private List<Candidate> candidates(Records.Source source, ModelProfile p, String after) {
         return db.tx(c -> {
             List<Candidate> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("""
@@ -178,10 +214,12 @@ public class Embeddings {
                        e.text_hash
                 FROM kilnmark.asset a
                 LEFT JOIN kilnmark.asset_embedding e ON e.asset_urn = a.urn AND e.profile_id = ?
-                WHERE a.source_id = ? AND a.removed_at IS NULL
-                ORDER BY a.urn""")) {
+                WHERE a.source_id = ? AND a.removed_at IS NULL AND a.urn > ?
+                ORDER BY a.urn LIMIT ?""")) {
                 ps.setLong(1, p.id());
                 ps.setLong(2, source.id());
+                ps.setString(3, after);
+                ps.setInt(4, PAGE);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         out.add(new Candidate(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4),
@@ -205,26 +243,44 @@ public class Embeddings {
         return out;
     }
 
-    private void save(ModelProfile p, List<Pending> part, List<float[]> vectors) {
-        db.tx(c -> {
+    /**
+     * Saves vectors, but only while the profile is still the version they were made with: the
+     * profile row is share-locked in the same transaction, so an edit to its model or dimensions
+     * cannot slip in between, and rows of an old size never land under a profile.
+     *
+     * @return false (nothing saved) if the profile changed or was deleted
+     */
+    boolean saveIfCurrent(ModelProfile p, List<String> urns, List<byte[]> hashes, List<float[]> vectors) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                "SELECT version, dimensions FROM kilnmark.model_profile WHERE id = ? FOR SHARE")) {
+                ps.setLong(1, p.id());
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next() || rs.getInt(1) != p.version() || rs.getInt(2) != p.dimensions()) {
+                        return false;
+                    }
+                }
+            }
             try (PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO kilnmark.asset_embedding (profile_id, asset_urn, model, dimensions, text_hash, embedding)
-                VALUES (?, ?, ?, ?, ?, ?::public.vector)
+                SELECT ?, ?, ?, ?, ?, ?::public.vector
+                WHERE EXISTS (SELECT 1 FROM kilnmark.asset WHERE urn = ?)
                 ON CONFLICT (profile_id, asset_urn) DO UPDATE SET model = EXCLUDED.model,
                     dimensions = EXCLUDED.dimensions, text_hash = EXCLUDED.text_hash, embedding = EXCLUDED.embedding,
                     embedded_at = now()""")) {
-                for (int i = 0; i < part.size(); i++) {
+                for (int i = 0; i < urns.size(); i++) {
                     ps.setLong(1, p.id());
-                    ps.setString(2, part.get(i).urn());
+                    ps.setString(2, urns.get(i));
                     ps.setString(3, p.model());
                     ps.setInt(4, p.dimensions());
-                    ps.setBytes(5, part.get(i).hash());
+                    ps.setBytes(5, hashes.get(i));
                     ps.setString(6, literal(vectors.get(i)));
+                    ps.setString(7, urns.get(i));
                     ps.addBatch();
                 }
                 ps.executeBatch();
             }
-            return null;
+            return true;
         });
     }
 
@@ -246,23 +302,47 @@ public class Embeddings {
         return dimensions <= 2000 ? "public.vector(" + dimensions + ")" : "public.halfvec(" + dimensions + ")";
     }
 
-    private static String indexName(ModelProfile p) {
+    static String indexName(ModelProfile p) {
         return "asset_embedding_hnsw_p" + p.id() + "_d" + p.dimensions();
     }
 
-    /** Creates the profile's partial HNSW index if it is not there yet. */
+    /**
+     * Creates the profile's partial HNSW index if {@code pg_indexes} does not have a valid one,
+     * with {@code CREATE INDEX CONCURRENTLY} outside any transaction, so scans and searches go on
+     * while it builds. A build that failed half-way (an invalid index) is dropped and built again.
+     */
     void ensureIndex(ModelProfile p) {
-        String name = indexName(p);
-        if (p.dimensions() == null || p.dimensions() > 4000 || indexes.contains(name)) {
+        if (p.dimensions() == null || p.dimensions() > 4000) {
             return;
         }
+        String name = indexName(p);
         String type = p.dimensions() <= 2000 ? "vector" : "halfvec";
-        // Only numbers go into this statement: the profile id and its validated dimensions.
-        String sql = "CREATE INDEX IF NOT EXISTS " + name + " ON kilnmark.asset_embedding USING hnsw ((embedding::"
-            + cast(p.dimensions()) + ") public." + type + "_cosine_ops) WHERE profile_id = " + p.id();
-        try (Connection c = db.connection(); Statement s = c.createStatement()) {
-            s.execute(sql);
-            indexes.add(name);
+        // Only numbers go into these statements: the profile id and its validated dimensions.
+        String create = "CREATE INDEX CONCURRENTLY IF NOT EXISTS " + name + " ON kilnmark.asset_embedding USING hnsw "
+            + "((embedding::" + cast(p.dimensions()) + ") public." + type + "_cosine_ops) WHERE profile_id = " + p.id()
+            + " AND dimensions = " + p.dimensions();
+        try (Connection c = db.connection()) {
+            c.setAutoCommit(true);
+            Boolean valid = null;
+            try (PreparedStatement ps = c.prepareStatement("SELECT i.indisvalid FROM pg_index i JOIN pg_class x "
+                + "ON x.oid = i.indexrelid JOIN pg_namespace n ON n.oid = x.relnamespace "
+                + "WHERE n.nspname = 'kilnmark' AND x.relname = ?")) {
+                ps.setString(1, name);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        valid = rs.getBoolean(1);
+                    }
+                }
+            }
+            if (Boolean.TRUE.equals(valid)) {
+                return;
+            }
+            try (Statement s = c.createStatement()) {
+                if (Boolean.FALSE.equals(valid)) {
+                    s.execute("DROP INDEX CONCURRENTLY IF EXISTS kilnmark." + name);
+                }
+                s.execute(create);
+            }
         } catch (SQLException e) {
             LOG.warnf("Could not create the search index %s (searches still work, more slowly): %s", name,
                 e.getMessage());
@@ -295,7 +375,6 @@ public class Embeddings {
             }
             return null;
         });
-        indexes.removeIf(n -> n.startsWith("asset_embedding_hnsw_p" + profileId + "_"));
         gateway.forget(profileId);
     }
 
@@ -328,53 +407,64 @@ public class Embeddings {
         }
     }
 
-    /** Whether a full re-embed is running in this process. */
+    /** Full re-embed passes this process has finished. */
+    public int passes() {
+        return passes.get();
+    }
+
+    /** Whether a full re-embed is running, or waiting for another process's, in this process. */
     public boolean reembedding() {
-        return reembedding.get();
+        return running.get();
     }
 
     /**
-     * Embeds every source again in the background, after the embedding profile changed. Only one
-     * process does it at a time (a PostgreSQL advisory lock); unchanged assets are skipped.
+     * Embeds every source again in the background, after the embedding profile changed. Requests
+     * that arrive while one is running are not dropped: the run goes round once more when it ends.
+     * Across processes, a PostgreSQL advisory lock makes a second process wait for the first, then
+     * run (finding most assets unchanged).
      *
-     * @return false if one is already running here
+     * @return true if a run started now, false if the request was added to the one running
      */
     public boolean reembedAllInBackground(String caller) {
-        if (!reembedding.compareAndSet(false, true)) {
+        again.set(true);
+        if (!running.compareAndSet(false, true)) {
             return false;
         }
         Thread.ofVirtual().name("kilnmark-reembed").start(() -> {
-            try (Connection lock = db.connection()) {
-                if (!tryLock(lock)) {
-                    LOG.info("Another Kilnmark process is already embedding assets; leaving it to that one");
-                    return;
-                }
+            do {
                 try {
-                    for (Records.Source s : store.sources()) {
-                        Outcome o = embedSource(s, caller, () -> false);
-                        LOG.infof("Embedding %s: %s", s.name(), o.note());
-                    }
+                    passAll(caller);
                 } finally {
-                    try (PreparedStatement ps = lock.prepareStatement("SELECT pg_advisory_unlock(?)")) {
-                        ps.setLong(1, REEMBED_LOCK);
-                        ps.execute();
-                    }
+                    running.set(false);
                 }
-            } catch (SQLException | RuntimeException e) {
-                LOG.warnf(e, "Embedding every source failed");
-            } finally {
-                reembedding.set(false);
-            }
+            } while (again.get() && running.compareAndSet(false, true));
         });
         return true;
     }
 
-    private static boolean tryLock(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement("SELECT pg_try_advisory_lock(?)")) {
-            ps.setLong(1, REEMBED_LOCK);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() && rs.getBoolean(1);
+    private void passAll(String caller) {
+        try (Connection lock = db.connection()) {
+            lock.setAutoCommit(true);
+            try (PreparedStatement ps = lock.prepareStatement("SELECT pg_advisory_lock(?)")) {
+                ps.setLong(1, REEMBED_LOCK);
+                ps.execute(); // waits while another process embeds
             }
+            try {
+                while (again.getAndSet(false)) {
+                    for (Records.Source s : store.sources()) {
+                        Outcome o = embedSource(s, caller, () -> false);
+                        LOG.infof("Embedding %s: %s", s.name(), o.note());
+                    }
+                    passes.incrementAndGet();
+                }
+            } finally {
+                try (PreparedStatement ps = lock.prepareStatement("SELECT pg_advisory_unlock(?)")) {
+                    ps.setLong(1, REEMBED_LOCK);
+                    ps.execute();
+                }
+            }
+        } catch (SQLException | RuntimeException e) {
+            LOG.warnf(e, "Embedding every source failed");
         }
     }
 
@@ -390,12 +480,13 @@ public class Embeddings {
         return Optional.of(db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("""
                 SELECT (SELECT count(*) FROM kilnmark.asset_embedding e JOIN kilnmark.asset a ON a.urn = e.asset_urn
-                        WHERE e.profile_id = ? AND a.removed_at IS NULL),
+                        WHERE e.profile_id = ? AND e.dimensions = ? AND a.removed_at IS NULL),
                        (SELECT count(*) FROM kilnmark.asset WHERE removed_at IS NULL)""")) {
                 ps.setLong(1, p.get().id());
+                ps.setInt(2, p.get().dimensions());
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
-                    return new Status(p.get().name(), rs.getLong(1), rs.getLong(2), reembedding.get());
+                    return new Status(p.get().name(), rs.getLong(1), rs.getLong(2), running.get());
                 }
             }
         }));

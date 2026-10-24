@@ -47,9 +47,76 @@ class AiProfilesTest {
     final FakeModelServer fake = FakeModelServer.get();
     String viewer;
 
+    /** Every log record written while these tests run, to check no API key is ever logged. */
+    final List<String> logged = new java.util.concurrent.CopyOnWriteArrayList<>();
+    final java.util.logging.Handler capture = new java.util.logging.Handler() {
+        @Override
+        public void publish(java.util.logging.LogRecord r) {
+            StringBuilder b = new StringBuilder(String.valueOf(r.getMessage()));
+            if (r.getParameters() != null) {
+                for (Object o : r.getParameters()) {
+                    b.append(' ').append(o);
+                }
+            }
+            for (Throwable t = r.getThrown(); t != null; t = t.getCause()) {
+                b.append(' ').append(t);
+            }
+            logged.add(b.toString());
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public void close() {
+        }
+    };
+
+    @Inject
+    UsageRetention retention;
+
     @BeforeAll
     void setUp() {
         fake.clear();
+        capture.setLevel(java.util.logging.Level.ALL);
+        java.util.logging.Logger.getLogger("").addHandler(capture);
+        // Everything Kilnmark and LangChain4j log, debug included, goes past the capture.
+        for (String name : List.of("io.kilnmark", "dev.langchain4j", "io.quarkiverse.mcp")) {
+            java.util.logging.Logger.getLogger(name).setLevel(java.util.logging.Level.ALL);
+        }
+    }
+
+    @Test
+    @Order(97)
+    void oldUsageRecordsAreDeleted() throws Exception {
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            s.execute("INSERT INTO kilnmark.ai_usage (at, feature, outcome, caller) "
+                + "VALUES (now() - interval '400 days', 'embed', 'ok', 'old')");
+        }
+        assertTrue(retention.purge() >= 1);
+        try (Connection c = db.getConnection(); Statement s = c.createStatement();
+             ResultSet rs = s.executeQuery("SELECT count(*) FROM kilnmark.ai_usage WHERE caller = 'old'")) {
+            rs.next();
+            assertEquals(0, rs.getInt(1));
+        }
+    }
+
+    @Test
+    @Order(98)
+    void theApiKeyNeverReachesTheLog() {
+        // Make the key's profile fail in every way once more, with the capture in place.
+        fake.failNext(401, 1);
+        admin().post("/api/v1/ai/profiles/t-chat/test");
+        fake.failNext(500, 3);
+        admin().post("/api/v1/ai/profiles/t-chat/test");
+        java.util.logging.Logger.getLogger("").removeHandler(capture);
+        for (String name : List.of("io.kilnmark", "dev.langchain4j", "io.quarkiverse.mcp")) {
+            java.util.logging.Logger.getLogger(name).setLevel(null);
+        }
+        assertFalse(logged.isEmpty(), "the capture saw the server's log");
+        assertTrue(logged.stream().noneMatch(l -> l.contains(KEY)), "the key was logged");
+        assertTrue(logged.stream().noneMatch(l -> l.contains(KEY.substring(0, 20))), "part of the key was logged");
     }
 
     /** Last: leaves no feature routed, so other tests see the server as it starts. */
@@ -151,8 +218,7 @@ class AiProfilesTest {
         admin().contentType(ContentType.JSON).body(p).post("/api/v1/ai/profiles").then().statusCode(201);
         admin().post("/api/v1/ai/profiles/t-embed/test").then().statusCode(200)
             .body("ok", equalTo(false))
-            .body("dimensions", equalTo(64))
-            .body("message", containsString("Set dimensions to 64"));
+            .body("message", containsString("Set the profile's dimensions to 64"));
         p.put("dimensions", 64);
         admin().contentType(ContentType.JSON).body(p).put("/api/v1/ai/profiles/t-embed").then().statusCode(200);
         admin().post("/api/v1/ai/profiles/t-embed/test").then().statusCode(200).body("ok", equalTo(true));
@@ -183,6 +249,35 @@ class AiProfilesTest {
         admin().contentType(ContentType.JSON).body(profile("t-chat", "openai-compatible", "chat", "m", true))
             .post("/api/v1/ai/profiles").then().statusCode(409);
         admin().get("/api/v1/ai/profiles/nothing").then().statusCode(404);
+        // Cloud metadata services are not model servers.
+        for (String url : List.of("http://169.254.169.254/v1", "http://metadata.google.internal/v1",
+            "http://[fe80::1]:8080/v1")) {
+            Map<String, Object> meta = profile("t-bad", "openai-compatible", "chat", "m", false);
+            meta.put("baseUrl", url);
+            admin().contentType(ContentType.JSON).body(meta).post("/api/v1/ai/profiles").then().statusCode(400)
+                .body("error", containsString("metadata"));
+        }
+    }
+
+    @Test
+    @Order(9)
+    void aStoredKeyIsOnlySentWhereItWasEnteredFor() {
+        Map<String, Object> p = profile("t-moved", "openai-compatible", "chat", "fake-chat", false);
+        p.put("apiKey", KEY);
+        admin().contentType(ContentType.JSON).body(p).post("/api/v1/ai/profiles").then().statusCode(201);
+        // Same host, another path: the key stays.
+        p.remove("apiKey");
+        p.put("baseUrl", fake.baseUrl() + "/");
+        admin().contentType(ContentType.JSON).body(p).put("/api/v1/ai/profiles/t-moved").then().statusCode(200)
+            .body("hasApiKey", equalTo(true));
+        // Another host: the key must be entered again.
+        p.put("baseUrl", "http://localhost:1/v1");
+        admin().contentType(ContentType.JSON).body(p).put("/api/v1/ai/profiles/t-moved").then().statusCode(400)
+            .body("error", containsString("enter the API key again"));
+        p.put("apiKey", "");
+        admin().contentType(ContentType.JSON).body(p).put("/api/v1/ai/profiles/t-moved").then().statusCode(200)
+            .body("hasApiKey", equalTo(false));
+        admin().delete("/api/v1/ai/profiles/t-moved").then().statusCode(204);
     }
 
     @Test
@@ -224,7 +319,8 @@ class AiProfilesTest {
         fake.clear();
         admin().post("/api/v1/ai/profiles/t-hosted/test").then().statusCode(200)
             .body("ok", equalTo(false))
-            .body("message", containsString("only models marked local"));
+            .body("message", containsString("Only local models may be used"))
+            .body("message", not(containsString("mark")));
         assertTrue(fake.seen().isEmpty(), "a refused call never reaches the model");
         // Local models still work.
         admin().post("/api/v1/ai/profiles/t-chat/test").then().body("ok", equalTo(true));
@@ -245,7 +341,7 @@ class AiProfilesTest {
             && ((Number) t.get("refused")).intValue() >= 1), totals::toString);
         List<Map<String, Object>> recent = u.getList("recent");
         assertTrue(recent.stream().anyMatch(r -> "refused".equals(r.get("outcome"))
-            && String.valueOf(r.get("detail")).contains("marked local")));
+            && String.valueOf(r.get("detail")).contains("not a local model")));
         assertTrue(recent.stream().allMatch(r -> String.valueOf(r.get("caller")).contains("token")
             || String.valueOf(r.get("caller")).contains("environment")), recent::toString);
         try (Connection c = db.getConnection(); Statement s = c.createStatement();
