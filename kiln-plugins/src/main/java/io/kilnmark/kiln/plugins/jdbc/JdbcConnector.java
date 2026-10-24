@@ -142,7 +142,8 @@ public abstract class JdbcConnector implements Connector {
             return "url: the property " + name + " names another host, port or database than the URL's own. Write "
                 + "the address in the URL itself, for example " + "jdbc:postgresql://db.example.com:5432/sales";
         }
-        if (TIMEOUT_PROPERTIES.contains(n)) {
+        // Every property naming a timeout (sslResponseTimeout too): pgjdbc lets URL values win.
+        if (TIMEOUT_PROPERTIES.contains(n) || n.contains("timeout")) {
             return "url: the property " + name + " would change the time limits Kilnmark sets for connecting and "
                 + "reading. Take it out of the URL";
         }

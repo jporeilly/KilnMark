@@ -52,6 +52,8 @@ class JdbcUrlRulesTest {
             "jdbc:postgresql://allowed.example.com/db?loginTimeout=100000&socketTimeout=0",
             "jdbc:postgresql://allowed.example.com/db?socketTimeout=0&loginTimeout=0&connectTimeout=0",
             "jdbc:postgresql://allowed.example.com/db?cancelSignalTimeout=0",
+            "jdbc:postgresql://allowed.example.com/db?sslResponseTimeout=0",
+            "jdbc:postgresql://allowed.example.com/db?sslmode=require&SSLRESPONSETIMEOUT=0",
             "jdbc:postgresql://allowed.example.com/db?service=prod",
             "jdbc:postgresql://allowed.example.com/db?ssl%6Bey=/x")) {
             List<String> p = pg.validate(src(pg, url));
