@@ -277,9 +277,10 @@ class RelationshipsTest {
 
         JsonPath around = Tokens.as(viewer).queryParam("asset", CUSTOMERS).get("/api/v1/diagram")
             .then().statusCode(200).extract().jsonPath();
-        // The view's customer_id fits customers too, so it is proposed like any other column.
+        // The view's customer_id fits customers too, so it is proposed like any other column. Other
+        // test classes' sources share this database and may be related across sources: count ours.
         assertEquals(Set.of("customers", "accounts", "transactions", "payments", "big_spenders"),
-            Set.copyOf(around.getList("tables.name")));
+            Set.copyOf(around.getList("tables.findAll { it.source == '" + SOURCE + "' }.name")));
         JsonPath further = Tokens.as(viewer).queryParam("asset", ACCOUNTS).queryParam("depth", 2)
             .get("/api/v1/diagram").then().statusCode(200).extract().jsonPath();
         assertTrue(further.getList("tables.name").contains("payments"), "two steps away through customers");
