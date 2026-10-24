@@ -49,10 +49,17 @@ a whole, not of one asset, so they sit beside the assets rather than inside them
    estimate a sketch keeps while it is built biased `|A ∪ B| - |B|` by several hundred on a large
    B and hid real keys under about 13% of B. With one estimator a true subset leaves B's buckets
    unchanged, so it scores exactly 1 at any size; on a 100,000-value key, subsets of 2%, 5% and
-   10% score 1, half-overlaps 0.47 to 0.50, and disjoint sets under 0.07. The margin is about 10%
-   of the values A adds to B plus two standard errors of A's own count (both measured), relative
-   to A. Values hash alike only within a type family (whole numbers, other numbers, text), so only
-   those pairs are compared.
+   10% score 1 and half-overlaps 0.47 to 0.50. The converse does not hold for a small A: values
+   outside a large B often leave its buckets unchanged too, so a small disjoint A can also score
+   near 1. Disjoint sets score under 0.07 only when A is large enough to show against B's
+   resolution (on 100,000 values, 500 or more). The margin therefore has three parts, relative to
+   A: about 10% of the values A adds to B, two standard errors of A's own count, and B's
+   resolution, three values per bucket (`3·|B| / 2^14`). Tuned by simulation: disjoint sets of 20
+   to 500 values against a million, or 20 against 100,000, are inconclusive; subsets of 1,000 in a
+   million, or 2% of 100,000, stay conclusive. An inconclusive estimate leaves only the names, at
+   most 0.5, so no proposal. The price: against a key of ten million values, a column needs about
+   8,000 distinct values before its containment counts. Values hash alike only within a type
+   family (whole numbers, other numbers, text), so only those pairs are compared.
 2. **Candidates from names only.** Targets are key-like columns of current assets: a single-column
    primary key, or an identifier-like name (`id`, `..._id`, `key`, `code`, `ref`, `no`, `number`,
    `uuid`) with no nulls and distinct values equal to rows (98% above 1,000 rows, for the sketch's
@@ -111,7 +118,12 @@ table beside the diagram, so keyboard and screen-reader users lose nothing (ADR 
 - Refreshes run one at a time across every server process, under a PostgreSQL advisory lock held
   for the whole step (declared keys, inference, inferred rows), and write rows in one sorted
   order. Two scans finishing together therefore never deadlock, and the second sees the first's
-  result. A large estate's refresh holds up others' for its length.
+  result. A refresh waits at most `kilnmark.relationships.lock-wait` (2 minutes) for the lock;
+  past that it is skipped and the run's detail says so (the next scan refreshes). Each statement
+  is limited to `kilnmark.relationships.statement-timeout` (5 minutes). If releasing the lock
+  fails, its connection is closed rather than returned to the pool, which releases it.
+- Foreign keys that cannot be read leave the declared relationships recorded before untouched;
+  the run's detail says why.
 - Responses are bounded: relationships come a page at a time (100 for an asset), and a diagram
   reads at most 1,000 relationships, one query per neighbourhood level.
 

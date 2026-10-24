@@ -17,8 +17,9 @@ import org.apache.datasketches.hll.TgtHllType;
  *
  * @param fraction  the estimated share of A's distinct values found in B, 0 to 1
  * @param margin    roughly how far {@code fraction} may be off: about 10% of the values A adds to
- *                  B (the error of a union's growth, measured), plus two standard errors of A's
- *                  own count, relative to A
+ *                  B (the error of a union's growth, measured), two standard errors of A's own
+ *                  count, and B's resolution ({@link #RESOLUTION} values per bucket), relative to A.
+ *                  Large when A is small next to B.
  * @param fromCount A's estimated distinct values
  * @param toCount   B's estimated distinct values
  * @param union     the estimated distinct values of both together
@@ -30,6 +31,15 @@ public record Containment(double fraction, double margin, double fromCount, doub
 
     /** Relative standard error of an HLL count at lgK 14: 1.04 / sqrt(2^14). */
     static final double RSE = 1.04 / Math.sqrt(1 << LG_K);
+
+    /**
+     * B's resolution, in values per bucket. A small A outside a large B changes almost none of B's
+     * {@code 2^14} buckets, so the union looks like B and the fraction comes out near 1; this term
+     * makes such estimates inconclusive. Tuned by simulation: disjoint sets of 500 against a million,
+     * or 20 against 100,000, are inconclusive; true subsets of 1,000 in a million, or 2% of 100,000,
+     * stay conclusive.
+     */
+    static final double RESOLUTION = 3.0;
 
     /** True when the estimate is precise enough to count as evidence. */
     public boolean conclusive() {
@@ -56,7 +66,7 @@ public record Containment(double fraction, double margin, double fromCount, doub
         }
         double fraction = Math.max(0, Math.min(1, (na + nb - nu) / na));
         double added = Math.max(0, nu - nb);
-        double margin = Math.min(1, (0.1 * added + 2 * RSE * na) / na);
+        double margin = Math.min(1, (0.1 * added + 2 * RSE * na + RESOLUTION * nb / (1 << LG_K)) / na);
         return new Containment(fraction, margin, na, nb, nu);
     }
 

@@ -108,6 +108,12 @@ export function DiagramSection({ scope, title }: { scope: DiagramScope; title: s
                   `${diagram.relationships.filter((r) => r.status !== "rejected").length} relationships. ` +
                   "Solid lines are declared or accepted; dashed lines are proposals."}
           </p>
+          {diagram.relationshipsTruncated && (
+            <p className="warning" role="status">
+              These tables have more than {diagram.relationships.length.toLocaleString("en-GB")} relationships; only
+              that many are drawn and listed. Narrow the tables with the filter, or centre on one table.
+            </p>
+          )}
           {diagram.tables.length > 0 && (
             <p>
               <a

@@ -81,6 +81,8 @@ export type Diagram = {
   total: number;
   limit: number;
   truncated: boolean;
+  /** More relationships exist than a diagram reads; some are not drawn or listed. */
+  relationshipsTruncated: boolean;
 };
 
 /** What a diagram is of: a container (optionally filtered), or one asset and its neighbours. */

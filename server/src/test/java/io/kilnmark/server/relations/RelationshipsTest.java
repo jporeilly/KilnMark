@@ -382,12 +382,12 @@ class RelationshipsTest {
             }
             firstOut.set(System.nanoTime());
             return null;
-        }));
+        }, java.time.Duration.ofSeconds(30)));
         inside.await();
         store.serialised(() -> {
             secondIn.set(System.nanoTime());
             return null;
-        });
+        }, java.time.Duration.ofSeconds(30));
         first.join();
         assertTrue(secondIn.get() >= firstOut.get(), "the second refresh waited for the first");
 
@@ -408,7 +408,7 @@ class RelationshipsTest {
             threads.add(Thread.ofVirtual().start(() -> {
                 try {
                     for (int i = 0; i < 3; i++) {
-                        service.afterScan(s, List.of());
+                        service.afterScan(s, List.of(), false);
                     }
                 } catch (Throwable t) {
                     failures.add(t);
@@ -423,5 +423,71 @@ class RelationshipsTest {
         assertEquals("rejected", find(relationshipsOf(TRANSACTIONS), TRANSACTIONS, "customer_id", CUSTOMERS).get("status"));
         assertNotNull(find(relationshipsOf(CUSTOMERS), "urn:kilnmark:rel-db2:rel_billing.transactions", "customer_id",
             CUSTOMERS));
+    }
+
+    @Test
+    @Order(8)
+    void aRefreshThatCannotGetTheLockInTimeIsSkipped() throws Exception {
+        java.util.concurrent.CountDownLatch inside = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        Thread holder = Thread.ofVirtual().start(() -> store.serialised(() -> {
+            inside.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return null;
+        }, java.time.Duration.ofSeconds(30)));
+        inside.await();
+        try {
+            org.junit.jupiter.api.Assertions.assertThrows(io.kilnmark.graph.store.RelationshipStore.Busy.class,
+                () -> store.serialised(() -> "ran", java.time.Duration.ofMillis(300)));
+            RelationshipService.Outcome skipped = service.afterScan(graph.source(SOURCE).orElseThrow(), List.of(), false,
+                java.time.Duration.ofMillis(300));
+            assertNotNull(skipped.skipped());
+            assertTrue(skipped.skipped().contains("not refreshed"), skipped.skipped());
+        } finally {
+            release.countDown();
+            holder.join();
+        }
+        assertEquals("ran", store.serialised(() -> "ran", java.time.Duration.ofSeconds(5)), "the lock is free again");
+    }
+
+    @Test
+    @Order(9)
+    void unreadableForeignKeysKeepTheOnesRecordedBefore() throws Exception {
+        FlakyKeysConnector.failKeys = false;
+        admin().contentType(ContentType.JSON).body(Map.of("name", "rel-flaky", "kind", "test-flaky-keys",
+                "password", password, "settings", Map.of("url", url, "username", user, "schemas", "rel_crm")))
+            .post("/api/v1/sources").then().statusCode(201);
+        try {
+            scanOf("rel-flaky");
+            int before = Tokens.as(viewer).queryParam("kind", "declared").queryParam("source", "rel-flaky")
+                .get("/api/v1/relationships").then().statusCode(200).extract().jsonPath().getInt("total");
+            assertTrue(before >= 1, "declared keys recorded: " + before);
+
+            FlakyKeysConnector.failKeys = true;
+            JsonPath run = scanOf("rel-flaky");
+            assertTrue(run.getString("detail").contains("Foreign keys could not be read"), run.getString("detail"));
+            Tokens.as(viewer).queryParam("kind", "declared").queryParam("source", "rel-flaky")
+                .get("/api/v1/relationships").then().statusCode(200).body("total", equalTo(before));
+        } finally {
+            FlakyKeysConnector.failKeys = false;
+        }
+    }
+
+    private static JsonPath scanOf(String name) throws InterruptedException {
+        long id = admin().post("/api/v1/sources/" + name + "/scans").then().statusCode(202)
+            .extract().jsonPath().getLong("id");
+        for (int i = 0; i < 240; i++) {
+            JsonPath run = admin().get("/api/v1/runs/" + id).then().statusCode(200).extract().jsonPath();
+            if (!Set.of("queued", "running").contains(run.getString("status"))) {
+                assertEquals("succeeded", run.getString("status"), run.getString("detail"));
+                return run;
+            }
+            Thread.sleep(250);
+        }
+        throw new AssertionError("scan " + id + " did not finish");
     }
 }

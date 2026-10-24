@@ -22,9 +22,17 @@ import javax.sql.DataSource;
 public final class JdbcRelationshipStore implements RelationshipStore {
 
     private final DataSource db;
+    private final long statementTimeoutMs;
 
+    /** With statements limited to five minutes. */
     public JdbcRelationshipStore(DataSource db) {
+        this(db, java.time.Duration.ofMinutes(5));
+    }
+
+    /** {@code statementTimeout}: the longest any one statement of this store may run. */
+    public JdbcRelationshipStore(DataSource db, java.time.Duration statementTimeout) {
         this.db = db;
+        this.statementTimeoutMs = Math.max(1, statementTimeout.toMillis());
     }
 
     @FunctionalInterface
@@ -37,6 +45,10 @@ public final class JdbcRelationshipStore implements RelationshipStore {
             boolean auto = c.getAutoCommit();
             c.setAutoCommit(false);
             try {
+                // Bounds every statement, including the refresh's work under the relationship lock.
+                try (java.sql.Statement st = c.createStatement()) {
+                    st.execute("SET LOCAL statement_timeout = " + statementTimeoutMs);
+                }
                 T result = work.run(c);
                 c.commit();
                 return result;
@@ -341,13 +353,29 @@ public final class JdbcRelationshipStore implements RelationshipStore {
     static final long LOCK_KEY = 0x6b6d72656cL;
 
     @Override
-    public <T> T serialised(java.util.function.Supplier<T> work) {
+    public <T> T serialised(java.util.function.Supplier<T> work, java.time.Duration wait) {
         // A session lock on a connection of its own, held while work runs its own transactions; it
         // is released when the work ends, or by PostgreSQL if this connection is lost.
-        try (Connection c = db.getConnection()) {
-            try (PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_lock(?)")) {
-                ps.setLong(1, LOCK_KEY);
-                ps.execute();
+        long deadline = System.nanoTime() + wait.toNanos();
+        Connection c;
+        try {
+            c = db.getConnection();
+        } catch (SQLException e) {
+            throw new JdbcGraphStore.StoreException(e.getMessage(), e);
+        }
+        boolean reusable = true;
+        try {
+            while (!tryLock(c)) {
+                if (System.nanoTime() >= deadline) {
+                    throw new Busy("Another relationship refresh held the lock for more than " + wait.toSeconds()
+                        + " seconds");
+                }
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new Busy("Interrupted while waiting for the relationship lock");
+                }
             }
             try {
                 return work.get();
@@ -355,10 +383,47 @@ public final class JdbcRelationshipStore implements RelationshipStore {
                 try (PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_unlock(?)")) {
                     ps.setLong(1, LOCK_KEY);
                     ps.execute();
+                } catch (SQLException e) {
+                    // The lock may still be held by this session: never hand the connection back to the
+                    // pool holding it. Aborting closes the physical connection, which releases the lock.
+                    reusable = false;
+                    abort(c);
                 }
             }
         } catch (SQLException e) {
+            reusable = false;
+            abort(c);
             throw new JdbcGraphStore.StoreException(e.getMessage(), e);
+        } finally {
+            if (reusable) {
+                try {
+                    c.close();
+                } catch (SQLException e) {
+                    // closing a pooled connection that failed: nothing more to do
+                }
+            }
+        }
+    }
+
+    private static boolean tryLock(Connection c) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT pg_try_advisory_lock(?)")) {
+            ps.setLong(1, LOCK_KEY);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getBoolean(1);
+            }
+        }
+    }
+
+    private static void abort(Connection c) {
+        try {
+            c.abort(Runnable::run);
+        } catch (SQLException | RuntimeException e) {
+            try {
+                c.close();
+            } catch (SQLException ignored) {
+                // nothing more to do
+            }
         }
     }
 

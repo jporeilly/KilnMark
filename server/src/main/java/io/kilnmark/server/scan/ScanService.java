@@ -291,7 +291,11 @@ public class ScanService {
     private String relate(Records.Source source, CatalogInfo catalog) {
         String warnings = catalog.warnings().isEmpty() ? "" : ". " + String.join("; ", catalog.warnings());
         try {
-            RelationshipService.Outcome r = relationships.afterScan(source, catalog.relationships());
+            RelationshipService.Outcome r = relationships.afterScan(source, catalog.relationships(),
+                catalog.relationshipsRead());
+            if (r.skipped() != null) {
+                return warnings + ". " + r.skipped();
+            }
             return warnings + (r.proposed() > 0 ? ". " + r.proposed()
                 + (r.proposed() == 1 ? " relationship" : " relationships") + " proposed for review" : "");
         } catch (RuntimeException e) {

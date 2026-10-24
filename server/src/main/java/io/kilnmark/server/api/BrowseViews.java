@@ -63,10 +63,11 @@ public final class BrowseViews {
     /**
      * A diagram: tables with their columns and the relationships between them (rejected ones
      * included, for the list; diagrams hide them). {@code total} is how many tables the request
-     * matched; {@code truncated} when more matched than {@code limit} allows.
+     * matched; {@code truncated} when more matched than {@code limit} allows;
+     * {@code relationshipsTruncated} when more relationships exist than a diagram reads (1,000).
      */
     public record Diagram(List<Table> tables, List<Relationship> relationships, int total, int limit,
-                          boolean truncated) {
+                          boolean truncated, boolean relationshipsTruncated) {
     }
 
     /** What to show an asset as, from its kind and, for files, the end of its name. */

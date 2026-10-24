@@ -43,15 +43,20 @@ export function TableDetails({ asset }: { asset: Asset }) {
   );
   const outgoing = (relationships ?? []).filter((r) => r.from.urn === asset.urn && r.status !== "rejected").length;
   const incoming = (relationships ?? []).filter((r) => r.to.urn === asset.urn && r.status !== "rejected").length;
-  const more = () =>
-    relationships &&
+  const [loadingMore, setLoadingMore] = useState(false);
+  const more = () => {
+    if (!relationships || loadingMore) return;
+    setLoadingMore(true);
     browseApi
       .relationshipsOf(asset.urn, relationships.length)
       .then((p) => {
-        setRelationships([...relationships, ...p.items]);
+        // Append to the list as it is now, never a copy captured before the request.
+        setRelationships((rs) => [...(rs ?? []), ...p.items.filter((r) => !(rs ?? []).some((x) => x.id === r.id))]);
         setTotal(p.total);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoadingMore(false));
+  };
   const onChange = (updated: Relationship) =>
     setRelationships((rs) => rs && rs.map((r) => (r.id === updated.id ? updated : r)));
 
@@ -117,7 +122,7 @@ export function TableDetails({ asset }: { asset: Asset }) {
               onChange={onChange}
             />
             {relationships.length < total && (
-              <button type="button" onClick={more}>
+              <button type="button" onClick={more} disabled={loadingMore}>
                 Show more relationships ({formatNumber(relationships.length)} of {formatNumber(total)} shown)
               </button>
             )}

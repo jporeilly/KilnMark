@@ -14,8 +14,11 @@ public class RelationsStoreProducer {
 
     @Produces
     @ApplicationScoped
-    RelationshipStore relationshipStore(AgroalDataSource dataSource) {
-        return new JdbcRelationshipStore(dataSource);
+    RelationshipStore relationshipStore(AgroalDataSource dataSource,
+                                        @org.eclipse.microprofile.config.inject.ConfigProperty(
+                                            name = "kilnmark.relationships.statement-timeout", defaultValue = "5m")
+                                        java.time.Duration statementTimeout) {
+        return new JdbcRelationshipStore(dataSource, statementTimeout);
     }
 
     @Produces

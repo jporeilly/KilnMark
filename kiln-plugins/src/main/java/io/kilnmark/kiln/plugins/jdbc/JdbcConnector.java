@@ -151,7 +151,6 @@ public abstract class JdbcConnector implements Connector {
             java.util.Set<String> paths = new java.util.HashSet<>();
             assets.forEach(a -> paths.add(a.path()));
             List<RelationshipInfo> relationships = new ArrayList<>();
-            List<String> warnings = new ArrayList<>();
             try {
                 for (JdbcCatalog.ForeignKey k : readForeignKeys(c, tables)) {
                     String from = k.fromSchema() + "." + k.fromTable();
@@ -161,10 +160,10 @@ public abstract class JdbcConnector implements Connector {
                     }
                 }
             } catch (SQLException e) {
-                relationships.clear();
-                warnings.add("Foreign keys could not be read, so none were recorded: " + explain(e));
+                return CatalogInfo.withoutRelationships(assets,
+                    "Foreign keys could not be read, so the ones recorded before were kept: " + explain(e));
             }
-            return new CatalogInfo(assets, relationships, warnings);
+            return new CatalogInfo(assets, relationships);
         } catch (SQLException e) {
             throw new ConnectorException("Cannot read the catalogue of " + source.name() + ": " + explain(e), e);
         }

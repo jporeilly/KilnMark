@@ -36,11 +36,16 @@ public class RelationshipService {
 
     private final RelationshipStore store;
     private final ObjectMapper json;
+    private final java.time.Duration lockWait;
     private final KeyInference inference = new KeyInference(KeyInference.Limits.DEFAULT);
 
-    public RelationshipService(RelationshipStore store, ObjectMapper json) {
+    public RelationshipService(RelationshipStore store, ObjectMapper json,
+                               @org.eclipse.microprofile.config.inject.ConfigProperty(
+                                   name = "kilnmark.relationships.lock-wait", defaultValue = "2m")
+                               java.time.Duration lockWait) {
         this.store = store;
         this.json = json;
+        this.lockWait = lockWait;
     }
 
     /** True for a profile attribute that is stored apart from the profile JSON. */
@@ -74,20 +79,40 @@ public class RelationshipService {
         }
     }
 
-    /** What {@link #afterScan} did, for the run's summary. */
-    public record Outcome(int declared, int proposed, int removed) {
+    /**
+     * What {@link #afterScan} did, for the run's summary. {@code skipped} says why nothing was
+     * refreshed (another refresh held the lock too long), or is null.
+     */
+    public record Outcome(int declared, int proposed, int removed, String skipped) {
     }
 
     /**
      * After a scan of {@code source}: records the foreign keys it declares, then refreshes the
      * inferred relationships with at least one end in it.
      */
-    public Outcome afterScan(Records.Source source, List<RelationshipInfo> declared) {
-        return store.serialised(() -> refresh(source, declared));
+    public Outcome afterScan(Records.Source source, List<RelationshipInfo> declared, boolean declaredRead) {
+        return afterScan(source, declared, declaredRead, lockWait);
     }
 
-    private Outcome refresh(Records.Source source, List<RelationshipInfo> declared) {
-        int saved = store.saveDeclared(source.id(), declared.stream().map(r -> new RelationshipStore.Declared(
+    /**
+     * As {@link #afterScan(Records.Source, List, boolean)}, waiting at most {@code wait} for another
+     * source's refresh to finish; past that, nothing is refreshed and the outcome says so. With
+     * {@code declaredRead} false (the source's keys could not be read) the declared relationships
+     * recorded before are kept as they are.
+     */
+    public Outcome afterScan(Records.Source source, List<RelationshipInfo> declared, boolean declaredRead,
+                             java.time.Duration wait) {
+        try {
+            return store.serialised(() -> refresh(source, declared, declaredRead), wait);
+        } catch (RelationshipStore.Busy e) {
+            LOG.warnf("Relationships of %s were not refreshed: %s", source.name(), e.getMessage());
+            return new Outcome(0, 0, 0, "Relationships were not refreshed: another source's refresh took longer than "
+                + wait.toSeconds() + " seconds. The next scan refreshes them");
+        }
+    }
+
+    private Outcome refresh(Records.Source source, List<RelationshipInfo> declared, boolean declaredRead) {
+        int saved = !declaredRead ? -1 : store.saveDeclared(source.id(), declared.stream().map(r -> new RelationshipStore.Declared(
             urn(source, r.fromPath()), r.fromFields(), urn(source, r.toPath()), r.toFields(), r.name())).toList());
         List<RelationshipStore.KeyColumn> columns = store.keyColumns(source.id(), MAX_KEY_COLUMNS);
         if (columns.size() == MAX_KEY_COLUMNS) {
@@ -103,7 +128,7 @@ public class RelationshipService {
             .map(p -> new RelationshipStore.Inferred(p.from().assetUrn(), p.from().field(), p.to().assetUrn(),
                 p.to().field(), p.confidence(), evidence(p.evidence())))
             .toList());
-        return new Outcome(saved, refresh.added(), refresh.removed());
+        return new Outcome(saved, refresh.added(), refresh.removed(), null);
     }
 
     private static String urn(Records.Source source, String path) {

@@ -121,8 +121,8 @@ public class BrowseResource {
         if (urns != null && !urns.isEmpty()) {
             List<String> chosen = urns.stream().filter(u -> u != null && !u.isBlank()).distinct().toList();
             List<BrowseStore.Table> tables = browse.tables(chosen.subList(0, Math.min(n, chosen.size())));
-            return diagram(tables, Set.of(), relationships.among(urnsOf(tables), false, DIAGRAM_RELATIONSHIPS),
-                chosen.size(), n);
+            List<RelationshipStore.Relationship> rels = relationships.among(urnsOf(tables), false, DIAGRAM_RELATIONSHIPS);
+            return diagram(tables, Set.of(), rels, chosen.size(), n, rels.size() >= DIAGRAM_RELATIONSHIPS);
         }
         if (source == null || container == null) {
             throw new IllegalArgumentException(
@@ -133,6 +133,7 @@ public class BrowseResource {
         List<BrowseStore.Table> tables = new ArrayList<>(page.items());
         List<String> inside = urnsOf(tables);
         List<RelationshipStore.Relationship> rels = relationships.among(inside, true, DIAGRAM_RELATIONSHIPS);
+        boolean cut = rels.size() >= DIAGRAM_RELATIONSHIPS;
         // Tables in other containers or sources that these refer to, or that refer to them.
         Set<String> outside = new LinkedHashSet<>();
         for (RelationshipStore.Relationship r : rels) {
@@ -147,7 +148,7 @@ public class BrowseResource {
         tables.addAll(browse.tables(outside));
         Set<String> shown = new HashSet<>(urnsOf(tables));
         rels = rels.stream().filter(r -> shown.contains(r.from().urn()) && shown.contains(r.to().urn())).toList();
-        return diagram(tables, outside, rels, page.total(), n);
+        return diagram(tables, outside, rels, page.total(), n, cut);
     }
 
     /** {@code start} and the assets related to it, level by level: one query per level, capped. */
@@ -155,9 +156,12 @@ public class BrowseResource {
         Set<String> seen = new LinkedHashSet<>(List.of(start));
         List<String> frontier = List.of(start);
         boolean more = false;
+        boolean cut = false;
         for (int level = 0; level < depth && !frontier.isEmpty(); level++) {
             List<String> next = new ArrayList<>();
-            for (RelationshipStore.Relationship r : relationships.among(frontier, true, DIAGRAM_RELATIONSHIPS)) {
+            List<RelationshipStore.Relationship> around = relationships.among(frontier, true, DIAGRAM_RELATIONSHIPS);
+            cut |= around.size() >= DIAGRAM_RELATIONSHIPS;
+            for (RelationshipStore.Relationship r : around) {
                 if (r.status().equals("rejected")) {
                     continue;
                 }
@@ -177,11 +181,13 @@ public class BrowseResource {
         }
         List<BrowseStore.Table> tables = browse.tables(seen);
         int total = more ? seen.size() + 1 : seen.size();
-        return diagram(tables, Set.of(), relationships.among(seen, false, DIAGRAM_RELATIONSHIPS), total, limit);
+        List<RelationshipStore.Relationship> rels = relationships.among(seen, false, DIAGRAM_RELATIONSHIPS);
+        return diagram(tables, Set.of(), rels, total, limit, cut || rels.size() >= DIAGRAM_RELATIONSHIPS);
     }
 
     private BrowseViews.Diagram diagram(List<BrowseStore.Table> tables, Set<String> external,
-                                        List<RelationshipStore.Relationship> rels, int total, int limit) {
+                                        List<RelationshipStore.Relationship> rels, int total, int limit,
+                                        boolean relationshipsCut) {
         Set<String> foreign = new HashSet<>();
         for (RelationshipStore.Relationship r : rels) {
             if (!r.status().equals("rejected")) {
@@ -193,7 +199,8 @@ public class BrowseResource {
             external.contains(t.urn()), t.columns().stream().map(c -> new BrowseViews.Column(c.name(), c.sourceType(),
                 c.kind(), c.nullable(), t.primaryKey().contains(c.name()), foreign.contains(t.urn() + '\u0000' + c.name())))
                 .toList())).toList();
-        return new BrowseViews.Diagram(boxes, rels.stream().map(this::view).toList(), total, limit, total > limit);
+        return new BrowseViews.Diagram(boxes, rels.stream().map(this::view).toList(), total, limit, total > limit,
+            relationshipsCut);
     }
 
     /**

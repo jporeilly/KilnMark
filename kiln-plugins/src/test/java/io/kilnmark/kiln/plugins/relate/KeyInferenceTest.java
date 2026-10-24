@@ -78,10 +78,26 @@ class KeyInferenceTest {
         byte[] big = sketch(LongStream.rangeClosed(1, 1_000_000));
         Containment large = Containment.of(sketch(LongStream.rangeClosed(1, 200_000).map(n -> n * 5)), big);
         assertTrue(large.fraction() > 0.9, "large subset: " + large);
-        // A few values inside a million leave its buckets as they were: still judged, as contained.
-        Containment few = Containment.of(sketch(LongStream.rangeClosed(1, 50)), big);
-        assertEquals(1.0, few.fraction(), 0.0, few.toString());
-        assertTrue(Containment.of(sketch(LongStream.rangeClosed(5_000_001, 5_000_050)), big).fraction() < 0.2);
+        // A thousand values inside a million: still judged, and contained.
+        Containment thousand = Containment.of(sketch(LongStream.rangeClosed(1, 1_000).map(v -> v * 997)), big);
+        assertTrue(thousand.conclusive() && thousand.fraction() >= 0.98, thousand.toString());
+    }
+
+    @Test
+    void smallSetsOutsideALargeKeyAreNeverStrongEvidence() {
+        java.util.Random random = new java.util.Random(20261024L);
+        byte[] million = sketch(LongStream.rangeClosed(1, 1_000_000));
+        byte[] hundredThousand = sketch(LongStream.rangeClosed(1, 100_000));
+        for (int trial = 0; trial < 60; trial++) {
+            int n = 20 + random.nextInt(481); // 20 to 500 values
+            long start = 2_000_000 + (long) (random.nextDouble() * 1e12);
+            Containment c = Containment.of(sketch(LongStream.range(start, start + n)), million);
+            assertFalse(c.conclusive() && c.fraction() >= 0.9, "trial " + trial + ", " + n + " values: " + c);
+        }
+        Containment twenty = Containment.of(sketch(LongStream.rangeClosed(500_001, 500_020)), hundredThousand);
+        assertFalse(twenty.conclusive(), twenty.toString());
+        Containment fiveHundred = Containment.of(sketch(LongStream.rangeClosed(7_000_001, 7_000_500)), million);
+        assertFalse(fiveHundred.conclusive(), fiveHundred.toString());
     }
 
     @Test

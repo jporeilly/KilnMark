@@ -84,9 +84,21 @@ public interface RelationshipStore {
      * Runs {@code work} while holding the relationship lock, a PostgreSQL advisory lock shared by
      * every server process: one source's relationship refresh at a time, each seeing the last one's
      * committed result. Concurrent refreshes would otherwise lock the same rows in different
-     * orders.
+     * orders. Waits at most {@code wait} for the lock.
+     *
+     * @throws Busy if the lock is not free within {@code wait}; {@code work} has not run
      */
-    <T> T serialised(java.util.function.Supplier<T> work);
+    <T> T serialised(java.util.function.Supplier<T> work, java.time.Duration wait);
+
+    /** The relationship lock stayed taken for longer than the caller would wait. */
+    final class Busy extends RuntimeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        public Busy(String message) {
+            super(message);
+        }
+    }
 
     /** The latest sketch of each column that has one. */
     Map<FieldRef, byte[]> sketches(Collection<FieldRef> fields);
