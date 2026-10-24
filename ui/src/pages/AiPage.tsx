@@ -76,6 +76,14 @@ export function AiPage() {
 
   return (
     <>
+      <nav aria-label="Breadcrumb" className="crumbs">
+        <ol>
+          <li>
+            <a href={href.settings()}>Settings</a>
+          </li>
+          <li aria-current="page">AI models</li>
+        </ol>
+      </nav>
       <h1 tabIndex={-1}>AI models</h1>
       <p className="lead">
         Choose the models Kilnmark uses: local ones on your own servers, or hosted ones with an API key. AI only proposes;

@@ -169,6 +169,10 @@
   with the relationships a source declares, and warnings; `AssetInfo` is unchanged. Foreign keys
   that cannot be read leave the scan going, with a warning in its detail.
 
+- Settings: API tokens, AI models and AI usage move under one Settings section, admins only.
+- Interactive API documentation at `/api/docs`, served by the server itself (works offline), from
+  the OpenAPI document at `/q/openapi`. Calls made from it need an API token (Authorize button).
+
 ## 0.0.2 (24 October 2026)
 
 The first working slice: point Kilnmark at PostgreSQL databases, scan them, and search what it

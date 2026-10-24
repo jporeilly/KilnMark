@@ -1,3 +1,4 @@
+import { href } from "../router";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { aiApi, api, formatTime, type AccessRole, type ApiToken, type CreatedToken, type Me } from "../api";
 import { useTitle } from "../components/useTitle";
@@ -74,6 +75,14 @@ export function TokensPage({ me }: { me: Me }) {
 
   return (
     <>
+      <nav aria-label="Breadcrumb" className="crumbs">
+        <ol>
+          <li>
+            <a href={href.settings()}>Settings</a>
+          </li>
+          <li aria-current="page">API tokens</li>
+        </ol>
+      </nav>
       <h1 tabIndex={-1}>API tokens</h1>
       <p className="lead">
         Scripts, pipelines and people sign in with an API token. Each token has a role, and can expire or be revoked at

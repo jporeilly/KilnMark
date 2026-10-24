@@ -985,3 +985,8 @@ legend {
 .ai-days {
   max-width: 240px;
 }
+
+/* Settings */
+.settings-list { list-style: none; padding: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); }
+.settings-list h2 { margin: 0 0 0.25rem; font-size: 1.1rem; }
+.settings-list p { margin: 0; }

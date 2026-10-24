@@ -7,6 +7,7 @@ export type Route =
   | { page: "sources" }
   | { page: "source"; name: string }
   | { page: "tokens" }
+  | { page: "settings" }
   | { page: "signout" }
   | { page: "ai" }
   | { page: "ai-usage" }
@@ -23,6 +24,7 @@ export function parse(hash: string): Route {
   if (path === "/sources") return { page: "sources" };
   if (path.startsWith("/source/")) return { page: "source", name: decodeURIComponent(path.slice("/source/".length)) };
   if (path === "/tokens") return { page: "tokens" };
+  if (path === "/settings") return { page: "settings" };
   if (path === "/sign-out") return { page: "signout" };
   if (path === "/ai") return { page: "ai" };
   if (path === "/ai/usage") return { page: "ai-usage" };
@@ -45,6 +47,7 @@ export const href = {
   sources: () => "#/sources",
   source: (name: string) => `#/source/${encodeURIComponent(name)}`,
   tokens: () => "#/tokens",
+  settings: () => "#/settings",
   signOut: () => "#/sign-out",
   ai: () => "#/ai",
   aiUsage: () => "#/ai/usage",

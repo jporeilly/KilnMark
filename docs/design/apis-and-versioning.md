@@ -30,8 +30,9 @@ browser with an API token.
 - Generated from the code (SmallRye OpenAPI), with operation summaries, error responses and
   role requirements written on each endpoint.
 - The explorer is served from the server itself, so it works offline.
-- A setting can turn the explorer off in production. The OpenAPI document stays available to
-  signed-in users.
+- Both the explorer and the OpenAPI document describe the API only and need no sign-in; every
+  call made from them still needs an API token. Either can be turned off in production
+  (`QUARKUS_SWAGGER_UI_ENABLE=false`, `QUARKUS_SMALLRYE_OPENAPI_ENABLE=false`).
 - The OpenAPI document is versioned with the API (`/api/v1`). A breaking change needs `/api/v2`.
 
 ## Data as APIs (parked)

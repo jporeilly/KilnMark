@@ -58,6 +58,7 @@ Useful endpoints in dev mode (all but the first and the `/q` ones need an API to
 - `GET /api/v1/relationships?asset={urn}` or `?source=...&status=proposed`, and
   `POST /api/v1/relationships/{id}/accept` or `/reject` (steward)
 - `POST /api/v1/tokens`, `GET /api/v1/tokens`, `DELETE /api/v1/tokens/{id}`: API tokens (admin)
+- `/api/docs`: interactive API documentation; `/q/openapi`: the OpenAPI document it reads
 - `GET /q/health/ready`, `GET /q/health/live`: readiness and liveness (see [Health](#health))
 - `POST /api/v1/search/ask`: ask in plain English; `/api/v1/ai/...`: AI models (see [AI models](#ai-models))
 - `/mcp`: the read-only MCP server for outside AI assistants

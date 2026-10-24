@@ -32,6 +32,14 @@ export function AiUsagePage() {
 
   return (
     <>
+      <nav aria-label="Breadcrumb" className="crumbs">
+        <ol>
+          <li>
+            <a href={href.settings()}>Settings</a>
+          </li>
+          <li aria-current="page">AI usage</li>
+        </ol>
+      </nav>
       <h1 tabIndex={-1}>AI usage</h1>
       <p className="lead">
         Every model call, including refused ones: which feature asked, which model answered, tokens and time. Prompts

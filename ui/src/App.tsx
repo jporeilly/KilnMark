@@ -9,6 +9,7 @@ import { SourcePage } from "./pages/SourcePage";
 import { SignInPage, type SignInNotice } from "./pages/SignInPage";
 import { TokensPage } from "./pages/TokensPage";
 import { AiPage } from "./pages/AiPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { AiUsagePage } from "./pages/AiUsagePage";
 import { BrowsePage } from "./browse/BrowsePage";
 import { RelationshipsPage } from "./browse/RelationshipsPage";
@@ -186,15 +187,13 @@ function Shell({ me }: { me: Me }) {
             </li>
             {allows(me.role, "admin") && (
               <li>
-                <a href={href.tokens()} aria-current={current("tokens")}>
-                  API tokens
-                </a>
-              </li>
-            )}
-            {allows(me.role, "admin") && (
-              <li>
-                <a href={href.ai()} aria-current={route.page === "ai" || route.page === "ai-usage" ? "page" : undefined}>
-                  AI models
+                <a
+                  href={href.settings()}
+                  aria-current={
+                    ["settings", "tokens", "ai", "ai-usage"].includes(route.page) ? "page" : undefined
+                  }
+                >
+                  Settings
                 </a>
               </li>
             )}
@@ -203,6 +202,15 @@ function Shell({ me }: { me: Me }) {
         <RoleContext.Provider value={me.role}>
         <main id="main" tabIndex={-1}>
           {route.page === "home" && <HomePage />}
+          {route.page === "settings" &&
+            (allows(me.role, "admin") ? (
+              <SettingsPage />
+            ) : (
+              <>
+                <h1 tabIndex={-1}>Settings</h1>
+                <p>Only admins can change settings.</p>
+              </>
+            ))}
           {route.page === "search" && <SearchPage q={route.q} ask={route.ask} />}
           {route.page === "asset" && <AssetPage urn={route.urn} />}
           {route.page === "sources" && <SourcesPage role={me.role} />}
