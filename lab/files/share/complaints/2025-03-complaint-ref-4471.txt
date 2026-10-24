@@ -1,0 +1,12 @@
+Customer complaint, reference 4471 (synthetic test document)
+
+Received: 14 March 2025
+From: Ella Martin <ella.martin2@example.net>, telephone 07700 900002
+Date of birth on file: 23/01/1962
+Address postcode: M1 3CO
+National Insurance number quoted by the customer: QQ000074C
+
+Summary: The customer reports a duplicated card payment of £42.10 at Boots on 2 March 2025
+(card ending 1838) and asks for a refund to her current account.
+
+Action: Refund approved by the complaints team on 18 March 2025.
