@@ -7,6 +7,8 @@ import { AssetPage } from "./pages/AssetPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { SignInPage, type SignInNotice } from "./pages/SignInPage";
 import { TokensPage } from "./pages/TokensPage";
+import { RulesPage } from "./pages/RulesPage";
+import { IssuesPage } from "./pages/IssuesPage";
 
 /**
  * Checks who is signed in, then shows either the sign-in page or the app. Signing out (the
@@ -162,6 +164,16 @@ function Shell({ me }: { me: Me }) {
                 Sources
               </a>
             </li>
+            <li>
+              <a href={href.rules()} aria-current={current("rules")}>
+                Quality rules
+              </a>
+            </li>
+            <li>
+              <a href={href.issues()} aria-current={current("issues")}>
+                Issues
+              </a>
+            </li>
             {allows(me.role, "admin") && (
               <li>
                 <a href={href.tokens()} aria-current={current("tokens")}>
@@ -176,6 +188,8 @@ function Shell({ me }: { me: Me }) {
           {route.page === "search" && <SearchPage q={route.q} />}
           {route.page === "asset" && <AssetPage urn={route.urn} />}
           {route.page === "sources" && <SourcesPage role={me.role} />}
+          {route.page === "rules" && <RulesPage role={me.role} urn={route.urn} />}
+          {route.page === "issues" && <IssuesPage role={me.role} />}
           {route.page === "tokens" &&
             (allows(me.role, "admin") ? (
               <TokensPage me={me} />

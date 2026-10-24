@@ -31,6 +31,12 @@ import io.kilnmark.kiln.StepException;
  * {@code transaction-isolation} (a {@link Connection} isolation level number; default the
  * driver's). When it finishes it reports the rows it read as a {@code ROW_COUNT} event, marked
  * complete unless a row limit cut the read short.
+ *
+ * <p>Sampling large tables: with {@link #SAMPLE_ABOVE} (rows), {@link #ESTIMATE_QUERY} (giving the
+ * database's row estimate) and {@link #SAMPLE_QUERY} (holding {@link #PERCENT}), a table estimated
+ * above that many rows is read through the sample query instead, at the percentage that gives
+ * about that many rows. The {@code ROW_COUNT} event then says {@code complete=false},
+ * {@code sampled=true}, {@code sample_percent} and {@code estimated_rows}.
  */
 public final class JdbcTableInput implements Step {
 
@@ -38,6 +44,17 @@ public final class JdbcTableInput implements Step {
 
     /** The setting holding the transaction isolation level the read runs at, as a JDBC level number. */
     public static final String ISOLATION = "transaction-isolation";
+    /** Setting: sample tables estimated above this many rows. */
+    public static final String SAMPLE_ABOVE = "sample-above";
+    /** Setting: SQL giving the row estimate as one number. */
+    public static final String ESTIMATE_QUERY = "estimate-query";
+    /** Setting: SQL reading a sample; {@link #PERCENT} is replaced by the percentage. */
+    public static final String SAMPLE_QUERY = "sample-query";
+    /** Placeholder for the percentage in {@link #SAMPLE_QUERY}. */
+    public static final String PERCENT = "{percent}";
+
+    private String samplePercent;
+    private long estimatedRows = -1;
 
     private Connection connection;
     private Statement statement;
@@ -79,6 +96,9 @@ public final class JdbcTableInput implements Step {
                 connection.setTransactionIsolation(Integer.parseInt(context.setting(ISOLATION)));
             }
             statement = connection.createStatement();
+            if (context.settings().containsKey(SAMPLE_ABOVE)) {
+                sql = sampled(context, sql);
+            }
             statement.setFetchSize(batchSize);
             rows = statement.executeQuery(sql);
             ResultSetMetaData md = rows.getMetaData();
@@ -128,9 +148,15 @@ public final class JdbcTableInput implements Step {
             throw new StepException("Interrupted", e);
         }
         if (exhausted) {
-            boolean complete = rowLimit <= 0 || read < rowLimit;
-            context.metadata().emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.ROW_COUNT,
-                Map.of("rows", Long.toString(read), "complete", Boolean.toString(complete)), Instant.now()));
+            boolean complete = samplePercent == null && (rowLimit <= 0 || read < rowLimit);
+            Map<String, String> attributes = new java.util.HashMap<>(
+                Map.of("rows", Long.toString(read), "complete", Boolean.toString(complete)));
+            if (samplePercent != null) {
+                attributes.put("sampled", "true");
+                attributes.put("sample_percent", samplePercent);
+                attributes.put("estimated_rows", Long.toString(estimatedRows));
+            }
+            context.metadata().emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.ROW_COUNT, attributes, Instant.now()));
         }
         return !exhausted;
     }
@@ -156,6 +182,21 @@ public final class JdbcTableInput implements Step {
         } catch (SQLException e) {
             // closing a read-only connection; nothing to keep
         }
+    }
+
+    /** The sample query if the table is estimated above the threshold, otherwise {@code sql}. */
+    private String sampled(StepContext context, String sql) throws SQLException, StepException {
+        long above = Long.parseLong(context.setting(SAMPLE_ABOVE));
+        try (ResultSet r = statement.executeQuery(context.setting(ESTIMATE_QUERY))) {
+            estimatedRows = r.next() ? r.getLong(1) : -1;
+        }
+        if (estimatedRows <= above) {
+            return sql;
+        }
+        double percent = Math.max(0.0001, Math.min(100.0, 100.0 * above / estimatedRows));
+        samplePercent = new java.math.BigDecimal(percent).round(new java.math.MathContext(3)).stripTrailingZeros()
+            .toPlainString();
+        return context.setting(SAMPLE_QUERY).replace(PERCENT, samplePercent);
     }
 
     static String quote(String identifier) {

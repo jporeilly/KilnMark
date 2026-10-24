@@ -15,8 +15,11 @@ import java.util.Objects;
  */
 public record MetadataEvent(String assetUrn, Kind kind, Map<String, String> attributes, Instant observedAt) {
 
-    /** The kinds of fact a step can report. */
-    public enum Kind { SCHEMA, ROW_COUNT, PROFILE, LINEAGE }
+    /**
+     * The kinds of fact a step can report. {@code SAMPLE} carries real values (sample rows and
+     * example values per value shape); whoever stores it applies the source's controls on samples.
+     */
+    public enum Kind { SCHEMA, ROW_COUNT, PROFILE, LINEAGE, SAMPLE }
 
     public MetadataEvent {
         Objects.requireNonNull(assetUrn, "assetUrn");

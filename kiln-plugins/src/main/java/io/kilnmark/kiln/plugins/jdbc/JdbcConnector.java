@@ -97,6 +97,37 @@ public abstract class JdbcConnector implements Connector {
         return "\"" + identifier.replace("\"", "\"\"") + "\"";
     }
 
+    /**
+     * Setting: tables with more rows than this (by the database's own estimate) are profiled from a
+     * {@code TABLESAMPLE} of about that many rows, and their profile is marked as an estimate.
+     * Absent: every row is read. Like {@code keep_samples}, it is one of the source's common
+     * settings rather than a form field of each database's connector.
+     */
+    public static final String TABLE_SAMPLE_ABOVE = "table_sample_above_rows";
+
+    /** How this database writes SQL, for checks Kilnmark runs in it. */
+    public SqlDialect dialect() {
+        return SqlDialect.POSTGRESQL;
+    }
+
+    /** A connection to the source, for checks run in the database; the caller closes it. */
+    public Connection connect(SourceConfig source) throws SQLException {
+        return DriverManager.getConnection(source.setting("url"), source.setting("username"), source.secret());
+    }
+
+    /**
+     * SQL giving the database's estimate of {@code asset}'s row count as one number, or null when
+     * this database has none (then tables are never sampled).
+     */
+    protected String estimateRowsSql(AssetInfo asset) {
+        return null;
+    }
+
+    /** The {@code TABLESAMPLE} clause for {@code percent} (a number as text), or null when unsupported. */
+    protected String tableSampleClause(String percent) {
+        return null;
+    }
+
     @Override
     public List<Setting> settings() {
         return List.of(
@@ -114,6 +145,16 @@ public abstract class JdbcConnector implements Connector {
         } else if (PASSWORD_IN_URL.matcher(url).find()) {
             problems.add("url: take the password out of the URL and enter it as the source's password instead; "
                 + "the URL is stored and shown as plain text, the password is encrypted");
+        }
+        String above = source.setting(TABLE_SAMPLE_ABOVE);
+        if (above != null) {
+            try {
+                if (Long.parseLong(above) < 1000) {
+                    problems.add(TABLE_SAMPLE_ABOVE + ": at least 1000 rows");
+                }
+            } catch (NumberFormatException e) {
+                problems.add(TABLE_SAMPLE_ABOVE + ": a whole number of rows, for example 10000000");
+            }
         }
         return problems;
     }
@@ -152,6 +193,16 @@ public abstract class JdbcConnector implements Connector {
         s.put("asset-urn", read.assetUrn());
         s.put("row-limit", Long.toString(read.rowLimit()));
         s.put("batch-size", Integer.toString(read.batchSize()));
+        String above = source.setting(TABLE_SAMPLE_ABOVE);
+        if (above != null && !asset.bounded() && read.rowLimit() <= 0 && asset.hints().containsKey("table")) {
+            String estimate = estimateRowsSql(asset);
+            String clause = tableSampleClause(JdbcTableInput.PERCENT);
+            if (estimate != null && clause != null) {
+                s.put(JdbcTableInput.SAMPLE_ABOVE, above);
+                s.put(JdbcTableInput.ESTIMATE_QUERY, estimate);
+                s.put(JdbcTableInput.SAMPLE_QUERY, selectSql(asset, 0) + " " + clause);
+            }
+        }
         s.putAll(readSettings(source));
         return new StepSpec("read", new JdbcTableInput(), s);
     }

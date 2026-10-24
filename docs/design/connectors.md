@@ -156,6 +156,23 @@ reasons for them are in [ADR 0015](../adr/0015-file-formats.md).
 - **Changed files.** If a CSV header no longer matches the catalogue, the reader infers the
   columns again rather than misreading them.
 
+## Sampling and data quality
+
+The scan's profile step (`ProfileStep`) also keeps value shapes, formats and quantiles, and with
+values allowed a sample of rows: settings `keep-values`, `examples`, `sample-size`, `sample-mode`
+(`key`, `row` or `reservoir`), `sample-key` and `sample-seed`. It reports the rows and the example
+values per shape as one `SAMPLE` metadata event, which the server stores under the source's
+`keep_samples` setting. Database connectors (`JdbcConnector`) also provide:
+
+- `dialect()`: how the database quotes names and values, limits rows, matches regular expressions
+  (none on SQL Server, so pattern rules there are checked while streaming) and makes a
+  transaction read-only; data quality rules are written through it;
+- `connect(source)`: a connection for checks run in the database;
+- `estimateRowsSql` and `tableSampleClause`: with the source setting `table_sample_above_rows`, a
+  table the database estimates above that many rows is read through `TABLESAMPLE SYSTEM`
+  (repeatable) at the percentage that gives about that many rows, and its `ROW_COUNT` event says
+  `sampled`, `sample_percent` and `estimated_rows`.
+
 ## Registering it
 
 List the class in `kiln-plugins/src/main/resources/META-INF/services/io.kilnmark.kiln.connect.Connector`.

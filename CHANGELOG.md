@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- **Data quality** (docs/design/data-quality.md, build step 1). Profiling now keeps, over every
+  row, each text column's value shapes (`SW1A 1AA` is `AA9A 9AA`; the top 20 with counts and the
+  share outside them), detected formats (email, phone, UK postcode, NI number, IBAN, card numbers
+  by Luhn, ISO dates and timestamps, numbers and booleans as text, JSON, padded values), blank
+  values, and for numbers and dates quantiles every 5%, negatives, values beyond the quartile
+  fences and dates after today. A few example values per shape are kept apart from the profile.
+- **Samples:** every scan keeps a sample of whole rows (1,000 by default; source setting
+  `sample_rows`), chosen by the hash of the primary key (or of the whole row), so the same rows
+  are chosen every time; files use reservoir sampling seeded per asset. Samples are replaced on
+  each scan and deleted with the asset. Source setting `keep_samples=false` keeps no values at
+  all: no samples, examples, most common values or failing rows. Database tables larger than the
+  source setting `table_sample_above_rows` are profiled from a `TABLESAMPLE`, and the profile says
+  it is an estimate. Viewing samples, examples and failing rows needs the steward role; columns a
+  steward marks sensitive are masked unless an admin unmasks them.
+- **Automatic pre-analysis** after each scan, with no extra read: measures for completeness,
+  uniqueness, validity, consistency, accuracy (estimated), timeliness and volume, each with its
+  evidence; suggested regular expressions for a column's dominant shapes; stewards accept shapes
+  with one click, which makes a validity rule.
+- **Rules:** not null, unique, allowed values, matches pattern, in range, freshness, row count and
+  its change, references and custom SQL, each tagged with a dimension, with warn and fail
+  thresholds as a share or a count. Actions: status, a steward task (the new **Issues** list),
+  and webhooks to URLs on the administrator's allow-list (`kilnmark.quality.webhook-allow-list`).
+  They run after every scan and on demand through the job queue (jobs of kind `quality`): as SQL
+  in PostgreSQL and SQL Server (custom SQL read-only and stopped after
+  `kilnmark.quality.query-timeout`), and while streaming files. Results keep the query that lists
+  the failing rows and a few failing rows. Rules preview against the sample before saving, and
+  are recommended from the profile without AI.
+- **Profile versions and drift:** a version per asset per scan; each is compared with the one
+  before and with a chosen baseline for schema, volume, distribution (quantile shift, nulls,
+  distinct values, most common values, shape shares) and freshness. Drift events have a severity,
+  lower the scores and open steward tasks.
+- **Scores** per column and dimension, rolled up to the asset and the source, with reasons.
+- **Open formats** (ADR 0020): `GET /api/v1/quality/export/openlineage` and `/export/odcs` export
+  an asset as an OpenLineage run event (schema, data quality metrics and assertions facets) and as
+  an ODCS 3.1 data contract, validated against the published schemas in the tests.
+- **Web UI:** a Quality section on asset pages (scores by dimension, value patterns with share
+  bars and examples, accept a pattern, rules and results, drift, sample rows, recommended rules),
+  a **Quality rules** page and an **Issues** page.
+- **Database:** migration V9 adds profile versions, samples, rules, accepted patterns, quality
+  runs, results, measures, scores, drift events and issues, a `sensitive` flag on fields, and
+  lets the job queue hold jobs of other kinds.
+
 - **Sign-in with API tokens:** every API call needs a token (`Authorization: Bearer km_...`)
   with a role: viewer (read), steward (also start scans) or admin (also add sources and manage
   tokens). Public without a token: `GET /api/v1/info`, `/q/health` and the API description

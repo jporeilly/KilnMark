@@ -45,6 +45,9 @@ public interface KilnmarkConfig {
     /** Settings for the {@code s3} connector. */
     S3 s3();
 
+    /** Data quality: samples, rules and their actions (docs/design/data-quality.md). */
+    Quality quality();
+
     /** API sign-in. */
     interface Auth {
         /**
@@ -108,6 +111,42 @@ public interface KilnmarkConfig {
          */
         @WithDefault("false")
         boolean allowDefaultCredentials();
+    }
+
+    interface Quality {
+        /**
+         * URL prefixes rule webhooks may call, comma-separated, for example
+         * {@code https://hooks.example.com/kilnmark/}. None (the default) allows no webhooks.
+         */
+        Optional<List<String>> webhookAllowList();
+
+        /** How long a webhook call may take. */
+        @WithDefault("5s")
+        Duration webhookTimeout();
+
+        /** How long one rule's query may run in a source database before it is cancelled. */
+        @WithDefault("60s")
+        Duration queryTimeout();
+
+        /** Rows sampled per asset, unless a source's {@code sample_rows} says otherwise (at most 10,000). */
+        @WithDefault("1000")
+        int sampleRows();
+
+        /** Example values kept per value shape. */
+        @WithDefault("5")
+        int examples();
+
+        /** Failing rows kept with each rule result (when the source keeps samples). */
+        @WithDefault("20")
+        int failingRows();
+
+        /** Profile versions kept per asset, besides baselines. */
+        @WithDefault("30")
+        int keepVersions();
+
+        /** How often new data is expected when an asset's history cannot tell yet. */
+        @WithDefault("1d")
+        Duration defaultCadence();
     }
 
     interface Scan {

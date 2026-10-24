@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatNumber, formatTime, type Asset, type Field } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
+import { QualityPanel } from "../components/QualityPanel";
 
 const percent = new Intl.NumberFormat("en-GB", { style: "percent", maximumFractionDigits: 1 });
 
@@ -180,6 +181,7 @@ export function AssetPage({ urn }: { urn: string }) {
           </table>
         </div>
       </section>
+      <QualityPanel asset={asset} />
       <p className="muted small">
         Identifier <span className="mono">{asset.urn}</span> · first seen {formatTime(asset.firstSeenAt)} ·{" "}
         <a href={href.search(asset.name)}>search for similar names</a>

@@ -6,6 +6,8 @@ export type Route =
   | { page: "asset"; urn: string }
   | { page: "sources" }
   | { page: "tokens" }
+  | { page: "rules"; urn: string }
+  | { page: "issues" }
   | { page: "signout" }
   | { page: "home" };
 
@@ -16,6 +18,8 @@ export function parse(hash: string): Route {
   if (path.startsWith("/asset/")) return { page: "asset", urn: decodeURIComponent(path.slice("/asset/".length)) };
   if (path === "/sources") return { page: "sources" };
   if (path === "/tokens") return { page: "tokens" };
+  if (path === "/quality/rules") return { page: "rules", urn: params.get("urn") ?? "" };
+  if (path === "/quality/issues") return { page: "issues" };
   if (path === "/sign-out") return { page: "signout" };
   return { page: "home" };
 }
@@ -26,6 +30,8 @@ export const href = {
   asset: (urn: string) => `#/asset/${encodeURIComponent(urn)}`,
   sources: () => "#/sources",
   tokens: () => "#/tokens",
+  rules: (urn?: string) => (urn ? `#/quality/rules?urn=${encodeURIComponent(urn)}` : "#/quality/rules"),
+  issues: () => "#/quality/issues",
   signOut: () => "#/sign-out",
 };
 

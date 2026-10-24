@@ -87,7 +87,7 @@ for that browser tab. A token has one role, and each role includes the ones befo
 | Role | Can |
 | --- | --- |
 | `viewer` | search, and read assets, sources, runs and connectors |
-| `steward` | also start scans |
+| `steward` | also start scans, manage quality rules, patterns and issues, and see sample values |
 | `admin` | also add and import sources, and create, list and revoke tokens |
 
 **The first admin token.** On first start, when no admin token is usable, the server creates
@@ -171,6 +171,38 @@ recovery (`stale-after`, 2 minutes) instead:
 With a shorter grace period, lower `KILNMARK_WORKER_SHUTDOWN_TIMEOUT` to leave 15 s or more. Each scan also profiles
 `kilnmark.scan.parallel-tables` tables at a time, so one worker reads up to
 `concurrency × parallel-tables` tables at once.
+
+## Data quality
+
+Each scan also samples rows, keeps value shapes and formats, and then queues a job of kind
+`quality` that works out measures, drift and scores and runs the asset's rules. Endpoints (asset
+endpoints take `?urn=`, since file URNs hold slashes):
+
+- `GET /api/v1/quality/asset?urn=...`: scores, measures, value patterns, accepted patterns
+- `GET /api/v1/quality/asset/drift`, `/asset/versions`, `PUT /asset/baseline` (steward)
+- `GET /api/v1/quality/asset/samples` (steward): sample rows, sensitive columns masked unless an
+  admin passes `unmask=true`; `PUT /asset/sensitive` (steward)
+- `POST /api/v1/quality/asset/patterns` (steward): accept a shape; `GET /asset/recommendations`
+- `GET|POST /api/v1/quality/rules`, `GET|PUT|DELETE /rules/{id}`, `POST /rules/preview` and
+  `POST /rules/{id}/run` (steward), `GET /rules/{id}/results`, `GET /results/{id}`
+- `POST /api/v1/quality/asset/runs` (steward), `GET /runs/{id}`
+- `GET /api/v1/quality/issues`, `PUT /issues/{id}` (steward)
+- `GET /api/v1/quality/sources/{name}`: a source's scores
+- `GET /api/v1/quality/export/openlineage` and `/export/odcs` (ADR 0020)
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `kilnmark.quality.webhook-allow-list` | none | URL prefixes rule webhooks may call; none allows no webhooks |
+| `kilnmark.quality.query-timeout` | `60s` | How long one rule's query may run in a source database |
+| `kilnmark.quality.sample-rows` | `1000` | Rows sampled per asset |
+| `kilnmark.quality.examples` | `5` | Example values kept per value shape |
+| `kilnmark.quality.failing-rows` | `20` | Failing rows kept with each result |
+| `kilnmark.quality.keep-versions` | `30` | Profile versions kept per asset, besides baselines |
+| `kilnmark.quality.default-cadence` | `1d` | How often new data is expected until an asset's history says |
+
+Source settings, for any kind of source: `keep_samples` (`true` by default; `false` keeps no
+values at all), `sample_rows` (up to 10,000) and, for databases, `table_sample_above_rows`.
+Seeing values (samples, examples, failing rows, previews) needs the steward role.
 
 ## Try it on the reference lab
 

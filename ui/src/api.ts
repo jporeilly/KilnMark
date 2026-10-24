@@ -276,3 +276,253 @@ export const formatNumber = (n: number | null | undefined) => (n == null ? "–"
 
 const times = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
 export const formatTime = (iso: string | null | undefined) => (iso ? times.format(new Date(iso)) : "–");
+
+// ---- Data quality (docs/design/data-quality.md) ----
+
+export type QualityStatus = "pass" | "warn" | "fail" | "error";
+export type Severity = "low" | "medium" | "high";
+
+export type DimensionScore = { dimension: string; score: number; reasons: string[] };
+
+export type ProfileVersion = {
+  id: number;
+  assetUrn: string;
+  runId: number | null;
+  observedAt: string;
+  rowCount: number | null;
+  rowCountComplete: boolean | null;
+  estimate: boolean;
+  sampledRows: number | null;
+  samplePercent: number | null;
+  estimatedRows: number | null;
+  origin: string;
+  method: string;
+  baseline: boolean;
+};
+
+export type Measure = {
+  field: string;
+  dimension: string;
+  score: number;
+  reason: string;
+  evidence: Record<string, unknown>;
+};
+
+export type Shape = {
+  shape: string;
+  count: number;
+  share: number;
+  regex: string;
+  accepted: boolean;
+  examples?: (string | null)[];
+};
+
+export type ColumnPatterns = {
+  field: string;
+  values: number;
+  other: number;
+  collapsed: boolean;
+  exact: boolean;
+  shapes: Shape[];
+  otherExamples?: (string | null)[];
+  formats: { format: string; count: number }[];
+  suggestion?: { regex: string; coverage: number; basis: string; shapes: string[] };
+};
+
+export type AcceptedPattern = {
+  id: number;
+  assetUrn: string;
+  field: string;
+  shape: string;
+  regex: string;
+  ruleId: number | null;
+  acceptedBy: string;
+  acceptedAt: string;
+};
+
+export type AssetQuality = {
+  urn: string;
+  canSeeData: boolean;
+  canUnmask: boolean;
+  version: ProfileVersion | null;
+  scores: { asset: DimensionScore[]; fields: Record<string, DimensionScore[]> };
+  measures: Measure[];
+  sensitive: string[];
+  accepted: AcceptedPattern[];
+  patterns: ColumnPatterns[];
+};
+
+export type RuleType =
+  | "not_null"
+  | "unique"
+  | "allowed_values"
+  | "matches_pattern"
+  | "in_range"
+  | "freshness"
+  | "row_count"
+  | "row_count_change"
+  | "references"
+  | "custom_sql";
+
+export type QualityRule = {
+  id: number;
+  assetUrn: string;
+  field: string | null;
+  name: string;
+  type: RuleType;
+  dimension: string;
+  params: Record<string, unknown>;
+  thresholdUnit: "share" | "count";
+  warnAbove: number | null;
+  failAbove: number;
+  actions: { webhook: string | null; task: boolean };
+  enabled: boolean;
+  origin: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FailingRows = { columns: string[]; rows: (string | null)[][] };
+
+export type RuleResult = {
+  id: number;
+  ruleId: number;
+  assetUrn: string;
+  status: QualityStatus;
+  total: number | null;
+  failing: number | null;
+  method: string;
+  failingQuery: string | null;
+  failingRows?: FailingRows | null;
+  message: string | null;
+  observedAt: string;
+};
+
+export type RuleView = { rule: QualityRule; latest: RuleResult | null };
+
+/** A rule as sent to the server; thresholds are shares (0 to 1) or counts. */
+export type RuleDraft = {
+  assetUrn: string;
+  field?: string | null;
+  name?: string;
+  type: RuleType;
+  dimension?: string;
+  params?: Record<string, unknown>;
+  thresholdUnit?: "share" | "count";
+  warnAbove?: number | null;
+  failAbove?: number | null;
+  actions?: { webhook?: string | null; task?: boolean };
+  enabled?: boolean;
+};
+
+export type Preview = {
+  checked: number;
+  failing: number;
+  share: number;
+  status: QualityStatus;
+  message: string;
+  failingRows: FailingRows | null;
+};
+
+export type DriftEvent = {
+  id: number;
+  assetUrn: string;
+  field: string | null;
+  kind: string;
+  change: string;
+  severity: Severity;
+  message: string;
+  against: "previous" | "baseline";
+  detectedAt: string;
+};
+
+export type Issue = {
+  id: number;
+  assetUrn: string;
+  field: string | null;
+  ruleId: number | null;
+  driftEventId: number | null;
+  title: string;
+  detail: string | null;
+  severity: Severity;
+  status: "open" | "resolved" | "dismissed";
+  createdAt: string;
+  updatedAt: string;
+  closedBy: string | null;
+};
+
+export type SampleRows = {
+  urn: string;
+  kept: boolean;
+  message?: string;
+  method?: string;
+  keyFields?: string[];
+  seen?: number;
+  takenAt?: string;
+  columns?: string[];
+  masked?: string[];
+  rows?: (string | null)[][];
+};
+
+export type Recommendation = {
+  field: string | null;
+  type: RuleType;
+  dimension: string;
+  name: string;
+  params: Record<string, unknown>;
+  reason: string;
+};
+
+export type QualityRun = { id: number; status: "queued" | "running" | "succeeded" | "failed"; detail: string | null };
+
+const q = (urn: string) => `urn=${encodeURIComponent(urn)}`;
+
+export const qualityApi = {
+  asset: (urn: string, unmask = false) => call<AssetQuality>(`/api/v1/quality/asset?${q(urn)}&unmask=${unmask}`),
+  drift: (urn: string) => call<DriftEvent[]>(`/api/v1/quality/asset/drift?${q(urn)}&limit=20`),
+  samples: (urn: string, unmask = false) =>
+    call<SampleRows>(`/api/v1/quality/asset/samples?${q(urn)}&unmask=${unmask}`),
+  setSensitive: (urn: string, field: string, sensitive: boolean) =>
+    call<null>(`/api/v1/quality/asset/sensitive?${q(urn)}`, {
+      method: "PUT",
+      body: JSON.stringify({ field, sensitive }),
+    }),
+  accept: (urn: string, field: string, shape: string, regex?: string) =>
+    call<AcceptedPattern>(`/api/v1/quality/asset/patterns?${q(urn)}`, {
+      method: "POST",
+      body: JSON.stringify({ field, shape, regex }),
+    }),
+  unaccept: (urn: string, id: number) =>
+    call<null>(`/api/v1/quality/asset/patterns/${id}?${q(urn)}`, { method: "DELETE" }),
+  recommendations: (urn: string) => call<Recommendation[]>(`/api/v1/quality/asset/recommendations?${q(urn)}`),
+  runAsset: (urn: string) => call<QualityRun>(`/api/v1/quality/asset/runs?${q(urn)}`, { method: "POST" }),
+  run: (id: number) => call<QualityRun>(`/api/v1/quality/runs/${id}`),
+  rules: (filter: { urn?: string; source?: string } = {}) =>
+    call<RuleView[]>(
+      `/api/v1/quality/rules?${filter.urn ? q(filter.urn) : ""}${
+        filter.source ? `&source=${encodeURIComponent(filter.source)}` : ""
+      }`,
+    ),
+  addRule: (r: RuleDraft) => call<QualityRule>("/api/v1/quality/rules", { method: "POST", body: JSON.stringify(r) }),
+  updateRule: (id: number, r: RuleDraft) =>
+    call<QualityRule>(`/api/v1/quality/rules/${id}`, { method: "PUT", body: JSON.stringify(r) }),
+  deleteRule: (id: number) => call<null>(`/api/v1/quality/rules/${id}`, { method: "DELETE" }),
+  preview: (r: RuleDraft) =>
+    call<Preview>("/api/v1/quality/rules/preview", { method: "POST", body: JSON.stringify(r) }),
+  runRule: (id: number) => call<QualityRun>(`/api/v1/quality/rules/${id}/run`, { method: "POST" }),
+  result: (id: number) => call<RuleResult>(`/api/v1/quality/results/${id}`),
+  issues: (status: string) => call<Issue[]>(`/api/v1/quality/issues?status=${encodeURIComponent(status)}`),
+  setIssue: (id: number, status: Issue["status"]) =>
+    call<Issue>(`/api/v1/quality/issues/${id}`, { method: "PUT", body: JSON.stringify({ status }) }),
+};
+
+const percentFormat = new Intl.NumberFormat("en-GB", { style: "percent", maximumFractionDigits: 1 });
+export const formatShare = (share: number | null | undefined) => (share == null ? "–" : percentFormat.format(share));
+
+/** A score in words as well as a number, so it never depends on colour. */
+export function rating(score: number): { word: string; tone: "good" | "fair" | "poor" } {
+  if (score >= 0.95) return { word: "Good", tone: "good" };
+  if (score >= 0.8) return { word: "Fair", tone: "fair" };
+  return { word: "Poor", tone: "poor" };
+}

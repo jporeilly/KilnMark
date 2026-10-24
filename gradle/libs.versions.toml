@@ -12,6 +12,7 @@ snappy-java = "1.1.10.8"
 lz4-java = "1.11.1"
 jackson = "2.21.7"
 awssdk = "2.55.16"
+json-schema-validator = "1.5.9"
 
 [libraries]
 quarkus-bom = { module = "io.quarkus.platform:quarkus-bom", version.ref = "quarkus" }
@@ -32,6 +33,7 @@ mssql-jdbc = { module = "com.microsoft.sqlserver:mssql-jdbc", version.ref = "mss
 testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }
 testcontainers-mssqlserver = { module = "org.testcontainers:testcontainers-mssqlserver", version.ref = "testcontainers" }
 testcontainers-junit = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }
+json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "json-schema-validator" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-launcher = { module = "org.junit.platform:junit-platform-launcher" }
