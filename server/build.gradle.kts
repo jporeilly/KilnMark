@@ -39,7 +39,7 @@ dependencies {
 
 // Arrow reads buffer addresses through java.nio; tests and dev mode need the same opening as the jar.
 tasks.withType<Test>().configureEach {
-    jvmArgs("--add-opens=java.base/java.nio=ALL-UNNAMED")
+    jvmArgs("--add-opens=java.base/java.nio=ALL-UNNAMED", "--enable-native-access=ALL-UNNAMED")
     systemProperty("java.util.logging.manager", "org.jboss.logmanager.LogManager")
 }
 
