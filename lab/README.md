@@ -68,7 +68,8 @@ with none.
 | Finding | Where |
 | --- | --- |
 | Email, phone, date of birth, postcode, NI number | `crm.customers`, the CSV export, the complaint letter |
-| Undeclared join on `customer_id` | `billing.transactions` to `crm.customers` |
+| Declared key on `customer_id` | `crm.accounts` to `crm.customers` |
+| Undeclared join on `customer_id` | `billing.transactions` to `crm.customers` (proposed, confidence 0.99) |
 | Renamed key: `cust_ref` holds customer ids as text | `billing.invoices`, the Parquet file |
 | Duplicates of customer data | `crm.customers_archive_2023`, `exports/customers_export_2025.csv` |
 | No personal data | `marketing/2024-q4-campaign-plan.md` |

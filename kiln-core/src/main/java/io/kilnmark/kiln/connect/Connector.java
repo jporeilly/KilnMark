@@ -46,6 +46,18 @@ public interface Connector {
     List<AssetInfo> catalog(SourceConfig source) throws ConnectorException;
 
     /**
+     * The catalogue together with the relationships the source declares between its assets, such
+     * as foreign keys, read in one go. The default has no relationships: it returns
+     * {@link #catalog(SourceConfig)} alone. Connectors for sources that declare relationships
+     * (databases) override it; the scan calls this method, not {@link #catalog(SourceConfig)}.
+     *
+     * @throws ConnectorException as {@link #catalog(SourceConfig)}
+     */
+    default CatalogInfo catalogWithRelationships(SourceConfig source) throws ConnectorException {
+        return new CatalogInfo(catalog(source), List.of());
+    }
+
+    /**
      * The first step of the pipeline that reads {@code asset}: it puts Arrow batches on its output
      * and, when it finishes, reports the rows it read as a {@code ROW_COUNT} event for
      * {@code read.assetUrn()} with attributes {@code rows} and {@code complete}. The step's

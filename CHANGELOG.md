@@ -138,6 +138,37 @@
 - **Fixed:** an S3 source with its own access key can be added through the API, the form and bulk
   import; the check that the secret goes with the key no longer misses the secret.
 
+- **Browse:** a new **Browse** page shows the catalogue as a tree: source, then schema, folder or
+  bucket prefix, then tables, views and files, with counts, kind labels and icons. Children load
+  as a node opens, a hundred at a time; a filter box narrows the tree by name; the tree follows
+  the ARIA tree pattern for the keyboard. Choosing a schema lists what it holds and draws it.
+- **Schema diagrams:** tables as boxes with their columns (keys marked PK and FK) and lines for
+  relationships: declared keys solid, proposals dashed with their confidence, rejected ones hidden.
+  Pan, zoom, fit, automatic layout; at most 60 tables, with a filter or one table and its
+  neighbours (one or two steps, across schemas and sources) for larger schemas. The same
+  relationships are listed in a table beside it. Uses @xyflow/react and @dagrejs/dagre (MIT,
+  ADR 0019), loaded only when a diagram is shown.
+- **Relationships:** scans of PostgreSQL and SQL Server record declared foreign keys, including
+  multi-column keys in key order and keys between schemas. After every scan Kilnmark proposes
+  joins nobody declared, within and across sources, from column names, types, unique targets and
+  value containment estimated from stored HyperLogLog sketches; on the lab,
+  `billing.transactions.customer_id` to `crm.customers`. Stewards accept or reject proposals on
+  the new **Relationships** page, the asset page or below a diagram; decisions survive rescans.
+- **Asset page:** a summary with source and schema links, the asset's relationships in and out,
+  and per-column statistics: open a column for nulls, distinct values, quartiles, mean, a small
+  histogram, lengths and most common values.
+- **API:** `GET /api/v1/browse/sources`, `.../browse/sources/{name}/containers`,
+  `.../browse/sources/{name}/assets?container=`, `GET /api/v1/diagram` (a container, an asset and
+  its neighbours, or chosen assets), `GET /api/v1/relationships`, `GET /api/v1/relationships/{id}`,
+  and `POST /api/v1/relationships/{id}/accept` or `/reject` (steward).
+- **Profiles:** numbers, dates and times gain a ten-bin histogram; key-like columns (identifier
+  names and single-column primary keys) keep their distinct-value sketch (about 8 KiB) beside the
+  profile for discovery.
+- **Database:** migration V8 adds the `relationship` table and `profile.hll`.
+- **Connectors:** `Connector.catalogWithRelationships` (a default method) returns the catalogue
+  with the relationships a source declares, and warnings; `AssetInfo` is unchanged. Foreign keys
+  that cannot be read leave the scan going, with a warning in its detail.
+
 ## 0.0.2 (24 October 2026)
 
 The first working slice: point Kilnmark at PostgreSQL databases, scan them, and search what it

@@ -41,6 +41,9 @@ final class ColumnStats {
     private final FrequentItemsSketch<String> topText = new FrequentItemsSketch<>(64);
     private final FrequentLongsSketch topLongs = new FrequentLongsSketch(64);
 
+    /** Whether {@link #attributes()} carries the distinct-value sketch ({@link ProfileStep#SKETCH}). */
+    boolean keepSketch;
+
     ColumnStats(String field, Shape shape) {
         this.field = field;
         this.shape = shape;
@@ -111,6 +114,11 @@ final class ColumnStats {
         topLongs.merge(other.topLongs);
     }
 
+    /** The sketch behind {@code distinct}, for {@link ProfileStep#SKETCH}. */
+    private String sketch() {
+        return java.util.Base64.getEncoder().encodeToString(distinct.copyAs(TgtHllType.HLL_4).toCompactByteArray());
+    }
+
     long values() {
         return rows - nulls;
     }
@@ -128,6 +136,9 @@ final class ColumnStats {
         }
         long d = Math.min(Math.round(distinct.getEstimate()), values());
         a.put("distinct", Long.toString(d));
+        if (keepSketch && (shape == Shape.INTEGER || shape == Shape.NUMBER || shape == Shape.TEXT)) {
+            a.put(ProfileStep.SKETCH, sketch());
+        }
         // Below a few thousand values the sketch keeps every hash, and its bounds meet the estimate.
         a.put("distinct_exact", Boolean.toString(
             Math.round(distinct.getLowerBound(1)) == Math.round(distinct.getUpperBound(1))));
@@ -139,6 +150,7 @@ final class ColumnStats {
                 a.put("p75", number(quantiles.getQuantile(0.75)));
                 a.put("max", number(quantiles.getMaxItem()));
                 a.put("mean", number(sum / values()));
+                putIfPresent(a, "histogram", histogram());
                 if (shape == Shape.INTEGER) {
                     a.put("top", topLongs());
                 }
@@ -147,6 +159,7 @@ final class ColumnStats {
                 a.put("min", temporal(quantiles.getMinItem()));
                 a.put("median", temporal(quantiles.getQuantile(0.5)));
                 a.put("max", temporal(quantiles.getMaxItem()));
+                putIfPresent(a, "histogram", histogram());
             }
             case TEXT -> {
                 a.put("min_length", Integer.toString(minLength));
@@ -160,6 +173,78 @@ final class ColumnStats {
             case BOOLEAN -> a.put("true", Long.toString(trues));
         }
         return a;
+    }
+
+    static final int BINS = 10;
+
+    private static void putIfPresent(Map<String, String> a, String key, String value) {
+        if (value != null) {
+            a.put(key, value);
+        }
+    }
+
+    /**
+     * An equal-width histogram from the quantile sketch: up to {@link #BINS} bins between the
+     * smallest and largest value, each with its bounds and an estimated count; for whole numbers
+     * spanning fewer than {@code BINS} values, one bin per value. JSON, for the UI to draw.
+     */
+    String histogram() {
+        double min = quantiles.getMinItem();
+        double max = quantiles.getMaxItem();
+        long n = quantiles.getN();
+        if (n == 0 || !Double.isFinite(min) || !Double.isFinite(max)) {
+            return null;
+        }
+        if (max == min) {
+            return bins(new double[] {min}, new double[] {max}, new double[] {1.0}, n);
+        }
+        java.util.List<Double> splits = new java.util.ArrayList<>();
+        boolean whole = shape != Shape.NUMBER && max - min < BINS && min == Math.rint(min) && max == Math.rint(max);
+        if (whole) {
+            for (double v = min; v < max; v++) {
+                splits.add(v + 0.5);
+            }
+        } else {
+            double width = max / BINS - min / BINS; // never overflows, unlike (max - min) / BINS
+            for (int i = 1; i < BINS && Double.isFinite(width) && width > 0; i++) {
+                double split = min + i * width;
+                // Values a few ulps apart give splits that do not increase: keep only those that do.
+                if (split > min && split < max && (splits.isEmpty() || split > splits.get(splits.size() - 1))) {
+                    splits.add(split);
+                }
+            }
+        }
+        double[] lows = new double[splits.size() + 1];
+        double[] highs = new double[splits.size() + 1];
+        for (int i = 0; i <= splits.size(); i++) {
+            lows[i] = whole ? min + i : i == 0 ? min : splits.get(i - 1);
+            highs[i] = whole ? min + i : i == splits.size() ? max : splits.get(i);
+        }
+        try {
+            double[] mass = splits.isEmpty() ? new double[] {1.0} : quantiles.getPMF(
+                splits.stream().mapToDouble(Double::doubleValue).toArray(),
+                org.apache.datasketches.quantilescommon.QuantileSearchCriteria.INCLUSIVE);
+            return bins(lows, highs, mass, n);
+        } catch (RuntimeException e) {
+            return null; // a histogram is a nicety: the rest of the profile stands without it
+        }
+    }
+
+    private String bins(double[] lows, double[] highs, double[] mass, long n) {
+        StringBuilder b = new StringBuilder("[");
+        for (int i = 0; i < lows.length; i++) {
+            b.append(i == 0 ? "" : ",").append("{\"from\":").append(Json.string(bound(lows[i])))
+                .append(",\"to\":").append(Json.string(bound(highs[i])))
+                .append(",\"count\":").append(Math.round(mass[i] * n)).append('}');
+        }
+        return b.append(']').toString();
+    }
+
+    private String bound(double v) {
+        return switch (shape) {
+            case DATE, TIME, TIMESTAMP -> temporal(v);
+            default -> number(v);
+        };
     }
 
     private String topText() {

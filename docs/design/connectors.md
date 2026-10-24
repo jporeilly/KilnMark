@@ -32,6 +32,7 @@ line in a services file; nothing in the server changes.
 | `hosts(source)` | Optional. Every host the source would reach, for the server's allowed-hosts list (default: the hosts in `addressKeys` URLs) |
 | `secretScope()` | Optional. Settings that decide where the secret goes; changing one needs the secret again (default: every setting) |
 | `addressSettings(host, port, database)` | Optional. Settings built from a host, port and database, for bulk import (default: none) |
+| `catalogWithRelationships(source)` | Optional (default: `catalog` with no relationships). The catalogue plus the relationships the source declares, such as foreign keys; the scan calls this one |
 
 **Choosing assets.** `AssetFilter` (in `kiln-core`) holds the containers chosen and the `include`
 and `exclude` patterns every source has. Use `AssetFilter.of(this, source)` while reading the
@@ -61,6 +62,12 @@ An `AssetInfo` is one table, view or file: a `path` unique within the source (it
 path, `urn:kilnmark:<source>:<path>`), a `kind`, a `container` (schema, folder or bucket), the
 fields, any primary key, `bounded` (true when reading it in full may be expensive: the scan then
 reads `kilnmark.scan.view-row-limit` rows), and `hints` the reader needs.
+
+A `RelationshipInfo` is a relationship the source declares between two of its assets, by path:
+`fromPath` and `fromFields` refer to `toPath` and `toFields`, field for field in key order, with
+the constraint's `name`. Both assets must be in the same catalogue. Relationships Kilnmark infers
+from names and values are not the connector's business: the server proposes those after the scan
+([ADR 0019](../adr/0019-relationships.md)).
 
 ## The reader step
 
@@ -97,6 +104,12 @@ an example URL and the SQL that reads a table (`selectSql`), and may override:
 - `selectSql(AssetInfo, rowLimit)` to read particular columns differently (SQL Server reads
   geography, geometry and hierarchyid through `ToString()`, so they arrive as text people can
   read);
+- `readForeignKeys` to read declared keys differently; by default `getImportedKeys` table by
+  table (PostgreSQL: once per schema), multi-column keys kept together in `KEY_SEQ` order, keys to
+  tables outside the schemas read left out. `catalogWithRelationships` reads tables and keys on
+  one connection; if the keys cannot be read, it returns `CatalogInfo.withoutRelationships`
+  (`relationshipsRead` false, with a warning): the scan keeps the declared relationships it
+  recorded before and adds the warning to the run's detail;
 - `readCatalog` to add what the driver's metadata leaves out (SQL Server's driver reports no
   comments, so its connector reads `MS_Description` extended properties in one query);
 - `readSettings` for extra `JdbcTableInput` settings, such as the transaction isolation level;

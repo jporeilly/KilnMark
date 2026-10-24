@@ -18,8 +18,10 @@ import java.util.regex.Pattern;
 import io.kilnmark.kiln.StepSpec;
 import io.kilnmark.kiln.connect.AssetFilter;
 import io.kilnmark.kiln.connect.AssetInfo;
+import io.kilnmark.kiln.connect.CatalogInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
+import io.kilnmark.kiln.connect.RelationshipInfo;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.connect.UrlHosts;
 
@@ -374,20 +376,61 @@ public abstract class JdbcConnector implements Connector {
         }
     }
 
+    // ---- Relationships: the catalogue with its declared foreign keys ----
+
+    /**
+     * The foreign keys declared on {@code tables}. By default standard JDBC metadata
+     * ({@code getImportedKeys}); override where a driver reports them differently or too slowly.
+     */
+    protected List<JdbcCatalog.ForeignKey> readForeignKeys(Connection connection, List<JdbcCatalog.Table> tables)
+        throws SQLException {
+        return JdbcCatalog.foreignKeys(connection, tables);
+    }
+
     @Override
     public List<AssetInfo> catalog(SourceConfig source) throws ConnectorException {
+        return catalogWithRelationships(source).assets();
+    }
+
+    /**
+     * The catalogue, kept to the source's containers and patterns, and its foreign keys, on one
+     * connection. Keys to tables outside the catalogue are left out. If the keys cannot be read
+     * (a restricted account, say), the catalogue is still returned, without relationships and with
+     * a warning for the run.
+     */
+    @Override
+    public CatalogInfo catalogWithRelationships(SourceConfig source) throws ConnectorException {
         checkValid(source); // also for sources saved before a rule existed
         AssetFilter filter = filter(source);
         try (Connection c = connect(source)) {
-            List<AssetInfo> out = new ArrayList<>();
-            for (JdbcCatalog.Table t : readCatalog(c, filter)) {
-                out.add(info(t));
+            List<JdbcCatalog.Table> tables = readCatalog(c, filter);
+            List<AssetInfo> assets = new ArrayList<>();
+            java.util.Set<String> paths = new java.util.HashSet<>();
+            for (JdbcCatalog.Table t : tables) {
+                AssetInfo a = info(t);
+                assets.add(a);
+                paths.add(a.path());
             }
-            return out;
+            List<RelationshipInfo> relationships = new ArrayList<>();
+            try {
+                for (JdbcCatalog.ForeignKey k : readForeignKeys(c, tables)) {
+                    String from = k.fromSchema() + "." + k.fromTable();
+                    String to = k.toSchema() + "." + k.toTable();
+                    if (paths.contains(from) && paths.contains(to)) {
+                        relationships.add(new RelationshipInfo(from, k.fromColumns(), to, k.toColumns(), k.name()));
+                    }
+                }
+            } catch (SQLException e) {
+                return CatalogInfo.withoutRelationships(assets,
+                    "Foreign keys could not be read, so the ones recorded before were kept: " + explain(e));
+            }
+            return new CatalogInfo(assets, relationships);
         } catch (SQLException e) {
             throw new ConnectorException("Cannot read the catalogue of " + source.name() + ": " + explain(e), e);
         }
     }
+
+    // ---- end of relationships ----
 
     @Override
     public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {

@@ -36,7 +36,29 @@ public final class ProfileStep implements Step {
 
     public static final String TYPE = "profile";
 
+    /**
+     * Attribute of a {@code PROFILE} event holding the column's distinct-value sketch: base64 of a
+     * compact HyperLogLog (lgK 14, 4 bits per bucket, at most about 8 KiB). Kept apart from the
+     * profile, it lets relationship discovery estimate how far one column's values lie inside
+     * another's ({@code |A ∪ B|} against {@code |B|}) without reading either again. Only integer,
+     * number and text columns with values have one, the types keys have.
+     */
+    public static final String SKETCH = "hll";
+
+    /**
+     * Setting naming the fields whose sketch to report: each name URL-encoded (UTF-8), joined with
+     * commas. Without it no sketches are reported. See {@link #sketchFields(java.util.Collection)}.
+     */
+    public static final String SKETCH_FIELDS = "sketch-fields";
+
+    /** {@code fields} as the value of {@link #SKETCH_FIELDS}. */
+    public static String sketchFields(java.util.Collection<String> fields) {
+        return String.join(",", fields.stream()
+            .map(f -> java.net.URLEncoder.encode(f, java.nio.charset.StandardCharsets.UTF_8)).toList());
+    }
+
     private String assetUrn;
+    private java.util.Set<String> sketched = java.util.Set.of();
     private List<ColumnStats> stats;
 
     @Override
@@ -47,6 +69,12 @@ public final class ProfileStep implements Step {
     @Override
     public void init(StepContext context) throws StepException {
         assetUrn = context.setting("asset-urn");
+        String fields = context.setting(SKETCH_FIELDS, "");
+        if (fields != null && !fields.isEmpty()) {
+            sketched = java.util.Arrays.stream(fields.split(","))
+                .map(f -> java.net.URLDecoder.decode(f, java.nio.charset.StandardCharsets.UTF_8))
+                .collect(java.util.stream.Collectors.toSet());
+        }
     }
 
     @Override
@@ -85,7 +113,9 @@ public final class ProfileStep implements Step {
         if (stats == null) {
             stats = new ArrayList<>();
             for (Field f : batch.getSchema().getFields()) {
-                stats.add(new ColumnStats(f.getName(), shape(f.getType())));
+                ColumnStats cs = new ColumnStats(f.getName(), shape(f.getType()));
+                cs.keepSketch = sketched.contains(f.getName());
+                stats.add(cs);
             }
         }
         int n = batch.getRowCount();

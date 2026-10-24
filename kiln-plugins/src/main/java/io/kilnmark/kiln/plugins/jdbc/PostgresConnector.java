@@ -57,4 +57,12 @@ public final class PostgresConnector extends JdbcConnector {
     protected boolean isSystemSchema(String schema) {
         return SYSTEM_SCHEMAS.contains(schema) || schema.startsWith("pg_temp") || schema.startsWith("pg_toast");
     }
+
+    /** Foreign keys with one metadata call per schema: the driver accepts a null table name. */
+    @Override
+    protected java.util.List<JdbcCatalog.ForeignKey> readForeignKeys(java.sql.Connection connection,
+                                                                     java.util.List<JdbcCatalog.Table> tables)
+        throws java.sql.SQLException {
+        return JdbcCatalog.foreignKeysBySchema(connection, tables);
+    }
 }

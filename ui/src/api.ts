@@ -189,7 +189,13 @@ export type Profile = {
   max_length?: number;
   true?: number;
   top?: TopValue[];
+  p25?: string;
+  p75?: string;
+  /** Equal-width bins from the quantile sketch (numbers, dates and times). */
+  histogram?: HistogramBin[];
 };
+
+export type HistogramBin = { from: string; to: string; count: number };
 
 export type Field = {
   name: string;
@@ -310,7 +316,7 @@ export class ApiError extends Error {
   }
 }
 
-async function call<T>(path: string, init?: RequestInit, contentType = "application/json"): Promise<T> {
+export async function call<T>(path: string, init?: RequestInit, contentType = "application/json"): Promise<T> {
   const token = currentToken();
   let response: Response;
   try {
