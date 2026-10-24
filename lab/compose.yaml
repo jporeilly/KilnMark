@@ -2,7 +2,7 @@
 #   podman compose -f lab/compose.yaml up -d      (or: docker compose ...)
 # Sources it provides:
 #   PostgreSQL  localhost:5433  db=lab  user=lab  password=lab   (schemas crm, billing)
-#   MinIO (S3)  localhost:9000  console localhost:9001  key=labadmin  secret=labadmin123  bucket=lab-raw
+#   S3          localhost:9000  access key=labadmin  secret=labadmin123  bucket=lab-raw  (path-style)
 #   File share  lab/files/share (read directly from disk)
 services:
   lab-postgres:
@@ -20,29 +20,15 @@ services:
       interval: 5s
       retries: 30
 
-  lab-minio:
-    image: quay.io/minio/minio:latest
-    command: server /data --console-address ":9001"
+  # S3-compatible object storage: VersityGW (Apache 2.0) serves a folder as a bucket.
+  # Each folder under /data is a bucket, so lab/files/bucket appears as bucket lab-raw.
+  lab-s3:
+    image: ghcr.io/versity/versitygw:v1.10.0
+    command: ["posix", "/data"]
     environment:
-      MINIO_ROOT_USER: labadmin
-      MINIO_ROOT_PASSWORD: labadmin123
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      retries: 30
-
-  # One-shot: creates the bucket and uploads the sample files, then exits.
-  lab-minio-seed:
-    image: quay.io/minio/mc:latest
-    depends_on:
-      lab-minio:
-        condition: service_healthy
+      ROOT_ACCESS_KEY: labadmin
+      ROOT_SECRET_KEY: labadmin123
     volumes:
-      - ./files/bucket:/seed:ro,Z
-    entrypoint: >
-      /bin/sh -c "mc alias set lab http://lab-minio:9000 labadmin labadmin123 &&
-                  mc mb --ignore-existing lab/lab-raw &&
-                  mc mirror --overwrite /seed lab/lab-raw"
+      - ./files/bucket:/data/lab-raw:Z
+    ports:
+      - "9000:7070"
