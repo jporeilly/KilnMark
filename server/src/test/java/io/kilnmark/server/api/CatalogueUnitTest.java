@@ -34,7 +34,9 @@ class CatalogueUnitTest {
         Views.ConnectorCatalogue c = new CatalogResource(null, null, Connectors.load(), config(false)).catalogue();
         assertFalse(c.showPlanned());
         assertTrue(c.categories().stream().allMatch(x -> x.planned().isEmpty()));
-        assertEquals(4, c.categories().stream().mapToInt(x -> x.connectors().size()).sum());
+        // Test-only connectors (kind test-...) are registered on the test class path; leave them out.
+        assertEquals(4, c.categories().stream().flatMap(x -> x.connectors().stream())
+            .filter(x -> !x.kind().startsWith("test-")).count());
         Views.ConnectorCatalogue shown = new CatalogResource(null, null, Connectors.load(), config(true)).catalogue();
         assertTrue(shown.categories().stream().mapToInt(x -> x.planned().size()).sum() > 30);
     }
