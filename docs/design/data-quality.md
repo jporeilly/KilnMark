@@ -150,7 +150,44 @@ Pipelines do not re-read sources to find out what they hold.
 The run then reports the predicted and the measured scores side by side. The gap tells stewards
 where the metadata, or the pipeline, needs attention.
 
-## 9. Scores and trust
+## 9. Drift
+
+Every scan and every pipeline run produces a profile version. Kilnmark compares it with the
+previous one, or with a baseline, and records drift events:
+
+- **Schema**: columns added, removed, renamed (same position and profile) or retyped.
+- **Volume**: row count or file count outside its usual range.
+- **Distribution**: quantile shift (from KLL sketches), change in null rate, distinct count,
+  top values, and the share of each value pattern.
+- **Freshness**: no new data within the expected cadence.
+
+Drift needs no extra read: the new profile comes from the scan or the pipeline's single pass and
+is compared with stored sketches. Drift lowers the quality and trust scores, opens a steward
+task, and can stop a pipeline at its gate.
+
+## 10. Bring your own catalogue
+
+A customer who already has a catalogue does not need Kilnmark to profile everything again.
+Kilnmark imports what that catalogue knows and uses it as the baseline, as long as it comes in
+a standard format.
+
+- **Formats Kilnmark reads and writes:**
+  - OpenLineage dataset facets: schema, data quality metrics (row count, and per column null
+    count, distinct count, min, max, sum, quantiles), data quality assertions, column lineage.
+  - ODCS 3.1 data contracts: schema, quality rules, service levels, owners.
+  - Adapters for the APIs of common open catalogues (OpenMetadata, DataHub) that translate into
+    the same model.
+- **Kilnmark's own model maps one-to-one onto these formats**, so imported and native metadata
+  sit side by side and compare directly. Everything Kilnmark learns can be exported the same way.
+- **Imported metadata keeps its provenance:** which catalogue, when it was observed, how it was
+  computed. It is a baseline, not a fact. Kilnmark checks it cheaply against the source (schema
+  and row count, file size and timestamps) before relying on it, and marks it as stale when they
+  disagree.
+- **From then on, drift is found incrementally.** The next scan or pipeline run profiles in its
+  one pass and compares with the imported baseline. Full profiling happens only where no
+  baseline exists or the baseline is shown to be wrong.
+
+## 11. Scores and trust
 
 Scores roll up from column to table, source and data product, with the reasons shown. The trust
 score later combines quality with ratings, verified lineage, glossary coverage and
@@ -160,7 +197,11 @@ issues queue.
 ## Build order
 
 1. Patterns, detectors, coordinated sampling with its controls, pre-analysis measures and
-   scores, rule library, thresholds and actions, results, UI. Starts when a round 2 slot frees.
-2. Rule recommendations without AI, then AI suggestions, classification and explanations, after
+   scores, rule library, thresholds and actions, results, profile versions and drift, the model
+   mapped onto OpenLineage and ODCS with export, UI. Round 2, stream E.
+2. Import from other catalogues (OpenLineage, ODCS, OpenMetadata and DataHub adapters) as
+   baselines, after source management merges.
+3. Rule recommendations without AI, then AI suggestions, classification and explanations, after
    the AI runtime merges.
-3. ODCS 3.1 contracts and OpenLineage, then the pipeline quality gate with round 3 pipelines.
+4. Predicted pipeline quality, AI improvement suggestions and the quality gate, with round 3
+   pipelines.
