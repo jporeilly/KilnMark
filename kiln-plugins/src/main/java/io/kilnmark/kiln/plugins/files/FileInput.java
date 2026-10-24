@@ -3,6 +3,7 @@ package io.kilnmark.kiln.plugins.files;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.Reader;
+import java.nio.charset.Charset;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -27,8 +28,9 @@ import io.kilnmark.kiln.StepException;
  * Reads one CSV, TSV, JSON, JSON lines or Parquet file into Arrow batches, streaming it.
  *
  * <p>The store and the columns come from the connector; settings: {@code path}, {@code format},
- * {@code size}, {@code delimiter} and {@code quote} (CSV), {@code asset-urn}, {@code batch-size}
- * (default 8192) and {@code row-limit} (default 0, every row).
+ * {@code size}, {@code encoding} (CSV and JSON; detected when absent), {@code delimiter},
+ * {@code quote} and {@code sep-line} (CSV), {@code asset-urn}, {@code batch-size} (default 8192)
+ * and {@code row-limit} (default 0, every row).
  *
  * <p>CSV and JSON are read with the column kinds the catalogue inferred; if the header has changed
  * since, or no columns were given, they are inferred again from the start of the file. A value that
@@ -82,13 +84,16 @@ public final class FileInput implements Step {
             label = store.describe(path);
             rows = switch (format) {
                 case CSV, TSV -> csv(context, path, format);
-                case JSON, JSON_LINES -> json(path, format);
+                case JSON, JSON_LINES -> json(context, path, format);
                 case PARQUET -> parquet(path, size);
                 case DOCUMENT -> throw new StepException(path + " is a document, not a data file: it is recorded, "
                     + "not read");
             };
         } catch (IOException | RuntimeException e) {
             throw new StepException("Cannot read " + (label == null ? path : label) + ": " + e.getMessage(), e);
+        } catch (StackOverflowError e) {
+            throw new StepException("Cannot read " + (label == null ? path : label)
+                + ": its structure is nested too deeply to read", e);
         }
         List<Field> fields = new ArrayList<>(columns.size());
         for (FileColumn c : columns) {
@@ -97,51 +102,99 @@ public final class FileInput implements Step {
         schema = new Schema(fields);
     }
 
+    /** The encoding given by the {@code encoding} setting, else detected from the file's first bytes. */
+    private Charset charset(StepContext context, String path) throws IOException {
+        String name = context.settings().get("encoding");
+        if (name != null && !name.isBlank()) {
+            return Charset.forName(name.strip());
+        }
+        byte[] head = store.head(path, FileInspector.SAMPLE_BYTES);
+        return FileInspector.encoding(head, head.length >= FileInspector.SAMPLE_BYTES, null);
+    }
+
     private Rows csv(StepContext context, String path, FileFormat format) throws IOException {
         char delimiter = Csv.Dialect.parse(context.settings().get("delimiter"), format == FileFormat.TSV ? '\t' : ',');
         char quote = Csv.Dialect.parse(context.settings().get("quote"), '"');
+        boolean sepLine = Boolean.parseBoolean(context.settings().get("sep-line"));
+        Charset charset = charset(context, path);
         columns = catalogued;
-        Reader reader = TextInput.reader(store.open(path));
-        Csv.Parser parser = new Csv.Parser(reader, delimiter, quote);
-        List<String> header = parser.next();
-        List<String> names = header == null ? List.of() : Csv.names(header);
-        if (columns.isEmpty() || !names.equals(columns.stream().map(FileColumn::name).toList())) {
-            // no catalogue, or the file changed since: look again
-            reader.close();
-            FileInspector.Layout layout = FileInspector.csv(store.head(path, FileInspector.SAMPLE_BYTES), format);
-            columns = layout.columns();
-            Csv.Dialect d = new Csv.Dialect(Csv.Dialect.parse(layout.hints().get("delimiter"), delimiter),
-                Csv.Dialect.parse(layout.hints().get("quote"), quote));
-            reader = TextInput.reader(store.open(path));
-            parser = new Csv.Parser(reader, d.delimiter(), d.quote());
-            parser.next();
+        Reader reader = null;
+        try {
+            reader = TextInput.reader(store.open(path), charset);
+            Csv.Parser parser = new Csv.Parser(reader, delimiter, quote);
+            if (sepLine) {
+                parser.next();
+            }
+            List<String> header = parser.next();
+            List<String> names = header == null ? List.of() : Csv.names(header);
+            if (columns.isEmpty() || !names.equals(columns.stream().map(FileColumn::name).toList())) {
+                // no catalogue, or the file changed since: look again
+                reader.close();
+                reader = null;
+                byte[] head = store.head(path, FileInspector.SAMPLE_BYTES);
+                FileInspector.Layout layout = FileInspector.csv(head, format, head.length >= FileInspector.SAMPLE_BYTES,
+                    charset);
+                columns = layout.columns();
+                reader = TextInput.reader(store.open(path), charset);
+                parser = new Csv.Parser(reader, Csv.Dialect.parse(layout.hints().get("delimiter"), delimiter),
+                    Csv.Dialect.parse(layout.hints().get("quote"), quote));
+                if (Boolean.parseBoolean(layout.hints().get("sep-line"))) {
+                    parser.next();
+                }
+                parser.next();
+            }
+            return new CsvRows(reader, parser, columns);
+        } catch (IOException | RuntimeException e) {
+            closeQuietly(reader); // stops the transfer of a remote file
+            throw e;
         }
-        return new CsvRows(reader, parser, columns);
     }
 
-    private Rows json(String path, FileFormat format) throws IOException {
-        columns = catalogued.isEmpty()
-            ? FileInspector.json(store.head(path, FileInspector.SAMPLE_BYTES), format).columns() : catalogued;
-        return new JsonRows(new JsonRecords(TextInput.reader(store.open(path)), format), columns);
+    private Rows json(StepContext context, String path, FileFormat format) throws IOException {
+        Charset charset = charset(context, path);
+        if (catalogued.isEmpty()) {
+            byte[] head = store.head(path, FileInspector.SAMPLE_BYTES);
+            columns = FileInspector.json(head, format, head.length >= FileInspector.SAMPLE_BYTES, charset).columns();
+        } else {
+            columns = catalogued;
+        }
+        Reader reader = null;
+        try {
+            reader = TextInput.reader(store.open(path), charset);
+            return new JsonRows(new JsonRecords(reader, format), columns);
+        } catch (IOException | RuntimeException e) {
+            closeQuietly(reader);
+            throw e;
+        }
+    }
+
+    private static void closeQuietly(AutoCloseable c) {
+        if (c != null) {
+            try {
+                c.close();
+            } catch (Exception e) {
+                // already failing; the first failure is the one to report
+            }
+        }
     }
 
     private Rows parquet(String path, long size) throws IOException {
         InputFile file = store.parquet(path, size);
-        ParquetFileReader reader;
+        ParquetFileReader reader = null;
         try {
-            reader = ParquetFileReader.open(file);
-        } catch (IOException | RuntimeException e) {
-            file.close();
-            throw e;
-        }
-        try {
-            List<ParquetFields.ParquetField> fields = ParquetFields.of(reader.getFileMetaData());
+            FileInspector.checkFooter(file);
+            reader = ParquetRuntime.open(file);
+            String codecs = ParquetRuntime.unsupportedCodecs(reader.getFileMetaData());
+            if (codecs != null) {
+                throw new IOException(codecs);
+            }
+            List<ParquetFields.ParquetField> fields = ParquetFields.of(reader.getFileMetaData(), reader.getFileSchema());
             columns = fields.stream().map(ParquetFields.ParquetField::column).toList();
             RowReader rr = rowLimit > 0 ? reader.buildRowReader().head(rowLimit + 1).build() : reader.rowReader();
             return new ParquetRows(file, reader, rr, fields);
-        } catch (RuntimeException e) {
-            reader.close();
-            file.close();
+        } catch (IOException | RuntimeException e) {
+            closeQuietly(reader);
+            closeQuietly(file);
             throw e;
         }
     }
@@ -216,6 +269,9 @@ public final class FileInput implements Step {
 
     @Override
     public void close() {
+        if (store != null) {
+            store.cancel(); // stop downloads still running for this read before waiting on anything
+        }
         try {
             if (rows != null) {
                 rows.close();

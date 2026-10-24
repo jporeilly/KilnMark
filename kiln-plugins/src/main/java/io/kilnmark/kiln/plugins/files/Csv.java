@@ -26,8 +26,13 @@ final class Csv {
     private Csv() {
     }
 
-    /** How a file is delimited. */
-    record Dialect(char delimiter, char quote) {
+    /**
+     * How a file is delimited.
+     *
+     * @param sepLine whether the file starts with Excel's {@code sep=X} line, which names the
+     *                delimiter and is not part of the data
+     */
+    record Dialect(char delimiter, char quote, boolean sepLine) {
 
         /** As shown in hints: {@code \t} for a tab. */
         String delimiterName() {
@@ -43,32 +48,67 @@ final class Csv {
     }
 
     /**
-     * Picks the delimiter that splits the sample's header into the most fields and keeps the same
-     * number of fields in the rows after it; a tab for TSV files. The quote is {@code "} unless
-     * fields start with {@code '} and never with {@code "}.
+     * Finds how a sample is delimited.
+     *
+     * <ul>
+     *   <li>A first line {@code sep=X}, which Excel writes and reads, names the delimiter.</li>
+     *   <li>Otherwise TSV files use a tab, and other files the delimiter that splits the header into
+     *       the most fields while keeping the same number of fields in the rows below it.</li>
+     *   <li>The quote is {@code "}. It is {@code '} only when some fields start with {@code '},
+     *       none with {@code "}, every field that starts with {@code '} is closed by a {@code '}
+     *       followed by the delimiter or the end of a line, and reading with {@code '} keeps the
+     *       number of fields per row at least as steady. An apostrophe at the start of a value
+     *       ({@code 'tis}, Excel's {@code '+44 ...}) is therefore text, not a quote.</li>
+     * </ul>
      */
     static Dialect detect(String sample, FileFormat format) {
-        char quote = detectQuote(sample);
-        if (format == FileFormat.TSV) {
-            return new Dialect('\t', quote);
+        Character sep = excelSeparator(sample);
+        String body = sample;
+        if (sep != null) {
+            int nl = sample.indexOf('\n');
+            body = nl < 0 ? "" : sample.substring(nl + 1);
         }
-        char best = ',';
-        double bestScore = -1;
-        for (char d : DELIMITERS) {
-            double score = score(sample, d, quote);
-            if (score > bestScore) {
-                bestScore = score;
-                best = d;
+        char delimiter;
+        if (sep != null) {
+            delimiter = sep;
+        } else if (format == FileFormat.TSV) {
+            delimiter = '\t';
+        } else {
+            delimiter = ',';
+            double bestScore = -1;
+            for (char d : DELIMITERS) {
+                double score = score(body, d, '"');
+                if (score > bestScore) {
+                    bestScore = score;
+                    delimiter = d;
+                }
             }
         }
-        return new Dialect(best, quote);
+        char quote = singleQuoted(body, delimiter) && score(body, delimiter, '\'') >= score(body, delimiter, '"')
+            ? '\'' : '"';
+        return new Dialect(delimiter, quote, sep != null);
+    }
+
+    /** The delimiter named by a first line {@code sep=X}, or null. */
+    static Character excelSeparator(String sample) {
+        if (sample.length() >= 5 && sample.regionMatches(true, 0, "sep=", 0, 4)) {
+            char c = sample.charAt(4);
+            int end = 5;
+            if (end < sample.length() && sample.charAt(end) == '\r') {
+                end++;
+            }
+            if (c != '\n' && c != '\r' && (end == sample.length() || sample.charAt(end) == '\n')) {
+                return c;
+            }
+        }
+        return null;
     }
 
     private static double score(String sample, char delimiter, char quote) {
         Parser p = new Parser(new StringReader(sample), delimiter, quote);
         try {
             List<String> header = p.next();
-            if (header == null || header.size() < 2) {
+            if (header == null) {
                 return 0;
             }
             int rows = 0;
@@ -82,25 +122,55 @@ final class Csv {
             }
             // one ragged row is forgiven: the sample may end part-way through the last one
             double consistency = rows == 0 ? 1 : (double) Math.min(rows, same + 1) / rows;
-            return consistency * 1000 + header.size();
+            return header.size() < 2 ? consistency : consistency * 1000 + header.size();
         } catch (IOException e) {
             return 0;
         }
     }
 
-    private static char detectQuote(String sample) {
-        int dq = 0;
-        int sq = 0;
+    /**
+     * Whether some fields start with {@code '}, none with {@code "}, and every field starting
+     * with {@code '} is properly closed.
+     */
+    static boolean singleQuoted(String sample, char delimiter) {
+        int quoted = 0;
         boolean fieldStart = true;
-        for (int i = 0; i < sample.length(); i++) {
+        int i = 0;
+        int n = sample.length();
+        while (i < n) {
             char c = sample.charAt(i);
-            if (fieldStart) {
-                if (c == '"') dq++;
-                else if (c == '\'') sq++;
+            if (fieldStart && c == '"') {
+                return false;
             }
-            fieldStart = c == '\n' || c == '\r' || c == ',' || c == ';' || c == '\t' || c == '|';
+            if (fieldStart && c == '\'') {
+                // find the closing quote, skipping doubled ones
+                int j = i + 1;
+                while (true) {
+                    int q = sample.indexOf('\'', j);
+                    if (q < 0) {
+                        return false; // never closed
+                    }
+                    if (q + 1 < n && sample.charAt(q + 1) == '\'') {
+                        j = q + 2;
+                        continue;
+                    }
+                    if (q + 1 < n) {
+                        char after = sample.charAt(q + 1);
+                        if (after != delimiter && after != '\n' && after != '\r') {
+                            return false; // closed in the middle of a value
+                        }
+                    }
+                    i = q + 1;
+                    break;
+                }
+                quoted++;
+                fieldStart = false;
+                continue;
+            }
+            fieldStart = c == delimiter || c == '\n' || c == '\r';
+            i++;
         }
-        return sq > 0 && dq == 0 ? '\'' : '"';
+        return quoted > 0;
     }
 
     /** Column names from a header row: blanks become {@code column_N}, repeats get {@code _2}, {@code _3}. */

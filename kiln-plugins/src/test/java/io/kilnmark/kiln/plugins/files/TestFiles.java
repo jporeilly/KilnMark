@@ -23,6 +23,7 @@ import io.kilnmark.kiln.Runner;
 import io.kilnmark.kiln.StepSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
+import io.kilnmark.kiln.connect.ConnectorContext;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.profile.ProfileStep;
 
@@ -94,21 +95,29 @@ final class TestFiles {
             rows.add(new Object[] {(long) i, i % 25 == 0 ? null : Integer.toString(98 + i),
                 LocalDate.of(2024, 1, 1).plusDays(i % 600), new BigDecimal(i).movePointLeft(2), i % 2 == 0,
                 i * 1.5, Instant.parse("2025-01-01T00:00:00Z").plusSeconds(i), LocalDateTime.of(2025, 1, 1, 12, 0),
-                i % 100});
+                i % 100, i % 10 == 0 ? null : new Object[] {i % 2 == 0 ? "Leeds" : null, new byte[] {(byte) 0xCA, (byte) 0xFE}}});
         }
         ParquetTestWriter.write(dir.resolve("finance/invoices.parquet"), List.of(
             ParquetTestWriter.Col.of("invoice_id", ParquetTestWriter.Type.INT64),
             ParquetTestWriter.Col.of("cust_ref", ParquetTestWriter.Type.STRING),
             ParquetTestWriter.Col.of("issued_on", ParquetTestWriter.Type.DATE),
-            new ParquetTestWriter.Col("total", ParquetTestWriter.Type.DECIMAL, 10, 2),
+            ParquetTestWriter.Col.decimal("total", 10, 2),
             ParquetTestWriter.Col.of("paid", ParquetTestWriter.Type.BOOLEAN),
             ParquetTestWriter.Col.of("amount", ParquetTestWriter.Type.DOUBLE),
             ParquetTestWriter.Col.of("created_at", ParquetTestWriter.Type.TIMESTAMP_UTC),
             ParquetTestWriter.Col.of("local_at", ParquetTestWriter.Type.TIMESTAMP_LOCAL),
-            ParquetTestWriter.Col.of("qty", ParquetTestWriter.Type.INT32)), rows);
+            ParquetTestWriter.Col.of("qty", ParquetTestWriter.Type.INT32),
+            ParquetTestWriter.Col.struct("address", ParquetTestWriter.Col.of("city", ParquetTestWriter.Type.STRING),
+                ParquetTestWriter.Col.of("raw", ParquetTestWriter.Type.BYTES))), rows);
 
         Files.writeString(dir.resolve("letters/complaint.txt"),
             "From: Ella Martin <ella.martin2@example.net>, telephone 07700 900002\n");
+    }
+
+    /** The files connector as a server allowing {@code roots} would set it up. */
+    static FilesConnector files(Path... roots) {
+        return (FilesConnector) new FilesConnector().withContext(new ConnectorContext(Map.of(FilesConnector.ROOTS,
+            String.join(",", java.util.Arrays.stream(roots).map(Path::toString).toList()))));
     }
 
     /** What reading one asset produced. */

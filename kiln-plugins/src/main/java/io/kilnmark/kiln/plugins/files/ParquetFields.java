@@ -30,6 +30,8 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.row.StructAccessor;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 
 import io.kilnmark.kiln.plugins.jdbc.JdbcColumn.Kind;
 
@@ -41,40 +43,51 @@ import io.kilnmark.kiln.plugins.jdbc.JdbcColumn.Kind;
  * to UTC (and legacy {@code INT96} and converted-type timestamps) are timestamp_tz, others
  * timestamp, both in microseconds; decimals up to 38 digits are decimal; strings, enums, JSON and
  * UUIDs are text; other byte arrays are binary. Nested groups (lists, maps, structs) are read as
- * text, so nothing is dropped.
+ * JSON text, so nothing is dropped.
  */
 final class ParquetFields {
 
     /** One top-level field: the column it becomes and what is needed to copy its values. */
-    record ParquetField(FileColumn column, PhysicalType physical, boolean unsigned, boolean group, boolean uuid) {
+    record ParquetField(FileColumn column, PhysicalType physical, boolean unsigned, boolean group, boolean uuid,
+                        SchemaNode node) {
+
+        ParquetField withNode(SchemaNode n) {
+            return new ParquetField(column, physical, unsigned, group, uuid, n);
+        }
     }
 
     private ParquetFields() {
     }
 
-    /** The file's top-level fields, in order. */
-    static List<ParquetField> of(FileMetaData md) {
-        List<SchemaElement> schema = md.schema();
+    /** The file's top-level fields, in order, with their schema nodes when {@code schema} is given. */
+    static List<ParquetField> of(FileMetaData md, FileSchema schema) {
+        List<SchemaElement> elements = md.schema();
         List<ParquetField> out = new ArrayList<>();
-        if (schema.isEmpty()) {
+        if (elements.isEmpty()) {
             return out;
         }
-        int children = schema.get(0).numChildren() == null ? 0 : schema.get(0).numChildren();
+        List<SchemaNode> nodes = schema == null ? List.of() : schema.getRootNode().children();
+        int children = children(elements.get(0));
         int i = 1;
-        for (int c = 0; c < children && i < schema.size(); c++) {
-            out.add(map(schema.get(i)));
-            i = skip(schema, i);
+        for (int c = 0; c < children && i < elements.size(); c++) {
+            ParquetField f = map(elements.get(i));
+            out.add(c < nodes.size() ? f.withNode(nodes.get(c)) : f);
+            i = skip(elements, i);
         }
         return out;
     }
 
-    /** The index just after the subtree starting at {@code i}. */
-    private static int skip(List<SchemaElement> schema, int i) {
-        SchemaElement e = schema.get(i);
+    private static int children(SchemaElement e) {
+        return e.numChildren() == null ? 0 : Math.max(0, e.numChildren());
+    }
+
+    /** The index just after the subtree starting at {@code i}; iterative, so deep nesting is safe. */
+    private static int skip(List<SchemaElement> elements, int i) {
         int next = i + 1;
-        int n = e.numChildren() == null ? 0 : e.numChildren();
-        for (int c = 0; c < n && next < schema.size(); c++) {
-            next = skip(schema, next);
+        long pending = children(elements.get(i));
+        while (pending > 0 && next < elements.size()) {
+            pending += children(elements.get(next)) - 1;
+            next++;
         }
         return next;
     }
@@ -87,7 +100,7 @@ final class ParquetFields {
             String what = ct == ConvertedType.LIST || lt instanceof LogicalType.ListType ? "list"
                 : ct == ConvertedType.MAP || ct == ConvertedType.MAP_KEY_VALUE || lt instanceof LogicalType.MapType
                 ? "map" : e.isGroup() ? "group" : "repeated " + e.type().name();
-            return new ParquetField(new FileColumn(name, what, Kind.TEXT, 0, 0), e.type(), false, true, false);
+            return new ParquetField(new FileColumn(name, what, Kind.TEXT, 0, 0), e.type(), false, true, false, null);
         }
         PhysicalType pt = e.type();
         String source = pt.name() + (lt != null ? " " + describe(lt) : ct != null ? " " + ct.name() : "");
@@ -137,7 +150,7 @@ final class ParquetFields {
                 if (bits == 16 || signed) {
                     yield field(name, source, Kind.INT32, 0, 0, pt);
                 }
-                yield new ParquetField(new FileColumn(name, source, Kind.INT64, 0, 0), pt, true, false, false);
+                yield new ParquetField(new FileColumn(name, source, Kind.INT64, 0, 0), pt, true, false, false, null);
             }
             case INT64 -> {
                 if (lt instanceof LogicalType.TimestampType ts) {
@@ -151,7 +164,7 @@ final class ParquetFields {
                 }
                 boolean unsigned = lt instanceof LogicalType.IntType it ? !it.isSigned() : ct == ConvertedType.UINT_64;
                 if (unsigned) {
-                    yield new ParquetField(new FileColumn(name, source, Kind.DECIMAL, 20, 0), pt, true, false, false);
+                    yield new ParquetField(new FileColumn(name, source, Kind.DECIMAL, 20, 0), pt, true, false, false, null);
                 }
                 yield field(name, source, Kind.INT64, 0, 0, pt);
             }
@@ -166,7 +179,7 @@ final class ParquetFields {
             }
             case FIXED_LEN_BYTE_ARRAY -> {
                 if (lt instanceof LogicalType.UuidType) {
-                    yield new ParquetField(new FileColumn(name, source, Kind.TEXT, 0, 0), pt, false, false, true);
+                    yield new ParquetField(new FileColumn(name, source, Kind.TEXT, 0, 0), pt, false, false, true, null);
                 }
                 if (lt instanceof LogicalType.Float16Type) {
                     yield field(name, source, Kind.FLOAT32, 0, 0, pt);
@@ -178,7 +191,7 @@ final class ParquetFields {
 
     private static ParquetField field(String name, String source, Kind kind, int precision, int scale,
                                       PhysicalType pt) {
-        return new ParquetField(new FileColumn(name, source, kind, precision, scale), pt, false, false, false);
+        return new ParquetField(new FileColumn(name, source, kind, precision, scale), pt, false, false, false, null);
     }
 
     private static String describe(LogicalType lt) {
@@ -217,11 +230,11 @@ final class ParquetFields {
                 TextValues.micros(r.getLocalTimestamp(i).toInstant(ZoneOffset.UTC)));
             case TIMESTAMP_TZ -> ((TimeStampMicroTZVector) v).setSafe(row, TextValues.micros(r.getTimestamp(i)));
             case TEXT -> {
-                String s = f.group() ? String.valueOf(r.getValue(i))
+                String s = f.group() ? ParquetJson.json(r.getValue(i), f.node())
                     : f.uuid() ? r.getUuid(i).toString()
                     : c.sourceType().contains("DECIMAL") ? r.getDecimal(i).toPlainString() // over 38 digits
                     : f.physical() == PhysicalType.BYTE_ARRAY ? r.getString(i)
-                    : String.valueOf(r.getValue(i));
+                    : ParquetJson.json(r.getValue(i), f.node());
                 ((VarCharVector) v).setSafe(row, s.getBytes(StandardCharsets.UTF_8));
             }
             case BINARY -> ((VarBinaryVector) v).setSafe(row, r.getBinary(i));

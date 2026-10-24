@@ -16,6 +16,7 @@ dependencies {
     "implementation"(libs.hardwood)
     "runtimeOnly"(libs.zstd.jni)       // Parquet's ZSTD codec (the lab's invoices file uses it)
     "runtimeOnly"(libs.snappy.java)    // Parquet's Snappy codec, the most common default
+    "runtimeOnly"(libs.lz4.java)       // Parquet's LZ4 and LZ4_RAW codecs (pyarrow's "lz4")
     "implementation"(libs.jackson.core)
     "implementation"(libs.awssdk.s3) {
         // One small blocking HTTP client (the JDK's) instead of Apache HttpClient and Netty.

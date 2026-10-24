@@ -14,35 +14,81 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.function.Function;
 
 /**
- * Writes small, uncompressed Parquet files for tests, so test data is generated rather than
- * checked in and no Parquet writer (with its Hadoop dependencies) is needed. One row group, one
- * PLAIN-encoded v1 data page per column, every column optional.
+ * Writes small Parquet files for tests, so test data is generated rather than checked in and no
+ * Parquet writer (with its Hadoop dependencies) is needed. One row group, one PLAIN-encoded v1
+ * data page per leaf column, every column optional, structs of primitives allowed (no lists).
+ * Pages are not compressed, but the codec written in the metadata can be chosen, to test how a
+ * reader treats codecs it lacks.
  */
 final class ParquetTestWriter {
 
-    enum Type { BOOLEAN, INT32, INT64, DOUBLE, STRING, DATE, TIMESTAMP_UTC, TIMESTAMP_LOCAL, DECIMAL }
+    enum Type { BOOLEAN, INT32, INT64, DOUBLE, STRING, BYTES, DATE, TIMESTAMP_UTC, TIMESTAMP_LOCAL, DECIMAL, STRUCT }
 
-    record Col(String name, Type type, int precision, int scale) {
+    /** Parquet's codec numbers. */
+    static final int UNCOMPRESSED = 0;
+    static final int BROTLI = 4;
+
+    /** A column; a struct's value in a row is an {@code Object[]} of its children's values. */
+    record Col(String name, Type type, int precision, int scale, List<Col> children) {
 
         static Col of(String name, Type type) {
-            return new Col(name, type, 0, 0);
+            return new Col(name, type, 0, 0, List.of());
         }
+
+        static Col decimal(String name, int precision, int scale) {
+            return new Col(name, Type.DECIMAL, precision, scale, List.of());
+        }
+
+        static Col struct(String name, Col... children) {
+            return new Col(name, Type.STRUCT, 0, 0, List.of(children));
+        }
+    }
+
+    /** One leaf column: its path, type, highest definition level and how to find its value in a row. */
+    private record Leaf(List<String> path, Col col, int maxDef, Function<Object[], Object[]> valueAndLevel) {
     }
 
     private ParquetTestWriter() {
     }
 
     static void write(Path file, List<Col> cols, List<Object[]> rows) throws IOException {
+        write(file, cols, rows, UNCOMPRESSED);
+    }
+
+    static void write(Path file, List<Col> cols, List<Object[]> rows, int codec) throws IOException {
+        List<Leaf> leaves = new ArrayList<>();
+        for (int c = 0; c < cols.size(); c++) {
+            Col col = cols.get(c);
+            int index = c;
+            if (col.type() == Type.STRUCT) {
+                for (int k = 0; k < col.children().size(); k++) {
+                    int child = k;
+                    leaves.add(new Leaf(List.of(col.name(), col.children().get(k).name()), col.children().get(k), 2,
+                        row -> {
+                            Object[] s = (Object[]) row[index];
+                            if (s == null) {
+                                return new Object[] {null, 0};
+                            }
+                            return new Object[] {s[child], s[child] == null ? 1 : 2};
+                        }));
+                }
+            } else {
+                leaves.add(new Leaf(List.of(col.name()), col, 1,
+                    row -> new Object[] {row[index], row[index] == null ? 0 : 1}));
+            }
+        }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         out.writeBytes("PAR1".getBytes(StandardCharsets.US_ASCII));
-        long[] offsets = new long[cols.size()];
-        long[] sizes = new long[cols.size()];
-        for (int c = 0; c < cols.size(); c++) {
-            byte[] body = page(cols.get(c), c, rows);
+        long[] offsets = new long[leaves.size()];
+        long[] sizes = new long[leaves.size()];
+        for (int c = 0; c < leaves.size(); c++) {
+            byte[] body = page(leaves.get(c), rows);
             Compact h = new Compact();
             h.begin();
             h.i32(1, 0); // DATA_PAGE
@@ -64,31 +110,49 @@ final class ParquetTestWriter {
         Compact f = new Compact();
         f.begin();
         f.i32(1, 1);
-        f.list(2, Compact.STRUCT, cols.size() + 1);
+        int elements = 1;
+        for (Col col : cols) {
+            elements += 1 + col.children().size();
+        }
+        f.list(2, Compact.STRUCT, elements);
         f.begin();
         f.binary(4, "schema");
         f.i32(5, cols.size());
         f.end();
         for (Col col : cols) {
-            schemaElement(f, col);
+            if (col.type() == Type.STRUCT) {
+                f.begin();
+                f.i32(3, 1); // OPTIONAL
+                f.binary(4, col.name());
+                f.i32(5, col.children().size());
+                f.end();
+                for (Col child : col.children()) {
+                    schemaElement(f, child);
+                }
+            } else {
+                schemaElement(f, col);
+            }
         }
         f.i64(3, rows.size());
         f.list(4, Compact.STRUCT, 1);
         f.begin();
-        f.list(1, Compact.STRUCT, cols.size());
+        f.list(1, Compact.STRUCT, leaves.size());
         long total = 0;
-        for (int c = 0; c < cols.size(); c++) {
+        for (int c = 0; c < leaves.size(); c++) {
+            Leaf leaf = leaves.get(c);
             total += sizes[c];
             f.begin();
             f.i64(2, offsets[c]);
             f.struct(3);
-            f.i32(1, physical(cols.get(c).type()));
+            f.i32(1, physical(leaf.col().type()));
             f.list(2, Compact.I32, 2);
             f.rawI32(0);
             f.rawI32(3);
-            f.list(3, Compact.BINARY, 1);
-            f.rawBinary(cols.get(c).name());
-            f.i32(4, 0); // UNCOMPRESSED
+            f.list(3, Compact.BINARY, leaf.path().size());
+            for (String p : leaf.path()) {
+                f.rawBinary(p);
+            }
+            f.i32(4, codec);
             f.i64(5, rows.size());
             f.i64(6, sizes[c]);
             f.i64(7, sizes[c]);
@@ -101,7 +165,39 @@ final class ParquetTestWriter {
         f.end();
         f.binary(6, "kilnmark test writer");
         f.end();
-        byte[] footer = f.bytes();
+        finish(file, out, f.bytes());
+    }
+
+    /**
+     * A file with no rows whose schema nests {@code depth} groups inside each other: valid Parquet,
+     * built to find readers that walk schemas recursively.
+     */
+    static void writeDeeplyNested(Path file, int depth) throws IOException {
+        Compact f = new Compact();
+        f.begin();
+        f.i32(1, 1);
+        f.list(2, Compact.STRUCT, depth + 2);
+        f.begin();
+        f.binary(4, "schema");
+        f.i32(5, 1);
+        f.end();
+        for (int i = 0; i < depth; i++) {
+            f.begin();
+            f.i32(3, 1);
+            f.binary(4, "g" + i);
+            f.i32(5, 1);
+            f.end();
+        }
+        schemaElement(f, Col.of("leaf", Type.INT32));
+        f.i64(3, 0);
+        f.list(4, Compact.STRUCT, 0);
+        f.end();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.writeBytes("PAR1".getBytes(StandardCharsets.US_ASCII));
+        finish(file, out, f.bytes());
+    }
+
+    private static void finish(Path file, ByteArrayOutputStream out, byte[] footer) throws IOException {
         out.writeBytes(footer);
         out.writeBytes(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(footer.length).array());
         out.writeBytes("PAR1".getBytes(StandardCharsets.US_ASCII));
@@ -161,33 +257,43 @@ final class ParquetTestWriter {
             case INT32, DATE -> 1;
             case INT64, TIMESTAMP_UTC, TIMESTAMP_LOCAL, DECIMAL -> 2;
             case DOUBLE -> 5;
-            case STRING -> 6;
+            case STRING, BYTES -> 6;
+            case STRUCT -> throw new IllegalArgumentException("a struct is not a leaf");
         };
     }
 
-    private static byte[] page(Col col, int c, List<Object[]> rows) {
-        ByteArrayOutputStream levels = new ByteArrayOutputStream();
-        // definition levels, RLE runs of bit width 1
+    private static byte[] page(Leaf leaf, List<Object[]> rows) {
+        int[] levels = new int[rows.size()];
+        List<Object> present = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            Object[] vl = leaf.valueAndLevel().apply(rows.get(i));
+            levels[i] = (Integer) vl[1];
+            if (levels[i] == leaf.maxDef()) {
+                present.add(vl[0]);
+            }
+        }
+        // definition levels: RLE runs, one byte per value (bit widths 1 and 2)
+        ByteArrayOutputStream rle = new ByteArrayOutputStream();
         int i = 0;
-        while (i < rows.size()) {
-            boolean present = rows.get(i)[c] != null;
+        while (i < levels.length) {
+            int level = levels[i];
             int run = 0;
-            while (i < rows.size() && (rows.get(i)[c] != null) == present) {
+            while (i < levels.length && levels[i] == level) {
                 run++;
                 i++;
             }
-            Compact.varint(levels, (long) run << 1);
-            levels.write(present ? 1 : 0);
+            Compact.varint(rle, (long) run << 1);
+            rle.write(level);
         }
-        ByteBuffer values = ByteBuffer.allocate(64 + rows.size() * 16 + textBytes(c, rows)).order(ByteOrder.LITTLE_ENDIAN);
+        int text = 0;
+        for (Object v : present) {
+            text += v instanceof String s ? s.getBytes(StandardCharsets.UTF_8).length : v instanceof byte[] b ? b.length : 0;
+        }
+        ByteBuffer values = ByteBuffer.allocate(64 + present.size() * 16 + text).order(ByteOrder.LITTLE_ENDIAN);
         int bits = 0;
         int bitCount = 0;
-        for (Object[] row : rows) {
-            Object v = row[c];
-            if (v == null) {
-                continue;
-            }
-            switch (col.type()) {
+        for (Object v : present) {
+            switch (leaf.col().type()) {
                 case BOOLEAN -> {
                     if ((Boolean) v) {
                         bits |= 1 << bitCount;
@@ -206,31 +312,24 @@ final class ParquetTestWriter {
                     byte[] b = ((String) v).getBytes(StandardCharsets.UTF_8);
                     values.putInt(b.length).put(b);
                 }
+                case BYTES -> values.putInt(((byte[]) v).length).put((byte[]) v);
                 case TIMESTAMP_UTC -> values.putLong(ChronoUnit.MICROS.between(Instant.EPOCH, (Instant) v));
                 case TIMESTAMP_LOCAL -> values.putLong(ChronoUnit.MICROS.between(Instant.EPOCH,
                     ((LocalDateTime) v).toInstant(ZoneOffset.UTC)));
-                case DECIMAL -> values.putLong(((BigDecimal) v).setScale(col.scale()).unscaledValue().longValueExact());
+                case DECIMAL -> values.putLong(((BigDecimal) v).setScale(leaf.col().scale()).unscaledValue()
+                    .longValueExact());
+                case STRUCT -> throw new IllegalArgumentException("a struct is not a leaf");
             }
         }
         if (bitCount > 0) {
             values.put((byte) bits);
         }
         ByteArrayOutputStream page = new ByteArrayOutputStream();
-        byte[] l = levels.toByteArray();
+        byte[] l = rle.toByteArray();
         page.writeBytes(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(l.length).array());
         page.writeBytes(l);
         page.write(values.array(), 0, values.position());
         return page.toByteArray();
-    }
-
-    private static int textBytes(int c, List<Object[]> rows) {
-        int n = 0;
-        for (Object[] r : rows) {
-            if (r[c] instanceof String s) {
-                n += s.getBytes(StandardCharsets.UTF_8).length;
-            }
-        }
-        return n;
     }
 
     /** Just enough of Thrift's compact protocol for a Parquet footer and page headers. */

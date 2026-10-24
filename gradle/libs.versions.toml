@@ -9,6 +9,7 @@ testcontainers = "2.0.5"
 hardwood = "1.0.1.Final"
 zstd-jni = "1.5.7-16"
 snappy-java = "1.1.10.8"
+lz4-java = "1.11.1"
 jackson = "2.21.7"
 awssdk = "2.55.16"
 
@@ -21,6 +22,7 @@ arrow-jdbc = { module = "org.apache.arrow:arrow-jdbc", version.ref = "arrow" }
 datasketches = { module = "org.apache.datasketches:datasketches-java", version.ref = "datasketches" }
 hardwood = { module = "dev.hardwood:hardwood-core", version.ref = "hardwood" }
 zstd-jni = { module = "com.github.luben:zstd-jni", version.ref = "zstd-jni" }
+lz4-java = { module = "at.yawk.lz4:lz4-java", version.ref = "lz4-java" }
 snappy-java = { module = "org.xerial.snappy:snappy-java", version.ref = "snappy-java" }
 jackson-core = { module = "com.fasterxml.jackson.core:jackson-core", version.ref = "jackson" }
 awssdk-s3 = { module = "software.amazon.awssdk:s3", version.ref = "awssdk" }

@@ -9,14 +9,15 @@ file as a document. They use:
 
 | Need | Library | Licence | Jar size |
 | --- | --- | --- | --- |
-| Parquet | `dev.hardwood:hardwood-core` 1.0.1.Final, pure Java, no dependencies | Apache-2.0 | 0.66 MB |
-| Parquet's ZSTD codec | `com.github.luben:zstd-jni` 1.5.7-16 | BSD-2-Clause | 6.5 MB |
-| Parquet's Snappy codec | `org.xerial.snappy:snappy-java` 1.1.10.8 | Apache-2.0 | 2.4 MB |
+| Parquet | `dev.hardwood:hardwood-core` 1.0.1.Final, Java with no required dependencies | Apache-2.0 | 0.66 MB |
+| Parquet's ZSTD codec | `com.github.luben:zstd-jni` 1.5.7-16 (native code, JNI) | BSD-2-Clause | 6.5 MB |
+| Parquet's Snappy codec | `org.xerial.snappy:snappy-java` 1.1.10.8 (native code, JNI) | Apache-2.0 | 2.4 MB |
+| Parquet's LZ4 and LZ4_RAW codecs | `at.yawk.lz4:lz4-java` 1.11.1, the maintained fork Hardwood names | Apache-2.0 | 0.9 MB |
 | S3 | AWS SDK for Java v2 2.55.16, `s3` module and its core, with the JDK-based `url-connection-client` (Apache HttpClient and Netty excluded) | Apache-2.0 | 8.8 MB |
 | JSON | `jackson-core` streaming parser, already on the class path through Arrow | Apache-2.0 | none added |
 | CSV | Our own lenient parser (about 150 lines) | | none |
 
-In all, 18.4 MB of jars. Codec versions match the Quarkus platform, which pins them in the server.
+In all, 19.3 MB of jars. Codec versions match the Quarkus platform, which pins them in the server.
 
 ## Why
 
@@ -32,16 +33,36 @@ In all, 18.4 MB of jars. Codec versions match the Quarkus platform, which pins t
 - **Arrow Dataset** (JNI over Arrow C++): an 81 MB jar of native libraries, one per platform, whose
   memory sits outside the Java allocator's accounting, and a native crash takes the server down.
 - **DuckDB JDBC**: 81 MB of native code to read one format.
-- **Hardwood**: a Parquet reader in plain Java 21+ with no required dependencies. It reads through
+- **Hardwood**: a Parquet reader written in Java 21+ with no required dependencies. It is not
+  pure Java in use: it can call the system's libdeflate for gzip through the foreign-function API
+  (we turn that off, below) and its codecs other than gzip come from the native libraries above.
+  It reads through
   a small `InputFile` interface (`readRange(offset, length)`), which maps directly onto S3 ranged
   GETs and positional reads of local files. It read the lab's pyarrow-written, ZSTD-compressed,
   dictionary-encoded invoices file and our generated test files on Java 25.
 
 Hardwood is the lightest by far and works reliably on Java 25, so we chose it. It decompresses
-gzip with the JDK; Snappy and ZSTD, the codecs almost every writer uses, need the two codec jars
-above. LZ4 and Brotli need further jars we do not ship: such a file is catalogued (the footer is
-not compressed) but its read fails with a message naming the codec. Add `lz4-java` if they turn
-up.
+gzip with the JDK; Snappy, ZSTD and LZ4 need the codec jars above. We added lz4-java (0.9 MB)
+because pyarrow's `lz4` option writes LZ4_RAW. Brotli and LZO are not supported: the catalogue
+checks every column chunk's codec in the footer and records such a file as not readable, naming
+the codec, rather than failing later when it is read.
+
+**How Hardwood runs here.**
+
+- One Hardwood context (a bounded pool of decoding threads, `kilnmark.files.parquet-threads`,
+  default 2) serves every Parquet read in the server, rather than a pool per file.
+- Hardwood fetches at most `kilnmark.files.parquet-chunk-mb` (default 8 MiB; its own default is
+  128 MiB) per request, through the system property `hardwood.internal.sequentialChunkSize`.
+- `hardwood.uselibdeflate` is set to false unless given on the command line, so gzip uses the
+  JDK's inflater and no system library is loaded.
+- snappy-java unpacks its native library into `kilnmark.files.native-dir` (default
+  `~/.kilnmark/native`, readable only by the server's user) instead of the shared temporary
+  folder, through `org.xerial.snappy.tempdir`.
+- Before Hardwood reads a footer, the catalogue checks the file's trailer: a footer length larger
+  than the file or 64 MiB is refused, so a corrupt file cannot exhaust memory. A schema nested too
+  deeply for Hardwood's recursive reader (a stack overflow) marks that file unreadable too.
+- When a read stops early, the reader cancels the store before closing Hardwood: S3 range requests
+  still downloading are aborted, and new ones refused.
 
 **S3.** The AWS SDK is the reference implementation of the S3 protocol and works with any
 S3-compatible endpoint (tested against VersityGW). With only the `s3` module and the JDK's HTTP
@@ -58,7 +79,9 @@ publicly pullable.
 - Hardwood is young (first release 2026). All Parquet use is in three places
   (`ParquetFields`, `FileInspector.parquet`, `FileInput.ParquetRows`); replacing it is a day's
   work, and the lab regression would show a difference.
-- zstd-jni and snappy-java load native libraries, unpacked into `java.io.tmpdir`, which must be
-  writable. Java 25 warns about native access unless the JVM runs with
-  `--enable-native-access=ALL-UNNAMED`; the tests pass it, and the server's launch should too.
+- zstd-jni and snappy-java load native libraries (zstd-jni unpacks into `java.io.tmpdir`, snappy
+  into the folder above), which must be writable. The server jar's manifest and the tests allow
+  native access, so Java 25 does not warn.
+- Hardwood's tuning goes through JVM-wide system properties, set once when the first Parquet file
+  is read: one server, one setting.
 - Hardwood logs one INFO line through `java.util.logging` saying whether SIMD is in use.

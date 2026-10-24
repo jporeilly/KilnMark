@@ -40,6 +40,14 @@ public interface FileStore extends Closeable {
     /** Where a path is, for people: an absolute path or an {@code s3://} URL. */
     String describe(String path);
 
+    /**
+     * Stops transfers still running, from any thread, and refuses new ones: a read that ends early
+     * calls it before waiting for the Parquet reader's workers.
+     */
+    default void cancel() {
+        // local files have nothing in flight worth stopping
+    }
+
     @Override
     default void close() throws IOException {
         // most stores hold nothing open

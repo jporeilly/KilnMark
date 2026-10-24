@@ -8,6 +8,8 @@ import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import dev.hardwood.InputFile;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -52,13 +54,30 @@ public final class S3FileStore implements FileStore {
 
     private final Settings settings;
     private final S3Client s3;
+    private final Set<ResponseInputStream<GetObjectResponse>> active = ConcurrentHashMap.newKeySet();
+    private volatile boolean cancelled;
 
-    public S3FileStore(Settings settings) {
+    /**
+     * @param allowDefaultCredentials whether a source without an access key may use the server's
+     *                                own AWS credentials (environment, profile, instance role);
+     *                                never with an endpoint other than AWS
+     * @throws IOException when the settings would use credentials the server does not allow
+     */
+    public S3FileStore(Settings settings, boolean allowDefaultCredentials) throws IOException {
         this.settings = settings;
-        AwsCredentialsProvider credentials = settings.accessKeyId() == null
-            ? DefaultCredentialsProvider.builder().build()
-            : StaticCredentialsProvider.create(AwsBasicCredentials.create(settings.accessKeyId(),
+        if (settings.endpoint() != null && settings.endpoint().contains("@")) {
+            throw new IOException("The endpoint must not hold a user name or password: put the access key ID in "
+                + "access_key_id and the secret access key in the source's secret");
+        }
+        AwsCredentialsProvider credentials;
+        if (settings.accessKeyId() != null) {
+            credentials = StaticCredentialsProvider.create(AwsBasicCredentials.create(settings.accessKeyId(),
                 settings.secretAccessKey() == null ? "" : settings.secretAccessKey()));
+        } else if (allowDefaultCredentials && settings.endpoint() == null) {
+            credentials = DefaultCredentialsProvider.builder().build();
+        } else {
+            throw new IOException(S3Connector.NO_DEFAULT_CREDENTIALS);
+        }
         var builder = S3Client.builder()
             .region(Region.of(settings.region() == null ? DEFAULT_REGION : settings.region()))
             .credentialsProvider(credentials)
@@ -98,17 +117,48 @@ public final class S3FileStore implements FileStore {
 
     @Override
     public InputStream open(String key) throws IOException {
+        ResponseInputStream<GetObjectResponse> response = start(get(key).build(), key);
+        return new FilterInputStream(response) {
+            @Override
+            public void close() throws IOException {
+                finish(response); // stop the transfer rather than drain the rest of the object
+            }
+        };
+    }
+
+    /** Starts a GET, tracked so {@link #cancel} can stop it. */
+    private ResponseInputStream<GetObjectResponse> start(GetObjectRequest req, String key) throws IOException {
+        if (cancelled) {
+            throw new IOException("The read of " + describe(key) + " was stopped");
+        }
         try {
-            ResponseInputStream<GetObjectResponse> response = s3.getObject(get(key).build());
-            return new FilterInputStream(response) {
-                @Override
-                public void close() throws IOException {
-                    response.abort(); // stop the transfer rather than drain the rest of the object
-                    super.close();
-                }
-            };
+            ResponseInputStream<GetObjectResponse> response = s3.getObject(req);
+            active.add(response);
+            if (cancelled) {
+                finish(response);
+                throw new IOException("The read of " + describe(key) + " was stopped");
+            }
+            return response;
         } catch (SdkException e) {
             throw explain(e, "read " + describe(key));
+        }
+    }
+
+    private void finish(ResponseInputStream<GetObjectResponse> response) {
+        active.remove(response);
+        response.abort();
+        try {
+            response.close();
+        } catch (IOException | RuntimeException e) {
+            // aborted: nothing left to release
+        }
+    }
+
+    @Override
+    public void cancel() {
+        cancelled = true;
+        for (ResponseInputStream<GetObjectResponse> r : active) {
+            finish(r);
         }
     }
 
@@ -122,16 +172,26 @@ public final class S3FileStore implements FileStore {
         if (length <= 0) {
             return new byte[0];
         }
+        ResponseInputStream<GetObjectResponse> response;
         try {
-            return s3.getObjectAsBytes(get(key).range("bytes=" + offset + "-" + (offset + length - 1)).build())
-                .asByteArray();
-        } catch (S3Exception e) {
-            if (e.statusCode() == 416) {
+            response = start(get(key).range("bytes=" + offset + "-" + (offset + length - 1)).build(), key);
+        } catch (IOException e) {
+            if (e.getCause() instanceof S3Exception s3e && s3e.statusCode() == 416) {
                 return new byte[0]; // an empty object, or a range past its end
             }
-            throw explain(e, "read " + describe(key));
-        } catch (SdkException e) {
-            throw explain(e, "read " + describe(key));
+            throw e;
+        }
+        try {
+            byte[] b = response.readNBytes(length);
+            if (cancelled) {
+                throw new IOException("The read of " + describe(key) + " was stopped"); // aborted: b is cut short
+            }
+            return b;
+        } catch (IOException | RuntimeException e) {
+            throw cancelled ? new IOException("The read of " + describe(key) + " was stopped", e)
+                : new IOException("Reading " + describe(key) + " failed: " + e.getMessage(), e);
+        } finally {
+            finish(response);
         }
     }
 
@@ -213,6 +273,7 @@ public final class S3FileStore implements FileStore {
 
     @Override
     public void close() {
+        cancel();
         s3.close();
     }
 }

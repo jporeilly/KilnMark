@@ -15,9 +15,18 @@ public final class Connectors {
         this.byKind = byKind;
     }
 
-    /** Loads the connectors listed in {@code META-INF/services}. Two with the same kind is an error. */
+    /**
+     * Loads the connectors listed in {@code META-INF/services} with no server-wide settings, so
+     * those that need them stay at their safest defaults. Two with the same kind is an error.
+     */
     public static Connectors load() {
-        return of(ServiceLoader.load(Connector.class).stream().map(ServiceLoader.Provider::get).toList());
+        return load(ConnectorContext.EMPTY);
+    }
+
+    /** Loads the connectors listed in {@code META-INF/services}, each set up with {@code context}. */
+    public static Connectors load(ConnectorContext context) {
+        return of(ServiceLoader.load(Connector.class).stream().map(ServiceLoader.Provider::get)
+            .map(c -> c.withContext(context)).toList());
     }
 
     public static Connectors of(Collection<? extends Connector> connectors) {

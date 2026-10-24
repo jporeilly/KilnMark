@@ -1,6 +1,5 @@
 package io.kilnmark.kiln.plugins.files;
 
-import java.io.BufferedReader;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.Reader;
@@ -19,7 +18,8 @@ import com.fasterxml.jackson.core.JsonToken;
  * own fields become columns; nested objects and arrays are kept as JSON text. A value that is not
  * an object becomes a record with one field, {@code value}.
  *
- * <p>In JSON lines, a line that is not valid JSON is skipped and counted; in a JSON document a
+ * <p>In JSON lines, a line that is not valid JSON, or longer than {@value #MAX_LINE} characters, is
+ * skipped and counted; an over-long line is read past without being kept. In a JSON document a
  * syntax error ends the read with a message naming the line.
  */
 final class JsonRecords implements Closeable {
@@ -28,10 +28,17 @@ final class JsonRecords implements Closeable {
     record Value(String text, TypeGuess.Origin origin) {
     }
 
+    /** The longest JSON line read, in characters: as much as a catalogue samples. */
+    static final int MAX_LINE = FileInspector.SAMPLE_BYTES;
+
     private static final JsonFactory FACTORY = JsonFactory.builder().build();
 
     private final boolean lines;
-    private final BufferedReader lineReader;
+    private final Reader lineReader;
+    private final StringBuilder line = new StringBuilder();
+    private final char[] buf = new char[1 << 16];
+    private int pos;
+    private int len;
     private final JsonParser parser;
     private boolean inArray;
     private boolean started;
@@ -40,7 +47,7 @@ final class JsonRecords implements Closeable {
     JsonRecords(Reader reader, FileFormat format) throws IOException {
         this.lines = format == FileFormat.JSON_LINES;
         if (lines) {
-            lineReader = new BufferedReader(reader, 1 << 16);
+            lineReader = reader;
             parser = null;
         } else {
             lineReader = null;
@@ -58,13 +65,57 @@ final class JsonRecords implements Closeable {
         return lines ? nextLine() : nextValue();
     }
 
+    /** Whether the line just read was longer than {@link #MAX_LINE}. */
+    private boolean overLong;
+
+    /**
+     * Reads the next line into {@link #line}: false at the end of the input. A line longer than
+     * {@link #MAX_LINE} is read to its end but not kept, and leaves {@link #line} empty with
+     * {@link #overLong} set.
+     */
+    private boolean readLine() throws IOException {
+        line.setLength(0);
+        overLong = false;
+        boolean any = false;
+        while (true) {
+            if (pos == len) {
+                len = lineReader.read(buf, 0, buf.length);
+                pos = 0;
+                if (len <= 0) {
+                    len = 0;
+                    return any;
+                }
+            }
+            any = true;
+            int start = pos;
+            while (pos < len && buf[pos] != '\n') {
+                pos++;
+            }
+            if (!overLong) {
+                if (line.length() + (pos - start) > MAX_LINE) {
+                    overLong = true;
+                    line.setLength(0);
+                } else {
+                    line.append(buf, start, pos - start);
+                }
+            }
+            if (pos < len) {
+                pos++; // the newline
+                return true;
+            }
+        }
+    }
+
     private Map<String, Value> nextLine() throws IOException {
-        String line;
-        while ((line = lineReader.readLine()) != null) {
-            if (line.isBlank()) {
+        while (readLine()) {
+            if (overLong) {
+                skipped++;
                 continue;
             }
-            try (JsonParser p = FACTORY.createParser(line)) {
+            if (line.toString().isBlank()) {
+                continue;
+            }
+            try (JsonParser p = FACTORY.createParser(line.toString())) {
                 JsonToken t = p.nextToken();
                 Map<String, Value> record = record(p, t);
                 if (p.nextToken() != null) {

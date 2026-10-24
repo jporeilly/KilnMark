@@ -193,11 +193,23 @@ final class ColumnStats {
         return count > 1 && count * 100 >= values();
     }
 
-    private static String number(double v) {
+    /**
+     * A number as text: whole numbers without a fraction, others to at most six decimal places,
+     * never in scientific notation. Exact at any magnitude (rounding through a long would cap
+     * values above about 9.2e12).
+     */
+    static String number(double v) {
+        if (Double.isNaN(v) || Double.isInfinite(v)) {
+            return Double.toString(v);
+        }
         if (v == Math.rint(v) && Math.abs(v) < 1e15) {
             return Long.toString((long) v);
         }
-        return Double.toString(Math.round(v * 1e6) / 1e6);
+        java.math.BigDecimal d = java.math.BigDecimal.valueOf(v); // the shortest decimal that is v
+        if (d.scale() > 6) {
+            d = d.setScale(6, java.math.RoundingMode.HALF_EVEN);
+        }
+        return d.signum() == 0 ? "0" : d.stripTrailingZeros().toPlainString();
     }
 
     private String temporal(double v) {

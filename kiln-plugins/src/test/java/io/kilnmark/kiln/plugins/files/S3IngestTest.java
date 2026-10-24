@@ -35,11 +35,17 @@ import io.kilnmark.kiln.connect.SourceConfig;
  */
 class S3IngestTest {
 
+    /** VersityGW v1.10.0, pinned by digest. */
+    static final String IMAGE = "ghcr.io/versity/versitygw:v1.10.0"
+        + "@sha256:89cad13cc981986ee284cbafea4613f9533ce6fd5f37a2c96c4c4fb8adb3a316";
     static final String BUCKET = "lab-raw";
+    /** A CSV object large enough that reading it all would show in a byte count. */
+    static final int BIG_ROWS = 550_000;
     static final String KEY_ID = "kilnmark-test";
     static final String SECRET = "kilnmark-test-secret";
 
     @TempDir
+    static Path tmp;
     static Path generated;
 
     static GenericContainer<?> gateway;
@@ -49,8 +55,16 @@ class S3IngestTest {
 
     @BeforeAll
     static void start() throws Exception {
+        generated = Files.createDirectories(tmp.resolve("generated"));
         TestFiles.write(generated);
-        gateway = new GenericContainer<>(DockerImageName.parse("ghcr.io/versity/versitygw:v1.10.0"))
+        Path big = Files.createDirectories(tmp.resolve("big")).resolve("big.csv");
+        try (var w = Files.newBufferedWriter(big)) {
+            w.write("id,name,amount,created_at\n");
+            for (int i = 0; i < BIG_ROWS; i++) {
+                w.write(i + ",customer number " + i + "," + (i % 1000) + ".25,2025-01-01 10:00:00+01\n");
+            }
+        }
+        gateway = new GenericContainer<>(DockerImageName.parse(IMAGE))
             .withEnv("ROOT_ACCESS_KEY", KEY_ID)
             .withEnv("ROOT_SECRET_KEY", SECRET)
             .withCommand("posix", "/data")
@@ -62,6 +76,7 @@ class S3IngestTest {
         gateway.withCopyFileToContainer(MountableFile.forHostPath(
                 TestFiles.lab().resolve("share/complaints/2025-03-complaint-ref-4471.txt"), 0644),
             "/data/" + BUCKET + "/letters/2025-03-complaint-ref-4471.txt");
+        gateway.withCopyFileToContainer(MountableFile.forHostPath(big, 0644), "/data/" + BUCKET + "/big/big.csv");
         gateway.start();
         source = source(Map.of());
         assets = S3.catalog(source).stream().collect(Collectors.toMap(AssetInfo::path, Function.identity()));
@@ -93,7 +108,7 @@ class S3IngestTest {
 
     @Test
     void catalogueListsEveryObjectAndRecordsTheDocument() {
-        assertEquals(List.of("exports/customers_export_2025.csv", "finance/invoices_2024_2025.parquet",
+        assertEquals(List.of("big/big.csv", "exports/customers_export_2025.csv", "finance/invoices_2024_2025.parquet",
             "gen/exports/customers.csv", "gen/finance/invoices.parquet", "gen/letters/complaint.txt",
             "gen/raw/invoices.json", "gen/raw/transactions.ndjson", "letters/2025-03-complaint-ref-4471.txt",
             "raw/transactions/transactions_2025-q1.ndjson"), assets.keySet().stream().sorted().toList());
@@ -143,6 +158,57 @@ class S3IngestTest {
             assertTrue(r.result().succeeded(), r.result().error());
             assertEquals("100", r.rowCount().get("rows"), key);
             assertEquals("false", r.rowCount().get("complete"), key);
+        }
+    }
+
+    @Test
+    void aSampledReadStopsTheTransfer() throws Exception {
+        long size = Long.parseLong(assets.get("big/big.csv").hints().get("size"));
+        assertTrue(size > 30_000_000, "object of " + size + " bytes");
+        try (CountingProxy proxy = new CountingProxy(gateway.getHost(), gateway.getMappedPort(7070))) {
+            SourceConfig viaProxy = source(Map.of("endpoint", "http://127.0.0.1:" + proxy.port()));
+            TestFiles.Read r = TestFiles.read(S3, viaProxy, assets.get("big/big.csv"), 100);
+            assertTrue(r.result().succeeded(), r.result().error());
+            assertEquals("100", r.rowCount().get("rows"));
+            assertEquals("false", r.rowCount().get("complete"));
+            Thread.sleep(500); // let the proxy see the connection close
+            long transferred = proxy.bytesFromServer();
+            assertTrue(transferred < size / 3, "transferred " + transferred + " of " + size + " bytes");
+
+            proxy.reset();
+            TestFiles.Read all = TestFiles.read(S3, viaProxy, assets.get("big/big.csv"), 0);
+            assertEquals(Integer.toString(BIG_ROWS), all.rowCount().get("rows"));
+            assertTrue(proxy.bytesFromServer() >= size, "a full read transfers the object: " + proxy.bytesFromServer());
+        }
+    }
+
+    @Test
+    void cancellingAStoreStopsRangeDownloadsInFlight() throws Exception {
+        long size = Long.parseLong(assets.get("big/big.csv").hints().get("size"));
+        try (CountingProxy slow = new CountingProxy(gateway.getHost(), gateway.getMappedPort(7070), 2)) {
+            SourceConfig viaProxy = source(Map.of("endpoint", "http://127.0.0.1:" + slow.port()));
+            S3FileStore store = (S3FileStore) S3.open(viaProxy);
+            dev.hardwood.InputFile file = store.parquet("big/big.csv", size);
+            java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+            Thread reading = Thread.ofVirtual().start(() -> {
+                try {
+                    file.readRange(0, (int) size);
+                } catch (Throwable t) {
+                    failure.set(t);
+                }
+            });
+            Thread.sleep(300);
+            long start = System.nanoTime();
+            store.cancel();
+            reading.join(10_000);
+            assertFalse(reading.isAlive(), "the read ends when the store is cancelled");
+            assertTrue(System.nanoTime() - start < 5_000_000_000L);
+            assertTrue(failure.get() != null && failure.get().getMessage().contains("stopped"), String.valueOf(failure.get()));
+            Thread.sleep(300);
+            assertTrue(slow.bytesFromServer() < size / 2, "transferred " + slow.bytesFromServer() + " of " + size);
+            IOException refused = assertThrows(IOException.class, () -> file.readRange(0, 10));
+            assertTrue(refused.getMessage().contains("stopped"), refused.getMessage());
+            store.close();
         }
     }
 
