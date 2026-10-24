@@ -117,7 +117,40 @@ results when they are recent enough or runs the checks inline. On failure the ru
 failing rows are diverted to a quarantine output, as the pipeline chooses. This comes with the
 pipelines in round 3.
 
-## 8. Scores and trust
+## 8. Profile once, reuse everywhere
+
+Data is read for quality once, as far upstream as possible, and what is learnt travels with it.
+Pipelines do not re-read sources to find out what they hold.
+
+- **At design time, no data is read.** A pipeline's inputs already have profiles, patterns,
+  samples, relationships and rule results in the catalogue. Kilnmark propagates them through the
+  steps to predict the quality of each output. A not-null filter drops a known share of rows. A
+  join's orphan rate comes from the stored sketches. A date parse fails on the share of values in
+  other shapes. The pipeline gets a predicted quality score per output and per dimension before
+  it ever runs.
+- **AI suggests improvements from that metadata**, for example: trim these columns, standardise
+  the two date formats, deduplicate on this key, repair these orphans with a lookup, quarantine
+  rows outside the accepted patterns. Each suggestion shows its predicted effect on the score. A
+  person adds the ones they want as steps.
+- **At run time, nothing is read twice.** Before reading, the gate checks whether the source
+  changed since its last profile (row count and watermark, file size and modified time or ETag,
+  database change markers). If it did not change, the stored results stand. While data flows,
+  checks and profiling run on the same Arrow batches through the metadata side channel, in the
+  one pass the pipeline makes anyway.
+- **Outputs are profiled as they are written** and registered in the catalogue with lineage, so
+  the next pipeline downstream starts from metadata too.
+- **Incremental.** HLL, KLL and frequent-items sketches merge, so new rows or new files are
+  profiled alone and merged into the asset's profile. Only a structural change forces a full
+  re-profile.
+- **Limits.** Predicted scores are estimates and are labelled as such. A gate that must be exact,
+  such as a financial reconciliation, runs its checks exactly in the stream, which still costs
+  no extra read. Reused results are only trusted while the change check says the data is the
+  same.
+
+The run then reports the predicted and the measured scores side by side. The gap tells stewards
+where the metadata, or the pipeline, needs attention.
+
+## 9. Scores and trust
 
 Scores roll up from column to table, source and data product, with the reasons shown. The trust
 score later combines quality with ratings, verified lineage, glossary coverage and
