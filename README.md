@@ -9,7 +9,7 @@ every column's profile. No sign-in yet: lab use only.
 
 ## Quick start
 
-Requirements: Java 25 (run Gradle on it too: set JAVA_HOME to a JDK 25). The Gradle wrapper downloads Gradle itself.
+Requirements: any Java 17 or later to start the Gradle wrapper. The wrapper downloads Gradle, and Gradle downloads the JDK 25 the build needs.
 
 ```
 ./gradlew build          # compile and test everything (Windows: gradlew.bat build)

@@ -8,20 +8,15 @@ a container.
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| Java (JDK) | 25 | Building and running the server; Gradle must run on it too (see below) |
+| Java | 17 or later on the PATH | Starting the Gradle wrapper; it fetches JDK 25 itself |
 | Git | any recent | Source control |
 | Node.js | 22 or later | The web UI |
 | Podman (Podman Desktop with a WSL 2 machine on Windows), or Docker | Podman 5 or later | PostgreSQL and the full stack |
 
-**JDK 25 without disturbing Pentaho.** Pentaho and its Tomcat expect their own Java, so do not
-change the system-wide `JAVA_HOME`. Install a JDK 25 (on Windows:
-`winget install EclipseAdoptium.Temurin.25.JDK`) and point only the current terminal at it before
-building:
-
-```
-$env:JAVA_HOME = (Resolve-Path "C:\Program Files\Eclipse Adoptium\jdk-25*").Path   # PowerShell
-export JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64                                  # Linux
-```
+**Java 25 is downloaded for you.** The build runs on JDK 25 (`gradle/gradle-daemon-jvm.properties`)
+and compiles with it; if the machine has none, Gradle downloads one into its own cache the first
+time. Any Java 17 or later on the `PATH` is enough to start the wrapper, so leave `JAVA_HOME` as
+Pentaho and Tomcat expect it.
 
 Gradle is not needed: use the wrapper (`./gradlew`, or `gradlew.bat` on Windows).
 
@@ -52,6 +47,12 @@ podman machine start            # Windows and macOS only, once per boot
 ./gradlew :server:quarkusBuild  # build the server first
 podman compose up --build       # PostgreSQL (AGE, pgvector) and the Kilnmark server
 ```
+
+If `podman compose` reports `failed to connect to the docker API at npipe:////./pipe/podman-machine-default`,
+the compose tool cannot find Podman: start the machine (`podman machine start`), or point it at
+the machine's pipe (`podman machine inspect --format "{{.ConnectionInfo.PodmanPipe.Path}}"`, then
+`$env:DOCKER_HOST = "npipe://" + that path with forward slashes`), or turn on Docker compatibility
+in Podman Desktop's settings.
 
 `podman compose` uses whichever compose provider is installed (Podman Desktop can install
 `podman-compose` or `docker-compose`). Docker users run `docker compose up --build` instead; the
