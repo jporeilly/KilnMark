@@ -57,11 +57,11 @@ public final class JdbcGraphStore implements GraphStore {
     }
 
     private static final String SOURCE_COLUMNS =
-        "s.id, s.name, s.kind, s.jdbc_url, s.username, s.schemas, s.secret IS NOT NULL, s.created_at";
+        "s.id, s.name, s.kind, s.settings::text, s.secret IS NOT NULL, s.created_at";
 
     private static Source source(ResultSet rs) throws SQLException {
-        return new Source(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5),
-            strings(rs.getArray(6)), rs.getBoolean(7), instant(rs.getTimestamp(8)));
+        return new Source(rs.getLong(1), rs.getString(2), rs.getString(3), FlatJson.read(rs.getString(4)),
+            rs.getBoolean(5), instant(rs.getTimestamp(6)));
     }
 
     @Override
@@ -82,14 +82,12 @@ public final class JdbcGraphStore implements GraphStore {
 
     private static Source insertSource(Connection c, NewSource s) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-            "INSERT INTO kilnmark.data_source AS s (name, kind, jdbc_url, username, secret, schemas) "
-                + "VALUES (?, ?, ?, ?, ?, ?) RETURNING " + SOURCE_COLUMNS)) {
+            "INSERT INTO kilnmark.data_source AS s (name, kind, settings, secret) "
+                + "VALUES (?, ?, ?::jsonb, ?) RETURNING " + SOURCE_COLUMNS)) {
             ps.setString(1, s.name());
             ps.setString(2, s.kind());
-            ps.setString(3, s.jdbcUrl());
-            ps.setString(4, s.username());
-            ps.setBytes(5, s.secret());
-            ps.setArray(6, c.createArrayOf("text", s.schemas().toArray()));
+            ps.setString(3, FlatJson.write(s.settings()));
+            ps.setBytes(4, s.secret());
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return source(rs);
@@ -218,7 +216,7 @@ public final class JdbcGraphStore implements GraphStore {
     public void saveAsset(long sourceId, long runId, Asset a, List<Field> fields) {
         tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("""
-                INSERT INTO kilnmark.asset (urn, source_id, kind, schema_name, name, description, primary_key,
+                INSERT INTO kilnmark.asset (urn, source_id, kind, container, name, description, primary_key,
                                             last_seen_run, removed_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
                 ON CONFLICT (urn) DO UPDATE SET kind = EXCLUDED.kind, description = EXCLUDED.description,
@@ -226,7 +224,7 @@ public final class JdbcGraphStore implements GraphStore {
                 ps.setString(1, a.urn());
                 ps.setLong(2, sourceId);
                 ps.setString(3, a.kind());
-                ps.setString(4, a.schema());
+                ps.setString(4, a.container());
                 ps.setString(5, a.name());
                 ps.setString(6, a.description());
                 ps.setArray(7, c.createArrayOf("text", a.primaryKey().toArray()));
@@ -324,7 +322,7 @@ public final class JdbcGraphStore implements GraphStore {
                 hits AS (
                     SELECT a.urn,
                            greatest(public.word_similarity(q.t, lower(a.name)),
-                                    public.word_similarity(q.t, lower(a.schema_name || '.' || a.name)),
+                                    public.word_similarity(q.t, lower(a.container || '.' || a.name)),
                                     CASE WHEN a.search @@ q.ts THEN 0.6 ELSE 0 END) AS asset_score
                     FROM kilnmark.asset a, q
                     WHERE a.removed_at IS NULL
@@ -334,7 +332,7 @@ public final class JdbcGraphStore implements GraphStore {
                     FROM kilnmark.field f, q
                     WHERE lower(f.name) LIKE q.like_t OR public.word_similarity(q.t, lower(f.name)) >= 0.5
                 )
-                SELECT a.urn, s.name, a.kind, a.schema_name, a.name, a.description, a.row_count,
+                SELECT a.urn, s.name, a.kind, a.container, a.name, a.description, a.row_count,
                        coalesce(array_agg(f.name ORDER BY f.score DESC) FILTER (WHERE f.name IS NOT NULL), '{}'),
                        greatest(h.asset_score, coalesce(max(f.score) * 0.9, 0)) AS score
                 FROM hits h
@@ -343,7 +341,7 @@ public final class JdbcGraphStore implements GraphStore {
                 LEFT JOIN fields f ON f.asset_urn = a.urn
                 GROUP BY a.urn, s.name, h.asset_score
                 HAVING greatest(h.asset_score, coalesce(max(f.score) * 0.9, 0)) >= 0.4
-                ORDER BY score DESC, h.asset_score DESC, a.schema_name, a.name
+                ORDER BY score DESC, h.asset_score DESC, a.container, a.name
                 LIMIT ?""")) {
                 ps.setString(1, q);
                 ps.setString(2, q);
@@ -368,7 +366,7 @@ public final class JdbcGraphStore implements GraphStore {
         return tx(c -> {
             AssetDetail head;
             try (PreparedStatement ps = c.prepareStatement("""
-                SELECT a.urn, s.name, a.kind, a.schema_name, a.name, a.description, a.primary_key, a.row_count,
+                SELECT a.urn, s.name, a.kind, a.container, a.name, a.description, a.primary_key, a.row_count,
                        a.row_count_complete, a.first_seen_at, a.last_scanned_at, a.removed_at
                 FROM kilnmark.asset a JOIN kilnmark.data_source s ON s.id = a.source_id WHERE a.urn = ?""")) {
                 ps.setString(1, urn);
@@ -403,7 +401,7 @@ public final class JdbcGraphStore implements GraphStore {
                     }
                 }
             }
-            return Optional.of(new AssetDetail(head.urn(), head.source(), head.kind(), head.schema(), head.name(),
+            return Optional.of(new AssetDetail(head.urn(), head.source(), head.kind(), head.container(), head.name(),
                 head.description(), head.primaryKey(), head.rowCount(), head.rowCountComplete(), head.firstSeenAt(),
                 head.lastScannedAt(), head.removedAt(), fields));
         });

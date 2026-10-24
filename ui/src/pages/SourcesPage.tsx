@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, formatNumber, formatTime, type ImportReport, type Source } from "../api";
+import { api, formatNumber, formatTime, type Connector, type ImportReport, type Source } from "../api";
 import { Status } from "../components/Status";
 import { useTitle } from "../components/useTitle";
 
@@ -59,7 +59,7 @@ export function SourcesPage() {
               <thead>
                 <tr>
                   <th scope="col">Name</th>
-                  <th scope="col">Database</th>
+                  <th scope="col">Where</th>
                   <th scope="col">Last scan</th>
                   <th scope="col">
                     <span className="visually-hidden">Actions</span>
@@ -70,9 +70,10 @@ export function SourcesPage() {
                 {sources.map((s) => (
                   <tr key={s.name}>
                     <th scope="row">{s.name}</th>
-                    <td className="mono small">
-                      {s.url}
-                      {s.schemas.length > 0 && <div className="muted">schemas: {s.schemas.join(", ")}</div>}
+                    <td className="small">
+                      <div className="muted">{s.kind}</div>
+                      <div className="mono">{s.settings.url ?? s.settings.path ?? s.settings.bucket ?? "–"}</div>
+                      {s.settings.schemas && <div className="muted">schemas: {s.settings.schemas}</div>}
                     </td>
                     <td>
                       <Status run={s.lastRun} />
@@ -122,32 +123,30 @@ export function SourcesPage() {
 }
 
 function AddSource({ onAdded }: { onAdded: (s: Source) => void }) {
+  const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [kind, setKind] = useState("postgresql");
   const [name, setName] = useState("");
-  const [url, setUrl] = useState("jdbc:postgresql://");
-  const [username, setUsername] = useState("");
+  const [settings, setSettings] = useState<Record<string, string>>({});
   const [password, setPassword] = useState("");
-  const [schemas, setSchemas] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    api.connectors().then(setConnectors).catch((e: Error) => setError(e.message));
+  }, []);
+
+  const connector = connectors.find((c) => c.kind === kind);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError(null);
     try {
-      const s = await api.addSource({
-        name: name.trim(),
-        url: url.trim(),
-        username: username.trim(),
-        password,
-        schemas: schemas.split(",").map((x) => x.trim()).filter(Boolean),
-      });
+      const s = await api.addSource({ name: name.trim(), kind, settings, password });
       setName("");
-      setUrl("jdbc:postgresql://");
-      setUsername("");
+      setSettings({});
       setPassword("");
-      setSchemas("");
       onAdded(s);
     } catch (err) {
       setError((err as Error).message);
@@ -159,44 +158,56 @@ function AddSource({ onAdded }: { onAdded: (s: Source) => void }) {
 
   return (
     <section aria-labelledby="add-h" className="panel">
-      <h2 id="add-h">Add a PostgreSQL source</h2>
+      <h2 id="add-h">Add a source</h2>
       {error && (
         <p role="alert" className="error" tabIndex={-1} ref={errorRef}>
           {error}
         </p>
       )}
       <form onSubmit={submit} className="form">
-        <div className="field">
-          <label htmlFor="src-name">Name</label>
-          <input id="src-name" value={name} onChange={(e) => setName(e.target.value)} required
-            pattern="[a-z0-9][a-z0-9\-]{0,62}" aria-describedby="src-name-hint" autoComplete="off" />
-          <p id="src-name-hint" className="hint">Lower-case letters, digits and hyphens, for example finance-db.</p>
-        </div>
-        <div className="field">
-          <label htmlFor="src-url">JDBC URL</label>
-          <input id="src-url" value={url} onChange={(e) => setUrl(e.target.value)} required
-            aria-describedby="src-url-hint" autoComplete="off" spellCheck={false} />
-          <p id="src-url-hint" className="hint">For example jdbc:postgresql://db.example.com:5432/sales</p>
-        </div>
         <div className="field-row">
           <div className="field">
-            <label htmlFor="src-user">User name</label>
-            <input id="src-user" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" />
+            <label htmlFor="src-kind">Kind</label>
+            <select id="src-kind" value={kind} onChange={(e) => {
+              setKind(e.target.value);
+              setSettings({});
+            }}>
+              {connectors.map((c) => (
+                <option key={c.kind} value={c.kind}>{c.displayName}</option>
+              ))}
+            </select>
           </div>
           <div className="field">
-            <label htmlFor="src-pass">Password</label>
-            <input id="src-pass" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password" aria-describedby="src-pass-hint" />
-            <p id="src-pass-hint" className="hint">Stored encrypted. Use a read-only database account.</p>
+            <label htmlFor="src-name">Name</label>
+            <input id="src-name" value={name} onChange={(e) => setName(e.target.value)} required
+              pattern="[a-z0-9][a-z0-9\-]{0,62}" aria-describedby="src-name-hint" autoComplete="off" />
+            <p id="src-name-hint" className="hint">Lower-case letters, digits and hyphens, for example finance-db.</p>
           </div>
         </div>
+        {connector?.settings.map((s) => (
+          <div className="field" key={s.key}>
+            <label htmlFor={`src-${s.key}`}>
+              {s.label}
+              {!s.required && " (optional)"}
+            </label>
+            <input id={`src-${s.key}`} value={settings[s.key] ?? ""} required={s.required} autoComplete="off"
+              spellCheck={false} aria-describedby={s.hint ? `src-${s.key}-hint` : undefined}
+              onChange={(e) => setSettings({ ...settings, [s.key]: e.target.value })} />
+            {s.hint && (
+              <p id={`src-${s.key}-hint`} className="hint">
+                {s.hint}
+                {s.multiple && ". Separate several with commas."}
+              </p>
+            )}
+          </div>
+        ))}
         <div className="field">
-          <label htmlFor="src-schemas">Schemas (optional)</label>
-          <input id="src-schemas" value={schemas} onChange={(e) => setSchemas(e.target.value)}
-            aria-describedby="src-schemas-hint" autoComplete="off" />
-          <p id="src-schemas-hint" className="hint">Separate with commas. Leave empty to scan every schema.</p>
+          <label htmlFor="src-pass">Password or secret (optional)</label>
+          <input id="src-pass" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password" aria-describedby="src-pass-hint" />
+          <p id="src-pass-hint" className="hint">Stored encrypted. Use a read-only account.</p>
         </div>
-        <button type="submit" className="primary" disabled={saving}>
+        <button type="submit" className="primary" disabled={saving || !connector}>
           {saving ? "Adding…" : "Add source"}
         </button>
       </form>
@@ -231,8 +242,10 @@ function ImportSources({ onImported }: { onImported: (count: number) => void }) 
     <section aria-labelledby="import-h" className="panel">
       <h2 id="import-h">Import sources from a file</h2>
       <p className="hint">
-        A CSV with a header row: <span className="mono">name, url, username, password, password_ref, schemas</span>{" "}
-        (schemas separated by semicolons), or a JSON array with the same keys. Use{" "}
+        A CSV with a header row: <span className="mono">name, kind, password</span> or{" "}
+        <span className="mono">password_ref</span>, then one column per setting (for PostgreSQL{" "}
+        <span className="mono">url, username, schemas</span>; lists separated by semicolons), or a JSON array with the
+        same keys. Use{" "}
         <span className="mono">password_ref</span> as <span className="mono">env:VARIABLE</span> or{" "}
         <span className="mono">secret:NAME</span> to keep passwords out of the file. Nothing is created unless
         every row is right.

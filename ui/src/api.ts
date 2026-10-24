@@ -17,19 +17,20 @@ export type Run = {
 export type Source = {
   name: string;
   kind: string;
-  url: string;
-  username: string | null;
-  schemas: string[];
+  settings: Record<string, string>;
   hasPassword: boolean;
   createdAt: string;
   lastRun: Run | null;
 };
 
+export type ConnectorSetting = { key: string; label: string; required: boolean; hint: string; multiple: boolean };
+export type Connector = { kind: string; displayName: string; settings: ConnectorSetting[] };
+
 export type SearchHit = {
   urn: string;
   source: string;
   kind: string;
-  schema: string;
+  container: string;
   name: string;
   description: string | null;
   rowCount: number | null;
@@ -70,7 +71,7 @@ export type Asset = {
   urn: string;
   source: string;
   kind: string;
-  schema: string;
+  container: string;
   name: string;
   description: string | null;
   primaryKey: string[];
@@ -84,10 +85,9 @@ export type Asset = {
 
 export type NewSource = {
   name: string;
-  url: string;
-  username: string;
+  kind: string;
+  settings: Record<string, string>;
   password: string;
-  schemas: string[];
 };
 
 export type ImportRow = { line: number; name: string | null; status: "ok" | "created" | "error"; error: string | null };
@@ -126,6 +126,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   info: () => call<{ product: string; version: string; roles: string[] }>("/api/v1/info"),
   sources: () => call<Source[]>("/api/v1/sources"),
+  connectors: () => call<Connector[]>("/api/v1/connectors"),
   addSource: (s: NewSource) => call<Source>("/api/v1/sources", { method: "POST", body: JSON.stringify(s) }),
   importSources: (text: string, format: "csv" | "json", dryRun: boolean) =>
     fetch(`/api/v1/sources/import?dryRun=${dryRun}`, {

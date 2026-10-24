@@ -17,6 +17,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.kilnmark.graph.store.GraphStore;
+import io.kilnmark.kiln.connect.Connectors;
+import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.graph.store.Records;
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.SecretBox;
@@ -27,9 +29,11 @@ import jakarta.enterprise.context.ApplicationScoped;
  * row is wrong nothing is created, and the report says what to fix on which line. A dry run
  * checks without creating anything.
  *
- * <p>CSV columns (header row required, any order): {@code name}, {@code url}, and optionally
- * {@code username}, {@code password}, {@code password_ref} and {@code schemas} (separated by
- * semicolons). JSON: an array of objects with the same keys ({@code schemas} as an array).
+ * <p>CSV (header row required, any column order): {@code name}, optionally {@code kind} (default
+ * {@code postgresql}), {@code password} or {@code password_ref}, and one column per connector
+ * setting, for example {@code url}, {@code username} and {@code schemas} (lists separated by
+ * semicolons). JSON: an array of objects with the same keys, or with the settings in a
+ * {@code settings} object.
  * {@code password_ref} keeps passwords out of the file: {@code env:VARIABLE} reads the server's
  * environment, {@code secret:NAME} reads a file in the configured secrets folder.
  */
@@ -40,9 +44,12 @@ public class SourceImporter {
     private static final Pattern ENV = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final Pattern SECRET = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
 
-    public record Row(int line, String name, String url, String username, String password, String passwordRef,
-                      List<String> schemas) {
+    public record Row(int line, String name, String kind, Map<String, String> settings, String password,
+                      String passwordRef) {
     }
+
+    private static final Set<String> RESERVED = Set.of("name", "kind", "password", "password_ref", "passwordref",
+        "settings");
 
     public record RowResult(int line, String name, String status, String error) {
     }
@@ -54,12 +61,15 @@ public class SourceImporter {
     private final SecretBox secrets;
     private final KilnmarkConfig config;
     private final ObjectMapper json;
+    private final Connectors connectors;
 
-    public SourceImporter(GraphStore store, SecretBox secrets, KilnmarkConfig config, ObjectMapper json) {
+    public SourceImporter(GraphStore store, SecretBox secrets, KilnmarkConfig config, ObjectMapper json,
+                          Connectors connectors) {
         this.store = store;
         this.secrets = secrets;
         this.config = config;
         this.json = json;
+        this.connectors = connectors;
     }
 
     public Report run(List<Row> rows, boolean dryRun) {
@@ -76,7 +86,9 @@ public class SourceImporter {
         List<Records.NewSource> ready = new ArrayList<>();
         int errors = 0;
         for (Row r : rows) {
-            String error = SourceRules.check(r.name(), "postgresql", r.url());
+            String kind = r.kind() == null || r.kind().isBlank() ? "postgresql" : r.kind().trim();
+            String error = r.name() == null ? "name: missing"
+                : SourceRules.check(connectors, new SourceConfig(r.name(), kind, r.settings(), null));
             if (error == null && existing.contains(r.name())) {
                 error = "a source called " + r.name() + " already exists";
             }
@@ -98,8 +110,8 @@ public class SourceImporter {
             }
             results.add(new RowResult(r.line(), r.name(), dryRun ? "ok" : "created", null));
             if (!dryRun) {
-                ready.add(new Records.NewSource(r.name(), "postgresql", r.url(), blank(r.username()),
-                    password == null ? null : secrets.seal(password), r.schemas()));
+                ready.add(new Records.NewSource(r.name(), kind, r.settings(),
+                    password == null ? null : secrets.seal(password)));
             }
         }
         if (errors > 0) {
@@ -152,10 +164,6 @@ public class SourceImporter {
         throw new IllegalArgumentException("password_ref: use env:VARIABLE or secret:NAME");
     }
 
-    private static String blank(String s) {
-        return s == null || s.isBlank() ? null : s.trim();
-    }
-
     // ---------------------------------------------------------------- reading the file
 
     public List<Row> fromJson(String text) {
@@ -172,13 +180,30 @@ public class SourceImporter {
         int i = 0;
         for (JsonNode n : root) {
             i++;
-            List<String> schemas = new ArrayList<>();
-            n.path("schemas").forEach(s -> schemas.add(s.asText().trim()));
-            rows.add(new Row(i, text(n, "name"), text(n, "url"), text(n, "username"), text(n, "password"),
-                n.hasNonNull("password_ref") ? text(n, "password_ref") : text(n, "passwordRef"),
-                schemas.stream().filter(s -> !s.isEmpty()).toList()));
+            Map<String, String> settings = new HashMap<>();
+            n.path("settings").properties().forEach(e -> put(settings, e.getKey(), e.getValue()));
+            n.properties().forEach(e -> {
+                if (!RESERVED.contains(e.getKey().toLowerCase(Locale.ROOT))) {
+                    put(settings, e.getKey(), e.getValue());
+                }
+            });
+            rows.add(new Row(i, text(n, "name"), text(n, "kind"), SourceResource.clean(settings), text(n, "password"),
+                n.hasNonNull("password_ref") ? text(n, "password_ref") : text(n, "passwordRef")));
         }
         return rows;
+    }
+
+    private static void put(Map<String, String> settings, String key, JsonNode v) {
+        if (v == null || v.isNull() || v.isObject()) {
+            return;
+        }
+        if (v.isArray()) {
+            List<String> items = new ArrayList<>();
+            v.forEach(x -> items.add(x.asText().trim()));
+            settings.put(key, String.join(",", items));
+        } else {
+            settings.put(key, v.asText());
+        }
     }
 
     private static String text(JsonNode n, String key) {
@@ -196,10 +221,8 @@ public class SourceImporter {
         for (int i = 0; i < head.size(); i++) {
             header.put(head.get(i).trim().toLowerCase(Locale.ROOT).replace(' ', '_'), i);
         }
-        for (String required : List.of("name", "url")) {
-            if (!header.containsKey(required)) {
-                throw new IllegalArgumentException("The header row needs a '" + required + "' column");
-            }
+        if (!header.containsKey("name")) {
+            throw new IllegalArgumentException("The header row needs a 'name' column");
         }
         List<Row> rows = new ArrayList<>();
         for (int r = 1; r < records.size(); r++) {
@@ -207,11 +230,17 @@ public class SourceImporter {
             if (rec.stream().allMatch(String::isBlank)) {
                 continue;
             }
-            String schemas = cell(rec, header, "schemas");
-            rows.add(new Row(r + 1, cell(rec, header, "name"), cell(rec, header, "url"), cell(rec, header, "username"),
-                cell(rec, header, "password"), cell(rec, header, "password_ref"),
-                schemas == null ? List.of()
-                    : List.of(schemas.split(";")).stream().map(String::trim).filter(s -> !s.isEmpty()).toList()));
+            Map<String, String> settings = new HashMap<>();
+            for (var h : header.entrySet()) {
+                if (!RESERVED.contains(h.getKey())) {
+                    String v = cell(rec, header, h.getKey());
+                    if (v != null) {
+                        settings.put(h.getKey(), v.replace(';', ','));
+                    }
+                }
+            }
+            rows.add(new Row(r + 1, cell(rec, header, "name"), cell(rec, header, "kind"),
+                SourceResource.clean(settings), cell(rec, header, "password"), cell(rec, header, "password_ref")));
         }
         return rows;
     }

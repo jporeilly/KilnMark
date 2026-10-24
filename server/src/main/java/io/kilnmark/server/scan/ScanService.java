@@ -1,11 +1,7 @@
 package io.kilnmark.server.scan;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -26,8 +22,11 @@ import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
 import io.kilnmark.kiln.StepSpec;
-import io.kilnmark.kiln.plugins.jdbc.JdbcCatalog;
-import io.kilnmark.kiln.plugins.jdbc.JdbcTableInput;
+import io.kilnmark.kiln.connect.AssetInfo;
+import io.kilnmark.kiln.connect.Connector;
+import io.kilnmark.kiln.connect.ConnectorException;
+import io.kilnmark.kiln.connect.Connectors;
+import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.profile.ProfileStep;
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.Role;
@@ -36,9 +35,10 @@ import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
- * Scans a data source: reads its catalogue, records every table and view with its fields, then
- * reads each one through the Kiln engine (table input, then profile) and stores the row count and
- * column profiles. Tables are profiled a few at a time; one table failing does not stop the scan.
+ * Scans a data source through its connector: reads its catalogue, records every asset with its
+ * fields, then reads each one through the Kiln engine (the connector's reader, then profile) and
+ * stores the row count and column profiles. Assets are profiled a few at a time; one failing does
+ * not stop the scan.
  *
  * <p>For v0.0.2 scans run in this process when it has the worker role. The PostgreSQL job queue
  * (plan task 13) replaces this so any worker can pick a scan up.
@@ -52,13 +52,16 @@ public class ScanService {
     private final SecretBox secrets;
     private final KilnmarkConfig config;
     private final ObjectMapper json;
+    private final Connectors connectors;
     private final ExecutorService scans = Executors.newVirtualThreadPerTaskExecutor();
 
-    public ScanService(GraphStore store, SecretBox secrets, KilnmarkConfig config, ObjectMapper json) {
+    public ScanService(GraphStore store, SecretBox secrets, KilnmarkConfig config, ObjectMapper json,
+                       Connectors connectors) {
         this.store = store;
         this.secrets = secrets;
         this.config = config;
         this.json = json;
+        this.connectors = connectors;
     }
 
     @PreDestroy
@@ -82,31 +85,31 @@ public class ScanService {
         AtomicLong rows = new AtomicLong();
         List<String> problems = java.util.Collections.synchronizedList(new ArrayList<>());
         try {
-            String password = store.sourceSecret(source.name()).map(secrets::open).orElse(null);
-            List<JdbcCatalog.Table> tables;
-            try (Connection c = DriverManager.getConnection(source.jdbcUrl(), source.username(), password)) {
-                tables = JdbcCatalog.read(c, source.schemas());
-            }
-            Semaphore slots = new Semaphore(Math.max(1, config.scan().parallelTables()));
+            Connector connector = connectors.get(source.kind()).orElseThrow(() -> new ConnectorException(
+                "This server has no connector for sources of kind '" + source.kind() + "'"));
+            String secret = store.sourceSecret(source.name()).map(secrets::open).orElse(null);
+            SourceConfig config = new SourceConfig(source.name(), source.kind(), source.settings(), secret);
+            List<AssetInfo> assets = connector.catalog(config);
+            Semaphore slots = new Semaphore(Math.max(1, this.config.scan().parallelTables()));
             List<Thread> work = new ArrayList<>();
-            for (JdbcCatalog.Table t : tables) {
-                String urn = new Urn(source.name(), t.path()).toString();
-                store.saveAsset(source.id(), runId, asset(urn, t), fields(t));
+            for (AssetInfo a : assets) {
+                String urn = new Urn(source.name(), a.path()).toString();
+                store.saveAsset(source.id(), runId, asset(urn, a), fields(a));
                 seen.incrementAndGet();
                 slots.acquire();
-                work.add(Thread.ofVirtual().name("scan-" + runId + "-" + t.path()).start(() -> {
+                work.add(Thread.ofVirtual().name("scan-" + runId + "-" + a.path()).start(() -> {
                     try {
-                        RunResult r = profile(source, password, t, urn, runId);
+                        RunResult r = profile(connector, config, a, urn, runId);
                         rows.addAndGet(r.steps().get(0).rowsOut());
                         if (!r.succeeded()) {
                             failed.incrementAndGet();
-                            problems.add(t.path() + ": " + r.error());
+                            problems.add(a.path() + ": " + r.error());
                         }
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     } catch (RuntimeException e) {
                         failed.incrementAndGet();
-                        problems.add(t.path() + ": " + e.getMessage());
+                        problems.add(a.path() + ": " + e.getMessage());
                     } finally {
                         slots.release();
                     }
@@ -120,9 +123,8 @@ public class ScanService {
             String detail = summary(seen.get(), failed.get(), removed, problems);
             store.finishRun(runId, status, seen.get(), failed.get(), rows.get(), detail);
             LOG.infof("Scan %d of %s: %s", runId, source.name(), detail);
-        } catch (SQLException e) {
-            store.finishRun(runId, "failed", seen.get(), failed.get(), rows.get(),
-                "Cannot read the catalogue of " + source.name() + ": " + e.getMessage());
+        } catch (ConnectorException e) {
+            store.finishRun(runId, "failed", seen.get(), failed.get(), rows.get(), e.getMessage());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             store.finishRun(runId, "failed", seen.get(), failed.get(), rows.get(), "The server stopped during the scan");
@@ -132,23 +134,13 @@ public class ScanService {
         }
     }
 
-    private RunResult profile(Records.Source source, String password, JdbcCatalog.Table t, String urn, long runId)
+    private RunResult profile(Connector connector, SourceConfig config, AssetInfo a, String urn, long runId)
         throws InterruptedException {
-        boolean view = !t.type().equals("table") && !t.type().equals("partitioned table");
-        long limit = view ? config.scan().viewRowLimit() : 0;
-        java.util.HashMap<String, String> input = new java.util.HashMap<>(Map.of(
-            "url", source.jdbcUrl(), "schema", t.schema(), "table", t.name(), "asset-urn", urn,
-            "row-limit", Long.toString(limit)));
-        if (source.username() != null) {
-            input.put("user", source.username());
-        }
-        if (password != null) {
-            input.put("password", password);
-        }
-        Pipeline p = new Pipeline("scan-" + runId + "-" + t.path(), List.of(
-            new StepSpec("read", new JdbcTableInput(), input),
-            new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", urn))));
-        return new Runner(config.scan().memoryLimitMb() << 20, 4).run(p, event -> record(event, runId));
+        long limit = a.bounded() ? this.config.scan().viewRowLimit() : 0;
+        StepSpec read = connector.reader(config, a, new Connector.ReadOptions(urn, limit, 8192));
+        Pipeline p = new Pipeline("scan-" + runId + "-" + a.path(), List.of(
+            read, new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", urn))));
+        return new Runner(this.config.scan().memoryLimitMb() << 20, 4).run(p, event -> record(event, runId));
     }
 
     private void record(MetadataEvent e, long runId) {
@@ -190,13 +182,14 @@ public class ScanService {
         return o.toString();
     }
 
-    private static Records.Asset asset(String urn, JdbcCatalog.Table t) {
-        return new Records.Asset(urn, t.type(), t.schema(), t.name(), t.comment(), t.primaryKey());
+    private static Records.Asset asset(String urn, AssetInfo a) {
+        return new Records.Asset(urn, a.kind(), a.container() == null ? "" : a.container(),
+            a.name() == null ? a.path() : a.name(), a.description(), a.primaryKey());
     }
 
-    private static List<Records.Field> fields(JdbcCatalog.Table t) {
-        return t.columns().stream().map(c -> new Records.Field(c.name(), c.position(), c.sourceType(),
-            c.kind().name().toLowerCase(Locale.ROOT), c.nullable(), c.comment())).toList();
+    private static List<Records.Field> fields(AssetInfo a) {
+        return a.fields().stream().map(f -> new Records.Field(f.name(), f.position(), f.sourceType(), f.kind(),
+            f.nullable(), f.description())).toList();
     }
 
     private static String summary(int seen, int failed, int removed, List<String> problems) {

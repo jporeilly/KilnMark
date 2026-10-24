@@ -1,10 +1,14 @@
 package io.kilnmark.server.api;
 
 import java.net.URI;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import io.kilnmark.graph.store.GraphStore;
 import io.kilnmark.graph.store.Records;
+import io.kilnmark.kiln.connect.Connectors;
+import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.server.SecretBox;
 import io.kilnmark.server.scan.ScanService;
 import jakarta.ws.rs.Consumes;
@@ -17,26 +21,31 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
-/** Data sources: register one, list them, start a scan, see its runs. */
+/** Data sources: register one or many, list them, start a scan, see its runs. */
 @Path("/api/v1/sources")
 @Produces(MediaType.APPLICATION_JSON)
 public class SourceResource {
 
-    /** Body of {@code POST /api/v1/sources}. The password is encrypted before it is stored. */
-    public record NewSource(String name, String kind, String url, String username, String password,
-                            List<String> schemas) {
+    /**
+     * Body of {@code POST /api/v1/sources}: a connector kind (default {@code postgresql}), its
+     * settings (see {@code GET /api/v1/connectors}) and the secret, encrypted before it is stored.
+     */
+    public record NewSource(String name, String kind, Map<String, String> settings, String password) {
     }
 
     private final GraphStore store;
     private final SecretBox secrets;
     private final ScanService scans;
     private final SourceImporter importer;
+    private final Connectors connectors;
 
-    public SourceResource(GraphStore store, SecretBox secrets, ScanService scans, SourceImporter importer) {
+    public SourceResource(GraphStore store, SecretBox secrets, ScanService scans, SourceImporter importer,
+                          Connectors connectors) {
         this.store = store;
         this.secrets = secrets;
         this.scans = scans;
         this.importer = importer;
+        this.connectors = connectors;
     }
 
     @GET
@@ -53,11 +62,12 @@ public class SourceResource {
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     public Response add(NewSource body) {
-        if (body == null) {
-            throw new IllegalArgumentException("Send the source as JSON");
+        if (body == null || body.name() == null) {
+            throw new IllegalArgumentException("Send the source as JSON with at least a name");
         }
-        String kind = body.kind() == null ? "postgresql" : body.kind();
-        String problem = SourceRules.check(body.name(), kind, body.url());
+        String kind = body.kind() == null || body.kind().isBlank() ? "postgresql" : body.kind().trim();
+        Map<String, String> settings = clean(body.settings());
+        String problem = SourceRules.check(connectors, new SourceConfig(body.name(), kind, settings, null));
         if (problem != null) {
             throw new IllegalArgumentException(problem);
         }
@@ -65,14 +75,26 @@ public class SourceResource {
             throw ApiError.of(Response.Status.CONFLICT, "A source called " + body.name() + " already exists");
         }
         byte[] secret = body.password() == null || body.password().isEmpty() ? null : secrets.seal(body.password());
-        Records.Source s = store.addSource(new Records.NewSource(body.name(), kind, body.url(), body.username(), secret,
-            body.schemas() == null ? List.of() : body.schemas()));
+        Records.Source s = store.addSource(new Records.NewSource(body.name(), kind, settings, secret));
         return Response.created(URI.create("/api/v1/sources/" + s.name())).entity(view(s)).build();
     }
 
+    static Map<String, String> clean(Map<String, String> settings) {
+        Map<String, String> out = new HashMap<>();
+        if (settings != null) {
+            settings.forEach((k, v) -> {
+                if (k != null && v != null && !v.isBlank()) {
+                    out.put(k.trim(), v.trim());
+                }
+            });
+        }
+        return out;
+    }
+
     /**
-     * Registers many sources from a CSV file (header row: name, url, username, password,
-     * password_ref, schemas). All or nothing; {@code dryRun=true} only checks.
+     * Registers many sources from a CSV file: a header row with {@code name}, {@code kind},
+     * {@code password} or {@code password_ref}, and one column per setting (for example
+     * {@code url}, {@code username}, {@code schemas}). All or nothing; {@code dryRun=true} only checks.
      */
     @POST
     @Path("import")
@@ -114,7 +136,6 @@ public class SourceResource {
 
     private Views.Source view(Records.Source s) {
         Records.Run last = store.runs(s.name(), 1).stream().findFirst().orElse(null);
-        return new Views.Source(s.name(), s.kind(), s.jdbcUrl(), s.username(), s.schemas(), s.hasSecret(),
-            s.createdAt(), Views.Run.of(last));
+        return new Views.Source(s.name(), s.kind(), s.settings(), s.hasSecret(), s.createdAt(), Views.Run.of(last));
     }
 }

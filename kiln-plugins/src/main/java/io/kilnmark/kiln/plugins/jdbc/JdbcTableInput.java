@@ -24,10 +24,12 @@ import io.kilnmark.kiln.StepException;
 /**
  * Reads a database table into Arrow batches.
  *
- * <p>Settings: {@code url}, {@code user}, {@code password}, {@code schema}, {@code table},
- * {@code asset-urn} (for the row count it reports), {@code batch-size} (default 8192) and
- * {@code row-limit} (default 0, every row). When it finishes it reports the rows it read as a
- * {@code ROW_COUNT} event, marked complete unless a row limit cut the read short.
+ * <p>Settings: {@code url}, {@code user}, {@code password}, either {@code query} (with
+ * {@code label} naming what it reads) or {@code schema} and {@code table}, {@code asset-urn}
+ * (for the row count it reports), {@code batch-size} (default 8192) and {@code row-limit}
+ * (default 0, every row; with {@code query}, the query must apply the limit itself). When it
+ * finishes it reports the rows it read as a {@code ROW_COUNT} event, marked complete unless a row
+ * limit cut the read short.
  */
 public final class JdbcTableInput implements Step {
 
@@ -54,8 +56,16 @@ public final class JdbcTableInput implements Step {
         batchSize = Integer.parseInt(context.setting("batch-size", "8192"));
         rowLimit = Long.parseLong(context.setting("row-limit", "0"));
         assetUrn = context.setting("asset-urn");
-        String sql = "SELECT * FROM " + quote(context.setting("schema")) + "." + quote(context.setting("table"))
-            + (rowLimit > 0 ? " LIMIT " + rowLimit : "");
+        String label;
+        String sql;
+        if (context.settings().containsKey("query")) {
+            sql = context.setting("query");
+            label = context.setting("label", "the query");
+        } else {
+            label = context.setting("schema") + "." + context.setting("table");
+            sql = "SELECT * FROM " + quote(context.setting("schema")) + "." + quote(context.setting("table"))
+                + (rowLimit > 0 ? " LIMIT " + rowLimit : "");
+        }
         try {
             connection = DriverManager.getConnection(context.setting("url"), context.setting("user", null),
                 context.settings().get("password"));
@@ -74,8 +84,7 @@ public final class JdbcTableInput implements Step {
             }
             schema = new Schema(fields);
         } catch (SQLException e) {
-            throw new StepException("Cannot read " + context.setting("schema") + "." + context.setting("table")
-                + ": " + e.getMessage(), e);
+            throw new StepException("Cannot read " + label + ": " + e.getMessage(), e);
         }
     }
 

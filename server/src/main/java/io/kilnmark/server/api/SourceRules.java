@@ -1,6 +1,11 @@
 package io.kilnmark.server.api;
 
+import java.util.List;
 import java.util.regex.Pattern;
+
+import io.kilnmark.kiln.connect.Connector;
+import io.kilnmark.kiln.connect.Connectors;
+import io.kilnmark.kiln.connect.SourceConfig;
 
 /** What makes a source acceptable, shared by single adds and bulk import. */
 final class SourceRules {
@@ -10,17 +15,22 @@ final class SourceRules {
     private SourceRules() {
     }
 
-    /** The first problem with a source, or null if it is acceptable. */
-    static String check(String name, String kind, String url) {
-        if (name == null || !NAME.matcher(name).matches()) {
+    /** The first problem with a source, or null if it is acceptable. Does not connect to anything. */
+    static String check(Connectors connectors, SourceConfig source) {
+        if (!NAME.matcher(source.name()).matches()) {
             return "name: 1 to 63 lower-case letters, digits and hyphens, starting with a letter or digit";
         }
-        if (!"postgresql".equals(kind)) {
-            return "kind: only postgresql is supported in this version";
+        Connector c = connectors.get(source.kind()).orElse(null);
+        if (c == null) {
+            return "kind: unknown kind '" + source.kind() + "'; this server supports "
+                + String.join(", ", connectors.all().stream().map(Connector::kind).toList());
         }
-        if (url == null || !url.startsWith("jdbc:postgresql://")) {
-            return "url: a PostgreSQL JDBC URL, for example jdbc:postgresql://host:5432/db";
+        for (Connector.Setting s : c.settings()) {
+            if (s.required() && source.setting(s.key()) == null) {
+                return s.key() + ": required for " + c.displayName();
+            }
         }
-        return null;
+        List<String> problems = c.validate(source);
+        return problems.isEmpty() ? null : problems.get(0);
     }
 }

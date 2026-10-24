@@ -42,7 +42,7 @@ function rangeText(f: Field) {
 export function AssetPage({ urn }: { urn: string }) {
   const [asset, setAsset] = useState<Asset | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useTitle(asset ? `${asset.schema}.${asset.name}` : "Asset");
+  useTitle(asset ? `${asset.container}.${asset.name}` : "Asset");
 
   useEffect(() => {
     let live = true;
@@ -79,7 +79,7 @@ export function AssetPage({ urn }: { urn: string }) {
       <nav aria-label="Breadcrumb" className="crumbs">
         <ol>
           <li>{asset.source}</li>
-          <li>{asset.schema}</li>
+          <li>{asset.container}</li>
           <li aria-current="page">{asset.name}</li>
         </ol>
       </nav>

@@ -78,7 +78,8 @@ class CatalogFlowTest {
     }
 
     private Map<String, Object> source(String name, String pw) {
-        return Map.of("name", name, "url", url, "username", user, "password", pw, "schemas", java.util.List.of("shop"));
+        return Map.of("name", name, "kind", "postgresql", "password", pw,
+            "settings", Map.of("url", url, "username", user, "schemas", "shop"));
     }
 
     private JsonPath waitForRun(long id) throws InterruptedException {
@@ -100,6 +101,7 @@ class CatalogFlowTest {
             .when().post("/api/v1/sources")
             .then().statusCode(201)
             .body("name", equalTo("shop-db"))
+            .body("settings.schemas", equalTo("shop"))
             .body("hasPassword", equalTo(true))
             .body("$", org.hamcrest.Matchers.not(org.hamcrest.Matchers.hasKey("password")));
         try (Connection c = db.getConnection(); Statement s = c.createStatement();
@@ -177,8 +179,15 @@ class CatalogFlowTest {
     @Test
     @Order(6)
     void rejectsBadRequestsClearly() {
-        given().contentType(ContentType.JSON).body(Map.of("name", "Bad Name", "url", url))
+        given().contentType(ContentType.JSON).body(Map.of("name", "Bad Name", "settings", Map.of("url", url)))
             .post("/api/v1/sources").then().statusCode(400).body("error", containsString("name"));
+        given().contentType(ContentType.JSON).body(Map.of("name", "odd", "kind", "teradata"))
+            .post("/api/v1/sources").then().statusCode(400).body("error", containsString("unknown kind"));
+        given().contentType(ContentType.JSON).body(Map.of("name", "no-url"))
+            .post("/api/v1/sources").then().statusCode(400).body("error", containsString("url: required"));
+        given().get("/api/v1/connectors").then().statusCode(200)
+            .body("kind", hasItem("postgresql"))
+            .body("find { it.kind == 'postgresql' }.settings.key", hasItem("url"));
         given().contentType(ContentType.JSON).body(source("shop-db", password))
             .post("/api/v1/sources").then().statusCode(409).body("error", containsString("already exists"));
         given().get("/api/v1/assets/urn:kilnmark:shop-db:shop.nothing").then().statusCode(404);

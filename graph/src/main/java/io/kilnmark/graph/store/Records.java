@@ -2,6 +2,7 @@ package io.kilnmark.graph.store;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /** The catalogue's records, as the store reads and writes them. */
 public final class Records {
@@ -9,24 +10,27 @@ public final class Records {
     private Records() {
     }
 
-    /** A data source to register. {@code secret} is the password, already encrypted. */
-    public record NewSource(String name, String kind, String jdbcUrl, String username, byte[] secret,
-                            List<String> schemas) {
+    /** A data source to register: a connector kind and its settings. {@code secret} is already encrypted. */
+    public record NewSource(String name, String kind, Map<String, String> settings, byte[] secret) {
         public NewSource {
-            schemas = List.copyOf(schemas == null ? List.of() : schemas);
+            settings = Map.copyOf(settings == null ? Map.of() : settings);
         }
     }
 
     /** A registered data source. The secret is never part of it. */
-    public record Source(long id, String name, String kind, String jdbcUrl, String username, List<String> schemas,
-                         boolean hasSecret, Instant createdAt) {
+    public record Source(long id, String name, String kind, Map<String, String> settings, boolean hasSecret,
+                         Instant createdAt) {
+        public Source {
+            settings = Map.copyOf(settings == null ? Map.of() : settings);
+        }
     }
 
     public record Run(long id, String source, String kind, String status, Instant requestedAt, Instant startedAt,
                       Instant finishedAt, int assetsSeen, int assetsFailed, long rowsRead, String detail) {
     }
 
-    public record Asset(String urn, String kind, String schema, String name, String description,
+    /** {@code container}: where the asset sits, such as a schema, folder or bucket. */
+    public record Asset(String urn, String kind, String container, String name, String description,
                         List<String> primaryKey) {
         public Asset {
             primaryKey = List.copyOf(primaryKey == null ? List.of() : primaryKey);
@@ -37,7 +41,7 @@ public final class Records {
                         String description) {
     }
 
-    public record SearchHit(String urn, String source, String kind, String schema, String name, String description,
+    public record SearchHit(String urn, String source, String kind, String container, String name, String description,
                             Long rowCount, List<String> matchedFields, double score) {
     }
 
@@ -45,7 +49,7 @@ public final class Records {
                               String description, String profileJson, Instant profiledAt) {
     }
 
-    public record AssetDetail(String urn, String source, String kind, String schema, String name,
+    public record AssetDetail(String urn, String source, String kind, String container, String name,
                               String description, List<String> primaryKey, Long rowCount, Boolean rowCountComplete,
                               Instant firstSeenAt, Instant lastScannedAt, Instant removedAt,
                               List<FieldDetail> fields) {

@@ -41,7 +41,7 @@ export function SearchPage({ q }: { q: string }) {
             <li key={h.urn} className="result">
               <h2>
                 <a href={href.asset(h.urn)}>
-                  <span className="muted mono">{h.schema}.</span>
+                  <span className="muted mono">{h.container}.</span>
                   <span className="mono">{h.name}</span>
                 </a>
               </h2>

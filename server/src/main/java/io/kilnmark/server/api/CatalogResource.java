@@ -21,10 +21,12 @@ public class CatalogResource {
 
     private final GraphStore store;
     private final ObjectMapper json;
+    private final io.kilnmark.kiln.connect.Connectors connectors;
 
-    public CatalogResource(GraphStore store, ObjectMapper json) {
+    public CatalogResource(GraphStore store, ObjectMapper json, io.kilnmark.kiln.connect.Connectors connectors) {
         this.store = store;
         this.json = json;
+        this.connectors = connectors;
     }
 
     /** Keyword search over asset names, descriptions and field names. */
@@ -43,10 +45,19 @@ public class CatalogResource {
     public Views.Asset asset(@PathParam("urn") String urn) {
         Records.AssetDetail a = store.asset(urn)
             .orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No asset " + urn));
-        return new Views.Asset(a.urn(), a.source(), a.kind(), a.schema(), a.name(), a.description(), a.primaryKey(),
+        return new Views.Asset(a.urn(), a.source(), a.kind(), a.container(), a.name(), a.description(), a.primaryKey(),
             a.rowCount(), a.rowCountComplete(), a.firstSeenAt(), a.lastScannedAt(), a.removedAt(),
             a.fields().stream().map(f -> new Views.Field(f.name(), f.position(), f.sourceType(), f.kind(), f.nullable(),
                 f.description(), parse(f.profileJson()), f.profiledAt())).toList());
+    }
+
+    /** The kinds of source this server can read, with the settings each takes. */
+    @GET
+    @Path("connectors")
+    public java.util.List<Views.Connector> connectors() {
+        return connectors.all().stream().map(c -> new Views.Connector(c.kind(), c.displayName(),
+            c.settings().stream().map(s -> new Views.Setting(s.key(), s.label(), s.required(), s.hint(), s.multiple()))
+                .toList())).toList();
     }
 
     @GET

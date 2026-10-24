@@ -175,7 +175,8 @@ h2 {
   font-weight: 600;
 }
 
-input {
+input,
+select {
   font: inherit;
   color: var(--km-ink);
   background: var(--km-surface);

@@ -60,8 +60,9 @@ class SourceImportTest {
             .then().statusCode(200).body("created", equalTo(2));
         given().get("/api/v1/sources/sales-eu").then().statusCode(200)
             .body("hasPassword", equalTo(true))
-            .body("schemas", equalTo(java.util.List.of("public", "orders")));
-        given().get("/api/v1/sources/sales-us").then().statusCode(200).body("schemas.size()", equalTo(0));
+            .body("settings.schemas", equalTo("public,orders"))
+            .body("settings.username", equalTo("reader"));
+        given().get("/api/v1/sources/sales-us").then().statusCode(200).body("settings.schemas", equalTo(null));
     }
 
     @Test
@@ -73,7 +74,9 @@ class SourceImportTest {
         given().contentType("application/json").body(body)
             .post("/api/v1/sources/import")
             .then().statusCode(200).body("created", equalTo(2));
-        given().get("/api/v1/sources/hr-db").then().statusCode(200).body("username", equalTo("ro"));
+        given().get("/api/v1/sources/hr-db").then().statusCode(200)
+            .body("settings.username", equalTo("ro"))
+            .body("settings.schemas", equalTo("people"));
     }
 
     @Test
