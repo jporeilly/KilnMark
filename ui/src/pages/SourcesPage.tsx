@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, formatNumber, formatTime, type Connector, type ImportReport, type Source } from "../api";
+import { allows, api, formatNumber, formatTime, type AccessRole, type Connector, type ImportReport, type Source } from "../api";
 import { Status } from "../components/Status";
 import { useTitle } from "../components/useTitle";
 
 const busy = (s: Source) => s.lastRun?.status === "queued" || s.lastRun?.status === "running";
 
-export function SourcesPage() {
+/** Sources and their scans. Stewards can start scans; admins can also add and import sources. */
+export function SourcesPage({ role }: { role: AccessRole }) {
   useTitle("Sources");
+  const canScan = allows(role, "steward");
+  const canAdd = allows(role, "admin");
   const [sources, setSources] = useState<Source[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
@@ -33,7 +36,7 @@ export function SourcesPage() {
   const scan = async (name: string) => {
     try {
       await api.scan(name);
-      setNotice(`Scan of ${name} started.`);
+      setNotice(`Scan of ${name} queued. A worker will start it shortly.`);
       load();
     } catch (e) {
       setError((e as Error).message);
@@ -61,9 +64,11 @@ export function SourcesPage() {
                   <th scope="col">Name</th>
                   <th scope="col">Where</th>
                   <th scope="col">Last scan</th>
-                  <th scope="col">
-                    <span className="visually-hidden">Actions</span>
-                  </th>
+                  {canScan && (
+                    <th scope="col">
+                      <span className="visually-hidden">Actions</span>
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -92,12 +97,14 @@ export function SourcesPage() {
                         <div className="small">{s.lastRun.detail}</div>
                       )}
                     </td>
-                    <td>
-                      <button type="button" onClick={() => scan(s.name)} disabled={busy(s)}
-                        aria-label={`Scan ${s.name} now`}>
-                        {busy(s) ? "Scanning…" : "Scan now"}
-                      </button>
-                    </td>
+                    {canScan && (
+                      <td>
+                        <button type="button" onClick={() => scan(s.name)} disabled={busy(s)}
+                          aria-label={`Scan ${s.name} now`}>
+                          {s.lastRun?.status === "queued" ? "Queued…" : busy(s) ? "Scanning…" : "Scan now"}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -106,18 +113,27 @@ export function SourcesPage() {
         )}
       </section>
 
-      <AddSource
-        onAdded={(s) => {
-          setNotice(`Source ${s.name} added. Scan it to fill the catalogue.`);
-          load();
-        }}
-      />
-      <ImportSources
-        onImported={(n) => {
-          setNotice(`${n} ${n === 1 ? "source" : "sources"} imported.`);
-          load();
-        }}
-      />
+      {!canScan && (
+        <p className="hint">Your role ({role}) can read sources. Ask an admin for a steward token to start scans.</p>
+      )}
+      {canAdd ? (
+        <>
+          <AddSource
+            onAdded={(s) => {
+              setNotice(`Source ${s.name} added. Scan it to fill the catalogue.`);
+              load();
+            }}
+          />
+          <ImportSources
+            onImported={(n) => {
+              setNotice(`${n} ${n === 1 ? "source" : "sources"} imported.`);
+              load();
+            }}
+          />
+        </>
+      ) : (
+        <p className="hint">Only admins can add sources. Ask an admin if a database is missing.</p>
+      )}
     </>
   );
 }

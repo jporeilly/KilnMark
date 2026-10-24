@@ -211,14 +211,27 @@ button.primary {
 
 .form {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   max-width: 640px;
 }
 
+.form input {
+  max-width: 100%;
+}
+
 .field {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   align-content: start;
+  min-width: 0;
+}
+
+/* Long option labels must not widen the page on a phone. */
+.field select {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .panel > .hint {
@@ -375,6 +388,7 @@ button.primary {
 
 .table-scroll {
   overflow-x: auto;
+  position: relative; /* keeps visually hidden headers inside the scrolling region */
 }
 
 table {
@@ -429,9 +443,67 @@ tbody th {
   padding: 0;
 }
 
+/* Who is signed in, at the end of the top bar. */
+.who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.who a {
+  padding: 8px 4px;
+}
+
+.signin {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 48px 16px;
+}
+
+.signin .form {
+  max-width: none;
+}
+
+.warning {
+  border-left: 4px solid var(--km-warn);
+  padding: 8px 12px;
+  margin: 0 0 16px;
+  background: var(--km-ground);
+}
+
+.new-token {
+  border-color: var(--km-warn);
+}
+
+.copy-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.copy-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.badge-token-active {
+  color: var(--km-good);
+}
+
+.badge-token-expired {
+  color: var(--km-warn);
+}
+
+.badge-token-revoked {
+  color: var(--km-bad);
+}
+
 @media (max-width: 760px) {
   .shell {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr); /* wide tables scroll inside their region, not the page */
     grid-template-areas: "top" "nav" "main";
   }
 
@@ -441,6 +513,11 @@ tbody th {
 
   .kbd-hint {
     display: none;
+  }
+
+  .who {
+    margin-left: 0;
+    flex-wrap: wrap;
   }
 
   .sidenav {
