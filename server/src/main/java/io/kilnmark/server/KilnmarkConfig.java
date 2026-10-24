@@ -1,6 +1,7 @@
 package io.kilnmark.server;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -38,6 +39,12 @@ public interface KilnmarkConfig {
 
     Worker worker();
 
+    /** Settings for the {@code files} connector and Parquet reading. */
+    Files files();
+
+    /** Settings for the {@code s3} connector. */
+    S3 s3();
+
     /** API sign-in. */
     interface Auth {
         /**
@@ -73,6 +80,34 @@ public interface KilnmarkConfig {
         /** On shutdown, how long running jobs may take to finish before they are stopped and requeued. */
         @WithDefault("30s")
         Duration shutdownTimeout();
+    }
+
+    interface Files {
+        /**
+         * Folders that sources of kind {@code files} may read, comma-separated; a source's folder
+         * must be one of them or inside one. None (the default) disables folder sources.
+         */
+        Optional<List<String>> roots();
+
+        /** Threads decoding Parquet, shared by every read. */
+        @WithDefault("2")
+        int parquetThreads();
+
+        /** The most read from a Parquet file in one request, in MiB. */
+        @WithDefault("8")
+        int parquetChunkMb();
+
+        /** Where native compression libraries are unpacked; default {@code ~/.kilnmark/native}. */
+        Optional<String> nativeDir();
+    }
+
+    interface S3 {
+        /**
+         * Whether sources on AWS may leave out an access key and use this server's own AWS
+         * identity. Off by default: anyone who can add a source would get the server's access.
+         */
+        @WithDefault("false")
+        boolean allowDefaultCredentials();
     }
 
     interface Scan {

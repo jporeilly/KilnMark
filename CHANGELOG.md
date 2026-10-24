@@ -31,6 +31,27 @@
   `guest` are scanned.
 - **Fixed:** a read stopped early by a failing step now ends at once instead of reading the rest
   of the table.
+- **Files and object storage:** two new kinds of source. `files` scans a folder the server can
+  read; `s3` scans a bucket on AWS or any S3-compatible store (VersityGW, MinIO, Ceph). CSV, TSV,
+  JSON, JSON lines and Parquet files are catalogued with their fields and profiled like tables;
+  every other file is recorded as a document (size and time) without being read.
+- **Administrators decide what sources may reach:** folder sources only inside the folders listed
+  in `kilnmark.files.roots` (none by default, so folder sources are off until set); S3 sources need
+  their own access key unless `kilnmark.s3.allow-default-credentials` lets sources on AWS use the
+  server's identity.
+- CSV: delimiter (including Excel's `sep=` line), quote and encoding found automatically (UTF-8,
+  or windows-1252 when a file is not valid UTF-8; a source's `encoding` setting overrides); column
+  types (integer, decimal, boolean, date, time, timestamp) inferred from the first 1,000 rows. A
+  value that does not parse later in the file is read as null and counted (`unparsed`), never a
+  failed scan.
+- Objects are streamed: a catalogue reads only the first megabyte of text files and the footer of
+  Parquet files, and a sampled read stops the transfer when it has enough rows.
+- A corrupt, too deeply nested or unsupported file (a Parquet codec such as Brotli) is recorded as
+  not readable with the reason, and the scan goes on.
+- Parquet is read without Hadoop, through Hardwood, with one shared, bounded decoding pool
+  (`kilnmark.files.parquet-threads`, `kilnmark.files.parquet-chunk-mb`); nested values become JSON
+  text. S3 through the AWS SDK's S3 module only (ADR 0015). 19.3 MB of jars added.
+- **Fixed:** profile statistics above about 9.2 trillion are no longer capped.
 
 ## 0.0.2 (24 October 2026)
 

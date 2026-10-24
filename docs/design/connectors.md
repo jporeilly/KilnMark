@@ -16,6 +16,13 @@ line in a services file; nothing in the server changes.
 | `validate(source)` | Problems with the settings without connecting, each starting `setting: ...` |
 | `catalog(source)` | Every asset the source holds, with its fields; throws `ConnectorException` with a message a person can act on |
 | `reader(source, asset, read)` | The first pipeline step that reads one asset as Arrow batches |
+| `withContext(context)` | Optional (default: unchanged). Returns the connector set up with server-wide settings |
+
+Server-wide settings that people adding sources must not control (which folders may be read,
+whether the server's own cloud identity may be used) reach a connector as a `ConnectorContext`:
+the server builds it from its configuration and calls `Connectors.load(context)`, which gives it
+to each connector's `withContext` once and keeps the instance returned. Connectors stay immutable;
+`Connectors.load()` with no context leaves every connector at its safest defaults.
 
 A source arrives as a `SourceConfig`: name, kind, settings and the decrypted secret. Never log it
 or put it in an exception message; its `toString` hides the secret.
@@ -88,6 +95,66 @@ The `isolation` setting chooses how profiling reads see the application's change
 
 Profiles are statistics, so the default trades exactness on rows being changed for never
 holding up a production database.
+
+## Files and object storage
+
+Two connectors share `io.kilnmark.kiln.plugins.files`: `files` (a folder the server can read:
+`path`, `include` glob, `recursive`, `encoding`) and `s3` (`endpoint`, `region`, `bucket`, `prefix`,
+`access_key_id`, `path_style`, `encoding`; the secret is the secret access key). Libraries and the
+reasons for them are in [ADR 0015](../adr/0015-file-formats.md).
+
+- **What the server allows.** A folder source must be inside one of the folders listed in the
+  server setting `kilnmark.files.roots` (comma-separated). It is checked with links resolved when
+  the source is validated and again every time it is opened; with no roots, folder sources are
+  refused, so adding a source can never expose the server's own files. An S3 source needs its own
+  access key: only with `kilnmark.s3.allow-default-credentials=true` may a source on AWS (no
+  endpoint) use the server's own AWS identity, and never a source with another endpoint, which
+  would receive requests signed with it. Endpoints holding a user name or password are refused.
+- **Assets.** Every file is an asset. Its path is the path within the folder (with `/`) or the
+  object key; its container is the folder, or the bucket and folder. CSV, TSV, JSON, JSON lines
+  (`.jsonl`, `.ndjson`) and Parquet have kind `file` and are read; anything else has kind
+  `document` and `readable=false`, with `size` and `modified` in its hints. Files are never
+  `bounded`: the reader streams them. A file that cannot be catalogued (corrupt, nested too deeply,
+  a Parquet codec this server lacks, a first JSON line longer than the sample) is recorded as not
+  readable with the reason as its description; it does not stop the scan.
+- **Sampling.** The catalogue reads only the first 1 MiB of a text file (a ranged GET on S3) and
+  infers types from its first 1,000 rows; for Parquet it reads only the footer.
+- **Encoding.** A byte-order mark (UTF-8, UTF-16) decides; otherwise UTF-8 if the sample is valid
+  UTF-8, else windows-1252. The choice is stored in the `encoding` hint; a source's `encoding`
+  setting overrides it.
+- **CSV.** The first row is the header (blank names become `column_N`, repeats get `_2`); a first
+  line `sep=;` (Excel's) names the delimiter and is skipped. Otherwise the delimiter (`,` `;` tab
+  `|`) is the one that gives the header the most fields and keeps the same count in the rows
+  below. The quote is `"`; it is `'` only when no field starts with `"`, every field that starts
+  with `'` is closed by a `'` followed by the delimiter or the end of a line, and rows stay as
+  even as with `"`. So `'+44 7700 900001` and `'tis` are text. An empty unquoted field is null;
+  `""` is an empty string.
+- **Type inference** (CSV fields and JSON values): a column gets a type only if every sampled
+  value fits it, tried in order boolean (`true/false/t/f/yes/no`), int64 (no leading zeros, so
+  phone numbers and codes like `007` stay text), decimal(38, largest scale seen), float64
+  (scientific notation, or more than 18 decimal places), date (`yyyy-mm-dd`), time, timestamp
+  (ISO 8601, `T` or space) and timestamp_tz (every value has an offset: `Z`, `+01`, `+0100`,
+  `+01:00`); otherwise text. JSON strings only become dates and times: numbers in quotes stay text.
+- **Values that do not parse.** The reader never fails a file because a later value does not fit
+  its column's type: the value is read as null and counted, and `ROW_COUNT` carries the count as
+  `unparsed`. Decimals with more places than the column's scale are rounded half-even; ones too
+  large for it are unparsed. A timestamp_tz value without an offset is taken as UTC.
+- **JSON.** Each object's own fields are columns, in the order first seen in the sample; nested
+  objects and arrays are kept as JSON text. Fields that first appear after the sample are not read.
+  JSON lines that are not valid JSON, or longer than 1 MiB, are skipped (read past without being
+  kept) and counted as `skipped`; a syntax error in a `.json` document fails the read, naming the
+  line.
+- **Parquet** keeps its own types: 8- and 16-bit integers are int16, unsigned ones are widened,
+  UTC-adjusted timestamps (and legacy INT96) are timestamp_tz, decimals up to 38 digits are
+  decimal, strings, enums, JSON and UUIDs are text. Nested groups (structs, lists, maps) are text
+  holding JSON; bytes inside them are written `0xCAFE`, as the JDBC connectors write bytes.
+- **Safety.** The folder connector refuses paths with `..`, absolute paths and links that resolve
+  outside the folder, both when listing and when reading; hidden files and folders are skipped.
+- **Stopping.** A read that ends early (a row limit, or a failing later step) closes its stream or
+  aborts its S3 requests, including Parquet range requests still in flight, rather than draining
+  the rest of the object.
+- **Changed files.** If a CSV header no longer matches the catalogue, the reader infers the
+  columns again rather than misreading them.
 
 ## Registering it
 

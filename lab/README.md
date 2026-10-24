@@ -19,6 +19,11 @@ podman compose -f lab/compose.yaml down -v   # stop and wipe
 
 These are lab-only credentials for local testing.
 
+Kilnmark reads folders only inside the ones its administrator allows. The main `compose.yaml`
+mounts `lab/files/share` read-only at `/srv/files` and allows it, so in the compose stack add a
+source of kind **files** with path `/srv/files`. Running the server outside a container, set
+`KILNMARK_FILES_ROOTS` to the full path of `lab/files/share` and use that path.
+
 ## What is in it
 
 **Database** (`lab/postgres`, loaded on first start, same rows every time):

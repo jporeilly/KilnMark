@@ -1,0 +1,186 @@
+package io.kilnmark.kiln.plugins.files;
+
+import java.io.IOException;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+import io.kilnmark.kiln.connect.Connector;
+import io.kilnmark.kiln.connect.ConnectorContext;
+import io.kilnmark.kiln.connect.SourceConfig;
+
+/**
+ * Files in a folder the server can read: a local disk or a mounted share. Settings {@code path}
+ * (the folder), {@code include} (a glob, default every file), {@code recursive} (default true) and
+ * {@code encoding}. Asset paths are relative to the folder; nothing outside it is listed or read.
+ *
+ * <p>Whoever adds a source chooses the folder, but the server's administrator chooses which
+ * folders may be chosen: {@code kilnmark.files.roots}, a comma-separated list of folders. A
+ * source's folder must be one of them or inside one, checked with links resolved when the source
+ * is validated and again each time it is opened. With no roots (the default) the connector reads
+ * nothing, so adding Kilnmark to a server never exposes that server's own files.
+ */
+public final class FilesConnector extends FileSourceConnector {
+
+    /** The server setting listing the folders sources may read. */
+    public static final String ROOTS = "kilnmark.files.roots";
+
+    static final String NO_ROOTS = "this server reads no folders: an administrator lists the folders sources may "
+        + "read in the server setting " + ROOTS + " (KILNMARK_FILES_ROOTS)";
+
+    private final List<Path> roots;
+
+    /** The connector as the service loader creates it: no folders allowed until the server says so. */
+    public FilesConnector() {
+        this(List.of());
+    }
+
+    private FilesConnector(List<Path> roots) {
+        this.roots = List.copyOf(roots);
+    }
+
+    @Override
+    public Connector withContext(ConnectorContext context) {
+        ParquetRuntime.configure(context);
+        List<Path> out = new ArrayList<>();
+        for (String r : context.list(ROOTS)) {
+            Path p;
+            try {
+                p = Path.of(r);
+            } catch (InvalidPathException e) {
+                throw new IllegalArgumentException(ROOTS + ": '" + r + "' is not a valid path", e);
+            }
+            if (!p.isAbsolute()) {
+                throw new IllegalArgumentException(ROOTS + ": '" + r + "' is not a full path; write it from the root, "
+                    + "for example /srv/share");
+            }
+            out.add(p.normalize());
+        }
+        return new FilesConnector(out);
+    }
+
+    /** The folders sources may read, as configured. */
+    public List<Path> roots() {
+        return roots;
+    }
+
+    @Override
+    public String kind() {
+        return "files";
+    }
+
+    @Override
+    public String displayName() {
+        return "Files in a folder";
+    }
+
+    @Override
+    public List<Setting> settings() {
+        return List.of(
+            new Setting("path", "Folder", true,
+                "The full path of a folder this server can read, inside one of the folders its administrator "
+                    + "allows" + (roots.isEmpty() ? "" : " (" + String.join(", ", roots.stream().map(Path::toString)
+                    .toList()) + ")"), false),
+            new Setting("include", "Include", false,
+                "Which files to record, as a glob: *.csv matches file names, exports/** matches paths. "
+                    + "Leave empty for every file", false),
+            new Setting("recursive", "Include sub-folders", false, "true (the default) or false", false),
+            ENCODING);
+    }
+
+    @Override
+    public List<String> validate(SourceConfig source) {
+        List<String> problems = new ArrayList<>();
+        String path = source.setting("path");
+        if (roots.isEmpty()) {
+            problems.add("path: " + NO_ROOTS);
+        } else if (path == null) {
+            problems.add("path: the full path of the folder, for example " + roots.get(0));
+        } else {
+            try {
+                Path p = Path.of(path);
+                if (!p.isAbsolute()) {
+                    problems.add("path: a full path starting at the root, for example " + roots.get(0) + ", not '"
+                        + path + "'");
+                } else if (allowedRoot(p.normalize()) == null) {
+                    problems.add("path: " + path + " is not inside a folder this server allows (" + allowed() + ")");
+                } else if (Files.exists(p)) {
+                    Path real = p.toRealPath();
+                    if (allowedReal(real) == null) {
+                        problems.add("path: " + path + " leads outside the folders this server allows ("
+                            + allowed() + "), through a link");
+                    }
+                }
+            } catch (InvalidPathException | IOException e) {
+                problems.add("path: not a valid path (" + e.getMessage() + ")");
+            }
+        }
+        String include = source.setting("include");
+        if (include != null) {
+            try {
+                FileSystems.getDefault().getPathMatcher("glob:" + include);
+            } catch (IllegalArgumentException e) { // including PatternSyntaxException
+                problems.add("include: not a valid glob, for example *.csv or **/*.{csv,parquet}");
+            }
+        }
+        checkBoolean(source, "recursive", problems);
+        checkEncoding(source, problems);
+        return problems;
+    }
+
+    private String allowed() {
+        return String.join(", ", roots.stream().map(Path::toString).toList());
+    }
+
+    /** The root a normalised absolute path is under, or null. */
+    private Path allowedRoot(Path p) {
+        for (Path r : roots) {
+            if (p.startsWith(r)) {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    /** The root a real path is under, comparing against each root with its links resolved. */
+    private Path allowedReal(Path real) {
+        for (Path r : roots) {
+            try {
+                if (real.startsWith(r.toRealPath())) {
+                    return r;
+                }
+            } catch (IOException e) {
+                // a root that does not exist (yet) allows nothing
+            }
+        }
+        return null;
+    }
+
+    @Override
+    protected FileStore open(SourceConfig source) throws IOException {
+        if (roots.isEmpty()) {
+            throw new IOException(NO_ROOTS);
+        }
+        String path = source.setting("path");
+        if (path == null) {
+            throw new IOException("The source has no folder: set path");
+        }
+        Path folder = Path.of(path);
+        LocalFileStore store = new LocalFileStore(folder, source.setting("include"),
+            source.setting("recursive") == null || Boolean.parseBoolean(source.setting("recursive")));
+        if (!folder.isAbsolute() || allowedReal(store.root()) == null) {
+            throw new IOException("The folder " + path + (store.root().equals(folder) ? "" : " (" + store.root() + ")")
+                + " is outside the folders this server allows sources to read (" + allowed()
+                + "): choose a folder inside one of them, or ask an administrator to add it to " + ROOTS);
+        }
+        return store;
+    }
+
+    @Override
+    protected String container(SourceConfig source, String path) {
+        return folder(path);
+    }
+}

@@ -40,10 +40,15 @@ services:
       # Optional admin API token (km_ + 43 or more base64url characters). Unset, the first start
       # writes one to /var/lib/kilnmark/admin-token in the keys volume.
       KILNMARK_ADMIN_TOKEN: ${KILNMARK_ADMIN_TOKEN:-}
+      # Folders that folder sources may read. The share below is mounted here read-only.
+      KILNMARK_FILES_ROOTS: /srv/files
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
     volumes:
       - keys:/var/lib/kilnmark     # the key for stored source passwords: back it up apart from pgdata
+      # A folder to scan, read-only; by default the reference lab's file share. In Kilnmark,
+      # add a source of kind files with path /srv/files. Point KILNMARK_FILES_DIR at your own folder.
+      - ${KILNMARK_FILES_DIR:-./lab/files/share}:/srv/files:ro,Z
     depends_on:
       postgres:
         condition: service_healthy

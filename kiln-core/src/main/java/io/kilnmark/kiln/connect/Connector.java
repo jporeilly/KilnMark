@@ -48,6 +48,16 @@ public interface Connector {
      */
     StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read);
 
+    /**
+     * This connector set up with the server's settings for connectors. The registry calls it once,
+     * when it loads the connectors, and keeps what it returns; a connector that needs server-wide
+     * settings (allowed folders, credential policy) returns a new, equally immutable instance.
+     * The default returns this connector unchanged.
+     */
+    default Connector withContext(ConnectorContext context) {
+        return this;
+    }
+
     /** How much of an asset to read. {@code rowLimit} 0 reads everything. */
     record ReadOptions(String assetUrn, long rowLimit, int batchSize) {
     }
