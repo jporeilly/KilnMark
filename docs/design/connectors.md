@@ -113,6 +113,8 @@ an example URL and the SQL that reads a table (`selectSql`), and may override:
 - `readCatalog` to add what the driver's metadata leaves out (SQL Server's driver reports no
   comments, so its connector reads `MS_Description` extended properties in one query);
 - `readSettings` for extra `JdbcTableInput` settings, such as the transaction isolation level;
+- `driverSettings` for driver properties that come from the source's settings rather than its
+  URL (SQL Server's `trustServerCertificate`), added to every connection;
 - `explain` to add what to do about connection failures the database is known for.
 
 `validate` refuses a URL holding a password (`;password=` or `?password=` / `&password=`): the
@@ -139,6 +141,16 @@ The `isolation` setting chooses how profiling reads see the application's change
 
 Profiles are statistics, so the default trades exactness on rows being changed for never
 holding up a production database.
+
+Microsoft's driver encrypts connections and checks the server's certificate by default; `encrypt`
+in the URL works as the driver documents it. The `trust_server_certificate` setting (**Trust the
+server certificate**, `true` or `false`, off by default) is only for test servers with a
+self-signed certificate, such as the reference lab's: when it is `true` the connector passes
+`trustServerCertificate=true` to the driver as a connection property, for scans, checks, rules and
+reads alike, and never edits the URL. A URL that sets `trustServerCertificate` itself still works,
+but not together with the setting. Turning it on asks for the password again, since a server
+whose certificate is not checked could be another server. Connectors add driver properties like
+this by overriding `driverSettings`; the reader step receives them as `driver.<name>` settings.
 
 ## Files and object storage
 

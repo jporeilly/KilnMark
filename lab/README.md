@@ -81,11 +81,9 @@ curl -X POST "http://localhost:8780/api/v1/sources/import?remapHosts=true&test=t
 
 Run it again whenever you like: sources already there are left unchanged, or updated to match the file.
 
-**One click for SQL Server.** The lab's SQL Server has a self-signed certificate, which Microsoft's
-driver refuses by default, and the CSV cannot carry the driver option (bulk import turns `;` in
-settings into `,`, so a SQL Server URL does not survive a `url` column). After importing, open
-`lab-sqlserver`, add `;trustServerCertificate=true` to the end of its JDBC URL, save, and press
-**Test**. Importing the file again puts the URL back without it, so add it again afterwards.
+The lab's SQL Server has a self-signed certificate, which Microsoft's driver refuses by default,
+so its row sets `trust_server_certificate` to `true` (**Trust the server certificate** on the
+source's page). Nothing needs editing after the import. Only turn that setting on for test servers.
 
 ## What is in it
 
@@ -197,10 +195,10 @@ Microsoft's SQL Server 2022 Developer image, the same tag the SQL Server tests p
 | `sa` | `Lab-Admin-2026` | Everything; for the seed job and for you |
 
 These passwords are for the lab only. From Kilnmark the server is
-`jdbc:sqlserver://lab-sqlserver:1433;databaseName=labdb;trustServerCertificate=true`; from this
-machine it is `localhost,14330` (in SQL Server Management Studio or Azure Data Studio, tick
-**Trust server certificate**). The port is 14330 so it never clashes with a SQL Server you already
-run. The database allows snapshot isolation, so the connector's `isolation` setting can be tried
+`jdbc:sqlserver://lab-sqlserver:1433;databaseName=labdb` with **Trust the server certificate** set
+to `true`; from this machine it is `localhost,14330` (in SQL Server Management Studio or Azure Data
+Studio, tick **Trust server certificate**). The port is 14330 so it never clashes with a SQL Server
+you already run. The database allows snapshot isolation, so the connector's `isolation` setting can be tried
 with `snapshot`.
 
 ## Profiles: one per demo source

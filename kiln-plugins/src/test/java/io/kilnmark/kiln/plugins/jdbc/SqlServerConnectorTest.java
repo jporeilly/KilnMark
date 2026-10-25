@@ -27,12 +27,64 @@ class SqlServerConnectorTest {
     void theRegistryFindsSqlServerThroughServiceLoader() {
         Connector c = Connectors.load().get("sqlserver").orElseThrow();
         assertEquals("SQL Server", c.displayName());
-        assertEquals(List.of("url", "username", "schemas", "isolation"),
+        assertEquals(List.of("url", "username", "schemas", "trust_server_certificate", "isolation"),
             c.settings().stream().map(Connector.Setting::key).toList());
         assertEquals("For example jdbc:sqlserver://db.example.com:1433;databaseName=sales;encrypt=true",
             c.settings().get(0).hint());
         assertTrue(!c.settings().get(0).hint().contains("trustServerCertificate"), "people copy the example");
-        assertTrue(c.settings().get(3).hint().startsWith("read-uncommitted (the default)"));
+        assertEquals("Trust the server certificate", c.settings().get(3).label());
+        assertEquals("Only for test servers with a self-signed certificate. Off by default. With it off, the "
+            + "certificate must be valid", c.settings().get(3).hint());
+        assertTrue(c.settings().get(4).hint().startsWith("read-uncommitted (the default)"));
+    }
+
+    @Test
+    void trustingTheCertificateIsADriverPropertyNotAnEditOfTheUrl() {
+        String url = "jdbc:sqlserver://db:1433;databaseName=sales;encrypt=true";
+        AssetInfo t = asset(field("id", 1, "int"));
+        Connector.ReadOptions read = new Connector.ReadOptions("urn:kilnmark:x:crm.sites", 0, 100);
+
+        SourceConfig on = trusting(url, "true");
+        assertTrue(sql.validate(on).isEmpty(), sql.validate(on).toString());
+        assertEquals("true", sql.driverSettings(on).getProperty("trustServerCertificate"));
+        assertEquals(1, sql.driverSettings(on).size());
+        Map<String, String> step = sql.reader(on, t, read).settings();
+        assertEquals(url, step.get("url"), "the URL is passed on as written");
+        assertEquals("true", step.get(JdbcTableInput.DRIVER_PREFIX + "trustServerCertificate"));
+        assertEquals("true", sql.driverSettings(trusting(url, "TRUE")).getProperty("trustServerCertificate"));
+
+        // off, or not set: nothing is added, so the driver checks the certificate as before
+        for (SourceConfig off : List.of(trusting(url, "false"), source(url))) {
+            assertTrue(sql.validate(off).isEmpty());
+            assertTrue(sql.driverSettings(off).isEmpty());
+            assertTrue(sql.reader(off, t, read).settings().keySet().stream()
+                .noneMatch(k -> k.startsWith(JdbcTableInput.DRIVER_PREFIX)));
+        }
+        assertTrue(new PostgresConnector().reader(new SourceConfig("x", "postgresql",
+            Map.of("url", "jdbc:postgresql://db/sales"), null), t, read).settings().keySet().stream()
+            .noneMatch(k -> k.startsWith(JdbcTableInput.DRIVER_PREFIX)), "PostgreSQL reads as before");
+
+        assertEquals(List.of("trust_server_certificate: true or false, not 'yes'"),
+            sql.validate(trusting(url, "yes")));
+        assertEquals(List.of("trust_server_certificate: the URL sets trustServerCertificate too. Take it out of the "
+            + "URL and use this setting alone"), sql.validate(trusting(url + ";TrustServerCertificate=false", "true")));
+        assertTrue(sql.validate(source(url + ";trustServerCertificate=true")).isEmpty(),
+            "URLs that already trust the certificate keep working");
+
+        // trusting any certificate could send the password to another server: it must be entered again
+        assertTrue(sql.secretScope().contains("trust_server_certificate"));
+    }
+
+    @Test
+    void theReaderPassesDriverPropertiesUserAndPassword() {
+        java.util.Properties p = JdbcTableInput.connectionProperties(Map.of("url", "jdbc:sqlserver://db",
+            "user", "kiln", "password", "pa;ss", "driver.trustServerCertificate", "true", "query", "SELECT 1",
+            "driver.", "ignored"));
+        assertEquals("kiln", p.getProperty("user"));
+        assertEquals("pa;ss", p.getProperty("password"));
+        assertEquals("true", p.getProperty("trustServerCertificate"));
+        assertEquals(3, p.size());
+        assertTrue(JdbcTableInput.connectionProperties(Map.of("url", "jdbc:sqlserver://db")).isEmpty());
     }
 
     @Test
@@ -214,7 +266,7 @@ class SqlServerConnectorTest {
             4060)).contains("Check databaseName in the URL"));
         assertTrue(sql.explain(new SQLException("The driver could not establish a secure connection to SQL Server by "
             + "using Secure Sockets Layer (SSL) encryption. Error: \"PKIX path building failed\"", "08S01", 0))
-            .contains("trustServerCertificate=true"));
+            .contains("turn on Trust the server certificate (trust_server_certificate=true)"));
         assertTrue(sql.explain(new SQLException("The TCP/IP connection to the host db, port 1433 has failed.", "08S01",
             0)).contains("Check the host and port"));
         assertEquals("Something else.", sql.explain(new SQLException("Something else.", "S0001", 1)));
@@ -226,6 +278,10 @@ class SqlServerConnectorTest {
 
     private static SourceConfig source(String url) {
         return new SourceConfig("x", "sqlserver", Map.of("url", url), null);
+    }
+
+    private static SourceConfig trusting(String url, String trust) {
+        return new SourceConfig("x", "sqlserver", Map.of("url", url, "trust_server_certificate", trust), null);
     }
 
     private static SourceConfig source(String url, String isolation) {

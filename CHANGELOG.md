@@ -22,14 +22,24 @@ details.
   data marked in descriptions and sensitivity classifications) and an empty `warehouse` for
   pipeline writes. Logins `kiln_reader` (read-only) and `kiln_writer` (tables in `warehouse` only).
   Planted: null emails, duplicate keys in a staging table with no primary key, out-of-range dates
-  and five phone formats. `lab/sources.csv` adds `lab-sqlserver`; its JDBC URL needs
-  `;trustServerCertificate=true` added after import (self-signed certificate). Every lab service
+  and five phone formats. `lab/sources.csv` adds `lab-sqlserver`, with
+  `trust_server_certificate=true` for the server's self-signed certificate. Every lab service
   is now in a compose profile named after its demo source plus `all`, so a bare `up` starts
   nothing; `lab/lab.ps1` and `lab/lab.sh` (`list`, `start`, `stop`, `status`, `reset`, `logs`,
   `sources`) start just what is needed, and `build.ps1 -Lab` takes names
   (`-Lab postgres,sqlserver`). docs/design/connectors.md gains a definition of done: a connector
   ships with a lab dataset, or for SaaS and cloud-only connectors a mock or emulator and a test
   account recipe; lab/README.md has a lab coverage table.
+- **SQL Server: Trust the server certificate** (docs/design/connectors.md): new setting
+  `trust_server_certificate` (`true` or `false`, off by default) for test servers with a
+  self-signed certificate. It passes `trustServerCertificate=true` to the driver as a connection
+  property on every connection, scans, checks, rules and reads (`JdbcConnector.driverSettings`,
+  `driver.` settings of the reader step), and never edits the URL; a URL that also sets
+  `trustServerCertificate` is refused with the setting, and changing it needs the password again.
+  The connection-failure hint names it instead of the URL property.
+- **Bulk import keeps semicolons** (docs/development.md): only list settings (`schemas`,
+  `containers`) turn `;` into `,`. A SQL Server URL in a `url` column, a `;` delimiter and a
+  description were corrupted before; passwords never were.
 
 ## 0.0.3 (25 October 2026)
 

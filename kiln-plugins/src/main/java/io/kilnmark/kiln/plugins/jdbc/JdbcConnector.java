@@ -179,6 +179,15 @@ public abstract class JdbcConnector implements Connector {
         return new Properties();
     }
 
+    /**
+     * Driver properties that come from the source's own settings rather than its URL, such as SQL
+     * Server's {@code trustServerCertificate}: added to every connection the source makes (scans,
+     * checks, rules and reads), never written into the URL. None by default.
+     */
+    protected Properties driverSettings(SourceConfig source) {
+        return new Properties();
+    }
+
     /** Whole seconds for a driver timeout: a little under {@code timeout}, at least one. */
     protected static int seconds(Duration timeout) {
         return (int) Math.max(1, timeout.toSeconds() - 1);
@@ -516,6 +525,7 @@ public abstract class JdbcConnector implements Connector {
     /** Connects with the source's user name and secret and, for checks, the driver's own timeouts. */
     private Connection connect(SourceConfig source, Duration timeout) throws SQLException {
         Properties p = timeout == null ? new Properties() : timeouts(timeout);
+        p.putAll(driverSettings(source));
         if (source.setting("username") != null) {
             p.setProperty("user", source.setting("username"));
         }
@@ -599,6 +609,7 @@ public abstract class JdbcConnector implements Connector {
         if (source.secret() != null) {
             s.put("password", source.secret());
         }
+        driverSettings(source).forEach((k, v) -> s.put(JdbcTableInput.DRIVER_PREFIX + k, String.valueOf(v)));
         s.put("query", selectSql(asset, read.rowLimit()));
         s.put("label", asset.path());
         s.put("asset-urn", read.assetUrn());

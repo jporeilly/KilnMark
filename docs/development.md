@@ -408,7 +408,10 @@ sets a looser one says so in its notes. The stored password stays unless the row
 moves it; a row with a password always counts as updated, since comparing it with the stored one
 would let anyone running imports test guesses. Columns: `name`, `kind`,
 `display_name`, `password` or `password_ref`, the connector's settings, the common ones above, and,
-for databases, `host`, `port` and `database` instead of `url`. Options on
+for databases, `host`, `port` and `database` instead of `url`. In a CSV, list settings (`schemas`,
+`containers`) may separate their values with semicolons; every other value is kept as written, so
+a SQL Server URL, a `;` delimiter or a password keeps its semicolons (`include` and `exclude` keep
+theirs too). Rows may be shorter than the header: missing cells are empty. Options on
 `POST /api/v1/sources/import`:
 
 | Option | Effect |

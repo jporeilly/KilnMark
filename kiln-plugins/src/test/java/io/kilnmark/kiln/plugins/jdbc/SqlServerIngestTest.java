@@ -338,6 +338,24 @@ class SqlServerIngestTest {
     }
 
     @Test
+    void aSelfSignedCertificateIsTrustedOnlyWhenTheSettingSaysSo() throws Exception {
+        // the container's certificate is self-signed, as the reference lab's is
+        String encrypted = "jdbc:sqlserver://" + DB.getHost() + ":" + DB.getMappedPort(1433)
+            + ";databaseName=sales;encrypt=true";
+        SourceConfig strict = new SourceConfig("lab", "sqlserver",
+            Map.of("url", encrypted, "username", DB.getUsername()), DB.getPassword());
+        ConnectorException e = assertThrows(ConnectorException.class, () -> CONNECTOR.test(strict));
+        assertTrue(e.getMessage().contains("trust_server_certificate=true"), e.getMessage());
+
+        SourceConfig trusting = new SourceConfig("lab", "sqlserver",
+            Map.of("url", encrypted, "username", DB.getUsername(), "trust_server_certificate", "true"),
+            DB.getPassword());
+        CONNECTOR.test(trusting);
+        assertTrue(CONNECTOR.catalog(trusting).stream().anyMatch(a -> a.path().equals("crm.customers")));
+        assertEquals("2", rowCount(read(trusting, assets.get("Ops.odd]name"), 0)).attributes().get("rows"));
+    }
+
+    @Test
     void aWrongPasswordSaysWhatToCheck() {
         SourceConfig wrong = new SourceConfig("lab", "sqlserver", source.settings(), "not-the-password");
         ConnectorException e = assertThrows(ConnectorException.class, () -> CONNECTOR.catalog(wrong));

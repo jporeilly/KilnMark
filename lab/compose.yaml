@@ -42,7 +42,8 @@ services:
       - "9000:7070"
 
   # ---- SQL Server: synthetic operations data, database labdb (profile sqlserver) ----------------
-  # From Kilnmark:      jdbc:sqlserver://lab-sqlserver:1433;databaseName=labdb;trustServerCertificate=true
+  # From Kilnmark:      jdbc:sqlserver://lab-sqlserver:1433;databaseName=labdb with the source setting
+  #                     trust_server_certificate=true (the certificate is self-signed)
   # From this machine:  localhost,14330 (14330, so it never clashes with a SQL Server you already run)
   # Logins (lab only):  kiln_reader / Lab-Reader-2026 (read-only)   kiln_writer / Lab-Writer-2026
   #                     (creates tables in schema warehouse only)   sa / Lab-Admin-2026

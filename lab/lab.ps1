@@ -274,8 +274,6 @@ function Invoke-Sources {
     Write-Output 'In Kilnmark: Sources > Import sources from a file, choose that file, tick "Rewrite host names'
     Write-Output 'for this server" (and, if you like, "Test each connection" and "Queue a scan"), then Import.'
     Write-Output 'Only the demo sources you have started will connect; import again whenever you like.'
-    Write-Output 'lab-sqlserver: then edit the source and add ;trustServerCertificate=true to its JDBC URL (the lab'
-    Write-Output "server's certificate is self-signed), and press Test."
 }
 
 function Show-Usage {

@@ -293,8 +293,6 @@ cmd_sources() {
 In Kilnmark: Sources > Import sources from a file, choose that file, tick "Rewrite host names
 for this server" (and, if you like, "Test each connection" and "Queue a scan"), then Import.
 Only the demo sources you have started will connect; import again whenever you like.
-lab-sqlserver: then edit the source and add ;trustServerCertificate=true to its JDBC URL (the lab
-server's certificate is self-signed), and press Test.
 EOF
 }
 
