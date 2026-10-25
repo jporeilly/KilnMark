@@ -22,12 +22,15 @@ import io.kilnmark.kiln.connect.SourceConfig;
  *       ({@link AiEgress}); {@code local_only} when absent.</li>
  *   <li>{@value AssetFilter#INCLUDE} and {@value AssetFilter#EXCLUDE}: glob patterns choosing the
  *       tables or files to scan, applied by {@link AssetFilter} for every kind of source.</li>
+ *   <li>{@value #ALLOW_WRITING}: whether pipelines may write to the source ({@code true}); read-only
+ *       ({@code false}) when absent. Only admins may change it (docs/design/pipelines.md).</li>
  * </ul>
  */
 public final class CommonSettings {
 
     public static final String DESCRIPTION = "description";
     public static final String AI_EGRESS = "ai_egress";
+    public static final String ALLOW_WRITING = "allow_writing";
 
     static final int MAX_DESCRIPTION = 2000;
 
@@ -82,7 +85,10 @@ public final class CommonSettings {
             + "cust* or *.csv match names; crm.* (a schema's tables) or raw/** (a folder's files) match paths. "
             + "Leave empty for all", true, List.of(), null),
         new Definition(AssetFilter.EXCLUDE, "Exclude", "Leave out tables or files matching these patterns, for "
-            + "example tmp_*, *_backup or archive/**", true, List.of(), null));
+            + "example tmp_*, *_backup or archive/**", true, List.of(), null),
+        new Definition(ALLOW_WRITING, "Allow writing", "true lets pipelines write tables or files to this source, "
+            + "with an account that has write rights; false keeps it read-only. Only admins can change it", false,
+            List.of("false", "true"), "false"));
 
     private static final Set<String> KEYS = keys(DEFINITIONS);
 
@@ -112,7 +118,17 @@ public final class CommonSettings {
         if (e != null) {
             out.put(AI_EGRESS, e.id());
         }
+        String w = out.get(ALLOW_WRITING);
+        if (w != null && (w.trim().equalsIgnoreCase("true") || w.trim().equalsIgnoreCase("false"))) {
+            out.put(ALLOW_WRITING, w.trim().toLowerCase(Locale.ROOT));
+        }
         return out;
+    }
+
+    /** Whether pipelines may write to a source with these settings: {@code allow_writing=true}. */
+    public static boolean allowsWriting(Map<String, String> settings) {
+        String w = settings == null ? null : settings.get(ALLOW_WRITING);
+        return w != null && w.trim().equalsIgnoreCase("true");
     }
 
     /** Problems with the common settings, each starting with its key; empty when all are acceptable. */
@@ -126,6 +142,11 @@ public final class CommonSettings {
         String egress = settings.get(AI_EGRESS);
         if (egress != null && !egress.isBlank() && AiEgress.parse(egress) == null) {
             problems.add(AI_EGRESS + ": one of local_only, allowed or none, not '" + egress + "'");
+        }
+        String writing = settings.get(ALLOW_WRITING);
+        if (writing != null && !writing.isBlank() && !writing.trim().equalsIgnoreCase("true")
+            && !writing.trim().equalsIgnoreCase("false")) {
+            problems.add(ALLOW_WRITING + ": true or false, not '" + writing + "'");
         }
         problems.addAll(AssetFilter.problems(new SourceConfig("check", "check", settings, null)));
         return problems;

@@ -113,7 +113,10 @@ public class SourceResource {
         if (body == null || body.settings() == null) {
             throw new IllegalArgumentException("Send the source as JSON with all its settings");
         }
-        SourceService.Draft d = sources.draft(body, existing, true);
+        // allow_writing: only admins may change it; a steward's form that leaves it out keeps it.
+        SourceForm form = SourceService.writingAsAllowed(body, existing, identity.hasRole(AccessRole.ADMIN_ROLE));
+        SourceService.Draft d = sources.draft(form, existing, true);
+        SourceService.whereUnchangedOrAdmin(existing, d.config().settings(), identity.hasRole(AccessRole.ADMIN_ROLE));
         sources.readingUnchangedOrAdmin(existing, d.config().settings(), "change how this source is read");
         byte[] secret = d.replaceSecret() && d.newSecret() != null ? secrets.seal(d.newSecret()) : null;
         Records.Source s = conflicts(() -> store.updateSource(existing.id(), new Records.SourceChange(d.displayName(),

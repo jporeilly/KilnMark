@@ -45,6 +45,9 @@ class CatalogueUnitTest {
     void everyBuiltConnectorClaimsOnlyWhatItCanDoToday() {
         Set<String> writable = Set.of("postgresql", "sqlserver", "files", "s3");
         for (Connector c : Connectors.load().all()) {
+            if (c.kind().startsWith("test-")) {
+                continue; // test-only connectors (the pipeline tests' writer) are not shipped
+            }
             Set<Connector.Capability> today = writable.contains(c.kind())
                 ? Set.of(Connector.Capability.DISCOVER, Connector.Capability.READ, Connector.Capability.WRITE)
                 : Set.of(Connector.Capability.DISCOVER, Connector.Capability.READ);

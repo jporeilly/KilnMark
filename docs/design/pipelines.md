@@ -534,6 +534,79 @@ profiling or computing the profile), the write completes, `ROW_COUNT` is still e
 `SAMPLE` events follow. The service turns `profile_error` into a note on the run and keeps the
 asset's previous profile.
 
+### How the server runs and records a pipeline (decisions)
+
+- **Storage (V12).** `pipeline` (fixed name, display name, description, latest version),
+  `pipeline_version` (never changed once saved: YAML, message, author, whether it was valid and its
+  problems), `pipeline_run` (one version, status `queued`, `running`, `succeeded`, `failed` or
+  `cancelled`, who asked and with which role, error, a JSON result), `pipeline_step_run` (rows in
+  and out, rows per port, peak memory, error) and `pipeline_lineage` (written asset from read
+  asset, kept when the pipeline is deleted). Deleting a pipeline deletes its versions and runs;
+  refused while a run is queued or running.
+- **Saving.** Names are `[a-z][a-z0-9-]{0,62}` and never change; the YAML's `name` must match.
+  YAML over `kilnmark.pipelines.max-yaml-kb` (256 KB) is refused. `PUT` saves the next version;
+  its ETag is the latest version's number and `If-Match` with an older number is refused with 409,
+  as rule edits are.
+- **Queueing.** `POST .../runs` checks the version again (a source may have stopped allowing
+  writes since it was saved) and queues a job of kind `pipeline` with the run, in one
+  transaction. A pipeline has at most one run queued or running: asking again while one is gets a
+  409. A pipeline job is tried once, never repeated on its own: its writes may have begun.
+  It holds an advisory lock of its own (keyed by the job), not a source lock, so runs may overlap
+  scans of the sources they read; recovery leaves a job alone while its lock is held, and marks
+  the run failed when the job is given up.
+- **One writer per target.** Before its steps run, a run takes an advisory lock for each asset it
+  writes (a 64-bit key from the URN's SHA-256), whatever the mode, and holds them until what it
+  wrote is catalogued. These locks, and the written source's scan lock taken for cataloguing, are
+  taken on the connection the job's own lease already holds, so a run uses one pooled connection
+  for its locks however many targets it writes; closing the lease releases them all. A run
+  finding a target locked waits up to `kilnmark.pipelines.wait-for-target` (30 seconds) and then
+  fails plainly, naming the target, before writing anything; a cancel or shutdown ends the wait.
+- **On the worker.** The worker compiles that exact version inside a run context naming who asked
+  and their role. The server's `read` and `write` step factories resolve saved sources, decrypt
+  their secrets and re-check the allowed hosts only then; `write` also re-checks `allow_writing`
+  and that the role is steward or admin. Readers get their connector's own settings (which may
+  hold the secret) through a wrapper, never through the YAML or the graph's config. Every message
+  a run records has the secrets it resolved blanked out.
+- **Writers own profiling.** A write profiles what it writes in the same pass and reports it as
+  "What a write reports" (above) says; the server passes the source's own profiling settings
+  (whether values are kept, sampling) to the writer in `WriteOptions.options` and never profiles a
+  write itself. After a successful run each write's target is registered from the writer's events,
+  as the scan registers what it finds (asset, fields from `SCHEMA`, row count, profiles, quality
+  profile version and evaluation), under a finished run of kind `pipeline` on the written source;
+  source run lists show scans only. For `append` and `upsert` the server records the run's row count
+  and lineage, and keeps the table's fields, row count and profile from its last scan (a table the
+  catalogue does not know yet is registered with its columns, and the run notes to scan it). A
+  writer that could not profile says so in an event, never by failing: the write counts, and the run
+  gets a note whose detail is held back as other engine messages are. The written asset's URN comes
+  from the connector (`writtenAssetPath`: for a prefixed S3 source, prefix + path), so it is what a
+  scan records. Cataloguing takes the written source's scan lock (waiting as above); if a scan
+  holds it, the run notes that the source should be scanned. A scan does not mark removed an asset
+  a pipeline wrote after the scan began. Lineage links each written asset to every read asset
+  upstream of it (`GET /api/v1/lineage?urn=`).
+- **Each step's outcome** is recorded as the engine reports it (finished, ended early, stopped by the
+  engine, failed), so a writer the engine stopped never looks like a clean finish.
+- **Write permission stays with admins.** Only admins change `allow_writing`, and while it is on
+  only admins change where the source points (any setting but its description, display name,
+  sampling, AI rule and include and exclude patterns). A write step takes its own settings (where
+  and how) and the writer settings its connector's writer declares (`Connector.writeOptions()`;
+  the writers' settings of docs/guide/writing-data.md for a writer that declares none), passed to
+  the writer in `WriteOptions.options`. Nothing else is accepted, and never a name that says where
+  or as whom to connect (url, host, bucket, credentials, `profile` and the like), even when a writer
+  declares one.
+- **Messages from the data.** A failed run's error, its steps' errors and the details of its notes
+  (whatever the run's status) may quote values from the rows. Viewers see that a step failed, or a
+  note's own words, not the detail; when the run read or wrote an asset with columns marked
+  sensitive, only admins see the detail. This is decided through the request's `Sights`, as other
+  views of data values are, on the assets the run recorded as it started (`pipeline_run.assets`,
+  with read assets under the URNs their read steps catalogue them by).
+- **Cancelling.** A queued run is cancelled at once and its job taken off the queue; a running one
+  is interrupted within about half a second, and one asked to stop while its steps are being set
+  up stops before they run. A cancel asked for too late to stop a run is cleared when it ends. A
+  run left running by a worker that stopped is finished by a cancel, and by workers' recovery once
+  its job is done or failed, so it never blocks its pipeline. A worker shutting down marks its runs failed rather
+  than queueing them again.
+
+
 ## 6. API and UI in step 1
 
 - `GET/POST /api/v1/pipelines`, `GET/PUT/DELETE /api/v1/pipelines/{name}` (PUT saves a new
@@ -546,6 +619,20 @@ asset's previous profile.
 - UI: a **Pipelines** page (list, last run, run now), a pipeline page with a YAML editor that
   validates as you type and shows problems by line, a read-only graph of the steps (the existing
   diagram library), versions, and runs with a per-step breakdown.
+
+### Step catalogue and seams (decisions)
+
+- `GET /api/v1/steps` lists every `StepFactory`: those on the class path (`ServiceLoader`:
+  kiln-steps' transforms) and the server's `read` and `write`. `write` takes `target`, or `table` and
+  `path` as other names for it, and `mode` defaults to `create`, which never overwrites.
+- The writers' contract parts kiln-core does not have yet (`Connector.writeOptions()`,
+  `Connector.writtenAssetPath(...)`, the profile settings and profile-failure attribute names) are
+  reached through one adapter, `WriterContract`, found by name until the connector writers are
+  merged.
+- The server reaches the compiler through `PipelineCompilerPort` (adapter `KilnPipelineCompiler`)
+  and the runner as a `GraphRunner` bean, both produced in `PipelineCompilers`; tests replace
+  the runner with an alternative bean.
+- The YAML editor is a plain textarea with line numbers for now; the canvas replaces it in step 2.
 
 ## 7. Next
 

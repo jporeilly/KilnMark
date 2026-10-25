@@ -18,7 +18,11 @@ export type Route =
   | { page: "docs"; doc: string | null; section: string | null }
   // Browsing and relationships
   | { page: "browse"; source: string | null; container: string | null; asset: string | null }
-  | { page: "relationships"; status: string };
+  | { page: "relationships"; status: string }
+  // Pipelines: the list, one pipeline (a new one when name is null), and one run
+  | { page: "pipelines" }
+  | { page: "pipeline"; name: string | null; version: number | null }
+  | { page: "pipeline-run"; id: number };
 
 /** A path part decoded, or as it is when it is not valid percent-encoding. */
 function decode(part: string): string {
@@ -54,6 +58,20 @@ export function parse(hash: string): Route {
     const [doc, section] = path.slice("/docs/".length).split("/").map((p) => (p ? decode(p) : null));
     return { page: "docs", doc: doc ?? null, section: section ?? null };
   }
+  if (path === "/pipelines") return { page: "pipelines" };
+  if (path === "/pipelines/new") return { page: "pipeline", name: null, version: null };
+  if (path.startsWith("/pipelines/")) {
+    const v = Number(params.get("version"));
+    return {
+      page: "pipeline",
+      name: decode(path.slice("/pipelines/".length)),
+      version: Number.isInteger(v) && v > 0 ? v : null,
+    };
+  }
+  if (path.startsWith("/pipeline-runs/")) {
+    const id = Number(path.slice("/pipeline-runs/".length));
+    if (Number.isInteger(id) && id > 0) return { page: "pipeline-run", id };
+  }
   if (path === "/relationships") return { page: "relationships", status: params.get("status") ?? "proposed" };
   return { page: "home" };
 }
@@ -81,6 +99,12 @@ export const href = {
   },
   /** A diagram of one asset and the assets related to it. */
   neighbours: (urn: string) => `#/browse?asset=${encodeURIComponent(urn)}`,
+  pipelines: () => "#/pipelines",
+  newPipeline: () => "#/pipelines/new",
+  /** A pipeline; with a version, that saved version is shown read-only. */
+  pipeline: (name: string, version?: number) =>
+    `#/pipelines/${encodeURIComponent(name)}${version ? `?version=${version}` : ""}`,
+  pipelineRun: (id: number) => `#/pipeline-runs/${id}`,
   relationships: (status = "proposed") => `#/relationships?status=${encodeURIComponent(status)}`,
 };
 

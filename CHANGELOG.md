@@ -7,17 +7,24 @@ details.
 
 ### What's new
 
-- **Pipelines, the engine.** Kilnmark can read a pipeline written in YAML, check it before it
-  runs (every mistake with its line, and a suggestion when a name is misspelt), and run its steps
-  side by side within one memory limit. A run that fails names the step where it went wrong.
-- **Steps and expressions for pipelines.** Filter rows, compute new columns, pick and rename
-  columns, look up values in another input, total and count by group, combine inputs, remove
-  duplicates, send rows down different paths and keep the first rows. Conditions and new columns
-  are written in one expression language, checked against the columns before the pipeline runs,
-  with the position of any mistake and a suggestion.
-- **Writing to databases and files.** A pipeline can write its results to PostgreSQL or SQL Server
-  tables (create, add to, replace or update by key) and to CSV or Parquet files in folders and S3
-  storage. What it writes is profiled on the way and shows up in the catalogue straight away.
+- **Pipelines you can run.** Build a pipeline that reads from your sources, changes the rows and
+  writes the result to a table or file. Kilnmark checks it before it runs (every mistake with its
+  line, and a suggestion when a name is misspelt), runs its steps side by side within one memory
+  limit, and records what each step did and how it ended. A run that fails names the step where it
+  went wrong, and a run can be cancelled.
+- **Steps for changing rows.** Filter rows, compute new columns, pick and rename columns, look up
+  values in another input, total and count by group, combine inputs, remove duplicates, send rows
+  down different paths and keep the first rows. Conditions and new columns are written in one
+  expression language, checked against the columns before the pipeline runs, with the position of
+  any mistake and a suggestion.
+- **Writing to databases and files.** A pipeline can write to PostgreSQL or SQL Server tables
+  (create, add to, replace or update by key) and to CSV or Parquet files in folders and S3
+  storage. Sources stay read-only until an admin turns on **Allow writing** for one. What a
+  pipeline writes is profiled as it is written and joins the catalogue with its columns and where
+  it came from, so the next pipeline starts from what is known.
+- **The Pipelines page.** Under **Pipelines**, a YAML editor that checks as you type, a graph of
+  the steps with the columns leaving each, every saved version with who saved it and why, and each
+  run with what every step did and what was written.
 
 ### Details
 
@@ -92,6 +99,30 @@ details.
 - **Profiling no longer fails on an empty piece of text** (a quoted `""` in a CSV file), on a
   column whose values are all NaN, or on 8-bit and unsigned integer, 256-bit decimal and large
   text columns, and reads dates, times and timestamps in any unit.
+- **Pipelines can be saved, checked and run** (`/api/v1/pipelines`, `/api/v1/pipeline-runs`,
+  `/api/v1/steps`, `/api/v1/lineage`): every version is kept with who saved it and why, saves use
+  `If-Match` on the latest version number (409 when someone saved since), and YAML is checked as
+  it is written, with problems by line and each step's columns. Runs are queued as jobs of kind
+  `pipeline`, run once by a worker, recorded step by step (how each step ended, rows in and out per
+  port, peak memory, error) and can be cancelled. The step catalogue includes kiln-steps'
+  transforms. Viewers read; stewards edit and run.
+- **Reading and writing sources in pipelines:** the `read` step reads a saved source's table or
+  file; the `write` step writes to a source only when an admin has set its new **Allow writing**
+  setting (`allow_writing`, off by default; stewards cannot change it). Allowed hosts and the
+  role of whoever asked are checked again when a run starts, and no message carries a source's
+  secret. A write step takes the writer settings its source's writer declares, and nothing that says
+  where or as whom to connect. What a write wrote is registered in the catalogue from what the
+  writer reports (its columns, row count and profile, measured as it wrote; for append and upsert
+  only the rows written) with its lineage from the assets read, under a run of kind `pipeline` that source run lists do not show (migration
+  V12; `kilnmark.pipelines.max-yaml-kb`, `memory-limit-mb`, `row-set-capacity` and
+  `wait-for-target`). While a source allows writing, only admins change where it points, and a
+  write's options cannot redirect it. A pipeline runs once at a time, and one run at a time writes
+  each table or file. Viewers see that a step failed but not its message, which may quote the data;
+  for runs touching columns marked sensitive, only admins see it.
+- **Pipelines page:** a list with Run now, and for each pipeline a YAML editor that checks as you
+  type (choosing a problem moves to its line), Save with a message, a graph of the steps with the
+  columns leaving each, versions and runs with a per-step breakdown. The guide "Building and
+  running a pipeline" (docs/guide/pipelines.md) walks through it.
 
 ## 0.0.3 (25 October 2026)
 

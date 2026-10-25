@@ -352,7 +352,7 @@ public final class JdbcGraphStore implements GraphStore {
             try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS.replace("FROM kilnmark.run r ",
                 ", j.attempts, j.last_error FROM kilnmark.run r ")
                 + "LEFT JOIN kilnmark.job j ON j.kind = 'scan' AND (j.payload ->> 'runId')::bigint = r.id "
-                + "WHERE s.name = ? ORDER BY r.id DESC LIMIT ?")) {
+                + "WHERE s.name = ? AND r.kind = 'scan' ORDER BY r.id DESC LIMIT ?")) {
                 ps.setString(1, sourceName);
                 ps.setInt(2, limit);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -431,7 +431,8 @@ public final class JdbcGraphStore implements GraphStore {
         return tx(c -> {
             List<Run> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement(
-                "SELECT " + RUN_COLUMNS + "WHERE s.name = ? ORDER BY r.id DESC LIMIT ?")) {
+                // Scans only: a pipeline's write is recorded as a finished run of kind 'pipeline' (V12).
+                "SELECT " + RUN_COLUMNS + "WHERE s.name = ? AND r.kind = 'scan' ORDER BY r.id DESC LIMIT ?")) {
                 ps.setString(1, sourceName);
                 ps.setInt(2, limit);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -495,10 +496,15 @@ public final class JdbcGraphStore implements GraphStore {
     public int markUnseenRemoved(long sourceId, long runId) {
         return tx(c -> {
             int n;
-            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.asset SET removed_at = now() "
-                + "WHERE source_id = ? AND removed_at IS NULL AND last_seen_run IS DISTINCT FROM ?")) {
+            // Assets a pipeline wrote after this scan began were not there for it to see: keep them.
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.asset a SET removed_at = now() "
+                + "WHERE a.source_id = ? AND a.removed_at IS NULL AND a.last_seen_run IS DISTINCT FROM ? "
+                + "AND NOT EXISTS (SELECT 1 FROM kilnmark.run w, kilnmark.run scan WHERE w.id = a.last_seen_run "
+                + "AND w.kind = 'pipeline' AND scan.id = ? "
+                + "AND w.started_at >= coalesce(scan.started_at, scan.requested_at))")) {
                 ps.setLong(1, sourceId);
                 ps.setLong(2, runId);
+                ps.setLong(3, runId);
                 n = ps.executeUpdate();
             }
             // the text of a document no longer in its source is not kept (V7)

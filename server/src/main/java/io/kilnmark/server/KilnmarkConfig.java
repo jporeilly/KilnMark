@@ -37,6 +37,9 @@ public interface KilnmarkConfig {
 
     Scan scan();
 
+    /** Pipelines: limits on their YAML and on the memory a run may hold (docs/design/pipelines.md). */
+    Pipelines pipelines();
+
     Worker worker();
 
     /** Settings for the {@code files} connector and Parquet reading. */
@@ -225,6 +228,27 @@ public interface KilnmarkConfig {
         /** How often new data is expected when an asset's history cannot tell yet. */
         @WithDefault("1d")
         Duration defaultCadence();
+    }
+
+    interface Pipelines {
+        /** The largest pipeline YAML accepted, in KiB. */
+        @WithDefault("256")
+        int maxYamlKb();
+
+        /** Arrow memory one pipeline run may hold at once, across all its steps. */
+        @WithDefault("1024")
+        long memoryLimitMb();
+
+        /** Batches each edge holds before the step feeding it waits. */
+        @WithDefault("4")
+        int rowSetCapacity();
+
+        /**
+         * How long a run waits for another run writing the same table or file to finish, and for a
+         * scan of a written source to let go of it before what was written is catalogued.
+         */
+        @WithDefault("30s")
+        Duration waitForTarget();
     }
 
     interface Scan {
