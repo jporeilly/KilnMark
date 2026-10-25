@@ -62,7 +62,7 @@ Each sprint builds on the last: graph before engine, engine before connectors, c
 | 1 | Mono-repo, licence file, contribution rules, NOTICE and provenance log for Kettle 10.2 code | S0 | Platform | Not started |
 | 2 | CI: build, tests, one multi-arch image with role flags (api, scheduler, worker) | S0 | Platform | Not started |
 | 3 | Docker Compose with two services: PostgreSQL (AGE, pgvector) and the Kilnmark server | S0 | Platform | Not started |
-| 4 | Reference lab: sample database, MinIO bucket, file share, synthetic data | S0 | Platform | Not started |
+| 4 | Reference lab: sample database, S3-compatible bucket (VersityGW), file share, synthetic data | S0 | Platform | Not started |
 | 5 | Decision records: name, licence, framework | S0 | Platform | Not started |
 | 6 | Graph schema v0 on PostgreSQL + Apache AGE behind a GraphStore interface; migrations (Flyway) | S1 | Graph and API | Not started |
 | 7 | URN scheme and assertion envelope | S1 | Graph and API | Not started |
@@ -126,7 +126,7 @@ kilnmark/
 - Full regression on the reference lab before every package, no exceptions
 - Decision records for anything hard to reverse (schema, plugin interface, licence)
 
-**Reference lab** — public and synthetic data only: a sample relational database, a MinIO bucket of CSV, Parquet and JSON files, a file share, and a generated dataset seeded with fake PII for later discovery tests.
+**Reference lab** — public and synthetic data only: a sample relational database, an S3-compatible bucket (VersityGW) of CSV, Parquet and JSON files, a file share, and a generated dataset seeded with fake PII for later discovery tests.
 
 ## Risks
 
