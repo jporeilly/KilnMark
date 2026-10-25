@@ -16,9 +16,11 @@
   `kilnmark.ai.local-hosts` when Kilnmark runs in a container** (ADR 0016 amendment), counting as
   local only while they resolve to loopback, private addresses or 169.254.1.2. The image sets
   `KILNMARK_IN_CONTAINER=true`.
-- **Rootless Podman 5.3+ (pasta):** 169.254.1.2 is accepted as a model address only when reached
-  through those two names; every other link-local and metadata address stays refused, including
-  ones written as a single number, in hexadecimal or octal, or IPv4-mapped IPv6.
+- **Rootless Podman 5.3+ (pasta):** in a container, 169.254.1.2 is accepted as a model address
+  only when reached through those two names; every other link-local and metadata address stays
+  refused, including IPv4-mapped IPv6. Model addresses with an IPv4 address in an unusual form
+  (leading zeros, hexadecimal, a single number, fewer than four parts) or a host name ending in a
+  dot are refused with a 400.
 
 - **Data quality** (docs/design/data-quality.md, build step 1). Profiling now keeps, over every
   row, each text column's value shapes (`SW1A 1AA` is `AA9A 9AA`; the top 20 with counts and the

@@ -243,6 +243,10 @@ public class ModelDiscovery implements AutoCloseable {
             throw new IllegalArgumentException("baseUrl: the path may hold only letters, digits and . _ ~ - /, with no "
                 + ". or .. parts, for example http://host.containers.internal:11434/v1");
         }
+        String problem = ModelHosts.addressProblem(s).orElse(null);
+        if (problem != null) {
+            throw new IllegalArgumentException(problem);
+        }
         path = path.replaceAll("/+$", "");
         if (path.toLowerCase(Locale.ROOT).endsWith("/v1")) {
             path = path.substring(0, path.length() - 3).replaceAll("/+$", "");
@@ -351,6 +355,8 @@ public class ModelDiscovery implements AutoCloseable {
         }
         Map<String, FoundModel> models = new LinkedHashMap<>();
         int shown = 0;
+        // /api/show for embedding models gets one read timeout in all; past that the rest go without.
+        long showUntil = System.nanoTime() + readTimeout.toNanos();
         for (JsonNode m : tags.json().path("models")) {
             if (models.size() >= MAX_MODELS) {
                 break;
@@ -370,17 +376,20 @@ public class ModelDiscovery implements AutoCloseable {
                 : psKnown ? Gpu.NOT_LOADED : Gpu.UNKNOWN;
             Integer context = positive(run == null ? null : run.path("context_length"));
             Integer dimensions = null;
-            if (embedding && shown < MAX_SHOW) {
-                // What the form needs for an embedding model: its size of vector, and how much text it takes.
+            long left = showUntil - System.nanoTime();
+            if (embedding && shown < MAX_SHOW && left > 0) {
+                // What the form needs for an embedding model: its size of vector, and the context it runs with.
                 shown++;
-                JsonNode info = show(c.root(), name);
-                if (info != null) {
-                    for (Map.Entry<String, JsonNode> e : info.properties()) {
+                JsonNode shownModel = show(c.root(), name, Duration.ofNanos(left));
+                if (shownModel != null) {
+                    for (Map.Entry<String, JsonNode> e : shownModel.path("model_info").properties()) {
                         if (e.getKey().endsWith(".embedding_length")) {
                             dimensions = positive(e.getValue());
-                        } else if (e.getKey().endsWith(".context_length") && context == null) {
-                            context = positive(e.getValue());
                         }
+                    }
+                    // Only a context the model is set to run with (num_ctx), not the most it was trained for.
+                    if (context == null) {
+                        context = numCtx(shownModel.path("parameters").asText(""));
                     }
                 }
             }
@@ -396,16 +405,35 @@ public class ModelDiscovery implements AutoCloseable {
             List.copyOf(models.values()));
     }
 
-    /** Ollama's {@code model_info} for one model ({@code POST /api/show}), or null. */
-    private JsonNode show(String root, String model) {
+    /** {@code num_ctx} from Ollama's parameters text ("num_ctx 8192" on a line), or null. */
+    static Integer numCtx(String parameters) {
+        for (String line : parameters.split("\\R")) {
+            String[] w = line.strip().split("\\s+");
+            if (w.length == 2 && w[0].equals("num_ctx")) {
+                try {
+                    int n = Integer.parseInt(w[1]);
+                    return n > 0 ? n : null;
+                } catch (NumberFormatException e) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** What Ollama says about one model ({@code POST /api/show}), within {@code limit}, or null. */
+    private JsonNode show(String root, String model, Duration limit) {
+        Duration timeout = limit.compareTo(readTimeout) < 0 ? limit : readTimeout;
+        if (timeout.toMillis() < 1) {
+            return null;
+        }
         try {
-            Fetched f = send(HttpRequest.newBuilder(URI.create(root + "/api/show")).timeout(readTimeout)
+            Fetched f = send(HttpRequest.newBuilder(URI.create(root + "/api/show")).timeout(timeout)
                 .header("Content-Type", "application/json").header("Accept", "application/json")
                 .header("User-Agent", "Kilnmark")
                 .POST(HttpRequest.BodyPublishers.ofString(json.createObjectNode().put("model", model).toString()))
                 .build());
-            JsonNode info = f.ok() && f.json() != null ? f.json().path("model_info") : null;
-            return info != null && info.isObject() ? info : null;
+            return f.ok() && f.json() != null && f.json().isObject() ? f.json() : null;
         } catch (Unreachable e) {
             return null;
         }
@@ -509,7 +537,7 @@ public class ModelDiscovery implements AutoCloseable {
      * private network. Never for other names or public addresses: that is the admin's call.
      */
     private boolean suggestLocal(Candidate c, String host, InetAddress[] addresses) {
-        if (!ModelHosts.hostSide(addresses)) {
+        if (!ModelHosts.hostSide(addresses, inContainer)) {
             return false;
         }
         if (Arrays.stream(addresses).allMatch(InetAddress::isLoopbackAddress)) {

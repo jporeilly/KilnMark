@@ -653,6 +653,15 @@ function ProfileForm({
   const servers = checked && checked !== "checking" && checked.outcome === "found" ? [checked, ...known] : known;
   const server = compatible ? servers.find((s) => sameServer(s.baseUrl, f.baseUrl)) : undefined;
   const offered = server?.models ?? [];
+  // Another server at the address: offer its list again rather than keep the typed box.
+  const serverKey = server?.baseUrl ?? "";
+  const lastServer = useRef(serverKey);
+  useEffect(() => {
+    if (lastServer.current !== serverKey) {
+      lastServer.current = serverKey;
+      setTypeOwn(false);
+    }
+  }, [serverKey]);
   const choose = offered.length > 0 && !typeOwn && (f.model === "" || offered.some((m) => m.name === f.model));
   const pickModel = (name: string) => {
     if (name === "__other__") {

@@ -12,8 +12,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -40,8 +42,10 @@ import jakarta.inject.Inject;
  *       unless {@code kilnmark.ai.allow-metadata-addresses=true}, so a profile cannot be pointed at
  *       a cloud provider's metadata service. One exception: rootless Podman 5.3 and later (pasta)
  *       maps {@code host.containers.internal} to {@value #PODMAN_HOST_ADDRESS}, so that address is
- *       accepted for the two container host names only, never typed as an address or reached
- *       through any other name.</li>
+ *       accepted for the two container host names only, and only while Kilnmark runs in a container;
+ *       never typed as an address or reached through any other name. IPv4 addresses written in
+ *       unusual forms (leading zeros, hexadecimal, fewer than four parts) are refused, not
+ *       reinterpreted.</li>
  * </ul>
  */
 @ApplicationScoped
@@ -67,6 +71,12 @@ public class ModelHosts {
     static final String PODMAN_HOST_ADDRESS = "169.254.1.2";
     /** How long a name lookup may take before the address counts as unreachable. */
     static final Duration LOOKUP_LIMIT = Duration.ofSeconds(2);
+    /** How long a container host name's "local" answer is kept, so searches do not look it up every time. */
+    static final Duration REMEMBER_FOR = Duration.ofSeconds(5);
+    private static final java.util.regex.Pattern NUMERIC = java.util.regex.Pattern.compile(
+        "(?i)(0x[0-9a-f]*|[0-9]+)(\\.(0x[0-9a-f]*|[0-9]+))*\\.?");
+    private static final java.util.regex.Pattern DOTTED_QUAD = java.util.regex.Pattern.compile(
+        "(0|[1-9][0-9]{0,2})(\\.(0|[1-9][0-9]{0,2})){3}");
 
     private static final List<Cidr> METADATA_NETWORKS = List.of(Cidr.parse("169.254.0.0/16"),
         Cidr.parse("fe80::/10"), Cidr.parse("100.100.100.200/32"), Cidr.parse("fd00:ec2::254/128"));
@@ -81,6 +91,11 @@ public class ModelHosts {
     private final boolean allowMetadata;
     private final boolean inContainer;
     private final Resolver resolver;
+    /** Container host name to its recent answer; only the two container host names are ever kept. */
+    private final Map<String, Remembered> remembered = new ConcurrentHashMap<>();
+
+    private record Remembered(boolean local, long untilNanos) {
+    }
 
     private static final java.util.regex.Pattern NAME = java.util.regex.Pattern.compile(
         "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*");
@@ -126,12 +141,24 @@ public class ModelHosts {
      * {@code container} in the environment (systemd and Podman images).
      */
     static boolean runningInContainer() {
-        String set = System.getenv("KILNMARK_IN_CONTAINER");
-        if (set != null && !set.isBlank()) {
-            return Boolean.parseBoolean(set.strip());
+        Boolean set = yesNo(System.getenv("KILNMARK_IN_CONTAINER"));
+        if (set != null) {
+            return set;
         }
         return Files.exists(Path.of("/run/.containerenv")) || Files.exists(Path.of("/.dockerenv"))
             || System.getenv("container") != null;
+    }
+
+    /** 1, yes, true, on: true; 0, no, false, off: false (any case); anything else: null. */
+    static Boolean yesNo(String value) {
+        if (value == null) {
+            return null;
+        }
+        return switch (value.strip().toLowerCase(Locale.ROOT)) {
+            case "1", "yes", "true", "on" -> Boolean.TRUE;
+            case "0", "no", "false", "off" -> Boolean.FALSE;
+            default -> null;
+        };
     }
 
     /** Whether Kilnmark runs in a container, where {@code localhost} is the container itself. */
@@ -139,15 +166,49 @@ public class ModelHosts {
         return inContainer;
     }
 
-    /** The host of a base URL, lower case, without brackets or a trailing dot. */
+    /** The host of a base URL, lower case, without brackets. A trailing dot is kept: it changes how the name is looked up. */
     public static String host(String baseUrl) {
         String h = baseUrl == null ? null : URI.create(baseUrl).getHost();
         if (h == null) {
             return "";
         }
         h = h.toLowerCase(Locale.ROOT);
-        h = h.startsWith("[") && h.endsWith("]") ? h.substring(1, h.length() - 1) : h;
-        return h.replaceAll("\\.+$", "");
+        return h.startsWith("[") && h.endsWith("]") ? h.substring(1, h.length() - 1) : h;
+    }
+
+    /**
+     * What is wrong with how an address's host is written, for a 400 when a profile is saved or an
+     * address is checked: a trailing dot (an absolute name, looked up outside the local search
+     * domains, while the local-hosts list would match it without the dot), or an IPv4 address
+     * that is not four plain decimal numbers (leading zeros, hexadecimal, fewer parts), which
+     * resolvers read in different ways. Empty when it is fine.
+     */
+    public static Optional<String> addressProblem(String baseUrl) {
+        String h = host(baseUrl);
+        if (h.endsWith(".")) {
+            return Optional.of("baseUrl: remove the dot at the end of the host name " + h + ".");
+        }
+        if (unusualIpv4(h)) {
+            return Optional.of("baseUrl: write the IP address " + h + " as four decimal numbers without leading zeros, "
+                + "for example 192.168.1.20.");
+        }
+        return Optional.empty();
+    }
+
+    /** Looks like an IPv4 address but is not a plain dotted quad: 0177.0.0.1, 0x7f.1, 2130706433, 127.1. */
+    static boolean unusualIpv4(String host) {
+        if (!NUMERIC.matcher(host).matches()) {
+            return false;
+        }
+        if (!DOTTED_QUAD.matcher(host).matches()) {
+            return true;
+        }
+        for (String part : host.split("\\.")) {
+            if (Integer.parseInt(part) > 255) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -168,8 +229,16 @@ public class ModelHosts {
         if (!CONTAINER_HOST_NAMES.contains(host)) {
             return true;
         }
+        // Asked for every source in a search: the answer is kept a few seconds.
+        Remembered r = remembered.get(host);
+        long now = System.nanoTime();
+        if (r != null && now - r.untilNanos() < 0) {
+            return r.local();
+        }
         Optional<InetAddress[]> addresses = resolveWithin(host, LOOKUP_LIMIT);
-        return addresses.isEmpty() || mayBeLocal(host, addresses.get());
+        boolean local = addresses.isEmpty() || mayBeLocal(host, addresses.get());
+        remembered.put(host, new Remembered(local, System.nanoTime() + REMEMBER_FOR.toNanos()));
+        return local;
     }
 
     /** {@link #mayBeLocal(String)} with addresses already looked up. */
@@ -180,16 +249,20 @@ public class ModelHosts {
         if (!listedLocal(host)) {
             return false;
         }
-        return !CONTAINER_HOST_NAMES.contains(host) || hostSide(addresses);
+        return !CONTAINER_HOST_NAMES.contains(host) || hostSide(addresses, inContainer);
     }
 
-    /** Whether every address is loopback, private, or Podman's host address: this machine or its own network. */
-    static boolean hostSide(InetAddress[] addresses) {
+    /**
+     * Whether every address is loopback, private, or (in a container) Podman's host address: this
+     * machine or its own network.
+     */
+    static boolean hostSide(InetAddress[] addresses, boolean inContainer) {
         if (addresses.length == 0) {
             return false;
         }
         for (InetAddress a : addresses) {
-            if (!a.getHostAddress().equals(PODMAN_HOST_ADDRESS) && PRIVATE_NETWORKS.stream().noneMatch(n -> n.contains(a))) {
+            boolean podman = inContainer && a.getHostAddress().equals(PODMAN_HOST_ADDRESS);
+            if (!podman && PRIVATE_NETWORKS.stream().noneMatch(n -> n.contains(a))) {
                 return false;
             }
         }
@@ -240,16 +313,15 @@ public class ModelHosts {
     }
 
     /**
-     * The addresses of a host. IP addresses in any form a resolver might accept (dotted quad,
-     * one 32-bit number, {@code a.b} or {@code a.b.c}, hexadecimal or octal parts, IPv4-mapped
-     * IPv6) are parsed here, so a metadata address cannot slip through written differently.
+     * The addresses of a host. IP literals are parsed, not looked up (IPv4-mapped IPv6 comes back
+     * as IPv4); an IPv4 address written in an unusual form is not resolved at all, since
+     * resolvers disagree on what it means.
      */
     InetAddress[] resolve(String host) throws UnknownHostException {
-        Optional<InetAddress> v4 = numericIpv4(host);
-        if (v4.isPresent()) {
-            return new InetAddress[] {v4.get()};
+        if (unusualIpv4(host)) {
+            throw new UnknownHostException(host + " is an IP address written in an unusual form");
         }
-        if (host.contains(":")) {
+        if (isIpLiteral(host)) {
             return new InetAddress[] {InetAddress.getByName(host)}; // a literal; mapped addresses come back as IPv4
         }
         return resolver.resolve(host);
@@ -278,56 +350,15 @@ public class ModelHosts {
         }
     }
 
-    /**
-     * An IPv4 address written the BSD way: up to four parts separated by dots, each decimal,
-     * {@code 0x} hexadecimal or {@code 0} octal, the last part filling the remaining bytes
-     * ({@code 2852039166}, {@code 169.254.43518} and {@code 0xa9.0xfe.0xa9.0xfe} are all
-     * 169.254.169.254). Empty for anything else.
-     */
-    static Optional<InetAddress> numericIpv4(String host) {
-        if (!host.matches("(?i)(0x[0-9a-f]+|[0-9]+)(\\.(0x[0-9a-f]+|[0-9]+)){0,3}")) {
-            return Optional.empty();
-        }
-        String[] parts = host.split("\\.");
-        long[] n = new long[parts.length];
-        try {
-            for (int i = 0; i < parts.length; i++) {
-                String p = parts[i].toLowerCase(Locale.ROOT);
-                n[i] = p.startsWith("0x") ? Long.parseLong(p.substring(2), 16)
-                    : p.length() > 1 && p.startsWith("0") ? Long.parseLong(p.substring(1), 8) : Long.parseLong(p);
-            }
-        } catch (NumberFormatException e) {
-            return Optional.empty();
-        }
-        long value = 0;
-        for (int i = 0; i < n.length - 1; i++) {
-            if (n[i] > 255) {
-                return Optional.empty();
-            }
-            value = value << 8 | n[i];
-        }
-        int restBits = 8 * (4 - (n.length - 1));
-        long last = n[n.length - 1];
-        if (last >= 1L << restBits) {
-            return Optional.empty();
-        }
-        value = value << restBits | last;
-        byte[] b = {(byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value};
-        try {
-            return Optional.of(InetAddress.getByAddress(b));
-        } catch (UnknownHostException e) {
-            return Optional.empty();
-        }
-    }
-
     /** Why a base URL may not be used (a metadata or link-local address), or empty. */
     public Optional<String> forbidden(String baseUrl) {
         if (allowMetadata) {
             return Optional.empty();
         }
         String host = host(baseUrl);
-        if (METADATA_NAMES.contains(host)) {
-            return Optional.of(METADATA_REASON);
+        Optional<String> early = forbidden(host, new InetAddress[0]);
+        if (early.isPresent()) {
+            return early;
         }
         try {
             return forbidden(host, resolve(host));
@@ -338,14 +369,21 @@ public class ModelHosts {
 
     private static final String METADATA_REASON = "This address is a link-local or cloud metadata address, which model "
         + "profiles may not use. Whoever runs the server can allow it with kilnmark.ai.allow-metadata-addresses=true.";
+    private static final String UNUSUAL_REASON = "This address is an IP address written in an unusual form (leading "
+        + "zeros, hexadecimal or fewer than four parts), which name services read in different ways. Write it as four "
+        + "decimal numbers, for example 192.168.1.20.";
 
     /** {@link #forbidden(String)} with addresses already looked up. */
     Optional<String> forbidden(String host, InetAddress[] addresses) {
         if (allowMetadata) {
             return Optional.empty();
         }
-        if (METADATA_NAMES.contains(host)) {
+        // Metadata names with or without the trailing dot of an absolute name.
+        if (METADATA_NAMES.contains(host.replaceAll("\\.+$", ""))) {
             return Optional.of(METADATA_REASON);
+        }
+        if (unusualIpv4(host.replaceAll("\\.+$", ""))) {
+            return Optional.of(UNUSUAL_REASON);
         }
         for (InetAddress a : addresses) {
             InetAddress v = mappedToIpv4(a);
@@ -353,7 +391,7 @@ public class ModelHosts {
                 continue;
             }
             // Rootless Podman's host address, reached by the name Podman gives it: the host, not a metadata service.
-            if (v.getHostAddress().equals(PODMAN_HOST_ADDRESS) && CONTAINER_HOST_NAMES.contains(host)) {
+            if (inContainer && v.getHostAddress().equals(PODMAN_HOST_ADDRESS) && CONTAINER_HOST_NAMES.contains(host)) {
                 continue;
             }
             return Optional.of(METADATA_REASON);

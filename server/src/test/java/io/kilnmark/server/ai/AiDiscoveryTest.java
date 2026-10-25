@@ -2,7 +2,6 @@ package io.kilnmark.server.ai;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -168,7 +167,8 @@ class AiDiscoveryTest {
 
     private static final String SHOW = """
         {"model_info": {"general.architecture": "nomic-bert", "nomic-bert.embedding_length": 768,
-                        "nomic-bert.context_length": 2048}}""";
+                        "nomic-bert.context_length": 2048},
+         "parameters": "stop <|endoftext|>\\nnum_ctx                        8192"}""";
 
     private static Map<String, Reply> ollama(String tags, String ps) {
         Map<String, Reply> m = new HashMap<>(Map.of("/api/version", Reply.json("{\"version\": \"0.12.6\"}"),
@@ -218,7 +218,7 @@ class AiDiscoveryTest {
         assertTrue(idle.gpuText().startsWith("Not loaded yet"));
         assertTrue(idle.embedding(), "nomic-embed-text is an embedding model");
         assertEquals(768, idle.dimensions(), "from /api/show");
-        assertEquals(2048, idle.contextSize());
+        assertEquals(8192, idle.contextSize(), "num_ctx, not the trained context_length");
         assertTrue(model(s, "bge-m3:latest").embedding(), "BERT family: embeddings");
 
         // Only the model server's own paths; only GET, except Ollama's /api/show for embedding models.
@@ -410,24 +410,28 @@ class AiDiscoveryTest {
     }
 
     @Test
-    void metadataAddressesAreNeverCalledHoweverWritten() throws UnknownHostException {
+    void metadataAddressesAreNeverCalledHoweverWritten() {
         ModelDiscovery d = discovery(true);
-        for (String address : List.of("http://169.254.169.254/latest", "http://2852039166/",
-            "http://[::ffff:169.254.169.254]/", "http://[::ffff:a9fe:a9fe]/",
-            "http://169.254.170.2/", "http://[fd00:ec2::254]/", "http://[fe80::1]/", "http://metadata.google.internal",
-            "http://metadata.google.internal./", "http://169.254.1.2:11434")) {
+        for (String address : List.of("http://169.254.169.254/latest", "http://[::ffff:169.254.169.254]/",
+            "http://[::ffff:a9fe:a9fe]/", "http://169.254.170.2/", "http://[fd00:ec2::254]/", "http://[fe80::1]/",
+            "http://metadata.google.internal", "http://169.254.1.2:11434")) {
             FoundServer s = d.discover(address).servers().get(0);
             assertEquals("refused", s.outcome(), address + ": " + s.problem());
             assertTrue(s.problem().contains("metadata"), s.problem());
         }
-        // Forms java.net.URI does not take as a host at all are refused as addresses, and are metadata anyway.
-        for (String odd : List.of("http://169.254.43518/", "http://0xa9.0xfe.0xa9.0xfe/")) {
+        // Unusual ways of writing an address, and absolute names, are a 400, not reinterpreted.
+        for (String odd : List.of("http://169.254.43518/", "http://0xa9.0xfe.0xa9.0xfe/", "http://2852039166/",
+            "http://0251.0376.0251.0376/", "http://metadata.google.internal./")) {
             assertThrows(IllegalArgumentException.class, () -> d.discover(odd), odd);
         }
+        // And refused should one reach the address rules some other way.
         ModelHosts h = hosts(true, Map.of());
-        for (String host : List.of("169.254.43518", "0xa9.0xfe.0xa9.0xfe", "2852039166", "::ffff:a9fe:a9fe")) {
-            assertTrue(h.forbidden(host, h.resolve(host)).isPresent(), host);
+        for (String host : List.of("169.254.43518", "0xa9.0xfe.0xa9.0xfe", "2852039166", "017.0.0.1",
+            "metadata.google.internal.")) {
+            assertTrue(h.forbidden(host, new InetAddress[0]).isPresent(), host);
         }
+        assertTrue(h.forbidden("http://2852039166/").isPresent());
+        assertTrue(h.forbidden("http://[::ffff:a9fe:a9fe]/").isPresent());
     }
 
     @Test
@@ -447,6 +451,48 @@ class AiDiscoveryTest {
             "the container host names get only 169.254.1.2, not the rest of link-local");
         ModelHosts ecs = hosts(true, Map.of("host.docker.internal", "169.254.170.2"));
         assertTrue(ecs.forbidden("http://host.docker.internal/v1").isPresent());
+        // Not in a container: no exception at all.
+        assertTrue(hosts(false, pasta).forbidden("http://host.containers.internal:11434/v1").isPresent());
+    }
+
+    @Test
+    void aContainerHostNamesAnswerIsKeptBriefly() {
+        ModelHosts h = hosts(true, Map.of("host.docker.internal", "10.0.2.2"), "kilnmark.ai.hosted-models", "forbidden");
+        lookups.clear();
+        for (int i = 0; i < 5; i++) {
+            assertTrue(h.mayBeLocal("http://host.docker.internal:11434/v1"));
+        }
+        assertEquals(1, lookups.size(), "looked up once, not per source: " + lookups);
+    }
+
+    @Test
+    void kilnmarkInContainerTakesTheUsualWordsForYesAndNo() {
+        for (String yes : List.of("1", "yes", "TRUE", " True ", "on")) {
+            assertEquals(Boolean.TRUE, ModelHosts.yesNo(yes), yes);
+        }
+        for (String no : List.of("0", "No", "false", "off")) {
+            assertEquals(Boolean.FALSE, ModelHosts.yesNo(no), no);
+        }
+        assertNull(ModelHosts.yesNo("maybe"));
+        assertNull(ModelHosts.yesNo(null));
+    }
+
+    @Test
+    void ollamasEmbeddingDetailsHaveATimeBudget() throws IOException {
+        String tags = """
+            {"models": [{"name": "nomic-embed-text:a", "size": 1}, {"name": "nomic-embed-text:b", "size": 1},
+                        {"name": "nomic-embed-text:c", "size": 1}, {"name": "nomic-embed-text:d", "size": 1}]}""";
+        Map<String, Reply> routes = ollama(tags, "{\"models\": []}");
+        routes.put("/api/show", Reply.slow(SHOW, 300));
+        String root = serve(routes);
+        long start = System.nanoTime();
+        FoundServer s = discovery(false).probe(new Candidate("Ollama", Kind.OLLAMA, root, true)).server();
+        assertEquals("found", s.outcome(), "the slow details do not lose the server: " + s.problem());
+        assertEquals(4, s.models().size());
+        assertTrue(s.models().stream().anyMatch(m -> m.dimensions() == null), "the budget ran out");
+        assertTrue(Duration.ofNanos(System.nanoTime() - start).toMillis() < 2500);
+        assertEquals(8192, ModelDiscovery.numCtx("stop x\nnum_ctx 8192"));
+        assertNull(ModelDiscovery.numCtx("stop x"));
     }
 
     @Test
@@ -570,20 +616,29 @@ class AiDiscoveryTest {
         assertEquals("http://[::1]:8080", ModelDiscovery.root("http://[::1]:8080/v1"));
         for (String bad : List.of("ftp://h/", "http://user:pw@h/", "http://h/v1?x=1", "http://h/v1#x", "http://",
             "http://h/a/../v1", "http://h/./v1", "http://h/%2e%2e/v1", "http://h/a%2Fb/v1", "http://h/a;b/v1",
-            "http://h/a%3Fb", "http://h:99999/v1", "http://h:0/v1", "http://h\\x/v1")) {
+            "http://h/a%3Fb", "http://h:99999/v1", "http://h:0/v1", "http://h\\x/v1", "http://ai.:8080/v1",
+            "http://017.0.0.1:11434/v1", "http://127.1:11434")) {
             IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> ModelDiscovery.root(bad), bad);
             assertTrue(e.getMessage().startsWith("baseUrl:"), e.getMessage());
         }
     }
 
     @Test
-    void numericAddressFormsAreParsedLikeAResolverWould() {
-        assertEquals("169.254.169.254", ModelHosts.numericIpv4("2852039166").orElseThrow().getHostAddress());
-        assertEquals("169.254.169.254", ModelHosts.numericIpv4("169.254.43518").orElseThrow().getHostAddress());
-        assertEquals("169.254.169.254", ModelHosts.numericIpv4("0251.0376.0251.0376").orElseThrow().getHostAddress());
-        assertEquals("127.0.0.1", ModelHosts.numericIpv4("127.1").orElseThrow().getHostAddress());
-        assertTrue(ModelHosts.numericIpv4("256.1.1.1").isEmpty());
-        assertTrue(ModelHosts.numericIpv4("ai-embed").isEmpty());
-        assertNotEquals("169.254.169.254", ModelHosts.numericIpv4("10.0.0.1").orElseThrow().getHostAddress());
+    void unusualIpv4FormsAndTrailingDotsAreRefusedNotReinterpreted() {
+        for (String odd : List.of("0177.0.0.1", "017.0.0.1", "0x7f.0.0.1", "2130706433", "127.1", "256.1.1.1",
+            "1.2.3.4.5", "10.0.0.01")) {
+            assertTrue(ModelHosts.unusualIpv4(odd), odd);
+        }
+        for (String fine : List.of("127.0.0.1", "10.0.0.1", "0.0.0.0", "255.255.255.255", "ai-embed", "host.docker.internal")) {
+            assertFalse(ModelHosts.unusualIpv4(fine), fine);
+        }
+        assertTrue(ModelHosts.addressProblem("http://017.0.0.1:11434/v1").isPresent());
+        assertTrue(ModelHosts.addressProblem("http://ai.:8080/v1").orElseThrow().contains("dot at the end"));
+        assertTrue(ModelHosts.addressProblem("http://ai:8080/v1").isEmpty());
+        assertTrue(ModelHosts.addressProblem("http://[::1]:8080/v1").isEmpty());
+        // Under the lock an absolute name does not match the listed name.
+        ModelHosts narrow = hosts(true, Map.of(), "kilnmark.ai.hosted-models", "forbidden", "kilnmark.ai.local-hosts", "ai");
+        assertTrue(narrow.mayBeLocal("http://ai:8080/v1"));
+        assertFalse(narrow.mayBeLocal("http://ai.:8080/v1"));
     }
 }

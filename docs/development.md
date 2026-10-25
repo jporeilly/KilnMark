@@ -519,16 +519,21 @@ broader rule allows the port.
 
 **Rootless Podman 5.3 and later** (pasta networking) gives `host.containers.internal` the address
 `169.254.1.2`. That is a link-local address, which model profiles may not use, so Kilnmark makes
-one exception: `169.254.1.2` is accepted when it is reached through `host.containers.internal` or
-`host.docker.internal`, and refused typed as an address or behind any other name. Other
-link-local and metadata addresses (169.254.169.254 and the like) stay refused whatever the name.
+one exception: while Kilnmark runs in a container, `169.254.1.2` is accepted when it is reached
+through `host.containers.internal` or `host.docker.internal`, and refused typed as an address or
+behind any other name. Other link-local and metadata addresses (169.254.169.254 and the like)
+stay refused whatever the name. IPv4 addresses written in unusual forms (leading zeros,
+hexadecimal, a single number, fewer than four parts) and host names ending in a dot are refused
+with a plain error when a profile is saved or an address is checked, rather than read one way by
+Kilnmark and another by the name service.
 
 When Kilnmark runs in a container (the image sets `KILNMARK_IN_CONTAINER=true`; otherwise
 `/.dockerenv` or `/run/.containerenv`), both names are on the default `kilnmark.ai.local-hosts`,
 so models there count as local under the operator lock too, but only while the name leads to this
 machine or a private network (loopback, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7, or
-169.254.1.2), checked before every call: the name service decides where these names go. Outside
-a container they are not on the default list.
+169.254.1.2), checked before every call (the answer is kept for 5 seconds): the name service
+decides where these names go. Outside a container they are not on the default list.
+`KILNMARK_IN_CONTAINER` takes `1`, `yes`, `true` or `on` (and `0`, `no`, `false`, `off`).
 
 **GPU use comes from the model server.** Kilnmark does not run `nvidia-smi` or look for a GPU: in
 a container it usually cannot see one, and it does not need to, because the model server is what
