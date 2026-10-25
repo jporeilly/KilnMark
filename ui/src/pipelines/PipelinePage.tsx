@@ -233,7 +233,8 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   }
 
   const title = isNew ? "New pipeline" : (detail?.displayName ?? name);
-  // Announced when a check finishes; "Checking…" is shown but not announced on every keystroke.
+  // Always on the page, and changed only when a check finishes, so only results are announced;
+  // "Checking…" is shown beside it but not announced on every keystroke.
   const summary = checkError
       ? `Could not check: ${checkError}`
       : check == null
@@ -382,7 +383,6 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
               id="pl-check-summary"
               className={problems.length > 0 ? "pl-summary pl-bad" : "pl-summary"}
               aria-live="polite"
-              hidden={checking}
             >
               {summary}
             </p>
