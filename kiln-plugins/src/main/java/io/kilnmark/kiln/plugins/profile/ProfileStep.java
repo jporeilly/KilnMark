@@ -8,20 +8,28 @@ import java.util.Map;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.Decimal256Vector;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.LargeVarCharVector;
 import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.TimeMicroVector;
 import org.apache.arrow.vector.TimeStampVector;
+import org.apache.arrow.vector.TinyIntVector;
+import org.apache.arrow.vector.UInt1Vector;
+import org.apache.arrow.vector.UInt2Vector;
+import org.apache.arrow.vector.UInt4Vector;
+import org.apache.arrow.vector.UInt8Vector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 
+import io.kilnmark.kiln.MetadataEmitter;
 import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Step;
 import io.kilnmark.kiln.StepContext;
@@ -79,28 +87,55 @@ public final class ProfileStep implements Step {
 
     @Override
     public void init(StepContext context) throws StepException {
-        assetUrn = context.setting("asset-urn");
-        String fields = context.setting(SKETCH_FIELDS, "");
-        if (fields != null && !fields.isEmpty()) {
+        configure(context.stepName(), context.settings());
+    }
+
+    /**
+     * A profiler for a step that handles its batches itself, such as a writer: it profiles what it
+     * is given with {@link #accept} in the same pass and reports with {@link #report(MetadataEmitter)},
+     * exactly as this step would. {@code settings} are this step's settings ({@code asset-urn},
+     * {@code keep-values} and so on).
+     *
+     * @throws StepException if a setting cannot be read
+     */
+    public static ProfileStep tap(String stepName, Map<String, String> settings) throws StepException {
+        ProfileStep p = new ProfileStep();
+        p.configure(stepName, settings);
+        return p;
+    }
+
+    private void configure(String stepName, Map<String, String> settings) throws StepException {
+        assetUrn = settings.get("asset-urn");
+        if (assetUrn == null || assetUrn.isBlank()) {
+            throw new StepException("Step " + stepName + " needs the setting 'asset-urn'");
+        }
+        String fields = setting(settings, SKETCH_FIELDS, "");
+        if (!fields.isEmpty()) {
             sketched = java.util.Arrays.stream(fields.split(","))
                 .map(f -> java.net.URLDecoder.decode(f, java.nio.charset.StandardCharsets.UTF_8))
                 .collect(java.util.stream.Collectors.toSet());
         }
-        keepValues = Boolean.parseBoolean(context.setting("keep-values", "true"));
+        keepValues = Boolean.parseBoolean(setting(settings, "keep-values", "true"));
         try {
-            examples = Math.clamp(Integer.parseInt(context.setting("examples", "5")), 0, 50);
-            int size = Math.clamp(Integer.parseInt(context.setting("sample-size", "0")), 0, 100_000);
+            examples = Math.clamp(Integer.parseInt(setting(settings, "examples", "5")), 0, 50);
+            int size = Math.clamp(Integer.parseInt(setting(settings, "sample-size", "0")), 0, 100_000);
             if (keepValues && size > 0) {
-                List<String> key = java.util.Arrays.stream(context.setting("sample-key", "").split(","))
+                List<String> key = java.util.Arrays.stream(setting(settings, "sample-key", "").split(","))
                     .map(String::trim).filter(k -> !k.isEmpty()).toList();
-                sampler = new RowSampler(RowSampler.Mode.parse(context.setting("sample-mode", "key")), key, size,
-                    Long.parseLong(context.setting("sample-seed", "0")),
-                    Long.parseLong(context.setting("sample-max-bytes", Long.toString(RowSampler.DEFAULT_MAX_BYTES))));
+                sampler = new RowSampler(RowSampler.Mode.parse(setting(settings, "sample-mode", "key")), key, size,
+                    Long.parseLong(setting(settings, "sample-seed", "0")),
+                    Long.parseLong(setting(settings, "sample-max-bytes", Long.toString(RowSampler.DEFAULT_MAX_BYTES))));
             }
         } catch (IllegalArgumentException e) {
-            throw new StepException("Step " + context.stepName() + " has a sample setting it cannot read: "
+            throw new StepException("Step " + stepName + " has a sample setting it cannot read: "
                 + e.getMessage(), e);
         }
+    }
+
+    /** An optional setting, as {@link StepContext#setting(String, String)} reads it. */
+    private static String setting(Map<String, String> settings, String key, String fallback) {
+        String value = settings.get(key);
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     @Override
@@ -135,7 +170,8 @@ public final class ProfileStep implements Step {
         return true;
     }
 
-    void accept(VectorSchemaRoot batch) {
+    /** Profiles one batch; the caller keeps the batch and closes it. */
+    public void accept(VectorSchemaRoot batch) {
         if (stats == null) {
             stats = new ArrayList<>();
             for (Field f : batch.getSchema().getFields()) {
@@ -160,9 +196,16 @@ public final class ProfileStep implements Step {
                     case BigIntVector x -> s.addLong(x.get(i));
                     case IntVector x -> s.addLong(x.get(i));
                     case SmallIntVector x -> s.addLong(x.get(i));
+                    case TinyIntVector x -> s.addLong(x.get(i));
+                    case UInt1Vector x -> s.addLong(Byte.toUnsignedInt(x.get(i)));
+                    case UInt2Vector x -> s.addLong(x.get(i));
+                    case UInt4Vector x -> s.addLong(Integer.toUnsignedLong(x.get(i)));
+                    case UInt8Vector x -> s.addDouble(Double.parseDouble(Long.toUnsignedString(x.get(i))));
                     case Float8Vector x -> s.addDouble(x.get(i));
                     case Float4Vector x -> s.addDouble(x.get(i));
                     case DecimalVector x -> s.addDouble(x.getObject(i).doubleValue());
+                    case Decimal256Vector x -> s.addDouble(x.getObject(i).doubleValue());
+                    case LargeVarCharVector x -> s.addText(x.get(i));
                     case BitVector x -> s.addBoolean(x.get(i) == 1);
                     case VarCharVector x -> s.addText(x.get(i));
                     case VarBinaryVector x -> s.addBinary(x.get(i));
@@ -176,15 +219,23 @@ public final class ProfileStep implements Step {
     }
 
     private void report(StepContext context) {
+        report(context.metadata());
+    }
+
+    /**
+     * Reports one {@code PROFILE} event per column and, with values kept, the {@code SAMPLE} event,
+     * for what {@link #accept} was given. Nothing when it was given no batch.
+     */
+    public void report(MetadataEmitter metadata) {
         if (stats == null) {
             return;
         }
         Instant now = Instant.now();
         for (ColumnStats s : stats) {
-            context.metadata().emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.PROFILE, s.attributes(), now));
+            metadata.emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.PROFILE, s.attributes(), now));
         }
         if (keepValues) {
-            context.metadata().emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.SAMPLE, sample(), now));
+            metadata.emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.SAMPLE, sample(), now));
         }
     }
 
