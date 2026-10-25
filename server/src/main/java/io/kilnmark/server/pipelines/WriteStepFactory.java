@@ -150,31 +150,47 @@ public final class WriteStepFactory implements StepFactory {
         String taken = optionTakingSourceSetting(config, name == null ? null
             : sources.source(name).flatMap(s -> sources.connector(s.kind())).orElse(null));
         if (taken != null) {
-            problems.add("options: '" + taken + "' says where or as whom to write, which only the saved source decides. "
-                + "Remove it, or ask an admin to change the source");
+            problems.add("options: '" + taken + "' says where or as whom to write (or holds a list or map, which "
+                + "options may not), and only the saved source decides that. Remove it, or ask an admin to change the "
+                + "source");
         }
         return problems;
     }
 
-    /** The first option naming a setting of the source or its location (url, bucket, path, ...), or null. */
+    /**
+     * The first option naming a setting of the source or its location (url, bucket, path, ...), or
+     * holding a list or map (which could carry such a setting inside it), or null. Names are compared
+     * whatever their case and separators: {@code jdbcUrl}, {@code jdbc-url} and {@code JDBC_URL} are
+     * {@code jdbc_url}.
+     *
+     * <p>TODO when the connector writers (round 3, stream c) are merged: replace this deny-list with
+     * each writer's own list of the options it takes, and let a writer declare options holding lists
+     * or maps.
+     */
     static String optionTakingSourceSetting(Map<String, Object> config, Connector connector) {
         if (!(config.get("options") instanceof Map<?, ?> options)) {
             return null;
         }
-        java.util.Set<String> taken = new java.util.HashSet<>(LOCATION_KEYS);
-        taken.addAll(io.kilnmark.server.sources.CommonSettings.keys());
+        java.util.Set<String> taken = new java.util.HashSet<>();
+        LOCATION_KEYS.forEach(k -> taken.add(plainKey(k)));
+        io.kilnmark.server.sources.CommonSettings.keys().forEach(k -> taken.add(plainKey(k)));
         if (connector != null) {
-            connector.settings().forEach(s -> taken.add(s.key().toLowerCase(Locale.ROOT)));
-            connector.addressKeys().forEach(k -> taken.add(k.toLowerCase(Locale.ROOT)));
-            connector.secretScope().forEach(k -> taken.add(k.toLowerCase(Locale.ROOT)));
+            connector.settings().forEach(s -> taken.add(plainKey(s.key())));
+            connector.addressKeys().forEach(k -> taken.add(plainKey(k)));
+            connector.secretScope().forEach(k -> taken.add(plainKey(k)));
         }
-        for (Object k : options.keySet()) {
-            String key = String.valueOf(k).strip().toLowerCase(Locale.ROOT).replace('-', '_');
-            if (taken.contains(key)) {
-                return String.valueOf(k);
+        for (Map.Entry<?, ?> e : options.entrySet()) {
+            if (taken.contains(plainKey(String.valueOf(e.getKey()))) || e.getValue() instanceof Map<?, ?>
+                || e.getValue() instanceof List<?>) {
+                return String.valueOf(e.getKey());
             }
         }
         return null;
+    }
+
+    /** A setting's name with case and separators removed: jdbcUrl, jdbc-url, JDBC_URL and jdbc url are jdbcurl. */
+    static String plainKey(String key) {
+        return key.strip().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
     }
 
     /** Why a target is not acceptable, or null: it must stay inside the source. */

@@ -79,9 +79,6 @@ public class PipelineService {
     @Inject
     QualityService quality;
 
-    /** Locks: one run writing each target at a time, and no cataloguing while a scan holds the source. */
-    @Inject
-    JobQueue jobs;
 
     @Inject
     public PipelineService(PipelineStore store, PipelineCompilerPort compiler, StepFactories steps, GraphRunner runner,
@@ -195,7 +192,9 @@ public class PipelineService {
     // ---- pipelines and versions ----
 
     public List<PipelineViews.PipelineSummary> list(Sights sights) {
-        return store.pipelines().stream().map(s -> new PipelineViews.PipelineSummary(s.pipeline().name(),
+        List<PipelineStore.Summary> all = store.pipelines();
+        prepare(all.stream().map(PipelineStore.Summary::lastRun).toList(), sights);
+        return all.stream().map(s -> new PipelineViews.PipelineSummary(s.pipeline().name(),
             s.pipeline().displayName(), s.pipeline().description(), s.pipeline().latestVersion(), s.valid(),
             s.pipeline().updatedBy(), s.pipeline().updatedAt(), summary(s.lastRun(), sights))).toList();
     }
@@ -362,7 +361,9 @@ public class PipelineService {
 
     public List<PipelineViews.RunSummary> runs(String name, int limit, Sights sights) {
         find(name);
-        return store.runs(name, Math.max(1, Math.min(limit, 200))).stream().map(r -> summary(r, sights)).toList();
+        List<PipelineStore.Run> runs = store.runs(name, Math.max(1, Math.min(limit, 200)));
+        prepare(runs, sights);
+        return runs.stream().map(r -> summary(r, sights)).toList();
     }
 
     public PipelineViews.RunDetail run(long id, Sights sights) {
@@ -383,7 +384,13 @@ public class PipelineService {
                     w.hasNonNull("rows") ? w.get("rows").asLong() : null, w.path("registered").asBoolean()));
             }
             result.path("read").forEach(n -> read.add(n.asText()));
-            result.path("notes").forEach(n -> notes.add(n.asText()));
+            for (JsonNode n : result.path("notes")) {
+                // A note's text is the server's own; its detail may quote the engine, so it is held back as
+                // the run's other messages are.
+                String text = n.isTextual() ? n.asText() : n.path("text").asText();
+                String detail = n.hasNonNull("detail") ? n.get("detail").asText() : null;
+                notes.add(detail == null ? text : withheld == null ? text + " (" + detail + ")" : text + ". " + withheld);
+            }
         }
         List<PipelineViews.LineageLink> lineage = store.lineageOfRun(id).stream()
             .map(l -> new PipelineViews.LineageLink(l.stepId(), l.inputUrn(), l.outputUrn())).toList();
@@ -399,6 +406,12 @@ public class PipelineService {
         }
         PipelineStore.Run r = store.requestCancel(id, by).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
             "No pipeline run " + id));
+        if (r.status().equals("running") && !store.jobActive(id)) {
+            // Its worker stopped without finishing it: nothing will notice the request, so finish it here,
+            // or the pipeline could never run again.
+            store.finishRun(id, "cancelled", "Cancelled by " + by + "; the worker running it had stopped", null);
+            r = store.run(id).orElse(r);
+        }
         LOG.infof("Run %d of pipeline %s cancelled by %s", id, r.pipeline(), by);
         return summary(r, null); // a cancel says who cancelled, nothing from the data
     }
@@ -432,32 +445,56 @@ public class PipelineService {
         }
     }
 
+    static final String FOR_STEWARDS = "Stewards can see why: the message may hold values from the data.";
+    static final String FOR_ADMINS = "Only admins can see why: the message may hold values of columns marked "
+        + "sensitive.";
+
     /**
-     * Why a failed run's messages are held back from this caller, or null when they are not. An
-     * engine's message may quote values from the rows (a value that would not convert, say): only
-     * roles that see data read it, and when the run read or wrote an asset with columns marked
-     * sensitive, only admins. Decided through the request's {@link Sights}, as every view of data
-     * values is; {@code sights} null is the server's own use.
+     * Why the run's messages from the engine are held back from this caller, or null when they are
+     * not: a failed run's error, its steps' errors and the details of its notes, whatever its status.
+     * An engine's message may quote values from the rows (a value that would not convert, say), so
+     * only roles that see data read them, and only admins when the run read or wrote an asset with
+     * columns marked sensitive. Decided through the request's {@link Sights}, as every view of data
+     * values is, on the assets the run recorded as it started; {@code sights} null is the server's
+     * own use.
      */
     private String withheld(PipelineStore.Run r, Sights sights) {
-        if (sights == null || !"failed".equals(r.status()) || r.result() == null) {
-            return null; // a run that never started running has no rows in its messages
+        if (sights == null) {
+            return null;
         }
         if (!sights.data()) {
-            return "Stewards can see why: the message may hold values from the data.";
+            return FOR_STEWARDS;
         }
         if (sights.mayUnmask()) {
             return null;
         }
-        JsonNode result = tree(r.result());
+        List<String> urns = assets(r);
+        sights.load(urns); // a no-op for assets already loaded by prepare()
+        return urns.stream().anyMatch(u -> !sights.marks(u).isEmpty()) ? FOR_ADMINS : null;
+    }
+
+    /** Loads the marks of every asset these runs touched in one query, before their views are made. */
+    private void prepare(List<PipelineStore.Run> runs, Sights sights) {
+        if (sights == null || !sights.data() || sights.mayUnmask()) {
+            return;
+        }
+        sights.load(runs.stream().filter(java.util.Objects::nonNull).flatMap(r -> assets(r).stream()).distinct()
+            .toList());
+    }
+
+    /** The assets a run reads and writes: as recorded when it started, else from its result. */
+    private List<String> assets(PipelineStore.Run r) {
         List<String> urns = new ArrayList<>();
+        JsonNode recorded = tree(r.assets());
+        if (recorded != null) {
+            recorded.forEach(n -> urns.add(n.asText()));
+        }
+        JsonNode result = tree(r.result());
         if (result != null) {
             result.path("read").forEach(n -> urns.add(n.asText()));
             result.path("written").forEach(n -> urns.add(n.path("urn").asText()));
         }
-        sights.load(urns);
-        return urns.stream().anyMatch(u -> !sights.marks(u).isEmpty())
-            ? "Only admins can see why: the message may hold values of columns marked sensitive." : null;
+        return urns.stream().filter(u -> u.startsWith("urn:kilnmark:")).distinct().toList();
     }
 
     private PipelineViews.RunSummary summary(PipelineStore.Run r, Sights sights) {
@@ -466,7 +503,8 @@ public class PipelineService {
         }
         JsonNode result = tree(r.result());
         Long rows = result != null && result.hasNonNull("rowsWritten") ? result.get("rowsWritten").asLong() : null;
-        String withheld = r.error() == null ? null : withheld(r, sights);
+        // Only a failed run's error can come from the engine; "Cancelled by ..." and the like are the server's.
+        String withheld = r.error() == null || !"failed".equals(r.status()) ? null : withheld(r, sights);
         return new PipelineViews.RunSummary(r.id(), r.pipeline(), r.version(), r.status(), r.requestedBy(),
             r.requestedAt(), r.startedAt(), r.finishedAt(), r.cancelRequested(),
             withheld == null ? r.error() : "The run failed. " + withheld, rows);
@@ -508,7 +546,7 @@ public class PipelineService {
     }
 
     /** Runs the pipeline run behind job {@code jobId}; called by a worker. */
-    public ScanService.Result execute(long jobId, BooleanSupplier shutdown) {
+    public ScanService.Result execute(long jobId, JobQueue.ScanLease lease, BooleanSupplier shutdown) {
         store.failOrphanedRuns();
         Optional<Long> runId = store.runForJob(jobId);
         if (runId.isEmpty()) {
@@ -530,8 +568,9 @@ public class PipelineService {
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Pipeline run " + id + " was cancelled");
         }
         RunContext context = new RunContext(run.pipeline(), id, run.requestedBy(), role(run.requestedRole()));
-        List<JobQueue.ScanLease> held = new ArrayList<>();
+        List<String> held = new ArrayList<>();
         PipelineCompilerPort.Compilation c = null;
+        boolean ran = false;
         try {
             PipelineStore.Version v = store.version(run.pipeline(), run.version()).orElse(null);
             if (v == null) {
@@ -552,18 +591,26 @@ public class PipelineService {
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
             List<PipelineExecution.WriteTarget> writes = PipelineExecution.writes(c);
-            // One run writes a table or file at a time: wait a while for another run writing it.
+            java.util.Set<String> assets = new java.util.TreeSet<>(context.reads());
+            assets.addAll(PipelineExecution.reads(c).values());
+            writes.forEach(w -> assets.add(w.urn()));
+            store.setAssets(id, json.writeValueAsString(assets));
+            // One run writes a table or file at a time: wait a while for another run writing it. The
+            // locks are taken on the job's own connection, so a run never holds more than one.
+            BooleanSupplier stop = () -> store.cancelRequested(id) || shutdown.getAsBoolean();
             for (String urn : writes.stream().map(PipelineExecution.WriteTarget::urn).distinct().sorted().toList()) {
-                Optional<JobQueue.ScanLease> lease = JobQueue.waitFor(() -> jobs.lockTarget(urn),
-                    config.pipelines().waitForTarget());
-                if (lease.isEmpty()) {
+                if (!JobQueue.waitFor(() -> lease.tryLockTarget(urn), config.pipelines().waitForTarget(), stop)) {
+                    if (stopped(id, shutdown, c.graph())) {
+                        return new ScanService.Result(ScanService.Outcome.FINISHED, null);
+                    }
                     PipelineExecution.closeSteps(c.graph());
                     store.finishRun(id, "failed", "Another pipeline run is writing " + urn + ". Run this one again "
                         + "when it has finished.", null);
                     return new ScanService.Result(ScanService.Outcome.FINISHED, null);
                 }
-                held.add(lease.get());
+                held.add(urn);
             }
+            ran = true;
             PipelineGraph graphToRun = PipelineExecution.withProfiles(c.graph(), writes, this::profileSettings);
             PipelineExecution.Outcome o = execution.run(runner, graphToRun, writes, context,
                 () -> store.cancelRequested(id), shutdown);
@@ -581,10 +628,11 @@ public class PipelineService {
                 if (o.status().equals("succeeded")) {
                     String profileFailure = o.profileFailures().get(w.step());
                     if (profileFailure != null) {
-                        notes.add(w.step() + ": what it wrote could not be profiled (" + context.scrub(profileFailure)
-                            + "); scan " + w.source() + " to profile " + w.target());
+                        note(notes, w.step() + ": what it wrote could not be profiled; scan " + w.source() + " to profile "
+                            + w.target(), context.scrub(profileFailure));
                     }
-                    registered = register(w, rows, o.events(), profileFailure == null, c, context, notes);
+                    registered = register(w, rows, o.events(), profileFailure == null, c, context, notes, lease,
+                        shutdown);
                 }
                 ObjectNode n = written.addObject();
                 n.put("step", w.step());
@@ -605,17 +653,26 @@ public class PipelineService {
             LOG.infof("Run %d of pipeline %s: %s", id, run.pipeline(), o.status());
         } catch (InterruptedException e) {
             Thread.interrupted(); // cleared so the run's record can be written
-            if (c != null && c.graph() != null) {
+            if (!ran && c != null && c.graph() != null) {
                 PipelineExecution.closeSteps(c.graph());
             }
             store.finishRun(id, "failed", "The worker running this pipeline was stopped before it started writing. "
                 + "Run it again.", null);
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException e) {
             // The exception's own text may hold a source's secret: log it scrubbed, without the trace.
             LOG.errorf("Run %d of pipeline %s failed: %s", id, run.pipeline(), context.scrub(String.valueOf(e)));
+            if (!ran && c != null && c.graph() != null) {
+                PipelineExecution.closeSteps(c.graph()); // created, never handed to the runner
+            }
             store.finishRun(id, "failed", context.scrub("The run failed: " + e.getMessage()), null);
         } finally {
-            held.forEach(JobQueue.ScanLease::close);
+            for (String urn : held) {
+                try {
+                    lease.unlockTarget(urn);
+                } catch (RuntimeException e) {
+                    LOG.debugf("Could not give back the write lock of %s; closing the job's lease does", urn);
+                }
+            }
         }
         return new ScanService.Result(ScanService.Outcome.FINISHED, null);
     }
@@ -668,39 +725,54 @@ public class PipelineService {
      * upstream. Never throws: the run has already succeeded, so problems become notes.
      */
     private boolean register(PipelineExecution.WriteTarget w, Long rows, List<MetadataEvent> events, boolean profiled,
-                             PipelineCompilerPort.Compilation c, RunContext context, ArrayNode notes) {
+                             PipelineCompilerPort.Compilation c, RunContext context, ArrayNode notes,
+                             JobQueue.ScanLease lease, BooleanSupplier shutdown) {
         try {
             Records.Source s = graph.source(w.source()).orElse(null);
             if (s == null) {
-                notes.add(w.step() + ": source " + w.source() + " no longer exists, so what it wrote is not catalogued");
+                note(notes, w.step() + ": source " + w.source() + " no longer exists, so what it wrote is not catalogued",
+                    null);
                 return false;
             }
             store.saveLineage(context.pipeline(), context.runId(), w.step(), w.inputs(), w.urn());
             // A scan ending now would mark an asset it did not see as removed: catalogue under the
             // source's scan lock, or leave it to the next scan.
-            Optional<JobQueue.ScanLease> lock;
+            boolean locked;
             try {
-                lock = JobQueue.waitFor(() -> jobs.lockSource(s.id()), config.pipelines().waitForTarget());
+                locked = JobQueue.waitFor(() -> lease.tryLockSource(s.id()), config.pipelines().waitForTarget(),
+                    shutdown);
             } catch (InterruptedException e) {
                 Thread.interrupted();
-                lock = Optional.empty();
+                locked = false;
             }
-            if (lock.isEmpty()) {
-                notes.add(w.step() + ": a scan of " + w.source() + " was running, so " + w.target() + " is not in the "
-                    + "catalogue yet. Scan the source to catalogue the written table or file");
+            if (!locked) {
+                note(notes, w.step() + ": a scan of " + w.source() + " was running, so " + w.target() + " is not in "
+                    + "the catalogue yet. Scan the source to catalogue the written table or file", null);
                 return false;
             }
             try {
                 catalogue(s, w, rows, events, profiled, c, context, notes);
             } finally {
-                lock.get().close();
+                lease.unlockSource(s.id());
             }
             return true;
         } catch (RuntimeException e) {
             LOG.warnf("Could not catalogue what step %s of pipeline %s wrote: %s", w.step(), context.pipeline(),
                 context.scrub(String.valueOf(e)));
-            notes.add(w.step() + ": what it wrote could not be catalogued: " + context.scrub(e.getMessage()));
+            note(notes, w.step() + ": what it wrote could not be catalogued", context.scrub(e.getMessage()));
             return false;
+        }
+    }
+
+    /**
+     * A note on the run: {@code text} is the server's own words, shown to everyone; {@code detail},
+     * an engine's or database's message, is shown only to those who may read the run's messages.
+     */
+    private static void note(ArrayNode notes, String text, String detail) {
+        ObjectNode n = notes.addObject();
+        n.put("text", text);
+        if (detail != null) {
+            n.put("detail", detail);
         }
     }
 
@@ -749,13 +821,13 @@ public class PipelineService {
                     quality.observe(e, recordRun, s);
                 }
                 if (failed > 0) {
-                    notes.add(w.step() + ": " + failed + " column profiles could not be stored; scan " + w.source()
-                        + " to profile " + w.target());
+                    note(notes, w.step() + ": " + failed + " column profiles could not be stored; scan " + w.source()
+                        + " to profile " + w.target(), null);
                 }
                 quality.afterScan(s, recordRun);
             } else {
-                notes.add(w.step() + ": the " + w.mode() + " added to " + w.target() + ", so its profile is left as it "
-                    + "was; scan " + w.source() + " to profile the whole of it");
+                note(notes, w.step() + ": the " + w.mode() + " added to " + w.target() + ", so its profile is left as "
+                    + "it was; scan " + w.source() + " to profile the whole of it", null);
             }
         }
     }

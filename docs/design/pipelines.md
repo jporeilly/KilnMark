@@ -261,9 +261,12 @@ Writing:
   scans of the sources they read; recovery leaves a job alone while its lock is held, and marks
   the run failed when the job is given up.
 - **One writer per target.** Before its steps run, a run takes an advisory lock for each asset it
-  writes (by URN), whatever the mode, and holds them until what it wrote is catalogued. A run
+  writes (a 64-bit key from the URN's SHA-256), whatever the mode, and holds them until what it
+  wrote is catalogued. These locks, and the written source's scan lock taken for cataloguing, are
+  taken on the connection the job's own lease already holds, so a run uses one pooled connection
+  for its locks however many targets it writes; closing the lease releases them all. A run
   finding a target locked waits up to `kilnmark.pipelines.wait-for-target` (30 seconds) and then
-  fails plainly, naming the target, before writing anything.
+  fails plainly, naming the target, before writing anything; a cancel or shutdown ends the wait.
 - **On the worker.** The worker compiles that exact version inside a run context naming who asked
   and their role. The server's `read` and `write` step factories resolve saved sources, decrypt
   their secrets and re-check the allowed hosts only then; `write` also re-checks `allow_writing`
@@ -286,12 +289,17 @@ Writing:
   sampling, AI rule and include and exclude patterns). A write's `options` may not name a setting
   of the source or anything that says where or as whom to connect (url, host, bucket, path,
   credentials and the like).
-- **Messages from the data.** A failed run's messages may quote values from the rows. Viewers see
-  that a step failed, not why; when the run read or wrote an asset with columns marked sensitive,
-  only admins see why (decided through the request's `Sights`, as other views of data values).
+- **Messages from the data.** A failed run's error, its steps' errors and the details of its notes
+  (whatever the run's status) may quote values from the rows. Viewers see that a step failed, or a
+  note's own words, not the detail; when the run read or wrote an asset with columns marked
+  sensitive, only admins see the detail. This is decided through the request's `Sights`, as other
+  views of data values are, on the assets the run recorded as it started (`pipeline_run.assets`,
+  with read assets under the URNs their read steps catalogue them by).
 - **Cancelling.** A queued run is cancelled at once and its job taken off the queue; a running one
   is interrupted within about half a second, and one asked to stop while its steps are being set
-  up stops before they run. A cancel asked for too late to stop a run is cleared when it ends. A worker shutting down marks its runs failed rather
+  up stops before they run. A cancel asked for too late to stop a run is cleared when it ends. A
+  run left running by a worker that stopped is finished by a cancel, and by workers' recovery once
+  its job is done or failed, so it never blocks its pipeline. A worker shutting down marks its runs failed rather
   than queueing them again.
 
 ## 6. API and UI in step 1

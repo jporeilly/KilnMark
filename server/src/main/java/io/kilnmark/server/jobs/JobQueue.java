@@ -38,8 +38,7 @@ public class JobQueue {
     static final int SOURCE_LOCK_CLASS = 0x4B53;
     /** Advisory lock class for a running pipeline job (objid is the job id): held by the worker running it. */
     static final int PIPELINE_JOB_LOCK_CLASS = 0x4B50;
-    /** Advisory lock class for what a pipeline writes (objid is a hash of the written asset's URN). */
-    static final int PIPELINE_TARGET_LOCK_CLASS = 0x4B57;
+
     private static final long OID_RANGE = 1L << 32;
 
     /** A claimed job. {@code attempts} counts this one. */
@@ -161,27 +160,34 @@ public class JobQueue {
     }
 
     /**
-     * Takes the lock of one written asset (by its URN) so two pipeline runs never write it at once.
-     * Empty if another run holds it.
-     */
-    public Optional<ScanLease> lockTarget(String urn) {
-        return lock(PIPELINE_TARGET_LOCK_CLASS, urn.hashCode(), "Cannot lock " + urn + " for writing: ");
-    }
-
-    /**
-     * Tries {@code take} until it gives a lease or {@code wait} has passed; empty then.
+     * Tries {@code take} until it is true, {@code wait} has passed or {@code stop} turns true,
+     * polling a few times a second.
      *
+     * @return whether {@code take} succeeded
      * @throws InterruptedException if interrupted while waiting
      */
-    public static Optional<ScanLease> waitFor(java.util.function.Supplier<Optional<ScanLease>> take, Duration wait)
-        throws InterruptedException {
+    public static boolean waitFor(java.util.function.BooleanSupplier take, Duration wait,
+                                  java.util.function.BooleanSupplier stop) throws InterruptedException {
         long deadline = System.nanoTime() + wait.toNanos();
         while (true) {
-            Optional<ScanLease> lease = take.get();
-            if (lease.isPresent() || System.nanoTime() >= deadline) {
-                return lease;
+            if (take.getAsBoolean()) {
+                return true;
+            }
+            if (System.nanoTime() >= deadline || stop.getAsBoolean()) {
+                return false;
             }
             Thread.sleep(Math.min(250, Math.max(1, (deadline - System.nanoTime()) / 1_000_000)));
+        }
+    }
+
+    /** A 64-bit key for a written asset's advisory lock: the first eight bytes of its URN's SHA-256. */
+    public static long targetKey(String urn) {
+        try {
+            byte[] h = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(urn.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.nio.ByteBuffer.wrap(h).getLong();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is missing from this Java", e);
         }
     }
 
@@ -241,6 +247,57 @@ public class JobQueue {
             return backendPid;
         }
 
+        /**
+         * Takes the write lock of one asset (single-key advisory lock, {@link #targetKey}) on this
+         * lease's own connection, so a run holds all its locks on the one connection its job
+         * already has. False if another session holds it.
+         */
+        public synchronized boolean tryLockTarget(String urn) {
+            return tryLock("SELECT pg_try_advisory_lock(?)", ps -> ps.setLong(1, targetKey(urn)));
+        }
+
+        /** Gives back an asset's write lock taken with {@link #tryLockTarget}. */
+        public synchronized void unlockTarget(String urn) {
+            tryLock("SELECT pg_advisory_unlock(?)", ps -> ps.setLong(1, targetKey(urn)));
+        }
+
+        /**
+         * Takes a source's scan lock on this lease's connection, so no scan of the source runs
+         * meanwhile (scans take the same lock). False if a scan holds it.
+         */
+        public synchronized boolean tryLockSource(long source) {
+            return tryLock("SELECT pg_try_advisory_lock(?, ?)", ps -> {
+                ps.setInt(1, SOURCE_LOCK_CLASS);
+                ps.setInt(2, (int) source);
+            });
+        }
+
+        /** Gives back a source's scan lock taken with {@link #tryLockSource}. */
+        public synchronized void unlockSource(long source) {
+            tryLock("SELECT pg_advisory_unlock(?, ?)", ps -> {
+                ps.setInt(1, SOURCE_LOCK_CLASS);
+                ps.setInt(2, (int) source);
+            });
+        }
+
+        private interface Binder {
+            void bind(PreparedStatement ps) throws SQLException;
+        }
+
+        private boolean tryLock(String sql, Binder binder) {
+            if (closed) {
+                return false;
+            }
+            try (PreparedStatement ps = c.prepareStatement(sql)) {
+                binder.bind(ps);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() && rs.getBoolean(1);
+                }
+            } catch (SQLException e) {
+                throw new Db.DbException("Cannot take or give back a lock: " + e.getMessage(), e);
+            }
+        }
+
         /** Refreshes the job's heartbeat. False if the job is no longer this worker's, or the lock was lost. */
         public synchronized boolean beat(long jobId, String workerId) {
             if (closed) {
@@ -263,9 +320,9 @@ public class JobQueue {
                 return;
             }
             closed = true;
-            try (c; PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_unlock(?, ?)")) {
-                ps.setInt(1, lockClass);
-                ps.setInt(2, (int) sourceId);
+            // Every advisory lock this session took (a pipeline's target and source locks too), so the
+            // connection goes back to the pool holding none.
+            try (c; PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_unlock_all()")) {
                 ps.execute();
             } catch (SQLException e) {
                 LOG.debugf(e, "Releasing source %d's scan lock; a closed connection releases it anyway", sourceId);

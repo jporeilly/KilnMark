@@ -22,6 +22,7 @@ public final class RunContext {
     private final String requestedBy;
     private final AccessRole role;
     private final Set<String> secrets = Collections.synchronizedSet(new LinkedHashSet<>());
+    private final Set<String> reads = Collections.synchronizedSet(new LinkedHashSet<>());
 
     public RunContext(String pipeline, long runId, String requestedBy, AccessRole role) {
         this.pipeline = pipeline;
@@ -60,6 +61,20 @@ public final class RunContext {
     void secret(String secret) {
         if (secret != null && secret.length() >= 3) {
             secrets.add(secret);
+        }
+    }
+
+    /** Notes an asset a read step reads, under the URN the catalogue records it by. */
+    void read(String urn) {
+        if (urn != null) {
+            reads.add(urn);
+        }
+    }
+
+    /** The assets the run's read steps read, as catalogued. */
+    public Set<String> reads() {
+        synchronized (reads) {
+            return Set.copyOf(reads);
         }
     }
 

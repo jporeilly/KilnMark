@@ -47,7 +47,8 @@ CREATE TABLE pipeline_run (
     finished_at       timestamptz,
     cancel_requested  boolean NOT NULL DEFAULT false,
     error             text,
-    result            jsonb,                    -- {rowsWritten, written: [{step, urn, rows}], read: [urn]}
+    result            jsonb,                    -- {rowsWritten, written: [{step, urn, rows}], read: [urn], notes}
+    assets            jsonb NOT NULL DEFAULT '[]', -- every asset URN the run reads or writes, as catalogued
     FOREIGN KEY (pipeline, version) REFERENCES pipeline_version (pipeline, n) ON DELETE CASCADE
 );
 CREATE INDEX pipeline_run_pipeline_idx ON pipeline_run (pipeline, id DESC);

@@ -5,6 +5,15 @@ details.
 
 ## Unreleased
 
+### What's new
+
+- **Pipelines.** Build pipelines that read from your sources, change the rows and write them to a
+  table or file, under **Pipelines**. The YAML is checked as you type, every saved version is
+  kept, and each run shows what every step did and what was written.
+- **What pipelines write joins the catalogue,** with its columns, its profile and where it came
+  from, so the next pipeline starts from what is known.
+- **Sources stay read-only** until an admin turns on **Allow writing** for one.
+
 ### Details
 
 - **Pipelines run as graphs (engine, ADR 0022):** `KilnGraphRunner` runs a pipeline graph with

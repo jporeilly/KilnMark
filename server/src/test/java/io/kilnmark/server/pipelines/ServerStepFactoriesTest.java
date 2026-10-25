@@ -212,12 +212,17 @@ class ServerStepFactoriesTest {
     void writeOptionsCannotSayWhereToWrite() {
         assertEquals(List.of(), write.check(Map.of("source", "warehouse", "path", "out/x.csv", "options",
             Map.of("delimiter", ";"))));
-        for (String key : List.of("rows", "host", "url", "Bucket", "access-key-id", "allow_writing")) {
+        for (String key : List.of("rows", "host", "url", "Bucket", "access-key-id", "allow_writing", "jdbcUrl",
+            "accessKeyId", "SECRET_ACCESS_KEY")) {
             List<String> p = write.check(Map.of("source", "warehouse", "path", "out/x.csv", "options",
                 Map.of(key, "x")));
             assertEquals(1, p.size(), key + ": " + p);
             assertTrue(p.get(0).startsWith("options: '" + key + "' says where or as whom to write"), p.get(0));
         }
+        List<String> nested = write.check(Map.of("source", "warehouse", "path", "out/x.csv", "options",
+            Map.of("writer", Map.of("url", "jdbc:postgresql://elsewhere/db"))));
+        assertEquals(1, nested.size(), nested.toString());
+        assertTrue(nested.get(0).contains("holds a list or map"), nested.get(0));
         RunContext ctx = run(AccessRole.ADMIN);
         IllegalStateException e = assertThrows(IllegalStateException.class, () -> ctx.run(() -> {
             try {

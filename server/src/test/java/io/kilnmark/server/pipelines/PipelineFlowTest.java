@@ -370,6 +370,70 @@ class PipelineFlowTest {
 
     @Test
     @Order(10)
+    void messagesFromTheDataGoThroughSights() throws Exception {
+        String admin = Tokens.ADMIN;
+        // The pipeline now fails at its write (the previous test); mark a column it reads sensitive.
+        as(steward).body(Map.of("field", "name", "sensitive", true)).queryParam("urn", READ_URN)
+            .put("/api/v1/quality/asset/sensitive").then().statusCode(204);
+        try {
+            long failed = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
+                .jsonPath().getLong("id");
+            waitForRun(failed, "failed");
+            for (String path : List.of("/api/v1/pipeline-runs/" + failed)) {
+                JsonPath v = as(viewer).get(path).then().statusCode(200).extract().jsonPath();
+                assertEquals("The run failed. " + PipelineService.FOR_STEWARDS, v.getString("run.error"));
+                assertEquals("This step failed. " + PipelineService.FOR_STEWARDS,
+                    v.getString("steps.find { it.step == 'out' }.error"));
+                JsonPath st = as(steward).get(path).then().statusCode(200).extract().jsonPath();
+                assertEquals("The run failed. " + PipelineService.FOR_ADMINS, st.getString("run.error"));
+                assertEquals("This step failed. " + PipelineService.FOR_ADMINS,
+                    st.getString("steps.find { it.step == 'out' }.error"));
+                JsonPath ad = as(admin).get(path).then().statusCode(200).extract().jsonPath();
+                assertTrue(ad.getString("run.error").contains("refused the rows"), ad.prettify());
+                assertFalse(ad.prettify().contains(OUT_SECRET), "the secret stays out, even for admins");
+            }
+            as(viewer).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
+                .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_STEWARDS));
+            as(steward).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
+                .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_ADMINS));
+            as(admin).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
+                .body("[0].error", containsString("refused the rows"));
+            as(viewer).get("/api/v1/pipelines").then().statusCode(200)
+                .body("find { it.name == 'people-copy' }.lastRun.error",
+                    equalTo("The run failed. " + PipelineService.FOR_STEWARDS));
+            as(steward).get("/api/v1/pipelines").then().statusCode(200)
+                .body("find { it.name == 'people-copy' }.lastRun.error",
+                    equalTo("The run failed. " + PipelineService.FOR_ADMINS));
+
+            // A run that succeeds with a note quoting the engine: the note's detail is held back alike.
+            as(steward).body(Map.of("yaml", YAML, "message", "Writes again")).put("/api/v1/pipelines/people-copy")
+                .then().statusCode(200);
+            HoldingGraphRunner.breakProfiles = true;
+            long noted;
+            try {
+                noted = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
+                    .jsonPath().getLong("id");
+                waitForRun(noted, "succeeded");
+            } finally {
+                HoldingGraphRunner.breakProfiles = false;
+            }
+            String path = "/api/v1/pipeline-runs/" + noted;
+            String note = "out: what it wrote could not be profiled; scan mem-out to profile lab.people_copy";
+            as(viewer).get(path).then().statusCode(200)
+                .body("notes", hasItems(note + ". " + PipelineService.FOR_STEWARDS)).body("run.error",
+                    org.hamcrest.Matchers.nullValue());
+            as(steward).get(path).then().statusCode(200).body("notes", hasItems(note + ". "
+                + PipelineService.FOR_ADMINS));
+            as(admin).get(path).then().statusCode(200).body("notes", hasItems(note
+                + " (cannot profile a column of maps (test))"));
+        } finally {
+            as(admin).body(Map.of("field", "name", "sensitive", false)).queryParam("urn", READ_URN)
+                .put("/api/v1/quality/asset/sensitive").then().statusCode(204);
+        }
+    }
+
+    @Test
+    @Order(11)
     void deletingAPipelineKeepsItsLineage() {
         as(viewer).delete("/api/v1/pipelines/people-copy").then().statusCode(403);
         as(steward).delete("/api/v1/pipelines/people-copy").then().statusCode(204);

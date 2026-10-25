@@ -33,10 +33,10 @@ public class PipelineStore {
                           boolean valid, String problems) {
     }
 
-    /** {@code result} is JSON or null. */
+    /** {@code result} is JSON or null; {@code assets} a JSON array of the URNs the run reads and writes. */
     public record Run(long id, String pipeline, int version, String status, String requestedBy, String requestedRole,
                       Instant requestedAt, Instant startedAt, Instant finishedAt, boolean cancelRequested, String error,
-                      String result) {
+                      String result, String assets) {
 
         public boolean finished() {
             return !status.equals("queued") && !status.equals("running");
@@ -288,13 +288,15 @@ public class PipelineStore {
     // ---- runs ----
 
     private static final String RUN_COLUMNS = "r.id, r.pipeline, r.version, r.status, r.requested_by, "
-        + "r.requested_role, r.requested_at, r.started_at, r.finished_at, r.cancel_requested, r.error, r.result";
+        + "r.requested_role, r.requested_at, r.started_at, r.finished_at, r.cancel_requested, r.error, r.result, "
+        + "r.assets";
 
     private static Run run(ResultSet rs, int from) throws SQLException {
         int i = from;
         return new Run(rs.getLong(i), rs.getString(i + 1), rs.getInt(i + 2), rs.getString(i + 3), rs.getString(i + 4),
             rs.getString(i + 5), Db.instant(rs.getTimestamp(i + 6)), Db.instant(rs.getTimestamp(i + 7)),
-            Db.instant(rs.getTimestamp(i + 8)), rs.getBoolean(i + 9), rs.getString(i + 10), rs.getString(i + 11));
+            Db.instant(rs.getTimestamp(i + 8)), rs.getBoolean(i + 9), rs.getString(i + 10), rs.getString(i + 11),
+            rs.getString(i + 12));
     }
 
     /**
@@ -462,6 +464,35 @@ public class PipelineStore {
         });
     }
 
+    /** Records the assets a run reads and writes, as soon as its steps are known (for who may read its messages). */
+    public void setAssets(long id, String assets) {
+        db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.pipeline_run SET assets = ?::jsonb "
+                + "WHERE id = ?")) {
+                ps.setString(1, assets);
+                ps.setLong(2, id);
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /**
+     * Whether the run's job is still being run by a worker (queued or running); false when the job
+     * is done, failed or gone, so a run still marked running has been left behind.
+     */
+    public boolean jobActive(long runId) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.job WHERE kind = '" + JOB_KIND
+                + "' AND status IN ('queued', 'running') AND (payload ->> 'pipelineRunId')::bigint = ?")) {
+                ps.setLong(1, runId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next();
+                }
+            }
+        });
+    }
+
     /** Whether someone has asked the run to stop. */
     public boolean cancelRequested(long id) {
         return db.tx(c -> {
@@ -486,7 +517,7 @@ public class PipelineStore {
                     error = 'The worker running this pipeline stopped before it finished. Check the workers, then run '
                         || 'the pipeline again; check what its writes had written first.'
                 FROM kilnmark.job j
-                WHERE j.kind = 'pipeline' AND j.status = 'failed'
+                WHERE j.kind = 'pipeline' AND j.status IN ('failed', 'done')
                   AND (j.payload ->> 'pipelineRunId')::bigint = r.id AND r.status IN ('queued', 'running')""")) {
                 return ps.executeUpdate();
             }

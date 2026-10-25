@@ -162,6 +162,7 @@ public final class ReadStepFactory implements StepFactory {
             throw new StepException(path + " in " + source + " cannot be read as rows");
         }
         String urn = PipelineSources.urn(source, asset.path());
+        run.read(urn);
         StepSpec spec;
         try {
             spec = r.connector().reader(r.config(), asset, new Connector.ReadOptions(urn, Math.max(0, rowLimit(config)),

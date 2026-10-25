@@ -215,7 +215,8 @@ public class JobWorker {
         } catch (RuntimeException e) {
             LOG.errorf(e, "Job %d (run %d) failed", job.id(), job.runId());
             if (lost.remove(job.id()) == null) {
-                queue.retryOrFail(job, String.valueOf(e.getMessage()));
+                queue.retryOrFail(job, "The pipeline job failed (" + e.getClass().getSimpleName() + "); the run "
+                    + "says why");
             }
         } finally {
             running.remove(job.id());
@@ -244,7 +245,7 @@ public class JobWorker {
         AtomicBoolean cancelled = new AtomicBoolean();
         running.put(job.id(), new Execution(job, lease.get(), cancelled));
         try {
-            ScanService.Result result = pipelines.execute(job.id(), cancelled::get);
+            ScanService.Result result = pipelines.execute(job.id(), lease.get(), cancelled::get);
             if (lost.remove(job.id()) != null) {
                 LOG.warnf("Pipeline job %d lost its lock while running", job.id());
             } else {
@@ -254,7 +255,8 @@ public class JobWorker {
             // Not the exception's text or trace: a source's secret could be in it.
             LOG.errorf("Pipeline job %d failed with %s", job.id(), e.getClass().getName());
             if (lost.remove(job.id()) == null) {
-                queue.retryOrFail(job, String.valueOf(e.getMessage()));
+                queue.retryOrFail(job, "The pipeline job failed (" + e.getClass().getSimpleName() + "); the run "
+                    + "says why");
             }
         } finally {
             running.remove(job.id());
