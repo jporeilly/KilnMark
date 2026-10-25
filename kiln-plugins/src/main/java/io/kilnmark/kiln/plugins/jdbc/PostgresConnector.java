@@ -63,6 +63,11 @@ public final class PostgresConnector extends JdbcConnector {
         return SqlDialect.POSTGRESQL;
     }
 
+    @Override
+    WriteSql writeSql() {
+        return WriteSql.POSTGRESQL;
+    }
+
     /** The planner's estimate (-1 before the table was first analysed, so it is then read in full). */
     @Override
     protected String estimateRowsSql(io.kilnmark.kiln.connect.AssetInfo asset) {

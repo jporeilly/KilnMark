@@ -295,7 +295,8 @@ public abstract class JdbcConnector implements Connector {
     public List<Setting> settings() {
         return List.of(
             new Setting("url", "JDBC URL", true, "For example " + exampleUrl(), false),
-            new Setting("username", "User name", false, "A read-only account is enough", false),
+            new Setting("username", "User name", false, "A read-only account is enough for scanning; "
+                + "pipelines that write to this source need a login with write rights", false),
             new Setting("schemas", "Schemas", false, "Leave empty to scan every schema, or choose them from a list", true));
     }
 
@@ -515,7 +516,25 @@ public abstract class JdbcConnector implements Connector {
 
     /** Connects with the source's user name and secret and, for checks, the driver's own timeouts. */
     private Connection connect(SourceConfig source, Duration timeout) throws SQLException {
-        Properties p = timeout == null ? new Properties() : timeouts(timeout);
+        return connectWith(source, timeout == null ? new Properties() : timeouts(timeout));
+    }
+
+    /**
+     * A connection for a pipeline's write step, with the source's user name and secret and the
+     * driver properties writing needs ({@link #writeProperties}); the caller closes it.
+     *
+     * @param bulk whether the step loads a table it created itself, which some drivers can load faster
+     */
+    Connection connectForWrite(SourceConfig source, boolean bulk) throws SQLException {
+        return connectWith(source, writeProperties(bulk));
+    }
+
+    /** Driver properties for writing; none by default. */
+    protected Properties writeProperties(boolean bulk) {
+        return new Properties();
+    }
+
+    private Connection connectWith(SourceConfig source, Properties p) throws SQLException {
         if (source.setting("username") != null) {
             p.setProperty("user", source.setting("username"));
         }
@@ -588,6 +607,122 @@ public abstract class JdbcConnector implements Connector {
     }
 
     // ---- end of relationships ----
+
+    // ---- Writing (docs/design/pipelines.md, section 4; docs/guide/writing-data.md) ----
+
+    /** How this database is written to, or null when Kilnmark cannot write to it (the default). */
+    WriteSql writeSql() {
+        return null;
+    }
+
+    /**
+     * The table as the catalogue names it ({@code schema.table}): on databases whose names ignore
+     * case (SQL Server), an existing table's own spelling, so {@code dbo.Customers} in a pipeline is
+     * recorded as the {@code dbo.customers} a scan found; otherwise the target as written.
+     */
+    @Override
+    public String writtenAssetPath(SourceConfig source, WriteOptions write) throws ConnectorException {
+        WriteSql sql = writeSql();
+        TableName table = TableName.parse(write.target());
+        WriteSql.Sql real = sql == null ? null : sql.realName(table);
+        if (real == null) {
+            return table.toString();
+        }
+        checkValid(source);
+        try (Connection c = connect(source); java.sql.PreparedStatement ps = c.prepareStatement(real.text())) {
+            for (int i = 0; i < real.params().size(); i++) {
+                ps.setString(i + 1, real.params().get(i));
+            }
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) + "." + rs.getString(2) : table.toString();
+            }
+        } catch (SQLException e) {
+            throw new ConnectorException("Cannot look up " + table + " in " + source.name() + ": " + explain(e), e);
+        }
+    }
+
+    /** The settings a write step to this database takes; see {@link #writer}. */
+    @Override
+    public List<io.kilnmark.kiln.SettingSpec> writeOptions() {
+        if (writeSql() == null) {
+            return List.of();
+        }
+        return io.kilnmark.kiln.plugins.write.WriteSettings.withProfiling(writeOptionsOfOwn().toArray(
+            io.kilnmark.kiln.SettingSpec[]::new));
+    }
+
+    /** This database's write settings, before the profiling ones every writer takes. */
+    List<io.kilnmark.kiln.SettingSpec> writeOptionsOfOwn() {
+        return List.of(
+            io.kilnmark.kiln.plugins.write.WriteSettings.number("commit_every", "Commit every N rows", 0,
+                "0 (the default) writes in one transaction; otherwise commit after each batch reaching N rows. A "
+                    + "failure then keeps the rows already committed"),
+            io.kilnmark.kiln.plugins.write.WriteSettings.number("batch_size", "Rows per batch", 1000,
+                "Rows sent to the database at a time (1,000; 5,000 for SQL Server inserts)"),
+            io.kilnmark.kiln.plugins.write.WriteSettings.number("text_length", "Text column length", 0,
+                "For create and replace: the length of text columns; 0 (the default) for unlimited"),
+            io.kilnmark.kiln.plugins.write.WriteSettings.flag("keep_grants", "Keep grants", true,
+                "For replace: repeat the old table's grants on the new one"),
+            io.kilnmark.kiln.plugins.write.WriteSettings.flag("allow_dropping_row_security",
+                "Allow dropping row-level security", false,
+                "For replace: replace a table with row-level security, whose policies the new table will not have"),
+            io.kilnmark.kiln.plugins.write.WriteSettings.number("lock_timeout", "Lock timeout (seconds)", 30,
+                "For replace: how long the swap waits for others using the old table"));
+    }
+
+    /** Discover and read, and write where this database can be written to. */
+    @Override
+    public Set<Capability> capabilities() {
+        return writeSql() == null ? Set.of(Capability.DISCOVER, Capability.READ)
+            : Set.of(Capability.DISCOVER, Capability.READ, Capability.WRITE);
+    }
+
+    /**
+     * A step writing to the table {@code write.target()} ({@code schema.table}) in mode
+     * {@code create}, {@code append}, {@code replace} or {@code upsert} (with {@code key}); see
+     * {@link JdbcTableOutput}. Further settings: {@code commit_every} (rows per transaction; a
+     * failure then leaves the rows already committed), {@code batch_size}, {@code text_length}
+     * (the length of text columns a create or replace makes; unlimited by default),
+     * {@code keep_grants} (replace; default true), {@code bulk_copy} (SQL Server; default true),
+     * {@code profile_output} and {@code keep_values}; {@link #writeOptions()} lists them.
+     */
+    @Override
+    public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+        WriteSql sql = writeSql();
+        if (sql == null) {
+            throw new ConnectorException(displayName() + " sources cannot be written to yet");
+        }
+        checkValid(source);
+        String mode = write.mode() == null ? "" : write.mode().strip().toLowerCase(Locale.ROOT);
+        if (!JdbcTableOutput.MODES.contains(mode)) {
+            throw new ConnectorException("mode: " + String.join(", ", JdbcTableOutput.MODES.subList(0, 3)) + " or "
+                + "upsert" + (mode.isEmpty() ? "" : ", not '" + write.mode() + "'"));
+        }
+        if (write.format() != null && !write.format().isBlank()) {
+            throw new ConnectorException("format: only files have a format; a table's columns decide its types");
+        }
+        List<String> key = write.key();
+        if (mode.equals("upsert")) {
+            if (key.isEmpty()) {
+                throw new ConnectorException("key: upsert needs the key columns that identify a row, for example "
+                    + "[customer_id]");
+            }
+            if (new java.util.HashSet<>(key).size() != key.size() || key.stream().anyMatch(k -> k == null || k.isBlank())) {
+                throw new ConnectorException("key: each key column once, by name");
+            }
+        } else if (!key.isEmpty()) {
+            throw new ConnectorException("key: only mode upsert takes key columns");
+        }
+        TableName table = TableName.parse(write.target());
+        for (String part : List.of(table.schema(), table.table())) {
+            String problem = sql.identifierProblem(part);
+            if (problem != null) {
+                throw new ConnectorException("table: " + problem);
+            }
+        }
+        return new JdbcTableOutput(this, sql, source, table, mode, key,
+            new io.kilnmark.kiln.plugins.write.WriteSettings(write.options()), write.assetUrn(), write.profiling());
+    }
 
     @Override
     public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {

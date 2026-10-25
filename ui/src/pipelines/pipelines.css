@@ -1,0 +1,317 @@
+/* Pipelines: the list, the editor, the graph of steps and runs. Colours from tokens.css only. */
+
+.pl-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.pl-link-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--km-control-h);
+  padding: var(--km-control-pad);
+  border-radius: 8px;
+  border: 1px solid var(--km-accent);
+  background: var(--km-accent);
+  color: var(--km-on-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.pl-link-button:focus-visible,
+.pl-problem:focus-visible,
+.pl-link:focus-visible {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 2px;
+}
+
+.pl-bad {
+  color: var(--km-bad);
+  font-weight: 600;
+}
+
+.pl-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0 20px;
+}
+
+@media (min-width: 1200px) {
+  .pl-layout {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    align-items: start;
+  }
+}
+
+/* The editor: line numbers beside a monospace textarea, scrolling together. */
+.pl-editor {
+  display: flex;
+  border: 1px solid var(--km-border-control);
+  border-radius: 8px;
+  background: var(--km-surface);
+  overflow: hidden;
+  height: 30rem;
+}
+
+.pl-editor:focus-within {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 2px;
+}
+
+.pl-gutter {
+  flex: none;
+  min-width: 4.5ch;
+  padding: 8px 6px;
+  overflow: hidden;
+  text-align: right;
+  font-family: var(--km-mono);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--km-muted);
+  background: var(--km-ground);
+  border-right: 1px solid var(--km-border);
+  user-select: none;
+}
+
+.pl-gutter-line.has-problem {
+  color: var(--km-bad);
+  font-weight: 700;
+}
+
+.pl-text {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--km-ink);
+  background: var(--km-surface);
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+}
+
+.pl-problems {
+  margin-top: 12px;
+}
+
+.pl-summary {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+.pl-summary:empty {
+  display: none;
+}
+
+.pl-problem-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 14rem;
+  overflow: auto;
+}
+
+.pl-problem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-weight: 400;
+  min-height: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--km-border);
+  border-left: 4px solid var(--km-bad);
+  border-radius: 6px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+}
+
+button.pl-problem:hover {
+  background: var(--km-ground);
+}
+
+.pl-problem-at {
+  font-weight: 700;
+}
+
+.pl-save {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+  max-width: 640px;
+}
+
+.pl-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  min-height: 0;
+  color: var(--km-link);
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+.pl-lists {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0 20px;
+}
+
+@media (min-width: 1200px) {
+  .pl-lists {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+.pl-versions {
+  margin: 0;
+  padding-left: 1.5em;
+  display: grid;
+  gap: 8px;
+}
+
+.pl-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 0 0 12px;
+}
+
+.pl-facts dt {
+  color: var(--km-muted);
+}
+
+.pl-facts dd {
+  margin: 0;
+}
+
+.pl-written {
+  padding-left: 1.2em;
+  display: grid;
+  gap: 6px;
+}
+
+/* The graph of steps: boxes with ports; the columns show on hover and focus. */
+.pl-frame {
+  height: 420px;
+}
+
+.pl-step {
+  width: 230px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border-control);
+  border-top: 4px solid var(--km-muted);
+  border-radius: 8px;
+  font-size: 12px;
+  position: relative;
+}
+
+.pl-step.pl-kind-source {
+  border-top-color: var(--km-link);
+}
+
+.pl-step.pl-kind-sink {
+  border-top-color: var(--km-good);
+}
+
+.pl-step.pl-kind-gate {
+  border-top-color: var(--km-warn);
+}
+
+.pl-step.has-problem {
+  border-color: var(--km-bad);
+  border-style: dashed;
+}
+
+.pl-step-head {
+  display: grid;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--km-border);
+}
+
+.pl-step-id {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.pl-step-type {
+  color: var(--km-muted);
+}
+
+.pl-ports {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.pl-port-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pl-port {
+  position: relative;
+  height: 20px;
+  line-height: 20px;
+  padding: 0 10px;
+  color: var(--km-muted);
+}
+
+.pl-port-list-out .pl-port {
+  text-align: right;
+}
+
+.pl-handle {
+  width: 8px;
+  height: 8px;
+  background: var(--km-ink);
+  border: 1px solid var(--km-surface);
+}
+
+.pl-step-columns {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 10;
+  width: 300px;
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border-control);
+  border-radius: 6px;
+}
+
+.react-flow__node:hover .pl-step-columns,
+.react-flow__node:focus .pl-step-columns,
+.react-flow__node:focus-visible .pl-step-columns {
+  display: block;
+}
+
+.dg-frame .react-flow__edge.pl-edge-other .react-flow__edge-path {
+  stroke: var(--km-ink);
+}
+
+@media (forced-colors: active) {
+  .pl-step,
+  .pl-problem,
+  .pl-editor {
+    border-color: CanvasText;
+  }
+
+  .pl-gutter-line.has-problem {
+    color: Mark;
+  }
+}

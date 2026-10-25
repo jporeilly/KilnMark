@@ -15,7 +15,10 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 
 - [Asking Kilnmark](guide/assistant.md): the Ask panel, what it answers from, sources and links, and privacy
 - [Setting data quality rules](guide/quality-rules.md): one-click rules from the profile, writing rules, thresholds, previews, alerts and recipes
+- [Writing data from a pipeline](guide/writing-data.md): writing to tables (create, append, replace, upsert) and to CSV and Parquet files, the rights a write needs, and what replace keeps
 - [Branding and appearance](guide/branding.md): themes, accent colours and density; the branding folder for an organisation's name, logo and connector logos
+- [Building and running a pipeline](guide/pipelines.md): the Pipelines page, YAML basics, checking as you type, saving versions, running, and reading a run
+- [Pipeline steps and expressions](guide/pipeline-steps.md): filter, compute, select, lookup, aggregate, union, dedupe, route and limit, and the expression language for conditions and computed columns
 
 ## Spikes
 
@@ -24,7 +27,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 ## Design
 
 - [UI mockups](design/mockups.md): asset page, steward inbox, relationship explorer, pipeline designer
-- [Writing a connector](design/connectors.md): the connector interface, the reader step, registering and testing
+- [Writing a connector](design/connectors.md): the connector interface, the reader and writer steps, registering and testing
 - [Pipelines](design/pipelines.md): graphs of steps, the YAML format, expressions, the step catalogue, running and recording
 - [The assistant](design/assistant.md): a chat window that answers from knowledge domains, starting with the documentation
 - [Lessons from earlier work](design/prior-work.md): ideas taken from an earlier Trusted Data Operations example, and the release each lands in

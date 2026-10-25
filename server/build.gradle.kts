@@ -32,6 +32,8 @@ dependencies {
     "implementation"("org.flywaydb:flyway-database-postgresql")
     "implementation"(project(":kiln-core"))
     "implementation"(project(":kiln-plugins"))
+    // Pipeline steps and expressions (filter, compute, ...), found through ServiceLoader (ADR 0022).
+    "implementation"(project(":kiln-steps"))
     "implementation"(project(":graph"))
     // POI (documents, ADR 0017) logs through the Log4j API: send it to the server's own log.
     "runtimeOnly"("org.jboss.logmanager:log4j2-jboss-logmanager")

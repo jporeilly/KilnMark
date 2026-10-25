@@ -59,19 +59,27 @@ final class ParquetRuntime {
             setIfAbsent("hardwood.internal.sequentialChunkSize", Integer.toString(chunk << 20));
             setIfAbsent("hardwood.internal.maxCoalescedBytes", Integer.toString(chunk << 20));
             setIfAbsent("hardwood.uselibdeflate", "false");
-            if (System.getProperty("org.xerial.snappy.tempdir") == null) {
-                String dir = settings.setting(NATIVE_DIR);
-                Path native_ = dir != null ? Path.of(dir) : Path.of(System.getProperty("user.home"), ".kilnmark", "native");
-                try {
-                    createPrivate(native_);
-                    System.setProperty("org.xerial.snappy.tempdir", native_.toString());
-                } catch (IOException | RuntimeException e) {
-                    // snappy-java falls back to java.io.tmpdir
-                }
-            }
+            ensureNativeDirectory();
             context = HardwoodContext.create(Math.max(1, settings.integer(THREADS, 2)));
         }
         return context;
+    }
+
+    /**
+     * Points snappy-java at the private folder for its native library ({@value #NATIVE_DIR}),
+     * before Snappy is first used to read or write.
+     */
+    static synchronized void ensureNativeDirectory() {
+        if (System.getProperty("org.xerial.snappy.tempdir") == null) {
+            String dir = settings.setting(NATIVE_DIR);
+            Path native_ = dir != null ? Path.of(dir) : Path.of(System.getProperty("user.home"), ".kilnmark", "native");
+            try {
+                createPrivate(native_);
+                System.setProperty("org.xerial.snappy.tempdir", native_.toString());
+            } catch (IOException | RuntimeException e) {
+                // snappy-java falls back to java.io.tmpdir
+            }
+        }
     }
 
     private static void setIfAbsent(String key, String value) {
