@@ -275,10 +275,19 @@ final class JdbcTableOutput implements Step {
                     || type == Types.NVARCHAR || type == Types.LONGVARCHAR || type == Types.LONGNVARCHAR;
                 int maxLength = text && c.kind() == Kind.TEXT && precision > 0 && precision < 1_000_000 ? precision : 0;
                 out.add(new TargetColumn(md.getColumnName(i), md.getColumnTypeName(i), c.kind(), precision,
-                    md.getScale(i), maxLength));
+                    scale(md.getScale(i)), maxLength));
             }
         }
         return out;
+    }
+
+    /**
+     * A column's scale as the driver reports it, with PostgreSQL 15's negative scales decoded: the
+     * type modifier keeps the scale in 11 bits, which the driver hands over unsigned
+     * ({@code numeric(5,-2)} arrives as 2046).
+     */
+    static int scale(int reported) {
+        return reported > 1000 && reported < 2048 ? reported - 2048 : reported;
     }
 
     private Set<String> readNames(WriteSql.Sql query) throws SQLException {

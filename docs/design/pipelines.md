@@ -397,10 +397,13 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
   format, further settings (`options`), the asset URN and the source's profiling settings
   (`profiling`; see "What a write reports" in section 5). Connectors that write list
   `Capability.WRITE`, declare the settings they take in `Connector.writeOptions()` (`SettingSpec`s
-  with kind, default and help; the service passes only those keys), and say in
+  with kind, default and help; the service passes only those keys), find problems with a write
+  without connecting in `Connector.checkWrite(source, write)` (by default, `writer`'s refusal), and
+  say in
   `Connector.writtenAssetPath(source, write)` which catalogue path the written asset has: the table
-  (`schema.table`), or for files the path below the source's prefix, escaped as the catalogue
-  escapes it (`raw/` + `out/a.csv` on a prefixed S3 source). The pipeline service checks that the
+  (`schema.table`; on SQL Server an existing table's catalogue spelling, since names ignore case
+  there), or for files the path below the source's prefix, escaped as the catalogue escapes it
+  (`raw/` + `out/a.csv` on a prefixed S3 source). The pipeline service checks that the
   source allows writing and that its hosts are allowed before it asks for the step; the step reads
   its `in` port and has no outputs.
 - **Databases** (PostgreSQL, SQL Server), target `schema.table`, names used exactly and always
@@ -476,7 +479,9 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
   are checked by path and then used: someone able to write inside an allowed folder on the server
   could swap a checked folder for a link in between, so allowed folders should be writable only by
   Kilnmark and trusted people.
-  - CSV: RFC 4180, UTF-8, header row, CRLF, configurable `delimiter`; a null is an empty field and
+  - CSV: RFC 4180, UTF-8, header row, CRLF, `delimiter` defaulting to the source's own (a
+    different one, a source reading files without a header row, or one reading another encoding
+    than UTF-8 is refused, so the file reads back as written); a null is an empty field and
     an empty string `""`, so Kilnmark's reader tells them apart; ISO 8601 dates and times.
   - Parquet: Kilnmark's own streaming writer (Hardwood cannot write; parquet-java needs Hadoop,
     ADR 0015): flat optional columns, PLAIN values, RLE definition levels, pages of at most 1 MiB
@@ -527,7 +532,9 @@ profile step's defaults.
 | Table `append`, `upsert` | `ROW_COUNT` only (`rows` written, `complete=false`, `written=true`, `appended=true`, `mode`) | Rows were added to or merged into an existing table: record the run's lineage and row count, but keep the table's fields, row count and profile from its last scan; a scan refreshes them |
 
 Columns, kinds and profile attributes are those a scan reports (`JdbcColumn.Kind` names,
-`ColumnStats` attributes), so the service stores them the same way.
+`ColumnStats` attributes), so the service stores them the same way. For a CSV file the `SCHEMA`
+kinds and types are the ones the CSV reader infers from the written file (as a scan would), not
+the input's, so a scan after a write finds no retyped column.
 
 **Profiling never fails a write.** If profiling fails (settings it cannot read, or an error while
 profiling or computing the profile), the write completes, `ROW_COUNT` is still emitted and carries

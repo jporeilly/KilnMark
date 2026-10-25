@@ -405,8 +405,41 @@ public abstract class FileSourceConnector implements Connector {
                     + "settings, or set allow_unscanned: true to write it anyway");
             }
         }
+        String delimiter = csvDelimiter(source, target, settings);
         return new FileOutput(() -> open(source), storePath, target, overwrite, settings, write.assetUrn(),
-            write.profiling());
+            write.profiling(), delimiter, options(source));
+    }
+
+    /**
+     * The delimiter a CSV file is written with: the step's, else the source's own, else a comma.
+     * A CSV file must be one the source reads back as written, so refused: a delimiter other than
+     * the source's, a source whose CSV files have no header row, and a source reading another
+     * encoding than UTF-8, the one files are written in.
+     */
+    static String csvDelimiter(SourceConfig source, FileTarget target,
+                               io.kilnmark.kiln.plugins.write.WriteSettings settings)
+        throws ConnectorException {
+        String own = source.setting("delimiter");
+        String step = settings.text("delimiter", null);
+        if (!target.format().equals("csv")) {
+            return step;
+        }
+        if (own != null && step != null && CsvEncoder.delimiter(own) != CsvEncoder.delimiter(step)) {
+            throw new ConnectorException("delimiter: " + source.name() + " reads files delimited by '" + own
+                + "', so a file written with '" + step + "' would be read wrongly; leave delimiter out to use the "
+                + "source's");
+        }
+        if ("false".equalsIgnoreCase(source.setting("header"))) {
+            throw new ConnectorException("path: " + source.name() + " reads CSV files without a header row, and "
+                + "Kilnmark writes one; write Parquet, or to a source that reads header rows");
+        }
+        String encoding = source.setting("encoding");
+        if (encoding != null && Charset.isSupported(encoding)
+            && !Charset.forName(encoding).equals(java.nio.charset.StandardCharsets.UTF_8)) {
+            throw new ConnectorException("path: " + source.name() + " reads text files as " + encoding + ", and "
+                + "Kilnmark writes CSV in UTF-8; write Parquet, or to a source reading UTF-8");
+        }
+        return step != null ? step : own;
     }
 
     /** Where the store puts a written file: below an S3 source's prefix, as a folder or key path. */
@@ -428,8 +461,9 @@ public abstract class FileSourceConnector implements Connector {
         return io.kilnmark.kiln.plugins.write.WriteSettings.withProfiling(
             io.kilnmark.kiln.plugins.write.WriteSettings.flag("overwrite", "Overwrite", false,
                 "Replace a file of the same name; otherwise an existing file stops the write"),
-            io.kilnmark.kiln.SettingSpec.optional("delimiter", "Delimiter", io.kilnmark.kiln.SettingSpec.Kind.TEXT, ",",
-                "CSV only: one character, or \\t for a tab"),
+            io.kilnmark.kiln.SettingSpec.optional("delimiter", "Delimiter", io.kilnmark.kiln.SettingSpec.Kind.TEXT, null,
+                "CSV only: one character, or \\t for a tab; by default the source's own delimiter, else a comma. A "
+                    + "delimiter other than the source's is refused"),
             io.kilnmark.kiln.SettingSpec.choice("compression", "Compression", false, "snappy",
                 "Parquet only: how pages are compressed", List.of("snappy", "zstd", "gzip", "none")),
             io.kilnmark.kiln.plugins.write.WriteSettings.flag("allow_unscanned", "Allow paths scans skip", false,

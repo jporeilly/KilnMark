@@ -121,6 +121,16 @@ public final class WriteReport {
      */
     public void emit(MetadataEmitter metadata, List<WriteColumn> columns, List<String> types,
                      Map<String, String> details) {
+        emit(metadata, columns, List.of(), types, details);
+    }
+
+    /**
+     * As {@link #emit(MetadataEmitter, List, List, Map)}, with the kind each column is recorded as
+     * when a scan of the written asset would see another than the input's (a CSV file, whose kinds
+     * are inferred again from its text). Empty: the input's kinds.
+     */
+    public void emit(MetadataEmitter metadata, List<WriteColumn> columns, List<String> kinds, List<String> types,
+                     Map<String, String> details) {
         Instant now = Instant.now();
         Map<String, String> count = new LinkedHashMap<>();
         count.put("rows", Long.toString(rows));
@@ -151,7 +161,7 @@ public final class WriteReport {
         for (int i = 0; i < columns.size(); i++) {
             WriteColumn c = columns.get(i);
             json.append(i == 0 ? "" : ",").append("{\"name\":").append(jsonString(c.name()))
-                .append(",\"kind\":").append(jsonString(c.kindName()))
+                .append(",\"kind\":").append(jsonString(i < kinds.size() ? kinds.get(i) : c.kindName()))
                 .append(",\"type\":").append(jsonString(i < types.size() ? types.get(i) : c.kindName())).append('}');
         }
         Map<String, String> schema = new LinkedHashMap<>(details);

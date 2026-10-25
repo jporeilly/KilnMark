@@ -252,12 +252,31 @@ class WriteSqlTest {
     }
 
     @Test
+    void declaredDecimalsOfAnyPrecisionAndNegativeScalesAreChecked() {
+        List<WriteColumn> in = WriteColumn.of(new Schema(List.of(field("amount", Rows.decimal(12, 4)))));
+        WritePlan.Plan wide = WritePlan.plan(in, List.of(col("amount", "numeric", Kind.DECIMAL, 50, 2, 0)), Set.of(),
+            List.of());
+        assertEquals(List.of(50, 2), List.of(wide.bindings().get(0).precision(), wide.bindings().get(0).scale()),
+            "numeric(50,2) is declared: checked per value, not taken as unconstrained");
+        WritePlan.Plan open = WritePlan.plan(in, List.of(col("amount", "numeric", Kind.DECIMAL, 0, 0, 0)), Set.of(),
+            List.of());
+        assertEquals(0, open.bindings().get(0).precision(), "plain numeric holds anything");
+        assertNull(WritePlan.fitDecimal(new BigDecimal("1.2345"), 50, 2), "never rounded, however wide");
+        assertEquals(-2, JdbcTableOutput.scale(2046), "numeric(5,-2) as the driver reports it");
+        assertEquals(2, JdbcTableOutput.scale(2));
+        assertEquals(new BigDecimal("1.23E+4"), WritePlan.fitDecimal(new BigDecimal("12300"), 5, -2));
+        assertNull(WritePlan.fitDecimal(new BigDecimal("12345"), 5, -2));
+        assertTrue(WritePlan.decimalProblem(new BigDecimal("12345"), 5, -2).contains("not a whole multiple of 100"));
+        assertNull(WritePlan.fitDecimal(new BigDecimal("123450000"), 5, -2), "more than seven digits before the point");
+    }
+
+    @Test
     void sqlServerBulkCopyGetsFullIsoDatesAndTimes() {
-        assertEquals("2024-01-01T00:00:00.000000", WriteSql.SqlServer.isoText(Kind.TIMESTAMP,
+        assertEquals("2024-01-01T00:00:00.0000000", WriteSql.SqlServer.isoText(Kind.TIMESTAMP,
             LocalDateTime.of(2024, 1, 1, 0, 0)));
-        assertEquals("2024-06-01T00:00:00.000001+00:00", WriteSql.SqlServer.isoText(Kind.TIMESTAMP_TZ,
+        assertEquals("2024-06-01T00:00:00.0000010+00:00", WriteSql.SqlServer.isoText(Kind.TIMESTAMP_TZ,
             Instant.parse("2024-06-01T00:00:00.000001Z")));
-        assertEquals("00:00:00.000000", WriteSql.SqlServer.isoText(Kind.TIME, LocalTime.MIDNIGHT));
+        assertEquals("00:00:00.0000000", WriteSql.SqlServer.isoText(Kind.TIME, LocalTime.MIDNIGHT));
         assertEquals("0950-03-01", WriteSql.SqlServer.isoText(Kind.DATE, LocalDate.of(950, 3, 1)));
         assertNull(WriteSql.SqlServer.isoText(Kind.TEXT, "x"));
     }

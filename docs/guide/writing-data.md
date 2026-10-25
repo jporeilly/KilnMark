@@ -62,14 +62,16 @@ or anything except bytes into text. Whole numbers and decimals go into any decim
 narrower one (`decimal(12,4)` into `numeric(10,2)`): each value is then checked as it is written,
 and a value that would have to be rounded, or has too many digits before the point, stops the
 write with its row named ("Row 2: the value 1.2345 in column amount has more decimal places than
-the column's 2"). Nothing is rounded, and nothing is written, since the write is one
-transaction. PostgreSQL and SQL Server behave the same. Text is never turned into numbers or
-dates: add a `select` step to cast columns first. Columns the input lacks are left to their
-defaults, so a column that is `NOT NULL` without a default must be in the input. Two input
-columns whose names differ only in capitals cannot both go to one column. Text longer than a
-column holds is refused with the row and column named. On PostgreSQL, a table with row-level
-security that applies to the login is filled row by row, so its policies are checked for every
-row (and the write is slower).
+the column's 2"). Nothing is rounded. The run stops there, and nothing from it stays in the
+table, since the write is one transaction; with `commit_every`, the rows committed before that
+batch stay. This holds for any declared decimal column, beyond 38 digits too, and for PostgreSQL's
+negative scales (`numeric(5,-2)` takes whole hundreds). PostgreSQL and SQL Server behave the same.
+Text is never turned into numbers or dates: add a `select` step to cast columns first. Columns the
+input lacks are left to their defaults, so a column that is `NOT NULL` without a default must be in
+the input. Two input columns whose names differ only in capitals cannot both go to one column. Text
+longer than a column holds is refused with the row and column named. On PostgreSQL, a table with
+row-level security that applies to the login is filled row by row, so its policies are checked for
+every row (and the write is slower).
 
 **upsert** needs `key`, the columns that identify a row:
 
@@ -156,7 +158,11 @@ used only for tables the step creates.
     format: csv
 ```
 
-- **`path`** is relative to the source's folder (or, for S3, below the source's prefix). Folders
+- **`path`** is relative to the source's folder (or, for S3, below the source's prefix: with the
+  prefix `raw/`, `path: out/spend.csv` writes the object `raw/out/spend.csv`). This differs from a
+  `read` step, whose `asset` is the asset's path as the catalogue shows it: for S3 the whole key,
+  prefix included (`asset: raw/out/spend.csv`). Kilnmark records a written file under that same
+  catalogue path, so a later `read` or scan finds it. Folders
   that do not exist are created. Paths that are absolute, contain `..`, `//`, a backslash or
   control characters, or name a hidden file or folder (starting with a dot) are refused, and so
   is a path that would lead out of the folder through a link.
@@ -182,7 +188,15 @@ value is a null; an empty piece of text is written `""`, so the two stay apart w
 the file again. Dates and times are ISO 8601 (`2025-01-31`, `2025-01-31 09:30:00`, and
 `2025-01-31 09:30:00Z` in UTC); decimals are written in full, never in scientific notation.
 
-Set `delimiter: ";"` (or `"\t"` for tabs) for spreadsheets that expect another delimiter.
+A CSV file must read back as written, so it follows the source's own settings: it uses the
+source's `delimiter` when the source has one (a comma otherwise), and Kilnmark refuses a different
+`delimiter`, a source set to read CSV files without a header row, and a source reading another
+encoding than UTF-8. Choose Parquet, or another source, in those cases. On a source without its
+own delimiter, set `delimiter: ";"` (or `"\t"` for tabs) for spreadsheets that expect another one.
+
+Kilnmark records the CSV file's columns with the types a scan will infer from its text (a column
+of digits is a whole number, whatever it was written from), so scanning the file later shows no
+change.
 
 ### Parquet
 

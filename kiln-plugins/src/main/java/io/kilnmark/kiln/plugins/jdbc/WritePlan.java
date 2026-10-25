@@ -44,7 +44,7 @@ final class WritePlan {
 
         /** As people read it: {@code numeric(10,2)}, {@code nvarchar(50)}, {@code integer}. */
         String described() {
-            if (kind == Kind.DECIMAL && precision > 0 && precision <= 38) {
+            if (kind == Kind.DECIMAL && precision > 0) {
                 return typeName + "(" + precision + "," + scale + ")";
             }
             if (maxLength > 0) {
@@ -53,8 +53,12 @@ final class WritePlan {
             return typeName;
         }
 
+        /**
+         * A decimal column declared without precision (PostgreSQL's plain {@code numeric}): it holds
+         * any value. Any declared precision, beyond 38 digits too, is checked value by value.
+         */
         boolean unconstrainedDecimal() {
-            return kind == Kind.DECIMAL && (precision <= 0 || precision > 38);
+            return kind == Kind.DECIMAL && precision <= 0;
         }
     }
 
@@ -231,7 +235,9 @@ final class WritePlan {
         try {
             value.setScale(scale, java.math.RoundingMode.UNNECESSARY);
         } catch (ArithmeticException e) {
-            return "has more decimal places than the column's " + scale;
+            return scale < 0 ? "is not a whole multiple of " + java.math.BigDecimal.ONE.scaleByPowerOfTen(-scale)
+                .toPlainString() + ", as the column's scale of " + scale + " needs"
+                : "has more decimal places than the column's " + scale;
         }
         return "has more digits before the point than the column's " + (precision - scale);
     }

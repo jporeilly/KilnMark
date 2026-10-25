@@ -214,6 +214,54 @@ class FileWriteTest {
     }
 
     @Test
+    void csvFollowsTheSourcesOwnTextSettings() throws Exception {
+        Path dir = Files.createDirectories(root.resolve("csv-source-settings"));
+        SourceConfig semicolons = new SourceConfig("semi", "files", Map.of("path", dir.toString(), "delimiter", ";"),
+            null);
+        Schema schema = new Schema(List.of(field("a", Rows.TEXT), field("b", Rows.INT32)));
+        assertTrue(write(files, semicolons, options("semi.csv", null, Map.of()), schema,
+            Rows.list(new Object[] {"x", 1}), 10, -1, Rows.events()).succeeded());
+        assertEquals("a;b\r\nx;1\r\n", Files.readString(dir.resolve("semi.csv")), "the source's delimiter by default");
+        Connector.WriteOptions comma = options("comma.csv", null, Map.of("delimiter", ","));
+        assertTrue(assertThrows(ConnectorException.class, () -> files.writer(semicolons, comma)).getMessage()
+            .startsWith("delimiter: semi reads files delimited by ';'"));
+        assertEquals(1, files.checkWrite(semicolons, comma).size(), "the service's check finds it too");
+        assertEquals(List.of(), files.checkWrite(semicolons, options("ok.csv", null, Map.of())));
+        SourceConfig noHeader = new SourceConfig("nh", "files", Map.of("path", dir.toString(), "header", "false"), null);
+        assertTrue(assertThrows(ConnectorException.class, () -> files.writer(noHeader, options("h.csv", null,
+            Map.of()))).getMessage().contains("without a header row"));
+        SourceConfig latin = new SourceConfig("latin", "files", Map.of("path", dir.toString(), "encoding",
+            "windows-1252"), null);
+        assertTrue(assertThrows(ConnectorException.class, () -> files.writer(latin, options("l.csv", null,
+            Map.of()))).getMessage().contains("writes CSV in UTF-8"));
+        assertEquals(List.of(), files.checkWrite(latin, options("l.parquet", null, Map.of())),
+            "Parquet does not depend on them");
+    }
+
+    @Test
+    void aCsvWriteRecordsTheKindsAScanWillSee() throws Exception {
+        SourceConfig s = folder("csv-kinds");
+        Schema schema = new Schema(List.of(field("small", Rows.INT32), field("code", Rows.TEXT),
+            field("price", Rows.decimal(9, 2)), field("day", Rows.DATE), field("ok", Rows.BOOL)));
+        List<Object[]> rows = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            rows.add(new Object[] {i, Integer.toString(1000 + i), new BigDecimal(i).movePointLeft(2),
+                LocalDate.of(2025, 1, 1).plusDays(i), i % 2 == 0});
+        }
+        List<MetadataEvent> events = Rows.events();
+        assertTrue(write(files, s, options("kinds.csv", null, Map.of()), schema, rows, 16, -1, events).succeeded());
+        String columns = events.stream().filter(e -> e.kind() == MetadataEvent.Kind.SCHEMA).findFirst().orElseThrow()
+            .attributes().get("columns");
+        AssetInfo scanned = files.asset(s, "kinds.csv");
+        for (AssetInfo.FieldInfo f : scanned.fields()) {
+            assertTrue(columns.contains("{\"name\":\"" + f.name() + "\",\"kind\":\"" + f.kind() + "\""),
+                f.name() + " is " + f.kind() + " to a scan; reported " + columns);
+        }
+        assertTrue(columns.contains("\"name\":\"code\",\"kind\":\"int64\""), "numeric-looking text, as a scan "
+            + "infers it: " + columns);
+    }
+
+    @Test
     void anExistingFileIsRefusedUnlessOverwriteIsAsked() throws Exception {
         SourceConfig s = folder("overwrite");
         Path file = Path.of(s.setting("path")).resolve("keep.csv");

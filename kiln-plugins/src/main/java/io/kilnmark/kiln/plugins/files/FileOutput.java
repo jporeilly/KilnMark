@@ -9,6 +9,7 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import io.kilnmark.kiln.Step;
 import io.kilnmark.kiln.StepContext;
 import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.plugins.write.WriteColumn;
 import io.kilnmark.kiln.plugins.write.WriteReport;
@@ -34,6 +35,7 @@ final class FileOutput implements Step {
     private final ParquetEncoder.Codec codec;
     private final WriteSettings settings;
     private final String assetUrn;
+    private final FileInspector.TextOptions reading;
     private final Map<String, String> profiling;
 
     private FileStore store;
@@ -47,17 +49,21 @@ final class FileOutput implements Step {
      * @param storePath where the store puts the file (with an S3 source's prefix)
      * @param target    the checked target and format, as the pipeline gave them
      * @param overwrite whether an existing file may be replaced
+     * @param delimiter the CSV delimiter setting (the step's, else the source's), or null for a comma
+     * @param reading   how the source reads text files, to record a CSV file's columns as a scan will
      */
     FileOutput(FileStore.Opener opener, String storePath, FileTarget target, boolean overwrite, WriteSettings settings,
-               String assetUrn, Map<String, String> profiling) throws ConnectorException {
+               String assetUrn, Map<String, String> profiling, String delimiter, FileInspector.TextOptions reading)
+        throws ConnectorException {
         this.profiling = profiling;
+        this.reading = reading;
         this.opener = opener;
         this.storePath = storePath;
         this.target = target;
         this.settings = settings;
         this.assetUrn = assetUrn;
         this.overwrite = overwrite;
-        this.delimiter = CsvEncoder.delimiter(settings.text("delimiter", null));
+        this.delimiter = CsvEncoder.delimiter(delimiter);
         this.codec = ParquetEncoder.Codec.of(settings.text("compression", null));
     }
 
@@ -124,7 +130,21 @@ final class FileOutput implements Step {
         } catch (IOException | RuntimeException e) {
             throw new StepException("Cannot finish " + target.path() + ": " + message(e), e);
         }
-        report.emit(context.metadata(), columns, encoder.types(), Map.of("target", target.path(),
+        List<String> kinds = List.of();
+        List<String> types = encoder.types();
+        if (target.format().equals("csv")) {
+            // a scan infers a CSV file's kinds from its text: record those, so the next scan sees no change
+            try {
+                AssetInfo seen = FileInspector.inspect(store, store.entry(storePath), "", reading);
+                if (seen.fields().size() == columns.size()) {
+                    kinds = seen.fields().stream().map(AssetInfo.FieldInfo::kind).toList();
+                    types = seen.fields().stream().map(AssetInfo.FieldInfo::sourceType).toList();
+                }
+            } catch (IOException | RuntimeException e) {
+                // the input's kinds, then; the next scan corrects them
+            }
+        }
+        report.emit(context.metadata(), columns, kinds, types, Map.of("target", target.path(),
             "format", target.format(), "location", store.describe(storePath)));
     }
 

@@ -184,6 +184,24 @@ class PostgresWriteTest {
             + "point than the column's 8"), large.error());
         assertEquals(List.of(List.of(3L)), query("SELECT count(*) FROM billing.ledger"), "only the row that fits");
 
+        // declared beyond 38 digits, and with a negative scale: still checked, never rounded
+        sql("CREATE TABLE billing.wide (id bigint, amount numeric(50,2))",
+            "CREATE TABLE billing.hundreds (id bigint, amount numeric(5,-2))");
+        RunResult wider = write(source, options("billing.wide", "append", List.of(), Map.of()), wide,
+            Rows.list(new Object[] {1L, new BigDecimal("1.2345")}), 10, -1, Rows.events());
+        assertTrue(wider.error().contains("Row 1: the value 1.2345 in column amount has more decimal places than the "
+            + "column's 2"), wider.error());
+        assertEquals(List.of(List.of(0L)), query("SELECT count(*) FROM billing.wide"));
+        Schema whole = new Schema(List.of(field("id", Rows.INT64), field("amount", Rows.decimal(10, 0))));
+        assertTrue(write(source, options("billing.hundreds", "append", List.of(), Map.of()), whole,
+            Rows.list(new Object[] {1L, new BigDecimal("12300")}), 10, -1, Rows.events()).succeeded());
+        RunResult notHundreds = write(source, options("billing.hundreds", "append", List.of(), Map.of()), whole,
+            Rows.list(new Object[] {2L, new BigDecimal("12345")}), 10, -1, Rows.events());
+        assertTrue(notHundreds.error().contains("is not a whole multiple of 100"), notHundreds.error());
+        List<List<Object>> stored = query("SELECT amount FROM billing.hundreds");
+        assertEquals(1, stored.size());
+        assertEquals(0, new BigDecimal("12300").compareTo((BigDecimal) stored.get(0).get(0)), stored.toString());
+
         RunResult missing = write(source, options("billing.no_such", "append", List.of(), Map.of()), schema,
             Rows.list(new Object[] {1, null, null, null}), 10, -1, Rows.events());
         assertTrue(missing.error().contains("billing.no_such does not exist in warehouse"), missing.error());

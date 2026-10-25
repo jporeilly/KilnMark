@@ -104,6 +104,15 @@ abstract class WriteSql {
     /** Whether the table (or view) exists: one row, true or false. */
     abstract Sql exists(TableName t);
 
+    /**
+     * The table's schema and name as the catalogue spells them, one row when it exists; null where
+     * names are compared exactly, so the spelling written is the catalogue's (PostgreSQL, whose
+     * quoted names keep their case).
+     */
+    Sql realName(TableName t) {
+        return null;
+    }
+
     /** The names of the table's columns that need a value: NOT NULL, no default, not generated. */
     abstract Sql requiredColumns(TableName t);
 
@@ -639,6 +648,13 @@ abstract class WriteSql {
                 + "ELSE 0 END", List.of(regName(t), regName(t)));
         }
 
+        /** Names compare ignoring case under SQL Server's usual collations: the catalogue's spelling. */
+        @Override
+        Sql realName(TableName t) {
+            return new Sql("SELECT s.name, o.name FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id "
+                + "WHERE o.object_id = OBJECT_ID(?) AND o.type IN ('U', 'V')", List.of(regName(t)));
+        }
+
         @Override
         Sql requiredColumns(TableName t) {
             return new Sql("SELECT c.name FROM sys.columns c WHERE c.object_id = OBJECT_ID(?) AND c.is_nullable = 0 "
@@ -848,7 +864,7 @@ abstract class WriteSql {
             }
         }
 
-        /** Full ISO 8601 for a date, time or timestamp ({@code 2024-01-01T00:00:00.000000}); null for other kinds. */
+        /** Full ISO 8601 for a date, time or timestamp ({@code 2024-01-01T00:00:00.0000000}); null for other kinds. */
         static String isoText(Kind kind, Object v) {
             return switch (kind) {
                 case DATE -> ISO_DATE.format((LocalDate) v);
@@ -865,6 +881,8 @@ abstract class WriteSql {
         private static final java.time.format.DateTimeFormatter ISO_DATE =
             java.time.format.DateTimeFormatter.ofPattern("uuuu-MM-dd", java.util.Locale.ROOT);
         private static final java.time.format.DateTimeFormatter ISO_TIME =
-            java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS", java.util.Locale.ROOT);
+            // seven digits, as SQL Server sends time and datetime2 itself, so the column rounds a value
+            // the same way whether it arrives by bulk copy or as a typed parameter
+            java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSSS", java.util.Locale.ROOT);
     }
 }

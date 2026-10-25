@@ -153,6 +153,15 @@ class SqlServerWriteTest {
     }
 
     @Test
+    void writtenTablesAreRecordedUnderTheCataloguesSpelling() throws Exception {
+        sql("CREATE TABLE billing.customers (customer_id bigint)");
+        assertEquals("billing.customers", CONNECTOR.writtenAssetPath(source, options("BILLING.Customers", "append",
+            List.of(), Map.of())));
+        assertEquals("billing.NewOne", CONNECTOR.writtenAssetPath(source, options("billing.NewOne", "create",
+            List.of(), Map.of())), "a table that does not exist yet keeps the spelling it will be created with");
+    }
+
+    @Test
     void upsertMergesByKey() throws Exception {
         sql("CREATE TABLE billing.spend (customer_id bigint PRIMARY KEY, total decimal(12,2), note nvarchar(50))");
         assertTrue(write(source, options("billing.spend", "upsert", List.of("customer_id"), Map.of()), SPEND,

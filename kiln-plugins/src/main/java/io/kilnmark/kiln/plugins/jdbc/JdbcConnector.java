@@ -615,6 +615,32 @@ public abstract class JdbcConnector implements Connector {
         return null;
     }
 
+    /**
+     * The table as the catalogue names it ({@code schema.table}): on databases whose names ignore
+     * case (SQL Server), an existing table's own spelling, so {@code dbo.Customers} in a pipeline is
+     * recorded as the {@code dbo.customers} a scan found; otherwise the target as written.
+     */
+    @Override
+    public String writtenAssetPath(SourceConfig source, WriteOptions write) throws ConnectorException {
+        WriteSql sql = writeSql();
+        TableName table = TableName.parse(write.target());
+        WriteSql.Sql real = sql == null ? null : sql.realName(table);
+        if (real == null) {
+            return table.toString();
+        }
+        checkValid(source);
+        try (Connection c = connect(source); java.sql.PreparedStatement ps = c.prepareStatement(real.text())) {
+            for (int i = 0; i < real.params().size(); i++) {
+                ps.setString(i + 1, real.params().get(i));
+            }
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) + "." + rs.getString(2) : table.toString();
+            }
+        } catch (SQLException e) {
+            throw new ConnectorException("Cannot look up " + table + " in " + source.name() + ": " + explain(e), e);
+        }
+    }
+
     /** The settings a write step to this database takes; see {@link #writer}. */
     @Override
     public List<io.kilnmark.kiln.SettingSpec> writeOptions() {
