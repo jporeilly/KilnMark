@@ -270,8 +270,9 @@ public interface KilnmarkConfig {
         /**
          * While hosted models are forbidden, the hosts and networks (CIDR) a model marked local
          * must be on. Unset: loopback and private networks (10.0.0.0/8, 172.16.0.0/12,
-         * 192.168.0.0/16, fc00::/7), {@code localhost}, and the container host names
-         * {@code host.containers.internal} and {@code host.docker.internal}. Set it to narrow
+         * 192.168.0.0/16, fc00::/7) and {@code localhost}; in a container also
+         * {@code host.containers.internal} and {@code host.docker.internal}, which count only while
+         * they resolve to loopback, private addresses or Podman's 169.254.1.2. Set it to narrow
          * them, for example {@code 10.20.0.0/16,ai}.
          */
         Optional<List<String>> localHosts();

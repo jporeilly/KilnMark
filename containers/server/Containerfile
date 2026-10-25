@@ -10,8 +10,11 @@ COPY --chown=1001:1001 dist/build/server/quarkus-app/ ./
 
 USER 1001
 EXPOSE 8780
+# KILNMARK_IN_CONTAINER: localhost is this container, and host.containers.internal and
+# host.docker.internal (the machine running it) count as local model hosts by default.
 ENV KILNMARK_ROLES=api,scheduler,worker \
-    KILNMARK_SECRET_KEY_FILE=/var/lib/kilnmark/secret.key
+    KILNMARK_SECRET_KEY_FILE=/var/lib/kilnmark/secret.key \
+    KILNMARK_IN_CONTAINER=true
 # The key that encrypts stored source passwords; keep this volume, and back it up apart from the database.
 VOLUME /var/lib/kilnmark
 ENTRYPOINT ["java", "-XX:+UseZGC", "-jar", "quarkus-run.jar"]

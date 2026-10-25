@@ -242,7 +242,14 @@ export function AiPage() {
                           <button type="button" onClick={() => test(p)} disabled={t === "testing"} aria-label={`Test ${p.name}`}>
                             {t === "testing" ? "Testing…" : "Test"}
                           </button>
-                          <button type="button" onClick={() => setEditing(p)} aria-label={`Edit ${p.name}`}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPrefill(null);
+                              setEditing(p);
+                            }}
+                            aria-label={`Edit ${p.name}`}
+                          >
                             Edit
                           </button>
                           <button type="button" onClick={() => remove(p)} aria-label={`Delete ${p.name}`}>
@@ -266,7 +273,14 @@ export function AiPage() {
           </div>
         )}
         {editing === null && (
-          <button type="button" className="primary" onClick={() => setEditing("new")}>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              setPrefill(null);
+              setEditing("new");
+            }}
+          >
             Add a model
           </button>
         )}
@@ -341,6 +355,9 @@ function fromFound(server: AiFoundServer, model: AiFoundModel): Partial<FormStat
     purpose: model.embedding ? "embedding" : "chat",
     local: server.suggestLocal,
     apiKey: "",
+    // What the server says about the model; Test still checks the embedding size.
+    contextSize: model.contextSize != null && model.contextSize >= 256 ? String(model.contextSize) : "",
+    dimensions: model.embedding && model.dimensions != null ? String(model.dimensions) : "",
   };
 }
 
@@ -387,7 +404,8 @@ function FindModels({
         the GPU itself.
       </p>
       <div className="buttons">
-        <button type="button" onClick={onFind} disabled={finding}>
+        {/* aria-disabled, not disabled: the button keeps focus while it works. */}
+        <button type="button" onClick={() => !finding && onFind()} aria-disabled={finding}>
           {finding ? "Looking…" : "Find local models"}
         </button>
       </div>
@@ -395,8 +413,13 @@ function FindModels({
         {summary}
       </p>
       {error && (
-        <p role="alert" className="error" tabIndex={-1} ref={errorRef}>
+        <p className="error" tabIndex={-1} ref={errorRef}>
           {error}
+        </p>
+      )}
+      {discovery && !discovery.inContainer && (
+        <p className="hint">
+          Kilnmark is not running in a container, so only <code>localhost</code> was checked.
         </p>
       )}
       {found.map((s) => (
@@ -449,7 +472,7 @@ function FoundServerView({ server: s, onUse }: { server: AiFoundServer; onUse: (
               <tr>
                 <th scope="col">Model</th>
                 <th scope="col">Size</th>
-                <th scope="col">GPU</th>
+                {s.gpuReported && <th scope="col">GPU</th>}
                 <th scope="col">
                   <span className="visually-hidden">Action</span>
                 </th>
@@ -460,16 +483,18 @@ function FoundServerView({ server: s, onUse }: { server: AiFoundServer; onUse: (
                 <tr key={m.name}>
                   <th scope="row">
                     <span className="mono">{m.name}</span>
-                    <div className="small muted">{m.embedding ? "Embedding model" : "Chat model"}</div>
+                    <div className="small muted">
+                      {m.embedding ? "Embedding model" : "Chat model"}
+                      {m.loaded === true && !s.gpuReported ? " · loaded" : ""}
+                    </div>
                   </th>
                   <td className="small">{modelFacts(m) || "Not reported"}</td>
-                  <td className="small">
-                    {m.gpuText}
-                    {m.gpu === "split" && m.vramBytes != null && m.sizeBytes != null
-                      ? ` (${formatSize(m.vramBytes)} in GPU memory)`
-                      : ""}
-                    {m.loaded === true && m.gpu === "unknown" ? " · loaded" : ""}
-                  </td>
+                  {s.gpuReported && (
+                    <td className="small">
+                      {m.gpuText}
+                      {m.gpu === "split" && m.vramBytes != null ? ` (${formatSize(m.vramBytes)} in GPU memory)` : ""}
+                    </td>
+                  )}
                   <td>
                     <button type="button" onClick={() => onUse(s, m)} aria-label={`Use ${m.name} from ${s.server}`}>
                       Use this model
@@ -598,7 +623,13 @@ function ProfileForm({
   }));
   const [checked, setChecked] = useState<AiFoundServer | "checking" | null>(null);
   const [typeOwn, setTypeOwn] = useState(false);
-  const checkRef = useRef<HTMLDivElement>(null);
+  const checkRef = useRef<HTMLParagraphElement>(null);
+  const modelRef = useRef<HTMLInputElement>(null);
+  const urlRef = useRef<HTMLInputElement>(null);
+  // After "Another model", the text box replaces the list: put the focus in it.
+  useEffect(() => {
+    if (typeOwn) modelRef.current?.focus();
+  }, [typeOwn]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -625,6 +656,7 @@ function ProfileForm({
   const choose = offered.length > 0 && !typeOwn && (f.model === "" || offered.some((m) => m.name === f.model));
   const pickModel = (name: string) => {
     if (name === "__other__") {
+      setF((s) => ({ ...s, model: "" }));
       setTypeOwn(true);
       return;
     }
@@ -634,10 +666,14 @@ function ProfileForm({
       model: name,
       // A new profile follows the model: embedding models are for search by meaning.
       purpose: profile === null && m ? (m.embedding ? "embedding" : "chat") : s.purpose,
+      contextSize: profile === null && m?.contextSize != null && m.contextSize >= 256 ? String(m.contextSize) : s.contextSize,
+      dimensions: profile === null && m?.embedding && m.dimensions != null ? String(m.dimensions) : s.dimensions,
     }));
   };
 
+  const checkable = checked !== "checking" && f.baseUrl.trim() !== "";
   const check = async () => {
+    if (!checkable) return;
     setChecked("checking");
     try {
       const d = await aiApi.discover(f.baseUrl.trim());
@@ -746,7 +782,7 @@ function ProfileForm({
                 <option value="__other__">Another model (type its name)</option>
               </select>
             ) : (
-              <input id="ai-model" value={f.model} onChange={(e) => set("model", e.target.value)} required
+              <input id="ai-model" ref={modelRef} value={f.model} onChange={(e) => set("model", e.target.value)} required
                 autoComplete="off" aria-describedby="ai-model-hint" />
             )}
             <p id="ai-model-hint" className="hint">
@@ -758,7 +794,7 @@ function ProfileForm({
         </div>
         <div className="field">
           <label htmlFor="ai-url">Base URL{provider?.defaultBaseUrl ? " (optional)" : ""}</label>
-          <input id="ai-url" type="url" value={f.baseUrl}
+          <input id="ai-url" ref={urlRef} type="url" value={f.baseUrl}
             onChange={(e) => {
               changeUrl(e.target.value);
               setChecked(null);
@@ -774,15 +810,18 @@ function ProfileForm({
           </p>
           {compatible && (
             <div className="buttons">
-              <button type="button" onClick={check} disabled={checked === "checking" || f.baseUrl.trim() === ""}>
+              {/* aria-disabled, not disabled: the button keeps focus while it checks. */}
+              <button type="button" onClick={check} aria-disabled={!checkable}>
                 {checked === "checking" ? "Checking…" : "Check this address"}
               </button>
             </div>
           )}
-          <div role="status" className="small ai-check" tabIndex={-1} ref={checkRef}>
-            {checked && checked !== "checking" && (
-              checked.outcome === "found" ? (
-                <p className="ai-ok">
+          <div className="small ai-check">
+            {/* Found: announced as a status. Not found: focus moves to the reason, which reads it out once. */}
+            <p role="status">
+              {checked === "checking" && "Checking the address…"}
+              {checked && checked !== "checking" && checked.outcome === "found" && (
+                <span className="ai-ok">
                   <strong>Found {checked.server}</strong> with {checked.models.length}{" "}
                   {checked.models.length === 1 ? "model" : "models"}
                   {checked.detail ? `. ${checked.detail}` : "."}
@@ -790,19 +829,28 @@ function ProfileForm({
                   {f.baseUrl.trim().replace(/\/+$/, "") !== checked.baseUrl && (
                     <>
                       {" "}
-                      <button type="button" className="link-button" onClick={() => changeUrl(checked.baseUrl)}>
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => {
+                          changeUrl(checked.baseUrl);
+                          // The button goes once the address matches: move focus to the address itself.
+                          window.setTimeout(() => urlRef.current?.focus(), 0);
+                        }}
+                      >
                         Use {checked.baseUrl}
                       </button>
                     </>
                   )}
-                </p>
-              ) : (
-                <p className="ai-bad">
-                  <strong>Not found: </strong>
-                  {checked.problem}
-                  {checked.guidance ? ` ${checked.guidance}` : ""}
-                </p>
-              )
+                </span>
+              )}
+            </p>
+            {checked && checked !== "checking" && checked.outcome !== "found" && (
+              <p className="ai-bad" tabIndex={-1} ref={checkRef}>
+                <strong>Not found: </strong>
+                {checked.problem}
+                {checked.guidance ? ` ${checked.guidance}` : ""}
+              </p>
             )}
           </div>
         </div>

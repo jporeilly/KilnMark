@@ -86,10 +86,11 @@ public final class AiViews {
      * A model a server offers. Sizes are bytes; {@code loaded} null when the server does not say.
      * {@code gpu}: {@code gpu}, {@code split} (with {@code gpuPercent}), {@code cpu},
      * {@code not-loaded} or {@code unknown}; {@code gpuText} says the same in words.
+     * {@code contextSize} and (embedding models) {@code dimensions} when the server says.
      */
     public record FoundModel(String name, Long sizeBytes, String family, String parameterSize, String quantisation,
                              boolean embedding, Boolean loaded, String gpu, Integer gpuPercent, Long vramBytes,
-                             String gpuText, Integer contextSize) {
+                             String gpuText, Integer contextSize, Integer dimensions) {
     }
 
     /** What viewers may know: which AI search features are on. */

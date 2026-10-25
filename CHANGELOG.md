@@ -13,9 +13,12 @@
   model-server paths are called, after the address rules, with short timeouts, no redirects and no
   response bodies returned. Kilnmark itself never looks for a GPU.
 - **`host.containers.internal` and `host.docker.internal` are on the default
-  `kilnmark.ai.local-hosts`** (ADR 0016 amendment): a model server on the machine running the
-  container counts as local under the operator lock without extra configuration. Names are still
-  matched as written, never resolved.
+  `kilnmark.ai.local-hosts` when Kilnmark runs in a container** (ADR 0016 amendment), counting as
+  local only while they resolve to loopback, private addresses or 169.254.1.2. The image sets
+  `KILNMARK_IN_CONTAINER=true`.
+- **Rootless Podman 5.3+ (pasta):** 169.254.1.2 is accepted as a model address only when reached
+  through those two names; every other link-local and metadata address stays refused, including
+  ones written as a single number, in hexadecimal or octal, or IPv4-mapped IPv6.
 
 - **Data quality** (docs/design/data-quality.md, build step 1). Profiling now keeps, over every
   row, each text column's value shapes (`SW1A 1AA` is `AA9A 9AA`; the top 20 with counts and the

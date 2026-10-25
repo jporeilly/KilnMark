@@ -508,6 +508,8 @@ export type AiFoundModel = {
   vramBytes: number | null;
   gpuText: string;
   contextSize: number | null;
+  /** Embedding models: numbers per text, when the server says. */
+  dimensions: number | null;
 };
 /** One address checked by discovery: found, not found (with the reason), refused, or not on the local list. */
 export type AiFoundServer = {
