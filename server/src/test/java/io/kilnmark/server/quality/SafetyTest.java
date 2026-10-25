@@ -202,6 +202,24 @@ class SafetyTest {
     }
 
     @Test
+    void webhookPathsTakeOnlyHarmlessEscapesAndAsciiAndTheDefaultPortIsNoPort() {
+        List<String> allow = List.of("https://hooks.example.com/kilnmark/", "http://127.0.0.1:47391/hooks/");
+        for (String url : List.of("https://hooks.example.com/kilnmark/%252e%252e/admin", // double-decoded dots
+            "https://hooks.example.com/kilnmark/a%00b", "https://hooks.example.com/kilnmark/%c0%ae%c0%ae/admin",
+            "https://hooks.example.com/kilnmark/%20x", "https://hooks.example.com/kilnmark/%zz",
+            "https://hooks.example.com/kilnmark/%4", "https://hooks.example.com/kilnmark/caf\u00e9",
+            "https://hooks.example.com/kilnmark/x?q=\u00e9")) {
+            assertFalse(RuleDraft.allowed(url, allow), url);
+        }
+        assertTrue(RuleDraft.allowed("https://hooks.example.com/kilnmark/%41b-c_d~", allow), "unreserved escapes");
+        assertTrue(RuleDraft.allowed("https://hooks.example.com:443/kilnmark/x", allow), "443 is https's own port");
+        assertTrue(RuleDraft.allowed("https://hooks.example.com/kilnmark/x", List.of("https://hooks.example.com:443/")));
+        assertFalse(RuleDraft.allowed("https://hooks.example.com:8443/kilnmark/x", allow));
+        assertTrue(RuleDraft.allowed("http://example.net:80/a", List.of("http://example.net/")));
+        assertFalse(RuleDraft.allowed("http://example.net:443/a", List.of("http://example.net/")));
+    }
+
+    @Test
     void regexesStayInTheSubsetBothEnginesRead() {
         for (String ok : List.of("^[A-Z]{2}[0-9]{4}$", "^\\p{Lu}\\p{Ll}+$", "^(?:ab|cd)*?x$", "^[^@\\s]+@[^@]+\\.[a-z]{2,}$",
             "^\\d{3}-\\d{4}$", "^a\\.b\\+c$")) {

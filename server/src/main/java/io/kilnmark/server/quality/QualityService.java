@@ -440,7 +440,10 @@ public class QualityService {
                 body.put("error", e.error());
             }
             body.put("observedAt", Instant.now().toString());
-            hooks.send(rule.actions().webhook(), body.toString());
+            if (Webhooks.NOT_ALLOWED.equals(hooks.send(rule.actions().webhook(), body.toString()))) {
+                store.noteResult(resultId, "The webhook was not called: its address is no longer on this server's "
+                    + "webhook allow-list (kilnmark.quality.webhook-allow-list).");
+            }
         }
     }
 

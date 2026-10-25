@@ -119,9 +119,14 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
      * True when {@code url} is an http(s) URL starting with one of the allowed prefixes. The
      * comparison is on the parsed URL, so {@code https://hooks.example.com@evil.example/} does
      * not pass for {@code https://hooks.example.com/}, and paths with dot segments or encoded dots
-     * and slashes are refused ({@link #plainPath}).
+     * and slashes are refused ({@link #plainPath}). Only printable ASCII is accepted anywhere in the
+     * URL. A port written out that is the scheme's default ({@code :443}, {@code :80}) is the same as
+     * none, on either side.
      */
     public static boolean allowed(String url, List<String> allowList) {
+        if (url == null || url.chars().anyMatch(ch -> ch <= 0x20 || ch >= 0x7f)) {
+            return false;
+        }
         URI u;
         try {
             u = URI.create(url);
@@ -136,8 +141,7 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
             return false;
         }
         String normal = u.getScheme().toLowerCase(Locale.ROOT) + "://" + u.getHost().toLowerCase(Locale.ROOT)
-            + (u.getPort() >= 0 ? ":" + u.getPort() : "") + (u.getRawPath() == null || u.getRawPath().isEmpty() ? "/"
-            : u.getRawPath());
+            + port(u) + (u.getRawPath() == null || u.getRawPath().isEmpty() ? "/" : u.getRawPath());
         for (String entry : allowList) {
             String e = entry.trim();
             if (e.isEmpty()) {
@@ -153,8 +157,7 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
                 continue;
             }
             String prefix = a.getScheme().toLowerCase(Locale.ROOT) + "://" + a.getHost().toLowerCase(Locale.ROOT)
-                + (a.getPort() >= 0 ? ":" + a.getPort() : "")
-                + (a.getRawPath() == null || a.getRawPath().isEmpty() ? "/" : a.getRawPath());
+                + port(a) + (a.getRawPath() == null || a.getRawPath().isEmpty() ? "/" : a.getRawPath());
             if (normal.startsWith(prefix) && (prefix.endsWith("/") || normal.length() == prefix.length()
                 || normal.charAt(prefix.length()) == '/')) {
                 return true;
@@ -163,10 +166,21 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
         return false;
     }
 
+    /** {@code :port} as written, or nothing when there is none or it is the scheme's default. */
+    private static String port(URI u) {
+        int p = u.getPort();
+        boolean usual = p == 443 && "https".equalsIgnoreCase(u.getScheme())
+            || p == 80 && "http".equalsIgnoreCase(u.getScheme());
+        return p < 0 || usual ? "" : ":" + p;
+    }
+
     /**
-     * A path with no dot segments ({@code .} or {@code ..}), no encoded dots, slashes or
-     * backslashes and no semicolons, so it cannot climb out of an allowed prefix once the
-     * receiving server normalises it.
+     * A path with no dot segments ({@code .} or {@code ..}), no backslashes, no semicolons and no
+     * percent-escapes but of letters, digits, {@code -}, {@code _} and {@code ~}, so it cannot
+     * climb out of an allowed prefix once the receiving server decodes and normalises it. Escapes
+     * of anything else are refused: dots and slashes, the percent sign itself ({@code %25}, decoded
+     * twice by some servers), control bytes ({@code %00}) and any byte of UTF-8 ({@code %c0%ae},
+     * an overlong dot, which lenient decoders accept).
      *
      * <p>Semicolons are refused outright, raw or encoded ({@code %3b}): some servers (Tomcat,
      * Jetty) strip a segment's matrix parameters ({@code ..;x} becomes {@code ..}) before or after
@@ -180,10 +194,20 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
         if (rawPath == null || rawPath.isEmpty()) {
             return true;
         }
-        String lower = rawPath.toLowerCase(Locale.ROOT);
-        if (lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c") || lower.contains("\\")
-            || lower.contains(";") || lower.contains("%3b")) {
+        if (rawPath.contains("\\") || rawPath.contains(";")) {
             return false;
+        }
+        for (int i = rawPath.indexOf('%'); i >= 0; i = rawPath.indexOf('%', i + 1)) {
+            if (i + 3 > rawPath.length()) {
+                return false;
+            }
+            int hi = Character.digit(rawPath.charAt(i + 1), 16);
+            int lo = Character.digit(rawPath.charAt(i + 2), 16);
+            int b = hi * 16 + lo;
+            if (hi < 0 || lo < 0 || !(b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-'
+                || b == '_' || b == '~')) {
+                return false;
+            }
         }
         for (String segment : rawPath.split("/", -1)) {
             int params = segment.indexOf(';');

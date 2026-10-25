@@ -620,6 +620,16 @@ public class QualityStore {
 
     // ---- results ----
 
+    /** Adds a sentence to a result's message (words for every role, such as why its webhook was not called). */
+    public void noteResult(long id, String note) {
+        update("UPDATE kilnmark.quality_result SET message = CASE WHEN coalesce(message, '') = '' THEN ? "
+            + "ELSE message || ' ' || ? END WHERE id = ?", ps -> {
+                ps.setString(1, note);
+                ps.setString(2, note);
+                ps.setLong(3, id);
+            });
+    }
+
     public long saveResult(Rule rule, Long runId, Rule.Status status, RowChecks.Evaluation e, boolean keepRows) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.quality_result (rule_id, quality_run_id, "

@@ -94,7 +94,11 @@ details.
   only, never values.
 - **Webhooks, after review:** a webhook path may not hold a semicolon, raw or encoded (`%3b`), so a
   segment such as `..;x`, which some servers read as `..` once they drop its parameters, cannot
-  climb out of an allowed prefix. Checked when a rule is saved and again before each call.
+  climb out of an allowed prefix. Percent-escapes in the path are allowed only for letters, digits,
+  `-`, `_` and `~` (so no `%25`, `%00` or overlong UTF-8 such as `%c0%ae`), the URL must be printable
+  ASCII, and a written-out default port (`:443`, `:80`) matches an allow-list entry without one.
+  Checked when a rule is saved and again before each call; a call refused then is noted on the
+  rule's result.
 - **Custom SQL, after review:** refused under a login that may reach other databases (one that may
   execute dblink's functions or use a foreign server) and on any database with a user mapping or a
   foreign table, which a view owned by another role can reach, since a read-only transaction does

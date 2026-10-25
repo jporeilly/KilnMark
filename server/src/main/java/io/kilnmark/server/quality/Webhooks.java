@@ -19,6 +19,8 @@ import org.jboss.logging.Logger;
 public final class Webhooks {
 
     private static final Logger LOG = Logger.getLogger(Webhooks.class);
+    /** What {@link #send} answers when the URL is no longer on the allow-list. */
+    public static final String NOT_ALLOWED = "not on the allow-list";
 
     private final HttpClient client;
     private final Duration timeout;
@@ -34,7 +36,7 @@ public final class Webhooks {
     public String send(String url, String body) {
         if (!RuleDraft.allowed(url, allowList)) {
             LOG.warnf("Webhook %s is no longer on the allow-list; not called", url);
-            return "not on the allow-list";
+            return NOT_ALLOWED;
         }
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(url)).timeout(timeout)
