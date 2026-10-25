@@ -1,0 +1,150 @@
+/* The Ask panel (docs/design/assistant.md). Colours and fonts only from the tokens in tokens.css. */
+
+.ask-button {
+  white-space: nowrap;
+}
+
+.assistant {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(420px, 100vw);
+  padding: 16px;
+  box-sizing: border-box;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border-left: 1px solid var(--km-border);
+}
+
+/* On wide screens the page moves aside instead of hiding under the panel. */
+@media (min-width: 1100px) {
+  .shell.assistant-open {
+    padding-right: 420px;
+  }
+}
+
+.assistant-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistant-head h2 {
+  margin: 0 auto 0 0;
+  font-size: 20px;
+}
+
+.assistant-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.assistant-log,
+.assistant-suggest ul,
+.assistant-matches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.assistant-exchange {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--km-border);
+}
+
+.assistant-question {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--km-ground);
+  font-weight: 600;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.assistant-answer p {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+
+.assistant-cite {
+  font-weight: 600;
+}
+
+.assistant-sources-h {
+  margin: 12px 0 4px;
+  font-size: 14px;
+}
+
+.assistant-sources {
+  margin: 0 0 8px;
+  padding-left: 24px;
+  font-size: 14px;
+}
+
+.assistant-sources li {
+  padding: 2px 0;
+}
+
+.assistant-matches {
+  padding-left: 0;
+}
+
+.assistant-matches li {
+  display: grid;
+  gap: 2px;
+  padding: 6px 0;
+}
+
+.assistant-suggest li {
+  padding: 2px 0;
+}
+
+.assistant-suggest .link-button,
+.assistant-rate .link-button {
+  text-align: left;
+  min-height: 24px;
+}
+
+.assistant-rate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.assistant-form {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--km-border);
+}
+
+.assistant-form label {
+  font-weight: 600;
+}
+
+.assistant-form textarea {
+  font: inherit;
+  color: var(--km-ink);
+  background: var(--km-surface);
+  border: 1px solid var(--km-border-control);
+  border-radius: 8px;
+  padding: 9px 12px;
+  resize: vertical;
+  min-height: 3lh;
+  max-height: 40vh;
+}
+
+.assistant-form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}

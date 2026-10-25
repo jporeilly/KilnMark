@@ -338,6 +338,39 @@ public interface Connector {
     record ReadOptions(String assetUrn, long rowLimit, int batchSize) {
     }
 
+    /**
+     * A step that writes the rows it receives on its {@code in} port to {@code source}
+     * (docs/design/pipelines.md, section 4). Connectors that can write list
+     * {@link Capability#WRITE} in {@link #capabilities()} and override this; the default refuses.
+     * The caller (the pipeline service) has already checked that the source allows writing and
+     * that its hosts are allowed.
+     *
+     * @param write what to write and how; see {@link WriteOptions}
+     * @throws ConnectorException if this connector cannot write, or the options are wrong for it
+     */
+    default io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+        throw new ConnectorException(displayName() + " sources cannot be written to yet");
+    }
+
+    /**
+     * Where and how a pipeline's {@code write} step writes.
+     *
+     * @param target   a table ({@code schema.table}) for databases, or a path inside the source for
+     *                 files and object storage
+     * @param mode     {@code create}, {@code append}, {@code replace} or {@code upsert}
+     * @param key      the key columns for {@code upsert}; empty otherwise
+     * @param format   for files: {@code csv} or {@code parquet}; null for databases
+     * @param options  any further step settings from the pipeline YAML, as written
+     * @param assetUrn the URN the written asset is recorded under, for metadata and lineage
+     */
+    record WriteOptions(String target, String mode, java.util.List<String> key, String format,
+                        Map<String, Object> options, String assetUrn) {
+        public WriteOptions {
+            key = key == null ? java.util.List.of() : java.util.List.copyOf(key);
+            options = options == null ? Map.of() : Map.copyOf(options);
+        }
+    }
+
     /** One setting a source of this kind takes. */
     record Setting(String key, String label, boolean required, String hint, boolean multiple) {
     }

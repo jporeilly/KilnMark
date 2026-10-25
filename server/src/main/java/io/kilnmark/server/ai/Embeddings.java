@@ -306,7 +306,7 @@ public class Embeddings {
     }
 
     /** pgvector's text form: [1.0,2.5,...]. */
-    static String literal(float[] v) {
+    public static String literal(float[] v) {
         StringBuilder b = new StringBuilder(v.length * 10).append('[');
         for (int i = 0; i < v.length; i++) {
             if (i > 0) {
@@ -319,7 +319,7 @@ public class Embeddings {
     }
 
     /** The cast that a profile's index is built on, and that searches must use to hit it. */
-    static String cast(int dimensions) {
+    public static String cast(int dimensions) {
         return dimensions <= 2000 ? "public.vector(" + dimensions + ")" : "public.halfvec(" + dimensions + ")";
     }
 

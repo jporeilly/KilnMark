@@ -1,7 +1,7 @@
 # The assistant
 
-Status: design, 25 October 2026. Replaces help buttons: people ask in a chat window, and the
-answer links to the documentation.
+Status: step 1 (the documentation domain) built, 25 October 2026; steps 2 and 3 are design.
+Replaces help buttons: people ask in a chat window, and the answer links to the documentation.
 
 A chat window, open from anywhere in the app, answers questions about Kilnmark from what it
 knows: its **knowledge domains**. Each answer is short, says where it came from, and links to
