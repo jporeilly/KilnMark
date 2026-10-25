@@ -692,4 +692,71 @@ class KilnGraphRunnerTest {
             assertEquals(RunResult.Outcome.STOPPED, failed.step(other).outcome(), other);
         }
     }
+
+    @Test
+    @Timeout(30)
+    void aStepInterruptedWhileEndingItsOutputsSaysStopped() throws Exception {
+        // split gets one batch and finishes; its odd reader sleeps before reading, so split waits to end
+        // that output. Then its even reader fails, which interrupts split while it waits.
+        Step failing = new Step() {
+            @Override
+            public String type() {
+                return "failing";
+            }
+
+            @Override
+            public void init(StepContext context) {
+            }
+
+            @Override
+            public boolean process(StepContext context) throws StepException {
+                try {
+                    VectorSchemaRoot b = context.input().take(context.allocator());
+                    if (b != null) {
+                        b.close();
+                    }
+                    Thread.sleep(300);
+                    throw new StepException("even broke");
+                } catch (InterruptedException e) {
+                    throw Toys.interrupted(e);
+                }
+            }
+        };
+        Step sleepy = new Step() {
+            @Override
+            public String type() {
+                return "sleepy";
+            }
+
+            @Override
+            public void init(StepContext context) throws StepException {
+                try {
+                    Thread.sleep(1_500);
+                } catch (InterruptedException e) {
+                    throw Toys.interrupted(e);
+                }
+            }
+
+            @Override
+            public boolean process(StepContext context) throws StepException {
+                try {
+                    VectorSchemaRoot b = context.input().take(context.allocator());
+                    if (b == null) {
+                        return false;
+                    }
+                    b.close();
+                    return true;
+                } catch (InterruptedException e) {
+                    throw Toys.interrupted(e);
+                }
+            }
+        };
+        RunResult r = new G().step("gen", new Generate(1, 10)).step("split", new Split())
+            .step("even", failing).step("odd", sleepy)
+            .edge("gen", "split").edge("split.even", "even").edge("split.odd", "odd").run(64L << 20, 1);
+        assertEquals(RunResult.Status.FAILED, r.status());
+        assertTrue(r.error().contains("even broke"), r.error());
+        assertEquals(RunResult.Outcome.STOPPED, r.step("split").outcome(), "its odd output was failed, not ended");
+        assertEquals(RunResult.Outcome.FINISHED, r.step("gen").outcome());
+    }
 }

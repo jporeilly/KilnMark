@@ -25,6 +25,7 @@ import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Schema;
 
+import io.kilnmark.kiln.Decimals;
 import io.kilnmark.kiln.MetadataEmitter;
 import io.kilnmark.kiln.RowSet;
 import io.kilnmark.kiln.RunResult;
@@ -431,9 +432,10 @@ public final class KilnGraphRunner implements GraphRunner {
                     }
                 }
                 boolean early = n.inputs.values().stream().flatMap(List::stream).anyMatch(r -> !r.rowSet.atEnd());
-                n.outcome = early ? RunResult.Outcome.ENDED_EARLY : RunResult.Outcome.FINISHED;
                 releaseInputs(n);
-                finishOutputs(n);
+                boolean ended = finishOutputs(n);
+                n.outcome = !ended ? RunResult.Outcome.STOPPED
+                    : early ? RunResult.Outcome.ENDED_EARLY : RunResult.Outcome.FINISHED;
             } catch (Throwable t) {
                 boolean seen = t instanceof RowSet.UpstreamFailedException || t instanceof RowSet.CancelledException;
                 if (!seen && !n.stoppedByEngine) {
@@ -441,9 +443,8 @@ public final class KilnGraphRunner implements GraphRunner {
                 }
                 if (t instanceof RowSet.CancelledException && !failed.get()) {
                     // every step reading this one has finished and nothing failed: end early too
-                    n.outcome = RunResult.Outcome.ENDED_EARLY;
                     releaseInputs(n);
-                    finishOutputs(n);
+                    n.outcome = finishOutputs(n) ? RunResult.Outcome.ENDED_EARLY : RunResult.Outcome.STOPPED;
                 } else {
                     n.outcome = RunResult.Outcome.STOPPED; // or FAILED, when it recorded an error of its own
                     cancelInputs(n); // first, so the steps before stop even if a step after is stuck
@@ -468,8 +469,11 @@ public final class KilnGraphRunner implements GraphRunner {
             return "Step " + n.id() + " (" + n.step().type() + ") failed: " + message(t);
         }
 
-        /** Ends every output; if interrupted (the step is being stopped), ends the rest as failed without waiting. */
-        private void finishOutputs(Node n) {
+        /**
+         * Ends every output; if interrupted (the step is being stopped), ends the rest as failed without
+         * waiting. Returns whether every output was ended normally.
+         */
+        private boolean finishOutputs(Node n) {
             InterruptedException interrupted = null;
             for (Port p : n.outputs.values()) {
                 try {
@@ -489,7 +493,9 @@ public final class KilnGraphRunner implements GraphRunner {
             }
             if (interrupted != null) {
                 Thread.currentThread().interrupt();
+                return false;
             }
+            return true;
         }
 
         private void failOutputs(Node n, Throwable cause) {
@@ -731,15 +737,6 @@ public final class KilnGraphRunner implements GraphRunner {
             : e.from() + "->" + e.to();
     }
 
-    /**
-     * A decimal as text: written out in full when that is short, otherwise in scientific form, so a
-     * number such as 1e-999999999 never becomes a string of a billion zeros.
-     */
-    static String decimal(BigDecimal d) {
-        long plainLength = d.scale() >= 0 ? Math.max(d.precision(), d.scale()) : d.precision() - (long) d.scale();
-        return plainLength <= 100 ? d.toPlainString() : d.toString();
-    }
-
     /** Called with each thread's name just before it starts; for tests that make starting fail. */
     static volatile Consumer<String> beforeStart;
 
@@ -870,7 +867,7 @@ public final class KilnGraphRunner implements GraphRunner {
 
         private static String scalar(Object v) {
             if (v instanceof BigDecimal d) {
-                return decimal(d);
+                return Decimals.text(d);
             }
             if (v instanceof String || v instanceof Number || v instanceof Boolean || v instanceof Character) {
                 return v.toString();

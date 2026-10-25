@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
 
 import org.apache.arrow.vector.types.pojo.Schema;
 
+import io.kilnmark.kiln.Decimals;
 import io.kilnmark.kiln.SettingSpec;
 import io.kilnmark.kiln.StepException;
 import io.kilnmark.kiln.StepFactories;
@@ -292,7 +293,7 @@ public final class PipelineCompiler {
             if (text instanceof String t) {
                 return t;
             }
-            return value instanceof BigDecimal d ? PipelineDefinition.decimal(d) : String.valueOf(value);
+            return value instanceof BigDecimal d ? Decimals.text(d) : String.valueOf(value);
         }
 
         private static Checked number(Object v) {

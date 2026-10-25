@@ -22,15 +22,6 @@ import java.util.Set;
  */
 public record PipelineDefinition(String name, String description, List<StepDefinition> steps) {
 
-    /**
-     * A decimal as text: in full when that is short, otherwise in scientific form, so a number such
-     * as 1e-999999999 never becomes a string of a billion zeros.
-     */
-    static String decimal(java.math.BigDecimal d) {
-        long plainLength = d.scale() >= 0 ? Math.max(d.precision(), d.scale()) : d.precision() - (long) d.scale();
-        return plainLength <= 100 ? d.toPlainString() : d.toString();
-    }
-
     /** The format this version reads. */
     public static final String FORMAT = "pipeline/v1";
 
@@ -86,7 +77,7 @@ public record PipelineDefinition(String name, String description, List<StepDefin
                 return (T) Collections.unmodifiableList(out);
             }
             if (value instanceof java.math.BigDecimal d) {
-                return (T) decimal(d);
+                return (T) io.kilnmark.kiln.Decimals.text(d);
             }
             return value == null ? null : (T) String.valueOf(value);
         }
