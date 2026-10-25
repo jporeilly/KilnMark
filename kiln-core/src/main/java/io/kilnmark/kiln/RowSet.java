@@ -3,6 +3,7 @@ package io.kilnmark.kiln;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -23,12 +24,14 @@ public final class RowSet {
 
     private static final Object END = new Object();
     private static final long POLL_MILLIS = 100;
+    private static final long TAKE_ANY_WAIT_MILLIS = 5;
 
     private final String name;
     private final ArrayBlockingQueue<Object> queue;
     private final AtomicLong rows = new AtomicLong();
     private volatile Throwable failure;
     private volatile boolean cancelled;
+    private volatile boolean ended;
 
     public RowSet(String name, int capacity) {
         if (capacity < 1) {
@@ -93,14 +96,76 @@ public final class RowSet {
      * @throws UpstreamFailedException if the step before this one failed
      */
     public VectorSchemaRoot take(BufferAllocator into) throws InterruptedException, StepException {
-        Object o = queue.take();
+        return received(queue.take(), into);
+    }
+
+    /**
+     * The next batch if one arrives within {@code timeout}, moved into {@code into}; {@code null} if
+     * none did or the stream has ended, which {@link #atEnd()} tells apart.
+     *
+     * @throws UpstreamFailedException if the step before this one failed
+     */
+    public VectorSchemaRoot poll(BufferAllocator into, long timeout, TimeUnit unit)
+        throws InterruptedException, StepException {
+        if (ended) {
+            return null;
+        }
+        Object o = timeout <= 0 ? queue.poll() : queue.poll(timeout, unit);
+        return o == null ? null : received(o, into);
+    }
+
+    /** Whether the reader has been told the stream ended, by {@link #take} or {@link #poll}. */
+    public boolean atEnd() {
+        return ended;
+    }
+
+    private VectorSchemaRoot received(Object o, BufferAllocator into) throws StepException {
         if (o == END) {
+            ended = true;
             if (failure != null) {
                 throw new UpstreamFailedException("the step before " + name + " failed", failure);
             }
             return null;
         }
         return transfer((VectorSchemaRoot) o, into);
+    }
+
+    /** A batch taken by {@link #takeAny}, and the position in the list of the row set it came from. */
+    public record Taken(int index, VectorSchemaRoot batch) {
+    }
+
+    /**
+     * The next batch from whichever of these row sets has one, or {@code null} once every one has
+     * ended. For a step that reads several inputs and does not mind the order (union): reading them
+     * one after another would stall a pipeline whose inputs share a step upstream, as that step
+     * waits for room on the input not being read.
+     *
+     * @throws UpstreamFailedException if a step before any of them failed
+     */
+    public static Taken takeAny(List<RowSet> from, BufferAllocator into) throws InterruptedException, StepException {
+        int n = from.size();
+        while (true) {
+            int start = n == 0 ? 0 : ThreadLocalRandom.current().nextInt(n);
+            RowSet waitOn = null;
+            for (int k = 0; k < n; k++) {
+                int i = (start + k) % n;
+                RowSet r = from.get(i);
+                VectorSchemaRoot b = r.poll(into, 0, TimeUnit.MILLISECONDS);
+                if (b != null) {
+                    return new Taken(i, b);
+                }
+                if (!r.atEnd() && waitOn == null) {
+                    waitOn = r;
+                }
+            }
+            if (waitOn == null) {
+                return null;
+            }
+            VectorSchemaRoot b = waitOn.poll(into, TAKE_ANY_WAIT_MILLIS, TimeUnit.MILLISECONDS);
+            if (b != null) {
+                return new Taken(from.indexOf(waitOn), b);
+            }
+        }
     }
 
     /** The reading step has stopped: release waiting batches and make further puts fail fast. */
