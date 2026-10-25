@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 /**
  * A real switch for an on/off setting: a button with role="switch" and aria-checked, labelled by
@@ -31,6 +31,9 @@ export function Switch({
 }) {
   const auto = useId();
   const base = id ?? auto;
+  // Long help shows two lines, with More to read the rest (it is read out in full regardless).
+  const long = typeof help === "string" && help.length > 110;
+  const [more, setMore] = useState(false);
   const described = [help || defaultNote ? `${base}-help` : null, describedBy ?? null].filter(Boolean).join(" ") || undefined;
   if (compact) {
     return (
@@ -60,15 +63,21 @@ export function Switch({
   return (
     <div className="km-switch-row">
       <div className="km-switch-text">
-        <span id={`${base}-label`} className="km-switch-label">
-          {label}
+        <span className="km-switch-label">
+          <span id={`${base}-label`}>{label}</span>
+          {defaultNote && <span className="km-switch-default">{defaultNote}</span>}
         </span>
         {(help || defaultNote) && (
-          <span id={`${base}-help`} className="hint">
+          <span id={`${base}-help`} className={`hint${long && !more ? " km-clamp-2" : ""}`}>
             {help}
-            {help && defaultNote ? " " : ""}
-            {defaultNote}
+            {defaultNote && <span className="visually-hidden"> {defaultNote}</span>}
           </span>
+        )}
+        {long && (
+          <button type="button" className="link-button km-more" aria-expanded={more} onClick={() => setMore(!more)}>
+            {more ? "Less" : "More"}
+            <span className="visually-hidden"> about {label}</span>
+          </button>
         )}
       </div>
       <span className="km-switch-state" aria-hidden="true">

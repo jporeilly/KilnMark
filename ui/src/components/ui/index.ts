@@ -3,7 +3,7 @@
  * a new page (pipelines, notification settings) inherits the look without CSS of its own:
  *
  *   Card, PageHeader, StatTile, IconTile, StatusChip, SeverityChip, DataTable, Switch,
- *   EmptyState, Tabs and TabPanel, Button and ButtonLink, Meter, ScoreRing, FilterChips.
+ *   EmptyState, Tabs and TabPanel, Button and ButtonLink, Meter, ScoreRing, FilterChips, SideSheet.
  *
  * Plain elements are styled too: <button> (secondary), button.primary, inputs, selects, tables,
  * .panel (a Card), .badge (a chip), .hint, .error, .notice and .warning (see app.css).
@@ -20,3 +20,4 @@ export { Button, ButtonLink, type ButtonVariant } from "./Button";
 export { Meter, ScoreRing, type FillTone } from "./Meter";
 export { FilterChips, type FilterOption } from "./FilterChips";
 export { useDismiss } from "./useDismiss";
+export { SideSheet } from "./SideSheet";

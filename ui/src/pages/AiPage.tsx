@@ -736,7 +736,7 @@ function ProfileForm({
   };
 
   return (
-    <section aria-labelledby="profile-form-h" className="panel">
+    <section aria-labelledby="profile-form-h" className="panel km-form-card">
       <h2 id="profile-form-h" tabIndex={-1} ref={heading}>
         {profile ? `Edit ${profile.name}` : "Add a model"}
       </h2>

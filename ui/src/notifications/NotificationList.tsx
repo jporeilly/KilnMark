@@ -73,7 +73,11 @@ export function NotificationList({
                   n.title
                 )}
               </H>
-              {n.detail && <p className="km-note-detail">{n.detail}</p>}
+              {n.detail && (
+                <p className="km-note-detail km-one-line" title={n.detail}>
+                  {n.detail}
+                </p>
+              )}
               <p className="km-note-meta">
                 <time dateTime={n.createdAt}>{formatAgo(n.createdAt)}</time>
                 <Delivery n={n} />

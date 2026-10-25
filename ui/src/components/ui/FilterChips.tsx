@@ -12,14 +12,17 @@ export function FilterChips({
   options,
   selected,
   onSelect,
+  scroll = false,
 }: {
+  /** Keep the chips on one line, scrolling sideways when they do not fit. */
+  scroll?: boolean;
   label: string;
   options: FilterOption[];
   selected: string;
   onSelect: (id: string) => void;
 }) {
   return (
-    <div role="group" aria-label={label} className="km-filters">
+    <div role="group" aria-label={label} className={scroll ? "km-filters km-filters--scroll" : "km-filters"}>
       {options.map((o) => (
         <button
           key={o.id}

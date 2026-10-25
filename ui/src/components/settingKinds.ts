@@ -17,11 +17,11 @@ export type SettingKind =
 /** Help for the on/off settings, said in terms of the switch rather than "true" and "false". */
 const SWITCH_HELP: Record<string, string> = {
   recursive: "Also scan the folders inside this folder.",
-  header: "On: the first row of a delimited file names the columns. Off: it is data, and the columns are named column_1, column_2 and so on.",
+  header: "The first row of a delimited file names the columns. Off: it is data, and columns are named column_1, column_2 and so on.",
   keep_text:
-    "On: documents' text is kept in Kilnmark for search and reading. Off: only their properties are kept (title, author, pages, language, words), and text kept before is deleted at the next scan.",
+    "Keep documents' text for search and reading. Off keeps only their properties (title, author, pages, language, words) and deletes text kept before at the next scan.",
   read_text_on_demand:
-    "Only when Keep document text is off. On: stewards can view a document's text, read from the source when they open it and never stored. Off: only its properties are shown.",
+    "When Keep document text is off, stewards can still view a document's text, read from the source when they open it and never stored.",
   path_style: "On for most S3-compatible storage (VersityGW, MinIO); off for AWS.",
 };
 

@@ -12,9 +12,11 @@ import { ContainerPicker } from "./ContainerPicker";
 import { ConnectorTile, tileProps } from "./ConnectorTile";
 import { Icon } from "./icons";
 import { settingKind } from "./settingKinds";
-import { Switch } from "./ui";
+import { SideSheet, Switch } from "./ui";
 
 const STEPS = ["Connect", "Test", "Choose what to scan", "Save"] as const;
+/** The stepper's short labels, so it stays on one line. */
+const SHORT = ["Connect", "Test", "What to scan", "Save"] as const;
 /** File settings that say how to read files: chosen in step 3, beside the preview that shows their effect. */
 const READING = new Set(["delimiter", "header", "encoding"]);
 const PATTERNS = new Set(["include", "exclude"]);
@@ -208,7 +210,7 @@ export function ConnectionPanel({
           id={field(`s-${s.key}`)}
           label={s.label}
           help={k.help}
-          defaultNote={value === "" ? `Not set: ${k.defaultOn ? "on" : "off"}, the default.` : undefined}
+          defaultNote={`Default: ${k.defaultOn ? "on" : "off"}`}
           checked={on}
           onChange={(v) => set(s.key, v ? "true" : "false")}
         />
@@ -338,7 +340,7 @@ export function ConnectionPanel({
     );
 
   return (
-    <section className="connection-panel km-sheet" aria-labelledby={`${id}-title`} onKeyDown={onKeyDown}>
+    <SideSheet labelledBy={`${id}-title`} onKeyDown={onKeyDown} onScrim={requestClose}>
       <div className="km-panel-head">
         <ConnectorTile {...tileProps(connector)} size="md" />
         <div className="km-panel-title">
@@ -352,9 +354,16 @@ export function ConnectionPanel({
       <nav aria-label="Steps">
         <ol className="steps">
           {STEPS.map((label, i) => (
-            <li key={label}>
-              <button type="button" aria-current={step === i ? "step" : undefined} onClick={() => go(i)}>
-                <span className="step-number">{i + 1}</span> {label}
+            <li key={label} className={i < step ? "is-past" : undefined}>
+              <button type="button" aria-current={step === i ? "step" : undefined} onClick={() => go(i)} title={label}>
+                <span className="step-number" aria-hidden="true">
+                  {i + 1}
+                </span>
+                <span className="step-label">
+                  <span className="visually-hidden">Step {i + 1}: </span>
+                  <span aria-hidden="true">{SHORT[i]}</span>
+                  <span className="visually-hidden">{label}</span>
+                </span>
               </button>
             </li>
           ))}
@@ -585,6 +594,6 @@ export function ConnectionPanel({
           </button>
         )}
       </div>
-    </section>
+    </SideSheet>
   );
 }

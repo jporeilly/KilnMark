@@ -175,7 +175,7 @@ export function TokensPage({ me }: { me: Me }) {
           </div>
         )}
         <p id="assistant-hint" className="hint">
-          Local AI assistant: tick only for a token used by an AI assistant whose model runs on your own network. Through
+          Local AI assistant: turn it on only for a token used by an AI assistant whose model runs on your own network. Through
           the MCP server it then also sees sources that allow only local models; other tokens see only sources that allow
           any model.
         </p>
@@ -210,7 +210,7 @@ function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
   };
 
   return (
-    <section aria-labelledby="create-h" className="panel">
+    <section aria-labelledby="create-h" className="panel km-form-card">
       <h2 id="create-h">Create a token</h2>
       {error && (
         <p role="alert" className="error" tabIndex={-1} ref={errorRef}>

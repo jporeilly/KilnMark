@@ -108,12 +108,12 @@ export function SourcesPage({ role, add = false }: { role: AccessRole; add?: boo
             <div className="with-tile">
               <SourceTile kind={s.kind} size="md" />
               <div className="km-row-body">
-                <h3 className="km-row-title">
-                  <a href={href.source(s.name)} className="km-strong-link km-card-link">
+                <h3 className="km-row-title km-one-line">
+                  <a href={href.source(s.name)} className="km-strong-link km-card-link" title={s.displayName}>
                     {s.displayName}
                   </a>
                 </h3>
-                <p className="km-row-detail">
+                <p className="km-row-detail km-one-line" title={`${connectors[s.kind]?.displayName ?? s.kind} · ${s.name}`}>
                   {connectors[s.kind]?.displayName ?? s.kind}
                   {s.displayName !== s.name && <span className="mono"> · {s.name}</span>}
                 </p>

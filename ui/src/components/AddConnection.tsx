@@ -52,7 +52,7 @@ export function AddConnection({
       )}
       {!catalogue && !error && <p role="status">Loading connectors…</p>}
       {catalogue && (
-        <div className={chosen ? "add-connection with-panel" : "add-connection"}>
+        <div className="add-connection">
           <ConnectorGallery
             catalogue={catalogue}
             chosen={chosen?.kind ?? null}

@@ -728,7 +728,7 @@ export function RuleForm({
   const rangeInput = kind === "date" ? "date" : kind && TIMES.has(kind) ? "datetime-local" : "text";
 
   return (
-    <section aria-labelledby="rule-form-h" className="panel">
+    <section aria-labelledby="rule-form-h" className="panel km-form-card">
       <div className="km-card-head">
         <h2 id="rule-form-h" tabIndex={-1} className="km-card-title">
           {editing ? "Edit rule" : "Add a rule"}

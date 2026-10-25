@@ -548,6 +548,11 @@ main:focus {
   margin-bottom: 0;
 }
 
+/* Actions after a card's title sit at the end of the row. */
+.panel-head > h2 + * {
+  margin-left: auto;
+}
+
 .km-card-head,
 .panel-head {
   display: flex;
@@ -636,7 +641,7 @@ main:focus {
   gap: 10px;
   padding: 16px;
   border-radius: var(--km-radius-inner);
-  border: 1px solid var(--km-border);
+  border: 1px solid transparent;
   background: var(--km-surface-2);
   color: var(--km-ink);
   text-decoration: none;
@@ -644,7 +649,8 @@ main:focus {
 }
 
 a.km-inner:hover {
-  border-color: var(--km-border-control);
+  border-color: var(--km-border);
+  background: var(--km-surface-3);
 }
 
 .km-page-head {
@@ -725,8 +731,8 @@ a.km-inner:hover {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
-  padding: 26px 28px;
+  gap: 20px 32px;
+  padding: 28px 32px;
   border-radius: var(--km-radius-hero);
   background: var(--km-hero-bg);
   color: var(--km-hero-ink);
@@ -781,7 +787,7 @@ a.km-inner:hover {
   position: relative;
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
 }
 
 .km-hero :focus-visible {
@@ -794,9 +800,13 @@ a.km-inner:hover {
 }
 
 .km-hero .km-button:not(.primary) {
-  background: var(--km-hero-button);
-  border-color: transparent;
+  background: transparent;
+  border-color: var(--km-hero-muted);
   color: var(--km-hero-ink);
+}
+
+.km-hero .km-button:not(.primary):hover {
+  background: var(--km-hero-button);
 }
 
 /* Layout grids for cards. Spans collapse on narrow screens. */
@@ -833,7 +843,132 @@ a.km-inner:hover {
   grid-column: 1 / -1;
 }
 
-/* A main column and a side column of cards (the home page); one column on narrow screens. */
+/* The layout grid: 12 columns with one gap. A row pairs a wide card (8 columns) with a narrow one
+   (4); both stretch to the same height, so their footers line up. A card alone fills its row. */
+.km-rows-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--km-gap);
+}
+
+.km-row-pair {
+  display: grid;
+  gap: var(--km-gap);
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.km-row-pair > :first-child {
+  grid-column: span 8;
+}
+
+.km-row-pair > :last-child {
+  grid-column: span 4;
+}
+
+.km-row-single {
+  display: grid;
+}
+
+/* A card that fills its row's height, with its footer at the bottom. */
+.km-card--fill {
+  display: flex;
+  flex-direction: column;
+}
+
+.km-card--fill > .km-card-foot {
+  margin-top: auto;
+}
+
+.km-card--fill > .km-card-foot:only-child,
+.km-card--fill > :not(.km-card-foot) + .km-card-foot {
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+/* Two columns whose last cards stretch, so both columns end level. */
+.km-columns.km-columns--level {
+  align-items: stretch;
+}
+
+.km-columns--level > .km-column > :last-child {
+  flex: 1 1 auto;
+}
+
+/* Two cards side by side, equal width and height. */
+.km-halves {
+  display: grid;
+  gap: var(--km-gap);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+@media (max-width: 1023px) {
+  .km-halves {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A list that shows a few rows and scrolls inside its card. */
+.km-scroll-list {
+  max-height: 216px;
+  overflow-y: auto;
+  margin: 0 -6px;
+  padding: 0 6px;
+  border-radius: var(--km-radius-sm);
+}
+
+/* One line, cut with an ellipsis; the full text is in the title tooltip. */
+.km-one-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A slim strip across the page: a state worth one line, not a card. */
+.km-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  box-sizing: border-box;
+  padding: 10px 16px;
+  border-radius: var(--km-radius-inner);
+  background: var(--km-surface);
+  box-shadow: var(--km-shadow-card);
+  color: var(--km-muted);
+}
+
+.km-strip > .icon {
+  flex: none;
+}
+
+.km-strip-title {
+  margin: 0;
+  flex: none;
+  font-size: var(--km-text-md);
+  color: var(--km-ink-strong);
+}
+
+.km-strip-text {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--km-text-sm);
+}
+
+.km-strip--good > .icon {
+  color: var(--km-good);
+}
+
+.km-strip-close {
+  margin-left: auto;
+  flex: none;
+  width: 34px;
+  min-height: 34px;
+}
+
+/* A main column and a side column of cards; one column on narrow screens. */
 .km-columns {
   display: grid;
   gap: var(--km-gap);
@@ -1131,6 +1266,43 @@ fieldset.picker-list {
   gap: 12px;
 }
 
+/* Inside a card a fieldset is a titled section with a rule above it, not a box in a box. */
+.km-card fieldset,
+.panel fieldset,
+.km-sheet fieldset {
+  border: 0;
+  border-top: 1px solid var(--km-divider);
+  border-radius: 0;
+  padding: 14px 0 0;
+  margin: 4px 0 0;
+}
+
+.km-card legend,
+.panel legend,
+.km-sheet legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  margin: 0 0 10px;
+  /* In a fieldset laid out as a grid the legend becomes a grid item: give it the whole row. */
+  grid-column: 1 / -1;
+}
+
+/* The first section of a card or form needs no rule above it. */
+.km-card fieldset:first-child,
+.panel fieldset:first-child,
+.km-sheet fieldset:first-child {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.km-card legend + *,
+.panel legend + *,
+.km-sheet legend + * {
+  clear: both;
+}
+
 .check {
   display: inline-flex;
   flex-wrap: wrap;
@@ -1195,8 +1367,25 @@ details > summary {
 }
 
 .km-switch-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
   font-size: var(--km-text-md);
   font-weight: 600;
+}
+
+.km-switch-default {
+  font-size: var(--km-text-xs);
+  font-weight: 500;
+  color: var(--km-muted);
+}
+
+.km-more {
+  justify-self: start;
+  min-height: 24px;
+  padding: 0;
+  font-size: var(--km-text-xs);
 }
 
 .km-switch-state {
@@ -2223,14 +2412,16 @@ a.km-stat--link:hover {
 }
 
 /* Facts: small labelled values. On the ground they are cards; inside a card, soft wells. */
+/* Facts wrap and the last row's grow to fill it, so no row has a hole. */
 .facts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   margin: 0 0 var(--km-gap);
 }
 
 .facts div {
+  flex: 1 1 170px;
   background: var(--km-surface);
   border-radius: var(--km-radius-inner);
   box-shadow: var(--km-shadow-card);
@@ -2362,13 +2553,6 @@ a.km-stat--link:hover {
   gap: 20px;
 }
 
-@media (min-width: 1100px) {
-  .add-connection.with-panel {
-    grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
-    align-items: start;
-  }
-}
-
 .gallery {
   display: grid;
   gap: 12px;
@@ -2477,13 +2661,48 @@ a.km-stat--link:hover {
   min-width: 0;
 }
 
-@media (min-width: 1100px) {
-  .with-panel .connection-panel {
-    position: sticky;
-    top: calc(var(--km-topbar-h) + 16px);
-    max-height: calc(100vh - var(--km-topbar-h) - 32px);
-    overflow-y: auto;
+/* The side sheet: over the page from the right, with a scrim; the page behind does not scroll. */
+.km-no-scroll {
+  overflow: hidden;
+}
+
+.km-sheet-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+.km-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--km-backdrop);
+}
+
+.km-side-sheet {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(480px, 100vw);
+  overflow-y: auto;
+  border-radius: var(--km-radius-hero) 0 0 var(--km-radius-hero);
+  animation: km-sheet-in 0.2s var(--km-ease);
+}
+
+.km-side-sheet:focus {
+  outline: none;
+}
+
+@keyframes km-sheet-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
   }
+}
+
+/* The gallery's search needs only a search box's width. */
+.gallery > .field:first-child {
+  max-width: 420px;
 }
 
 .km-panel-head {
@@ -2503,33 +2722,90 @@ a.km-stat--link:hover {
   min-width: 0;
 }
 
+/* The stepper: one line, a numbered dot and a short label per step, joined by a line. */
 .steps {
   list-style: none;
-  margin: 16px 0;
+  margin: 18px 0 14px;
   padding: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
+}
+
+.steps li {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.steps li + li::before {
+  content: "";
+  flex: 1 1 8px;
+  min-width: 6px;
+  height: 2px;
+  margin-right: 4px;
+  border-radius: 1px;
+  background: var(--km-border);
+}
+
+.steps li.is-past + li::before,
+.steps li:has(+ li [aria-current="step"]).is-past + li::before {
+  background: var(--km-accent);
 }
 
 .steps button {
-  min-height: 34px;
-  padding: 5px 12px;
+  flex: none;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 8px 4px 4px;
+  border: 0;
   border-radius: var(--km-radius-pill);
-  border-color: var(--km-border);
+  background: transparent;
   font-size: var(--km-text-sm);
+  font-weight: 600;
+  color: var(--km-muted);
+  white-space: nowrap;
 }
 
-.steps button[aria-current="step"] {
-  background: var(--km-ink-strong);
-  border-color: var(--km-ink-strong);
-  color: var(--km-surface);
+.steps button:hover {
+  background: var(--km-surface-3);
 }
 
 .step-number {
-  display: inline-block;
-  min-width: 1.2em;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--km-surface-3);
+  color: var(--km-ink-soft);
+  font-size: var(--km-text-xs);
   font-variant-numeric: tabular-nums;
+}
+
+.steps .is-past .step-number {
+  background: var(--km-tint-green-bg);
+  color: var(--km-tint-green-fg);
+}
+
+.steps button[aria-current="step"] {
+  color: var(--km-ink-strong);
+}
+
+.steps button[aria-current="step"] .step-number {
+  background: var(--km-accent-fill);
+  color: var(--km-on-accent);
+}
+
+@media (max-width: 440px) {
+  .steps button:not([aria-current="step"]) .step-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
 }
 
 .step-heading {
@@ -2723,6 +2999,14 @@ a.km-stat--link:hover {
   font-size: var(--km-h3);
 }
 
+.settings-list h3 a {
+  text-decoration: none;
+}
+
+.settings-list h3 a:hover {
+  text-decoration: underline;
+}
+
 .settings-list p {
   margin: 0;
   color: var(--km-muted);
@@ -2801,6 +3085,8 @@ table.sample td {
 }
 
 .km-dim {
+  display: flex;
+  flex-direction: column;
   padding: 16px 18px;
 }
 
@@ -2872,42 +3158,57 @@ table.sample td {
   margin-top: 10px;
 }
 
-/* Recommended rules: a compact list with checkboxes. */
+/* Recommended rules: a checklist in two columns, each row on one grid (checkbox, column, check
+   with its reason, fit) so every row lines up. */
 .km-reco-list {
   list-style: none;
-  margin: 0 0 4px;
+  margin: 12px 0 4px;
   padding: 0;
-  border: 1px solid var(--km-divider);
-  border-radius: 12px;
-  overflow: hidden;
+  display: grid;
+  column-gap: 24px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
 }
 
 .km-reco {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 10px 10px;
   border-top: 1px solid var(--km-divider);
+  border-radius: var(--km-radius-sm);
 }
 
-.km-reco:first-child {
-  border-top: 0;
+.km-reco > input {
+  margin-top: 2px;
 }
 
 .km-reco.is-on {
   background: var(--km-accent-tint);
 }
 
-.km-reco label {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
+.km-reco-label {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) 76px;
+  align-items: baseline;
+  gap: 12px;
   font-size: var(--km-text-md);
   font-weight: 400;
   cursor: pointer;
+  min-width: 0;
+}
+
+.km-reco-col {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.km-reco-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .km-reco-check {
@@ -2915,16 +3216,77 @@ table.sample td {
 }
 
 .km-reco-fit {
-  margin-left: auto;
   font-size: var(--km-text-xs);
   font-weight: 600;
+  text-align: right;
   white-space: nowrap;
 }
 
 .km-reco-why {
-  flex-basis: 100%;
   font-size: var(--km-text-xs);
   color: var(--km-muted);
+}
+
+.km-reco-actions {
+  margin-top: 14px;
+}
+
+.km-filters--scroll {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.km-filters--scroll .km-filter {
+  flex: none;
+}
+
+/* Cards stacked with one gap (the Quality tab's rules, then the suggestions). */
+.km-stack-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--km-gap);
+  margin-top: var(--km-gap);
+}
+
+/* At most two lines, cut with an ellipsis; the full text is in the title tooltip. */
+.km-clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+/* A card holding a form is as wide as the form, not the page. */
+.km-form-card {
+  max-width: 760px;
+}
+
+.km-footnote {
+  margin-top: var(--km-gap);
+}
+
+/* A select or input that needs only its content's width. */
+.km-field-narrow {
+  max-width: 280px;
+}
+
+/* Labelled checkboxes in a wrapping grid. */
+.km-check-grid {
+  display: grid;
+  gap: 6px 16px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr));
+}
+
+.km-check-grid .check {
+  margin: 0;
+  min-width: 0;
+}
+
+.km-check-grid .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* A gallery of cards on the page (sources). */
@@ -2933,8 +3295,18 @@ table.sample td {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: var(--km-gap);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  align-items: stretch;
+}
+
+/* A lone card or two do not stretch across the whole page. */
+.km-gallery:has(> li:only-child) {
+  grid-template-columns: minmax(0, 420px);
+}
+
+.km-gallery:has(> li:nth-child(2):last-child) {
+  grid-template-columns: repeat(2, minmax(0, 420px));
 }
 
 .km-gallery-card {
@@ -3028,7 +3400,16 @@ a.km-link-card:hover {
   padding: 0;
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+}
+
+/* One or two sources do not stretch across a wide card. */
+.km-source-cards:has(> li:only-child) {
+  grid-template-columns: minmax(0, 360px);
+}
+
+.km-source-cards:has(> li:nth-child(2):last-child) {
+  grid-template-columns: repeat(2, minmax(0, 360px));
 }
 
 .km-source-cards .km-inner {
@@ -3072,14 +3453,31 @@ a.km-link-card:hover {
   gap: 6px;
 }
 
-/* Home: the setup checklist. */
+/* Home: the setup checklist, its steps in one row. */
+.km-setup-progress {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.km-setup-progress .km-card-sub {
+  margin: 0;
+  flex: none;
+}
+
+.km-setup-progress .km-meter {
+  flex: 1;
+  width: auto;
+}
+
 .km-setup {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  gap: 12px 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
 }
 
 .km-setup li {
@@ -3327,9 +3725,10 @@ h1.with-tile {
   margin-bottom: 8px;
 }
 
+/* Options fill their row (auto-fit), so a short set leaves no hole. */
 .option-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
   gap: 8px;
 }
 
@@ -3499,9 +3898,14 @@ h1.with-tile {
   .card[aria-pressed="true"],
   .option:has(input:checked),
   .km-filter[aria-pressed="true"],
-  .steps button[aria-current="step"],
   .search-mode button[aria-pressed="true"] {
     border: 3px solid Highlight;
+  }
+
+  .steps button[aria-current="step"] .step-number {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
   }
 
   .km-switch[aria-checked="true"] {
@@ -3653,6 +4057,15 @@ h1.with-tile {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .km-row-pair > :first-child,
+  .km-row-pair > :last-child {
+    grid-column: 1 / -1;
+  }
+
+  .km-strip {
+    flex-wrap: wrap;
+  }
+
   .km-span-2,
   .km-span-3 {
     grid-column: auto;
@@ -3678,6 +4091,16 @@ h1.with-tile {
 
   .user-button {
     padding: 4px;
+  }
+}
+
+@media (max-width: 640px) {
+  .km-reco-label {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .km-reco-col {
+    grid-column: 1 / -1;
   }
 }
 

@@ -180,7 +180,7 @@ export function QualityPanel({ asset }: { asset: Asset }) {
       {quality?.version && (
         <>
           <Scores quality={quality} rules={rules} />
-          <div className="km-split km-section">
+          <div className="km-stack-cards">
             <Rules rules={rules} urn={urn} steward={steward} onRun={runRules} round={round} />
             {steward && (
               <Recommendations
@@ -267,7 +267,11 @@ function DimensionCard({ score }: { score: DimensionScore }) {
       <h3 className="km-dim-label">{DIMENSIONS[score.dimension] ?? score.dimension}</h3>
       <p className="km-dim-value num">{Math.round(score.score * 100)}%</p>
       <Meter value={score.score} tone={DIM_FILL[score.dimension] ?? "accent"} size="lg" />
-      {why && <p className="hint km-dim-why">{why}</p>}
+      {why && (
+        <p className="hint km-dim-why km-clamp-2" title={why}>
+          {why}
+        </p>
+      )}
     </div>
   );
 }
@@ -586,6 +590,7 @@ function Recommendations({
             {list.length} {list.length === 1 ? "suggestion" : "suggestions"}. Tick the ones you want and add them together.
           </p>
           <FilterChips
+            scroll
             label="Show suggestions by dimension"
             selected={group}
             onSelect={setGroup}
@@ -605,8 +610,14 @@ function Recommendations({
               const fit = fitOf(r);
               const held = withheld(r);
               const on = !held && picked.has(key);
-              const fitText = fit == null ? "not a row check" : `fits ${formatShare(fit)}`;
               const fitTone = fit == null ? "km-text-neutral" : fit >= 1 ? "km-text-good" : fit > 0.95 ? "" : "km-text-warn";
+              const why = `${r.reason}${
+                held
+                  ? canUnmask
+                    ? ". The values are held back: turn on Show sensitive values under Sample rows to add it."
+                    : ". The values are held back because the column is sensitive."
+                  : ""
+              }`;
               return (
                 <li key={key} className={on ? "km-reco is-on" : "km-reco"}>
                   <input
@@ -617,16 +628,25 @@ function Recommendations({
                     onChange={(e) => toggle(r, e.target.checked)}
                     aria-describedby={`${id}-${key}-why`}
                   />
-                  <label htmlFor={`${id}-${key}`}>
-                    {r.field && <span className="km-code">{r.field}</span>}
-                    <span className="km-reco-check">{checkText(r)}</span>
-                    <span className={`km-reco-fit num ${fitTone}`}>{fitText}</span>
-                    <span className="km-reco-why" id={`${id}-${key}-why`}>
-                      {r.reason}
-                      {held &&
-                        (canUnmask
-                          ? ". The values are held back: tick “Show sensitive values” under Sample rows to add it."
-                          : ". The values are held back because the column is sensitive.")}
+                  <label htmlFor={`${id}-${key}`} className="km-reco-label">
+                    <span className="km-reco-col">
+                      {r.field ? <span className="km-code">{r.field}</span> : <span className="muted small">Whole table</span>}
+                    </span>
+                    <span className="km-reco-main">
+                      <span className="km-reco-check">{checkText(r)}</span>
+                      <span className="km-reco-why km-one-line" id={`${id}-${key}-why`} title={why}>
+                        {why}
+                      </span>
+                    </span>
+                    <span className={`km-reco-fit num ${fitTone}`} title={fit == null ? "Not a check on rows" : undefined}>
+                      {fit == null ? (
+                        <>
+                          <span aria-hidden="true">–</span>
+                          <span className="visually-hidden">not a row check</span>
+                        </>
+                      ) : (
+                        `fits ${formatShare(fit)}`
+                      )}
                     </span>
                   </label>
                 </li>
@@ -697,7 +717,7 @@ function Patterns({
         Each value reduced to its shape: A for capitals, a for small letters, 9 for digits. Counted over every row.
         {column.collapsed && " Runs of letters and digits are shown once with + because this column is free text."}
       </p>
-      <div className="field inline-field">
+      <div className="field inline-field km-field-narrow">
         <label htmlFor={`${id}-col`}>Column</label>
         <select id={`${id}-col`} value={column.field} onChange={(e) => setField(e.target.value)}>
           {quality.patterns.map((p) => (
@@ -882,6 +902,7 @@ function Samples({
         <fieldset className="sensitive">
           <legend>Sensitive columns</legend>
           <p id={`${id}-sens-hint`} className="hint">Stewards mark columns sensitive; only an admin can unmark one.</p>
+          <div className="km-check-grid">
           {asset.fields.map((f) => (
             <label key={f.name} className="check">
               <input
@@ -894,6 +915,7 @@ function Samples({
               <span className="mono">{f.name}</span>
             </label>
           ))}
+          </div>
         </fieldset>
       )}
       <div id={`${id}-rows`}>

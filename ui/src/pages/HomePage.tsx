@@ -80,6 +80,7 @@ export function HomePage({ me }: { me: Me }) {
   const [pipelines, setPipelines] = useState<number | null | undefined>(undefined);
   const [runs, setRuns] = useState<PipelineRun[] | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const notesOn = useNotifications().available === true;
 
   useEffect(() => {
     let live = true;
@@ -234,25 +235,40 @@ export function HomePage({ me }: { me: Me }) {
         />
       </section>
 
-      <div className="km-columns">
-        <div className="km-column">
-          {runs && <RecentRuns runs={runs} />}
+      <SetupCard
+        sources={sources}
+        rules={rules}
+        model={model}
+        pipelines={pipelines}
+        admin={admin}
+        steward={steward}
+      />
+
+      {runs ? (
+        // Two columns that end level: runs and sources on the left; what needs a look and what
+        // happened on the right, their lists scrolling inside fixed heights.
+        <div className="km-columns km-columns--level">
+          <div className="km-column">
+            <RecentRuns runs={runs} />
+            <SourcesCard sources={sources} scores={scores} admin={admin} />
+          </div>
+          <div className="km-column">
+            <NeedsALook issues={issues} />
+            {notesOn && <NotificationsCard admin={admin} />}
+          </div>
+        </div>
+      ) : (
+        // Without pipelines: sources across the page, then the two lists side by side.
+        <>
           <SourcesCard sources={sources} scores={scores} admin={admin} />
-          <TrendCard />
-        </div>
-        <div className="km-column">
-          <SetupCard
-            sources={sources}
-            rules={rules}
-            model={model}
-            pipelines={pipelines}
-            admin={admin}
-            steward={steward}
-          />
-          <NeedsALook issues={issues} />
-          <NotificationsCard admin={admin} />
-        </div>
-      </div>
+          <div className={notesOn ? "km-halves" : undefined}>
+            <NeedsALook issues={issues} />
+            {notesOn && <NotificationsCard admin={admin} />}
+          </div>
+        </>
+      )}
+
+      <TrendStrip />
     </div>
   );
 }
@@ -275,7 +291,7 @@ const RUN_CHIP: Record<PipelineRun["status"], { tone: Tone; label: string }> = {
 /** The last five pipeline runs. Shown only when the server has pipelines. */
 function RecentRuns({ runs }: { runs: PipelineRun[] }) {
   return (
-    <Card title="Recent pipeline runs" titleId="runs-h" actions={<a href="#/pipelines">All pipelines</a>}>
+    <Card title="Recent pipeline runs" titleId="runs-h" className="km-card--fill" actions={<a href="#/pipelines">All pipelines</a>}>
       {runs.length === 0 ? (
         <EmptyState compact icon={<Icon name="pipelines" size={22} />} title="No runs yet">
           Runs appear here once a pipeline has run.
@@ -334,7 +350,7 @@ const short = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short",
 function SourcesCard({ sources, scores, admin }: { sources: Source[] | null; scores: Record<string, SourceScore>; admin: boolean }) {
   const connectors = useConnectorInfo();
   return (
-    <Card title="Sources" titleId="src-h" actions={<a href={href.sources()}>Manage sources</a>}>
+    <Card title="Sources" titleId="src-h" className="km-card--fill" actions={<a href={href.sources()}>Manage sources</a>}>
       {sources === null && <p role="status" className="muted">Loading sources…</p>}
       {sources?.length === 0 && (
         <EmptyState
@@ -358,8 +374,13 @@ function SourcesCard({ sources, scores, admin }: { sources: Source[] | null; sco
                   <span className="with-tile">
                     <SourceTile kind={s.kind} size="md" />
                     <span className="km-row-body">
-                      <span className="km-row-title">{s.displayName}</span>
-                      <span className="km-row-detail">
+                      <span className="km-row-title km-one-line" title={s.displayName}>
+                        {s.displayName}
+                      </span>
+                      <span
+                        className="km-row-detail km-one-line"
+                        title={`${connectors[s.kind]?.displayName ?? s.kind}${where ? ` · ${where.split(",").join(", ")}` : ""}`}
+                      >
                         {connectors[s.kind]?.displayName ?? s.kind}
                         {where && ` · ${where.split(",").join(", ")}`}
                       </span>
@@ -393,9 +414,10 @@ function NeedsALook({ issues }: { issues: Issue[] | null }) {
   const rank = { high: 0, medium: 1, low: 2 } as const;
   const top = [...(issues ?? [])]
     .sort((a, b) => rank[a.severity] - rank[b.severity] || Date.parse(b.createdAt) - Date.parse(a.createdAt))
-    .slice(0, 4);
+    .slice(0, 5);
+  const more = (issues?.length ?? 0) - top.length;
   return (
-    <Card title="Needs a look" titleId="iss-h" actions={<a href={href.issues()}>Issues</a>} subtitle="Things to fix">
+    <Card title="Needs a look" titleId="iss-h" subtitle="Things to fix" className="km-card--fill">
       {issues === null && <p role="status" className="muted">Loading issues…</p>}
       {issues?.length === 0 && (
         <EmptyState compact icon={<Icon name="circle-check" size={22} />} title="Nothing needs a look">
@@ -403,6 +425,7 @@ function NeedsALook({ issues }: { issues: Issue[] | null }) {
         </EmptyState>
       )}
       {top.length > 0 && (
+        <div className="km-scroll-list" role="region" aria-label="Open issues, most severe first" tabIndex={0}>
         <ul className="km-rows">
           {top.map((i) => {
             const asset = i.assetUrn.replace(/^urn:kilnmark:[^:]+:/, "");
@@ -413,7 +436,10 @@ function NeedsALook({ issues }: { issues: Issue[] | null }) {
                   <h3 className="km-row-title">
                     <a href={href.asset(i.assetUrn, "quality")}>{i.title}</a>
                   </h3>
-                  <p className="km-row-detail">
+                  <p
+                    className="km-row-detail km-one-line"
+                    title={`${i.driftEventId != null ? "Drift · " : ""}${asset}${i.detail ? ` · ${i.detail}` : ""}`}
+                  >
                     {i.driftEventId != null ? "Drift · " : ""}
                     {asset}
                     {i.detail ? ` · ${i.detail}` : ""}
@@ -423,7 +449,14 @@ function NeedsALook({ issues }: { issues: Issue[] | null }) {
             );
           })}
         </ul>
+        </div>
       )}
+      <div className="km-card-foot">
+        <a href={href.issues()}>
+          {issues && issues.length > 0 ? `View all ${issues.length} open issues` : "View issues"}
+        </a>
+        {more > 0 && <span className="muted">{more} more not shown</span>}
+      </div>
     </Card>
   );
 }
@@ -438,6 +471,7 @@ function NotificationsCard({ admin }: { admin: boolean }) {
       title="Notifications"
       titleId="notes-h"
       subtitle="What happened"
+      className="km-card--fill"
       actions={
         n.unread > 0 ? (
           <button
@@ -465,12 +499,15 @@ function NotificationsCard({ admin }: { admin: boolean }) {
         </EmptyState>
       )}
       {n.items && n.items.length > 0 && (
-        <NotificationList
-          items={n.items}
-          onOpen={(x) => {
-            if (!x.read) void markNotificationsRead([x.id]).catch(() => undefined);
-          }}
-        />
+        // At most about five rows show; the rest scroll inside the card (a focusable region).
+        <div className="km-scroll-list" role="region" aria-label="Latest notifications" tabIndex={0}>
+          <NotificationList
+            items={n.items}
+            onOpen={(x) => {
+              if (!x.read) void markNotificationsRead([x.id]).catch(() => undefined);
+            }}
+          />
+        </div>
       )}
       <div className="km-card-foot">
         <a href={NOTIFICATION_SETTINGS}>Notification settings</a>
@@ -482,24 +519,41 @@ function NotificationsCard({ admin }: { admin: boolean }) {
 
 /**
  * Quality over the last 14 days. The server keeps each asset's latest scores only, with no daily
- * history, so there is nothing to draw yet: say so plainly rather than draw an invented line.
+ * history, so there is nothing to draw: a slim line says so, rather than a full card or an
+ * invented chart. Replace it with the chart once score history exists.
  */
-function TrendCard() {
+function TrendStrip() {
   return (
-    <Card title="Quality over the last 14 days" titleId="trend-h">
-      <EmptyState icon={<Icon name="chart-line" size={22} />} title="No trend to show yet">
-        <p>
-          Kilnmark keeps each asset's latest quality scores, not a daily history, so there is no trend to draw. Today's
-          scores are on each source and asset; rule results over time are on an asset's Quality tab.
-        </p>
-      </EmptyState>
-    </Card>
+    <section className="km-strip" aria-labelledby="trend-h">
+      <Icon name="chart-line" size={18} />
+      <h2 id="trend-h" className="km-strip-title">
+        Quality over the last 14 days
+      </h2>
+      <p className="km-strip-text">
+        No trend yet: Kilnmark keeps each asset's latest scores, not a daily history. Rule results over time are on an
+        asset's Quality tab.
+      </p>
+    </section>
   );
 }
 
 type Step = { id: string; label: string; done: boolean; link: string | null; cta: string };
 
-/** Getting set up: each step is ticked from what the server says has been done. */
+const SETUP_DISMISSED = "kilnmark.setupDismissed";
+
+const readDismissed = () => {
+  try {
+    return window.localStorage.getItem(SETUP_DISMISSED) === "1";
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Getting set up: each step is ticked from what the server says has been done, across the page
+ * in one row. Once every step is done it shrinks to one line, which can be dismissed (remembered
+ * in this browser).
+ */
 function SetupCard({
   sources,
   rules,
@@ -515,7 +569,8 @@ function SetupCard({
   admin: boolean;
   steward: boolean;
 }) {
-  if (sources === null) return null;
+  const [dismissed, setDismissed] = useState(readDismissed);
+  if (sources === null || rules === null && model === null) return null;
   const scanned = sources.some((s) => s.lastRun?.status === "succeeded" || s.lastRun?.status === "partial" || s.assets > 0);
   const steps: Step[] = [
     { id: "source", label: "Connect a source", done: sources.length > 0, link: admin ? href.addConnection() : null, cta: "Add a connection" },
@@ -528,14 +583,59 @@ function SetupCard({
     steps.push({ id: "pipeline", label: "Build your first pipeline", done: pipelines > 0, link: steward ? "#/pipelines/new" : null, cta: "Build a pipeline" });
   const done = steps.filter((s) => s.done).length;
   const next = steps.find((s) => !s.done);
+
+  if (!next) {
+    if (dismissed) return null;
+    return (
+      <section className="km-strip km-strip--good" aria-labelledby="setup-h">
+        <Icon name="circle-check" size={18} />
+        <h2 id="setup-h" className="km-strip-title">
+          All set up
+        </h2>
+        <p className="km-strip-text">
+          Sources connected and scanned, rules added{model ? ", a local model connected" : ""}
+          {pipelines ? " and a pipeline built" : ""}.
+        </p>
+        <button
+          type="button"
+          className="km-icon-button km-strip-close"
+          aria-label="Dismiss All set up"
+          onClick={() => {
+            try {
+              window.localStorage.setItem(SETUP_DISMISSED, "1");
+            } catch {
+              // Storage blocked: dismissed until the page is reloaded.
+            }
+            setDismissed(true);
+          }}
+        >
+          <Icon name="close" size={18} />
+        </button>
+      </section>
+    );
+  }
+
   return (
-    <Card title="Getting set up" titleId="setup-h">
-      <p className="km-card-sub" id="setup-progress">
-        {done} of {steps.length} done
-      </p>
-      <span className="km-progress">
+    <Card
+      title="Getting set up"
+      titleId="setup-h"
+      className="km-setup-card"
+      actions={
+        next.link ? (
+          <a href={next.link}>
+            {next.cta} <Icon name="arrow-right" size={16} />
+          </a>
+        ) : (
+          <span className="hint">Next: {next.label.toLowerCase()}. Ask an admin or steward.</span>
+        )
+      }
+    >
+      <div className="km-setup-progress">
+        <span id="setup-progress" className="km-card-sub">
+          {done} of {steps.length} done
+        </span>
         <Meter value={done / steps.length} size="lg" gradient />
-      </span>
+      </div>
       <ol className="km-setup" aria-describedby="setup-progress">
         {steps.map((s, i) => (
           <li key={s.id} className={s.done ? "is-done" : s === next ? "is-next" : undefined}>
@@ -549,19 +649,6 @@ function SetupCard({
           </li>
         ))}
       </ol>
-      {next ? (
-        next.link ? (
-          <p className="km-card-next">
-            <a href={next.link}>
-              {next.cta} <Icon name="arrow-right" size={16} />
-            </a>
-          </p>
-        ) : (
-          <p className="km-card-next hint">Next: {next.label.toLowerCase()}. Ask an admin or steward to do this.</p>
-        )
-      ) : (
-        <p className="km-card-next km-text-good">All set up.</p>
-      )}
     </Card>
   );
 }

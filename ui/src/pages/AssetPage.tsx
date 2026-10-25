@@ -133,7 +133,7 @@ export function AssetPage({ urn, tab }: { urn: string; tab?: string | null }) {
         )}
         {!isDocument && selected === "quality" && <QualityPanel asset={asset} />}
       </TabPanel>
-      <p className="muted small">
+      <p className="muted small km-footnote">
         Identifier <span className="mono">{asset.urn}</span> · first seen {formatTime(asset.firstSeenAt)} ·{" "}
         <a href={href.search(asset.name)}>search for similar names</a>
       </p>

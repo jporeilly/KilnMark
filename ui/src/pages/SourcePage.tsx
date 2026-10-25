@@ -156,15 +156,17 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
       <div role="status" aria-live="polite">
         {test &&
           (test.ok ? (
-            <p className="notice">Connected in {(test.millis / 1000).toFixed(1)} s.</p>
+            <p className="km-status-line good">
+              <Icon name="circle-check" size={18} /> Connected · {test.millis} ms
+            </p>
           ) : (
-            <p className="warning">
+            <p className="km-callout km-callout--bad">
               <strong>Could not connect.</strong> {test.problem}
             </p>
           ))}
       </div>
 
-      {editing && connector ? (
+      {editing && connector && (
         <ConnectionPanel
           connector={connector}
           existing={source}
@@ -180,7 +182,7 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
             window.setTimeout(() => editButton.current?.focus(), 0);
           }}
         />
-      ) : (
+      )}
         <section aria-labelledby="settings-h" className="panel">
           <h2 id="settings-h">Settings</h2>
           <dl className="facts">
@@ -220,7 +222,7 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
             </div>
           </dl>
         </section>
-      )}
+
 
       <section aria-labelledby="runs-h" className="panel">
         <h2 id="runs-h">Scans</h2>
