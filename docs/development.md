@@ -546,14 +546,38 @@ they open it, on a reader of its own, at most six documents a minute each, and n
 Copies of S3 objects are made in a folder under `java.io.tmpdir` that only the server's user can
 read, and deleted after (a workbook's copy is kept until the scan ends, so a scan fetches it once).
 
+## Branding and appearance
+
+Each signed-in user chooses their own theme (System, Light, Dark, High contrast), accent colour and
+density under **Settings**, **Appearance**; it is kept in their browser. The operator can set the
+product name and logo, and logos or colours for connectors, with a branding folder. The manifest
+format, the image rules and an example are in the [branding guide](guide/branding.md).
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `kilnmark.branding.dir` | `/etc/kilnmark/branding` | Folder with `manifest.json` and the images it names; missing means Kilnmark's own look. Mount it read-only (see the commented line in `compose.yaml`) |
+| `kilnmark.branding.max-file-kb` | `256` | Larger images are ignored |
+
+`GET /api/v1/branding` and `GET /api/v1/branding/files/{name}` need no token: the sign-in page
+shows the logo, and `<img>` cannot send one. Only files the manifest lists are served (SVG, PNG,
+WebP, content checked against the extension, no symbolic links or sub-folders), with `nosniff` and
+a Content-Security-Policy that stops SVGs running scripts. Problems are logged as warnings
+starting `Branding folder`.
+
 ## Web UI
 
 ```
 cd ui
 npm install
-npm run dev        # http://localhost:5173, calls the server on :8780
-npm run build      # writes dist/ui
+npm run dev              # http://localhost:5173, calls the server on :8780
+npm run build            # type check, contrast check, then writes dist/ui
+npm run check:contrast   # the colour tokens against WCAG AA, for every theme and accent
 ```
+
+Every colour is a token in `ui/src/tokens.css`, defined once per theme; style sheets use only the
+tokens. Icons are Tabler Icons, named in one place (`ui/src/components/icons.tsx`); products get
+letter tiles (`ConnectorTile.tsx`), never vendor logos. The build also writes the UI packages'
+licences to `dist/ui/third-party-notices.txt` ([third-party UI software](legal/third-party-ui.md)).
 
 ## Rules
 

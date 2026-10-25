@@ -9,7 +9,7 @@ import {
   type TestResult,
 } from "../api";
 import { ContainerPicker } from "./ContainerPicker";
-import { Icon } from "./Icon";
+import { ConnectorTile, tileProps } from "./ConnectorTile";
 
 const STEPS = ["Connect", "Test", "Choose what to scan", "Save"] as const;
 /** File settings that say how to read files: chosen in step 3, beside the preview that shows their effect. */
@@ -274,7 +274,7 @@ export function ConnectionPanel({
     <section className="connection-panel panel" aria-labelledby={`${id}-title`} onKeyDown={onKeyDown}>
       <div className="panel-head">
         <h2 id={`${id}-title`}>
-          <Icon name={connector.icon} size={22} /> {editing ? `Edit ${existing.displayName}` : `New ${connector.displayName} connection`}
+          <ConnectorTile {...tileProps(connector)} size="md" /> {editing ? `Edit ${existing.displayName}` : `New ${connector.displayName} connection`}
         </h2>
         <button type="button" onClick={requestClose}>
           Close<span className="visually-hidden"> the connection panel</span>

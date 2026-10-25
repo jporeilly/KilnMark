@@ -16,6 +16,8 @@ import { RelationshipsPage } from "./browse/RelationshipsPage";
 import { RoleContext } from "./components/role";
 import { RulesPage } from "./pages/RulesPage";
 import { IssuesPage } from "./pages/IssuesPage";
+import { Brand } from "./components/Brand";
+import { ThemeQuickSwitch } from "./components/ThemeQuickSwitch";
 
 /**
  * Checks who is signed in, then shows either the sign-in page or the app. Signing out (the
@@ -135,8 +137,7 @@ function Shell({ me }: { me: Me }) {
       <div className="shell">
         <header className="topbar">
           <a className="brand" href={href.home()}>
-            <span className="brand-mark" aria-hidden="true">K</span>
-            Kilnmark
+            <Brand />
           </a>
           <form role="search" className="searchbar" onSubmit={submit}>
             <label htmlFor="q" className="visually-hidden">
@@ -158,6 +159,7 @@ function Shell({ me }: { me: Me }) {
             <button type="submit">Search</button>
           </form>
           <div className="who">
+            <ThemeQuickSwitch />
             <span>
               {me.signInRequired ? "Signed in as " : ""}
               <strong>{me.name}</strong> <span className="muted">({me.role})</span>
@@ -197,32 +199,20 @@ function Shell({ me }: { me: Me }) {
                 Issues
               </a>
             </li>
-            {allows(me.role, "admin") && (
-              <li>
-                <a
-                  href={href.settings()}
-                  aria-current={
-                    ["settings", "tokens", "ai", "ai-usage"].includes(route.page) ? "page" : undefined
-                  }
-                >
-                  Settings
-                </a>
-              </li>
-            )}
+            <li>
+              <a
+                href={href.settings()}
+                aria-current={["settings", "tokens", "ai", "ai-usage"].includes(route.page) ? "page" : undefined}
+              >
+                Settings
+              </a>
+            </li>
           </ul>
         </nav>
         <RoleContext.Provider value={me.role}>
         <main id="main" tabIndex={-1}>
           {route.page === "home" && <HomePage />}
-          {route.page === "settings" &&
-            (allows(me.role, "admin") ? (
-              <SettingsPage />
-            ) : (
-              <>
-                <h1 tabIndex={-1}>Settings</h1>
-                <p>Only admins can change settings.</p>
-              </>
-            ))}
+          {route.page === "settings" && <SettingsPage role={me.role} />}
           {route.page === "search" && <SearchPage q={route.q} ask={route.ask} />}
           {route.page === "asset" && <AssetPage urn={route.urn} />}
           {route.page === "sources" && <SourcesPage role={me.role} />}

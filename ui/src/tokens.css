@@ -1,23 +1,106 @@
-/* Design tokens from the mockups (docs/design/mockups.md). Contrast checked to WCAG 2.2 AA. */
+/*
+ * Design tokens. Every colour the UI uses is defined here, once per theme, and nowhere else
+ * (app.css and the other style sheets use only these variables).
+ *
+ * Themes are chosen per viewer on <html> (see src/theme/appearance.ts):
+ *   data-theme   system (follows the OS) | light | dark | contrast (high contrast; light or dark
+ *                following the OS)
+ *   data-accent  orange (default) | blue | green | purple | pink | teal
+ *   data-density comfortable (default) | compact
+ *
+ * Contrast is checked to WCAG 2.2 AA by `npm run check:contrast` (scripts/check-contrast.mjs):
+ * text 4.5:1 (7:1 in high contrast), borders, focus rings and indicators 3:1, for every theme and
+ * accent. The script also checks that the two copies of the dark and high-contrast dark sets agree.
+ * Edit a set's copies together.
+ */
+
+/* ---- Light (the default, and System when the OS is light) ---- */
 :root {
+  color-scheme: light;
   --km-ink: #15171c;
   --km-muted: #5a6170;
   --km-border: #e2e5ea;
   --km-border-control: #767d89;
   --km-ground: #f5f6f8;
   --km-surface: #ffffff;
-  --km-accent: #c2410c;
   --km-link: #1d4ed8;
+  --km-focus: #1d4ed8;
   --km-good: #0f766e;
   --km-warn: #b45309;
   --km-bad: #b91c1c;
-  --km-font: Inter, system-ui, sans-serif;
-  --km-mono: "JetBrains Mono", ui-monospace, monospace;
-  color-scheme: light dark;
+  --km-on-accent: #ffffff;
+  --km-backdrop: rgb(0 0 0 / 50%);
+  --km-accent-orange: #c2410c;
+  --km-accent-blue: #1d4ed8;
+  --km-accent-green: #15803d;
+  --km-accent-purple: #7e22ce;
+  --km-accent-pink: #be185d;
+  --km-accent-teal: #0f766e;
+  /* Connector tiles: letters on a tint, chosen per connector (src/components/ConnectorTile.tsx). */
+  --km-tile-border: rgb(0 0 0 / 8%);
+  --km-tile-1-bg: #dbeafe;
+  --km-tile-1-fg: #1e3a8a;
+  --km-tile-2-bg: #dcfce7;
+  --km-tile-2-fg: #14532d;
+  --km-tile-3-bg: #ffedd5;
+  --km-tile-3-fg: #7c2d12;
+  --km-tile-4-bg: #f3e8ff;
+  --km-tile-4-fg: #581c87;
+  --km-tile-5-bg: #fce7f3;
+  --km-tile-5-fg: #831843;
+  --km-tile-6-bg: #ccfbf1;
+  --km-tile-6-fg: #134e4a;
+  --km-tile-7-bg: #fef3c7;
+  --km-tile-7-fg: #78350f;
+  --km-tile-8-bg: #e2e8f0;
+  --km-tile-8-fg: #1e293b;
+}
+
+/* ---- Dark: chosen, or System when the OS is dark. Two copies; keep them the same. ---- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --km-ink: #e8eaee;
+  --km-muted: #a3a9b3;
+  --km-border: #2a2d35;
+  --km-border-control: #8c929d;
+  --km-ground: #0f1115;
+  --km-surface: #15171c;
+  --km-link: #9db8ff;
+  --km-focus: #9db8ff;
+  --km-good: #34d399;
+  --km-warn: #fbbf24;
+  --km-bad: #f87171;
+  --km-on-accent: #0f1115;
+  --km-backdrop: rgb(0 0 0 / 70%);
+  --km-accent-orange: #fb923c;
+  --km-accent-blue: #93c5fd;
+  --km-accent-green: #4ade80;
+  --km-accent-purple: #c084fc;
+  --km-accent-pink: #f472b6;
+  --km-accent-teal: #2dd4bf;
+  --km-tile-border: rgb(255 255 255 / 10%);
+  --km-tile-1-bg: #1e3a5f;
+  --km-tile-1-fg: #bfdbfe;
+  --km-tile-2-bg: #14432a;
+  --km-tile-2-fg: #bbf7d0;
+  --km-tile-3-bg: #4a2410;
+  --km-tile-3-fg: #fed7aa;
+  --km-tile-4-bg: #3b1d5e;
+  --km-tile-4-fg: #e9d5ff;
+  --km-tile-5-bg: #4c1530;
+  --km-tile-5-fg: #fbcfe8;
+  --km-tile-6-bg: #0f3d3a;
+  --km-tile-6-fg: #99f6e4;
+  --km-tile-7-bg: #45300a;
+  --km-tile-7-fg: #fde68a;
+  --km-tile-8-bg: #2a3241;
+  --km-tile-8-fg: #e2e8f0;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]),
+  :root[data-theme="system"] {
+    color-scheme: dark;
     --km-ink: #e8eaee;
     --km-muted: #a3a9b3;
     --km-border: #2a2d35;
@@ -25,10 +108,173 @@
     --km-ground: #0f1115;
     --km-surface: #15171c;
     --km-link: #9db8ff;
+    --km-focus: #9db8ff;
     --km-good: #34d399;
     --km-warn: #fbbf24;
     --km-bad: #f87171;
+    --km-on-accent: #0f1115;
+    --km-backdrop: rgb(0 0 0 / 70%);
+    --km-accent-orange: #fb923c;
+    --km-accent-blue: #93c5fd;
+    --km-accent-green: #4ade80;
+    --km-accent-purple: #c084fc;
+    --km-accent-pink: #f472b6;
+    --km-accent-teal: #2dd4bf;
+    --km-tile-border: rgb(255 255 255 / 10%);
+    --km-tile-1-bg: #1e3a5f;
+    --km-tile-1-fg: #bfdbfe;
+    --km-tile-2-bg: #14432a;
+    --km-tile-2-fg: #bbf7d0;
+    --km-tile-3-bg: #4a2410;
+    --km-tile-3-fg: #fed7aa;
+    --km-tile-4-bg: #3b1d5e;
+    --km-tile-4-fg: #e9d5ff;
+    --km-tile-5-bg: #4c1530;
+    --km-tile-5-fg: #fbcfe8;
+    --km-tile-6-bg: #0f3d3a;
+    --km-tile-6-fg: #99f6e4;
+    --km-tile-7-bg: #45300a;
+    --km-tile-7-fg: #fde68a;
+    --km-tile-8-bg: #2a3241;
+    --km-tile-8-fg: #e2e8f0;
   }
+}
+
+/* ---- High contrast, light (when the OS is light). Tiles drop their tints: letters and a border. ---- */
+:root[data-theme="contrast"] {
+  color-scheme: light;
+  --km-ink: #000000;
+  --km-muted: #2b2f36;
+  --km-border: #4b5058;
+  --km-border-control: #000000;
+  --km-ground: #ffffff;
+  --km-surface: #ffffff;
+  --km-link: #0033a8;
+  --km-focus: #0033a8;
+  --km-good: #00563b;
+  --km-warn: #703200;
+  --km-bad: #9a0000;
+  --km-on-accent: #ffffff;
+  --km-backdrop: rgb(0 0 0 / 80%);
+  --km-accent-orange: #8a2c0a;
+  --km-accent-blue: #1e3a8a;
+  --km-accent-green: #14532d;
+  --km-accent-purple: #581c87;
+  --km-accent-pink: #831843;
+  --km-accent-teal: #134e4a;
+  --km-tile-border: #000000;
+  --km-tile-1-bg: #ffffff;
+  --km-tile-1-fg: #000000;
+  --km-tile-2-bg: #ffffff;
+  --km-tile-2-fg: #000000;
+  --km-tile-3-bg: #ffffff;
+  --km-tile-3-fg: #000000;
+  --km-tile-4-bg: #ffffff;
+  --km-tile-4-fg: #000000;
+  --km-tile-5-bg: #ffffff;
+  --km-tile-5-fg: #000000;
+  --km-tile-6-bg: #ffffff;
+  --km-tile-6-fg: #000000;
+  --km-tile-7-bg: #ffffff;
+  --km-tile-7-fg: #000000;
+  --km-tile-8-bg: #ffffff;
+  --km-tile-8-fg: #000000;
+}
+
+/* ---- High contrast, dark (when the OS is dark). ---- */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="contrast"] {
+    color-scheme: dark;
+    --km-ink: #ffffff;
+    --km-muted: #e3e3e3;
+    --km-border: #b8b8b8;
+    --km-border-control: #ffffff;
+    --km-ground: #000000;
+    --km-surface: #000000;
+    --km-link: #8fc7ff;
+    --km-focus: #ffe14d;
+    --km-good: #5eead4;
+    --km-warn: #ffd84d;
+    --km-bad: #ffa3a3;
+    --km-on-accent: #000000;
+    --km-backdrop: rgb(0 0 0 / 85%);
+    --km-accent-orange: #fdba74;
+    --km-accent-blue: #bfdbfe;
+    --km-accent-green: #86efac;
+    --km-accent-purple: #e9d5ff;
+    --km-accent-pink: #fbcfe8;
+    --km-accent-teal: #99f6e4;
+    --km-tile-border: #ffffff;
+    --km-tile-1-bg: #000000;
+    --km-tile-1-fg: #ffffff;
+    --km-tile-2-bg: #000000;
+    --km-tile-2-fg: #ffffff;
+    --km-tile-3-bg: #000000;
+    --km-tile-3-fg: #ffffff;
+    --km-tile-4-bg: #000000;
+    --km-tile-4-fg: #ffffff;
+    --km-tile-5-bg: #000000;
+    --km-tile-5-fg: #ffffff;
+    --km-tile-6-bg: #000000;
+    --km-tile-6-fg: #ffffff;
+    --km-tile-7-bg: #000000;
+    --km-tile-7-fg: #ffffff;
+    --km-tile-8-bg: #000000;
+    --km-tile-8-fg: #ffffff;
+  }
+}
+
+/* ---- Accent: one of the theme's presets ---- */
+:root {
+  --km-accent: var(--km-accent-orange);
+}
+
+:root[data-accent="blue"] {
+  --km-accent: var(--km-accent-blue);
+}
+
+:root[data-accent="green"] {
+  --km-accent: var(--km-accent-green);
+}
+
+:root[data-accent="purple"] {
+  --km-accent: var(--km-accent-purple);
+}
+
+:root[data-accent="pink"] {
+  --km-accent: var(--km-accent-pink);
+}
+
+:root[data-accent="teal"] {
+  --km-accent: var(--km-accent-teal);
+}
+
+/* ---- Type and density ---- */
+:root {
+  --km-font: Inter, system-ui, sans-serif;
+  --km-mono: "JetBrains Mono", ui-monospace, monospace;
+  --km-control-h: 40px;
+  --km-control-pad: 9px 16px;
+  --km-input-pad: 9px 12px;
+  --km-cell-pad: 10px 12px;
+  --km-row-h: 32px;
+  --km-nav-pad: 10px 12px;
+  --km-panel-pad: 20px;
+  --km-main-pad: 28px 32px 48px;
+  --km-gap: 16px;
+}
+
+/* Compact keeps every target at least 24 px (WCAG 2.2, 2.5.8). */
+:root[data-density="compact"] {
+  --km-control-h: 32px;
+  --km-control-pad: 5px 12px;
+  --km-input-pad: 5px 10px;
+  --km-cell-pad: 6px 10px;
+  --km-row-h: 26px;
+  --km-nav-pad: 6px 10px;
+  --km-panel-pad: 14px;
+  --km-main-pad: 20px 24px 36px;
+  --km-gap: 10px;
 }
 
 body {
@@ -43,7 +289,7 @@ a {
 }
 
 :focus-visible {
-  outline: 3px solid var(--km-link);
+  outline: 3px solid var(--km-focus);
   outline-offset: 2px;
 }
 
@@ -63,8 +309,18 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation: none !important;
     transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Windows high contrast and other forced colours: the system's colours win; keep focus visible. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 3px solid Highlight;
   }
 }

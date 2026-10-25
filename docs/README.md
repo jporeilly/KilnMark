@@ -14,6 +14,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 ## User guides
 
 - [Setting data quality rules](guide/quality-rules.md): one-click rules from the profile, writing rules, thresholds, previews, alerts and recipes
+- [Branding and appearance](guide/branding.md): themes, accent colours and density; the branding folder for an organisation's name, logo and connector logos
 
 ## Spikes
 
@@ -30,3 +31,4 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Development guide](development.md): set up, build, run and test
 - [Decision records](adr/README.md): decisions that are hard to reverse
 - [Code provenance](legal/provenance.md): every file adapted from third-party code
+- [Third-party UI software](legal/third-party-ui.md): the web UI's packages, icons and their licences

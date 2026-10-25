@@ -11,6 +11,7 @@ import {
   type Source,
 } from "../api";
 import { AddConnection } from "../components/AddConnection";
+import { SourceTile } from "../components/ConnectorTile";
 import { ScanAction } from "../components/ScanAction";
 import { Status } from "../components/Status";
 import { useTitle } from "../components/useTitle";
@@ -82,8 +83,13 @@ export function SourcesPage({ role }: { role: AccessRole }) {
           {list.map((s) => (
             <tr key={s.name}>
               <th scope="row">
-                <a href={href.source(s.name)}>{s.displayName}</a>
-                {s.displayName !== s.name && <div className="small muted mono">{s.name}</div>}
+                <div className="with-tile">
+                  <SourceTile kind={s.kind} />
+                  <div>
+                    <a href={href.source(s.name)}>{s.displayName}</a>
+                    {s.displayName !== s.name && <div className="small muted mono">{s.name}</div>}
+                  </div>
+                </div>
               </th>
               <td className="small">
                 <div className="muted">

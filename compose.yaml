@@ -52,6 +52,10 @@ services:
       # A folder to scan, read-only; by default the reference lab's file share. In Kilnmark,
       # add a source of kind files with path /srv/files. Point KILNMARK_FILES_DIR at your own folder.
       - ${KILNMARK_FILES_DIR:-./lab/files/share}:/srv/files:ro,Z
+      # Optional organisation branding: product name, logo and connector logos you are licensed to use
+      # (docs/guide/branding.md). Kilnmark reads /etc/kilnmark/branding (KILNMARK_BRANDING_DIR);
+      # without it, Kilnmark's own name and letter tiles are shown.
+      # - ./branding:/etc/kilnmark/branding:ro,Z
     depends_on:
       postgres:
         condition: service_healthy

@@ -1,9 +1,27 @@
+import { allows, type AccessRole } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
+import { Icon } from "../components/icons";
+import { useBranding } from "../theme/looks";
+import {
+  ACCENTS,
+  DEFAULTS,
+  DENSITIES,
+  setAppearance,
+  THEMES,
+  useAppearance,
+  type Accent,
+  type Density,
+  type Theme,
+} from "../theme/appearance";
 
-/** Settings: the admin pages, gathered in one place so the main menu stays about data. */
-export function SettingsPage() {
+/**
+ * Settings: Appearance for everyone (their own view, in this browser), then the admin pages,
+ * gathered in one place so the main menu stays about data.
+ */
+export function SettingsPage({ role }: { role: AccessRole }) {
   useTitle("Settings");
+  const admin = allows(role, "admin");
   const items: { title: string; link: string; text: string; external?: boolean }[] = [
     { title: "API tokens", link: href.tokens(), text: "Create, list and revoke tokens for people, scripts and AI assistants." },
     { title: "AI models", link: href.ai(), text: "Local and hosted models, which feature uses which, and the rule for hosted models." },
@@ -18,20 +36,152 @@ export function SettingsPage() {
   return (
     <>
       <h1 tabIndex={-1}>Settings</h1>
-      <p className="lead">Administration for this Kilnmark server.</p>
-      <ul className="settings-list">
-        {items.map((i) => (
-          <li key={i.title} className="panel">
-            <h2>
-              <a href={i.link} {...(i.external ? { target: "_blank", rel: "noopener" } : {})}>
-                {i.title}
-                {i.external && <span className="visually-hidden"> (opens in a new tab)</span>}
-              </a>
-            </h2>
-            <p>{i.text}</p>
-          </li>
-        ))}
-      </ul>
+      <p className="lead">
+        {admin ? "How Kilnmark looks for you, and administration for this server." : "How Kilnmark looks for you."}
+      </p>
+      <Appearance />
+      {admin && (
+        <section aria-labelledby="admin-heading">
+          <h2 id="admin-heading">Administration</h2>
+          <ul className="settings-list">
+            {items.map((i) => (
+              <li key={i.title} className="panel">
+                <h3>
+                  <a href={i.link} {...(i.external ? { target: "_blank", rel: "noopener" } : {})}>
+                    {i.title}
+                    {i.external && <span className="visually-hidden"> (opens in a new tab)</span>}
+                  </a>
+                </h3>
+                <p>{i.text}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </>
+  );
+}
+
+/** Theme, accent and density for this viewer, saved in this browser; org branding, read-only. */
+function Appearance() {
+  const a = useAppearance();
+  const branding = useBranding();
+  const logos = Object.values(branding.connectors).filter((c) => c.image).length;
+  return (
+    <section className="panel appearance" aria-labelledby="appearance-heading">
+      <h2 id="appearance-heading">Appearance</h2>
+      <p className="hint">
+        Your choices apply to you only, in this browser, and are saved straight away. If your browser does not keep
+        site data, they last until you reload the page.
+      </p>
+      <fieldset>
+        <legend>Theme</legend>
+        <div className="option-grid">
+          {THEMES.map((t) => (
+            <label key={t.id} className="option">
+              <input
+                type="radio"
+                name="theme"
+                value={t.id}
+                checked={a.theme === t.id}
+                onChange={() => setAppearance({ theme: t.id as Theme })}
+                aria-labelledby={`theme-${t.id}-label`}
+                aria-describedby={`theme-${t.id}-hint`}
+              />
+              <span className="option-label" id={`theme-${t.id}-label`}>
+                <Icon name={`theme-${t.id}`} size={18} />
+                {t.label}
+              </span>
+              <span id={`theme-${t.id}-hint`} className="hint">
+                {t.hint}
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Accent colour</legend>
+        <p className="hint">Used for the current page, selections and main buttons. Each has a shade for every theme.</p>
+        <div className="option-grid">
+          {ACCENTS.map((x) => (
+            <label key={x.id} className="option">
+              <input
+                type="radio"
+                name="accent"
+                value={x.id}
+                checked={a.accent === x.id}
+                onChange={() => setAppearance({ accent: x.id as Accent })}
+              />
+              <span className="option-label">
+                <span className={`swatch swatch-${x.id}`} aria-hidden="true" />
+                {x.label}
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Density</legend>
+        <div className="option-grid">
+          {DENSITIES.map((d) => (
+            <label key={d.id} className="option">
+              <input
+                type="radio"
+                name="density"
+                value={d.id}
+                checked={a.density === d.id}
+                onChange={() => setAppearance({ density: d.id as Density })}
+                aria-labelledby={`density-${d.id}-label`}
+                aria-describedby={`density-${d.id}-hint`}
+              />
+              <span className="option-label" id={`density-${d.id}-label`}>
+                {d.label}
+              </span>
+              <span id={`density-${d.id}-hint`} className="hint">
+                {d.hint}
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <div className="buttons">
+        <button
+          type="button"
+          onClick={() => setAppearance(DEFAULTS)}
+          disabled={a.theme === DEFAULTS.theme && a.accent === DEFAULTS.accent && a.density === DEFAULTS.density}
+        >
+          Back to the defaults
+        </button>
+      </div>
+      <section aria-labelledby="org-heading">
+        <h3 id="org-heading">Organisation branding</h3>
+        {branding.productName || branding.logo || Object.keys(branding.connectors).length > 0 ? (
+          <dl className="org-brand">
+            <div>
+              <dt className="muted small">Product name</dt>
+              <dd>{branding.productName ?? "Kilnmark (not changed)"}</dd>
+            </div>
+            <div>
+              <dt className="muted small">Logo</dt>
+              <dd>
+                {branding.logo ? <img className="org-logo" src={branding.logo} alt="The organisation's logo" /> : "None"}
+              </dd>
+            </div>
+            <div>
+              <dt className="muted small">Connector logos and colours</dt>
+              <dd>
+                {Object.keys(branding.connectors).length} connectors, {logos} with a logo
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <p>None set: Kilnmark's own name, and letter tiles for connectors.</p>
+        )}
+        <p className="hint">
+          Read-only here. The server's operator sets these by putting a manifest and image files in the branding folder
+          on the server (see the branding guide in the documentation).
+        </p>
+      </section>
+    </section>
   );
 }

@@ -141,14 +141,28 @@ export type Connector = {
   capabilities: Capability[];
   formats: string[];
   icon: string;
+  /** Letters for a product's tile (never a vendor logo); null for generic kinds, whose tile shows the icon. */
+  monogram: string | null;
   docsAnchor: string;
   /** Whether host, port and database fields can build its address. */
   addressFields: boolean;
   driverBundled: boolean;
 };
-export type PlannedConnector = { name: string; category: string; family: string; capabilities: Capability[]; wave: string };
+/** id is the kind it is expected to have, so a branding manifest can name it. */
+export type PlannedConnector = {
+  id: string;
+  name: string;
+  category: string;
+  family: string;
+  capabilities: Capability[];
+  wave: string;
+  monogram: string | null;
+};
 export type ConnectorCategory = { id: string; label: string; connectors: Connector[]; planned: PlannedConnector[] };
 export type ConnectorCatalogue = { showPlanned: boolean; categories: ConnectorCategory[] };
+/** The operator's branding folder (docs/guide/branding.md); images are links shown with <img>. */
+export type ConnectorLook = { image: string | null; color: string | null; label: string | null };
+export type Branding = { productName: string | null; logo: string | null; connectors: Record<string, ConnectorLook> };
 export type AssetItem = { path: string; name: string; kind: string; readable: boolean };
 export type AssetList = { container: string; total: number; offset: number; items: AssetItem[] };
 export type PreviewColumn = { name: string; kind: string | null; sourceType: string | null };
@@ -382,6 +396,8 @@ export const api = {
   info: () => call<{ product: string; version: string; roles: string[] }>("/api/v1/info"),
   sources: () => call<Source[]>("/api/v1/sources"),
   connectors: () => call<Connector[]>("/api/v1/connectors"),
+  /** Public: the sign-in page shows the organisation's name and logo. */
+  branding: () => call<Branding>("/api/v1/branding"),
   addSource: (s: NewSource) => call<Source>("/api/v1/sources", { method: "POST", body: JSON.stringify(s) }),
   importSources: (text: string, format: "csv" | "json", o: ImportOptions) =>
     call<ImportReport>(

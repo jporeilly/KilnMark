@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatTime, type Source } from "../api";
 import { href } from "../router";
 import { Status } from "../components/Status";
+import { SourceTile } from "../components/ConnectorTile";
 import { useTitle } from "../components/useTitle";
 
 export function HomePage() {
@@ -32,7 +33,8 @@ export function HomePage() {
         {sources && sources.length > 0 && (
           <ul className="plain-list">
             {sources.map((s) => (
-              <li key={s.name}>
+              <li key={s.name} className="with-tile">
+                <SourceTile kind={s.kind} size="sm" />
                 <strong>{s.name}</strong> <Status run={s.lastRun} />{" "}
                 <span className="muted">
                   {s.lastRun ? `last scan ${formatTime(s.lastRun.finishedAt ?? s.lastRun.requestedAt)}` : ""}

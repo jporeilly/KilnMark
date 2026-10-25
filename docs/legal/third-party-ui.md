@@ -1,0 +1,28 @@
+# Third-party software in the web UI
+
+The server's libraries are checked and listed by the build (`THIRD-PARTY-NOTICES.md`,
+[ADR 0007](../adr/0007-dependency-policy.md)). The web UI's are npm packages, pinned in
+`ui/package-lock.json`. `npm run build` writes the licence of every package in the UI bundle to
+`dist/ui/third-party-notices.txt`, served with the UI and included in each release. The licences
+are MIT, plus ISC and BSD-3-Clause for the d3 packages that @xyflow/react brings, all permissive.
+(`config/allowed-licenses.json` is checked against the server's libraries only.)
+
+Direct dependencies:
+
+| Package | Version | Licence | Used for |
+| --- | --- | --- | --- |
+| react, react-dom | 19.3 | MIT | The UI |
+| @xyflow/react | 12.12 | MIT | Schema diagrams |
+| @dagrejs/dagre | 3.1 | MIT | Laying out schema diagrams |
+| @tabler/icons-react (with @tabler/icons) | 3.48.0, pinned exactly | MIT, Copyright (c) 2020-2026 Paweł Kuna | Every icon: categories, connector families, file formats, the browse tree, the theme switch |
+
+## Icons and logos
+
+- Icons come only from Tabler Icons, imported one by one so only the icons used are bundled
+  (about 60), and served by Kilnmark itself, so they work offline. The mapping from names to
+  icons is in `ui/src/components/icons.tsx`.
+- Kilnmark ships **no vendor logos or brand icons**. Products are shown as letter tiles drawn by
+  Kilnmark (`ui/src/components/ConnectorTile.tsx`). Tabler's brand icons must not be used.
+- Operators can add logos they are licensed to use through the branding folder
+  ([branding guide](../guide/branding.md)); those files stay on the customer's server and are not
+  part of Kilnmark.

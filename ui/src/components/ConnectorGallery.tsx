@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Capability, Connector, ConnectorCatalogue, PlannedConnector } from "../api";
-import { Icon } from "./Icon";
+import { ConnectorTile, plannedTileProps, tileProps } from "./ConnectorTile";
+import { Icon } from "./icons";
 
 const CAPABILITY: Record<Capability, string> = {
   discover: "Discover",
@@ -17,7 +18,8 @@ type Card =
  * "Add connection": tabs by category (the ARIA tabs pattern: arrow keys move between tabs, Tab
  * goes into the panel), a search box whose result count is announced, family subheadings, and a
  * card per connector. Cards are buttons; planned ones say "Planned · wave N", are announced as
- * unavailable and do nothing. Icons are generic, never vendor logos.
+ * unavailable and do nothing. Each card has the connector's tile: letters on a tint, or the
+ * operator's own logo from the branding folder; never a vendor logo shipped with Kilnmark.
  */
 export function ConnectorGallery({
   catalogue,
@@ -169,7 +171,7 @@ export function ConnectorGallery({
                                 aria-pressed={chosen === c.connector.kind}
                                 onClick={(e) => onChoose(c.connector, e.currentTarget)}
                               >
-                                <Icon name={c.connector.icon} />
+                                <ConnectorTile {...tileProps(c.connector)} size="lg" />
                                 <span className="card-name">{c.name}</span>
                                 <Badges caps={c.capabilities} formats={c.connector.formats} />
                               </button>
@@ -181,7 +183,7 @@ export function ConnectorGallery({
                                 aria-describedby={`${id}-unavailable`}
                                 onClick={(e) => e.preventDefault()}
                               >
-                                <Icon name={c.category} />
+                                <ConnectorTile {...plannedTileProps(c.planned)} size="lg" />
                                 <span className="card-name">{c.name}</span>
                                 <span className="planned-label">
                                   Planned · {/^\d/.test(c.planned.wave) ? `wave ${c.planned.wave}` : c.planned.wave}
