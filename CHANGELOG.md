@@ -1,6 +1,33 @@
 # Changelog
 
+Each release starts with **What's new**, a short summary in plain words, followed by the
+details.
+
 ## Unreleased
+
+### What's new
+
+- **Sign-in and roles.** Every user signs in with an API token, as a viewer, steward or admin.
+  Admins manage tokens under **Settings**.
+- **Adding connections is guided.** Pick a connector from a gallery grouped by category, test the
+  connection, choose which schemas or folders to scan, and preview the data before scanning.
+  Sources can be edited and deleted.
+- **More kinds of source.** SQL Server, folders of files, and S3-compatible object storage. Excel
+  sheets are read as tables.
+- **Documents are read.** PDF, Word, Excel, PowerPoint and email files: their text is searchable
+  and readable page by page on the asset page.
+- **Browse and relationships.** A tree of sources, schemas, folders and tables, and schema
+  diagrams showing how tables relate, from declared foreign keys and from the data itself.
+- **Data quality.** Every scan scores each table in eight quality dimensions with no set-up. Value
+  patterns, rules with previews, drift between scans, sample rows with sensitive columns masked,
+  and an issue list for stewards. Contracts export in open formats (ODCS, OpenLineage).
+- **AI, local first.** Add local or hosted models; each source decides what may leave the
+  network. Search by meaning, ask questions in plain English, and connect outside AI assistants
+  through the MCP server. Every model call is recorded.
+- **For administrators.** A job queue, health checks, and interactive API documentation at
+  `/api/docs`.
+
+### Details
 
 - **Find local models** on the AI models page (`POST /api/v1/ai/discover`, admins only): looks for
   Ollama and LM Studio on the machine running Kilnmark or its container
