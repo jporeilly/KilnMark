@@ -5,9 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
@@ -17,15 +16,15 @@ import io.kilnmark.server.auth.AccessRole;
 /**
  * Emails and in-app notifications never show a recipient what their role could not see in the
  * UI: restricted detail only for roles that may see the column's values, never a sensitive
- * column's (emails never unmask, even for admins), and team addresses as viewers.
+ * column's (emails never unmask, even for admins); about a whole source or asset with marks, only
+ * admins; and team addresses as viewers.
  */
 class NotificationMaskingTest {
 
     static final String URN = "urn:kilnmark:lab:crm.customers";
     static final String SECRET = "value-from-the-data-4471";
-    static final Map<String, Set<String>> MARKS = Map.of(URN, Set.of("ni_number"));
-    static final MailSettings SETTINGS = new MailSettings(true, "smtp.example.com", null, MailSecurity.STARTTLS, null,
-        false, "kilnmark@example.com", "Kilnmark", "https://kilnmark.example.com", true, null, null);
+    static final Exposure MARKED = new Exposure(Set.of("ni_number"), true);
+    static final MailSettings SETTINGS = Fixtures.settings("https://kilnmark.example.com");
 
     static NotificationEvent event(String field) {
         return new NotificationEvent(NotificationKind.RULE_FAILED, Severity.LOW, URN, field + " check could not run on "
@@ -34,8 +33,20 @@ class NotificationMaskingTest {
             Instant.parse("2026-10-25T06:00:00Z"));
     }
 
+    /** A failed scan as the publisher writes it: the run's own words only as restricted detail. */
+    static NotificationEvent scanFailed() {
+        return new NotificationEvent(NotificationKind.SCAN_FAILED, Severity.HIGH, null, "Scan of lab failed",
+            "The scan failed. Open the source to see why.", NotificationEvent.sourceLink("lab"), "lab", null,
+            "It said: crm.customers: ERROR: invalid input syntax for type integer: \"" + SECRET + "\"", "scan:lab",
+            Instant.parse("2026-10-25T06:00:00Z"));
+    }
+
+    static MailMessages messages(Exposure x) {
+        return new MailMessages(SETTINGS, ZoneId.of("UTC"), e -> x);
+    }
+
     static MailMessages messages() {
-        return new MailMessages(SETTINGS, java.time.ZoneId.of("UTC"), urn -> MARKS.getOrDefault(urn, Set.of()));
+        return messages(MARKED);
     }
 
     static MailMessages.Recipient person(AccessRole role) {
@@ -68,6 +79,44 @@ class NotificationMaskingTest {
     }
 
     @Test
+    void aFailedScansOwnWordsReachStewardsOnlyAndOnlyAdminsWhenTheSourceHasMarks() {
+        NotificationEvent e = scanFailed();
+        Exposure clean = Exposure.NONE;
+        assertFalse(shows(messages(clean).single(e, person(AccessRole.VIEWER))), "a viewer never sees the run's words");
+        assertFalse(shows(messages(clean).single(e, TEAM)), "nor does a team address");
+        assertTrue(shows(messages(clean).single(e, person(AccessRole.STEWARD))), "a steward does, on an unmarked source");
+        assertTrue(messages(clean).single(e, person(AccessRole.VIEWER)).text()
+            .contains("The scan failed. Open the source to see why."), "everyone gets the plain words");
+        Exposure marked = new Exposure(Set.of(), true);
+        assertFalse(shows(messages(marked).single(e, person(AccessRole.STEWARD))), "a source with marks: not stewards");
+        assertTrue(shows(messages(marked).single(e, person(AccessRole.ADMIN))), "but admins");
+        assertFalse(InAppFeed.write(e, AccessRole.STEWARD, marked).detail().contains(SECRET), "in the app alike");
+        assertTrue(InAppFeed.write(e, AccessRole.ADMIN, marked).detail().contains(SECRET));
+        assertFalse(InAppFeed.write(e, AccessRole.VIEWER, clean).detail().contains(SECRET));
+    }
+
+    @Test
+    void theScanPublisherKeepsTheRunsWordsOutOfTheDetail() {
+        java.util.List<NotificationEvent> fired = new java.util.ArrayList<>();
+        NotificationPublisher p = new NotificationPublisher() {
+            @Override
+            public void publish(NotificationEvent e) {
+                fired.add(e);
+            }
+
+            @Override
+            public void clear(String key) {
+                // nothing to clear in this test
+            }
+        };
+        p.scanFinished("lab", 7, "failed", "crm.customers: \"" + SECRET + "\"");
+        assertEquals(1, fired.size());
+        assertFalse(fired.get(0).detail().contains(SECRET), fired.get(0).detail());
+        assertTrue(fired.get(0).restrictedDetail().contains(SECRET));
+        assertEquals(null, fired.get(0).field(), "about the whole source");
+    }
+
+    @Test
     void digestsMaskEachEventTheSameWay() {
         Instant now = Instant.parse("2026-10-25T08:00:00Z");
         List<NotificationEvent> events = List.of(event("email"), event("ni_number"));
@@ -79,18 +128,17 @@ class NotificationMaskingTest {
 
     @Test
     void inAppNotificationsAreWrittenForTheRoleByTheSameRule() {
-        java.util.function.Function<String, Set<String>> marks = urn -> MARKS.getOrDefault(urn, Set.of());
-        assertFalse(InAppFeed.write(event("email"), AccessRole.VIEWER, marks).detail().contains(SECRET));
-        assertTrue(InAppFeed.write(event("email"), AccessRole.STEWARD, marks).detail().contains(SECRET));
+        assertFalse(InAppFeed.write(event("email"), AccessRole.VIEWER, MARKED).detail().contains(SECRET));
+        assertTrue(InAppFeed.write(event("email"), AccessRole.STEWARD, MARKED).detail().contains(SECRET));
         for (AccessRole r : AccessRole.values()) {
-            NotificationStore.InAppWriter.Item item = InAppFeed.write(event("ni_number"), r, marks);
+            NotificationStore.InAppWriter.Item item = InAppFeed.write(event("ni_number"), r, MARKED);
             assertFalse(item.detail().contains(SECRET), r.id());
             assertEquals("The rule could not run. Open the asset to see why.", item.detail());
             assertEquals("#/asset/urn%3Akilnmark%3Alab%3Acrm.customers", item.link());
         }
         NotificationEvent recovered = new NotificationEvent(NotificationKind.RULE_RECOVERED, Severity.HIGH, URN,
             "email not null passes again on crm.customers", null, null, "lab", null, null, "rule:9", null);
-        assertEquals(Severity.INFO, InAppFeed.write(recovered, AccessRole.VIEWER, marks).severity(), "good news");
+        assertEquals(Severity.INFO, InAppFeed.write(recovered, AccessRole.VIEWER, MARKED).severity(), "good news");
     }
 
     @Test
@@ -110,12 +158,22 @@ class NotificationMaskingTest {
         }
         MailMessages.Mail team = messages().single(event("email"), TEAM);
         assertTrue(team.text().contains("https://kilnmark.example.com/#/settings/email"), "teams: ask an admin");
-        MailSettings noBase = new MailSettings(true, "smtp.example.com", null, MailSecurity.NONE, null, false,
-            "kilnmark@example.com", null, null, true, null, null);
-        MailMessages.Mail plain = new MailMessages(noBase, ZoneOffset.UTC, u -> Set.of()).single(event("email"),
-            person(AccessRole.VIEWER));
+        MailMessages.Mail plain = new MailMessages(Fixtures.settings(null), ZoneId.of("UTC"), e -> Exposure.NONE)
+            .single(event("email"), person(AccessRole.VIEWER));
         assertFalse(plain.html().contains("<a "), "no base URL, no links");
         assertTrue(plain.text().contains("under Settings, Notifications"));
+    }
+
+    @Test
+    void theConfirmationEmailCarriesALinkAndTheCode() {
+        MailMessages.Mail m = messages().confirmation("abc123");
+        assertEquals("[Kilnmark] Confirm your email address", m.subject());
+        assertTrue(m.text().contains("https://kilnmark.example.com/#/settings/notifications?confirm=abc123"), m.text());
+        assertTrue(m.html().contains("enter this code: abc123"), m.html());
+        MailMessages.Mail noLink = new MailMessages(Fixtures.settings(null), ZoneId.of("UTC"), e -> Exposure.NONE)
+            .confirmation("abc123");
+        assertFalse(noLink.text().contains("http"), "without a base URL, only the code");
+        assertTrue(noLink.text().contains("abc123"));
     }
 
     @Test

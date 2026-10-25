@@ -8,7 +8,6 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
@@ -55,9 +54,8 @@ class DigestTest {
 
     @Test
     void theDigestEmailListsEveryGroupWithCounts() {
-        MailSettings settings = new MailSettings(true, "smtp.example.com", null, MailSecurity.STARTTLS, null, false,
-            "kilnmark@example.com", "Kilnmark", "https://kilnmark.example.com", true, null, null);
-        MailMessages messages = new MailMessages(settings, ZoneOffset.UTC, urn -> Set.of());
+        MailSettings settings = Fixtures.settings("https://kilnmark.example.com");
+        MailMessages messages = new MailMessages(settings, ZoneOffset.UTC, e -> Exposure.NONE);
         List<NotificationEvent> events = List.of(
             event(NotificationKind.RULE_FAILED, Severity.HIGH, "email not null fails on crm.customers",
                 "2026-10-25T03:00:00Z"),

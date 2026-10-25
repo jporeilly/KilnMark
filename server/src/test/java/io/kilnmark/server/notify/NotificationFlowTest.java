@@ -3,6 +3,7 @@ package io.kilnmark.server.notify;
 import static io.kilnmark.server.Tokens.admin;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -14,6 +15,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.junit.jupiter.api.AfterAll;
@@ -37,10 +40,12 @@ import jakarta.mail.internet.MimeMessage;
 
 /**
  * Notifications end to end on PostgreSQL (dev services), with GreenMail as the mail server in the
- * test's own process: admin-only settings with a write-only password, the test email, people's
- * choices, a failed connection test told in the app (written for each role) and by email (to a
- * person and a team address), told once until it clears, each person's feed kept to themselves,
- * and the send log.
+ * test's own process: admin-only settings with a write-only password that stays with its server,
+ * unencrypted sign-in refused unless allowed, a locked setting, the test email, people's choices and
+ * the confirmation of their address, a failed connection test told once in the app and by email
+ * (written for each role and for a team address), each person's feed kept to themselves, allowed
+ * domains, and the send log. The test profile locks undelivered-action
+ * ({@code %test.kilnmark.mail.locked}).
  */
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -48,6 +53,7 @@ class NotificationFlowTest {
 
     static final String PASSWORD = "smtp-pw-7731";
     static final String SOURCE = "notify-bad";
+    static final Pattern CODE = Pattern.compile("enter this code: ([A-Za-z0-9_-]+)");
     static GreenMail smtp;
     static String steward;
     static String viewer;
@@ -82,10 +88,11 @@ class NotificationFlowTest {
         return Tokens.as(token);
     }
 
+    /** GreenMail speaks plain SMTP, so signing in there needs the admin's leave (a password entered here). */
     private static Map<String, Object> settings(String password) {
         Map<String, Object> s = new HashMap<>(Map.of("enabled", true, "host", "127.0.0.1", "port",
             smtp.getSmtp().getPort(), "security", "none", "username", "kilnmark", "fromAddress", "kilnmark@example.com",
-            "fromName", "Kilnmark", "baseUrl", "http://kilnmark.example.com"));
+            "fromName", "Kilnmark", "baseUrl", "http://kilnmark.example.com", "allowPlainAuth", true));
         if (password != null) {
             s.put("password", password);
         }
@@ -102,10 +109,11 @@ class NotificationFlowTest {
         }
     }
 
-    private static List<MimeMessage> to(String address) {
+    private static List<MimeMessage> to(String address, String subjectPart) {
         return Arrays.stream(smtp.getReceivedMessages()).filter(m -> {
             try {
-                return Arrays.stream(m.getAllRecipients()).anyMatch(a -> a.toString().equals(address));
+                return Arrays.stream(m.getAllRecipients()).anyMatch(a -> a.toString().equalsIgnoreCase(address))
+                    && m.getSubject().contains(subjectPart);
             } catch (jakarta.mail.MessagingException e) {
                 return false;
             }
@@ -126,7 +134,7 @@ class NotificationFlowTest {
 
     @Test
     @Order(1)
-    void mailSettingsAreForAdminsAndThePasswordIsWriteOnly() {
+    void mailSettingsAreForAdminsAndThePasswordStaysWithItsServer() {
         steward = token("notify-steward", "steward");
         viewer = token("notify-viewer", "viewer");
         quiet = token("notify-quiet", "steward");
@@ -140,13 +148,36 @@ class NotificationFlowTest {
             .statusCode(200).body("hasPassword", equalTo(true)).body("ready", equalTo(true))
             .body("saved", equalTo(true)).extract().asString();
         assertFalse(saved.contains(PASSWORD), saved);
-        // Leaving the password out keeps it.
+        // Leaving the password out keeps it, while the server stays the same.
         String again = admin().contentType(ContentType.JSON).body(settings(null)).put("/api/v1/mail/settings").then()
             .statusCode(200).body("hasPassword", equalTo(true)).extract().asString();
         assertFalse(again.contains(PASSWORD));
         assertFalse(admin().get("/api/v1/mail/settings").then().statusCode(200).extract().asString().contains(PASSWORD));
-        admin().contentType(ContentType.JSON).body(Map.of("host", "smtp://x", "fromAddress", "k@example.com"))
-            .put("/api/v1/mail/settings").then().statusCode(400).body("error", containsString("host:"));
+
+        // Another server keeps no password: it has to be typed again.
+        Map<String, Object> moved = settings(null);
+        moved.put("host", "attacker.example");
+        admin().contentType(ContentType.JSON).body(moved).put("/api/v1/mail/settings").then().statusCode(400)
+            .body("error", containsString("password:"));
+        admin().get("/api/v1/mail/settings").then().body("host", equalTo("127.0.0.1"));
+
+        // Unencrypted sign-in only with the admin's leave.
+        Map<String, Object> plain = settings(null);
+        plain.put("allowPlainAuth", false);
+        admin().contentType(ContentType.JSON).body(plain).put("/api/v1/mail/settings").then().statusCode(400)
+            .body("error", containsString("unencrypted"));
+
+        // The test profile locks undelivered-action.
+        admin().get("/api/v1/mail/settings").then().body("locked", hasItem("undelivered-action"))
+            .body("undeliveredAction", equalTo("digest"));
+        admin().contentType(ContentType.JSON).body(Map.of("undeliveredAction", "drop")).put("/api/v1/mail/settings")
+            .then().statusCode(400).body("error", containsString("undelivered-action is set by the server's configuration"));
+        admin().contentType(ContentType.JSON).body(Map.of("undeliveredAction", "digest", "maxAttempts", 4))
+            .put("/api/v1/mail/settings").then().statusCode(200).body("maxAttempts", equalTo(4));
+        admin().contentType(ContentType.JSON).body(Map.of("maxAttempts", 11)).put("/api/v1/mail/settings").then()
+            .statusCode(400).body("error", containsString("maxAttempts"));
+        admin().contentType(ContentType.JSON).body(Map.of("host", "smtp://x")).put("/api/v1/mail/settings").then()
+            .statusCode(400).body("error", containsString("host:"));
     }
 
     @Test
@@ -154,8 +185,7 @@ class NotificationFlowTest {
     void theTestEmailSaysWhetherItWent() throws Exception {
         admin().contentType(ContentType.JSON).body(Map.of("to", "admin@example.com")).post("/api/v1/mail/test").then()
             .statusCode(200).body("ok", equalTo(true)).body("message", containsString("Sent to admin@example.com"));
-        await("the test email", () -> !to("admin@example.com").isEmpty());
-        assertEquals("[Kilnmark] Test email", to("admin@example.com").get(0).getSubject());
+        await("the test email", () -> !to("admin@example.com", "Test email").isEmpty());
         admin().contentType(ContentType.JSON).body(Map.of("to", "not an address")).post("/api/v1/mail/test").then()
             .statusCode(400);
 
@@ -171,17 +201,33 @@ class NotificationFlowTest {
 
     @Test
     @Order(3)
-    void choicesStartFromTheRolesDefaults() {
+    void choicesStartFromTheRolesDefaultsAndAddressesAreConfirmed() throws Exception {
+        as(viewer).get("/api/v1/notifications/unread-count").then().statusCode(200).body("unread", equalTo(0));
         as(steward).get("/api/v1/me/notifications").then().statusCode(200).body("saved", equalTo(false))
             .body("enabled", equalTo(false)).body("available", equalTo(true)).body("mailReady", equalTo(true))
+            .body("confirmationRequired", equalTo(true))
             .body("inAppKinds.size()", equalTo(8)).body("kindChoices.size()", equalTo(8))
             .body("timeZone", not(equalTo(null)));
         admin().get("/api/v1/me/notifications").then().statusCode(200).body("enabled", equalTo(true))
             .body("minSeverity", equalTo("high"));
-        as(steward).contentType(ContentType.JSON).body(Map.of("email", "steward@example.com", "enabled", true, "kinds",
-            List.of("connection_failed", "scan_failed"), "minSeverity", "low", "mode", "immediate", "digestHour", 8))
-            .put("/api/v1/me/notifications").then().statusCode(200).body("saved", equalTo(true))
-            .body("email", equalTo("steward@example.com")).body("inAppKinds.size()", equalTo(8));
+        as(steward).contentType(ContentType.JSON).body(Map.of("email", "Steward@Example.com", "enabled", true, "kinds",
+            List.of("connection_failed", "scan_failed"), "minSeverity", "low", "mode", "immediate", "digestHour", 8,
+            "allSources", true)).put("/api/v1/me/notifications").then().statusCode(200).body("saved", equalTo(true))
+            .body("email", equalTo("steward@example.com")).body("confirmed", equalTo(false))
+            .body("inAppKinds.size()", equalTo(8));
+
+        await("the confirmation email", () -> !to("steward@example.com", "Confirm your email address").isEmpty());
+        String body = GreenMailUtil.getBody(to("steward@example.com", "Confirm your email address").get(0));
+        Matcher m = CODE.matcher(body.replaceAll("=\\r?\\n", ""));
+        assertTrue(m.find(), body);
+        assertTrue(body.contains("http://kilnmark.example.com/#/settings/notifications?confirm="), body);
+        as(viewer).contentType(ContentType.JSON).body(Map.of("code", m.group(1)))
+            .post("/api/v1/me/notifications/confirm").then().statusCode(400); // not the viewer's code
+        as(steward).contentType(ContentType.JSON).body(Map.of("code", "wrong"))
+            .post("/api/v1/me/notifications/confirm").then().statusCode(400);
+        as(steward).contentType(ContentType.JSON).body(Map.of("code", m.group(1)))
+            .post("/api/v1/me/notifications/confirm").then().statusCode(200).body("confirmed", equalTo(true));
+
         as(quiet).contentType(ContentType.JSON).body(Map.of("enabled", false, "inAppKinds", List.of()))
             .put("/api/v1/me/notifications").then().statusCode(200).body("inAppKinds.size()", equalTo(0));
         as(viewer).contentType(ContentType.JSON).body(Map.of("enabled", true, "kinds", List.of("scan_failed")))
@@ -199,29 +245,28 @@ class NotificationFlowTest {
         admin().contentType(ContentType.JSON).body(source).post("/api/v1/sources").then().statusCode(201);
         as(steward).post("/api/v1/sources/" + SOURCE + "/test").then().statusCode(200).body("ok", equalTo(false));
 
-        List<Map<String, Object>> stewards = mine(steward);
-        assertEquals(1, stewards.size(), stewards.toString());
-        Map<String, Object> item = stewards.get(0);
+        await("the steward's notification", () -> mine(steward).size() == 1);
+        Map<String, Object> item = mine(steward).get(0);
         assertEquals("connection_failed", item.get("kind"));
         assertEquals("medium", item.get("severity"));
         assertEquals("#/source/" + SOURCE, item.get("link"));
         assertEquals(false, item.get("read"));
         assertTrue(String.valueOf(item.get("detail")).contains("It said:"), "a steward may see the reason: " + item);
         assertFalse(String.valueOf(item.get("detail")).contains("wrong-password-0042"));
-        List<Map<String, Object>> viewers = mine(viewer);
-        assertEquals(1, viewers.size());
-        assertFalse(String.valueOf(viewers.get(0).get("detail")).contains("It said:"), "not for a viewer");
+        await("the viewer's notification", () -> mine(viewer).size() == 1);
+        assertFalse(String.valueOf(mine(viewer).get(0).get("detail")).contains("It said:"), "not for a viewer");
         assertEquals(List.of(), mine(quiet), "in-app turned off");
 
-        await("the steward's and the team's emails", () -> !to("steward@example.com").isEmpty()
-            && !to("team@example.com").isEmpty());
-        MimeMessage personal = to("steward@example.com").get(0);
-        assertEquals("[Kilnmark] Medium: Connection test of " + SOURCE + " failed", personal.getSubject());
+        String subject = "Connection test of " + SOURCE + " failed";
+        await("the steward's and the team's emails", () -> !to("steward@example.com", subject).isEmpty()
+            && !to("team@example.com", subject).isEmpty());
+        MimeMessage personal = to("steward@example.com", subject).get(0);
+        assertEquals("[Kilnmark] Medium: " + subject, personal.getSubject());
         String body = GreenMailUtil.getBody(personal);
         assertTrue(body.contains("It said:"), body);
         assertTrue(body.contains("http://kilnmark.example.com/#/settings/notifications"), body);
         assertFalse(body.contains("<img"), body);
-        String team = GreenMailUtil.getBody(to("team@example.com").get(0));
+        String team = GreenMailUtil.getBody(to("team@example.com", subject).get(0));
         assertFalse(team.contains("It said:"), "a team address is written for a viewer");
         assertTrue(team.contains("#/settings/email"), team);
 
@@ -229,14 +274,16 @@ class NotificationFlowTest {
         as(steward).post("/api/v1/sources/" + SOURCE + "/test").then().statusCode(200).body("ok", equalTo(false));
         Thread.sleep(3000);
         assertEquals(1, mine(steward).size());
-        assertEquals(1, to("steward@example.com").size());
+        assertEquals(1, to("steward@example.com", subject).size());
 
         await("the feed to show the email as sent", () -> {
-            List<Map<String, Object>> channels = channels(mine(steward).get(0));
-            return channels.size() == 2 && "sent".equals(channels.get(1).get("status"));
+            List<Map<String, Object>> c = channels(mine(steward).get(0));
+            return c.size() == 2 && "sent".equals(c.get(1).get("status"));
         });
+        await("the admin's notification", () -> mine(Tokens.ADMIN).size() == 1);
+        await("the team email as sent", () -> List.of(Map.of("name", "Data team", "status", "sent"))
+            .equals(mine(Tokens.ADMIN).get(0).get("teamEmails")));
         Map<String, Object> adminItem = mine(Tokens.ADMIN).get(0);
-        assertEquals(List.of(Map.of("name", "Data team", "status", "sent")), adminItem.get("teamEmails"));
         assertFalse(adminItem.toString().contains("@"), "never an address in the feed: " + adminItem);
         assertFalse(mine(steward).get(0).containsKey("teamEmails"), "team emails for admins only");
     }
@@ -260,13 +307,13 @@ class NotificationFlowTest {
             .getLong("unread");
         assertTrue(before >= 1);
         as(steward).get("/api/v1/notifications?unread=true&limit=100").then().statusCode(200)
-            .body("items.id", org.hamcrest.Matchers.hasItem(stewardItem));
+            .body("items.id", hasItem(stewardItem));
         as(steward).contentType(ContentType.JSON).body(Map.of("ids", List.of(stewardItem)))
             .post("/api/v1/notifications/read").then().statusCode(204);
         assertEquals(true, mine(steward).get(0).get("read"));
         as(steward).get("/api/v1/notifications/unread-count").then().body("unread", equalTo((int) before - 1));
         as(steward).get("/api/v1/notifications?unread=true&limit=100").then().statusCode(200)
-            .body("items.id", not(org.hamcrest.Matchers.hasItem(stewardItem)));
+            .body("items.id", not(hasItem(stewardItem)));
         assertEquals(false, mine(viewer).get(0).get("read"), "the viewer's own copy is still unread");
 
         as(viewer).contentType(ContentType.JSON).body(Map.of("all", true)).post("/api/v1/notifications/read").then()
@@ -282,12 +329,34 @@ class NotificationFlowTest {
 
     @Test
     @Order(6)
+    void emailGoesOnlyToTheAllowedDomainsAndOthersArePaused() {
+        admin().contentType(ContentType.JSON).body(Map.of("allowedDomains", List.of("Example.com")))
+            .put("/api/v1/mail/settings").then().statusCode(200).body("allowedDomains", equalTo(List.of("example.com")))
+            .body("pausedAddresses.size()", equalTo(0));
+        as(quiet).contentType(ContentType.JSON).body(Map.of("email", "quiet@example.org"))
+            .put("/api/v1/me/notifications").then().statusCode(400).body("error", containsString("example.com"));
+        admin().contentType(ContentType.JSON).body(Map.of("name", "Elsewhere", "email", "list@example.net"))
+            .post("/api/v1/mail/teams").then().statusCode(400);
+        admin().contentType(ContentType.JSON).body(Map.of("to", "someone@example.net")).post("/api/v1/mail/test").then()
+            .statusCode(400);
+        JsonPath paused = admin().contentType(ContentType.JSON).body(Map.of("allowedDomains", List.of("example.org")))
+            .put("/api/v1/mail/settings").then().statusCode(200).extract().jsonPath();
+        List<String> emails = paused.getList("pausedAddresses.email");
+        assertTrue(emails.containsAll(List.of("steward@example.com", "team@example.com")), emails.toString());
+        as(steward).get("/api/v1/me/notifications").then().body("paused", equalTo("domain"));
+        admin().contentType(ContentType.JSON).body(Map.of("allowedDomains", List.of())).put("/api/v1/mail/settings")
+            .then().statusCode(200).body("pausedAddresses.size()", equalTo(0));
+        as(steward).get("/api/v1/me/notifications").then().body("paused", equalTo(null));
+    }
+
+    @Test
+    @Order(7)
     void theSendLogShowsEveryAttemptToAdmins() {
         JsonPath log = admin().get("/api/v1/mail/log?status=sent&limit=500").then().statusCode(200).extract().jsonPath();
         List<String> recipients = log.getList("recipient");
         assertTrue(recipients.contains("steward@example.com"), recipients.toString());
         assertTrue(recipients.contains("team@example.com"), recipients.toString());
-        assertTrue(log.getList("kind").contains("connection_failed"));
+        assertTrue(log.getList("kind").containsAll(List.of("connection_failed", "confirm", "test")));
         admin().get("/api/v1/mail/log?status=nope").then().statusCode(400);
         as(viewer).get("/api/v1/mail/log").then().statusCode(403);
     }

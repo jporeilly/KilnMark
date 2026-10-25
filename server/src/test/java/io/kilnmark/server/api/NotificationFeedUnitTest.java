@@ -53,6 +53,14 @@ class NotificationFeedUnitTest {
     }
 
     @Test
+    void theUnreadCountStopsAt99Plus() throws Exception {
+        assertEquals("{\"unread\":3}", JSON.writeValueAsString(NotificationResource.Unread.of(3)));
+        assertEquals("{\"unread\":99}", JSON.writeValueAsString(NotificationResource.Unread.of(99)));
+        assertEquals("{\"unread\":99,\"more\":true}", JSON.writeValueAsString(NotificationResource.Unread.of(100)),
+            "still a number, with more: true, for the bell's 99+");
+    }
+
+    @Test
     void idsAreChecked() {
         assertEquals(List.of(3L, 4L), NotificationResource.ids(List.of("3", " 4 ")));
         assertThrows(IllegalArgumentException.class, () -> NotificationResource.ids(List.of("x")));
