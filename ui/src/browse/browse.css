@@ -15,12 +15,12 @@
 
 .browse-side {
   background: var(--km-surface);
-  border: 1px solid var(--km-border);
-  border-radius: 12px;
+  border-radius: var(--km-radius-card);
+  box-shadow: var(--km-shadow-card);
   padding: 14px;
   position: sticky;
-  top: 12px;
-  max-height: calc(100vh - 24px);
+  top: calc(var(--km-topbar-h) + 12px);
+  max-height: calc(100vh - var(--km-topbar-h) - 24px);
   overflow: auto;
 }
 
@@ -48,7 +48,7 @@
 }
 
 .tree [role="treeitem"]:focus-visible > .tree-row {
-  outline: 3px solid var(--km-link);
+  outline: 3px solid var(--km-focus);
   outline-offset: -1px;
 }
 
@@ -64,11 +64,11 @@
 }
 
 .tree-row:hover {
-  background: var(--km-ground);
+  background: var(--km-surface-3);
 }
 
 .tree-row.is-selected {
-  background: var(--km-ground);
+  background: var(--km-accent-tint);
   box-shadow: inset 3px 0 0 var(--km-accent);
   font-weight: 700;
 }
@@ -121,29 +121,6 @@
   white-space: nowrap;
 }
 
-.panel-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.panel-head h2 {
-  margin: 0;
-}
-
-h3 {
-  font-size: 16px;
-  margin: 20px 0 8px;
-}
-
-h4 {
-  font-size: 14px;
-  margin: 12px 0 6px;
-}
-
 .dg-controls {
   display: flex;
   flex-wrap: wrap;
@@ -157,25 +134,6 @@ h4 {
   flex-wrap: wrap;
   gap: 8px;
   align-items: end;
-}
-
-.check {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 8px;
-  min-height: 24px;
-}
-
-.buttons.tight {
-  gap: 6px;
-  flex-wrap: nowrap;
-}
-
-.buttons.tight button {
-  padding: 6px 10px;
-  min-height: 32px;
-  white-space: nowrap;
 }
 
 table.rel {
@@ -219,7 +177,7 @@ table.rel td:nth-child(2) {
 .dg-frame {
   height: 560px;
   border: 1px solid var(--km-border);
-  border-radius: 10px;
+  border-radius: var(--km-radius-inner);
   overflow: hidden;
   margin: 8px 0 16px;
 }
@@ -261,7 +219,7 @@ table.rel td:nth-child(2) {
 }
 
 .dg-frame .react-flow__node:focus-visible {
-  outline: 3px solid var(--km-link);
+  outline: 3px solid var(--km-focus);
   outline-offset: 2px;
   border-radius: 8px;
 }
@@ -271,7 +229,8 @@ table.rel td:nth-child(2) {
   background: var(--km-surface);
   color: var(--km-ink);
   border: 1px solid var(--km-border-control);
-  border-radius: 8px;
+  border-radius: 10px;
+  box-shadow: var(--km-shadow-card);
   font-size: 12px;
   box-sizing: border-box;
 }
@@ -387,7 +346,7 @@ tr.is-open > td {
 }
 
 .detail-row > td {
-  background: var(--km-ground);
+  background: var(--km-surface-2);
 }
 
 .col-detail {
@@ -428,7 +387,7 @@ tr.is-open > td {
 }
 
 .histogram svg rect {
-  fill: var(--km-link);
+  fill: var(--km-fill-sky);
 }
 
 .histogram-axis {
@@ -470,21 +429,6 @@ tr.is-open > td {
   white-space: nowrap;
 }
 
-.top-bar {
-  display: inline-block;
-  height: 8px;
-  background: var(--km-ground);
-  border: 1px solid var(--km-border-control);
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.top-bar span {
-  display: block;
-  height: 100%;
-  background: var(--km-good);
-}
-
 @media (max-width: 960px) {
   .browse {
     grid-template-columns: minmax(0, 1fr);
@@ -492,6 +436,7 @@ tr.is-open > td {
 
   .browse-side {
     position: static;
+    top: auto;
     max-height: 420px;
   }
 

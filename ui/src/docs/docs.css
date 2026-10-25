@@ -1,16 +1,4 @@
-/* In-app documentation (src/docs) and the version line under the navigation. Uses the tokens in tokens.css. */
-
-.nav-version {
-  margin: 16px 12px 0;
-}
-
-.sidenav .nav-version a {
-  display: inline;
-  padding: 0;
-  color: var(--km-link);
-  text-decoration: underline;
-  font-weight: 500;
-}
+/* In-app documentation (src/docs). Uses the tokens in tokens.css. */
 
 .doc-body {
   max-width: 75ch;
@@ -18,10 +6,24 @@
 
 .doc-body pre {
   overflow-x: auto;
-  padding: 12px;
-  background: var(--km-ground);
-  border: 1px solid var(--km-border);
-  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--km-surface-2);
+  border: 1px solid var(--km-divider);
+  border-radius: 12px;
+}
+
+.doc-body :not(pre) > code {
+  padding: 1px 5px;
+  border-radius: var(--km-radius-xs);
+  background: var(--km-surface-3);
+}
+
+.doc-body h2 {
+  margin-top: 28px;
+}
+
+.doc-body table {
+  margin: 12px 0;
 }
 
 .doc-body code {
@@ -29,9 +31,11 @@
 }
 
 .doc-body blockquote {
-  margin: 0;
-  padding-left: 12px;
-  border-left: 3px solid var(--km-border);
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-left: 4px solid var(--km-accent);
+  border-radius: 0 12px 12px 0;
+  background: var(--km-accent-tint);
 }
 
 .doc-body [id^="doc-"] {
