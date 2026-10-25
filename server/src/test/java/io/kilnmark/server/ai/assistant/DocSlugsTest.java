@@ -21,7 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 class DocSlugsTest {
 
     static Path cases() {
-        return Path.of(System.getProperty("kilnmark.docs.cases", "../tests/docs"));
+        return Path.of(System.getProperty("kmtest.docs.cases", "../tests/docs"));
     }
 
     static JsonNode fixture() throws IOException {

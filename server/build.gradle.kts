@@ -56,9 +56,10 @@ dependencies {
 tasks.withType<Test>().configureEach {
     jvmArgs("--add-opens=java.base/java.nio=ALL-UNNAMED", "--enable-native-access=ALL-UNNAMED")
     systemProperty("java.util.logging.manager", "org.jboss.logmanager.LogManager")
+    // Not under kilnmark.*: that prefix is the server configuration, which refuses names it does not know.
     // The assistant's shared fixtures: section anchors (also checked by the UI build) and the docs evaluation set.
-    systemProperty("kilnmark.docs.cases", rootProject.file("tests/docs").absolutePath)
-    systemProperty("kilnmark.eval.docs", rootProject.file("tests/ai-eval/docs.json").absolutePath)
+    systemProperty("kmtest.docs.cases", rootProject.file("tests/docs").absolutePath)
+    systemProperty("kmtest.eval.docs", rootProject.file("tests/ai-eval/docs.json").absolutePath)
     inputs.dir(rootProject.file("tests/docs"))
     inputs.file(rootProject.file("tests/ai-eval/docs.json"))
 }

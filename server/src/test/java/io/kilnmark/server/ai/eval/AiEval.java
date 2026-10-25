@@ -47,7 +47,7 @@ class AiEval {
     private final Path baseline = Path.of(System.getProperty("kilnmark.eval.baseline",
         "../tests/ai-eval/baseline.json"));
     private final boolean updateBaseline = Boolean.getBoolean("kilnmark.eval.update-baseline");
-    private final Path docsGolden = Path.of(System.getProperty("kilnmark.eval.docs", "../tests/ai-eval/docs.json"));
+    private final Path docsGolden = Path.of(System.getProperty("kmtest.eval.docs", "../tests/ai-eval/docs.json"));
     /** Sections the assistant retrieves for a question. */
     private static final int DOCS_K = 6;
     private static final int K = 5;

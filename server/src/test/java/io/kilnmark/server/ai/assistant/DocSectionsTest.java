@@ -111,7 +111,7 @@ class DocSectionsTest {
     @Test
     void everySectionInTheEvaluationSetExists() throws IOException {
         Set<String> ids = BundledDocs.sections().stream().map(DocSections.Section::id).collect(Collectors.toSet());
-        JsonNode set = new ObjectMapper().readTree(Path.of(System.getProperty("kilnmark.eval.docs",
+        JsonNode set = new ObjectMapper().readTree(Path.of(System.getProperty("kmtest.eval.docs",
             "../tests/ai-eval/docs.json")).toFile());
         int items = 0;
         for (JsonNode item : set.path("items")) {

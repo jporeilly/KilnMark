@@ -136,7 +136,7 @@ class AssistantTest {
     @Test
     @Order(3)
     void wordsAloneFindTheSectionsThatAnswer() throws Exception {
-        JsonNode set = new ObjectMapper().readTree(Path.of(System.getProperty("kilnmark.eval.docs",
+        JsonNode set = new ObjectMapper().readTree(Path.of(System.getProperty("kmtest.eval.docs",
             "../tests/ai-eval/docs.json")).toFile());
         List<Double> recall = new ArrayList<>();
         List<String> misses = new ArrayList<>();
