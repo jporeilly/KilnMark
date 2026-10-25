@@ -41,6 +41,106 @@ The linear `Pipeline` and `Runner` stay for scanning and are run as a graph inte
   step's columns before anything runs.
 - `GraphRunner.run(graph, metadata)` returns a `RunResult` with rows per edge and per step.
 
+Added while building the engine (round 3, step 1):
+
+- `StepContext.inputs(port)`: every row set arriving on a port, in the order the pipeline lists
+  them. A factory port named with a trailing `*` (union's `in*`) is connected, read and named in
+  edges without the `*`, as `in`. `input(port)` on a port with several inputs is an error that
+  points to `inputs(port)`.
+- `StepContext.emit(port, batch)`: hands the batch to the port, or closes it when nothing is
+  connected. `output(port)` returns `null` for an unconnected port; in a graph run it does so for
+  any name, since the compiler has already checked the edges against the step type's ports.
+- `RowSet.takeAny(rowSets, allocator)` returns the next batch from whichever input has one, with
+  its index, or `null` once all have ended; `RowSet.poll(allocator, timeout, unit)` and
+  `RowSet.atEnd()` underneath it. A step with several inputs that does not care about order
+  (union) must read them this way: reading one to its end first stalls a pipeline whose inputs
+  share a step upstream (a route followed by a union), because that step waits for room on the
+  input not being read.
+- `RunResult.edges()`: `EdgeResult(fromStep, fromPort, toStep, toPort, rows)` per edge, in the
+  graph's order: the rows that edge's reader was given. `StepResult` gains `rowsIn`,
+  `rowsInByPort` and `rowsOutByPort`; `rowsOut` is the sum over connected output ports, each port
+  counted once however many steps read it. Rows dropped because a reader stopped early, or because
+  a step failed, are not counted (`RowSet.rows()` counts rows when they are taken). The old
+  constructors remain. `RunResult.step(name)` finds one step.
+- `StepContext.inputSchema(port)` and `inputSchema(port, index)` (for a port taking many): the
+  columns arriving on an input, as worked out when the pipeline was checked, or `null` when they
+  were not known before the run. A step can then act on an input that sends no batch: an
+  aggregate of no rows writes SQL's one row, a union adds the columns of an empty input, a lookup
+  knows the columns of an empty lookup side. The compiler puts them on `GraphStep.inputSchemas`
+  (keyed `in`, `main`, `in[0]`, …; a new record component, the three-argument constructor
+  remains) and the runner hands them to the step.
+- In a graph run `hasInput()` and `hasOutput()` mean the `in` and `out` ports, as they did for a
+  step in a line; `inputPorts()` and `outputPorts()` list every connected port.
+- `RowSet.fail(cause)` never waits: it drops batches still queued (the run is failing) to make
+  room for the end, so a failure always reaches the next step. `finish()` still waits for room.
+  `RowSet.put` closes its batch if interrupted while waiting. Added for the engine: `discard`
+  (drop a batch without counting it), `isCancelled`, and `progress`, `readerWaiting` and
+  `writerWaiting` for the stall watchdog.
+
+### Running a graph (`KilnGraphRunner`)
+
+- Every step runs on its own virtual thread; each edge is a bounded `RowSet` of the configured
+  capacity; each step's memory is a child allocator inside the run's one limit, as before.
+- **One output, several readers (the tee).** The step writes to one row set. A copying thread
+  takes each batch and gives every reader but the last a copy (its buffers copied whole, so
+  nested columns copy too) and the last the original; each reader then moves its batch into its
+  own allocator. Copies waiting to be read are accounted to the writing step, in a child of its
+  allocator, as any batch waiting on an edge is. One slow reader holds the others back by at most
+  the row set capacity.
+- **A step that ends early** (it stops before its input ends, like a `limit`) releases its
+  inputs. Each step counts its readers that have not finished, over all its ports and the readers
+  behind a tee; when the last finishes, the step is stopped without failing. Until then, what it
+  still writes to a finished reader is read and dropped (a tee simply stops copying to it).
+- **Failures.** A failing step first cancels its inputs (the steps before it stop, not blamed),
+  then fails its outputs without waiting (the steps after it end, not blamed), along every edge,
+  so the whole connected graph stops even if a step after it is stuck. The steps before it are
+  also interrupted, so one waiting on a database or a file stops too. Steps not joined to it at
+  all are stopped. The run's error is the first failure in time; a step that did not free its
+  memory is named when nothing failed first (a step stopped mid-batch is only logged). Running out
+  of memory names the run's limit ("ran out of memory: the run may hold 256 MB of Arrow memory in
+  all"). A tee that cannot copy is reported against the writing step.
+- **Stalls.** If no batch moves through any row set for the stall timeout (120 seconds unless
+  set on `KilnGraphRunner` or `Runner`) while every running step is waiting on a row set, the run
+  fails: "The run stalled: no rows moved for 120 seconds while every running step waited for
+  another. Waiting: seq (to read from p1.out->seq.a); p2 (to write to p2.out->seq.b) …". A step
+  busy outside the row sets (a slow query) is never taken for a stall.
+- **Interruption** of the calling thread stops every step and waits for every thread ever
+  started before `run` throws `InterruptedException`; no thread starts once a stop has begun.
+- The linear `Runner` builds a graph (`a.out -> b.in -> ...`, settings as configuration) and runs
+  it with `KilnGraphRunner`. One difference from before: if one step fails and another leaks, the
+  run reports the failure, not whichever step came first in the line. A step that ends before its
+  input does no longer leaves the step before it waiting for ever.
+- **Known limit.** A step that reads one input to its end before another (a lookup reads its
+  lookup side first) stalls when both inputs come from the same step and more rows are waiting
+  than the edges hold. The compiler adds a note to such pipelines (also when the inputs of a port
+  taking many share a step, in case the step reads them one after another); reading the source
+  twice avoids it, and the stall watchdog ends such a run with a plain message instead of hanging.
+- **Outcomes.** Each `StepResult` has an `outcome`: `FINISHED`, `ENDED_EARLY` (it stopped before
+  its input ended, or every step reading it had finished), `STOPPED` (the engine stopped it
+  because another step failed, the run stalled or was stopped) or `FAILED`. A UI shows a stopped
+  writer as stopped, not as a clean finish. The older constructors derive it from `error`.
+- If anything fails while the run is starting (building a step's context, starting a thread),
+  the steps already started are stopped and waited for before the failure is thrown. Decimal
+  settings are turned into text in full only when that is short, otherwise in scientific form
+  (`1E-999999999`), so a number can never become a string of a billion zeros.
+
+### Writing a step for graphs
+
+- Read with `input(port)` or, for a port taking many, `inputs(port)` with `RowSet.takeAny`; write
+  with `emit(port, batch)`, which drops rows for an unconnected port.
+- A step that polls with a timeout counts as waiting only while it waits; work between polls (a
+  commit, a remote call) is never taken for a stall.
+- **Close what you hold in `close()` or a `finally`.** When another step fails, the steps before
+  it are interrupted wherever they are, and every step can be stopped mid-batch. A batch taken but
+  not yet handed on must still be closed, or the step is reported (or, when stopped, logged) for
+  not freeing its memory.
+- **Interruption closes sockets.** Interrupting a thread blocked in socket or channel I/O closes
+  that socket. A step using a connection pool must validate connections before reuse, and must not
+  return a connection to the pool after it was interrupted mid-call. Writers should roll back in
+  `close()` when the step did not finish.
+- `inputSchema(port)` gives an input's columns when they were known before the run, so a step can
+  act correctly on an input that sends no batch.
+
 ## 2. The YAML format
 
 ```yaml
@@ -96,10 +196,53 @@ steps:
 ```
 
 - `input: <id>` means that step's `out` port; `input: <id>.<port>` names another port;
-  `inputs: {port: id[.port]}` connects several.
+  `inputs: {port: id[.port]}` connects several. `input` connects the step's only input port; a
+  list (`input: [a, b, c]`, or a list under `inputs`) connects several steps to a port that takes
+  many.
 - Steps are listed in any order; the edges decide the order of work.
 - Unknown keys are errors, with the line number, so typing mistakes are caught.
 - Secrets never appear: steps name saved sources, and the source holds the credentials.
+
+### Reading and checking (`io.kilnmark.kiln.yaml`)
+
+- YAML is read with **SnakeYAML Engine 3.2** (YAML 1.2, Apache-2.0; its licence is listed in the
+  generated third-party notices). Kilnmark builds its own tree from the parser's events, so no
+  object is ever constructed from a tag. Scalars follow the YAML 1.2 core schema: `yes` and `on`
+  are text, quoted values are always text, `${VAR}` is never substituted. Decimals are read as
+  exact `BigDecimal`s. The text written is kept beside each value
+  (`StepDefinition.configText`), and mapping keys are always the text written (`007` stays
+  `007`).
+- Settings reach the step in the form their kind needs (`Compiled.configs()`): a setting that is
+  text (text, expression, column, source, asset, choice, and the values of columns, expressions,
+  conditions and column maps) holds exactly what was written, so `asset: 2024.10` is `"2024.10"`
+  and `007` is `"007"`; a number is a whole number (Integer or Long) or a BigDecimal, never
+  not-a-number, infinite, beyond a long or a double, or with more than 1,000 digits or its decimal
+  point more than 1,000 places away (`1e-999999999` is refused). `settings()` at run time is the text of
+  those values.
+- Refused, each with its line and column: files over 1,000,000 characters, more than one
+  document, anchors and aliases (a pipeline is written out in full, so the canvas can rewrite it),
+  tags, duplicate keys, keys that are lists or mappings, nesting deeper than 64, more than
+  100,000 values, and characters YAML forbids. Values echoed in messages are cut to 80 characters.
+- `PipelineDefinition.parse(yaml)` reads the format line, names, steps, ids, inputs and settings
+  with their positions. `PipelineCompiler(stepFactories).compile(yaml)` checks it against the step
+  types and returns `Compiled`: `problems()` (line, column, step id, message), `notes()`,
+  `schemas()` (columns per step and output port) and `graph()`. Checking never creates a step or
+  opens a connection; `graph()` creates new steps for one run, and closes those already made if one
+  fails.
+- `compile(PipelineDefinition)`, for a pipeline built in code, also checks what reading does: the
+  name, step ids (pattern and uniqueness) and that each step has a type.
+- Checks: the format line; unknown top-level keys; step ids (`[a-z][a-z0-9_-]{0,63}`, unique);
+  unknown step types, suggesting the closest; settings against the step type's `SettingSpec`s
+  (unknown keys with a suggestion, required, kind, choices) and then the factory's `check`, whose
+  messages point at the setting they start with; inputs naming unknown steps or ports; every input
+  port connected; a single-input port not fed twice, nor a port fed twice by the same step;
+  loops, naming the steps in them.
+- Columns are then worked out in the order rows flow with each factory's `outputSchema`. A port
+  that takes many inputs is given them keyed `in[0]`, `in[1]`, … in the order listed. When a step
+  returns null (columns unknown before the run), the steps after it are not checked against
+  columns, and one note on that step names them. A step with a problem of its own is skipped
+  silently.
+- The server registers `read` and `write` itself; the compiler works with any `StepFactories`.
 
 ## 3. Expressions
 
