@@ -1992,9 +1992,12 @@ a.km-stat--link:hover {
 }
 
 .km-row {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
+  /* The severity chip sits in a column as wide as the widest word (Medium), so every row's text
+     starts at the same place whatever the level. */
+  display: grid;
+  grid-template-columns: var(--km-chip-col) minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: start;
   min-width: 0;
 }
 
@@ -2080,9 +2083,10 @@ a.km-stat--link:hover {
 }
 
 .km-note {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: var(--km-chip-col) minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: start;
   padding: 10px 0;
   border-top: 1px solid var(--km-divider);
 }
@@ -2090,12 +2094,6 @@ a.km-stat--link:hover {
 .km-note:first-child {
   border-top: 0;
   padding-top: 0;
-}
-
-.km-note .km-chip {
-  margin-top: 2px;
-  min-width: 52px;
-  justify-content: center;
 }
 
 .km-note-body {
@@ -4210,4 +4208,14 @@ h1.with-tile {
   .km-stat-value {
     font-size: 26px;
   }
+}
+
+/* The severity chip column used by Needs a look, notifications and drift lists. */
+:root {
+  --km-chip-col: 5.25rem;
+}
+.km-row > :first-child,
+.km-note > :first-child {
+  justify-self: start;
+  margin-top: 2px; /* lines the chip up with the title's first line */
 }
