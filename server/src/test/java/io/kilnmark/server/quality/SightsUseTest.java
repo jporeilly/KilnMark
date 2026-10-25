@@ -93,7 +93,7 @@ class SightsUseTest {
 
     private static List<Path> boundary() throws IOException {
         List<Path> out = new ArrayList<>();
-        for (Path dir : List.of(MAIN.resolve("api"), MAIN.resolve("ai/mcp"))) {
+        for (Path dir : List.of(MAIN.resolve("api"), MAIN.resolve("ai/mcp"), MAIN.resolve("ai/assistant"))) {
             try (Stream<Path> files = Files.list(dir)) {
                 files.filter(f -> f.toString().endsWith(".java")).forEach(out::add);
             }

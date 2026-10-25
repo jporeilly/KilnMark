@@ -240,6 +240,15 @@ its text, find and snippets for admins. Marks outlive the column (a dropped or r
 stored values stay masked). Embeddings and prompts carry names, types and descriptions only, never
 values.
 
+**Known limit:** marks protect the catalogued source and its stored data. A steward who can reach
+the same folder, bucket or database another way, for example by drafting a new connection to the
+same folder path (folders need no password), can preview it unmasked under the new connection. The
+control for that is where sources may point: limit folder sources to the folders an administrator
+lists (`KILNMARK_FILES_ROOTS`) and give database and object storage sources their own credentials,
+which a steward drafting a new connection would also need. Objects in a bucket whose keys start with
+`/` or contain empty, `.` or `..` parts are still scanned from the listing, but cannot be previewed
+or read on demand.
+
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `kilnmark.quality.custom-sql` | `false` | Whether admins may write and run custom SQL rules |

@@ -7,6 +7,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.FileVisitOption;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
@@ -177,8 +178,10 @@ public final class LocalFileStore implements FileStore {
         }
         Path real = resolve(path);
         // Only the path as the listing writes it: a file has one name, so whatever is keyed by it (the
-        // catalogue's asset and its marks) cannot be reached under another spelling (a//b, a/./b).
-        String canonical = relative(root.resolve(path).normalize());
+        // catalogue's asset and its marks) cannot be reached under another spelling (a//b, a/./b, or a
+        // different letter case or Unicode form on a case-insensitive or normalising file system). The
+        // spelling on disk is taken without following links, as the listing sees them.
+        String canonical = relative(root.resolve(path).normalize().toRealPath(LinkOption.NOFOLLOW_LINKS));
         if (!canonical.equals(path)) {
             throw new IOException("There is no file " + path + " to read: write it as " + canonical);
         }
