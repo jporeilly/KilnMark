@@ -67,7 +67,7 @@ spellings or JSON: you choose from lists and fill in plain fields.
 
 1. **Asset.** Type part of the table, view or file name under **Find an asset** and choose it from
    the matches, which show each asset's source and path. The chosen asset is shown with its URN
-   underneath, for example `urn:kilnmark:lab:crm.customers`. You can also paste a URN into the box
+   underneath, for example `urn:kilnmark:sales-db:crm.customers`. You can also paste a URN into the box
    and choose **Use this URN**. The asset is chosen already if you came from **Manage rules for
    this asset**.
 2. **Check.** The kind of rule. The line under the list says what fails. See [Choosing a
@@ -221,7 +221,7 @@ Under **When it warns or fails**:
   "rule": "email matches pattern",
   "type": "matches_pattern",
   "dimension": "validity",
-  "asset": "urn:kilnmark:lab:crm.customers",
+  "asset": "urn:kilnmark:sales-db:crm.customers",
   "field": "email",
   "status": "fail",
   "previousStatus": "pass",

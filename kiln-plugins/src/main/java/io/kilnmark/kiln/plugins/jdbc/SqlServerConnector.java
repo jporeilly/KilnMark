@@ -282,7 +282,7 @@ public final class SqlServerConnector extends JdbcConnector {
         } else if (e.getErrorCode() == CANNOT_OPEN_DATABASE) {
             hint = "Check databaseName in the URL, and that this user has access to that database.";
         } else if (message.contains("PKIX") || message.contains("secure connection") || message.contains("certificate")) {
-            hint = "The server's TLS certificate is not trusted: add it to Kilnmark's trust store, or, for a lab "
+            hint = "The server's TLS certificate is not trusted: add it to Kilnmark's trust store, or, for a test "
                 + "server only, add trustServerCertificate=true to the URL.";
         } else if ("08S01".equals(e.getSQLState())) {
             hint = "Check the host and port in the URL, that SQL Server accepts TCP/IP connections, and that no "

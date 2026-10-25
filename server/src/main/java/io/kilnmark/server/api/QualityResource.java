@@ -720,7 +720,7 @@ public class QualityResource {
 
     private Records.AssetDetail asset(String urn) {
         if (urn == null || urn.isBlank()) {
-            throw new IllegalArgumentException("urn: the asset's URN, for example urn:kilnmark:lab:crm.customers");
+            throw new IllegalArgumentException("urn: the asset's URN, for example urn:kilnmark:sales-db:crm.customers");
         }
         return graph.asset(urn).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No asset " + urn));
     }
