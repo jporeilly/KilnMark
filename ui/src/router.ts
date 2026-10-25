@@ -14,6 +14,8 @@ export type Route =
   | { page: "ai" }
   | { page: "ai-usage" }
   | { page: "home" }
+  // The bundled user guides (src/docs): a page, and optionally a section of it
+  | { page: "docs"; doc: string | null; section: string | null }
   // Browsing and relationships
   | { page: "browse"; source: string | null; container: string | null; asset: string | null }
   | { page: "relationships"; status: string };
@@ -39,6 +41,10 @@ export function parse(hash: string): Route {
       container: params.get("container"),
       asset: params.get("asset"),
     };
+  if (path === "/docs" || path.startsWith("/docs/")) {
+    const [doc, section] = path.slice("/docs/".length).split("/").map((p) => (p ? decodeURIComponent(p) : null));
+    return { page: "docs", doc: doc ?? null, section: section ?? null };
+  }
   if (path === "/relationships") return { page: "relationships", status: params.get("status") ?? "proposed" };
   return { page: "home" };
 }
