@@ -176,6 +176,12 @@ public final class LocalFileStore implements FileStore {
             throw new IOException("There is no file " + path + " to read: this source does not look in sub-folders");
         }
         Path real = resolve(path);
+        // Only the path as the listing writes it: a file has one name, so whatever is keyed by it (the
+        // catalogue's asset and its marks) cannot be reached under another spelling (a//b, a/./b).
+        String canonical = relative(root.resolve(path).normalize());
+        if (!canonical.equals(path)) {
+            throw new IOException("There is no file " + path + " to read: write it as " + canonical);
+        }
         BasicFileAttributes attrs = Files.readAttributes(real, BasicFileAttributes.class);
         if (!attrs.isRegularFile()) {
             throw new IOException(path + " is not a file");
