@@ -397,14 +397,21 @@ public class QualityStore {
             }) == 1 || sensitive(urn).contains(field);
     }
 
-    /** Of {@code urns}, the assets that or any of whose parts (a workbook's sheets) have a column marked sensitive. */
+    /**
+     * Of {@code urns}, the assets that or any of whose parts, at any depth (a workbook's sheets, a
+     * mail's attached workbook's sheets), have a column marked sensitive.
+     */
     public Set<String> textWithheld(java.util.Collection<String> urns) {
-        return new HashSet<>(query("""
-            SELECT u FROM unnest(?::text[]) u
-            WHERE EXISTS (SELECT 1 FROM kilnmark.sensitive_column s WHERE s.asset_urn = u)
-               OR EXISTS (SELECT 1 FROM kilnmark.sensitive_column s JOIN kilnmark.asset a ON a.urn = s.asset_urn
-                          WHERE a.parent_urn = u)""",
+        return new HashSet<>(query("SELECT u FROM unnest(?::text[]) u WHERE u IN ("
+            + io.kilnmark.graph.store.JdbcGraphStore.WITHHELD_TEXT + ")",
             ps -> ps.setArray(1, ps.getConnection().createArrayOf("text", urns.toArray())), rs -> rs.getString(1)));
+    }
+
+    /** Whether any asset of the source has a column marked sensitive. */
+    public boolean sourceHasMarks(String source) {
+        return !query("SELECT 1 FROM kilnmark.sensitive_column m JOIN kilnmark.asset a ON a.urn = m.asset_urn "
+            + "JOIN kilnmark.data_source s ON s.id = a.source_id WHERE s.name = ? LIMIT 1",
+            ps -> ps.setString(1, source), rs -> 1).isEmpty();
     }
 
     /** A column renamed from {@code from} to {@code to} keeps its mark under both names. */

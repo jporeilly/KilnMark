@@ -610,8 +610,11 @@ class QualityFlowTest {
         assertNotNull(email);
         assertEquals("sensitive", email.get("classification").asText());
         assertEquals("missingValues", email.get("quality").get(0).get("metric").asText(), "blanks count as missing");
-        assertTrue(contract.get("schema").get(0).get("quality").toString().contains("\"engine\":\"kilnmark\""),
-            "row count and freshness checks travel as Kilnmark's own");
+        // Freshness and range checks travel as Kilnmark's own (on their columns). The table-level custom SQL rule
+        // is an ODCS text item for a steward: its SQL may quote any column, and this asset has sensitive ones.
+        assertTrue(contract.toString().contains("\"engine\":\"kilnmark\""), "freshness checks travel as Kilnmark's own");
+        assertTrue(contract.get("schema").get(0).get("quality").toString().contains("\"type\":\"text\""),
+            "custom SQL stays hidden while the asset has sensitive columns");
 
         // Viewers get the same formats without values: no allowed values, range bounds or custom SQL,
         // and no statistics of a sensitive column.
@@ -835,6 +838,16 @@ class QualityFlowTest {
         int col = same.getList("columns.name").indexOf("quantity");
         List<List<String>> rows = same.getList("rows");
         assertTrue(col >= 0 && rows.stream().allMatch(r -> r.get(col) == null || r.get(col).equals("••••")));
+
+        // A source with marks: stewards may not change how it is read (other names would escape the marks),
+        // but may still describe it; admins may change anything.
+        as(steward).contentType(ContentType.JSON).body(Map.of("name", "quality-db", "kind", "postgresql",
+            "settings", changed)).put("/api/v1/sources/quality-db").then().statusCode(403)
+            .body("error", containsString("marked sensitive"));
+        Map<String, String> described = new HashMap<>(saved);
+        described.put("description", "The quality test database");
+        as(steward).contentType(ContentType.JSON).body(Map.of("name", "quality-db", "kind", "postgresql",
+            "settings", described)).put("/api/v1/sources/quality-db").then().statusCode(200);
     }
 
     @Test
@@ -863,5 +876,26 @@ class QualityFlowTest {
         as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", ORDERS, "field", "quantity",
             "type", "in_range", "params", Map.of("min", 0))).put("/api/v1/quality/rules/" + id).then().statusCode(400)
             .body("error", containsString("assetUrn"));
+    }
+
+    @Test
+    @Order(18)
+    void aMarkOutlivesItsColumnAndFollowsARename() throws Exception {
+        // note was added (empty) on the second scan: mark it, rename it, scan again.
+        as(steward).contentType(ContentType.JSON).queryParam("urn", CUSTOMERS)
+            .body(Map.of("field", "note", "sensitive", true)).put("/api/v1/quality/asset/sensitive").then()
+            .statusCode(204);
+        sql("ALTER TABLE qa.\"Customers\" RENAME COLUMN note TO remark");
+        scan("quality-db");
+        List<String> marks = quality(steward, CUSTOMERS).getList("sensitive");
+        assertTrue(marks.contains("remark"), "the detected rename carries the mark: " + marks);
+        assertTrue(marks.contains("note"), "the old name keeps it, for values stored under it: " + marks);
+        assertEquals(1, count("SELECT count(*) FROM kilnmark.drift_event WHERE asset_urn = '" + CUSTOMERS
+            + "' AND change = 'column_renamed' AND field_name = 'remark'"));
+        // Only an admin clears the mark of the column that is gone.
+        admin().contentType(ContentType.JSON).queryParam("urn", CUSTOMERS)
+            .body(Map.of("field", "note", "sensitive", false)).put("/api/v1/quality/asset/sensitive").then()
+            .statusCode(204);
+        assertFalse(quality(steward, CUSTOMERS).<String>getList("sensitive").contains("note"));
     }
 }

@@ -560,13 +560,18 @@ public final class JdbcGraphStore implements GraphStore {
      */
     @Override
     public List<SearchHit> search(String query, int limit, List<String> sources) {
+        return search(query, limit, sources, true);
+    }
+
+    @Override
+    public List<SearchHit> search(String query, int limit, List<String> sources, boolean everyText) {
         String q = query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
         if (q.isEmpty()) {
             return List.of();
         }
         return tx(c -> {
             List<SearchHit> out = new ArrayList<>();
-            try (PreparedStatement ps = prepareKeywordSearch(c, "", q, limit, sources)) {
+            try (PreparedStatement ps = prepareKeywordSearch(c, "", q, limit, sources, everyText)) {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         long rows = rs.getLong(7);
@@ -597,6 +602,23 @@ public final class JdbcGraphStore implements GraphStore {
     static final int CHUNK_SAMPLE = 2000;
     /** A document's matching chunks, in order, from which its snippet's chunk is chosen. */
     static final int SNIPPET_CHUNKS = 50;
+    /**
+     * Assets whose text is withheld from all but admins: those with a column marked sensitive and
+     * every asset holding them, up the whole chain (a sheet's workbook, that workbook's mail).
+     */
+    public static final String WITHHELD_TEXT = """
+        WITH RECURSIVE up(urn) AS (
+            SELECT asset_urn FROM kilnmark.sensitive_column
+            UNION
+            SELECT a.parent_urn FROM kilnmark.asset a JOIN up ON a.urn = up.urn WHERE a.parent_urn IS NOT NULL)
+        SELECT urn FROM up""";
+
+    /**
+     * Each branch that takes some of many equal matches first takes up to this many times as many,
+     * in whatever order the index gives them, then the first by URN of those: bounded first, then
+     * ordered, so a word whose matches all sit at the end of URN order cannot walk the table.
+     */
+    static final int POOL = 4;
     /** How alike a field name must be (word similarity) to match. */
     static final double FIELD_SIMILARITY = 0.5;
 
@@ -621,6 +643,12 @@ public final class JdbcGraphStore implements GraphStore {
      */
     static PreparedStatement prepareKeywordSearch(Connection c, String prefix, String q, int limit,
                                                   List<String> sources) throws SQLException {
+        return prepareKeywordSearch(c, prefix, q, limit, sources, true);
+    }
+
+    /** With {@code everyText} false, withheld documents' text is not matched (see {@link GraphStore#search}). */
+    static PreparedStatement prepareKeywordSearch(Connection c, String prefix, String q, int limit,
+                                                  List<String> sources, boolean everyText) throws SQLException {
         // Kept to these sources (none means all) inside every branch, their ids written in so each branch's plan
         // stays as simple as without (ids are numbers read from the database, never text from the caller).
         String inSources = "";
@@ -638,12 +666,17 @@ public final class JdbcGraphStore implements GraphStore {
         }
         String urnInSources = inSources.isEmpty() || inSources.equals("AND false") ? inSources
             : "AND %s IN (SELECT a.urn FROM kilnmark.asset a WHERE true " + inSources + ")";
+        String chunkScope = String.format(java.util.Locale.ROOT, urnInSources, "c.asset_urn")
+            + (everyText ? "" : " AND c.asset_urn NOT IN (" + WITHHELD_TEXT + ")");
         try (PreparedStatement st = c.prepareStatement("""
                 SELECT set_config('pg_trgm.word_similarity_threshold', ?, true),
-                       set_config('plan_cache_mode', 'force_custom_plan', true)""")) {
+                       set_config('plan_cache_mode', 'force_custom_plan', true),
+                       set_config('enable_seqscan', 'off', true)""")) {
             // the threshold of the <% operator below: fields whose word similarity is at least this;
-            // and planned for the words given each time, as a plan cached for any words could scan
-            // every field for a rare one to find the few a common one finds at once
+            // planned for the words given each time, as a plan cached for any words could scan every
+            // field for a rare one to find the few a common one finds at once; and matches found
+            // through the indexes only, as a scan that stops at its limit walks the whole table when
+            // the matches sit at its end (the nearest-name branches still use their GiST order)
             st.setString(1, Double.toString(FIELD_SIMILARITY));
             st.executeQuery().close();
         }
@@ -663,18 +696,21 @@ public final class JdbcGraphStore implements GraphStore {
                 (SELECT a.urn FROM kilnmark.asset a WHERE strpos(?::text, '.') > 0 AND a.removed_at IS NULL %6$s
                  ORDER BY ?::text OPERATOR(public.<<->) (a.container || '.' || a.name) LIMIT ?)
                 UNION
-                (SELECT a.urn FROM kilnmark.asset a
-                 WHERE a.search @@ plainto_tsquery('simple', ?) AND a.removed_at IS NULL %6$s ORDER BY a.urn
-                 LIMIT %1$d)
+                (SELECT w.urn FROM (SELECT a.urn FROM kilnmark.asset a
+                                     WHERE a.search @@ plainto_tsquery('simple', ?) AND a.removed_at IS NULL %6$s
+                                     LIMIT %9$d) w
+                 ORDER BY w.urn LIMIT %1$d)
                 UNION
-                (SELECT f.asset_urn FROM kilnmark.field f WHERE ?::text OPERATOR(public.<%%) f.name %7$s
+                (SELECT f.asset_urn FROM (SELECT f.asset_urn, f.name FROM kilnmark.field f
+                                          WHERE ?::text OPERATOR(public.<%%) f.name %7$s LIMIT %10$d) f
                  ORDER BY f.asset_urn, f.name LIMIT %2$d)
             ),
             chunks AS (
                 SELECT c.asset_urn, ts_rank_cd(c.search, q.ts) AS rank
-                FROM (SELECT c.asset_urn, c.search FROM kilnmark.document_chunk c
-                      WHERE c.search @@ plainto_tsquery('simple', ?) %8$s ORDER BY c.asset_urn, c.seq
-                      LIMIT %3$d) c, q
+                FROM (SELECT c.asset_urn, c.search FROM (SELECT c.asset_urn, c.seq, c.search FROM kilnmark.document_chunk c
+                                                         WHERE c.search @@ plainto_tsquery('simple', ?) %8$s
+                                                         LIMIT %11$d) c
+                      ORDER BY c.asset_urn, c.seq LIMIT %3$d) c, q
             ),
             texts AS (
                 -- documents whose text has every word: below name and description matches (0.41 to 0.5),
@@ -710,7 +746,8 @@ public final class JdbcGraphStore implements GraphStore {
                      h.container, h.name
             LIMIT ?""", WORD_CANDIDATES, FIELD_CANDIDATES, CHUNK_SAMPLE, TEXT_CANDIDATES, FIELD_SIMILARITY, inSources,
             String.format(java.util.Locale.ROOT, urnInSources, "f.asset_urn"),
-            String.format(java.util.Locale.ROOT, urnInSources, "c.asset_urn")));
+            chunkScope, WORD_CANDIDATES * POOL,
+            FIELD_CANDIDATES * POOL, CHUNK_SAMPLE * POOL));
         int names = Math.max(limit, NAME_CANDIDATES);
         int i = 0;
         ps.setString(++i, q);

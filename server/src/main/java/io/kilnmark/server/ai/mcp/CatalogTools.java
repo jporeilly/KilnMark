@@ -77,6 +77,7 @@ public class CatalogTools {
             return ToolResponse.ofError("query: 500 characters at most");
         }
         Set<String> hidden = hiddenSources();
+        sights.speakingToModel(); // a model never matches withheld documents' text
         int n = Math.max(1, Math.min(limit, 50));
         HybridSearch.Result r = search.search(query.strip(), HybridSearch.Filters.NONE, n + hidden.size() * 5 + 10,
             "mcp: " + caller(), true);

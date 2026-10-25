@@ -133,9 +133,45 @@ class SearchBoundsTest {
                 assertTrue(t.getOrDefault("asset", 0L) <= 5_000, q + " " + sources + ": " + t);
                 // candidates (about 1,000 at most) times their 5 columns, plus the field candidates
                 assertTrue(t.getOrDefault("field", 0L) <= 20_000, q + " " + sources + ": " + t);
-                assertTrue(t.getOrDefault("document_chunk", 0L) <= 5_000, q + " " + sources + ": " + t);
+                // the chunk branch takes up to 8,000 matches (2,000 times its pool of 4), then the first 2,000
+                assertTrue(t.getOrDefault("document_chunk", 0L) <= 10_000, q + " " + sources + ": " + t);
             }
         }
+        // Matches that all sit at the end, by URN and on disk: a branch that takes the first so many by URN
+        // must not walk every row before them.
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            s.execute("""
+                INSERT INTO kilnmark.asset (urn, source_id, kind, container, name, description)
+                SELECT 'urn:kilnmark:search-bounds:' || (CASE WHEN n > 30000 THEN 'zz.m' ELSE 'aa.t' END)
+                           || lpad(n::text, 6, '0'),
+                       (SELECT id FROM kilnmark.data_source WHERE name = 'search-bounds'),
+                       CASE WHEN n % 10 = 0 THEN 'document' ELSE 'table' END,
+                       CASE WHEN n > 30000 THEN 'zz' ELSE 'aa' END, 't' || lpad(n::text, 6, '0'),
+                       CASE WHEN n > 30000 THEN 'holds widget records' ELSE 'plain words only' END
+                FROM generate_series(1, 31000) n""");
+            s.execute("""
+                INSERT INTO kilnmark.field (asset_urn, name, position, source_type, kind, nullable)
+                SELECT a.urn, CASE WHEN a.container = 'zz' THEN 'widget_code_' ELSE 'col_' END || i, i, 'text',
+                       'text', true
+                FROM kilnmark.asset a, generate_series(1, 5) i WHERE a.container IN ('aa', 'zz')
+                  AND a.urn LIKE 'urn:kilnmark:search-bounds:%'""");
+            s.execute("""
+                INSERT INTO kilnmark.document_chunk (asset_urn, seq, text, start_offset, end_offset)
+                SELECT a.urn, k, CASE WHEN a.container = 'zz' THEN 'the widget arrived' ELSE 'plain words' END, 0, 20
+                FROM kilnmark.asset a, generate_series(0, 29) k
+                WHERE a.container IN ('aa', 'zz') AND a.kind = 'document' AND a.urn LIKE 'urn:kilnmark:search-bounds:%'""");
+        }
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            c.setAutoCommit(true);
+            s.execute("VACUUM (ANALYZE) kilnmark.asset, kilnmark.field, kilnmark.document_chunk");
+        }
+        for (String q : new String[] {"widget", "customer", "the"}) {
+            Map<String, Long> t = touched(q, java.util.List.of());
+            assertTrue(t.getOrDefault("asset", 0L) <= 5_000, "clustered " + q + ": " + t);
+            assertTrue(t.getOrDefault("field", 0L) <= 20_000, "clustered " + q + ": " + t);
+            assertTrue(t.getOrDefault("document_chunk", 0L) <= 10_000, "clustered " + q + ": " + t);
+        }
+
         // Kept to one source before any limit: every hit is that source's.
         admin().queryParam("q", "customer").queryParam("mode", "keyword").queryParam("source", SOURCE)
             .get("/api/v1/search").then().statusCode(200)

@@ -31,6 +31,7 @@ public class Sights {
     @Inject
     QualityStore store;
     private final Map<String, Set<String>> marks = new HashMap<>();
+    private boolean model;
 
     /** Whether the caller may see data values at all. */
     public boolean data() {
@@ -53,6 +54,24 @@ public class Sights {
         if (!missing.isEmpty()) {
             marks.putAll(store.sensitive(missing));
         }
+    }
+
+    /** This request answers a model (the MCP server): no admin sight, whoever's token it uses. */
+    public void speakingToModel() {
+        model = true;
+    }
+
+    /**
+     * Whether searches may match the text of every document, including those withheld because they
+     * hold a column marked sensitive: for admins, never for a model.
+     */
+    public boolean everyText() {
+        return mayUnmask() && !model;
+    }
+
+    /** Whether any asset of the source has a column marked sensitive. */
+    public boolean sourceHasMarks(String source) {
+        return store.sourceHasMarks(source);
     }
 
     /** Quality views: values for roles that may see data; sensitive columns only for an admin who asks. */

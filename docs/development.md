@@ -261,11 +261,17 @@ superuser** and has no rights to server files, programs or other sessions:
   which are granted to everyone when the extension is created, or use a foreign server), on a
   database with any user mapping or foreign table (a view owned by another role can reach one), and
   on SQL Server, which has no read-only transactions. The refusal names the fix, such as
-  `REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA <schema> FROM PUBLIC`. dblink and postgres_fdw functions
+  `REVOKE EXECUTE ON FUNCTION dblink_connect(text,text), ... FROM PUBLIC` with dblink's own functions. dblink and postgres_fdw functions
   are also refused in the SQL itself.
 - PostgreSQL's read-only transactions do not stop functions that act outside the database
   (reading files, advisory locks, signalling sessions), which is why such functions are refused
   in custom SQL and why the login must not hold those rights.
+
+**Known limit: counts.** A steward who may not unmask a sensitive column cannot preview rules on
+it or see their failing rows, but can still save such a rule, run it and read how many rows fail.
+Repeated with different bounds or values, counts tell how the column's values are spread (never
+which row holds which value). Marking a column sensitive limits what is shown, not which rules may be
+run; keep the steward role for people trusted with that.
 
 For PostgreSQL, for example:
 
@@ -330,7 +336,9 @@ delimiter, header row, encoding); if that is wrong, set `delimiter`, `header` (f
 first row is data) or `encoding` on the source: they apply to every file of it, in previews and
 scans. A preview reads the table or file named even when the source's include or exclude patterns
 leave it out of scans. Columns marked sensitive on the catalogued table or file are masked for
-anyone but an admin, and only admins preview settings that are not saved. Previews are sent with `Cache-Control: no-store`.
+anyone but an admin. For a source with marks, only admins may change how it is read (folders,
+patterns, header rows, formats) or preview such changes, as other settings could read the marked
+columns under other names; new connections, which have no marks, preview as before. Previews are sent with `Cache-Control: no-store`.
 
 **Name and display name.** A source's name is its ID: it is part of every asset's reference
 (`urn:kilnmark:<name>:<path>`), so it is set when the source is added and never changes. An edit

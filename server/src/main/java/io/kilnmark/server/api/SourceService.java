@@ -305,24 +305,35 @@ public class SourceService {
         return out;
     }
 
-    /** Settings that do not change what a preview reads. */
-    private static final java.util.Set<String> NOT_READING = java.util.Set.of("description", "ai_egress", "display_name");
+    /** Settings that do not change what is read or how its columns are named. */
+    private static final java.util.Set<String> NOT_READING = java.util.Set.of("description", "ai_egress", "display_name",
+        "keep_samples", "sample_rows", "table_sample_above_rows");
 
     /**
-     * Previews of settings not yet saved are for admins. Masking finds a table's sensitive columns by
-     * the saved source's name and the column names it read; changed settings (another folder, no
-     * header row, another source's address under this name) could read the same data under other
-     * names. So a steward previews a saved source exactly as saved.
+     * A draft preview for a non-admin. New connections have no marks, so there is nothing to mask
+     * and stewards preview them as they add them. But masking finds a table's sensitive columns by
+     * the saved source's name and the column names it read, so for a saved source with columns
+     * marked sensitive, changed reading settings (another folder, no header row, other patterns)
+     * could read the same data under other names: only an admin may preview those.
      */
     void previewDraftAllowed(Records.Source existing, SourceConfig draft) {
-        if (sights.mayUnmask()) {
+        Records.Source saved = existing != null ? existing : store.source(draft.name()).orElse(null);
+        readingUnchangedOrAdmin(saved, draft.settings(), "preview settings that are not saved");
+    }
+
+    /**
+     * Refuses (403) a non-admin a change of reading settings, or a preview of them, for a source with
+     * columns marked sensitive: read under other names, its columns would no longer be masked.
+     * Description, display name and the like stay open to stewards.
+     */
+    void readingUnchangedOrAdmin(Records.Source saved, Map<String, String> settings, String doing) {
+        if (saved == null || sights.mayUnmask() || reading(saved.settings()).equals(reading(settings))
+            || !sights.sourceHasMarks(saved.name())) {
             return;
         }
-        if (existing == null || !existing.name().equals(draft.name())
-            || !reading(existing.settings()).equals(reading(draft.settings()))) {
-            throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can preview settings that are not saved. Save "
-                + "the source first, then preview it, so columns marked sensitive are found and masked.");
-        }
+        throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can " + doing + " for " + saved.name() + ": it has "
+            + "columns marked sensitive, and other reading settings (folders, patterns, header rows, formats) could read "
+            + "them under other names, unmasked. You can still change its description and display name.");
     }
 
     private static Map<String, String> reading(Map<String, String> settings) {

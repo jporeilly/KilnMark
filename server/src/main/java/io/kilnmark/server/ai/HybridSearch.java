@@ -41,6 +41,16 @@ public class HybridSearch {
     private final ModelProfiles profiles;
     private final KilnmarkConfig config;
 
+    /** Who is asking: withheld documents' text is matched only for admins (data quality, sensitive columns). */
+    @jakarta.inject.Inject
+    jakarta.enterprise.inject.Instance<io.kilnmark.server.quality.Sights> sights;
+
+    /** Outside a request (no caller) nothing withheld is matched. */
+    private boolean everyText() {
+        io.quarkus.arc.ArcContainer arc = io.quarkus.arc.Arc.container();
+        return arc != null && sights != null && arc.requestContext().isActive() && sights.get().everyText();
+    }
+
     public HybridSearch(GraphStore store, Db db, AiGateway gateway, ModelProfiles profiles, KilnmarkConfig config) {
         this.store = store;
         this.db = db;
@@ -89,7 +99,7 @@ public class HybridSearch {
             return new Result("keyword", null, listing(filters, limit));
         }
         List<Records.SearchHit> keyword = store.search(q, filters.any() ? CANDIDATES * 2 : CANDIDATES,
-            filters.sources());
+            filters.sources(), everyText());
         List<String> keywordUrns = keyword.stream().map(Records.SearchHit::urn).toList();
         Map<String, Records.SearchHit> keywordHits = new HashMap<>();
         keyword.forEach(h -> keywordHits.put(h.urn(), h));
