@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   allows,
   formatNumber,
@@ -38,15 +38,19 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
   useEffect(() => setFilter(urn), [urn]);
   useEffect(load, [load]);
 
-  // Editing moves focus to the form; leaving it returns focus to the rule's Edit button.
+  // Editing moves focus to the form once it shows the rule; leaving it returns focus to the rule's Edit button.
+  const focusForm = useRef(false);
+  useEffect(() => {
+    if (!focusForm.current) return;
+    focusForm.current = false;
+    const h = document.getElementById("rule-form-h");
+    h?.scrollIntoView({ block: "start" });
+    h?.focus();
+  }, [editing]);
   const startEdit = (rule: QualityRule) => {
+    focusForm.current = true;
     setEditing(rule);
     setNotice("");
-    window.setTimeout(() => {
-      const h = document.getElementById("rule-form-h");
-      h?.scrollIntoView({ block: "start" });
-      h?.focus();
-    }, 0);
   };
   const stopEdit = (id: number) => {
     setEditing(null);
@@ -156,9 +160,11 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                             `Rule "${rule.name}" queued to run.`)} aria-label={`Run rule ${rule.name} now`}>
                             Run now
                           </button>
+                          {/* Switching and deleting wait while the rule is open in the form, so a save cannot undo them. */}
                           <button type="button" onClick={() => act(() => qualityApi.updateRule(rule.id, {
                             ...rule, enabled: !rule.enabled, actions: { webhook: rule.actions.webhook, task: rule.actions.task },
-                          }), `Rule "${rule.name}" switched ${rule.enabled ? "off" : "on"}.`)}
+                          }, rule.updatedAt), `Rule "${rule.name}" switched ${rule.enabled ? "off" : "on"}.`)}
+                            disabled={editing?.id === rule.id}
                             aria-label={`${rule.enabled ? "Switch off" : "Switch on"} rule ${rule.name}`}>
                             {rule.enabled ? "Switch off" : "Switch on"}
                           </button>
@@ -166,10 +172,11 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                             if (window.confirm(`Delete the rule "${rule.name}" and its results?`)) {
                               act(() => qualityApi.deleteRule(rule.id), `Rule "${rule.name}" deleted.`);
                             }
-                          }} aria-label={`Delete rule ${rule.name}`}>
+                          }} disabled={editing?.id === rule.id} aria-label={`Delete rule ${rule.name}`}>
                             Delete
                           </button>
                         </div>
+                        {editing?.id === rule.id && <p className="hint">Open in the form below.</p>}
                       </td>
                     )}
                   </tr>
@@ -183,10 +190,20 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
       {steward ? (
         editing ? (
           <RuleForm
-            key={`edit-${editing.id}`}
+            key={`edit-${editing.id}-${editing.updatedAt}`}
             admin={admin}
             urn={editing.assetUrn}
             rule={editing}
+            onReload={() =>
+              qualityApi
+                .rule(editing.id)
+                .then((v) => {
+                  focusForm.current = true;
+                  setEditing(v.rule);
+                  load();
+                })
+                .catch((e: Error) => setError(e.message))
+            }
             onSaved={(name) => {
               setNotice(`Rule "${name}" saved. Its next run uses the new settings, or press Run now.`);
               load();

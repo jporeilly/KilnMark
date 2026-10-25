@@ -322,7 +322,10 @@ export async function call<T>(path: string, init?: RequestInit, contentType = "a
   try {
     response = await fetch(path, {
       ...init,
-      headers: headers(init?.body ? { "Content-Type": contentType } : {}, token),
+      headers: headers(
+        { ...(init?.body ? { "Content-Type": contentType } : {}), ...((init?.headers as Record<string, string>) ?? {}) },
+        token,
+      ),
     });
   } catch {
     throw new ApiError("Cannot reach the Kilnmark server. Is it running?", 0);
@@ -427,6 +430,13 @@ export const api = {
   scan: (name: string) => call<Run>(`/api/v1/sources/${encodeURIComponent(name)}/scans`, { method: "POST" }),
   run: (id: number) => call<Run>(`/api/v1/runs/${id}`),
   search: (q: string) => call<{ query: string; hits: SearchHit[] }>(`/api/v1/search?q=${encodeURIComponent(q)}`),
+  /** Assets by words in their names (no model call), optionally in one source: for pickers. */
+  findAssets: (q: string, source?: string, limit = 50) =>
+    call<{ query: string; hits: SearchHit[] }>(
+      `/api/v1/search?q=${encodeURIComponent(q)}&mode=keyword&limit=${limit}${
+        source ? `&source=${encodeURIComponent(source)}` : ""
+      }`,
+    ),
   asset: (urn: string) => call<Asset>(`/api/v1/assets/${encodeURIComponent(urn)}`),
 };
 
@@ -893,8 +903,14 @@ export const qualityApi = {
       }`,
     ),
   addRule: (r: RuleDraft) => call<QualityRule>("/api/v1/quality/rules", { method: "POST", body: JSON.stringify(r) }),
-  updateRule: (id: number, r: RuleDraft) =>
-    call<QualityRule>(`/api/v1/quality/rules/${id}`, { method: "PUT", body: JSON.stringify(r) }),
+  /** version: the rule's updatedAt as read; the server refuses the change (409) if it has changed since. */
+  updateRule: (id: number, r: RuleDraft, version?: string) =>
+    call<QualityRule>(`/api/v1/quality/rules/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(r),
+      headers: version ? { "If-Match": `"${version}"` } : undefined,
+    }),
+  rule: (id: number) => call<RuleView>(`/api/v1/quality/rules/${id}`),
   deleteRule: (id: number) => call<null>(`/api/v1/quality/rules/${id}`, { method: "DELETE" }),
   preview: (r: RuleDraft) =>
     call<RulePreview>("/api/v1/quality/rules/preview", { method: "POST", body: JSON.stringify(r) }),

@@ -10,11 +10,28 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ENTITIES[c]);
  * they never break the router; web and mail addresses and paths on this server (/api/docs) stay.
  */
 function target(page: DocPage, href: string): string | null {
-  if (href.startsWith("#")) return docHref(page.id, decodeURIComponent(href.slice(1)) || null);
+  // Backslashes and control characters can make a browser read a path as another host.
+  if (/[\u0000-\u001f\u007f\\]/.test(href)) return null;
+  if (href.startsWith("#")) return docHref(page.id, decode(href.slice(1)) || null);
   const other = /^(?:\.\/)?([\w-]+)\.md(?:#(.*))?$/.exec(href);
-  if (other) return docPage(other[1]) ? docHref(other[1], other[2] ? decodeURIComponent(other[2]) : null) : null;
-  if (/^(?:https?:|mailto:)/i.test(href) || /^\/(?!\/)/.test(href)) return href;
+  if (other) return docPage(other[1]) ? docHref(other[1], other[2] ? decode(other[2]) : null) : null;
+  if (/^(?:https?:|mailto:)/i.test(href)) return href;
+  if (href.startsWith("/")) {
+    try {
+      return new URL(href, window.location.origin).origin === window.location.origin ? href : null;
+    } catch {
+      return null;
+    }
+  }
   return null;
+}
+
+function decode(part: string): string {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return part;
+  }
 }
 
 /**
