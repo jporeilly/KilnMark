@@ -34,6 +34,7 @@ import {
   ScoreRing,
   SeverityChip,
   StatusChip,
+  Switch,
   type FillTone,
   type FilterOption,
   type Tone,
@@ -869,9 +870,9 @@ function Samples({
           {open ? "Hide sample rows" : "Show sample rows"}
         </button>
         {quality.canUnmask && (
-          <label className="check">
-            <input type="checkbox" checked={unmask} onChange={(e) => onUnmask(e.target.checked)} /> Show sensitive values
-          </label>
+          <div className="km-inline-switch">
+            <Switch label="Show sensitive values" checked={unmask} onChange={onUnmask} />
+          </div>
         )}
       </div>
       {steward && (

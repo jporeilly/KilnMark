@@ -1232,6 +1232,27 @@ details > summary {
   transform: translateX(18px);
 }
 
+/* A single switch among other controls, without the row's divider. */
+.km-inline-switch .km-switch-row {
+  border: 0;
+  padding: 4px 0;
+  gap: 10px;
+}
+
+.km-inline-switch {
+  min-width: 220px;
+}
+
+.km-switch-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.km-switch-compact .km-switch-state {
+  text-align: left;
+}
+
 .km-switches {
   margin: 0;
   padding: 0;

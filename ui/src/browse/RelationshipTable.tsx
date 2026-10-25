@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Switch } from "../components/ui";
 import { allows, formatNumber } from "../api";
 import { useRole } from "../components/role";
 import { href } from "../router";
@@ -115,10 +116,9 @@ export function RelationshipTable({
         </p>
       )}
       {rejected > 0 && !listRejected && (
-        <label className="check">
-          <input type="checkbox" checked={showRejected} onChange={(e) => setShowRejected(e.target.checked)} /> Show{" "}
-          {rejected} rejected
-        </label>
+        <div className="km-inline-switch">
+          <Switch label={`Show ${rejected} rejected`} checked={showRejected} onChange={setShowRejected} />
+        </div>
       )}
       <div className="table-scroll" role="region" aria-label={`${caption} (scrolls sideways on small screens)`} tabIndex={0}>
         <table className="rel">

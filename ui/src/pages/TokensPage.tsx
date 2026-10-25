@@ -1,4 +1,5 @@
 import { href } from "../router";
+import { Switch } from "../components/ui";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { aiApi, api, formatTime, type AccessRole, type ApiToken, type CreatedToken, type Me } from "../api";
 import { useTitle } from "../components/useTitle";
@@ -155,15 +156,13 @@ export function TokensPage({ me }: { me: Me }) {
                     <td className="small">{t.expiresAt ? formatTime(t.expiresAt) : "Never"}</td>
                     <td className="small">{t.lastUsedAt ? formatTime(t.lastUsedAt) : "Not yet"}</td>
                     <td>
-                      <label className="choice small">
-                        <input
-                          type="checkbox"
-                          checked={assistants.includes(t.id)}
-                          onChange={(e) => setAssistant(t, e.target.checked)}
-                          aria-describedby="assistant-hint"
-                        />
-                        <span className="visually-hidden">{t.name}: </span>Yes
-                      </label>
+                      <Switch
+                        compact
+                        label={`${t.name}: local AI assistant`}
+                        checked={assistants.includes(t.id)}
+                        onChange={(on) => setAssistant(t, on)}
+                        describedBy="assistant-hint"
+                      />
                     </td>
                     <td>
                       {t.status !== "revoked" && (

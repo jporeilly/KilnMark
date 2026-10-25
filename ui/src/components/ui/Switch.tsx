@@ -14,6 +14,8 @@ export function Switch({
   disabled,
   defaultNote,
   id,
+  compact = false,
+  describedBy,
 }: {
   label: ReactNode;
   help?: ReactNode;
@@ -22,9 +24,39 @@ export function Switch({
   disabled?: boolean;
   defaultNote?: ReactNode;
   id?: string;
+  /** In a table cell: the label is read out but not shown (the column header says it). */
+  compact?: boolean;
+  /** An extra hint elsewhere on the page that describes this switch. */
+  describedBy?: string;
 }) {
   const auto = useId();
   const base = id ?? auto;
+  const described = [help || defaultNote ? `${base}-help` : null, describedBy ?? null].filter(Boolean).join(" ") || undefined;
+  if (compact) {
+    return (
+      <span className="km-switch-compact">
+        <span id={`${base}-label`} className="visually-hidden">
+          {label}
+        </span>
+        <button
+          type="button"
+          id={base}
+          role="switch"
+          className="km-switch"
+          aria-checked={checked}
+          aria-labelledby={`${base}-label`}
+          aria-describedby={describedBy}
+          disabled={disabled}
+          onClick={() => onChange(!checked)}
+        >
+          <span className="km-switch-thumb" />
+        </button>
+        <span className="km-switch-state" aria-hidden="true">
+          {checked ? "On" : "Off"}
+        </span>
+      </span>
+    );
+  }
   return (
     <div className="km-switch-row">
       <div className="km-switch-text">
@@ -49,7 +81,7 @@ export function Switch({
         className="km-switch"
         aria-checked={checked}
         aria-labelledby={`${base}-label`}
-        aria-describedby={help || defaultNote ? `${base}-help` : undefined}
+        aria-describedby={described}
         disabled={disabled}
         onClick={() => onChange(!checked)}
       >

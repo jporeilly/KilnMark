@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { Switch } from "../components/ui";
 import {
   aiApi,
   formatNumber,
@@ -864,18 +865,19 @@ function ProfileForm({
           </div>
         </div>
         {compatible && (
-          <div className="field">
-            <label className="choice">
-              <input type="checkbox" checked={f.local} onChange={(e) => set("local", e.target.checked)}
-                aria-describedby="ai-local-hint" />
-              This server runs on our own network (local)
-            </label>
-            <p id="ai-local-hint" className="hint">
-              Sources with the default AI rule let only local models see their metadata. Tick this only if no data
-              sent to this server leaves your network. Changing the address clears it.
-              {locked && " This server accepts a model as local only if its address is on one of its own networks."}
-            </p>
-          </div>
+          <Switch
+            id="ai-local"
+            label="This server runs on our own network (local)"
+            checked={f.local}
+            onChange={(on) => set("local", on)}
+            help={
+              <>
+                Sources with the default AI rule let only local models see their metadata. Turn this on only if no
+                data sent to this server leaves your network. Changing the address turns it off.
+                {locked && " This server accepts a model as local only if its address is on one of its own networks."}
+              </>
+            }
+          />
         )}
         <div className="field">
           <label htmlFor="ai-key">API key{provider?.needsKey ? "" : " (if the server needs one)"}</label>
@@ -891,10 +893,13 @@ function ProfileForm({
                 : "Stored encrypted. Kilnmark never shows it again."}
           </p>
           {profile?.hasApiKey && !provider?.needsKey && (
-            <label className="choice">
-              <input type="checkbox" checked={f.removeKey} onChange={(e) => set("removeKey", e.target.checked)} />
-              Remove the stored key
-            </label>
+            <Switch
+              id="ai-remove-key"
+              label="Remove the stored key"
+              help="On save, the stored key is deleted."
+              checked={f.removeKey}
+              onChange={(on) => set("removeKey", on)}
+            />
           )}
         </div>
         <div className="field-row">
