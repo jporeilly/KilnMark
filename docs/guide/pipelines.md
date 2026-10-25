@@ -28,8 +28,8 @@ Stewards see **Run now** beside each pipeline, and **New pipeline** at the top.
 ## Starting a new pipeline
 
 Choose **New pipeline**. The editor opens with a template that reads 100 customers from the lab
-database (`lab-db`) and writes them as a CSV file to the lab file share (`lab-share`). All the
-lab's data is made up.
+database (`lab-db`) and writes them as a CSV file to the lab's warehouse bucket (`lab-warehouse`),
+the one lab source that allows writing. All the lab's data is made up.
 
 1. Give the pipeline a **Name**: small letters, digits and dashes, such as `customer-billing`.
    The name cannot change once saved; the YAML's `name` line follows what you type.

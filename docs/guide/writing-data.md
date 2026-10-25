@@ -147,7 +147,7 @@ used only for tables the step creates.
   - id: orphans
     type: write
     input: joined.rejected
-    source: lab-share
+    source: lab-warehouse
     path: quarantine/orphan-spend.csv
     format: csv
 ```
