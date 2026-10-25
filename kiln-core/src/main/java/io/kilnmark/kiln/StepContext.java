@@ -1,10 +1,12 @@
 package io.kilnmark.kiln;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
 
 /** What the runner gives a step: its name, settings, memory, row sets and the metadata side-channel. */
 public interface StepContext {
@@ -91,5 +93,44 @@ public interface StepContext {
             return hasOutput() ? output() : null;
         }
         throw new StepException("Step " + stepName() + " has no output port '" + port + "'");
+    }
+
+    /**
+     * Every row set arriving on an input port, in the order the pipeline lists them: the way to
+     * read a port that takes many inputs (a factory port named with a trailing {@code *}, such as
+     * union's {@code in*}, is read here as {@code in}). Empty when nothing is connected to the port.
+     * {@link RowSet#takeAny} reads several at once without one holding up the others.
+     */
+    default List<RowSet> inputs(String port) {
+        if (inputPorts().contains(port)) {
+            try {
+                return List.of(input(port));
+            } catch (StepException e) {
+                return List.of();
+            }
+        }
+        return List.of();
+    }
+
+    /**
+     * Hands a batch to an output port, or closes it when nothing is connected to that port, so a
+     * step with several outputs does not have to check each one. The step gives up the batch either
+     * way.
+     *
+     * @throws StepException if the step has no such port, or the steps reading it have stopped
+     */
+    default void emit(String port, VectorSchemaRoot batch) throws StepException, InterruptedException {
+        RowSet out;
+        try {
+            out = output(port);
+        } catch (StepException | RuntimeException e) {
+            batch.close();
+            throw e;
+        }
+        if (out == null) {
+            batch.close();
+        } else {
+            out.put(batch);
+        }
     }
 }
