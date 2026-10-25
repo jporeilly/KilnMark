@@ -102,27 +102,46 @@ for example `KILNMARK_ROLES=worker`.
 ## Install a release
 
 `./gradlew release` assembles `dist/release/kilnmark-<version>`: the built server, both
-Containerfiles, the licences and a `compose.yaml` made for customers from
-`containers/compose.release.yaml`. That is what to hand over or copy to the server; it holds the
-product only, never the reference lab, tests or developer docs
-([ADR 0024](adr/0024-the-lab-is-not-the-product.md)). On the server, from that folder:
+Containerfiles, the licences, a `compose.yaml` made for customers from
+`containers/compose.release.yaml`, and `.env.example` (from `containers/release.env.example`). That
+is what to hand over or copy to the server; it holds the product only, never the reference lab,
+tests or developer docs ([ADR 0024](adr/0024-the-lab-is-not-the-product.md)).
+
+**Nothing that ships has a default password or token.** The release's `compose.yaml` requires two
+secrets, and refuses to start, naming the missing one, while either is unset or empty:
+
+| Variable | What it is |
+| --- | --- |
+| `KILNMARK_DB_PASSWORD` | Password of Kilnmark's database, whose `kilnmark` user is its PostgreSQL superuser. A long random value (`openssl rand -base64 32`); it takes effect when the database volume is first created |
+| `KILNMARK_ADMIN_TOKEN` | The admin API token, `km_` and 43 or more letters, digits, `-` or `_` (see [Sign in](#sign-in)) |
+
+The key that encrypts stored source passwords is not a setting: the server generates it on first
+start in the `keys` volume. `.env.example` lists every variable, with the required ones empty and a
+comment on how to make each. On the server, from the release folder:
 
 ```
-podman compose up -d --build    # or: docker compose up -d --build
+cp .env.example .env && chmod 600 .env    # then fill in .env
+podman compose up -d --build              # or: docker compose up -d --build
 ```
 
-It builds `localhost/kilnmark-postgres:<version>` and `localhost/kilnmark-server:<version>` (the
-server image from the release's `server` folder, through the Containerfile's `APP_DIR` argument) and
-starts them. Settings are environment variables or a `.env` file beside `compose.yaml`: set
-`KILNMARK_DB_PASSWORD`, and optionally `KILNMARK_ADMIN_TOKEN`, `KILNMARK_PORT` and
-`KILNMARK_DB_PORT`. Nothing is scanned until a source is added. For folder sources, uncomment the
+Without the values, compose stops before starting anything, for example
+`required variable KILNMARK_DB_PASSWORD is missing a value: Set KILNMARK_DB_PASSWORD to a strong
+password before starting Kilnmark (see .env.example)`. It builds
+`localhost/kilnmark-postgres:<version>` and `localhost/kilnmark-server:<version>` (the server image
+from the release's `server` folder, through the Containerfile's `APP_DIR` argument) and starts
+them. Optional settings: `KILNMARK_PORT`, `KILNMARK_DB_PORT` (the database is published on this
+machine only; Kilnmark reaches it inside the stack) and `KILNMARK_SOURCES_HOST_MAP`. Nothing is
+scanned until a source is added. For folder sources, uncomment the
 example volume and mount the customer's folder at `/srv/files`; there is no default folder. The
 AI profiles work as described in [AI models](#ai-models).
 
 `release` also runs `checkProductOnly`, which fails the build if the release folder, Kilnmark's own
 jars, the UI bundle or the bundled guides name the lab (any `lab-<name>`, `labadmin`, a path into
 `lab/`, the lab-only ports 5433 and 9000), or if the shipped `compose.yaml`, the Containerfiles,
-the guides or the changelog's "What's new" mention it. A justified exception goes in
+the guides or the changelog's "What's new" mention it. It also fails if the shipped `compose.yaml`
+gives a variable whose name holds `PASSWORD`, `SECRET` or `TOKEN` a default (`:-`, even an empty
+one) or sets one to a literal value, if `.env.example` fills one in, or if the release holds a
+`.env` file. The developer `compose.yaml` keeps its defaults. A justified exception goes in
 `config/product-only-allow.txt` with its reason. Run it on its own with `./gradlew checkProductOnly`.
 
 ## Integration tests

@@ -131,13 +131,18 @@ details.
   and demos, and never ships. The release has its own `compose.yaml`, made from
   `containers/compose.release.yaml`: no lab defaults, a commented-out example for the folder to
   scan, images tagged with the version, and the server image built from the release folder (the
-  server Containerfile's new `APP_DIR` argument). The root `compose.yaml` is the developer setup.
+  server Containerfile's new `APP_DIR` argument). It has no default password or token: it requires
+  `KILNMARK_DB_PASSWORD` and `KILNMARK_ADMIN_TOKEN` and stops, naming the missing one, without
+  them; `.env.example` beside it lists every setting; the database is published on the machine
+  itself only. The root `compose.yaml` is the developer setup, with its defaults.
   **New pipeline** starts from the first source with scanned tables or files and the first that
   allows writing, or from placeholders such as `<your source>`, instead of lab sources. Guide and
   message examples use neutral names (`sales-db`, `warehouse`, `file-share`, `landing-bucket`).
   `release` now runs `checkProductOnly`, which fails on any lab folder, source name, path, lab-only
   port or mention in the release, in Kilnmark's own jars (the UI bundle included) and in the
-  bundled guides; justified exceptions go in `config/product-only-allow.txt`.
+  bundled guides, and on a default or literal value for any password, secret or token in the
+  shipped `compose.yaml` or `.env.example`; justified exceptions go in
+  `config/product-only-allow.txt`.
 
 ## 0.0.3 (25 October 2026)
 

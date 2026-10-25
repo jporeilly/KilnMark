@@ -13,6 +13,10 @@
 //   changelog  the bundled changelog's "What's new" sections, written for customers, do not either;
 //              its details may describe lab changes, and the UI bundle that carries them is let off
 //              for exactly that text
+//   secrets    the shipped compose.yaml gives no variable whose name holds PASSWORD, SECRET or TOKEN
+//              a default (${X:-...}, ${X-...}, ${X:=...}, ${X=...}, even an empty one) and sets no
+//              such key to a literal value; .env.example leaves every such variable empty; and the
+//              release holds no .env file
 // Kilnmark's own jars are its application jar and lib/main/io.kilnmark.*.jar, read entry by entry
 // (classes, the UI bundle under META-INF/resources, the bundled docs, application.properties, whose
 // %dev and %test lines may use the lab). Other files in the release are read as they are.
@@ -37,13 +41,13 @@ tasks.register("checkProductOnly") {
         if (problems.isNotEmpty()) {
             problems.forEach { logger.error(it) }
             throw GradleException(
-                "checkProductOnly: ${problems.size} lab reference(s) in the release (ADR 0024). " +
+                "checkProductOnly: ${problems.size} problem(s) in the release (ADR 0024). " +
                     "Remove it, or justify it in config/product-only-allow.txt."
             )
         }
         out.parentFile.mkdirs()
-        out.writeText("No lab references in ${root.name}.\n")
-        logger.lifecycle("checkProductOnly: no lab references in ${root.name}")
+        out.writeText("Product only: no lab references or default secrets in ${root.name}.\n")
+        logger.lifecycle("checkProductOnly: no lab references or default secrets in ${root.name}")
     }
 }
 
@@ -118,8 +122,16 @@ class ProductOnly(private val root: java.io.File, allowFile: java.io.File) {
             when {
                 isOwnJar(path) -> entries(f) { name, text -> checkEntry("$path!/$name", name, text) }
                 f.name.endsWith(".jar") -> {}   // third-party libraries and Quarkus's generated code
-                path == "compose.yaml" || path.startsWith("containers/") ->
-                    scan(path, f.readText(Charsets.ISO_8859_1), names + word, corpus = false)
+                path == "compose.yaml" || path.startsWith("containers/") -> {
+                    val text = f.readText(Charsets.ISO_8859_1)
+                    scan(path, text, names + word, corpus = false)
+                    if (path == "compose.yaml") secretDefaults(path, text)
+                }
+                path == ".env.example" -> {
+                    val text = f.readText(Charsets.ISO_8859_1)
+                    scan(path, text, names + word, corpus = false)
+                    secretValues(path, text)
+                }
                 else -> scan(path, f.readText(Charsets.ISO_8859_1), names, corpus = false)
             }
         }
@@ -131,7 +143,36 @@ class ProductOnly(private val root: java.io.File, allowFile: java.io.File) {
     private fun isOwnJar(path: String) =
         Regex("server/app/[^/]+\\.jar|server/lib/main/io\\.kilnmark\\.[^/]+\\.jar").matches(path)
 
+    /** A name that holds a secret: a password, secret or token. */
+    private val secretName = "[A-Za-z0-9_]*(?:PASSWORD|SECRET|TOKEN)[A-Za-z0-9_]*"
+
+    /** compose.yaml: no default for a secret's variable, and no secret written into the file. */
+    private fun secretDefaults(path: String, text: String) {
+        text.lines().forEachIndexed { i, raw ->
+            val line = raw.substringBefore(" #").let { if (it.trimStart().startsWith("#")) "" else it }
+            Regex("\\$\\{($secretName)(:?[-=])").findAll(line).forEach { m ->
+                problems += "$path:${i + 1}: secrets: \"${m.groupValues[1]}\" has a default (${m.groupValues[2]}); " +
+                    "require it with \${${m.groupValues[1]}:?message} or let Kilnmark generate it"
+            }
+            Regex("^\\s*-?\\s*\"?($secretName)\"?\\s*[:=]\\s*\"?([^\\s\"]+)").find(line)?.let { m ->
+                if (!m.groupValues[2].startsWith("\$") && !m.groupValues[1].endsWith("_FILE")) {
+                    problems += "$path:${i + 1}: secrets: \"${m.groupValues[1]}\" is set to a literal value"
+                }
+            }
+        }
+    }
+
+    /** .env.example: secrets are listed, never filled in. */
+    private fun secretValues(path: String, text: String) {
+        text.lines().forEachIndexed { i, line ->
+            Regex("^\\s*($secretName)\\s*=\\s*(\\S.*)$").find(line)?.let { m ->
+                problems += "$path:${i + 1}: secrets: \"${m.groupValues[1]}\" has a value; leave it empty"
+            }
+        }
+    }
+
     private fun checkPath(path: String) {
+        if (path.substringAfterLast('/') == ".env") problems += "$path: secrets: a .env file in the release"
         val parts = path.split('/')
         if (parts.dropLast(1).any { it == "lab" || it == "tests" || it == "docs" }) {
             problems += "$path: a lab, tests or docs folder in the release"

@@ -6,13 +6,16 @@
 #   podman build -t localhost/kilnmark-postgres:@VERSION@ -f containers/postgres/Containerfile containers/postgres
 #   podman build -t localhost/kilnmark-server:@VERSION@ --build-arg APP_DIR=server -f containers/server/Containerfile .
 #   podman compose up -d
-# Then open http://localhost:8780 and sign in with the admin token (see KILNMARK_ADMIN_TOKEN below).
+# Then open http://localhost:8780 and sign in with your admin token.
 #
-# Settings are environment variables, or lines in a .env file beside this one:
-#   KILNMARK_DB_PASSWORD   password of Kilnmark's own database (set your own)
-#   KILNMARK_ADMIN_TOKEN   an admin API token; unset, the first start writes a 24-hour one
-#   KILNMARK_PORT          the port Kilnmark is published on (8780)
-#   KILNMARK_DB_PORT       the port its database is published on (5442)
+# Before the first start, set the required secrets: copy .env.example to .env beside this file and
+# fill it in (or set them as environment variables). Nothing here has a default password or token:
+# without them, compose stops with a message naming the missing one.
+#   KILNMARK_DB_PASSWORD   required: password of Kilnmark's database, and of its PostgreSQL owner
+#   KILNMARK_ADMIN_TOKEN   required: Kilnmark's admin API token
+#   KILNMARK_PORT          optional: the port Kilnmark is published on (8780)
+#   KILNMARK_DB_PORT       optional: the port its database is published on, on this machine only (5442)
+# The key that encrypts stored source passwords is generated on first start, in the keys volume.
 services:
   postgres:
     image: localhost/kilnmark-postgres:@VERSION@
@@ -22,7 +25,8 @@ services:
     environment:
       POSTGRES_DB: kilnmark
       POSTGRES_USER: kilnmark
-      POSTGRES_PASSWORD: ${KILNMARK_DB_PASSWORD:-kilnmark}
+      # The kilnmark user owns the database and is its PostgreSQL superuser: no default password.
+      POSTGRES_PASSWORD: ${KILNMARK_DB_PASSWORD:?Set KILNMARK_DB_PASSWORD to a strong password before starting Kilnmark (see .env.example)}
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
@@ -30,8 +34,9 @@ services:
       interval: 5s
       retries: 20
     ports:
-      # Published on 5442 so it never clashes with another PostgreSQL on this machine.
-      - "${KILNMARK_DB_PORT:-5442}:5432"
+      # Kilnmark reaches the database inside this stack; it is published on this machine only, for
+      # backups and administration, on 5442 so it never clashes with another PostgreSQL here.
+      - "127.0.0.1:${KILNMARK_DB_PORT:-5442}:5432"
 
   kilnmark:
     image: localhost/kilnmark-server:@VERSION@
@@ -44,10 +49,9 @@ services:
       KILNMARK_ROLES: api,scheduler,worker
       QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/kilnmark
       QUARKUS_DATASOURCE_USERNAME: kilnmark
-      QUARKUS_DATASOURCE_PASSWORD: ${KILNMARK_DB_PASSWORD:-kilnmark}
-      # Optional admin API token (km_ + 43 or more base64url characters). Unset, the first start
-      # writes one to /var/lib/kilnmark/admin-token in the keys volume.
-      KILNMARK_ADMIN_TOKEN: ${KILNMARK_ADMIN_TOKEN:-}
+      QUARKUS_DATASOURCE_PASSWORD: ${KILNMARK_DB_PASSWORD:?Set KILNMARK_DB_PASSWORD to a strong password before starting Kilnmark (see .env.example)}
+      # The admin API token: km_ followed by 43 or more letters, digits, - or _ (see .env.example).
+      KILNMARK_ADMIN_TOKEN: ${KILNMARK_ADMIN_TOKEN:?Set KILNMARK_ADMIN_TOKEN to a new admin token before starting Kilnmark (see .env.example)}
       # Folders that folder sources may read. Mount yours there (see volumes below); with nothing
       # mounted, folder sources find no files.
       KILNMARK_FILES_ROOTS: /srv/files

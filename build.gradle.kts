@@ -46,7 +46,8 @@ subprojects {
 
 // Copies the runnable server and supporting files into dist/release: the product only. The
 // reference lab, the tests and the developer docs never ship (ADR 0024); the release gets its own
-// compose.yaml, made from containers/compose.release.yaml, not the developer one at the root.
+// compose.yaml, made from containers/compose.release.yaml, not the developer one at the root, and
+// a .env.example listing the secrets it requires: nothing that ships has a default password.
 val releaseVersion = project.version.toString()
 tasks.register<Sync>("assembleRelease") {
     group = "distribution"
@@ -63,9 +64,11 @@ tasks.register<Sync>("assembleRelease") {
         filter { line -> line.replace("@VERSION@", releaseVersion) }
     }
     inputs.property("version", releaseVersion)
+    // Every setting compose.yaml requires (the database password, the admin token), with no values.
+    from("containers/release.env.example") { rename { ".env.example" } }
     from("containers") {
         into("containers")
-        exclude("compose.release.yaml")
+        exclude("compose.release.yaml", "release.env.example")
     }
     from("LICENSE", "NOTICE")
     from(distDir.dir("licenses")) { include("THIRD-PARTY-NOTICES.md") }
