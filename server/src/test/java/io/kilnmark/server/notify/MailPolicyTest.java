@@ -113,7 +113,7 @@ class MailPolicyTest {
         assertTrue(MailPolicy.domainAllowed("a@EXAMPLE.ORG", domains));
         assertFalse(MailPolicy.domainAllowed("a@badexample.com", domains), "not a suffix match");
         assertFalse(MailPolicy.domainAllowed("a@example.net", domains));
-        assertTrue(MailPolicy.domainAllowed("a@anything.test", List.of()), "none listed: any");
+        assertTrue(MailPolicy.domainAllowed("a@sub.example.com", List.of()), "none listed: any");
         assertThrows(IllegalArgumentException.class, () -> MailPolicy.checkDomain("email", "a@example.net", domains));
         assertEquals(List.of("example.com", "mail.example.org"),
             MailSettings.domains(List.of(" Example.com", "@mail.example.org", "", "example.com")));
