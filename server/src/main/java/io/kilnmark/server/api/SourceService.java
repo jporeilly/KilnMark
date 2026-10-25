@@ -252,9 +252,9 @@ public class SourceService {
      * <p>A preview reads the asset named, whatever the source's include and exclude patterns say:
      * they choose what a scan records, not what a steward may look at.
      *
-     * <p>TODO: when sensitive-column flags arrive (stream E), mask flagged columns here for people
-     * who may not unmask them, as every other view of the data must. Until then previews are not
-     * masked.
+     * <p>Columns a steward marked sensitive on the catalogued asset (matched by name) are masked
+     * for anyone but an admin, as in every other view of the data. A table never scanned has no
+     * marks yet.
      */
     Views.Preview preview(Connector connector, SourceConfig config, String asset, Integer rows) {
         if (asset == null || asset.isBlank()) {
@@ -269,9 +269,49 @@ public class SourceService {
             return connector.preview(config, info, n);
         });
         return new Views.Preview(asset, p.columns().stream()
-            .map(c -> new Views.PreviewColumn(c.name(), c.kind(), c.sourceType())).toList(), p.rows(), p.rows().size(),
-            p.truncated(), p.details());
+            .map(c -> new Views.PreviewColumn(c.name(), c.kind(), c.sourceType())).toList(),
+            masked(config, asset, p), p.rows().size(), p.truncated(), p.details());
     }
+
+    /** The preview's rows with the catalogued asset's sensitive columns masked, unless an admin asks. */
+    private List<List<String>> masked(SourceConfig config, String asset, io.kilnmark.kiln.connect.Preview p) {
+        if (identity.hasRole(io.kilnmark.server.auth.AccessRole.ADMIN_ROLE)) {
+            return p.rows();
+        }
+        java.util.Set<String> sensitive;
+        try {
+            sensitive = quality.sensitive(new io.kilnmark.graph.Urn(config.name(), asset).toString());
+        } catch (IllegalArgumentException e) {
+            return p.rows(); // no asset can have that URN, so none has marks
+        }
+        List<Integer> hide = new ArrayList<>();
+        for (int i = 0; i < p.columns().size(); i++) {
+            if (sensitive.contains(p.columns().get(i).name())) {
+                hide.add(i);
+            }
+        }
+        if (hide.isEmpty()) {
+            return p.rows();
+        }
+        List<List<String>> out = new ArrayList<>();
+        for (List<String> row : p.rows()) {
+            List<String> r = new ArrayList<>(row);
+            hide.forEach(i -> {
+                if (i < r.size() && r.get(i) != null) {
+                    r.set(i, io.kilnmark.server.quality.Masking.MASK);
+                }
+            });
+            out.add(r);
+        }
+        return out;
+    }
+
+    /** Columns marked sensitive, for masking previews (data quality, stream E). */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.QualityStore quality;
+
+    @jakarta.inject.Inject
+    io.quarkus.security.identity.SecurityIdentity identity;
 
     /** A preview as a response no browser or proxy keeps: the rows are the source's data. */
     static Response noStore(Views.Preview preview) {

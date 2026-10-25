@@ -719,4 +719,52 @@ class QualityFlowTest {
             .then().statusCode(200).extract().jsonPath().getList("$"));
         assertFalse(all.isEmpty());
     }
+
+    @Test
+    @Order(15)
+    void stewardsSeeNoValueOfASensitiveColumnByAnyRoute() throws Exception {
+        // quantity was marked sensitive in exportsAreValidOpenLineageAndOdcs; it drifted (quantile shift) on the
+        // second scan and has an in_range rule with bounds.
+        List<Map<String, Object>> drift = as(steward).queryParam("urn", CUSTOMERS).get("/api/v1/quality/asset/drift")
+            .then().statusCode(200).extract().jsonPath().getList("$");
+        Map<String, Object> shift = drift.stream().filter(d -> "quantity".equals(d.get("field"))
+            && d.get("change").equals("quantile_shift")).findFirst().orElseThrow();
+        assertNull(shift.get("detail"), shift.toString());
+        assertFalse(((Map<?, ?>) shift.get("evidence")).containsKey("medianFrom"), shift.toString());
+        Map<String, Object> unmasked = admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
+            .get("/api/v1/quality/asset/drift").then().statusCode(200).extract().jsonPath().<Map<String, Object>>getList("$")
+            .stream().filter(d -> d.get("id").equals(shift.get("id"))).findFirst().orElseThrow();
+        assertNotNull(unmasked.get("detail"), "an admin who unmasks sees it");
+
+        List<Map<String, Object>> measures = quality(steward, CUSTOMERS).getList("measures");
+        for (Map<String, Object> m : measures) {
+            if ("quantity".equals(m.get("field"))) {
+                Map<?, ?> e = (Map<?, ?>) m.get("evidence");
+                assertFalse(e.containsKey("min") || e.containsKey("max") || e.containsKey("fenceLow"), m.toString());
+            }
+        }
+
+        JsonPath rule = as(steward).get("/api/v1/quality/rules/" + rules.get("quantity")).then().statusCode(200)
+            .extract().jsonPath();
+        assertEquals(true, rule.get("rule.params.hidden"), "the rule's bounds are values of the column");
+        // Saving it again as shown keeps its bounds.
+        as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "quantity",
+            "type", "in_range", "params", Map.of("hidden", true), "failAbove", 0.5))
+            .put("/api/v1/quality/rules/" + rules.get("quantity")).then().statusCode(200);
+        JsonPath kept = admin().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
+            .statusCode(200).extract().jsonPath();
+        assertNull(kept.get("rule.params.hidden"));
+        assertNotNull(kept.get("rule.params.min"), kept.prettify());
+
+        // The catalogue profile and a live preview of the table mask it too.
+        String profile = as(steward).get("/api/v1/assets/" + CUSTOMERS).then().statusCode(200).extract().jsonPath()
+            .getString("fields.find { it.name == 'quantity' }.profile");
+        assertFalse(profile.matches(".*(min|max|from|to)=[0-9-].*"), profile);
+        JsonPath preview = as(steward).queryParam("asset", "qa.Customers").get("/api/v1/sources/quality-db/preview")
+            .then().statusCode(200).extract().jsonPath();
+        int col = preview.getList("columns.name").indexOf("quantity");
+        List<List<String>> rows = preview.getList("rows");
+        assertTrue(col >= 0 && rows.stream().allMatch(r -> r.get(col) == null || r.get(col).equals("••••")),
+            rows.toString());
+    }
 }

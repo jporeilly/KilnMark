@@ -228,7 +228,13 @@ Source settings, for any kind of source: `keep_samples` (`true` by default; `fal
 sample rows, example values, most common values or failing rows, though numeric statistics are
 kept), `sample_rows` (up to 10,000) and, for databases, `table_sample_above_rows`. Seeing values
 (samples, examples, failing rows, previews, and values in measures, drift and exports) needs the
-steward role; only admins unmask sensitive columns or unmark them.
+steward role; only admins unmask sensitive columns or unmark them. A column marked sensitive has
+every value drawn from it masked for everyone else, wherever it appears: samples, examples, the
+profile's most common values, range, quantiles and histogram, measure evidence, drift detail,
+allowed values and range bounds of its rules and recommendations, failing rows, failing-rows
+queries and database error text, exports, live previews and the MCP server (which always masks).
+Shapes, counts and shares stay. Quality endpoints take `unmask=true` from an admin. Embeddings and
+prompts carry names, types and descriptions only, never values.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -316,8 +322,8 @@ length, and a preview stops at about 2 MB. For files it also shows what was dete
 delimiter, header row, encoding); if that is wrong, set `delimiter`, `header` (false when the
 first row is data) or `encoding` on the source: they apply to every file of it, in previews and
 scans. A preview reads the table or file named even when the source's include or exclude patterns
-leave it out of scans, and it is not masked yet: sensitive-column masking arrives with column
-flags. Previews are sent with `Cache-Control: no-store`.
+leave it out of scans. Columns marked sensitive on the catalogued table or file are masked for
+anyone but an admin. Previews are sent with `Cache-Control: no-store`.
 
 **Name and display name.** A source's name is its ID: it is part of every asset's reference
 (`urn:kilnmark:<name>:<path>`), so it is set when the source is added and never changes. An edit

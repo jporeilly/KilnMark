@@ -83,6 +83,15 @@ details.
 - **Database:** migration V9 adds profile versions, samples, rules, accepted patterns, quality
   runs, results, measures, scores, drift events and issues, a `sensitive` flag on fields, and
   lets the job queue hold jobs of other kinds.
+- **Sensitive columns, after review:** every value drawn from a column marked sensitive is masked
+  for anyone who may not unmask it, stewards included, through one check per asset: measure
+  evidence (range, fences, usual values, latest timestamp), drift detail, the allowed values and
+  range bounds of its rules and recommendations, failing-rows queries and database error text, the
+  ODCS export's rule values, the profile's histogram bounds, live previews of the catalogued table
+  or file, and the MCP server's `get_asset`, which always masks. Shapes, counts and shares stay. Drift,
+  rules, results and recommendations take `unmask=true` from an admin. Saving a rule whose values
+  were shown hidden keeps them. Embedded text and prompts were checked: names, types and descriptions
+  only, never values.
 - **Webhooks, after review:** a webhook path may not hold a semicolon, raw or encoded (`%3b`), so a
   segment such as `..;x`, which some servers read as `..` once they drop its parameters, cannot
   climb out of an allowed prefix. Checked when a rule is saved and again before each call.

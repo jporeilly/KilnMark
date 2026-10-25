@@ -2,6 +2,7 @@ package io.kilnmark.server.api;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -51,8 +52,10 @@ import jakarta.ws.rs.core.Response;
  *
  * <p>Viewers read scores, measures, shapes, rules and results without values. Seeing values
  * (samples, example values, failing rows, previews) needs {@value #DATA_ROLE}; columns marked
- * sensitive stay masked unless an admin asks for {@code unmask=true}. Stewards change rules,
- * patterns, baselines and issues.
+ * sensitive stay masked unless an admin asks for {@code unmask=true}. Every endpoint shows values
+ * through one {@link Masking.Sight} per asset ({@link #sight}), so a value of a sensitive column
+ * cannot slip out through evidence, drift detail, rule parameters, queries, error text,
+ * recommendations or exports. Stewards change rules, patterns, baselines and issues.
  */
 @Path("/api/v1/quality")
 @Produces(MediaType.APPLICATION_JSON)
@@ -111,6 +114,8 @@ public class QualityResource {
                 fieldScores.withArrayProperty(s.field()).add(o);
             }
         }
+        Set<String> sensitive = store.sensitive(urn);
+        Masking.Sight sight = sight(sensitive, unmask);
         ArrayNode measures = out.putArray("measures");
         v.ifPresent(x -> store.measures(x.id()).forEach(m -> {
             ObjectNode o = measures.addObject().put("field", m.field()).put("dimension", m.dimension())
@@ -118,15 +123,13 @@ public class QualityResource {
             ObjectNode e = m.evidence() instanceof ObjectNode n ? n.deepCopy() : json.createObjectNode();
             o.put("reason", e.path("reason").asText(""));
             e.remove("reason");
-            o.set("evidence", Masking.evidence(e, data));
+            o.set("evidence", Masking.evidence(e, m.field(), sight));
         }));
-        Set<String> sensitive = store.sensitive(urn);
         out.set("sensitive", json.valueToTree(sensitive));
         List<QualityStore.Accepted> accepted = store.accepted(urn);
         out.set("accepted", json.valueToTree(accepted));
         JsonNode examples = data && quality.samplesAllowed(urn)
             ? store.sample(urn).map(QualityStore.Sample::examples).orElse(null) : null;
-        boolean showSensitive = unmask && identity.hasRole(UNMASK_ROLE);
         ArrayNode patterns = out.putArray("patterns");
         v.flatMap(x -> store.facts(x.id())).ifPresent(facts -> {
             for (ProfileFacts.FieldFacts f : facts.fields()) {
@@ -139,7 +142,7 @@ public class QualityResource {
                 p.put("other", Math.max(0, f.get("patterns_other")));
                 p.put("collapsed", "true".equals(f.text("patterns_collapsed")));
                 p.put("exact", "true".equals(f.text("patterns_exact")));
-                boolean masked = sensitive.contains(f.name()) && !showSensitive;
+                boolean masked = !sight.values(f.name());
                 JsonNode fieldExamples = examples == null ? null : examples.get(f.name());
                 ArrayNode shapes = p.putArray("shapes");
                 for (ProfileFacts.Counted c : f.patterns()) {
@@ -178,13 +181,12 @@ public class QualityResource {
     /** Drift events, newest first. */
     @GET
     @Path("asset/drift")
-    public List<QualityStore.DriftRow> drift(@QueryParam("urn") String urn, @QueryParam("limit") Integer limit) {
+    public List<QualityStore.DriftRow> drift(@QueryParam("urn") String urn, @QueryParam("limit") Integer limit,
+                                             @QueryParam("unmask") boolean unmask) {
         asset(urn);
-        boolean data = identity.hasRole(DATA_ROLE);
+        Masking.Sight sight = sight(urn, unmask);
         return store.drift(urn, limit == null ? 50 : Math.max(1, Math.min(limit, 500))).stream()
-            .map(d -> data ? d : new QualityStore.DriftRow(d.id(), d.assetUrn(), d.field(), d.kind(), d.change(),
-                d.severity(), d.message(), Masking.evidence(d.evidence(), false), d.versionId(), d.comparedWith(),
-                d.against(), d.detectedAt(), null))
+            .map(d -> Masking.drift(d, sight))
             .toList();
     }
 
@@ -325,7 +327,8 @@ public class QualityResource {
     /** Rules worth adding, from the profile alone. */
     @GET
     @Path("asset/recommendations")
-    public List<Recommendations.Recommendation> recommendations(@QueryParam("urn") String urn) {
+    public List<Recommendations.Recommendation> recommendations(@QueryParam("urn") String urn,
+                                                                @QueryParam("unmask") boolean unmask) {
         asset(urn);
         Optional<ProfileFacts> facts = quality.latestFacts(urn);
         if (facts.isEmpty()) {
@@ -335,14 +338,10 @@ public class QualityResource {
         store.rules(urn, null, false).forEach(r -> existing.add(r.type().id() + ":" + (r.field() == null ? "" : r.field())));
         List<Recommendations.Recommendation> all = Recommendations.of(facts.get(), quality.historyOf(facts.get()), existing,
             quality.settings().defaultCadence());
-        if (identity.hasRole(DATA_ROLE)) {
-            return all;
-        }
-        // Allowed-value lists and ranges are values: viewers see that a rule is recommended, not its values.
-        return all.stream().map(r -> new Recommendations.Recommendation(r.field(), r.type(), r.dimension(), r.name(),
-            r.type().equals("allowed_values") || r.type().equals("in_range") ? json.createObjectNode() : r.params(),
-            r.type().equals("allowed_values") || r.type().equals("in_range") ? "Ask a steward to review it" : r.reason()))
-            .toList();
+        // Allowed-value lists and ranges are values: without sight of the column's values, a recommendation
+        // says that a rule is worth adding, not its values.
+        Masking.Sight sight = sight(urn, unmask);
+        return all.stream().map(r -> Masking.recommendation(r, sight)).toList();
     }
 
     /** Runs the asset's enabled rules now, through the job queue. */
@@ -370,20 +369,21 @@ public class QualityResource {
 
     @GET
     @Path("rules")
-    public List<RuleView> rules(@QueryParam("urn") String urn, @QueryParam("source") String source) {
+    public List<RuleView> rules(@QueryParam("urn") String urn, @QueryParam("source") String source,
+                                @QueryParam("unmask") boolean unmask) {
         Map<String, Map<Long, QualityStore.Result>> latest = new LinkedHashMap<>();
+        Map<String, Masking.Sight> sights = new HashMap<>();
         List<RuleView> out = new ArrayList<>();
         for (Rule r : store.rules(blank(urn), blank(source), false)) {
             QualityStore.Result res = latest.computeIfAbsent(r.assetUrn(), store::latestResults).get(r.id());
-            out.add(view(r, res));
+            out.add(view(r, res, sights.computeIfAbsent(r.assetUrn(), u -> sight(u, unmask))));
         }
         return out;
     }
 
-    /** A rule and its latest result as the caller may see them: no values or query text for viewers. */
-    private RuleView view(Rule r, QualityStore.Result res) {
-        boolean data = identity.hasRole(DATA_ROLE);
-        return new RuleView(Masking.rule(r, data), withoutRows(res));
+    /** A rule and its latest result as the caller may see them: no values or query text without sight of them. */
+    private RuleView view(Rule r, QualityStore.Result res, Masking.Sight sight) {
+        return new RuleView(Masking.rule(r, sight), Masking.result(res, r, sight));
     }
 
     @POST
@@ -398,9 +398,9 @@ public class QualityResource {
 
     @GET
     @Path("rules/{id}")
-    public RuleView rule(@PathParam("id") long id) {
+    public RuleView rule(@PathParam("id") long id, @QueryParam("unmask") boolean unmask) {
         Rule r = findRule(id);
-        return view(r, store.latestResults(r.assetUrn()).get(id));
+        return view(r, store.latestResults(r.assetUrn()).get(id), sight(r.assetUrn(), unmask));
     }
 
     @PUT
@@ -413,13 +413,21 @@ public class QualityResource {
         if (body != null && body.assetUrn() != null && !body.assetUrn().equals(old.assetUrn())) {
             throw new IllegalArgumentException("assetUrn: a rule cannot move to another asset; add a new rule there");
         }
+        // Parameters the caller was shown hidden ({"hidden": true}) are kept as they are, on the same column and
+        // type only, so a rule cannot be moved to a column whose values the caller may see to reveal them.
+        JsonNode params = body == null ? null : body.params();
+        if (params != null && params.size() == 1 && params.path("hidden").asBoolean(false)
+            && java.util.Objects.equals(body.field(), old.field())
+            && old.type().id().equalsIgnoreCase(String.valueOf(body.type()).trim())) {
+            params = old.params();
+        }
         RuleDraft d = body == null ? null : new RuleDraft(old.assetUrn(), body.field(), body.name(), body.type(),
-            body.dimension(), body.params(), body.thresholdUnit(), body.warnAbove(), body.failAbove(), body.actions(),
+            body.dimension(), params, body.thresholdUnit(), body.warnAbove(), body.failAbove(), body.actions(),
             body.enabled());
         Rule r = check(d);
         Rule saved = store.updateRule(id, r).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No rule " + id));
         quality.rescore(old.assetUrn());
-        return saved;
+        return Masking.rule(saved, sight(old.assetUrn(), false)); // kept hidden parameters stay hidden
     }
 
     @DELETE
@@ -463,10 +471,12 @@ public class QualityResource {
 
     @GET
     @Path("rules/{id}/results")
-    public List<QualityStore.Result> results(@PathParam("id") long id, @QueryParam("limit") Integer limit) {
-        findRule(id);
+    public List<QualityStore.Result> results(@PathParam("id") long id, @QueryParam("limit") Integer limit,
+                                             @QueryParam("unmask") boolean unmask) {
+        Rule rule = findRule(id);
+        Masking.Sight sight = sight(rule.assetUrn(), unmask);
         return store.results(id, limit == null ? 20 : Math.max(1, Math.min(limit, 200))).stream()
-            .map(this::withoutRows).toList();
+            .map(r -> Masking.result(r, rule, sight)).toList();
     }
 
     /** Custom SQL rules are the admins' alone: they can read anything the source's login can see. */
@@ -482,8 +492,8 @@ public class QualityResource {
     public ObjectNode result(@PathParam("id") long id, @QueryParam("unmask") boolean unmask) {
         QualityStore.Result r = store.result(id).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND,
             "No result " + id));
-        ObjectNode out = json.valueToTree(withoutRows(r));
         Rule rule = store.rule(r.ruleId()).orElse(null);
+        ObjectNode out = json.valueToTree(Masking.result(r, rule, sight(r.assetUrn(), unmask)));
         if (identity.hasRole(DATA_ROLE) && r.failingRows() != null && quality.samplesAllowed(r.assetUrn())) {
             List<String> columns = new ArrayList<>();
             r.failingRows().path("columns").forEach(c -> columns.add(c.asText()));
@@ -537,15 +547,13 @@ public class QualityResource {
         return o;
     }
 
-    /** A result without its failing rows; viewers also get no failing-rows query and no database error text. */
-    private QualityStore.Result withoutRows(QualityStore.Result r) {
-        if (r == null) {
-            return null;
-        }
-        boolean data = identity.hasRole(DATA_ROLE);
-        return new QualityStore.Result(r.id(), r.ruleId(), r.qualityRunId(), r.assetUrn(), r.status(), r.total(),
-            r.failing(), r.method(), data ? r.failingQuery() : null, null, r.message(), r.observedAt(), r.origin(),
-            data ? r.errorDetail() : null, r.estimate());
+    /** Who is looking at {@code urn}'s values: see {@link Masking.Sight}. */
+    private Masking.Sight sight(String urn, boolean unmask) {
+        return sight(store.sensitive(urn), unmask);
+    }
+
+    private Masking.Sight sight(Set<String> sensitive, boolean unmask) {
+        return new Masking.Sight(identity.hasRole(DATA_ROLE), sensitive, unmask && identity.hasRole(UNMASK_ROLE));
     }
 
     // ---- issues ----
