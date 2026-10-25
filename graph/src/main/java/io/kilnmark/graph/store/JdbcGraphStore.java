@@ -352,7 +352,7 @@ public final class JdbcGraphStore implements GraphStore {
             try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS.replace("FROM kilnmark.run r ",
                 ", j.attempts, j.last_error FROM kilnmark.run r ")
                 + "LEFT JOIN kilnmark.job j ON j.kind = 'scan' AND (j.payload ->> 'runId')::bigint = r.id "
-                + "WHERE s.name = ? ORDER BY r.id DESC LIMIT ?")) {
+                + "WHERE s.name = ? AND r.kind = 'scan' ORDER BY r.id DESC LIMIT ?")) {
                 ps.setString(1, sourceName);
                 ps.setInt(2, limit);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -431,7 +431,8 @@ public final class JdbcGraphStore implements GraphStore {
         return tx(c -> {
             List<Run> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement(
-                "SELECT " + RUN_COLUMNS + "WHERE s.name = ? ORDER BY r.id DESC LIMIT ?")) {
+                // Scans only: a pipeline's write is recorded as a finished run of kind 'pipeline' (V12).
+                "SELECT " + RUN_COLUMNS + "WHERE s.name = ? AND r.kind = 'scan' ORDER BY r.id DESC LIMIT ?")) {
                 ps.setString(1, sourceName);
                 ps.setInt(2, limit);
                 try (ResultSet rs = ps.executeQuery()) {

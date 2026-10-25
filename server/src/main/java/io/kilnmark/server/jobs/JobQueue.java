@@ -36,6 +36,8 @@ public class JobQueue {
     public static final String CHANNEL = "kilnmark_jobs";
     /** Advisory lock class for scans of a source (objid is the source id); deleting a source takes it too. */
     static final int SOURCE_LOCK_CLASS = 0x4B53;
+    /** Advisory lock class for a running pipeline job (objid is the job id): held by the worker running it. */
+    static final int PIPELINE_JOB_LOCK_CLASS = 0x4B50;
     private static final long OID_RANGE = 1L << 32;
 
     /** A claimed job. {@code attempts} counts this one. */
@@ -143,17 +145,31 @@ public class JobQueue {
      * lease is closed. Empty if another worker holds it.
      */
     public Optional<ScanLease> lockSource(long sourceId) {
+        return lock(SOURCE_LOCK_CLASS, sourceId, "Cannot lock source " + sourceId + " for a scan: ");
+    }
+
+    /**
+     * Takes the lock of a pipeline job (an advisory lock keyed by the job id) on a connection of
+     * its own, as {@link #lockSource} does for scans: heartbeats go over it, and recovery leaves
+     * the job alone while it is held. Pipelines need no source lock: runs of one pipeline may
+     * overlap, as scans of the sources they read may.
+     */
+    public Optional<ScanLease> lockPipelineJob(long jobId) {
+        return lock(PIPELINE_JOB_LOCK_CLASS, jobId, "Cannot lock pipeline job " + jobId + ": ");
+    }
+
+    private Optional<ScanLease> lock(int lockClass, long key, String failure) {
         Connection c = null;
         try {
             c = db.connection();
             c.setAutoCommit(true);
             try (PreparedStatement ps = c.prepareStatement("SELECT pg_try_advisory_lock(?, ?), pg_backend_pid()")) {
-                ps.setInt(1, SOURCE_LOCK_CLASS);
-                ps.setInt(2, (int) sourceId);
+                ps.setInt(1, lockClass);
+                ps.setInt(2, (int) key);
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     if (rs.getBoolean(1)) {
-                        ScanLease lease = new ScanLease(c, sourceId, rs.getInt(2));
+                        ScanLease lease = new ScanLease(c, lockClass, key, rs.getInt(2));
                         c = null;
                         return Optional.of(lease);
                     }
@@ -161,7 +177,7 @@ public class JobQueue {
                 }
             }
         } catch (SQLException e) {
-            throw new Db.DbException("Cannot lock source " + sourceId + " for a scan: " + e.getMessage(), e);
+            throw new Db.DbException(failure + e.getMessage(), e);
         } finally {
             if (c != null) {
                 try {
@@ -180,12 +196,15 @@ public class JobQueue {
      */
     public static final class ScanLease implements AutoCloseable {
         private final Connection c;
+        private final int lockClass;
         private final long sourceId;
         private final int backendPid;
         private boolean closed;
 
-        ScanLease(Connection c, long sourceId, int backendPid) {
+        /** {@code sourceId} is the lock's key: a source id, or a pipeline job's id. */
+        ScanLease(Connection c, int lockClass, long sourceId, int backendPid) {
             this.c = c;
+            this.lockClass = lockClass;
             this.sourceId = sourceId;
             this.backendPid = backendPid;
         }
@@ -218,7 +237,7 @@ public class JobQueue {
             }
             closed = true;
             try (c; PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_unlock(?, ?)")) {
-                ps.setInt(1, SOURCE_LOCK_CLASS);
+                ps.setInt(1, lockClass);
                 ps.setInt(2, (int) sourceId);
                 ps.execute();
             } catch (SQLException e) {
@@ -344,10 +363,18 @@ public class JobQueue {
                         AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
                         AND l.classid = ?::bigint::oid
                         AND l.objid = ((j.payload ->> 'sourceId')::bigint % ?)::oid)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM pg_locks l
+                      WHERE j.kind = 'pipeline' AND l.locktype = 'advisory' AND l.objsubid = 2 AND l.granted
+                        AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                        AND l.classid = ?::bigint::oid
+                        AND l.objid = (j.id % ?)::oid)
                 FOR UPDATE OF j SKIP LOCKED""")) {
                 ps.setDouble(1, staleAfter.toMillis() / 1000.0);
                 ps.setLong(2, SOURCE_LOCK_CLASS);
                 ps.setLong(3, OID_RANGE);
+                ps.setLong(4, PIPELINE_JOB_LOCK_CLASS);
+                ps.setLong(5, OID_RANGE);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         stale.add(new Stale(rs.getLong(1), rs.getInt(2), rs.getInt(3), rs.getString(4), rs.getLong(5)));

@@ -201,6 +201,38 @@ public class SourceService {
         return new Draft(connector, config, replace, replace ? secret : null, displayName, keepSecretIf);
     }
 
+    /** Said when someone other than an admin tries to change whether a source may be written to. */
+    static final String WRITING_ADMIN_ONLY = CommonSettings.ALLOW_WRITING + ": only admins can let pipelines write "
+        + "to a source, or make it read-only again. Ask an admin";
+
+    /**
+     * The edit form with {@code allow_writing} as only an admin may change it: for anyone else, a
+     * form that leaves it out keeps the stored value, and one that changes it is refused.
+     *
+     * @throws jakarta.ws.rs.WebApplicationException 403 when someone else changes it
+     */
+    static SourceForm writingAsAllowed(SourceForm form, Records.Source existing, boolean admin) {
+        if (admin || form == null || form.settings() == null) {
+            return form;
+        }
+        String stored = existing.settings().get(CommonSettings.ALLOW_WRITING);
+        String sent = form.settings().get(CommonSettings.ALLOW_WRITING);
+        if (sent == null || sent.isBlank()) {
+            if (stored == null) {
+                return form;
+            }
+            Map<String, String> kept = new HashMap<>(form.settings());
+            kept.put(CommonSettings.ALLOW_WRITING, stored);
+            return new SourceForm(form.name(), form.kind(), kept, form.password(), form.clearPassword(), form.source(),
+                form.displayName());
+        }
+        if (CommonSettings.allowsWriting(Map.of(CommonSettings.ALLOW_WRITING, sent))
+            != CommonSettings.allowsWriting(existing.settings())) {
+            throw ApiError.of(Response.Status.FORBIDDEN, WRITING_ADMIN_ONLY);
+        }
+        return form;
+    }
+
     private static boolean same(String a, String b) {
         String x = a == null || a.isBlank() ? null : a.trim();
         String y = b == null || b.isBlank() ? null : b.trim();

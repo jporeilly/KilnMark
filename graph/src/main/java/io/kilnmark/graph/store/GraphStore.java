@@ -66,7 +66,7 @@ public interface GraphStore {
     /** Whether a scan of the source is queued or running. */
     boolean hasActiveRun(long sourceId);
 
-    /** A source's latest runs, newest first, with their jobs' attempts and errors. */
+    /** A source's latest scans, newest first, with their jobs' attempts and errors. */
     List<Records.RunHistory> runHistory(String sourceName, int limit);
 
     long queueRun(long sourceId, String kind);
@@ -77,6 +77,7 @@ public interface GraphStore {
 
     Optional<Run> run(long runId);
 
+    /** A source's latest scans, newest first (not the finished runs that record a pipeline's writes). */
     List<Run> runs(String sourceName, int limit);
 
     /** Records an asset seen by a run, replacing its fields with {@code fields}. */

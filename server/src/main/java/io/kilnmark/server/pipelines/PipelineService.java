@@ -1,0 +1,716 @@
+package io.kilnmark.server.pipelines;
+
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.BooleanSupplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.jboss.logging.Logger;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import io.kilnmark.graph.store.GraphStore;
+import io.kilnmark.graph.store.Records;
+import io.kilnmark.kiln.MetadataEvent;
+import io.kilnmark.kiln.SettingSpec;
+import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.StepFactories;
+import io.kilnmark.kiln.StepFactory;
+import io.kilnmark.kiln.connect.AssetInfo;
+import io.kilnmark.kiln.connect.Connector;
+import io.kilnmark.kiln.graph.GraphRunner;
+import io.kilnmark.kiln.graph.PipelineGraph;
+import io.kilnmark.server.KilnmarkConfig;
+import io.kilnmark.server.api.ApiError;
+import io.kilnmark.server.auth.AccessRole;
+import io.kilnmark.server.quality.QualityService;
+import io.kilnmark.server.scan.ScanService;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import jakarta.ws.rs.WebApplicationException;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+
+/**
+ * Pipelines (docs/design/pipelines.md sections 5 and 6): saving them with every version, checking
+ * their YAML, queueing runs on the job queue and, on a worker, running one exact version and
+ * recording each step's part, the assets it wrote and their lineage.
+ */
+@ApplicationScoped
+public class PipelineService {
+
+    private static final Logger LOG = Logger.getLogger(PipelineService.class);
+
+    /** Pipeline names: a small letter, then small letters, digits and dashes; at most 63 characters. */
+    public static final Pattern NAME = Pattern.compile("[a-z][a-z0-9-]{0,62}");
+    static final int MAX_MESSAGE = 500;
+    static final int MAX_DISPLAY_NAME = 200;
+    static final int MAX_DESCRIPTION = 2000;
+
+    private final PipelineStore store;
+    private final PipelineCompilerPort compiler;
+    private final StepFactories steps;
+    private final GraphRunner runner;
+    private final GraphStore graph;
+    private final PipelineSources sources;
+    private final KilnmarkConfig config;
+    private final ObjectMapper json;
+    private final PipelineExecution execution;
+
+    /** The scan's path for storing row counts and profiles, reused for what pipelines write. */
+    @Inject
+    ScanService scans;
+
+    /** Quality: profile versions of written assets, and their evaluation afterwards. */
+    @Inject
+    QualityService quality;
+
+    @Inject
+    public PipelineService(PipelineStore store, PipelineCompilerPort compiler, StepFactories steps, GraphRunner runner,
+                           GraphStore graph, PipelineSources sources, KilnmarkConfig config, ObjectMapper json) {
+        this.store = store;
+        this.compiler = compiler;
+        this.steps = steps;
+        this.runner = runner;
+        this.graph = graph;
+        this.sources = sources;
+        this.config = config;
+        this.json = json;
+        this.execution = new PipelineExecution(json);
+    }
+
+    // ---- names and checks ----
+
+    /** Why {@code name} cannot name a pipeline, or null when it can. */
+    public static String nameProblem(String name) {
+        if (name == null || name.isBlank()) {
+            return "name: give the pipeline a name, such as customer-billing";
+        }
+        if (!NAME.matcher(name).matches()) {
+            return "name: '" + name + "' cannot name a pipeline. Start with a small letter, then use small letters, "
+                + "digits and dashes, at most 63 characters, such as customer-billing";
+        }
+        return null;
+    }
+
+    static WebApplicationException fail(Response.Status status, String message) {
+        return new WebApplicationException(Response.status(status).type(MediaType.APPLICATION_JSON)
+            .entity(new ApiError(message)).build());
+    }
+
+    private void checkSize(String yaml) {
+        if (yaml == null || yaml.isBlank()) {
+            throw new IllegalArgumentException("yaml: send the pipeline's YAML");
+        }
+        int max = Math.max(1, config.pipelines().maxYamlKb());
+        int size = yaml.getBytes(StandardCharsets.UTF_8).length;
+        if (size > max * 1024) {
+            throw new IllegalArgumentException("yaml: the pipeline is " + ((size + 1023) / 1024) + " KB; this server "
+                + "accepts at most " + max + " KB (kilnmark.pipelines.max-yaml-kb)");
+        }
+    }
+
+    private static String clip(String text, int max, String field) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        String t = text.strip();
+        if (t.length() > max) {
+            throw new IllegalArgumentException(field + ": at most " + max + " characters; this has " + t.length());
+        }
+        if (t.chars().anyMatch(c -> c < 0x20 && c != '\n' && c != '\t')) {
+            throw new IllegalArgumentException(field + ": no control characters");
+        }
+        return t;
+    }
+
+    // ---- validation ----
+
+    /**
+     * Checks YAML without running anything: problems with lines, each step's ports and output
+     * columns. {@code expectedName}, when given, is the pipeline's name, which the YAML's
+     * {@code name} must match.
+     */
+    public PipelineViews.Validation validate(String yaml, String expectedName) {
+        checkSize(yaml);
+        PipelineCompilerPort.Compilation c = compiler.check(yaml, steps);
+        List<PipelineCompilerPort.Problem> problems = new ArrayList<>(c.problems());
+        if (expectedName != null && c.name() != null && !c.name().equals(expectedName)) {
+            problems.add(0, new PipelineCompilerPort.Problem(lineOf(yaml, "name"), 1, null, "name: this pipeline is "
+                + "called " + expectedName + "; a pipeline's name cannot change. Write name: " + expectedName));
+        }
+        return new PipelineViews.Validation(problems.isEmpty(), c.name(), c.description(), problems, c.steps(),
+            c.edges());
+    }
+
+    /** The line of a top-level key, or 0. */
+    static int lineOf(String yaml, String key) {
+        Matcher m = Pattern.compile("(?m)^" + Pattern.quote(key) + "\\s*:").matcher(yaml);
+        if (!m.find()) {
+            return 0;
+        }
+        int line = 1;
+        for (int i = 0; i < m.start(); i++) {
+            if (yaml.charAt(i) == '\n') {
+                line++;
+            }
+        }
+        return line;
+    }
+
+    private String problemsJson(List<PipelineCompilerPort.Problem> problems) {
+        try {
+            return json.writeValueAsString(problems);
+        } catch (JsonProcessingException e) {
+            return "[]";
+        }
+    }
+
+    private List<PipelineCompilerPort.Problem> problems(String text) {
+        try {
+            return text == null ? List.of() : json.readValue(text, new TypeReference<>() { });
+        } catch (JsonProcessingException e) {
+            return List.of();
+        }
+    }
+
+    // ---- pipelines and versions ----
+
+    public List<PipelineViews.PipelineSummary> list() {
+        return store.pipelines().stream().map(s -> new PipelineViews.PipelineSummary(s.pipeline().name(),
+            s.pipeline().displayName(), s.pipeline().description(), s.pipeline().latestVersion(), s.valid(),
+            s.pipeline().updatedBy(), s.pipeline().updatedAt(), summary(s.lastRun()))).toList();
+    }
+
+    private PipelineStore.Pipeline find(String name) {
+        return store.pipeline(name).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline called " + name));
+    }
+
+    public PipelineViews.PipelineDetail get(String name) {
+        PipelineStore.Pipeline p = find(name);
+        PipelineStore.Version v = store.version(name, p.latestVersion()).orElse(null);
+        PipelineStore.Run last = store.runs(name, 1).stream().findFirst().orElse(null);
+        return detail(p, v, last);
+    }
+
+    private PipelineViews.PipelineDetail detail(PipelineStore.Pipeline p, PipelineStore.Version v,
+                                                PipelineStore.Run last) {
+        return new PipelineViews.PipelineDetail(p.name(), p.displayName(), p.description(), p.latestVersion(),
+            p.createdBy(), p.createdAt(), p.updatedBy(), p.updatedAt(), v == null ? null : version(v), summary(last));
+    }
+
+    private PipelineViews.VersionDetail version(PipelineStore.Version v) {
+        return new PipelineViews.VersionDetail(v.n(), v.yaml(), v.message(), v.author(), v.createdAt(), v.valid(),
+            problems(v.problems()));
+    }
+
+    /** Adds a pipeline with its first version; an invalid one is saved as a draft. */
+    public PipelineViews.PipelineDetail create(PipelineViews.NewPipeline body, String by) {
+        if (body == null) {
+            throw new IllegalArgumentException("Send the pipeline as JSON with a name and its YAML");
+        }
+        String problem = nameProblem(body.name());
+        if (problem != null) {
+            throw new IllegalArgumentException(problem);
+        }
+        PipelineViews.Validation v = validate(body.yaml(), body.name());
+        String display = clip(body.displayName(), MAX_DISPLAY_NAME, "displayName");
+        String description = clip(body.description() != null ? body.description() : v.description(), MAX_DESCRIPTION,
+            "description");
+        String message = clip(body.message() == null ? "First version" : body.message(), MAX_MESSAGE, "message");
+        try {
+            PipelineStore.Pipeline p = store.create(body.name(), display == null ? body.name() : display, description,
+                by, body.yaml(), message, v.valid(), problemsJson(v.problems()));
+            LOG.infof("Pipeline %s added by %s", p.name(), by);
+            return detail(p, store.version(p.name(), 1).orElse(null), null);
+        } catch (PipelineStore.Exists e) {
+            throw fail(Response.Status.CONFLICT, "A pipeline called " + body.name() + " already exists");
+        }
+    }
+
+    /**
+     * Saves a new version. {@code expected}, from If-Match, is the latest version the caller read;
+     * when someone has saved another since, the change is refused (409).
+     */
+    public PipelineViews.PipelineDetail save(String name, Integer expected, PipelineViews.PipelineChange body,
+                                             String by) {
+        PipelineStore.Pipeline old = find(name);
+        if (body == null) {
+            throw new IllegalArgumentException("Send the new version as JSON with its YAML and a message");
+        }
+        PipelineViews.Validation v = validate(body.yaml(), name);
+        String display = clip(body.displayName(), MAX_DISPLAY_NAME, "displayName");
+        String description = body.description() != null ? clip(body.description(), MAX_DESCRIPTION, "description")
+            : v.description() != null ? clip(v.description(), MAX_DESCRIPTION, "description") : old.description();
+        String message = clip(body.message(), MAX_MESSAGE, "message");
+        try {
+            PipelineStore.Pipeline p = store.saveVersion(name, expected, body.yaml(), message, by, v.valid(),
+                problemsJson(v.problems()), display, description).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
+                    "No pipeline called " + name));
+            return detail(p, store.version(name, p.latestVersion()).orElse(null),
+                store.runs(name, 1).stream().findFirst().orElse(null));
+        } catch (PipelineStore.Changed e) {
+            throw changedSince();
+        }
+    }
+
+    static WebApplicationException changedSince() {
+        return fail(Response.Status.CONFLICT, "Someone else saved a new version of this pipeline after you opened it. "
+            + "Load it as it is now, then make your change again.");
+    }
+
+    /** The version number sent in If-Match ({@code "3"}, quotes and a weak W/ prefix allowed), or null for none. */
+    public static Integer readVersion(String ifMatch) {
+        if (ifMatch == null || ifMatch.isBlank() || ifMatch.strip().equals("*")) {
+            return null;
+        }
+        String v = ifMatch.strip();
+        if (v.startsWith("W/")) {
+            v = v.substring(2);
+        }
+        if (v.length() >= 2 && v.startsWith("\"") && v.endsWith("\"")) {
+            v = v.substring(1, v.length() - 1);
+        }
+        try {
+            int n = Integer.parseInt(v);
+            if (n >= 1) {
+                return n;
+            }
+        } catch (NumberFormatException e) {
+            // explained below
+        }
+        throw new IllegalArgumentException("If-Match: the pipeline's latest version as you last read it, for example "
+            + "\"3\"");
+    }
+
+    public void delete(String name, String by) {
+        try {
+            if (!store.delete(name)) {
+                throw fail(Response.Status.NOT_FOUND, "No pipeline called " + name);
+            }
+            LOG.infof("Pipeline %s deleted by %s", name, by);
+        } catch (PipelineStore.Busy e) {
+            throw fail(Response.Status.CONFLICT, "A run of " + name + " is queued or running. Wait for it to finish, "
+                + "or cancel it, then delete the pipeline.");
+        }
+    }
+
+    public List<PipelineViews.VersionSummary> versions(String name) {
+        find(name);
+        return store.versions(name).stream().map(v -> new PipelineViews.VersionSummary(v.n(), v.message(), v.author(),
+            v.createdAt(), v.valid(), problems(v.problems()).size())).toList();
+    }
+
+    public PipelineViews.VersionDetail version(String name, int n) {
+        find(name);
+        return store.version(name, n).map(this::version).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
+            name + " has no version " + n));
+    }
+
+    // ---- runs ----
+
+    /**
+     * Queues a run of one version (the latest by default). The version is checked again now, since
+     * sources may have changed since it was saved: one with problems cannot run.
+     */
+    public PipelineViews.RunSummary queueRun(String name, Integer version, String by, AccessRole role) {
+        PipelineStore.Pipeline p = find(name);
+        int n = version == null ? p.latestVersion() : version;
+        PipelineStore.Version v = store.version(name, n).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
+            name + " has no version " + n));
+        PipelineViews.Validation check = validate(v.yaml(), name);
+        if (!check.valid()) {
+            throw fail(Response.Status.CONFLICT, "Version " + n + " of " + name + " cannot run until its problems are "
+                + "fixed: " + firstProblems(check.problems()));
+        }
+        PipelineStore.Run run = store.queueRun(name, n, by, role.id());
+        LOG.infof("Run %d of pipeline %s (version %d) queued by %s", run.id(), name, n, by);
+        return summary(run);
+    }
+
+    private static String firstProblems(List<PipelineCompilerPort.Problem> problems) {
+        List<String> out = new ArrayList<>();
+        for (PipelineCompilerPort.Problem p : problems.subList(0, Math.min(3, problems.size()))) {
+            out.add((p.line() > 0 ? "line " + p.line() + ": " : "") + p.message());
+        }
+        return String.join("; ", out) + (problems.size() > 3 ? "; and " + (problems.size() - 3) + " more" : "");
+    }
+
+    public List<PipelineViews.RunSummary> runs(String name, int limit) {
+        find(name);
+        return store.runs(name, Math.max(1, Math.min(limit, 200))).stream().map(this::summary).toList();
+    }
+
+    public PipelineViews.RunDetail run(long id) {
+        PipelineStore.Run r = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline run " + id));
+        List<PipelineViews.StepRunView> stepViews = store.stepRuns(id).stream().map(s -> new PipelineViews.StepRunView(
+            s.stepId(), s.type(), s.position(), s.rowsIn(), s.rowsOut(), tree(s.portRows()), s.peakMemory(),
+            s.durationMs(), s.error())).toList();
+        JsonNode result = tree(r.result());
+        List<PipelineViews.WrittenAsset> written = new ArrayList<>();
+        List<String> read = new ArrayList<>();
+        List<String> notes = new ArrayList<>();
+        if (result != null) {
+            for (JsonNode w : result.path("written")) {
+                written.add(new PipelineViews.WrittenAsset(w.path("step").asText(), w.path("urn").asText(),
+                    w.path("source").asText(), w.path("target").asText(), w.path("mode").asText(),
+                    w.hasNonNull("rows") ? w.get("rows").asLong() : null, w.path("registered").asBoolean()));
+            }
+            result.path("read").forEach(n -> read.add(n.asText()));
+            result.path("notes").forEach(n -> notes.add(n.asText()));
+        }
+        List<PipelineViews.LineageLink> lineage = store.lineageOfRun(id).stream()
+            .map(l -> new PipelineViews.LineageLink(l.stepId(), l.inputUrn(), l.outputUrn())).toList();
+        return new PipelineViews.RunDetail(summary(r), stepViews, written, read, lineage, notes);
+    }
+
+    /** Asks a run to stop: a queued run is cancelled at once, a running one within a few seconds. */
+    public PipelineViews.RunSummary cancel(long id, String by) {
+        PipelineStore.Run before = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
+            "No pipeline run " + id));
+        if (before.finished()) {
+            throw fail(Response.Status.CONFLICT, "Run " + id + " has already finished (" + before.status() + ")");
+        }
+        PipelineStore.Run r = store.requestCancel(id, by).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
+            "No pipeline run " + id));
+        LOG.infof("Run %d of pipeline %s cancelled by %s", id, r.pipeline(), by);
+        return summary(r);
+    }
+
+    /** Lineage recorded by pipeline writes: what an asset came from, and what was made from it. */
+    public PipelineViews.AssetLineage lineage(String urn) {
+        if (urn == null || !urn.startsWith("urn:kilnmark:")) {
+            throw new IllegalArgumentException("urn: an asset reference, such as urn:kilnmark:lab-db:crm.customers");
+        }
+        List<PipelineViews.LineageEntry> up = new ArrayList<>();
+        List<PipelineViews.LineageEntry> down = new ArrayList<>();
+        for (PipelineStore.Lineage l : store.lineageOfAsset(urn)) {
+            if (l.outputUrn().equals(urn)) {
+                up.add(new PipelineViews.LineageEntry(l.inputUrn(), l.pipeline(), l.runId(), l.stepId(), l.recordedAt()));
+            } else {
+                down.add(new PipelineViews.LineageEntry(l.outputUrn(), l.pipeline(), l.runId(), l.stepId(),
+                    l.recordedAt()));
+            }
+        }
+        return new PipelineViews.AssetLineage(urn, up, down);
+    }
+
+    private JsonNode tree(String text) {
+        if (text == null) {
+            return null;
+        }
+        try {
+            return json.readTree(text);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
+    }
+
+    private PipelineViews.RunSummary summary(PipelineStore.Run r) {
+        if (r == null) {
+            return null;
+        }
+        JsonNode result = tree(r.result());
+        Long rows = result != null && result.hasNonNull("rowsWritten") ? result.get("rowsWritten").asLong() : null;
+        return new PipelineViews.RunSummary(r.id(), r.pipeline(), r.version(), r.status(), r.requestedBy(),
+            r.requestedAt(), r.startedAt(), r.finishedAt(), r.cancelRequested(), r.error(), rows);
+    }
+
+    // ---- the step catalogue ----
+
+    /** Every step type with its ports and settings schema, by type. */
+    public List<PipelineViews.StepType> catalogue() {
+        List<PipelineViews.StepType> out = new ArrayList<>();
+        for (StepFactory f : steps.all()) {
+            List<String> inputs = f.inputPorts().stream().map(p -> p.endsWith("*") ? p.substring(0, p.length() - 1) : p)
+                .toList();
+            List<String> many = f.inputPorts().stream().filter(p -> p.endsWith("*"))
+                .map(p -> p.substring(0, p.length() - 1)).toList();
+            List<PipelineViews.SettingView> settings = new ArrayList<>();
+            for (SettingSpec s : f.settings()) {
+                settings.add(new PipelineViews.SettingView(s.key(), s.label(), s.kind().name().toLowerCase(Locale.ROOT),
+                    s.required(), s.defaultValue(), s.help(), s.choices()));
+            }
+            out.add(new PipelineViews.StepType(f.type(), f.kind().name().toLowerCase(Locale.ROOT), f.label(), f.help(),
+                inputs, many, f.outputPorts(), settings));
+        }
+        return out;
+    }
+
+    // ---- the job ----
+
+    /** Marks failed the runs whose worker stopped without finishing them; called by workers' recovery. */
+    public void failOrphanedRuns() {
+        try {
+            int n = store.failOrphanedRuns();
+            if (n > 0) {
+                LOG.infof("%d pipeline runs were left by a stopped worker and are now marked failed", n);
+            }
+        } catch (RuntimeException e) {
+            LOG.debugf(e, "Could not check for pipeline runs left by a stopped worker");
+        }
+    }
+
+    /** Runs the pipeline run behind job {@code jobId}; called by a worker. */
+    public ScanService.Result execute(long jobId, BooleanSupplier shutdown) {
+        store.failOrphanedRuns();
+        Optional<Long> runId = store.runForJob(jobId);
+        if (runId.isEmpty()) {
+            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Job " + jobId + " names no pipeline run");
+        }
+        long id = runId.get();
+        Optional<PipelineStore.Run> found = store.run(id);
+        if (found.isEmpty()) {
+            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Pipeline run " + id + " no longer exists");
+        }
+        PipelineStore.Run run = found.get();
+        if (run.finished()) {
+            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Pipeline run " + id + " had already finished");
+        }
+        if (!store.startRun(id)) {
+            if (store.cancelRequested(id)) {
+                store.finishRun(id, "cancelled", "Cancelled before it started", null);
+            }
+            return new ScanService.Result(ScanService.Outcome.SKIPPED, "Pipeline run " + id + " was cancelled");
+        }
+        RunContext context = new RunContext(run.pipeline(), id, run.requestedBy(), role(run.requestedRole()));
+        try {
+            PipelineStore.Version v = store.version(run.pipeline(), run.version()).orElse(null);
+            if (v == null) {
+                store.finishRun(id, "failed", "Version " + run.version() + " of " + run.pipeline() + " no longer exists",
+                    null);
+                return new ScanService.Result(ScanService.Outcome.FINISHED, null);
+            }
+            PipelineCompilerPort.Compilation c = context.run(() -> compiler.compile(v.yaml(), steps));
+            if (!c.valid() || c.graph() == null) {
+                store.finishRun(id, "failed", context.scrub("The pipeline could not start: "
+                    + firstProblems(c.problems())), null);
+                return new ScanService.Result(ScanService.Outcome.FINISHED, null);
+            }
+            List<PipelineExecution.WriteTarget> writes = PipelineExecution.writes(c);
+            PipelineGraph graphToRun = PipelineExecution.withProfiles(c.graph(), writes, this::profileSettings);
+            PipelineExecution.Outcome o = execution.run(runner, graphToRun, writes, context,
+                () -> store.cancelRequested(id), shutdown);
+            store.saveStepRuns(id, o.steps());
+            ObjectNode result = json.createObjectNode();
+            ArrayNode read = result.putArray("read");
+            PipelineExecution.reads(c).values().stream().distinct().forEach(read::add);
+            ArrayNode notes = json.createArrayNode();
+            ArrayNode written = result.putArray("written");
+            long total = 0;
+            for (PipelineExecution.WriteTarget w : writes) {
+                Long rows = o.rowsIn().get(w.step());
+                total += rows == null ? 0 : rows;
+                boolean registered = false;
+                if (o.status().equals("succeeded")) {
+                    registered = register(w, rows, o.events(), c, context, notes);
+                }
+                ObjectNode n = written.addObject();
+                n.put("step", w.step());
+                n.put("urn", w.urn());
+                n.put("source", w.source());
+                n.put("target", w.target());
+                n.put("mode", w.mode());
+                if (rows == null) {
+                    n.putNull("rows");
+                } else {
+                    n.put("rows", rows);
+                }
+                n.put("registered", registered);
+            }
+            result.put("rowsWritten", total);
+            result.set("notes", notes);
+            store.finishRun(id, o.status(), o.error(), result.toString());
+            LOG.infof("Run %d of pipeline %s: %s", id, run.pipeline(), o.status());
+        } catch (RuntimeException e) {
+            LOG.errorf(e, "Run %d of pipeline %s failed", id, run.pipeline());
+            store.finishRun(id, "failed", context.scrub("The run failed: " + e.getMessage()), null);
+        }
+        return new ScanService.Result(ScanService.Outcome.FINISHED, null);
+    }
+
+    private static AccessRole role(String text) {
+        try {
+            return AccessRole.parse(text);
+        } catch (IllegalArgumentException e) {
+            return AccessRole.VIEWER;
+        }
+    }
+
+    /** Profile settings for what a write writes: the source's own rules on keeping values apply. */
+    private Map<String, String> profileSettings(PipelineExecution.WriteTarget w) {
+        try {
+            Records.Source s = graph.source(w.source()).orElse(null);
+            Connector c = s == null ? null : sources.connector(s.kind()).orElse(null);
+            if (s == null || c == null || quality == null) {
+                return Map.of("keep-values", "false");
+            }
+            AssetInfo a = new AssetInfo(w.target(), "table", null, w.target(), null, List.of(), w.key(), false, true,
+                Map.of());
+            return quality.profileSettings(s, c, a, w.urn());
+        } catch (RuntimeException e) {
+            return Map.of("keep-values", "false");
+        }
+    }
+
+    /**
+     * Registers what a write wrote as the scan registers what it finds: the asset and its fields,
+     * and (when the write replaced the whole target) its row count and column profiles, under a
+     * finished run of kind 'pipeline' on the written source; then its lineage from the assets read
+     * upstream. Never throws: the run has already succeeded, so problems become notes.
+     */
+    private boolean register(PipelineExecution.WriteTarget w, Long rows, List<MetadataEvent> events,
+                             PipelineCompilerPort.Compilation c, RunContext context, ArrayNode notes) {
+        try {
+            Records.Source s = graph.source(w.source()).orElse(null);
+            if (s == null) {
+                notes.add(w.step() + ": source " + w.source() + " no longer exists, so what it wrote is not catalogued");
+                return false;
+            }
+            long recordRun = store.recordWrite(s.id(), rows == null ? 0 : rows, "Written by pipeline "
+                + context.pipeline() + " (run " + context.runId() + ", step " + w.step() + ")");
+            AssetInfo info = describe(w, context);
+            List<MetadataEvent> mine = events.stream().filter(e -> e.assetUrn().equals(w.urn())).toList();
+            List<Records.Field> fields = info != null && !info.fields().isEmpty() ? fields(info)
+                : fieldsFromColumns(w, c, mine);
+            boolean files = sources.connector(s.kind()).map(k -> "files".equals(k.category())).orElse(false);
+            String kind = info != null ? info.kind() : files ? "file" : "table";
+            String container = info != null && info.container() != null ? info.container() : container(w.target());
+            String name = info != null && info.name() != null ? info.name() : lastPart(w.target());
+            graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), kind, container, name, null,
+                info != null ? info.primaryKey() : w.key()), fields);
+            if (w.wholeTarget()) {
+                List<MetadataEvent> toStore = new ArrayList<>(mine);
+                if (mine.stream().noneMatch(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT) && rows != null) {
+                    toStore.add(0, new MetadataEvent(w.urn(), MetadataEvent.Kind.ROW_COUNT,
+                        Map.of("rows", Long.toString(rows), "complete", "true"), Instant.now()));
+                }
+                int failed = 0;
+                for (MetadataEvent e : toStore) {
+                    try {
+                        scans.recordEvent(e, recordRun);
+                    } catch (RuntimeException ex) {
+                        failed++;
+                        LOG.debugf(ex, "Could not store %s for %s", e.kind(), w.urn());
+                    }
+                    quality.observe(e, recordRun, s);
+                }
+                if (failed > 0) {
+                    notes.add(w.step() + ": " + failed + " column profiles could not be stored; scan " + w.source()
+                        + " to profile " + w.target());
+                }
+                quality.afterScan(s, recordRun);
+            } else {
+                notes.add(w.step() + ": the " + w.mode() + " added to " + w.target() + ", so its profile is left as it "
+                    + "was; scan " + w.source() + " to profile the whole of it");
+            }
+            store.saveLineage(context.pipeline(), context.runId(), w.step(), w.inputs(), w.urn());
+            return true;
+        } catch (RuntimeException e) {
+            LOG.warnf(e, "Could not catalogue what step %s of pipeline %s wrote", w.step(), context.pipeline());
+            notes.add(w.step() + ": what it wrote could not be catalogued: " + context.scrub(e.getMessage()));
+            return false;
+        }
+    }
+
+    /** The written asset as its connector now describes it, or null when it cannot. */
+    private AssetInfo describe(PipelineExecution.WriteTarget w, RunContext context) {
+        try {
+            PipelineSources.Resolved r = sources.resolve(w.step(), w.source(), context);
+            return r.connector().asset(r.config(), w.target());
+        } catch (StepException | io.kilnmark.kiln.connect.ConnectorException | RuntimeException e) {
+            LOG.debugf("Could not describe %s after writing it: %s", w.urn(), context.scrub(e.getMessage()));
+            return null;
+        }
+    }
+
+    private static List<Records.Field> fields(AssetInfo a) {
+        return a.fields().stream().map(f -> new Records.Field(f.name(), f.position(), f.sourceType(), f.kind(),
+            f.nullable(), f.description())).toList();
+    }
+
+    /** The write's columns as validation worked them out, else as the profile step saw them. */
+    private static List<Records.Field> fieldsFromColumns(PipelineExecution.WriteTarget w,
+                                                         PipelineCompilerPort.Compilation c,
+                                                         List<MetadataEvent> events) {
+        for (PipelineCompilerPort.EdgeOutline e : c.edges()) {
+            if (!e.toStep().equals(w.step())) {
+                continue;
+            }
+            for (PipelineCompilerPort.StepOutline s : c.steps()) {
+                if (s.id().equals(e.fromStep()) && s.columns().get(e.fromPort()) != null) {
+                    List<Records.Field> out = new ArrayList<>();
+                    int i = 0;
+                    for (PipelineCompilerPort.Column col : s.columns().get(e.fromPort())) {
+                        out.add(new Records.Field(col.name(), ++i, col.type(), col.type(), true, null));
+                    }
+                    return out;
+                }
+            }
+        }
+        Map<String, String> seen = new LinkedHashMap<>();
+        for (MetadataEvent e : events) {
+            if (e.kind() == MetadataEvent.Kind.PROFILE && e.attributes().get("field") != null) {
+                seen.putIfAbsent(e.attributes().get("field"), kindOfShape(e.attributes().get("shape")));
+            }
+        }
+        List<Records.Field> out = new ArrayList<>();
+        int i = 0;
+        for (Map.Entry<String, String> f : seen.entrySet()) {
+            out.add(new Records.Field(f.getKey(), ++i, f.getValue(), f.getValue(), true, null));
+        }
+        return out;
+    }
+
+    private static String kindOfShape(String shape) {
+        if (shape == null) {
+            return "text";
+        }
+        return switch (shape) {
+            case "integer" -> "int64";
+            case "number" -> "float64";
+            case "boolean" -> "boolean";
+            case "date" -> "date";
+            case "time" -> "time";
+            case "timestamp" -> "timestamp";
+            case "binary" -> "binary";
+            default -> "text";
+        };
+    }
+
+    private static String container(String target) {
+        int slash = target.lastIndexOf('/');
+        if (slash > 0) {
+            return target.substring(0, slash);
+        }
+        int dot = target.indexOf('.');
+        return dot > 0 && !target.contains("/") && target.indexOf('.', dot + 1) < 0 && !looksLikeFile(target)
+            ? target.substring(0, dot) : "";
+    }
+
+    private static String lastPart(String target) {
+        int slash = target.lastIndexOf('/');
+        if (slash >= 0) {
+            return target.substring(slash + 1);
+        }
+        int dot = target.indexOf('.');
+        return dot > 0 && !looksLikeFile(target) ? target.substring(dot + 1) : target;
+    }
+
+    private static boolean looksLikeFile(String target) {
+        String t = target.toLowerCase(Locale.ROOT);
+        return t.endsWith(".csv") || t.endsWith(".parquet") || t.endsWith(".json") || t.endsWith(".txt");
+    }
+}

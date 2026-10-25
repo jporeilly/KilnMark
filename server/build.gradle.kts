@@ -33,6 +33,8 @@ dependencies {
     "implementation"(project(":kiln-core"))
     "implementation"(project(":kiln-plugins"))
     "implementation"(project(":graph"))
+    // Pipeline YAML (docs/design/pipelines.md): read as a node tree for line numbers; version from the Quarkus platform.
+    "implementation"("org.yaml:snakeyaml")
     // POI (documents, ADR 0017) logs through the Log4j API: send it to the server's own log.
     "runtimeOnly"("org.jboss.logmanager:log4j2-jboss-logmanager")
 
