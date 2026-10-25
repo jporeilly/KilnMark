@@ -60,6 +60,11 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   const [loadError, setLoadError] = useState<string | null>(null);
   const editor = useRef<YamlEditorHandle>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
+  // Each failure moves the focus to its message once it is on the page (even the same message again).
+  const [failures, setFailures] = useState(0);
+  useEffect(() => {
+    if (failures > 0) errorRef.current?.focus();
+  }, [failures]);
   const sequence = useRef(0);
 
   const load = useCallback(async () => {
@@ -134,11 +139,12 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   const fail = (e: unknown) => {
     setError((e as Error).message);
     setConflict(e instanceof ApiError && e.status === 409 && !isNew);
-    window.setTimeout(() => errorRef.current?.focus(), 0);
+    setFailures((n) => n + 1);
   };
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
+    if (saving || (!dirty && !isNew)) return;
     setError(null);
     setConflict(false);
     setNotice("");
@@ -227,9 +233,8 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   }
 
   const title = isNew ? "New pipeline" : (detail?.displayName ?? name);
-  const summary = checking
-    ? "Checking…"
-    : checkError
+  // Announced when a check finishes; "Checking…" is shown but not announced on every keystroke.
+  const summary = checkError
       ? `Could not check: ${checkError}`
       : check == null
         ? ""
@@ -255,9 +260,20 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
         </h1>
         {!isNew && !viewing && steward && (
           <div className="buttons">
-            <button type="button" className="primary" onClick={runNow} disabled={!detail?.latest?.valid}>
+            <button
+              type="button"
+              className="primary"
+              onClick={runNow}
+              disabled={!detail?.latest?.valid}
+              aria-describedby={dirty ? "pl-run-hint" : undefined}
+            >
               Run now
             </button>
+            {dirty && (
+              <span id="pl-run-hint" className="small muted">
+                Runs the saved version {detail?.latestVersion}, not your unsaved changes.
+              </span>
+            )}
             <button type="button" onClick={remove}>
               Delete
             </button>
@@ -357,7 +373,17 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
             describedBy="yaml-hint pl-check-summary"
           />
           <div className="pl-problems">
-            <p id="pl-check-summary" className={problems.length > 0 ? "pl-summary pl-bad" : "pl-summary"} aria-live="polite">
+            {checking && (
+              <p className="pl-summary muted" aria-hidden="true">
+                Checking…
+              </p>
+            )}
+            <p
+              id="pl-check-summary"
+              className={problems.length > 0 ? "pl-summary pl-bad" : "pl-summary"}
+              aria-live="polite"
+              hidden={checking}
+            >
               {summary}
             </p>
             {problems.length > 0 && (
@@ -408,7 +434,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                 />
               </div>
               <div className="buttons">
-                <button type="submit" className="primary" disabled={saving || (!dirty && !isNew)}>
+                <button type="submit" className="primary" aria-disabled={saving || (!dirty && !isNew)}>
                   {saving ? "Saving…" : isNew ? "Save pipeline" : "Save new version"}
                 </button>
                 {!isNew && dirty && savedYaml != null && (

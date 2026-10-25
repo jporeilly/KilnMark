@@ -73,6 +73,8 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
     );
   }
   const r = detail.run;
+  // The engine does not time steps yet: the column appears once it does.
+  const timed = detail.steps.some((s) => s.durationMs != null);
   return (
     <>
       <p className="small">
@@ -141,7 +143,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
                   <th scope="col">Rows in</th>
                   <th scope="col">Rows out</th>
                   <th scope="col">Peak memory</th>
-                  <th scope="col">Time</th>
+                  {timed && <th scope="col">Time</th>}
                   <th scope="col">Error</th>
                 </tr>
               </thead>
@@ -165,7 +167,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
                       )}
                     </td>
                     <td>{formatBytes(s.peakMemory)}</td>
-                    <td>{formatDuration(s.durationMs)}</td>
+                    {timed && <td>{formatDuration(s.durationMs)}</td>}
                     <td className={s.error ? "pl-bad" : undefined}>{s.error ?? "–"}</td>
                   </tr>
                 ))}

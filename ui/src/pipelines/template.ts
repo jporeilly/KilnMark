@@ -14,8 +14,8 @@ steps:
     asset: crm.customers
     row_limit: 100            # 0 reads every row
 
-  # Add steps here (filter, compute, select, lookup, aggregate, ...): each names the step
-  # feeding it with input: <id>, or input: <id>.<port> for another port such as rejected.
+  # Add steps here, from the types this server lists (GET /api/v1/steps): each names the
+  # step feeding it with input: <id>, or input: <id>.<port> for another of its outputs.
 
   # Write the rows. The source must allow writing: an admin turns on Allow writing for it.
   - id: sample

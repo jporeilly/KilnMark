@@ -53,7 +53,7 @@ function StepBox({ data }: NodeProps<StepNode>) {
           ))}
         </ul>
       </div>
-      <div className="pl-step-columns small" role="tooltip">
+      <div className="pl-step-columns small">
         {columnsText(step)}
       </div>
     </div>
@@ -126,7 +126,8 @@ export default function PipelineDiagram({
         edges={links}
         nodeTypes={nodeTypes}
         fitView
-        minZoom={0.2}
+        fitViewOptions={{ minZoom: 0.6 }}
+        minZoom={0.6}
         maxZoom={2}
         colorMode={scheme}
         nodesConnectable={false}
