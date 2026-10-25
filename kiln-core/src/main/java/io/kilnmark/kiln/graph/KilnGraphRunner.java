@@ -1,10 +1,13 @@
 package io.kilnmark.kiln.graph;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,10 +16,13 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.OutOfMemoryException;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Schema;
 
 import io.kilnmark.kiln.MetadataEmitter;
 import io.kilnmark.kiln.RowSet;
@@ -41,34 +47,55 @@ import io.kilnmark.kiln.StepException;
  *   <li><b>Unconnected outputs.</b> {@link StepContext#output(String)} returns {@code null} for an
  *       output port with nothing connected; the step drops those rows
  *       ({@link StepContext#emit} does that for it).</li>
- *   <li><b>A step that ends early</b> (it stops before its input has ended) releases its inputs: a
- *       step writing only to it is stopped, without failing; a step that also writes elsewhere
- *       goes on, and what it writes to the finished step is read and dropped.</li>
- *   <li><b>Failures.</b> A failing step stops the steps before it and ends the steps after it,
- *       along every edge, and steps not joined to it at all are stopped; the result names the step
- *       where the failure started. Steps that only saw it are not blamed. A step that does not free
- *       its memory is named.</li>
+ *   <li><b>A step that ends early</b> (it stops before its input has ended) releases its inputs.
+ *       Once every step reading a step has finished, that step is stopped, without failing; while
+ *       another still reads it, what it writes to the finished step is read and dropped.</li>
+ *   <li><b>Failures.</b> A failing step stops the steps before it (they are interrupted, so a step
+ *       waiting on a database stops too) and ends the steps after it, along every edge; steps not
+ *       joined to it are stopped. The result names the step where the failure started. Steps that
+ *       only saw it are not blamed. A step that does not free its memory is named.</li>
+ *   <li><b>Stalls.</b> If no batch moves for the stall timeout while every running step is waiting
+ *       on a row set, the run fails with a message naming the waiting steps.</li>
  *   <li><b>Interruption.</b> If the thread calling {@link #run} is interrupted, every step is
  *       stopped and waited for before the {@link InterruptedException} is thrown.</li>
  * </ul>
  */
 public final class KilnGraphRunner implements GraphRunner {
 
-    private static final long DRAIN_POLL_MILLIS = 100;
+    /** How long a run may go without moving a batch while every step waits, unless set otherwise. */
+    public static final Duration DEFAULT_STALL_TIMEOUT = Duration.ofSeconds(120);
+
+    private static final long POLL_MILLIS = 100;
+    private static final System.Logger LOG = System.getLogger(KilnGraphRunner.class.getName());
 
     private final long memoryLimitBytes;
     private final int rowSetCapacity;
+    private final Duration stallTimeout;
 
     /**
      * @param memoryLimitBytes Arrow memory the whole run may hold at once
      * @param rowSetCapacity   batches each edge holds before the step writing to it waits
      */
     public KilnGraphRunner(long memoryLimitBytes, int rowSetCapacity) {
+        this(memoryLimitBytes, rowSetCapacity, DEFAULT_STALL_TIMEOUT);
+    }
+
+    /**
+     * @param memoryLimitBytes Arrow memory the whole run may hold at once
+     * @param rowSetCapacity   batches each edge holds before the step writing to it waits
+     * @param stallTimeout     how long no batch may move while every running step waits before the
+     *                         run fails as stalled
+     */
+    public KilnGraphRunner(long memoryLimitBytes, int rowSetCapacity, Duration stallTimeout) {
         if (rowSetCapacity < 1) {
             throw new IllegalArgumentException("rowSetCapacity must be at least 1");
         }
+        if (stallTimeout == null || stallTimeout.isNegative() || stallTimeout.isZero()) {
+            throw new IllegalArgumentException("stallTimeout must be positive");
+        }
         this.memoryLimitBytes = memoryLimitBytes;
         this.rowSetCapacity = rowSetCapacity;
+        this.stallTimeout = stallTimeout;
     }
 
     /**
@@ -95,10 +122,13 @@ public final class KilnGraphRunner implements GraphRunner {
         private final Map<String, Node> byId = new HashMap<>();
         private final List<Port> ports = new ArrayList<>();
         private final List<Reader> readers = new ArrayList<>(); // one per edge, in the graph's order
+        /** Every thread started; a thread leaves only once it has ended. */
         private final ConcurrentLinkedQueue<Thread> threads = new ConcurrentLinkedQueue<>();
         private final AtomicBoolean failed = new AtomicBoolean();
         private final Object lock = new Object();
-        private int errors;
+        private int errors;            // guarded by lock
+        private boolean stopping;      // guarded by lock: no thread may start once set
+        private volatile String runError;
 
         Run(PipelineGraph graph, MetadataEmitter metadata) {
             this.graph = graph;
@@ -118,6 +148,7 @@ public final class KilnGraphRunner implements GraphRunner {
                 Reader r = new Reader(e, p, byId.get(e.to().step()));
                 p.readers.add(r);
                 readers.add(r);
+                p.producer.liveReaders.incrementAndGet();
             }
             for (Port p : ports) {
                 if (p.readers.size() == 1) {
@@ -181,22 +212,20 @@ public final class KilnGraphRunner implements GraphRunner {
                 synchronized (lock) { // a failure while starting waits until every thread is known
                     for (Node n : nodes) {
                         Context ctx = new Context(n, metadata);
-                        start(n, "kiln-" + graph.name() + "-" + n.id(), () -> runStep(n, ctx));
+                        n.stepThread = start(n, "kiln-" + graph.name() + "-" + n.id(), () -> runStep(n, ctx));
                         for (Port p : n.outputs.values()) {
                             if (p.copies != null) {
-                                start(n, "kiln-" + graph.name() + "-" + n.id() + "." + p.port + "-copies",
+                                p.teeThread = start(n, "kiln-" + graph.name() + "-" + n.id() + "." + p.port + "-copies",
                                     () -> runTee(p));
                             }
                         }
                     }
                 }
                 try {
-                    Thread t;
-                    while ((t = threads.poll()) != null) {
-                        t.join();
-                    }
+                    watch();
                 } catch (InterruptedException e) {
                     stopAll();
+                    joinAll();
                     for (Node n : nodes) {
                         n.closeAllocators(true);
                     }
@@ -215,12 +244,107 @@ public final class KilnGraphRunner implements GraphRunner {
             return result(started);
         }
 
-        private void start(Node owner, String name, Runnable body) {
-            Thread t = Thread.ofVirtual().name(name).unstarted(body);
-            owner.threads.add(t);
-            threads.add(t);
-            t.start();
+        /** Starts a thread for {@code owner}, unless the run or that step is being stopped; then null. */
+        private Thread start(Node owner, String name, Runnable body) {
+            synchronized (lock) {
+                if (stopping || owner.stoppedByEngine) {
+                    return null;
+                }
+                Thread t = Thread.ofVirtual().name(name).unstarted(body);
+                owner.threads.add(t);
+                threads.add(t);
+                t.start();
+                return t;
+            }
         }
+
+        // ---- waiting for the end, and the stall watchdog ----
+
+        /** Waits for every thread, failing the run if it stalls. */
+        private void watch() throws InterruptedException {
+            long stallNanos = stallTimeout.toNanos();
+            Duration tick = Duration.ofNanos(Math.max(TimeUnit.MILLISECONDS.toNanos(10),
+                Math.min(TimeUnit.SECONDS.toNanos(1), stallNanos / 4)));
+            long seen = progress();
+            long since = System.nanoTime();
+            Thread t;
+            while ((t = threads.peek()) != null) {
+                if (t.join(tick)) {
+                    threads.poll(); // only this thread removes, so the head is still t
+                    continue;
+                }
+                long now = System.nanoTime();
+                long p = progress();
+                if (p != seen) {
+                    seen = p;
+                    since = now;
+                } else if (now - since >= stallNanos) {
+                    List<String> waiting = waiting();
+                    if (waiting != null) {
+                        stalled(waiting);
+                    }
+                    since = now;
+                }
+            }
+        }
+
+        private long progress() {
+            long p = 0;
+            for (Port port : ports) {
+                p += port.rowSet.progress();
+                if (port.copies != null) {
+                    for (Reader r : port.readers) {
+                        p += r.rowSet.progress();
+                    }
+                }
+            }
+            return p;
+        }
+
+        /** What each running step waits for, or null if some running step is not waiting on a row set. */
+        private List<String> waiting() {
+            List<String> out = new ArrayList<>();
+            for (Node n : nodes) {
+                if (n.stepThread != null && n.stepThread.isAlive()) {
+                    List<String> on = new ArrayList<>();
+                    n.inputs.values().forEach(rs -> rs.stream().filter(r -> r.rowSet.readerWaiting())
+                        .forEach(r -> on.add("to read from " + r.rowSet.name())));
+                    n.outputs.values().stream().filter(p -> p.rowSet.writerWaiting())
+                        .forEach(p -> on.add("to write to " + p.rowSet.name()));
+                    if (on.isEmpty()) {
+                        return null;
+                    }
+                    out.add(n.id() + " (" + String.join(", ", on) + ")");
+                }
+                for (Port p : n.outputs.values()) {
+                    if (p.teeThread != null && p.teeThread.isAlive()) {
+                        boolean busy = !p.rowSet.readerWaiting()
+                            && p.readers.stream().noneMatch(r -> r.rowSet.writerWaiting());
+                        if (busy) {
+                            return null;
+                        }
+                    }
+                }
+            }
+            return out.isEmpty() ? null : out;
+        }
+
+        private void stalled(List<String> waiting) {
+            String time = stallTimeout.toMillis() % 1000 == 0 ? stallTimeout.toSeconds() + " seconds"
+                : stallTimeout.toMillis() + " milliseconds";
+            String message = "The run stalled: no rows moved for " + time + " while every running step waited for another. Waiting: " + String.join("; ", waiting)
+                + ". A step that reads one input to its end before another can cause this when both come"
+                + " from the same step.";
+            synchronized (lock) {
+                if (runError == null && errors == 0) {
+                    runError = message;
+                }
+            }
+            failed.set(true);
+            stopAll();
+        }
+
+        // ---- the result ----
 
         private RunResult result(Instant started) {
             List<RunResult.StepResult> steps = new ArrayList<>();
@@ -250,7 +374,9 @@ public final class KilnGraphRunner implements GraphRunner {
                 edges.add(new RunResult.EdgeResult(e.from().step(), e.from().port(), e.to().step(), e.to().port(),
                     r.rowSet.rows()));
             }
-            String error = first == null ? null : first.error;
+            // a step's own failure first, then a stall, then a step that did not free its memory
+            boolean ownFailure = first != null && first.errorOrder < Integer.MAX_VALUE - nodes.size();
+            String error = ownFailure ? first.error : runError != null ? runError : first == null ? null : first.error;
             return new RunResult(graph.name(), error == null ? RunResult.Status.SUCCEEDED : RunResult.Status.FAILED,
                 started, Instant.now(), steps, edges, error);
         }
@@ -267,20 +393,20 @@ public final class KilnGraphRunner implements GraphRunner {
                         throw new InterruptedException();
                     }
                 }
-                finishOutputs(n);
                 releaseInputs(n);
+                finishOutputs(n);
             } catch (Throwable t) {
                 boolean seen = t instanceof RowSet.UpstreamFailedException || t instanceof RowSet.CancelledException;
                 if (!seen && !n.stoppedByEngine) {
-                    recordError(n, "Step " + n.id() + " (" + step.type() + ") failed: " + message(t), false);
+                    recordError(n, describe(n, t), false);
                 }
                 if (t instanceof RowSet.CancelledException && !failed.get()) {
-                    // every step reading this one has finished early and nothing failed: end early too
-                    finishOutputs(n);
+                    // every step reading this one has finished and nothing failed: end early too
                     releaseInputs(n);
+                    finishOutputs(n);
                 } else {
+                    cancelInputs(n); // first, so the steps before stop even if a step after is stuck
                     failOutputs(n, t);
-                    cancelInputs(n);
                 }
             } finally {
                 try {
@@ -293,20 +419,42 @@ public final class KilnGraphRunner implements GraphRunner {
             }
         }
 
+        private String describe(Node n, Throwable t) {
+            if (t instanceof OutOfMemoryException) {
+                return "Step " + n.id() + " (" + n.step().type() + ") ran out of memory: the run may hold "
+                    + megabytes(memoryLimitBytes) + " of Arrow memory in all, and it was used up (" + message(t) + ")";
+            }
+            return "Step " + n.id() + " (" + n.step().type() + ") failed: " + message(t);
+        }
+
+        /** Ends every output; if interrupted (the step is being stopped), ends the rest as failed without waiting. */
         private void finishOutputs(Node n) {
+            InterruptedException interrupted = null;
             for (Port p : n.outputs.values()) {
                 try {
-                    p.rowSet.finish();
+                    if (interrupted == null) {
+                        p.rowSet.finish();
+                    } else {
+                        p.rowSet.fail(interrupted);
+                    }
                 } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+                    interrupted = e;
+                    try {
+                        p.rowSet.fail(e);
+                    } catch (InterruptedException never) {
+                        // fail never waits
+                    }
                 }
+            }
+            if (interrupted != null) {
+                Thread.currentThread().interrupt();
             }
         }
 
         private void failOutputs(Node n, Throwable cause) {
             for (Port p : n.outputs.values()) {
                 try {
-                    p.rowSet.fail(cause);
+                    p.rowSet.fail(cause); // never waits
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
@@ -318,32 +466,46 @@ public final class KilnGraphRunner implements GraphRunner {
         }
 
         /**
-         * The step has finished: a step writing only to it can stop, but one that also writes
-         * elsewhere must go on, so what it still writes here is read and dropped.
+         * The step has finished. Once every step reading a step has finished, that step can stop; until
+         * then, what it still writes here is read and dropped (a tee simply stops copying to this one).
          */
         private void releaseInputs(Node n) {
             for (List<Reader> rs : n.inputs.values()) {
                 for (Reader r : rs) {
-                    if (r.rowSet.atEnd()) {
+                    if (!r.released.compareAndSet(false, true)) {
                         continue;
                     }
-                    if (n.stoppedByEngine || r.port.copies != null || r.port.producer.outputs.size() == 1) {
-                        r.rowSet.cancel();
-                    } else {
-                        start(n, "kiln-" + graph.name() + "-" + n.id() + "-drain", () -> drain(r.rowSet, n));
+                    Node producer = r.port.producer;
+                    boolean last = producer.liveReaders.decrementAndGet() == 0;
+                    if (last) {
+                        cancelOutputs(producer); // nobody reads it any more
+                    } else if (!r.rowSet.atEnd()) {
+                        if (n.stoppedByEngine || r.port.copies != null) {
+                            r.rowSet.cancel();
+                        } else if (start(n, "kiln-" + graph.name() + "-" + n.id() + "-drain",
+                            () -> drain(r.rowSet, n)) == null) {
+                            r.rowSet.cancel();
+                        }
                     }
                 }
             }
         }
 
-        /** Reads and drops what is left of an input, until it ends or the run is stopped. */
+        private void cancelOutputs(Node producer) {
+            for (Port p : producer.outputs.values()) {
+                p.rowSet.cancel();
+                if (p.copies != null) {
+                    p.readers.forEach(r -> r.rowSet.cancel());
+                }
+            }
+        }
+
+        /** Reads and drops what is left of an input, without counting it, until it ends or is stopped. */
         private static void drain(RowSet rowSet, Node n) {
             try {
-                while (!rowSet.atEnd() && !n.stoppedByEngine) {
-                    VectorSchemaRoot b = rowSet.poll(n.allocator, DRAIN_POLL_MILLIS, TimeUnit.MILLISECONDS);
-                    if (b != null) {
-                        b.close();
-                    }
+                while (!rowSet.isCancelled() && !n.stoppedByEngine
+                    && rowSet.discard(POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+                    // dropped
                 }
             } catch (StepException e) {
                 // the step before failed: that step reports it
@@ -361,13 +523,23 @@ public final class KilnGraphRunner implements GraphRunner {
             VectorSchemaRoot held = null;
             try {
                 while (true) {
-                    held = p.rowSet.take(p.copies);
-                    if (held == null) {
-                        break;
+                    if (p.producer.stoppedByEngine) {
+                        throw new InterruptedException(); // its step is being stopped: end the readers
                     }
-                    if (live.isEmpty()) { // every reader has finished; the step goes on for its other outputs
-                        held.close();
-                        held = null;
+                    if (p.rowSet.isCancelled()) {
+                        return; // nobody reads this step any more
+                    }
+                    if (live.isEmpty()) { // these readers have finished; the step goes on for its other readers
+                        if (!p.rowSet.discard(POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+                            break;
+                        }
+                        continue;
+                    }
+                    held = p.rowSet.poll(p.copies, POLL_MILLIS, TimeUnit.MILLISECONDS);
+                    if (held == null) {
+                        if (p.rowSet.atEnd()) {
+                            break;
+                        }
                         continue;
                     }
                     int i = 0;
@@ -387,10 +559,6 @@ public final class KilnGraphRunner implements GraphRunner {
                             live.remove(i); // this reader finished early; the others are still fed
                         }
                     }
-                    if (live.isEmpty() && p.producer.outputs.size() == 1) {
-                        p.rowSet.cancel(); // nobody reads this step any more: it can stop
-                        return;
-                    }
                 }
                 for (Reader r : live) {
                     r.rowSet.finish();
@@ -400,11 +568,16 @@ public final class KilnGraphRunner implements GraphRunner {
                 failAll(live, seen);
             } catch (InterruptedException e) {
                 p.rowSet.cancel();
-                live.forEach(r -> r.rowSet.cancel());
+                failAll(live, e);
             } catch (Throwable t) {
                 if (!p.producer.stoppedByEngine) {
-                    recordError(p.producer, "Step " + p.producer.id() + " could not copy its '" + p.port
-                        + "' rows to the " + p.readers.size() + " steps reading them: " + message(t), false);
+                    String what = t instanceof OutOfMemoryException
+                        ? "ran out of memory copying its '" + p.port + "' rows to the " + p.readers.size()
+                            + " steps reading them: the run may hold " + megabytes(memoryLimitBytes)
+                            + " of Arrow memory in all (" + message(t) + ")"
+                        : "could not copy its '" + p.port + "' rows to the " + p.readers.size()
+                            + " steps reading them: " + message(t);
+                    recordError(p.producer, "Step " + p.producer.id() + " " + what, false);
                 }
                 p.rowSet.cancel();
                 failAll(live, t);
@@ -428,8 +601,9 @@ public final class KilnGraphRunner implements GraphRunner {
         // ---- failures and stopping ----
 
         /**
-         * Records where a failure started. The first failure also stops every step not joined to the
-         * failing one; the steps joined to it hear of it through their row sets.
+         * Records where a failure started. The first failure also interrupts the steps before the
+         * failing one (so a step waiting on a database stops) and stops every step not joined to it;
+         * the steps after it hear of it through their row sets.
          */
         private void recordError(Node n, String message, boolean leak) {
             synchronized (lock) {
@@ -446,8 +620,29 @@ public final class KilnGraphRunner implements GraphRunner {
                             stop(m);
                         }
                     }
+                    for (Node up : upstream(n)) {
+                        up.stoppedByEngine = true; // it ends through its own catch, failing its outputs
+                        up.threads.forEach(Thread::interrupt);
+                    }
                 }
             }
+        }
+
+        /** Every step feeding {@code n}, directly or through others. */
+        private Set<Node> upstream(Node n) {
+            Set<Node> out = new HashSet<>();
+            ArrayDeque<Node> todo = new ArrayDeque<>(List.of(n));
+            while (!todo.isEmpty()) {
+                for (List<Reader> rs : todo.poll().inputs.values()) {
+                    for (Reader r : rs) {
+                        if (out.add(r.port.producer)) {
+                            todo.add(r.port.producer);
+                        }
+                    }
+                }
+            }
+            out.remove(n);
+            return out;
         }
 
         private void stop(Node n) {
@@ -460,24 +655,27 @@ public final class KilnGraphRunner implements GraphRunner {
             n.threads.forEach(Thread::interrupt);
         }
 
-        /**
-         * Stops every step and waits for all of them, however often this thread is interrupted
-         * meanwhile. The interrupt flag is set again on return.
-         */
+        /** Stops every step; no thread starts after this. */
         private void stopAll() {
             synchronized (lock) {
+                stopping = true;
                 nodes.forEach(this::stop);
             }
+        }
+
+        /**
+         * Waits for every thread ever started, however often this thread is interrupted meanwhile.
+         * The interrupt flag is set again on return.
+         */
+        private void joinAll() {
             boolean interrupted = false;
-            for (Node n : nodes) {
-                for (Thread t : n.threads) {
-                    while (t.isAlive()) {
-                        try {
-                            t.join();
-                        } catch (InterruptedException again) {
-                            interrupted = true;
-                        }
-                    }
+            Thread t;
+            while ((t = threads.peek()) != null) {
+                try {
+                    t.join();
+                    threads.poll();
+                } catch (InterruptedException again) {
+                    interrupted = true;
                 }
             }
             if (interrupted) {
@@ -492,6 +690,10 @@ public final class KilnGraphRunner implements GraphRunner {
             : e.from() + "->" + e.to();
     }
 
+    private static String megabytes(long bytes) {
+        return bytes >= 1 << 20 ? (bytes >> 20) + " MB" : (bytes >> 10) + " KB";
+    }
+
     private static String message(Throwable t) {
         String m = t.getMessage();
         return m == null || m.isBlank() ? t.getClass().getSimpleName() : m;
@@ -504,8 +706,11 @@ public final class KilnGraphRunner implements GraphRunner {
         final Map<String, List<Reader>> inputs = new LinkedHashMap<>();
         final Map<String, Port> outputs = new LinkedHashMap<>();
         final List<Thread> threads = new CopyOnWriteArrayList<>();
+        /** Readers of any of its ports that have not finished. */
+        final AtomicInteger liveReaders = new AtomicInteger();
         int component = -1;
         BufferAllocator allocator;
+        volatile Thread stepThread;
         long peak;
         volatile boolean stoppedByEngine;
         String error; // guarded by the run's lock until the threads have ended
@@ -524,7 +729,10 @@ public final class KilnGraphRunner implements GraphRunner {
             return graphStep.step();
         }
 
-        /** Closes the copying allocators and then the step's; returns what leaked, or null. */
+        /**
+         * Closes the copying allocators and then the step's; returns what leaked, or null. A leak by a
+         * step that was stopped mid-batch is logged rather than reported.
+         */
         String closeAllocators(boolean quietly) {
             String leak = null;
             for (Port p : outputs.values()) {
@@ -533,7 +741,12 @@ public final class KilnGraphRunner implements GraphRunner {
                 }
             }
             leak = close(allocator, leak);
-            return quietly ? null : leak;
+            if (quietly && leak != null) {
+                LOG.log(System.Logger.Level.WARNING, "Step {0} was stopped and did not free all its memory: {1}",
+                    id(), leak);
+                return null;
+            }
+            return leak;
         }
 
         private static String close(BufferAllocator a, String leak) {
@@ -553,6 +766,7 @@ public final class KilnGraphRunner implements GraphRunner {
         final List<Reader> readers = new ArrayList<>();
         RowSet rowSet;             // what the step writes to
         BufferAllocator copies;    // set when several steps read the port
+        volatile Thread teeThread;
 
         Port(Node producer, String port) {
             this.producer = producer;
@@ -565,6 +779,7 @@ public final class KilnGraphRunner implements GraphRunner {
         final Edge edge;
         final Port port;
         final Node consumer;
+        final AtomicBoolean released = new AtomicBoolean();
         RowSet rowSet;             // what the reading step takes from: the port's own row set, or its copy
 
         Reader(Edge edge, Port port, Node consumer) {
@@ -574,7 +789,7 @@ public final class KilnGraphRunner implements GraphRunner {
         }
     }
 
-    /** What a step in a graph sees: its named ports, its settings and its memory. */
+    /** What a step in a graph sees: its named ports, its settings, its input columns and its memory. */
     private static final class Context implements StepContext {
         private final Node node;
         private final MetadataEmitter metadata;
@@ -657,14 +872,16 @@ public final class KilnGraphRunner implements GraphRunner {
                 : "Step " + node.id() + " has nothing connected to its 'out' port");
         }
 
+        /** Whether the {@code in} port is connected; {@link #inputPorts()} lists every connected input. */
         @Override
         public boolean hasInput() {
-            return !in.isEmpty();
+            return in.containsKey("in");
         }
 
+        /** Whether the {@code out} port is connected; {@link #outputPorts()} lists every connected output. */
         @Override
         public boolean hasOutput() {
-            return !out.isEmpty();
+            return out.containsKey("out");
         }
 
         @Override
@@ -699,6 +916,17 @@ public final class KilnGraphRunner implements GraphRunner {
         @Override
         public RowSet output(String port) {
             return out.get(port);
+        }
+
+        @Override
+        public Schema inputSchema(String port) {
+            return node.graphStep.inputSchemas().get(port);
+        }
+
+        @Override
+        public Schema inputSchema(String port, int index) {
+            Schema s = node.graphStep.inputSchemas().get(port + "[" + index + "]");
+            return s != null || index != 0 ? s : node.graphStep.inputSchemas().get(port);
         }
     }
 }

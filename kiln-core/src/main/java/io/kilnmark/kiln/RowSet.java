@@ -19,6 +19,9 @@ import org.apache.arrow.vector.util.TransferPair;
  * keeps a fast source from outrunning a slow step. Ownership moves with each batch. {@link #take}
  * moves the batch's buffers into the taking step's allocator, so memory is accounted per step, and
  * the taker must close what it takes. See docs/spikes/0001-arrow-row-sets.md.
+ *
+ * <p>{@link #rows()} counts the rows the reader was given; batches dropped because the reader
+ * stopped, or because the step before failed, are not counted.
  */
 public final class RowSet {
 
@@ -32,6 +35,9 @@ public final class RowSet {
     private volatile Throwable failure;
     private volatile boolean cancelled;
     private volatile boolean ended;
+    private final AtomicLong moves = new AtomicLong();
+    private volatile long readerWaitingSince;
+    private volatile long writerWaitingSince;
 
     public RowSet(String name, int capacity) {
         if (capacity < 1) {
@@ -45,9 +51,32 @@ public final class RowSet {
         return name;
     }
 
-    /** Rows put so far. */
+    /** Rows the reader has been given so far. */
     public long rows() {
         return rows.get();
+    }
+
+    /**
+     * How many times a batch or the end has moved through this row set: the engine's stall
+     * watchdog watches it change.
+     */
+    public long progress() {
+        return moves.get();
+    }
+
+    /** Whether the reader is waiting for a batch (or, through {@link #poll}, was the last time it looked). */
+    public boolean readerWaiting() {
+        return readerWaitingSince != 0;
+    }
+
+    /** Whether the writer is waiting for room. */
+    public boolean writerWaiting() {
+        return writerWaitingSince != 0;
+    }
+
+    /** Whether the reader has stopped reading ({@link #cancel()}). */
+    public boolean isCancelled() {
+        return cancelled;
     }
 
     /**
@@ -61,33 +90,58 @@ public final class RowSet {
             batch.close();
             throw new CancelledException("the next step stopped reading " + name);
         }
-        while (!queue.offer(batch, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
-            if (cancelled) {
-                batch.close();
-                throw new CancelledException("the next step stopped reading " + name);
+        try {
+            while (!queue.offer(batch, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+                if (writerWaitingSince == 0) {
+                    writerWaitingSince = System.nanoTime();
+                }
+                if (cancelled) {
+                    batch.close();
+                    throw new CancelledException("the next step stopped reading " + name);
+                }
             }
+        } catch (InterruptedException e) {
+            batch.close(); // it never reached the queue
+            throw e;
+        } finally {
+            writerWaitingSince = 0;
         }
-        rows.addAndGet(batch.getRowCount());
+        moves.incrementAndGet();
         if (cancelled) {
             drain();
         }
     }
 
-    /** No more batches. */
+    /** No more batches; waits for room for the end, unless the next step has stopped. */
     public void finish() throws InterruptedException {
-        end();
+        try {
+            while (!cancelled && !queue.offer(END, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+                if (writerWaitingSince == 0) {
+                    writerWaitingSince = System.nanoTime();
+                }
+            }
+        } finally {
+            writerWaitingSince = 0;
+        }
+        moves.incrementAndGet();
     }
 
-    /** No more batches, because this step failed; the next step's {@link #take} reports it. */
+    /**
+     * No more batches, because this step failed; the next step's {@link #take} reports it. Never
+     * waits: batches still queued are dropped (the run is failing) to make room for the end, so a
+     * failure can always reach the steps after it.
+     *
+     * @throws InterruptedException never; kept so callers written for the waiting version still compile
+     */
     public void fail(Throwable cause) throws InterruptedException {
         failure = cause;
-        end();
-    }
-
-    private void end() throws InterruptedException {
-        while (!cancelled && !queue.offer(END, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
-            // wait for room, unless the next step has stopped
+        while (!cancelled) {
+            drain();
+            if (queue.offer(END)) { // only the writer adds, so after draining there is room
+                break;
+            }
         }
+        moves.incrementAndGet();
     }
 
     /**
@@ -96,7 +150,16 @@ public final class RowSet {
      * @throws UpstreamFailedException if the step before this one failed
      */
     public VectorSchemaRoot take(BufferAllocator into) throws InterruptedException, StepException {
-        return received(queue.take(), into);
+        Object o = queue.poll();
+        if (o == null) {
+            readerWaitingSince = System.nanoTime();
+            try {
+                o = queue.take();
+            } finally {
+                readerWaitingSince = 0;
+            }
+        }
+        return received(o, into);
     }
 
     /**
@@ -107,11 +170,46 @@ public final class RowSet {
      */
     public VectorSchemaRoot poll(BufferAllocator into, long timeout, TimeUnit unit)
         throws InterruptedException, StepException {
+        Object o = next(timeout, unit);
+        return o == null ? null : received(o, into);
+    }
+
+    /**
+     * Reads the next batch and closes it without counting its rows, for an engine dropping what a
+     * finished step no longer reads. Returns {@code false} once the stream has ended.
+     *
+     * @throws UpstreamFailedException if the step before this one failed
+     */
+    public boolean discard(long timeout, TimeUnit unit) throws InterruptedException, StepException {
+        Object o = next(timeout, unit);
+        if (o == null) {
+            return !ended;
+        }
+        if (o == END) {
+            received(o, null);
+            return false;
+        }
+        ((VectorSchemaRoot) o).close();
+        moves.incrementAndGet();
+        return true;
+    }
+
+    /** The next item, waiting up to {@code timeout}; a wait that finds nothing leaves the reader marked waiting. */
+    private Object next(long timeout, TimeUnit unit) throws InterruptedException {
         if (ended) {
             return null;
         }
-        Object o = timeout <= 0 ? queue.poll() : queue.poll(timeout, unit);
-        return o == null ? null : received(o, into);
+        Object o = queue.poll();
+        if (o == null && timeout > 0) {
+            if (readerWaitingSince == 0) {
+                readerWaitingSince = System.nanoTime();
+            }
+            o = queue.poll(timeout, unit);
+        }
+        if (o != null) {
+            readerWaitingSince = 0;
+        }
+        return o;
     }
 
     /** Whether the reader has been told the stream ended, by {@link #take} or {@link #poll}. */
@@ -120,14 +218,18 @@ public final class RowSet {
     }
 
     private VectorSchemaRoot received(Object o, BufferAllocator into) throws StepException {
+        moves.incrementAndGet();
         if (o == END) {
             ended = true;
+            readerWaitingSince = 0;
             if (failure != null) {
                 throw new UpstreamFailedException("the step before " + name + " failed", failure);
             }
             return null;
         }
-        return transfer((VectorSchemaRoot) o, into);
+        VectorSchemaRoot batch = (VectorSchemaRoot) o;
+        rows.addAndGet(batch.getRowCount());
+        return transfer(batch, into);
     }
 
     /** A batch taken by {@link #takeAny}, and the position in the list of the row set it came from. */
