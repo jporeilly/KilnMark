@@ -54,4 +54,9 @@ tasks.register<Sync>("release") {
     from("containers") { into("containers") }
     from("LICENSE", "NOTICE")
     from(distDir.dir("licenses")) { include("THIRD-PARTY-NOTICES.md") }
+    // The web UI's packages and their licences, written by the UI build (ui/scripts/ui-notices.mjs).
+    from(distDir.dir("ui")) {
+        include("third-party-notices.txt")
+        rename { "THIRD-PARTY-NOTICES-UI.txt" }
+    }
 }

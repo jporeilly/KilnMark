@@ -74,7 +74,8 @@ export function QualityPanel({ asset }: { asset: Asset }) {
   const steward = allows(me?.role, "steward");
 
   const load = useCallback(() => {
-    Promise.all([qualityApi.asset(urn, unmask), qualityApi.rules({ urn }), qualityApi.drift(urn)])
+    // "Show sensitive values" (admins) unmasks rules and drift too; servers that do not mask ignore it.
+    Promise.all([qualityApi.asset(urn, unmask), qualityApi.rules({ urn }, unmask), qualityApi.drift(urn, unmask)])
       .then(([q, r, d]) => {
         setQuality(q);
         setRules(r);
@@ -183,6 +184,8 @@ export function QualityPanel({ asset }: { asset: Asset }) {
             <Recommendations
               key={rules.length}
               urn={urn}
+              unmask={unmask}
+              canUnmask={quality.canUnmask}
               onAdd={(r) =>
                 act(
                   () =>
@@ -578,14 +581,28 @@ function Samples({
   );
 }
 
-function Recommendations({ urn, onAdd }: { urn: string; onAdd: (r: Recommendation) => void }) {
+/** True for a recommendation whose values were held back (a sensitive column): it cannot be added in one click. */
+const withheld = (r: Recommendation) =>
+  (r.type === "allowed_values" || r.type === "in_range") && Object.keys(r.params ?? {}).length === 0;
+
+function Recommendations({
+  urn,
+  unmask,
+  canUnmask,
+  onAdd,
+}: {
+  urn: string;
+  unmask: boolean;
+  canUnmask: boolean;
+  onAdd: (r: Recommendation) => void;
+}) {
   const [list, setList] = useState<Recommendation[] | null>(null);
   useEffect(() => {
     qualityApi
-      .recommendations(urn)
+      .recommendations(urn, unmask)
       .then(setList)
       .catch(() => setList([]));
-  }, [urn]);
+  }, [urn, unmask]);
   if (!list || list.length === 0) return null;
   return (
     <>
@@ -596,9 +613,13 @@ function Recommendations({ urn, onAdd }: { urn: string; onAdd: (r: Recommendatio
           <li key={`${r.type}:${r.field ?? ""}`}>
             <strong>{r.name}</strong> <span className="muted small">({DIMENSIONS[r.dimension] ?? r.dimension})</span>
             <div className="small">{r.reason}</div>
-            <button type="button" onClick={() => onAdd(r)} aria-label={`Add rule: ${r.name}`}>
-              Add rule
-            </button>
+            {!withheld(r) ? (
+              <button type="button" onClick={() => onAdd(r)} aria-label={`Add rule: ${r.name}`}>
+                Add rule
+              </button>
+            ) : (
+              canUnmask && <div className="small muted">Tick “Show sensitive values” under Sample rows to see the values and add it.</div>
+            )}
           </li>
         ))}
       </ul>

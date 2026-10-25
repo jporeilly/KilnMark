@@ -47,8 +47,18 @@
   height: 28px;
   border-radius: 7px;
   background: var(--km-accent);
-  color: #ffffff;
+  color: var(--km-on-accent);
   font-size: 15px;
+  overflow: hidden;
+}
+
+/* The organisation's logo from the branding folder, always an <img>. */
+.brand-logo {
+  display: block;
+  height: 28px;
+  width: auto;
+  max-width: 160px;
+  object-fit: contain;
 }
 
 .searchbar {
@@ -92,7 +102,7 @@ kbd {
 
 .sidenav a {
   display: block;
-  padding: 10px 12px;
+  padding: var(--km-nav-pad);
   border-radius: 8px;
   color: var(--km-ink);
   text-decoration: none;
@@ -111,7 +121,7 @@ kbd {
 
 main {
   grid-area: main;
-  padding: 28px 32px 48px;
+  padding: var(--km-main-pad);
   max-width: 1200px;
 }
 
@@ -157,7 +167,7 @@ h2 {
   background: var(--km-surface);
   border: 1px solid var(--km-border);
   border-radius: 12px;
-  padding: 20px;
+  padding: var(--km-panel-pad);
   margin: 20px 0;
 }
 
@@ -182,7 +192,7 @@ select {
   background: var(--km-surface);
   border: 1px solid var(--km-border-control);
   border-radius: 8px;
-  padding: 9px 12px;
+  padding: var(--km-input-pad);
   min-height: 24px;
 }
 
@@ -193,8 +203,8 @@ button {
   background: var(--km-surface);
   border: 1px solid var(--km-border-control);
   border-radius: 8px;
-  padding: 9px 16px;
-  min-height: 40px;
+  padding: var(--km-control-pad);
+  min-height: var(--km-control-h);
   cursor: pointer;
 }
 
@@ -207,13 +217,13 @@ button[aria-disabled="true"] {
 button.primary {
   background: var(--km-accent);
   border-color: var(--km-accent);
-  color: #ffffff;
+  color: var(--km-on-accent);
 }
 
 .form {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
+  gap: var(--km-gap);
   max-width: 640px;
 }
 
@@ -402,7 +412,7 @@ th,
 td {
   text-align: left;
   vertical-align: top;
-  padding: 10px 12px;
+  padding: var(--km-cell-pad);
   border-bottom: 1px solid var(--km-border);
 }
 
@@ -423,12 +433,15 @@ tbody th {
   white-space: nowrap;
 }
 
+/* Bars: a ground-coloured track with a control border, so the fill stands out in every theme
+   (the fill against the track is checked at 3:1 by check-contrast.mjs). */
 .fill-bar {
   display: inline-block;
   width: 60px;
   height: 8px;
   border-radius: 4px;
-  background: var(--km-border);
+  background: var(--km-ground);
+  border: 1px solid var(--km-border-control);
   overflow: hidden;
 }
 
@@ -462,6 +475,10 @@ tbody th {
   max-width: 560px;
   margin: 0 auto;
   padding: 48px 16px;
+}
+
+.signin-brand {
+  margin: 0 0 20px;
 }
 
 .signin .form {
@@ -622,7 +639,7 @@ button.danger {
 }
 
 .dialog::backdrop {
-  background: rgb(0 0 0 / 50%);
+  background: var(--km-backdrop);
 }
 
 /* Add connection: gallery, connection panel, previews. */
@@ -663,7 +680,7 @@ button.danger {
   border-bottom: 3px solid transparent;
   border-radius: 0;
   background: none;
-  min-height: 40px;
+  min-height: var(--km-control-h);
 }
 
 .tabs [role="tab"][aria-selected="true"] {
@@ -678,31 +695,38 @@ button.danger {
   margin: 16px 0 4px;
 }
 
-.gallery-family {
-  margin: 12px 0 6px;
-  font-size: 13px;
-  text-transform: capitalize;
-  color: var(--km-muted);
-}
-
 .cards {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  gap: 8px;
 }
 
+/* A card: tile beside the name and family, capability badges underneath. */
 .card {
   width: 100%;
   height: 100%;
   display: grid;
-  justify-items: start;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 6px;
+  align-items: start;
   align-content: start;
-  gap: 6px;
+  padding: 10px 12px;
   text-align: left;
   font-weight: 400;
+}
+
+.card .badges {
+  grid-column: 1 / -1;
+}
+
+.card-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .card[aria-pressed="true"] {
@@ -712,13 +736,29 @@ button.danger {
 
 .card-name {
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
+.card-family {
+  display: block;
+  font-size: 12px;
+  color: var(--km-muted);
+}
+
+.card-family::first-letter {
+  text-transform: uppercase;
+}
+
+/* Not available yet: lighter, after the available ones, and said in words ("Planned · wave 2"). */
 .card.planned {
   cursor: not-allowed;
   border-style: dashed;
   color: var(--km-muted);
   background: var(--km-ground);
+}
+
+.card.planned .tag {
+  background: transparent;
 }
 
 .planned-label {
@@ -730,6 +770,10 @@ button.danger {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.badges .tag {
+  margin-right: 0;
 }
 
 .card-formats {
@@ -1025,7 +1069,8 @@ legend {
 
 /* Settings */
 .settings-list { list-style: none; padding: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); }
-.settings-list h2 { margin: 0 0 0.25rem; font-size: 1.1rem; }
+.settings-list h2,
+.settings-list h3 { margin: 0 0 0.25rem; font-size: 1.1rem; }
 .settings-list p { margin: 0; }
 
 
@@ -1216,4 +1261,273 @@ table.sample td {
 .preview {
   border-top: 1px solid var(--km-border);
   padding-top: 12px;
+}
+
+/* ---- Connector tiles: letters on a tint, a family icon, or the operator's logo ---- */
+.tile {
+  --tile-size: 28px;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  box-sizing: border-box;
+  width: var(--tile-size);
+  height: var(--tile-size);
+  border-radius: 7px;
+  border: 1px solid var(--km-tile-border);
+  font-family: var(--km-font);
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  vertical-align: middle;
+  user-select: none;
+}
+
+.tile .icon {
+  color: inherit;
+}
+
+.tile-sm {
+  --tile-size: 22px;
+  border-radius: 5px;
+  font-size: 10px;
+}
+
+.tile-sm.letters-3 {
+  font-size: 8px;
+}
+
+.tile-md.letters-3 {
+  font-size: 10px;
+}
+
+.tile-lg {
+  --tile-size: 40px;
+  border-radius: 9px;
+  font-size: 16px;
+}
+
+.tile-lg.letters-3 {
+  font-size: 13px;
+}
+
+.tile-tint-1 { background: var(--km-tile-1-bg); color: var(--km-tile-1-fg); }
+.tile-tint-2 { background: var(--km-tile-2-bg); color: var(--km-tile-2-fg); }
+.tile-tint-3 { background: var(--km-tile-3-bg); color: var(--km-tile-3-fg); }
+.tile-tint-4 { background: var(--km-tile-4-bg); color: var(--km-tile-4-fg); }
+.tile-tint-5 { background: var(--km-tile-5-bg); color: var(--km-tile-5-fg); }
+.tile-tint-6 { background: var(--km-tile-6-bg); color: var(--km-tile-6-fg); }
+.tile-tint-7 { background: var(--km-tile-7-bg); color: var(--km-tile-7-fg); }
+.tile-tint-8 { background: var(--km-tile-8-bg); color: var(--km-tile-8-fg); }
+
+/* Not built yet: no tint, a dashed edge, like the planned card around it. */
+.tile-planned:not(.tile-image) {
+  background: var(--km-ground);
+  color: var(--km-muted);
+  border: 1px dashed var(--km-border-control);
+}
+
+.tile-image {
+  background: var(--km-surface);
+}
+
+.tile-image img {
+  width: 82%;
+  height: 82%;
+  object-fit: contain;
+}
+
+.tile-family {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 12px;
+  height: 12px;
+}
+
+/* Letters move up and left a little to leave the corner to the family icon. */
+.tile-lg:has(.tile-family) .tile-letters {
+  transform: translate(-2px, -2px);
+}
+
+.with-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+h1.with-tile {
+  gap: 12px;
+}
+
+/* ---- Appearance: theme switch in the top bar and the settings section ---- */
+.theme-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.theme-quick select {
+  padding: 4px 8px;
+  min-height: 32px;
+  font-size: 14px;
+}
+
+.appearance {
+  display: grid;
+  gap: var(--km-gap);
+}
+
+.appearance fieldset {
+  margin: 0;
+}
+
+.appearance fieldset > .hint {
+  margin-bottom: 8px;
+}
+
+.option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  align-content: start;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--km-border);
+  border-radius: 10px;
+  background: var(--km-surface);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.option input {
+  margin: 3px 0 0;
+  accent-color: var(--km-accent);
+}
+
+.option .hint {
+  grid-column: 2;
+  font-weight: 400;
+}
+
+.option:has(input:checked) {
+  border-color: var(--km-accent);
+  box-shadow: inset 0 0 0 1px var(--km-accent);
+}
+
+.option:has(input:focus-visible) {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 2px;
+}
+
+.option-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* An accent swatch: the colour is shown, and named in words beside it. */
+.swatch {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--km-border-control);
+  flex: none;
+}
+
+.swatch-orange { background: var(--km-accent-orange); }
+.swatch-blue { background: var(--km-accent-blue); }
+.swatch-green { background: var(--km-accent-green); }
+.swatch-purple { background: var(--km-accent-purple); }
+.swatch-pink { background: var(--km-accent-pink); }
+.swatch-teal { background: var(--km-accent-teal); }
+
+.org-brand {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  align-items: center;
+}
+
+.org-logo {
+  max-height: 48px;
+  max-width: 200px;
+  object-fit: contain;
+  padding: 6px;
+  border: 1px solid var(--km-border);
+  border-radius: 8px;
+  background: var(--km-surface);
+}
+
+/* ---- High contrast theme: stronger edges, and states that never rely on a shade alone ---- */
+:root[data-theme="contrast"] .panel,
+:root[data-theme="contrast"] .card,
+:root[data-theme="contrast"] .facts div,
+:root[data-theme="contrast"] .browse-side {
+  border-color: var(--km-ink);
+}
+
+:root[data-theme="contrast"] .sidenav a:hover,
+:root[data-theme="contrast"] .tree-row:hover {
+  text-decoration: underline;
+}
+
+:root[data-theme="contrast"] .tag {
+  border-color: var(--km-ink);
+}
+
+/* Unavailable controls keep full contrast here and show it with a dashed edge, not a fade. */
+:root[data-theme="contrast"] button:disabled,
+:root[data-theme="contrast"] button[aria-disabled="true"] {
+  opacity: 1;
+  border-style: dashed;
+}
+
+/* ---- Forced colours (Windows high contrast): the system replaces our colours and drops box
+   shadows, so indicators drawn with shadows get borders, and bars get system colours. ---- */
+@media (forced-colors: active) {
+  .sidenav a[aria-current="page"],
+  .tree-row.is-selected {
+    border-left: 4px solid Highlight;
+  }
+
+  .card[aria-pressed="true"],
+  .option:has(input:checked) {
+    border: 3px solid Highlight;
+  }
+
+  .steps button[aria-current="step"],
+  .search-mode button[aria-pressed="true"] {
+    border-bottom: 4px solid Highlight;
+  }
+
+  .score-bar span,
+  .heat-bar span,
+  .fill-bar span,
+  .top-bar span {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+
+  .histogram svg rect {
+    fill: Highlight;
+  }
+
+  .tile {
+    border: 1px solid CanvasText;
+  }
+
+  .swatch {
+    forced-color-adjust: none;
+  }
 }

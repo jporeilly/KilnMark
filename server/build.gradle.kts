@@ -112,9 +112,10 @@ val buildUi by tasks.registering(Exec::class) {
     workingDir = uiDir.asFile
     commandLine(npm, "run", "build")
     inputs.dir(uiDir.dir("src"))
+    // scripts/: the contrast check, the third-party notices and the anchor check all run as part of the build.
     inputs.dir(uiDir.dir("scripts"))
     inputs.files(uiDir.file("index.html"), uiDir.file("vite.config.ts"), uiDir.file("tsconfig.json"),
-        uiDir.file("package-lock.json"), uiDir.file("package.json"))
+        uiDir.file("package.json"), uiDir.file("package-lock.json"))
     // The bundled documentation, and the anchor cases the pre-build check reads (scripts/check-slugs.mjs).
     inputs.files(rootProject.fileTree("docs/guide") { include("*.md") }, rootProject.file("CHANGELOG.md"))
     inputs.dir(rootProject.file("tests/docs"))

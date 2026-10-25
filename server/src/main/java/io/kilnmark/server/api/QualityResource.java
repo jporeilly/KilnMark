@@ -35,6 +35,7 @@ import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
+import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
@@ -396,20 +397,36 @@ public class QualityResource {
         return Response.created(URI.create("/api/v1/quality/rules/" + saved.id())).entity(saved).build();
     }
 
+    /** A rule with its latest result; the ETag is its updatedAt, to send back in If-Match when changing it. */
     @GET
     @Path("rules/{id}")
-    public RuleView rule(@PathParam("id") long id) {
+    public org.jboss.resteasy.reactive.RestResponse<RuleView> rule(@PathParam("id") long id) {
         Rule r = findRule(id);
-        return view(r, store.latestResults(r.assetUrn()).get(id));
+        RuleView v = view(r, store.latestResults(r.assetUrn()).get(id));
+        org.jboss.resteasy.reactive.RestResponse.ResponseBuilder<RuleView> out =
+            org.jboss.resteasy.reactive.RestResponse.ResponseBuilder.ok(v);
+        if (r.updatedAt() != null) {
+            out.header("ETag", "\"" + r.updatedAt() + "\"");
+        }
+        return out.build();
     }
 
+    /**
+     * Replaces a rule's settings; its asset, origin, author and creation time stay. With
+     * {@code If-Match} set to the rule's {@code updatedAt} as last read, the change is refused (409)
+     * when someone else has changed the rule since, so an edit never undoes theirs unseen.
+     */
     @PUT
     @Path("rules/{id}")
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.STEWARD_ROLE)
-    public Rule updateRule(@PathParam("id") long id, RuleDraft body) {
+    public Rule updateRule(@PathParam("id") long id, @HeaderParam("If-Match") String ifMatch, RuleDraft body) {
         Rule old = findRule(id);
         adminForCustomSql(old.type());
+        java.time.Instant expected = readVersion(ifMatch);
+        if (expected != null && !expected.equals(old.updatedAt())) {
+            throw changedSince();
+        }
         if (body != null && body.assetUrn() != null && !body.assetUrn().equals(old.assetUrn())) {
             throw new IllegalArgumentException("assetUrn: a rule cannot move to another asset; add a new rule there");
         }
@@ -417,9 +434,35 @@ public class QualityResource {
             body.dimension(), body.params(), body.thresholdUnit(), body.warnAbove(), body.failAbove(), body.actions(),
             body.enabled());
         Rule r = check(d);
-        Rule saved = store.updateRule(id, r).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No rule " + id));
+        Rule saved = store.updateRule(id, r, expected).orElseThrow(() -> store.rule(id).isPresent() ? changedSince()
+            : ApiError.of(Response.Status.NOT_FOUND, "No rule " + id));
         quality.rescore(old.assetUrn());
         return saved;
+    }
+
+    /** The {@code updatedAt} sent in {@code If-Match} (quotes and a weak W/ prefix allowed), or null for none. */
+    static java.time.Instant readVersion(String ifMatch) {
+        if (ifMatch == null || ifMatch.isBlank() || ifMatch.trim().equals("*")) {
+            return null;
+        }
+        String v = ifMatch.trim();
+        if (v.startsWith("W/")) {
+            v = v.substring(2);
+        }
+        if (v.length() >= 2 && v.startsWith("\"") && v.endsWith("\"")) {
+            v = v.substring(1, v.length() - 1);
+        }
+        try {
+            return java.time.Instant.parse(v);
+        } catch (java.time.format.DateTimeParseException e) {
+            throw new IllegalArgumentException("If-Match: the rule's updatedAt as you last read it, for example "
+                + "2026-10-25T09:30:00.123456Z");
+        }
+    }
+
+    private static jakarta.ws.rs.WebApplicationException changedSince() {
+        return ApiError.of(Response.Status.CONFLICT, "Someone else changed this rule after you opened it. Load it "
+            + "as it is now, then make your change again.");
     }
 
     @DELETE

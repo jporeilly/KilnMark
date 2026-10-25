@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
+  ApiError,
   formatShare,
+  HIDDEN_WEBHOOK,
+  isHidden,
   qualityApi,
   type ColumnPatterns,
   type Field,
@@ -13,6 +16,10 @@ import { AssetPicker, useAsset } from "./AssetPicker";
 import { QualityStatusBadge } from "./QualityPanel";
 
 const TEMPORAL = new Set(["date", "timestamp", "timestamp_tz"]);
+const TIMES = new Set(["timestamp", "timestamp_tz"]);
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+/** What a date-and-time input holds: 2024-01-31T13:45, seconds optional. */
+const LOCAL_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/;
 const NUMERIC = new Set(["int16", "int32", "int64", "float32", "float64", "decimal"]);
 const MAX_VALUES = 1000;
 
@@ -149,6 +156,8 @@ const DEFAULTS: Fields = {
   sql: "",
 };
 
+const text = (v: unknown) => (v == null ? "" : String(v));
+
 /** One value per line: lines trimmed, empty lines dropped, repeats dropped. */
 const valueLines = (text: string) => [...new Set(text.split(/\r?\n/).map((v) => v.trim()).filter((v) => v !== ""))];
 
@@ -160,11 +169,32 @@ function num(text: string): number | string | null {
   return Number.isFinite(n) ? n : t;
 }
 
-/** A range limit: a number for numeric columns when it reads back the same, else the text (dates). */
+/**
+ * A range limit: a number for numeric columns when it reads back the same, else the text. A date
+ * and time from the input is sent in UTC with seconds (browsers leave out :00), so it means the
+ * same instant in every source: 2024-01-31T09:30 is sent as 2024-01-31T09:30:00Z.
+ */
 function bound(text: string, kind: string | null): number | string | null {
   const t = text.trim();
   if (!t) return null;
-  return kind && NUMERIC.has(kind) && String(Number(t)) === t ? Number(t) : t;
+  if (kind && NUMERIC.has(kind) && String(Number(t)) === t) return Number(t);
+  if ((kind == null || TIMES.has(kind)) && LOCAL_TIME.test(t)) return t.length === 16 ? `${t}:00Z` : `${t}Z`;
+  return t;
+}
+
+/** A saved limit as the date-and-time input shows it: the Z that bound adds is taken off (seconds stay). */
+const unbound = (v: unknown) => {
+  const t = text(v);
+  return /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)Z$/.exec(t)?.[1] ?? t;
+};
+
+/** True when the range input for a column of this kind can show the value as it is. */
+function fitsInput(v: string, kind: string | null): boolean {
+  if (!v || !kind) return true;
+  if (NUMERIC.has(kind)) return Number.isFinite(Number(v));
+  if (kind === "date") return DATE_ONLY.test(v);
+  if (TIMES.has(kind)) return LOCAL_TIME.test(v);
+  return true;
 }
 
 /** A share as a percentage for typing: 0.2 is "20". */
@@ -201,8 +231,6 @@ function paramsFrom(type: RuleType, f: Fields, kind: string | null): Record<stri
   }
 }
 
-const text = (v: unknown) => (v == null ? "" : String(v));
-
 /** The plain fields for some parameters (from a saved rule or the JSON view), on top of `base`. */
 function fieldsFrom(type: RuleType, p: Record<string, unknown>, base: Fields): Fields {
   const list = (v: unknown) => (Array.isArray(v) ? v.map(text) : []);
@@ -216,7 +244,7 @@ function fieldsFrom(type: RuleType, p: Record<string, unknown>, base: Fields): F
     case "matches_pattern":
       return { ...base, regex: text(p.regex) };
     case "in_range":
-      return { ...base, min: text(p.min), max: text(p.max) };
+      return { ...base, min: unbound(p.min), max: unbound(p.max) };
     case "freshness":
       return { ...base, maxAgeHours: text(p.maxAgeHours) };
     case "row_count":
@@ -248,18 +276,33 @@ function canonical(v: unknown): string {
   return JSON.stringify(walk(v));
 }
 
-/** True when the plain fields can show these parameters without losing or changing anything. */
-function fitsFields(type: RuleType, p: unknown): p is Record<string, unknown> {
+/**
+ * True when the plain fields can show these parameters without losing or changing anything, for
+ * a column of this kind (null while it is not known yet).
+ */
+function fitsFields(type: RuleType, p: unknown, kind: string | null): p is Record<string, unknown> {
   if (!p || typeof p !== "object" || Array.isArray(p)) return false;
   const params = p as Record<string, unknown>;
   const f = fieldsFrom(type, params, DEFAULTS);
-  if (type === "in_range") {
-    // The inputs take a number or a date (2024-01-31); anything else stays in the JSON view.
-    for (const v of [f.min, f.max]) {
-      if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isFinite(Number(v))) return false;
-    }
-  }
-  return canonical(paramsFrom(type, f, null)) === canonical(params) || canonical(paramsFrom(type, f, "int64")) === canonical(params);
+  if (type === "in_range" && !(fitsInput(f.min, kind) && fitsInput(f.max, kind))) return false;
+  return canonical(paramsFrom(type, f, kind)) === canonical(params);
+}
+
+/** The fields with range limits the inputs for this kind of column cannot show emptied. */
+const withoutMisfits = (f: Fields, kind: string | null): Fields => ({
+  ...f,
+  min: fitsInput(f.min.trim(), kind) ? f.min : "",
+  max: fitsInput(f.max.trim(), kind) ? f.max : "",
+});
+
+/** The name the server gives a rule left unnamed: column and check, "email not null". */
+const autoName = (field: string | null, type: RuleType) => `${field ? `${field} ` : ""}${type.replace(/_/g, " ")}`;
+
+/** Why some typed text is not a number, or null when it is one. */
+function notANumber(t: string, label: string, example: string): string | null {
+  if (/^[+-]?\d+,\d+$/.test(t.trim())) return `${label}: use a full stop for decimals, such as ${t.trim().replace(",", ".")}.`;
+  if (t.trim() === "" || !Number.isFinite(Number(t))) return `${label}: a number, such as ${example}.`;
+  return null;
 }
 
 /** A problem with what was typed, and the id of the control to mark. */
@@ -274,13 +317,11 @@ class Fault extends Error {
 
 /** Helpful checks on the plain fields before anything is sent; the server checks everything again. */
 function problem(type: RuleType, f: Fields, kind: string | null): Fault | null {
-  const isNumber = (t: string) => t.trim() !== "" && Number.isFinite(Number(t));
   const isWhole = (t: string) => /^\d+$/.test(t.trim());
-  const isDate = (t: string) => /^\d{4}-\d{2}-\d{2}(?:[T ][0-9:.]+(?:Z|[+-][0-9:]+)?)?$/.test(t.trim());
   switch (type) {
     case "unique":
-      if (f.several && f.keyFields.length < 2) {
-        return new Fault("Key columns: tick two or more columns, or check a single column instead.", "rule-key");
+      if (f.several && f.keyFields.length === 0) {
+        return new Fault("Key columns: tick the columns that together must not repeat.", "rule-key");
       }
       return null;
     case "allowed_values": {
@@ -304,19 +345,26 @@ function problem(type: RuleType, f: Fields, kind: string | null): Fault | null {
       const numeric = kind != null && NUMERIC.has(kind);
       const temporal = kind != null && TEMPORAL.has(kind);
       for (const [v, label, at] of [[min, "Minimum", "rule-min"], [max, "Maximum", "rule-max"]] as const) {
-        if (v && numeric && !isNumber(v)) return new Fault(`${label}: a number, such as 0 or 12.5.`, at);
-        if (v && temporal && !isDate(v)) return new Fault(`${label}: a date, such as 2024-01-31.`, at);
+        const wrong = v && numeric ? notANumber(v, label, "0 or 12.5") : null;
+        if (wrong) return new Fault(wrong, at);
+        if (v && kind === "date" && !DATE_ONLY.test(v)) return new Fault(`${label}: a date, such as 2024-01-31.`, at);
+        if (v && kind && TIMES.has(kind) && !LOCAL_TIME.test(v)) {
+          return new Fault(`${label}: a date and time, such as 2024-01-31 09:30.`, at);
+        }
       }
       if (min && max && ((numeric && Number(min) > Number(max)) || (temporal && min > max))) {
         return new Fault("Minimum: must not be above the maximum.", "rule-min");
       }
       return null;
     }
-    case "freshness":
-      if (!isNumber(f.maxAgeHours) || Number(f.maxAgeHours) <= 0) {
+    case "freshness": {
+      const wrong = notANumber(f.maxAgeHours, "Hours", "24");
+      if (wrong) return new Fault(wrong, "rule-hours");
+      if (Number(f.maxAgeHours) <= 0) {
         return new Fault("Hours: how old the newest value may be, a number above 0, such as 24.", "rule-hours");
       }
       return null;
+    }
     case "row_count": {
       const [min, max] = [f.rowMin.trim(), f.rowMax.trim()];
       if (!min && !max) return new Fault("Row count: give a minimum, a maximum or both.", "rule-rows-min");
@@ -327,11 +375,12 @@ function problem(type: RuleType, f: Fields, kind: string | null): Fault | null {
       }
       return null;
     }
-    case "row_count_change":
-      if (!isNumber(f.changePercent) || Number(f.changePercent) <= 0) {
-        return new Fault("Largest change: a percentage above 0, such as 20.", "rule-change");
-      }
+    case "row_count_change": {
+      const wrong = notANumber(f.changePercent, "Largest change", "20");
+      if (wrong) return new Fault(wrong, "rule-change");
+      if (Number(f.changePercent) <= 0) return new Fault("Largest change: a percentage above 0, such as 20.", "rule-change");
       return null;
+    }
     case "references":
       if (!f.refUrn.trim()) return new Fault("Asset referred to: choose the asset the values must appear in.", "rule-ref-search");
       if (!f.refField) return new Fault("Column referred to: choose the column the values must appear in.", "rule-ref-field");
@@ -347,6 +396,39 @@ function problem(type: RuleType, f: Fields, kind: string | null): Fault | null {
 const json = (p: unknown) => JSON.stringify(p, null, 2);
 
 /**
+ * The control a server message is about, from the setting it starts with ("params.regex: ..."),
+ * so the form can mark it. In the JSON view every parameter is in the JSON box.
+ */
+function serverField(message: string, type: RuleType, jsonMode: boolean): string | undefined {
+  const key = /^([A-Za-z.]+):/.exec(message)?.[1];
+  if (!key) return undefined;
+  if (key.startsWith("params") && jsonMode) return "rule-json";
+  const rows = type === "row_count";
+  const ids: Record<string, string> = {
+    assetUrn: "rule-asset-search",
+    type: type === "custom_sql" ? "rule-sql" : "rule-type",
+    field: "rule-field",
+    name: "rule-name",
+    thresholdUnit: "rule-unit",
+    warnAbove: "rule-warn",
+    failAbove: "rule-fail",
+    "actions.webhook": "rule-hook",
+    params: rows ? "rule-rows-min" : "rule-min",
+    "params.min": rows ? "rule-rows-min" : "rule-min",
+    "params.max": rows ? "rule-rows-max" : "rule-max",
+    "params.values": "rule-values",
+    "params.regex": "rule-regex",
+    "params.fields": "rule-key",
+    "params.maxAgeHours": "rule-hours",
+    "params.maxChange": "rule-change",
+    "params.asset": "rule-ref-search",
+    "params.field": "rule-ref-field",
+    "params.sql": "rule-sql",
+  };
+  return ids[key];
+}
+
+/**
  * The form for adding a rule, or editing one (`rule`). A steward picks the asset by name and the
  * column from a list, and fills in plain fields for the check; "Advanced: edit as JSON" shows the
  * parameters those fields make, and can take over from them.
@@ -357,19 +439,26 @@ export function RuleForm({
   rule,
   onSaved,
   onCancel,
+  onReload,
 }: {
   urn: string;
   admin: boolean;
   rule?: QualityRule;
   onSaved: (name: string) => void;
   onCancel?: () => void;
+  /** Loads the rule again after someone else changed it (the server answered 409). */
+  onReload?: () => void;
 }) {
   const editing = rule != null;
-  const startJson = rule != null && !fitsFields(rule.type, rule.params);
+  // Values the server holds back (a sensitive column) are kept as they are unless replaced.
+  const hiddenAtStart = rule != null && isHidden(rule.params);
+  const [keepHidden, setKeepHidden] = useState(hiddenAtStart);
+  const startJson = rule != null && !hiddenAtStart && !fitsFields(rule.type, rule.params, null);
   const [assetUrn, setAssetUrn] = useState(rule?.assetUrn ?? urn);
   const [type, setType] = useState<RuleType>(rule?.type ?? "not_null");
   const [column, setColumn] = useState(rule?.field ?? "");
-  const [name, setName] = useState(rule?.name ?? "");
+  // A name the server made up is left empty, so it follows a changed column or check.
+  const [name, setName] = useState(rule && rule.name !== autoName(rule.field, rule.type) ? rule.name : "");
   const [f, setF] = useState<Fields>(() => (rule && !startJson ? fieldsFrom(rule.type, rule.params, DEFAULTS) : DEFAULTS));
   const [jsonMode, setJsonMode] = useState(startJson);
   const [jsonOpen, setJsonOpen] = useState(startJson);
@@ -380,27 +469,46 @@ export function RuleForm({
     v == null ? "" : rule?.thresholdUnit === "share" ? percent(v) : String(v);
   const [warn, setWarn] = useState(rule ? shown(rule.warnAbove) : "");
   const [fail, setFail] = useState(rule ? shown(rule.failAbove) : "0");
-  const [webhook, setWebhook] = useState(rule?.actions.webhook ?? "");
+  const webhookHidden = rule?.actions.webhook === HIDDEN_WEBHOOK;
+  const [webhook, setWebhook] = useState(webhookHidden ? "" : rule?.actions.webhook ?? "");
   const [task, setTask] = useState(rule?.actions.task ?? false);
   const [error, setError] = useState<string | null>(null);
   const [errorAt, setErrorAt] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
   const [preview, setPreview] = useState<RulePreview | null>(null);
   const [saving, setSaving] = useState(false);
   const [patterns, setPatterns] = useState<{ urn: string; list: ColumnPatterns[] } | null>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
 
   const spec = CHECKS.find((c) => c.type === type)!;
-  const { asset, loading, error: assetError } = useAsset(assetUrn);
+  const assetDetails = useAsset(assetUrn);
+  const { asset, loading, error: assetError } = assetDetails;
   const ref = useAsset(type === "references" ? f.refUrn : "");
   const fields: Field[] = asset?.fields ?? [];
   const options = fields.filter((c) => !spec.suits || spec.suits(c.kind));
   const kind = fields.find((c) => c.name === column)?.kind ?? null;
   const set = <K extends keyof Fields>(key: K, value: Fields[K]) => setF((old) => ({ ...old, [key]: value }));
 
-  // Arriving from "Manage rules for this asset" fills in the asset.
+  // Arriving from "Manage rules for this asset" fills in the asset, as choosing it would.
+  const lastUrn = useRef(urn);
   useEffect(() => {
-    if (!editing) setAssetUrn(urn);
+    if (editing || urn === lastUrn.current) return;
+    lastUrn.current = urn;
+    changeAsset(urn);
   }, [urn, editing]);
+
+  // A saved range whose limits the inputs for its column cannot show (a date-only limit on a
+  // date-and-time column) is shown as JSON instead, once the column's kind is known.
+  const checkedKind = useRef(false);
+  useEffect(() => {
+    if (!rule || checkedKind.current || !kind || hiddenAtStart) return;
+    checkedKind.current = true;
+    if (!jsonMode && rule.type === type && !fitsFields(rule.type, rule.params, kind)) {
+      setJsonText(json(rule.params));
+      setJsonMode(true);
+      setJsonOpen(true);
+    }
+  }, [kind]);
 
   // The profile's suggested expression, offered for pattern checks.
   const wantPatterns = type === "matches_pattern" && assetUrn.trim() !== "";
@@ -420,7 +528,7 @@ export function RuleForm({
     patterns?.urn === assetUrn.trim() ? patterns.list.find((p) => p.field === column)?.suggestion : undefined;
 
   const usingKey = type === "unique" && (jsonMode ? false : f.several);
-  const generated = paramsFrom(type, f, kind);
+  const generated = keepHidden ? { hidden: true } : paramsFrom(type, f, kind);
   const invalid = (id: string) => (errorAt === id ? true : undefined);
   const describedBy = (id: string, ...hints: string[]) =>
     [...hints, errorAt === id ? "rule-error" : ""].filter(Boolean).join(" ") || undefined;
@@ -428,7 +536,10 @@ export function RuleForm({
   const draft = (): RuleDraft => {
     if (!assetUrn.trim()) throw new Fault("Asset: choose the asset to check.", "rule-asset-search");
     let params: Record<string, unknown>;
-    if (jsonMode) {
+    if (keepHidden) {
+      // Exactly as the server sent it: it then keeps the stored values.
+      params = { hidden: true };
+    } else if (jsonMode) {
       let parsed: unknown;
       try {
         parsed = jsonText.trim() ? JSON.parse(jsonText) : {};
@@ -450,11 +561,20 @@ export function RuleForm({
     }
     const toNumber = (v: string, label: string, at: string) => {
       if (!v.trim()) return null;
+      const wrong = notANumber(v, label, "5");
+      if (wrong) throw new Fault(wrong, at);
       const n = Number(v);
-      if (!Number.isFinite(n)) throw new Fault(`${label}: a number, such as 5.`, at);
+      if (n < 0 || (unit === "share" && n > 100)) {
+        throw new Fault(`${label}: ${unit === "share" ? "a percentage from 0 to 100" : "a number of rows, 0 or more"}.`, at);
+      }
       // Shares are typed as percentages and sent as 0 to 1.
       return n / scaleOf(unit);
     };
+    const warnAbove = spec.whole ? null : toNumber(warn, "Warn above", "rule-warn");
+    const failAbove = spec.whole ? 0 : toNumber(fail, "Fail above", "rule-fail") ?? 0;
+    if (warnAbove != null && warnAbove > failAbove) {
+      throw new Fault("Warn above: must not be above Fail above.", "rule-warn");
+    }
     return {
       assetUrn: assetUrn.trim(),
       field: spec.column === "none" || keyed ? null : column || null,
@@ -464,16 +584,19 @@ export function RuleForm({
       dimension: rule && rule.type === type ? rule.dimension : undefined,
       params,
       thresholdUnit: spec.whole ? "count" : unit,
-      warnAbove: spec.whole ? null : toNumber(warn, "Warn above", "rule-warn"),
-      failAbove: spec.whole ? 0 : toNumber(fail, "Fail above", "rule-fail") ?? 0,
-      actions: { webhook: webhook.trim() || null, task },
+      warnAbove,
+      failAbove,
+      // A webhook hidden from this role is sent back as it came, which keeps it.
+      actions: { webhook: webhook.trim() || (webhookHidden ? HIDDEN_WEBHOOK : null), task },
       enabled: rule?.enabled,
     };
   };
 
   const fault = (e: unknown) => {
-    setError((e as Error).message);
-    setErrorAt(e instanceof Fault ? e.at ?? null : null);
+    const message = (e as Error).message;
+    setError(message);
+    setConflict(e instanceof ApiError && e.status === 409 && rule != null);
+    setErrorAt(e instanceof Fault ? e.at ?? null : serverField(message, type, jsonMode) ?? null);
     window.setTimeout(() => errorRef.current?.focus(), 0);
   };
 
@@ -501,7 +624,8 @@ export function RuleForm({
     }
     setSaving(true);
     try {
-      const saved = rule ? await qualityApi.updateRule(rule.id, d) : await qualityApi.addRule(d);
+      // The rule's updatedAt as read: the server refuses the change if someone changed the rule since.
+      const saved = rule ? await qualityApi.updateRule(rule.id, d, rule.updatedAt) : await qualityApi.addRule(d);
       setPreview(null);
       if (!rule) setName("");
       onSaved(saved.name);
@@ -513,23 +637,45 @@ export function RuleForm({
   };
 
   const changeType = (t: RuleType) => {
+    if (
+      jsonMode &&
+      !window.confirm("The JSON you typed is for the check chosen now. Change the check, and set the JSON aside?")
+    ) {
+      return;
+    }
     const next = CHECKS.find((c) => c.type === t)!;
     setType(t);
     setPreview(null);
     // A column that does not suit the new check is cleared; JSON written for the old check is set aside.
     const k = fields.find((c) => c.name === column)?.kind;
-    if (k && next.suits && !next.suits(k)) setColumn("");
+    if (k && next.suits && !next.suits(k)) changeColumn("");
     if (jsonMode) {
       setJsonMode(false);
       setJsonText("");
     }
   };
 
-  const changeAsset = (to: string) => {
+  const changeColumn = (to: string) => {
+    setColumn(to);
+    setPreview(null);
+    // Range limits typed for another kind of column would be hidden by the new inputs, so they go.
+    const k = fields.find((c) => c.name === to)?.kind ?? null;
+    setF((old) => withoutMisfits(old, k));
+  };
+
+  function changeAsset(to: string) {
     setAssetUrn(to);
     setColumn("");
     setPreview(null);
     setF((old) => ({ ...old, keyFields: [], refUrn: "", refField: "" }));
+  }
+
+  const replaceHidden = () => {
+    setKeepHidden(false);
+    setPreview(null);
+    // The values box takes the place of the button; start there.
+    const first: Partial<Record<RuleType, string>> = { allowed_values: "rule-values", in_range: "rule-min", custom_sql: "rule-sql" };
+    window.setTimeout(() => document.getElementById(first[type] ?? "rule-type")?.focus(), 0);
   };
 
   const editJson = () => {
@@ -546,13 +692,16 @@ export function RuleForm({
       return;
     }
     if (
-      !fitsFields(type, parsed) &&
-      !window.confirm("The fields cannot show all of this JSON. Use the fields anyway, and drop what they cannot show?")
+      !fitsFields(type, parsed, kind) &&
+      !window.confirm(
+        "The fields cannot show this JSON exactly. Use them anyway? Settings they cannot show are dropped, and " +
+          "values are tidied: spaces at the ends taken off and repeats removed.",
+      )
     ) {
       return;
     }
     const p = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
-    setF((old) => fieldsFrom(type, p, old));
+    setF((old) => withoutMisfits(fieldsFrom(type, p, old), kind));
     setJsonMode(false);
     setJsonText("");
   };
@@ -573,7 +722,8 @@ export function RuleForm({
     return null;
   };
 
-  const rangeInput = kind && NUMERIC.has(kind) ? "number" : kind && TEMPORAL.has(kind) ? "date" : "text";
+  // Numbers are typed as text (inputMode decimal) so a comma gets a plain message, not an empty box.
+  const rangeInput = kind === "date" ? "date" : kind && TIMES.has(kind) ? "datetime-local" : "text";
 
   return (
     <section aria-labelledby="rule-form-h" className="panel">
@@ -586,12 +736,23 @@ export function RuleForm({
           {error}
         </p>
       )}
+      {conflict && onReload && (
+        <p>
+          <button type="button" onClick={onReload}>
+            Load the rule as it is now
+          </button>{" "}
+          <span className="hint">Your changes here are set aside.</span>
+        </p>
+      )}
       <form onSubmit={submit} className="form" noValidate>
         <AssetPicker
           id="rule-asset"
           legend="Asset"
           urn={assetUrn}
+          details={assetDetails}
           onChange={changeAsset}
+          invalid={invalid("rule-asset-search")}
+          errorId="rule-error"
           fixed={editing}
           fixedHint="A rule stays on its asset. To check another asset, add a new rule there."
         />
@@ -602,7 +763,8 @@ export function RuleForm({
               id="rule-type"
               value={type}
               onChange={(e) => changeType(e.target.value as RuleType)}
-              aria-describedby="rule-type-hint"
+              disabled={keepHidden}
+              aria-describedby={keepHidden ? "rule-type-hint rule-hidden-hint" : "rule-type-hint"}
             >
               {CHECKS.filter((c) => admin || c.type !== "custom_sql" || c.type === rule?.type).map((c) => (
                 <option key={c.type} value={c.type}>
@@ -620,12 +782,10 @@ export function RuleForm({
               <select
                 id="rule-field"
                 value={column}
-                onChange={(e) => {
-                  setColumn(e.target.value);
-                  setPreview(null);
-                }}
+                onChange={(e) => changeColumn(e.target.value)}
+                disabled={keepHidden}
                 aria-invalid={invalid("rule-field")}
-                aria-describedby={describedBy("rule-field", "rule-field-hint")}
+                aria-describedby={describedBy("rule-field", "rule-field-hint", keepHidden ? "rule-hidden-hint" : "")}
               >
                 <option value="">{spec.column === "optional" ? "No column" : "Choose a column"}</option>
                 {options.map((c) => (
@@ -665,6 +825,20 @@ export function RuleForm({
           {jsonMode && (
             <p className="hint">Set by the JSON under “Advanced: edit as JSON” below, which the fields have handed over to.</p>
           )}
+          {keepHidden ? (
+            <>
+              <p id="rule-hidden-hint">
+                <strong>Hidden: this column is sensitive.</strong> The saved values stay as they are when you save. The
+                check and column stay fixed while the values are hidden.
+              </p>
+              <div className="buttons">
+                <button type="button" onClick={replaceHidden}>
+                  Replace the values
+                </button>
+              </div>
+            </>
+          ) : (
+          <>
           {type === "not_null" && (
             <label className="check">
               <input type="checkbox" checked={f.blankIsMissing} onChange={(e) => set("blankIsMissing", e.target.checked)} />{" "}
@@ -779,7 +953,8 @@ export function RuleForm({
                   <input
                     id="rule-min"
                     type={rangeInput}
-                    step={rangeInput === "number" ? "any" : undefined}
+                    inputMode={rangeInput === "text" && kind && NUMERIC.has(kind) ? "decimal" : undefined}
+                    step={rangeInput === "datetime-local" ? 1 : undefined}
                     value={f.min}
                     onChange={(e) => set("min", e.target.value)}
                     aria-invalid={invalid("rule-min")}
@@ -791,7 +966,8 @@ export function RuleForm({
                   <input
                     id="rule-max"
                     type={rangeInput}
-                    step={rangeInput === "number" ? "any" : undefined}
+                    inputMode={rangeInput === "text" && kind && NUMERIC.has(kind) ? "decimal" : undefined}
+                    step={rangeInput === "datetime-local" ? 1 : undefined}
                     value={f.max}
                     onChange={(e) => set("max", e.target.value)}
                     aria-invalid={invalid("rule-max")}
@@ -801,6 +977,7 @@ export function RuleForm({
               </div>
               <p id="rule-range-hint" className="hint">
                 Give one or both. Both limits count as inside.
+                {rangeInput === "datetime-local" ? " Times are in UTC." : ""}
                 {!kind ? " Choose the column first: the boxes then take numbers or dates to suit it." : ""}
               </p>
             </>
@@ -810,9 +987,7 @@ export function RuleForm({
             <Inline id="rule-hours" label="Newest value at most" after="hours old">
               <input
                 id="rule-hours"
-                type="number"
-                min="0"
-                step="any"
+                inputMode="decimal"
                 value={f.maxAgeHours}
                 onChange={(e) => set("maxAgeHours", e.target.value)}
                 aria-invalid={invalid("rule-hours")}
@@ -830,9 +1005,7 @@ export function RuleForm({
                 <label htmlFor="rule-rows-min">Minimum rows</label>
                 <input
                   id="rule-rows-min"
-                  type="number"
-                  min="0"
-                  step="1"
+                  inputMode="numeric"
                   value={f.rowMin}
                   onChange={(e) => set("rowMin", e.target.value)}
                   aria-invalid={invalid("rule-rows-min")}
@@ -843,9 +1016,7 @@ export function RuleForm({
                 <label htmlFor="rule-rows-max">Maximum rows</label>
                 <input
                   id="rule-rows-max"
-                  type="number"
-                  min="0"
-                  step="1"
+                  inputMode="numeric"
                   value={f.rowMax}
                   onChange={(e) => set("rowMax", e.target.value)}
                   aria-invalid={invalid("rule-rows-max")}
@@ -862,9 +1033,7 @@ export function RuleForm({
             <Inline id="rule-change" label="Largest change since the last scan" after="%">
               <input
                 id="rule-change"
-                type="number"
-                min="0"
-                step="any"
+                inputMode="decimal"
                 value={f.changePercent}
                 onChange={(e) => set("changePercent", e.target.value)}
                 aria-invalid={invalid("rule-change")}
@@ -883,8 +1052,11 @@ export function RuleForm({
                   id="rule-ref"
                   legend="Asset referred to"
                   urn={f.refUrn}
+                  details={ref}
                   onChange={(to) => setF((old) => ({ ...old, refUrn: to, refField: "" }))}
                   source={asset.source}
+                  invalid={invalid("rule-ref-search")}
+                  errorId="rule-error"
                 />
                 <div className="field">
                   <label htmlFor="rule-ref-field">Column referred to</label>
@@ -940,6 +1112,8 @@ export function RuleForm({
               </p>
             </div>
           )}
+          </>
+          )}
         </fieldset>
 
         <details open={jsonOpen} onToggle={(e) => setJsonOpen((e.target as HTMLDetailsElement).open)}>
@@ -979,7 +1153,7 @@ export function RuleForm({
                 {json(generated)}
               </code>
               <div className="buttons">
-                <button type="button" onClick={editJson}>
+                <button type="button" onClick={editJson} disabled={keepHidden}>
                   Edit as JSON
                 </button>
               </div>
@@ -1046,12 +1220,20 @@ export function RuleForm({
               autoComplete="off"
             />
             <p id="rule-hook-hint" className="hint">
+              {webhookHidden
+                ? "A webhook is set, but its address is hidden from your role. Leave this empty to keep it, or type an address to replace it. "
+                : ""}
               Only addresses on the administrator's allow-list are accepted.
             </p>
           </div>
         </fieldset>
         <div className="buttons">
-          <button type="button" onClick={doPreview}>
+          <button
+            type="button"
+            onClick={doPreview}
+            disabled={keepHidden}
+            aria-describedby={keepHidden ? "rule-preview-hint" : undefined}
+          >
             Preview on the sample
           </button>
           <button type="submit" className="primary" disabled={saving}>
@@ -1063,6 +1245,11 @@ export function RuleForm({
             </button>
           )}
         </div>
+        {keepHidden && (
+          <p id="rule-preview-hint" className="hint">
+            A preview needs the values, which are hidden from you. Save, then use Run now.
+          </p>
+        )}
         <div aria-live="polite">
           {preview && (
             <div className="preview">

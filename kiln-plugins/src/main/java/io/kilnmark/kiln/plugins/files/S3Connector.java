@@ -85,6 +85,11 @@ public final class S3Connector extends FileSourceConnector {
     }
 
     @Override
+    public String monogram() {
+        return "S3";
+    }
+
+    @Override
     public List<Setting> settings() {
         return List.of(
             new Setting("endpoint", "Endpoint", false,

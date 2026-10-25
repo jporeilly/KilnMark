@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, type Asset, type SearchHit } from "../api";
 
+export type AssetDetails = { asset: Asset | null; loading: boolean; error: string | null };
+
 /** The details of one asset, for pickers: its name and fields. Loads again when the URN changes. */
-export function useAsset(urn: string): { asset: Asset | null; loading: boolean; error: string | null } {
+export function useAsset(urn: string): AssetDetails {
   const [state, setState] = useState<{ urn: string; asset: Asset | null; error: string | null }>({
     urn: "",
     asset: null,
@@ -27,31 +29,40 @@ export function useAsset(urn: string): { asset: Asset | null; loading: boolean; 
 
 const looksLikeUrn = (text: string) => /^urn:\S+$/.test(text);
 const SHOWN = 20;
+const LIMIT = 50;
 
 /**
  * Chooses an asset by searching for it, or by pasting its URN. The chosen asset is shown by name,
  * source and path, with its URN. Results are a list of buttons: Tab moves through them, Enter or
  * Space chooses one. With `source`, only assets in that source are offered. With `fixed`, the
- * asset is shown but cannot be changed.
+ * asset is shown but cannot be changed. `details` is the chosen asset as loaded by the caller
+ * (useAsset), so it is fetched once. `invalid` marks the search box, which `errorId` then
+ * describes.
  */
 export function AssetPicker({
   id,
   legend,
   urn,
+  details,
   onChange,
   source,
   fixed,
   fixedHint,
+  invalid,
+  errorId,
 }: {
   id: string;
   legend: string;
   urn: string;
+  details: AssetDetails;
   onChange: (urn: string) => void;
   source?: string;
   fixed?: boolean;
   fixedHint?: string;
+  invalid?: boolean;
+  errorId?: string;
 }) {
-  const { asset, loading, error } = useAsset(urn);
+  const { asset, loading, error } = details;
   const [text, setText] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -64,6 +75,7 @@ export function AssetPicker({
   useEffect(() => {
     if (!query || pasted) {
       setHits(null);
+      setSearchError(null);
       setSearching(false);
       return;
     }
@@ -71,13 +83,18 @@ export function AssetPicker({
     setSearching(true);
     const timer = window.setTimeout(() => {
       api
-        .search(query)
+        .findAssets(query, source, LIMIT)
         .then((r) => {
           if (!live) return;
+          // A server that does not know the source filter returns every source's assets: narrow them here too.
           setHits(source ? r.hits.filter((h) => h.source === source) : r.hits);
           setSearchError(null);
         })
-        .catch((e: Error) => live && setSearchError(e.message))
+        .catch((e: Error) => {
+          if (!live) return;
+          setSearchError(e.message);
+          setHits(null);
+        })
         .finally(() => live && setSearching(false));
     }, 300);
     return () => {
@@ -111,7 +128,7 @@ export function AssetPicker({
           ? source
             ? `No assets in the source ${source} match. Try part of the name.`
             : "No assets match. Try part of the name, or check the source has been scanned."
-          : `${hits.length} matching ${hits.length === 1 ? "asset" : "assets"}${
+          : `${hits.length}${hits.length >= LIMIT ? " or more" : ""} matching ${hits.length === 1 ? "asset" : "assets"}${
               hits.length > SHOWN ? `, the first ${SHOWN} shown. Type more of the name to narrow them down` : ""
             }.`
         : said;
@@ -159,7 +176,8 @@ export function AssetPicker({
               onKeyDown={onKey}
               autoComplete="off"
               spellCheck={false}
-              aria-describedby={`${id}-chosen ${id}-hint ${id}-status`}
+              aria-invalid={invalid || undefined}
+              aria-describedby={`${id}-chosen ${id}-hint ${id}-status${invalid && errorId ? ` ${errorId}` : ""}`}
             />
             <p id={`${id}-hint`} className="hint">
               Type part of a table, view or file name{source ? ` in the source ${source}` : ""}. You can also paste

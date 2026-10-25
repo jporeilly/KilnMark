@@ -113,7 +113,7 @@ Each check is tagged with a quality dimension, which decides which score it affe
 | **Unique** | Values that appear more than once | Either the column, or **A key of several columns together** and the key columns ticked | Uniqueness |
 | **Allowed values** | Any value not in the list | The values, one per line: up to 1,000, matched exactly, capital letters included | Validity |
 | **Matches pattern** | Any value that does not match the regular expression | The **Pattern**, for example `^[A-Z]{2}[0-9]{6}[A-D]$`. **Use the suggested expression** fills in the profile's suggestion when there is one | Validity |
-| **In range** | Values below the minimum or above the maximum. Both limits count as inside | **Minimum**, **Maximum** or both: numbers for number columns, dates for date and time columns | Accuracy |
+| **In range** | Values below the minimum or above the maximum. Both limits count as inside | **Minimum**, **Maximum** or both: numbers for number columns (with a full stop for decimals), dates for date columns, and a date and time in UTC for date-and-time columns | Accuracy |
 | **Freshness** | The whole check fails when the newest value in a date or time column is too old | **Newest value at most** so many **hours old** | Timeliness |
 | **Row count** | The whole check fails when the asset has too few or too many rows | **Minimum rows**, **Maximum rows** or both, as whole numbers | Volume |
 | **Row count change** | The whole check fails when the row count moved by too much since the last scan, up or down | **Largest change since the last scan**, in percent: `20` means 20% | Volume |
@@ -244,9 +244,20 @@ On the **Quality rules** page, each rule has:
   **Save changes**, or **Cancel** to leave it as it was. The rule keeps its results so far, and
   the next run uses the new settings. A rule stays on its asset: to check another asset, add a new
   rule there. Only admins can edit custom SQL rules.
+
+  On a column marked sensitive, the allowed values and range limits may be hidden from you. The
+  form then shows **Hidden: this column is sensitive**, and saving keeps the hidden values. The
+  check and column stay fixed, and the preview is off, until you choose **Replace the values** and
+  type new ones. A webhook address hidden from your role is kept unless you type a new one.
 - **Delete:** removes the rule and its results, after you confirm.
 
-Rules can also be changed through the API, with `PUT /api/v1/quality/rules/{id}`.
+While a rule is open in the form, its **Switch off** and **Delete** buttons wait, so saving cannot
+undo them. If someone else changes the rule after you opened it, saving is refused rather than
+undoing their change: choose **Load the rule as it is now** and make your change again.
+
+Rules can also be changed through the API, with `PUT /api/v1/quality/rules/{id}`. Send the
+rule's `updatedAt`, as you read it, in an `If-Match` header to have the change refused (409) if the
+rule has changed since.
 
 ## Custom SQL (admins)
 

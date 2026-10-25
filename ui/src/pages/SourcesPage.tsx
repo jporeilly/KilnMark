@@ -11,6 +11,8 @@ import {
   type Source,
 } from "../api";
 import { AddConnection } from "../components/AddConnection";
+import { SourceTile } from "../components/ConnectorTile";
+import { useProductName } from "../components/Brand";
 import { ScanAction } from "../components/ScanAction";
 import { Status } from "../components/Status";
 import { useTitle } from "../components/useTitle";
@@ -32,6 +34,7 @@ const busy = (s: Source) => s.lastRun?.status === "queued" || s.lastRun?.status 
 /** Sources and their scans. Stewards can start scans and open a source to change it; admins can also add and import sources. */
 export function SourcesPage({ role }: { role: AccessRole }) {
   useTitle("Sources");
+  const product = useProductName();
   const canScan = allows(role, "steward");
   const canAdd = allows(role, "admin");
   const [sources, setSources] = useState<Source[] | null>(null);
@@ -82,8 +85,13 @@ export function SourcesPage({ role }: { role: AccessRole }) {
           {list.map((s) => (
             <tr key={s.name}>
               <th scope="row">
-                <a href={href.source(s.name)}>{s.displayName}</a>
-                {s.displayName !== s.name && <div className="small muted mono">{s.name}</div>}
+                <div className="with-tile">
+                  <SourceTile kind={s.kind} />
+                  <div>
+                    <a href={href.source(s.name)}>{s.displayName}</a>
+                    {s.displayName !== s.name && <div className="small muted mono">{s.name}</div>}
+                  </div>
+                </div>
               </th>
               <td className="small">
                 <div className="muted">
@@ -141,7 +149,7 @@ export function SourcesPage({ role }: { role: AccessRole }) {
     <>
       <h1 tabIndex={-1}>Sources</h1>
       <p className="lead">
-        Databases, folders and buckets Kilnmark reads. A scan records every table, view and file, and profiles each
+        Databases, folders and buckets {product} reads. A scan records every table, view and file, and profiles each
         column. Open a source to edit, test or delete it.
       </p>
       <p role="status" className="notice">

@@ -1,5 +1,7 @@
 package io.kilnmark.server.api;
 
+import java.util.List;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -48,13 +50,15 @@ public class CatalogResource {
     /**
      * Search over asset names, descriptions, field names and the text of documents, by words and,
      * when an embedding model is set, by meaning (ADR 0016). Document text ranks below name matches,
-     * and such hits carry a snippet. {@code mode=keyword} matches words only.
+     * and such hits carry a snippet. {@code mode=keyword} matches words only; {@code source} keeps
+     * to the assets of one source (by its name).
      */
     @GET
     @Path("search")
     public io.kilnmark.server.ai.AiViews.SearchResult search(@QueryParam("q") String q,
                                                             @QueryParam("limit") Integer limit,
-                                                            @QueryParam("mode") String mode) {
+                                                            @QueryParam("mode") String mode,
+                                                            @QueryParam("source") String source) {
         if (q == null || q.isBlank()) {
             throw new IllegalArgumentException("q: what to search for");
         }
@@ -65,9 +69,11 @@ public class CatalogResource {
             throw new IllegalArgumentException("mode: hybrid (the default) or keyword");
         }
         int n = limit == null ? 20 : Math.max(1, Math.min(limit, 100));
-        return io.kilnmark.server.ai.AiViews.SearchResult.of(q.trim(), hybrid.search(q.trim(),
-            io.kilnmark.server.ai.HybridSearch.Filters.NONE, n, io.kilnmark.server.ai.Callers.of(identity),
-            !"keyword".equals(mode)));
+        io.kilnmark.server.ai.HybridSearch.Filters filters = source == null || source.isBlank()
+            ? io.kilnmark.server.ai.HybridSearch.Filters.NONE
+            : new io.kilnmark.server.ai.HybridSearch.Filters(List.of(), List.of(source.trim()), List.of());
+        return io.kilnmark.server.ai.AiViews.SearchResult.of(q.trim(), hybrid.search(q.trim(), filters, n,
+            io.kilnmark.server.ai.Callers.of(identity), !"keyword".equals(mode)));
     }
 
     // Search by words and meaning (ADR 0016); field injection keeps the constructor as it is.
@@ -114,7 +120,7 @@ public class CatalogResource {
             .values()).filter(c.capabilities()::contains).map(x -> x.name().toLowerCase(java.util.Locale.ROOT)).toList();
         return new Views.Connector(c.kind(), c.displayName(), java.util.List.copyOf(settings), kind.setting(),
             kind.label(), kind.counted(), c.category(), c.family(), capabilities, c.formats(), c.icon(),
-            c.docsAnchor(), !c.addressSettings("db.example.com", null, "db").isEmpty(), c.driver() == null);
+            c.monogram(), c.docsAnchor(), !c.addressSettings("db.example.com", null, "db").isEmpty(), c.driver() == null);
     }
 
     /**

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   allows,
+  ApiError,
   formatNumber,
   formatShare,
   formatTime,
@@ -25,28 +26,34 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
   const [editing, setEditing] = useState<QualityRule | null>(null);
   const admin = allows(role, "admin");
 
-  const load = useCallback(() => {
+  // keepError: refresh the list but leave the message about what just went wrong showing.
+  const load = useCallback((keepError?: boolean) => {
     qualityApi
-      .rules(filter.trim() ? { urn: filter.trim() } : {})
+      // Admins edit with the real values of sensitive columns; others get them held back ({"hidden": true}).
+      .rules(filter.trim() ? { urn: filter.trim() } : {}, admin)
       .then((r) => {
         setRules(r);
-        setError(null);
+        if (keepError !== true) setError(null);
       })
       .catch((e: Error) => setError(e.message));
-  }, [filter]);
+  }, [filter, admin]);
 
   useEffect(() => setFilter(urn), [urn]);
-  useEffect(load, [load]);
+  useEffect(() => load(), [load]);
 
-  // Editing moves focus to the form; leaving it returns focus to the rule's Edit button.
+  // Editing moves focus to the form once it shows the rule; leaving it returns focus to the rule's Edit button.
+  const focusForm = useRef(false);
+  useEffect(() => {
+    if (!focusForm.current) return;
+    focusForm.current = false;
+    const h = document.getElementById("rule-form-h");
+    h?.scrollIntoView({ block: "start" });
+    h?.focus();
+  }, [editing]);
   const startEdit = (rule: QualityRule) => {
+    focusForm.current = true;
     setEditing(rule);
     setNotice("");
-    window.setTimeout(() => {
-      const h = document.getElementById("rule-form-h");
-      h?.scrollIntoView({ block: "start" });
-      h?.focus();
-    }, 0);
   };
   const stopEdit = (id: number) => {
     setEditing(null);
@@ -60,6 +67,8 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
       load();
     } catch (e) {
       setError((e as Error).message);
+      // Someone else changed the rule: show it as it is now.
+      if (e instanceof ApiError && e.status === 409) load(true);
     }
   };
 
@@ -156,9 +165,11 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                             `Rule "${rule.name}" queued to run.`)} aria-label={`Run rule ${rule.name} now`}>
                             Run now
                           </button>
+                          {/* Switching and deleting wait while the rule is open in the form, so a save cannot undo them. */}
                           <button type="button" onClick={() => act(() => qualityApi.updateRule(rule.id, {
                             ...rule, enabled: !rule.enabled, actions: { webhook: rule.actions.webhook, task: rule.actions.task },
-                          }), `Rule "${rule.name}" switched ${rule.enabled ? "off" : "on"}.`)}
+                          }, rule.updatedAt), `Rule "${rule.name}" switched ${rule.enabled ? "off" : "on"}.`)}
+                            disabled={editing?.id === rule.id}
                             aria-label={`${rule.enabled ? "Switch off" : "Switch on"} rule ${rule.name}`}>
                             {rule.enabled ? "Switch off" : "Switch on"}
                           </button>
@@ -166,10 +177,11 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                             if (window.confirm(`Delete the rule "${rule.name}" and its results?`)) {
                               act(() => qualityApi.deleteRule(rule.id), `Rule "${rule.name}" deleted.`);
                             }
-                          }} aria-label={`Delete rule ${rule.name}`}>
+                          }} disabled={editing?.id === rule.id} aria-label={`Delete rule ${rule.name}`}>
                             Delete
                           </button>
                         </div>
+                        {editing?.id === rule.id && <p className="hint">Open in the form below.</p>}
                       </td>
                     )}
                   </tr>
@@ -183,10 +195,20 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
       {steward ? (
         editing ? (
           <RuleForm
-            key={`edit-${editing.id}`}
+            key={`edit-${editing.id}-${editing.updatedAt}`}
             admin={admin}
             urn={editing.assetUrn}
             rule={editing}
+            onReload={() =>
+              qualityApi
+                .rule(editing.id, admin)
+                .then((v) => {
+                  focusForm.current = true;
+                  setEditing(v.rule);
+                  load();
+                })
+                .catch((e: Error) => setError(e.message))
+            }
             onSaved={(name) => {
               setNotice(`Rule "${name}" saved. Its next run uses the new settings, or press Run now.`);
               load();

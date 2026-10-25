@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig, searchForWorkspaceRoot } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 // Built files go to the repository-wide dist folder (see docs/adr/0010-repository-layout.md).
@@ -14,7 +14,7 @@ export default defineConfig({
   server: {
     fs: {
       allow: [
-        searchForWorkspaceRoot(process.cwd()),
+        fileURLToPath(new URL(".", import.meta.url)),
         fileURLToPath(new URL("../docs/guide", import.meta.url)),
         fileURLToPath(new URL("../CHANGELOG.md", import.meta.url)),
       ],
