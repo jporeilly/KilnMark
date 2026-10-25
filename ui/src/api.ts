@@ -1095,6 +1095,8 @@ export type PipelineStepRun = {
   peakMemory: number | null;
   durationMs: number | null;
   error: string | null;
+  /** How the step ended; a step the engine stopped is not a clean finish. Null when not recorded. */
+  outcome: "finished" | "ended_early" | "stopped" | "failed" | null;
 };
 export type PipelineWrittenAsset = {
   step: string;

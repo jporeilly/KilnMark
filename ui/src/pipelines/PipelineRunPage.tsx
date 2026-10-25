@@ -1,9 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { allows, formatNumber, formatTime, pipelinesApi, type AccessRole, type PipelineRunDetail } from "../api";
+import {
+  allows,
+  formatNumber,
+  formatTime,
+  pipelinesApi,
+  type AccessRole,
+  type PipelineRunDetail,
+  type PipelineStepRun,
+} from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { formatBytes, formatDuration, RunStatus, runTime } from "./RunStatus";
 import "./pipelines.css";
+
+const OUTCOME: Record<NonNullable<PipelineStepRun["outcome"]>, string> = {
+  finished: "Finished",
+  ended_early: "Ended early",
+  stopped: "Stopped by the engine",
+  failed: "Failed",
+};
 
 /** Rows per port, in words: "main 10, lookup 4". */
 function portRows(ports: Record<string, number | null> | undefined): string {
@@ -140,6 +155,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
               <thead>
                 <tr>
                   <th scope="col">Step</th>
+                  <th scope="col">How it ended</th>
                   <th scope="col">Rows in</th>
                   <th scope="col">Rows out</th>
                   <th scope="col">Peak memory</th>
@@ -154,6 +170,25 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
                       <span className="mono">{s.step}</span>
                       <div className="small muted">{s.type}</div>
                     </th>
+                    <td>
+                      {s.outcome ? (
+                        <span
+                          className={`badge ${
+                            s.outcome === "failed"
+                              ? "badge-failed"
+                              : s.outcome === "stopped"
+                                ? "badge-running"
+                                : s.outcome === "ended_early"
+                                  ? "badge-none"
+                                  : "badge-succeeded"
+                          }`}
+                        >
+                          {OUTCOME[s.outcome]}
+                        </span>
+                      ) : (
+                        "–"
+                      )}
+                    </td>
                     <td>
                       {formatNumber(s.rowsIn)}
                       {Object.keys(s.ports?.in ?? {}).length > 1 && (
