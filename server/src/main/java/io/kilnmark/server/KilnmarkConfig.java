@@ -60,6 +60,71 @@ public interface KilnmarkConfig {
     /** The operator's branding folder: the organisation's name and logo, and connector logos. */
     Branding branding();
 
+    /**
+     * The outgoing mail server, until an admin saves one under Settings › Email (which then wins,
+     * except that a password configured here is used while none is stored there).
+     */
+    Mail mail();
+
+    /** Email notifications: retries, rate limit and log (docs/design/notifications.md). */
+    Notifications notifications();
+
+    /** Defaults for the mail settings; see {@link io.kilnmark.server.notify.MailSettings}. */
+    interface Mail {
+        /** The SMTP server, such as {@code smtp.example.com}. */
+        Optional<String> host();
+
+        /** Its port; unset for the usual one for {@link #security()} (587, 465 or 25). */
+        Optional<Integer> port();
+
+        /** {@code starttls} (the default), {@code tls} or {@code none}. */
+        @WithDefault("starttls")
+        io.kilnmark.server.notify.MailSecurity security();
+
+        /** Who to sign in as; unset to send without signing in. */
+        Optional<String> username();
+
+        /** The password, for example from {@code KILNMARK_MAIL_PASSWORD}. Never logged or returned. */
+        Optional<String> password();
+
+        /** The sender's address, such as {@code kilnmark@example.com}. */
+        Optional<String> from();
+
+        /** The sender's name. */
+        @WithDefault("Kilnmark")
+        String fromName();
+
+        /** How people reach Kilnmark, for links in emails, such as {@code https://kilnmark.example.com}. */
+        Optional<String> baseUrl();
+    }
+
+    /** Email notifications. */
+    interface Notifications {
+        /** Emails of their own one address may get in an hour; the rest wait for its next daily digest. */
+        @WithDefault("20")
+        int rateLimitPerHour();
+
+        /** Tries before an email is given up (with back-off: 1, 3, 9, 27 minutes, then hourly). */
+        @WithDefault("5")
+        int maxAttempts();
+
+        /** How often workers look for emails to send. */
+        @WithDefault("10s")
+        Duration pollInterval();
+
+        /** How long one SMTP connection, sign-in or write may take. */
+        @WithDefault("20s")
+        Duration sendTimeout();
+
+        /** How long the send log, and events with nothing left to send, are kept. */
+        @WithDefault("30d")
+        Duration logRetention();
+
+        /** How long people's in-app notifications are kept, read or not. */
+        @WithDefault("90d")
+        Duration inAppRetention();
+    }
+
     /** See docs/guide/branding.md. */
     interface Branding {
         /**

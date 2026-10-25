@@ -46,7 +46,13 @@ dependencies {
     "implementation"(enforcedPlatform(libs.quarkus.mcp.server.bom))
     "implementation"("io.quarkiverse.mcp:quarkus-mcp-server-http")
 
+    // Email notifications (docs/design/notifications.md): Jakarta Mail through Eclipse Angus, version from the
+    // Quarkus platform. Not the Quarkus mailer: the mail server is set at run time, in the database.
+    "implementation"("org.eclipse.angus:angus-mail")
+
     "testImplementation"("io.quarkus:quarkus-junit5")
+    // An SMTP server in the test's own process (Apache-2.0, test only), so mail tests need no container.
+    "testImplementation"(libs.greenmail)
     "testImplementation"("io.rest-assured:rest-assured")
     // Validates the data quality exports against the published OpenLineage and ODCS schemas (Apache-2.0, test only).
     "testImplementation"(libs.json.schema.validator)

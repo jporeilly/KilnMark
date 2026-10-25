@@ -87,6 +87,15 @@ public class Sights {
         return new Masking.Sight(true, marks(urn), mayUnmask());
     }
 
+    /**
+     * What an email to someone with {@code role} may show of an asset whose columns marked sensitive
+     * are {@code marks} (notifications, which have no request): the quality views' rule, as
+     * {@link #of} gives it for that role, without unmasking. A team address is written for a viewer.
+     */
+    public static Masking.Sight recipient(AccessRole role, Set<String> marks) {
+        return new Masking.Sight(role.grants().contains(DATA_ROLE), marks, false);
+    }
+
     /** What a model may be shown (the MCP server): never a sensitive column's values, whoever's token. */
     public Masking.Sight model(String urn) {
         return new Masking.Sight(true, marks(urn), false);
