@@ -5,6 +5,8 @@ details.
 
 ## Unreleased
 
+## 0.0.4 (25 October 2026)
+
 ### What's new
 
 - **Pipelines you can run.** Build a pipeline that reads from your sources, changes the rows and
