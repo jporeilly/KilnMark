@@ -7,6 +7,8 @@
 #   PostgreSQL  db=lab  user=lab  password=lab   (schemas crm, billing)
 #   S3          access key=labadmin  secret=labadmin123  bucket=lab-raw  (path-style)
 #   File share  lab/files/share (read directly from disk)
+#   Mailpit     SMTP lab-mailpit:1025 from Kilnmark (localhost:1025 here), no sign-in, security none;
+#               the emails it catches at http://localhost:8025
 services:
   lab-postgres:
     image: docker.io/library/postgres:18
@@ -35,6 +37,19 @@ services:
       - ./files/bucket:/data/lab-raw:Z
     ports:
       - "9000:7070"
+
+  # A mail server that keeps every email it is sent and shows them in a web page, for trying
+  # Kilnmark's notifications (Settings > Email: server lab-mailpit, port 1025, security None).
+  # Nothing leaves it. Ports stay clear of 8080 (Tomcat) and 8780 (Kilnmark).
+  lab-mailpit:
+    image: docker.io/axllent/mailpit:v1.31.6
+    environment:
+      MP_MAX_MESSAGES: "500"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "1025:1025"
+      - "8025:8025"
 
 # Kilnmark's network (created by the main compose.yaml), so Kilnmark reaches these services by name.
 networks:
