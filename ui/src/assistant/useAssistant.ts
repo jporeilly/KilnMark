@@ -13,10 +13,14 @@ export type Exchange = {
   ratingError?: string;
 };
 
-/** Earlier turns sent with a question, as the server takes them: the last three questions and answers. */
+/**
+ * Earlier turns sent with a question, as the server takes them: the last three questions a model
+ * answered, with its answers. Lists of matching sections (fallbacks) are left out: they are not
+ * answers, and would only fill the model's context. The server shortens them further to fit.
+ */
 function history(exchanges: Exchange[]): AssistantTurn[] {
   const out: AssistantTurn[] = [];
-  for (const e of exchanges.filter((x) => x.state === "done" && x.answer).slice(-3)) {
+  for (const e of exchanges.filter((x) => x.state === "done" && x.answer && !x.answer.fallback).slice(-3)) {
     out.push({ role: "user", text: e.question.slice(0, 2000) });
     out.push({ role: "assistant", text: e.answer!.answer.slice(0, 4000) });
   }

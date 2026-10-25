@@ -106,8 +106,19 @@ function Shell({ me }: { me: Me }) {
     setAskOpen(true);
     setAskFocus((n) => n + 1);
   };
-  const closeAsk = () => {
+  // Below 1100px the panel covers the page, so the page behind it is inert (the panel acts as a modal).
+  const [narrow, setNarrow] = useState(() => window.matchMedia?.("(max-width: 1099px)").matches ?? false);
+  useEffect(() => {
+    const m = window.matchMedia?.("(max-width: 1099px)");
+    if (!m) return;
+    const onChange = () => setNarrow(m.matches);
+    m.addEventListener("change", onChange);
+    return () => m.removeEventListener("change", onChange);
+  }, []);
+  const covered = askOpen && narrow;
+  const closeAsk = (returnFocus = true) => {
     setAskOpen(false);
+    if (!returnFocus) return; // a link was followed: the page it opened takes focus
     const back = askReturn.current;
     // Back where focus was, or to the Ask button if that was nowhere in particular or has gone.
     const target = back && back !== document.body && document.contains(back) ? back : askButton.current;
@@ -133,9 +144,11 @@ function Shell({ me }: { me: Me }) {
         searchBox.current?.focus();
         searchBox.current?.select();
       }
-      // Alt+A opens the Ask panel, or moves focus into it. (On a Mac, Option+A in a text box types å.)
+      // Alt+A opens the Ask panel, or moves focus into it. By the letter typed, so it is A on AZERTY
+      // keyboards too; on a Mac, Option changes the letter (å), so by the key, and not while typing.
       const mac = /Mac/.test(navigator.platform);
-      if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyA" && !(mac && typing)) {
+      const isA = mac ? e.code === "KeyA" && !typing : e.key === "a" || e.key === "A";
+      if (e.altKey && !e.ctrlKey && !e.metaKey && isA) {
         e.preventDefault();
         openAskRef.current();
       }
@@ -170,14 +183,14 @@ function Shell({ me }: { me: Me }) {
 
   return (
     <>
-      <a href="#main" className="skip" onClick={(e) => {
+      <a href="#main" className="skip" inert={covered} onClick={(e) => {
         e.preventDefault();
         document.getElementById("main")?.focus();
       }}>
         Skip to main content
       </a>
       <div className={askOpen ? "shell assistant-open" : "shell"}>
-        <header className="topbar">
+        <header className="topbar" inert={covered}>
           <a className="brand" href={href.home()}>
             <span className="brand-mark" aria-hidden="true">K</span>
             Kilnmark
@@ -221,7 +234,7 @@ function Shell({ me }: { me: Me }) {
             {me.signInRequired && <a href={href.signOut()}>Sign out</a>}
           </div>
         </header>
-        <nav aria-label="Main" className="sidenav">
+        <nav aria-label="Main" className="sidenav" inert={covered}>
           <ul>
             <li>
               <a href={href.home()} aria-current={current("home")}>
@@ -277,7 +290,7 @@ function Shell({ me }: { me: Me }) {
           </p>
         </nav>
         <RoleContext.Provider value={me.role}>
-        <main id="main" tabIndex={-1}>
+        <main id="main" tabIndex={-1} inert={covered}>
           {route.page === "home" && <HomePage />}
           {route.page === "settings" &&
             (allows(me.role, "admin") ? (
@@ -323,7 +336,15 @@ function Shell({ me }: { me: Me }) {
             ))}
         </main>
         </RoleContext.Provider>
-        {askOpen && <AssistantPanel route={route} state={assistant} onClose={closeAsk} focusSignal={askFocus} />}
+        {askOpen && (
+          <AssistantPanel
+            route={route}
+            state={assistant}
+            onClose={closeAsk}
+            focusSignal={askFocus}
+            covering={narrow}
+          />
+        )}
       </div>
     </>
   );

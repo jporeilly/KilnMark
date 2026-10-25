@@ -119,12 +119,16 @@ export function AssistantPanel({
   state,
   onClose,
   focusSignal,
+  covering,
 }: {
   route: Route;
   state: AssistantState;
-  onClose: () => void;
+  /** returnFocus false when a link was followed, so the page it opened keeps focus. */
+  onClose: (returnFocus?: boolean) => void;
   /** Changes whenever the panel should take focus (opened, or the shortcut pressed while open). */
   focusSignal: number;
+  /** The panel covers the page (narrow screens): it is modal, and following a link closes it. */
+  covering: boolean;
 }) {
   const [text, setText] = useState("");
   const input = useRef<HTMLTextAreaElement>(null);
@@ -172,14 +176,20 @@ export function AssistantPanel({
       id="assistant"
       className="assistant"
       role="dialog"
-      aria-modal="false"
+      aria-modal={covering ? "true" : "false"}
       aria-labelledby="assistant-h"
       aria-describedby="assistant-about"
       onKeyDown={(e) => {
         if (e.key === "Escape") {
+          // Ours alone: no other Escape handler (React's or one on window) acts on it as well.
           e.stopPropagation();
+          e.nativeEvent.stopImmediatePropagation();
           onClose();
         }
+      }}
+      onClick={(e) => {
+        // On a narrow screen the viewer opens behind the panel, so following a link closes it.
+        if (covering && e.target instanceof Element && e.target.closest("a[href^='#/']")) onClose(false);
       }}
     >
       <div className="assistant-head">
@@ -189,7 +199,7 @@ export function AssistantPanel({
             Clear
           </button>
         )}
-        <button type="button" onClick={onClose} aria-keyshortcuts="Escape">
+        <button type="button" onClick={() => onClose()} aria-keyshortcuts="Escape">
           Close
         </button>
       </div>

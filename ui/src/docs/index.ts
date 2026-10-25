@@ -7,10 +7,10 @@
  */
 import changelog from "../../../CHANGELOG.md?raw";
 import { WHATS_NEW } from "./links";
-import { markdownHeadings, plainHeading, type DocHeading } from "./slug";
+import { markdownHeadings, plainHeading, type DocHeading } from "./anchors";
 
 export { docHref, WHATS_NEW } from "./links";
-export { markdownHeadings, plainHeading, slug, uniqueSlug, type DocHeading } from "./slug";
+export { markdownHeadings, plainHeading, slug, uniqueSlug, type DocHeading } from "./anchors";
 
 /** A bundled guide: id is its file name without .md, title its first heading. */
 export type DocPage = { id: string; title: string; markdown: string };
