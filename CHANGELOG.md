@@ -127,6 +127,17 @@ details.
   type (choosing a problem moves to its line), Save with a message, a graph of the steps with the
   columns leaving each, versions and runs with a per-step breakdown. The guide "Building and
   running a pipeline" (docs/guide/pipelines.md) walks through it.
+- **The release holds the product only** (ADR 0024): the reference lab is for development, tests
+  and demos, and never ships. The release has its own `compose.yaml`, made from
+  `containers/compose.release.yaml`: no lab defaults, a commented-out example for the folder to
+  scan, images tagged with the version, and the server image built from the release folder (the
+  server Containerfile's new `APP_DIR` argument). The root `compose.yaml` is the developer setup.
+  **New pipeline** starts from the first source with scanned tables or files and the first that
+  allows writing, or from placeholders such as `<your source>`, instead of lab sources. Guide and
+  message examples use neutral names (`sales-db`, `warehouse`, `file-share`, `landing-bucket`).
+  `release` now runs `checkProductOnly`, which fails on any lab folder, source name, path, lab-only
+  port or mention in the release, in Kilnmark's own jars (the UI bundle included) and in the
+  bundled guides; justified exceptions go in `config/product-only-allow.txt`.
 
 ## 0.0.3 (25 October 2026)
 
