@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Switch } from "../components/ui";
+import { PageHeader, Switch } from "../components/ui";
 import {
   aiApi,
   formatNumber,
@@ -102,19 +102,16 @@ export function AiPage() {
 
   return (
     <>
-      <nav aria-label="Breadcrumb" className="crumbs">
-        <ol>
-          <li>
-            <a href={href.settings()}>Settings</a>
-          </li>
-          <li aria-current="page">AI models</li>
-        </ol>
-      </nav>
-      <h1 tabIndex={-1}>AI models</h1>
-      <p className="lead">
-        Choose the models Kilnmark uses: local ones on your own servers, or hosted ones with an API key. AI only proposes;
+      <PageHeader
+        crumbs={[{ label: "Settings", href: href.settings() }, { label: "AI models" }]}
+        title="AI models"
+        lead={
+          <>
+            Choose the models Kilnmark uses: local ones on your own servers, or hosted ones with an API key. AI only proposes;
         people approve. A source&rsquo;s AI rule decides which models may see it. <a href={href.aiUsage()}>See usage</a>.
-      </p>
+          </>
+        }
+      />
       <p role="status" className="notice">
         {notice}
       </p>

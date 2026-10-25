@@ -1475,6 +1475,30 @@ tbody th {
   font-weight: 600;
 }
 
+/* Buttons in table rows are compact. */
+td button:not(.km-switch):not(.link-button):not(.disclosure) {
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: var(--km-text-sm);
+  border-radius: var(--km-radius-sm);
+}
+
+td .buttons {
+  gap: 6px;
+}
+
+/* Links in tables read as names: no underline until hovered. */
+td a,
+th a {
+  text-decoration: none;
+  font-weight: 600;
+}
+
+td a:hover,
+th a:hover {
+  text-decoration: underline;
+}
+
 caption {
   text-align: left;
   padding: 0 0 8px;
@@ -2244,6 +2268,10 @@ a.km-stat--link:hover {
   max-width: none;
 }
 
+.signin h1 {
+  margin-bottom: 16px;
+}
+
 .new-token {
   box-shadow: inset 0 0 0 2px var(--km-warn), var(--km-shadow-card);
 }
@@ -2896,6 +2924,15 @@ table.sample td {
   flex-direction: column;
   gap: 10px;
   padding: 16px;
+}
+
+a.km-link-card {
+  color: var(--km-ink);
+  text-decoration: none;
+}
+
+a.km-link-card:hover {
+  box-shadow: var(--km-shadow-raised);
 }
 
 .km-gallery-card p {

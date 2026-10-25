@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { Icon } from "../components/icons";
 import type { Route } from "../router";
 import type { AssistantAnswer, AssistantCitation } from "./api";
 import { pageHint, suggestions } from "./context";
@@ -200,14 +201,17 @@ export function AssistantPanel({
       }}
     >
       <div className="assistant-head">
-        <h2 id="assistant-h">Ask Kilnmark</h2>
+        <h2 id="assistant-h">
+          <Icon name="ask" size={18} className="km-violet-icon" />
+          Ask Kilnmark
+        </h2>
         {exchanges.length > 0 && (
           <button type="button" className="link-button" onClick={state.clear}>
             Clear
           </button>
         )}
-        <button type="button" onClick={() => onClose()} aria-keyshortcuts="Escape">
-          Close
+        <button type="button" className="km-icon-button km-close" onClick={() => onClose()} aria-keyshortcuts="Escape" aria-label="Close Ask Kilnmark">
+          <Icon name="close" size={20} />
         </button>
       </div>
       <p id="assistant-about" className="hint">

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PageHeader } from "../components/ui";
 import { aiApi, formatNumber, formatTime, type AiUsage, type AiUsageRecent } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
@@ -32,19 +33,16 @@ export function AiUsagePage() {
 
   return (
     <>
-      <nav aria-label="Breadcrumb" className="crumbs">
-        <ol>
-          <li>
-            <a href={href.settings()}>Settings</a>
-          </li>
-          <li aria-current="page">AI usage</li>
-        </ol>
-      </nav>
-      <h1 tabIndex={-1}>AI usage</h1>
-      <p className="lead">
-        Every model call, including refused ones: which feature asked, which model answered, tokens and time. Prompts
+      <PageHeader
+        crumbs={[{ label: "Settings", href: href.settings() }, { label: "AI usage" }]}
+        title="AI usage"
+        lead={
+          <>
+            Every model call, including refused ones: which feature asked, which model answered, tokens and time. Prompts
         and answers are not kept. <a href={href.ai()}>Back to AI models</a>.
-      </p>
+          </>
+        }
+      />
       {error && (
         <p role="alert" className="error">
           {error}

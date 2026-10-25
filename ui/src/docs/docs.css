@@ -1,7 +1,64 @@
 /* In-app documentation (src/docs). Uses the tokens in tokens.css. */
 
+.km-article {
+  display: grid;
+  gap: var(--km-gap);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+@media (min-width: 1100px) {
+  .km-article--toc {
+    grid-template-columns: minmax(0, 1fr) 240px;
+  }
+
+  .km-article--toc .km-toc {
+    order: 2;
+    position: sticky;
+    top: calc(var(--km-topbar-h) + 16px);
+    max-height: calc(100vh - var(--km-topbar-h) - 32px);
+    overflow-y: auto;
+  }
+}
+
+.km-toc {
+  padding: 16px 18px;
+  font-size: var(--km-text-sm);
+}
+
+.km-toc-title {
+  margin: 0 0 8px;
+  font: 700 var(--km-text-sm) var(--km-font-display);
+  color: var(--km-ink-strong);
+}
+
+.km-toc ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.km-toc a {
+  text-decoration: none;
+}
+
+.km-toc a:hover {
+  text-decoration: underline;
+}
+
 .doc-body {
-  max-width: 75ch;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+.doc-body > * {
+  max-width: 78ch;
+}
+
+.doc-body > :first-child {
+  margin-top: 0;
 }
 
 .doc-body pre {

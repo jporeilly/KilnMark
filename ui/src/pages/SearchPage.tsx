@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Card, EmptyState, PageHeader, StatusChip } from "../components/ui";
+import { Icon } from "../components/icons";
 import { aiApi, formatNumber, type AskResult, type HybridHit, type QueryPlan, type SearchHitWithSnippet } from "../api";
 import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
@@ -54,7 +56,7 @@ export function SearchPage({ q, ask }: { q: string; ask: boolean }) {
 
   return (
     <>
-      <h1 tabIndex={-1}>{q ? <>{ask ? "Answers for" : "Results for"} “{q}”</> : "Search"}</h1>
+      <PageHeader title={q ? <>{ask ? "Answers for" : "Results for"} “{q}”</> : "Search"} />
       <div className="search-mode" role="group" aria-label="How to search">
         <button type="button" aria-pressed={!ask} onClick={() => go(href.search(q))}>
           {meaning ? "Search names and meaning" : "Search names"}
@@ -77,9 +79,11 @@ export function SearchPage({ q, ask }: { q: string; ask: boolean }) {
       {note && <p className="meta">{note}</p>}
       {error && <p role="alert" className="error">{error}</p>}
       {hits?.length === 0 && (
-        <p>
-          Nothing matched. Try part of a name, or check the source has been <a href={href.sources()}>scanned</a>.
-        </p>
+        <Card>
+          <EmptyState icon={<Icon name="search" size={22} />} title="Nothing matched">
+            Try part of a name, or check the source has been <a href={href.sources()}>scanned</a>.
+          </EmptyState>
+        </Card>
       )}
       {hits && hits.length > 0 && (
         <ol className="results">
@@ -92,10 +96,10 @@ export function SearchPage({ q, ask }: { q: string; ask: boolean }) {
                 </a>
               </h2>
               <p className="meta">
-                <span className="tag">
+                <StatusChip tone="sky">
                   <KindIcon kind={h.kind} name={h.name} />
                   {h.kind}
-                </span>{" "}
+                </StatusChip>{" "}
                 in <strong>{h.source}</strong>
                 {h.rowCount != null && <> · {formatNumber(h.rowCount)} rows</>}
                 {h.matchedBy?.length > 0 && <> · Matched by {h.matchedBy.map((m) => MATCHED[m] ?? m).join(" and ")}</>}
@@ -112,8 +116,8 @@ export function SearchPage({ q, ask }: { q: string; ask: boolean }) {
                   Matching columns:{" "}
                   {h.matchedFields.slice(0, 6).map((f, i) => (
                     <span key={f}>
-                      {i > 0 && ", "}
-                      <span className="mono">{f}</span>
+                      {i > 0 && " "}
+                      <span className="km-code">{f}</span>
                     </span>
                   ))}
                 </p>
@@ -149,7 +153,7 @@ function Interpreted({ answer }: { answer: AskResult }) {
             </div>
             <div>
               <dt>Must have fields</dt>
-              <dd>{plan.fields.length ? plan.fields.map((f) => <span key={f} className="mono tag">{f}</span>) : "Any"}</dd>
+              <dd>{plan.fields.length ? plan.fields.map((f) => <span key={f} className="km-code">{f}</span>) : "Any"}</dd>
             </div>
           </dl>
           {plan.ignored.length > 0 && (

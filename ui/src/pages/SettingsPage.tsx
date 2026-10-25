@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { IconTile, PageHeader, type Tint } from "../components/ui";
 import { allows, type AccessRole } from "../api";
 import { useProductName } from "../components/Brand";
 import { href } from "../router";
@@ -25,31 +26,37 @@ export function SettingsPage({ role }: { role: AccessRole }) {
   useTitle("Settings");
   const admin = allows(role, "admin");
   const product = useProductName();
-  const items: { title: string; link: string; text: string; external?: boolean }[] = [
-    { title: "API tokens", link: href.tokens(), text: "Create, list and revoke tokens for people, scripts and AI assistants." },
-    { title: "AI models", link: href.ai(), text: "Local and hosted models, which feature uses which, and the rule for hosted models." },
-    { title: "AI usage", link: href.aiUsage(), text: "Model calls by day and model, with failures and refusals." },
+  // Notification settings arrive from another branch: add their entry here.
+  const items: { title: string; link: string; text: string; icon: string; tint: Tint; external?: boolean }[] = [
+    { title: "API tokens", link: href.tokens(), icon: "key", tint: "amber", text: "Create, list and revoke tokens for people, scripts and AI assistants." },
+    { title: "AI models", link: href.ai(), icon: "model", tint: "violet", text: "Local and hosted models, which feature uses which, and the rule for hosted models." },
+    { title: "AI usage", link: href.aiUsage(), icon: "chart", tint: "sky", text: "Model calls by day and model, with failures and refusals." },
     {
       title: "API documentation",
       link: "/api/docs",
+      icon: "external",
+      tint: "slate",
       text: "Every endpoint, with its parameters and responses. Try them with an API token.",
       external: true,
     },
   ];
   return (
     <>
-      <h1 tabIndex={-1}>Settings</h1>
-      <p className="lead">
-        {admin ? `How ${product} looks for you, and administration for this server.` : `How ${product} looks for you.`}
-      </p>
+      <PageHeader
+        title="Settings"
+        lead={admin ? `How ${product} looks for you, and administration for this server.` : `How ${product} looks for you.`}
+      />
       <Appearance />
       {admin && (
-        <section aria-labelledby="admin-heading">
+        <section aria-labelledby="admin-heading" className="km-section">
           <h2 id="admin-heading">Administration</h2>
           <ul className="settings-list">
             {items.map((i) => (
               <li key={i.title} className="panel">
                 <h3>
+                  <IconTile tint={i.tint} size="sm">
+                    <Icon name={i.icon} size={16} />
+                  </IconTile>
                   <a href={i.link} {...(i.external ? { target: "_blank", rel: "noopener" } : {})}>
                     {i.title}
                     {i.external && <span className="visually-hidden"> (opens in a new tab)</span>}
@@ -72,7 +79,7 @@ function Appearance() {
   const logos = Object.values(branding.connectors).filter((c) => c.image).length;
   const [brokenLogo, setBrokenLogo] = useState<string | null>(null);
   return (
-    <section className="panel appearance" aria-labelledby="appearance-heading">
+    <section className="km-card appearance" aria-labelledby="appearance-heading">
       <h2 id="appearance-heading">Appearance</h2>
       <p className="hint">
         Your choices apply to you only, in this browser, and are saved straight away. If your browser does not keep
@@ -105,7 +112,10 @@ function Appearance() {
       </fieldset>
       <fieldset>
         <legend>Accent colour</legend>
-        <p className="hint">Used for the current page, selections and main buttons. Each has a shade for every theme.</p>
+        <p className="hint">
+          Used for the current page, selections, links and main buttons. Each has a shade for every theme, checked for
+          contrast. Orange is the default.
+        </p>
         <div className="option-grid">
           {ACCENTS.map((x) => (
             <label key={x.id} className="option">
