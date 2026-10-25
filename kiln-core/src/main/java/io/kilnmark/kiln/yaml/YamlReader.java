@@ -1,6 +1,7 @@
 package io.kilnmark.kiln.yaml;
 
 import java.io.Serial;
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -20,6 +21,7 @@ import org.snakeyaml.engine.v2.events.NodeEvent;
 import org.snakeyaml.engine.v2.events.ScalarEvent;
 import org.snakeyaml.engine.v2.exceptions.Mark;
 import org.snakeyaml.engine.v2.exceptions.MarkedYamlEngineException;
+import org.snakeyaml.engine.v2.exceptions.ReaderException;
 import org.snakeyaml.engine.v2.exceptions.YamlEngineException;
 import org.snakeyaml.engine.v2.nodes.Tag;
 import org.snakeyaml.engine.v2.resolver.ScalarResolver;
@@ -51,11 +53,22 @@ final class YamlReader {
     sealed interface Node permits Scalar, Sequence, Mapping {
         Position position();
 
-        /** The plain Java value: String, Integer, Long, BigInteger, Double, Boolean, null, List or Map. */
+        /**
+         * The plain Java value: String, Integer, Long, BigInteger, BigDecimal, Double (only for
+         * infinities and not-a-number), Boolean, null, List or Map.
+         */
         Object value();
+
+        /** The same shape with every scalar as the text written (null for a null). */
+        Object text();
     }
 
-    record Scalar(Object value, Position position) implements Node {
+    /** A scalar: its typed value, and the text as written. */
+    record Scalar(Object value, String written, Position position) implements Node {
+        @Override
+        public Object text() {
+            return value == null ? null : written;
+        }
     }
 
     record Sequence(List<Node> items, Position position) implements Node {
@@ -63,6 +76,13 @@ final class YamlReader {
         public Object value() {
             List<Object> out = new ArrayList<>(items.size());
             items.forEach(i -> out.add(i.value()));
+            return Collections.unmodifiableList(out);
+        }
+
+        @Override
+        public Object text() {
+            List<Object> out = new ArrayList<>(items.size());
+            items.forEach(i -> out.add(i.text()));
             return Collections.unmodifiableList(out);
         }
     }
@@ -76,6 +96,13 @@ final class YamlReader {
         public Object value() {
             Map<String, Object> out = new LinkedHashMap<>();
             entries.forEach((k, e) -> out.put(k, e.value().value()));
+            return Collections.unmodifiableMap(out);
+        }
+
+        @Override
+        public Object text() {
+            Map<String, Object> out = new LinkedHashMap<>();
+            entries.forEach((k, e) -> out.put(k, e.value().text()));
             return Collections.unmodifiableMap(out);
         }
     }
@@ -113,6 +140,9 @@ final class YamlReader {
             for (Event e : new Parse(settings).parseString(text)) {
                 b.accept(e);
             }
+        } catch (ReaderException e) {
+            throw new Failure(offset(text, e.getPosition()), String.format(
+                "This is not valid YAML: the character U+%04X is not allowed", e.getCodePoint()));
         } catch (MarkedYamlEngineException e) {
             Position at = position(e.getProblemMark().or(e::getContextMark));
             String problem = e.getProblem() == null ? e.getMessage() : e.getProblem();
@@ -121,6 +151,24 @@ final class YamlReader {
             throw new Failure(Position.START, "This is not valid YAML: " + e.getMessage());
         }
         return b.root;
+    }
+
+    /** The line and column of the {@code index}-th code point. */
+    static Position offset(String text, int index) {
+        int line = 1;
+        int column = 1;
+        int i = 0;
+        for (int cp = 0; i < text.length() && cp < index; cp++) {
+            int c = text.codePointAt(i);
+            i += Character.charCount(c);
+            if (c == '\n') {
+                line++;
+                column = 1;
+            } else {
+                column++;
+            }
+        }
+        return new Position(line, column);
     }
 
     private static Position position(Optional<Mark> mark) {
@@ -163,7 +211,7 @@ final class YamlReader {
                 case Scalar -> {
                     ScalarEvent s = (ScalarEvent) e;
                     check(s, at, s.getTag());
-                    add(new Scalar(scalar(s), at), at);
+                    add(new Scalar(scalar(s), s.getValue(), at), at);
                 }
                 case MappingStart, SequenceStart -> {
                     CollectionStartEvent c = (CollectionStartEvent) e;
@@ -191,7 +239,7 @@ final class YamlReader {
             }
             if (tag.isPresent()) {
                 String t = tag.get().startsWith(Tag.PREFIX) ? "!!" + tag.get().substring(Tag.PREFIX.length()) : tag.get();
-                throw new Failure(at, "Tags (" + t + ") are not allowed in a pipeline");
+                throw new Failure(at, "Tags (" + Suggest.clip(t) + ") are not allowed in a pipeline");
             }
             if (++values > MAX_VALUES) {
                 throw new Failure(at, "The pipeline has more than " + MAX_VALUES + " values");
@@ -208,10 +256,10 @@ final class YamlReader {
                 if (!(node instanceof Scalar s) || s.value() == null) {
                     throw new Failure(at, "A key must be a plain word or number, not a list, a mapping or empty");
                 }
-                String key = String.valueOf(s.value());
+                String key = s.written(); // as written: 007 stays 007
                 Entry before = parent.entries.get(key);
                 if (before != null) {
-                    throw new Failure(at, "The key '" + key + "' appears twice (first on line "
+                    throw new Failure(at, "The key '" + Suggest.clip(key) + "' appears twice (first on line "
                         + before.keyPosition().line() + ")");
                 }
                 parent.key = key;
@@ -283,9 +331,13 @@ final class YamlReader {
             return Double.NaN;
         }
         try {
-            return Double.valueOf(v);
+            return new BigDecimal(v); // exact: 2024.10 keeps its last digit
         } catch (NumberFormatException e) {
-            return v;
+            try {
+                return Double.valueOf(v);
+            } catch (NumberFormatException again) {
+                return v;
+            }
         }
     }
 }

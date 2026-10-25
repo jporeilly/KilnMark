@@ -7,6 +7,7 @@ import java.util.Set;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Schema;
 
 /** What the runner gives a step: its name, settings, memory, row sets and the metadata side-channel. */
 public interface StepContext {
@@ -110,6 +111,25 @@ public interface StepContext {
             }
         }
         return List.of();
+    }
+
+    /**
+     * The columns arriving on an input port, as worked out when the pipeline was checked, or
+     * {@code null} when they could not be known before the run (or the step is not run from a
+     * checked pipeline). Lets a step act on an input that sends no batch at all: an aggregate of no
+     * rows still writes SQL's one row, a union adds the columns of an empty input, a lookup knows
+     * the columns of an empty lookup side.
+     */
+    default Schema inputSchema(String port) {
+        return null;
+    }
+
+    /**
+     * The columns arriving on the {@code index}-th input (from 0, in the order the pipeline lists
+     * them) of a port that takes many, such as union's {@code in}; {@code null} when not known.
+     */
+    default Schema inputSchema(String port, int index) {
+        return null;
     }
 
     /**

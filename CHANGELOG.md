@@ -33,12 +33,16 @@ details.
   every step on its own virtual thread and a bounded row set per edge, inside one memory limit.
   An output read by several steps gives each its own copy; a port such as union's `in*` takes many
   inputs (`StepContext.inputs`, `RowSet.takeAny`); rows on an unconnected output are dropped
-  (`StepContext.emit`). A failure stops the whole run and names the step where it started; run
-  results count rows per edge and per port. Scanning's linear runner now runs as a graph too, and
-  a step that stops before its input ends no longer leaves the step before it waiting.
+  (`StepContext.emit`). A failure stops the whole run and names the step where it started; a run
+  in which every step waits on another fails after 120 seconds with a message naming them; run
+  results count the rows each step was given, per edge and per port. Steps can read the columns
+  of an input that sends no rows (`StepContext.inputSchema`). Scanning's linear runner now runs as
+  a graph too, and a step that stops before its input ends no longer leaves the step before it
+  waiting.
 - **Pipeline YAML is read and checked** (`kilnmark: pipeline/v1`): every problem with its line and
   column (unknown keys, step types and settings with suggestions, missing or doubled inputs,
   loops), and each step's columns worked out before anything runs, without opening a connection.
+  Settings that are text keep exactly what was written (`asset: 2024.10` stays `2024.10`).
   Read with SnakeYAML Engine 3.2 (Apache-2.0); anchors, aliases, tags, duplicate keys and files
   over 1,000,000 characters are refused.
 - **Pipeline steps and expressions** (new module `kiln-steps`): `filter`, `compute`, `select`,

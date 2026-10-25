@@ -19,6 +19,9 @@ final class Suggest {
         String best = null;
         int bestDistance = Integer.MAX_VALUE;
         for (String o : options) {
+            if (Math.abs(o.length() - t.length()) > allowed) {
+                continue; // too far apart to be a typing mistake, and costly to measure
+            }
             int d = distance(t, o.toLowerCase(Locale.ROOT));
             if (d <= allowed && d < bestDistance) {
                 best = o;
@@ -26,6 +29,17 @@ final class Suggest {
             }
         }
         return best;
+    }
+
+    /** Longest text echoed back in a message. */
+    static final int MAX_ECHO = 80;
+
+    /** {@code text}, cut to {@link #MAX_ECHO} characters with an ellipsis, for echoing in a message. */
+    static String clip(String text) {
+        if (text == null || text.length() <= MAX_ECHO) {
+            return text;
+        }
+        return text.substring(0, MAX_ECHO - 1) + "…";
     }
 
     /** {@code " (did you mean 'x'?)"}, or nothing. */

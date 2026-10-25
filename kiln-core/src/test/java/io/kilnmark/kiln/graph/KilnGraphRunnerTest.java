@@ -20,7 +20,9 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import io.kilnmark.kiln.RowSet;
 import io.kilnmark.kiln.RunResult;
@@ -31,6 +33,8 @@ import io.kilnmark.kiln.graph.Toys.Collect;
 import io.kilnmark.kiln.graph.Toys.Generate;
 import io.kilnmark.kiln.graph.Toys.Merge;
 import io.kilnmark.kiln.graph.Toys.Pass;
+import io.kilnmark.kiln.graph.Toys.Sequential;
+import io.kilnmark.kiln.graph.Toys.Slow;
 import io.kilnmark.kiln.graph.Toys.Split;
 
 class KilnGraphRunnerTest {
@@ -59,6 +63,10 @@ class KilnGraphRunnerTest {
 
         RunResult run(long memory, int capacity) throws InterruptedException {
             return new KilnGraphRunner(memory, capacity).run(graph(), e -> { });
+        }
+
+        RunResult run(long memory, int capacity, Duration stall) throws InterruptedException {
+            return new KilnGraphRunner(memory, capacity, stall).run(graph(), e -> { });
         }
 
         RunResult run() throws InterruptedException {
@@ -344,5 +352,179 @@ class KilnGraphRunnerTest {
         G g = new G().step("a", new Pass()).step("b", new Pass()).edge("a", "b").edge("b", "a");
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, g::run);
         assertTrue(e.getMessage().contains("loop"), e.getMessage());
+    }
+
+    /** gen feeds p1 and p2; seq reads a (from p1) to its end before b (from p2), so p2 soon waits. */
+    private static G stallShape(Pass p2) {
+        return new G().step("gen", new Generate(100_000, 10)).step("p1", new Pass()).step("p2", p2)
+            .step("seq", new Sequential())
+            .edge("gen", "p1").edge("gen", "p2").edge("p1", "seq.a").edge("p2", "seq.b");
+    }
+
+    @Test
+    @Timeout(30)
+    void aFailureBreaksAStallInsteadOfWaitingBehindIt() throws Exception {
+        long start = System.nanoTime();
+        RunResult r = stallShape(new Pass(0, 1)).run(64L << 20, 1);
+        assertEquals(RunResult.Status.FAILED, r.status());
+        assertTrue(r.error().contains("p2") && r.error().contains("pass broke"), r.error());
+        for (String other : List.of("gen", "p1", "seq")) {
+            assertNull(r.step(other).error(), other);
+        }
+        assertTrue(Duration.ofNanos(System.nanoTime() - start).toSeconds() < 10, "no waiting for the stall timeout");
+    }
+
+    @Test
+    @Timeout(30)
+    void aStallFailsTheRunNamingTheWaitingSteps() throws Exception {
+        RunResult r = stallShape(new Pass()).run(64L << 20, 1, Duration.ofMillis(300));
+        assertEquals(RunResult.Status.FAILED, r.status());
+        assertTrue(r.error().startsWith("The run stalled: no rows moved for 300 milliseconds"), r.error());
+        assertTrue(r.error().contains("seq (to read from p1.out->seq.a)"), r.error());
+        assertTrue(r.error().contains("p2 (to write to p2.out->seq.b)"), r.error());
+        r.steps().forEach(s -> assertNull(s.error(), s.name()));
+    }
+
+    @Test
+    @Timeout(30)
+    void aStepThatOnlyWaitsOnItsOwnWorkIsNotAStall() throws Exception {
+        // Slow sleeps outside any row set for longer than the stall timeout; its reader waits on it.
+        Slow slow = new Slow();
+        Collect sink = new Collect();
+        Thread caller = Thread.currentThread();
+        Thread stopper = Thread.ofVirtual().start(() -> {
+            try {
+                Thread.sleep(1_000);
+                caller.interrupt();
+            } catch (InterruptedException e) {
+                // the run ended first
+            }
+        });
+        assertThrows(InterruptedException.class,
+            () -> new G().step("slow", slow).step("sink", sink).edge("slow", "sink").run(64L << 20, 1, Duration.ofMillis(200)));
+        stopper.interrupt();
+        assertTrue(slow.closed.get());
+        assertEquals(10, sink.rows.get());
+    }
+
+    @Test
+    @Timeout(30)
+    void aFailureInterruptsStepsBeforeItThatWaitOutsideARowSet() throws Exception {
+        Slow slow = new Slow();
+        Collect failing = new Collect();
+        failing.failAfter = 1;
+        long start = System.nanoTime();
+        RunResult r = new G().step("slow", slow).step("failing", failing).edge("slow", "failing").run();
+        assertEquals(RunResult.Status.FAILED, r.status());
+        assertTrue(r.error().contains("failing"), r.error());
+        assertNull(r.step("slow").error());
+        assertTrue(Duration.ofNanos(System.nanoTime() - start).toSeconds() < 10, "the slow step was interrupted");
+    }
+
+    @Test
+    void whenEveryReaderHasFinishedTheStepsBeforeStopAndDroppedRowsAreNotCounted() throws Exception {
+        Generate gen = new Generate(2_000, 10);
+        Collect evens = new Collect();
+        evens.limit = 1;
+        Collect odds = new Collect();
+        odds.limit = 1;
+        RunResult r = new G().step("gen", gen).step("split", new Split()).step("evens", evens).step("odds", odds)
+            .edge("gen", "split").edge("split.even", "evens").edge("split.odd", "odds").run(64L << 20, 1);
+        assertTrue(r.succeeded(), r.error());
+        assertTrue(gen.sent.get() < 100, "gen stopped early: sent " + gen.sent.get());
+        assertEquals(5, r.edges().get(1).rows(), "split.even -> evens: the one batch evens took");
+        assertEquals(5, r.edges().get(2).rows(), "split.odd -> odds: the one batch odds took");
+        assertEquals(Map.of("in", 5L), r.step("evens").rowsInByPort());
+    }
+
+    @Test
+    void runningOutOfMemoryNamesTheRunsLimit() throws Exception {
+        RunResult r = new G().step("gen", new Generate(10, 100_000)).step("sink", new Collect()).edge("gen", "sink")
+            .run(256L << 10, 2);
+        assertEquals(RunResult.Status.FAILED, r.status());
+        assertTrue(r.error().contains("Step gen (generate) ran out of memory: the run may hold 256 KB"), r.error());
+    }
+
+    @Test
+    void inAndOutMeanThoseTwoPortsAndInputColumnsComeFromTheGraph() throws Exception {
+        AtomicReference<List<Object>> seen = new AtomicReference<>();
+        Step probe = new Step() {
+            @Override
+            public String type() {
+                return "probe";
+            }
+
+            @Override
+            public void init(StepContext context) {
+                seen.set(List.of(context.hasInput(), context.hasOutput(), context.inputPorts(), context.outputPorts(),
+                    String.valueOf(context.inputSchema("main")), String.valueOf(context.inputSchema("main", 0)),
+                    String.valueOf(context.inputSchema("other"))));
+            }
+
+            @Override
+            public boolean process(StepContext context) throws StepException {
+                try {
+                    RowSet.Taken t = RowSet.takeAny(context.inputs("main"), context.allocator());
+                    if (t == null) {
+                        return false;
+                    }
+                    context.emit("rejected", t.batch());
+                    return true;
+                } catch (InterruptedException e) {
+                    throw Toys.interrupted(e);
+                }
+            }
+        };
+        List<GraphStep> steps = List.of(new GraphStep("gen", new Generate(2, 5), Map.of()),
+            new GraphStep("probe", probe, Map.of(), Map.of("main", Toys.N)),
+            new GraphStep("sink", new Collect(), Map.of()));
+        List<Edge> edges = List.of(new Edge(new PortRef("gen", "out"), new PortRef("probe", "main")),
+            new Edge(new PortRef("probe", "rejected"), new PortRef("sink", "in")));
+        RunResult r = new KilnGraphRunner(64L << 20, 2).run(new PipelineGraph("t", steps, edges), e -> { });
+        assertTrue(r.succeeded(), r.error());
+        Schema n = Toys.N;
+        assertEquals(List.of(false, false, java.util.Set.of("main"), java.util.Set.of("rejected"), n.toString(),
+            n.toString(), "null"), seen.get());
+        assertEquals(10, r.step("sink").rowsIn());
+    }
+
+    @Test
+    @Timeout(10)
+    void failingARowSetNeverWaitsAndDropsWhatIsQueued() throws Exception {
+        try (BufferAllocator root = new RootAllocator(1 << 20)) {
+            RowSet rs = new RowSet("a->b", 1);
+            rs.put(Toys.batch(root, 0, 10));
+            rs.fail(new StepException("broke"));
+            assertEquals(0, root.getAllocatedMemory(), "the queued batch was closed");
+            assertThrows(RowSet.UpstreamFailedException.class, () -> rs.take(root));
+            assertEquals(0, rs.rows(), "rows count what the reader was given");
+        }
+    }
+
+    @Test
+    @Timeout(10)
+    void anInterruptedPutClosesItsBatch() throws Exception {
+        try (BufferAllocator root = new RootAllocator(1 << 20)) {
+            RowSet rs = new RowSet("a->b", 1);
+            rs.put(Toys.batch(root, 0, 10));
+            AtomicReference<Throwable> outcome = new AtomicReference<>();
+            Thread writer = Thread.ofVirtual().start(() -> {
+                try {
+                    rs.put(Toys.batch(root, 10, 10));
+                } catch (Throwable t) {
+                    outcome.set(t);
+                }
+            });
+            while (!rs.writerWaiting()) {
+                Thread.onSpinWait();
+            }
+            writer.interrupt();
+            writer.join();
+            assertInstanceOf(InterruptedException.class, outcome.get());
+            VectorSchemaRoot first = rs.take(root);
+            assertEquals(10, rs.rows());
+            first.close();
+            assertEquals(0, root.getAllocatedMemory(), "the batch that never reached the queue was closed");
+        }
     }
 }
