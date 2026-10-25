@@ -148,6 +148,30 @@ kbd {
   color: var(--km-muted);
 }
 
+.km-text-info {
+  color: var(--km-info);
+}
+
+/* A link that reads as a strong label (a pipeline or asset name in a table). */
+.km-strong-link {
+  color: var(--km-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.km-strong-link:hover {
+  color: var(--km-link);
+  text-decoration: underline;
+}
+
+/* One line, cut with an ellipsis (the full text stays in the accessibility tree). */
+.km-clip {
+  max-width: 36ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ======================================================================= shell */
 
 .shell {
@@ -156,7 +180,13 @@ kbd {
   min-height: 100vh;
 }
 
-/* The dark sidebar. */
+/* The dark sidebar, in a column that runs the full height of the page. */
+.sidebar-col {
+  background: var(--km-side-bg);
+  border-right: 1px solid var(--km-side-edge);
+  min-width: 0;
+}
+
 .sidebar {
   position: sticky;
   top: 0;
@@ -167,7 +197,6 @@ kbd {
   gap: 4px;
   padding: 20px 14px 16px;
   background: var(--km-side-bg);
-  border-right: 1px solid var(--km-side-edge);
   color: var(--km-side-ink);
   overflow-y: auto;
   z-index: 30;
@@ -539,8 +568,21 @@ main:focus {
   font-weight: 600;
 }
 
-.km-card-actions a {
+.km-card-actions a,
+.km-card-foot a,
+.km-card-next a,
+.km-popover-foot a,
+.sidebar-foot a {
   font-weight: 600;
+  text-decoration: none;
+}
+
+.km-card-actions a:hover,
+.km-card-foot a:hover,
+.km-card-next a:hover,
+.km-popover-foot a:hover,
+.sidebar-foot a:hover {
+  text-decoration: underline;
 }
 
 .km-card-sub {
@@ -769,6 +811,21 @@ a.km-inner:hover {
 
 .km-span-3 {
   grid-column: 1 / -1;
+}
+
+/* A main column and a side column of cards (the home page); one column on narrow screens. */
+.km-columns {
+  display: grid;
+  gap: var(--km-gap);
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+.km-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--km-gap);
+  min-width: 0;
 }
 
 .km-split {
@@ -2734,6 +2791,57 @@ table.sample td {
   color: var(--km-muted);
 }
 
+/* Source cards inside a card (home), three across where there is room. */
+.km-source-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+}
+
+.km-source-cards .km-inner {
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.km-source-cards .km-row-title,
+.km-source-cards .km-row-detail {
+  display: block;
+}
+
+.km-source-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: var(--km-text-sm);
+  color: var(--km-ink-soft);
+}
+
+.km-source-facts strong {
+  color: var(--km-ink-strong);
+}
+
+.km-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--km-text-xs);
+  font-weight: 600;
+}
+
+.km-card-next {
+  margin: 16px 0 0;
+  font-weight: 600;
+}
+
+.km-card-next a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* Home: the setup checklist. */
 .km-setup {
   list-style: none;
@@ -3286,6 +3394,7 @@ h1.with-tile {
 
 @media (max-width: 1023px) {
   .km-grid-3,
+  .km-columns,
   .km-split {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -3322,6 +3431,10 @@ h1.with-tile {
   /* The drawer: the sidebar slides over the page, opened by the menu button. */
   .shell {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar-col {
+    display: contents;
   }
 
   .sidebar {
@@ -3382,7 +3495,12 @@ h1.with-tile {
   }
 
   .km-grid-4 {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .km-stat {
+    padding: 14px;
   }
 
   .km-scores {

@@ -45,6 +45,7 @@ export const Sidebar = forwardRef<HTMLDivElement, {
     );
   };
   return (
+    <div className="sidebar-col">
     <div
       ref={ref}
       className={drawerOpen ? "sidebar is-open" : "sidebar"}
@@ -76,6 +77,7 @@ export const Sidebar = forwardRef<HTMLDivElement, {
           What's new
         </a>
       </p>
+    </div>
     </div>
   );
 });
