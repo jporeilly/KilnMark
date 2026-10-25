@@ -468,6 +468,47 @@ A server outside Compose (`./gradlew :server:quarkusDev`) reaches them at
 embedding model for **Search by meaning** (every source is embedded in the background, and again
 after each scan) and the chat model for **Ask in plain English**.
 
+**Find local models.** **AI models > Find local models** looks for Ollama and LM Studio on the
+machine running Kilnmark (and on the machine running its container) and for the bundled Compose
+services, and lists their models with size and GPU use; **Use this model** fills in the add-model
+form. **Check this address**, next to **Base URL**, asks one address (with or without `/v1`) and
+then offers its models to choose from. When something is not found, it says why in plain words
+(connection refused, timed out, unknown host name, an HTTP status, not a model server) and what to
+do. Behind it is `POST /api/v1/ai/discover` (admins only, optional body `{"baseUrl": "..."}`): it
+asks only the model servers' own paths (`/api/version`, `/api/tags`, `/api/ps`, `/v1/models`,
+`/health`, `/props`, `/api/v0/models`) with a 1-second connect and 3-second read timeout, follows
+no redirects and returns a summary, never the servers' answers. Addresses pass the same rules as
+model profiles first: metadata and link-local addresses are refused, and while hosted models are
+forbidden, hosts not in `kilnmark.ai.local-hosts` are listed as not checked rather than called.
+
+**Ollama or LM Studio on the same PC.** Inside a container, `localhost` is the container itself,
+not your PC, so `http://localhost:11434/v1` does not reach an Ollama running on the PC. Use the
+name the container engine gives the PC:
+
+| Kilnmark runs in | Ollama | LM Studio |
+| --- | --- | --- |
+| Podman (including Podman Desktop on Windows) | `http://host.containers.internal:11434/v1` | `http://host.containers.internal:1234/v1` |
+| Docker, or Kilnmark's `compose.yaml` with either engine | `http://host.docker.internal:11434/v1` | `http://host.docker.internal:1234/v1` |
+| No container (`quarkusDev`, `java -jar`) | `http://localhost:11434/v1` | `http://localhost:1234/v1` |
+
+Ollama and LM Studio listen only on their own machine by default, which a container counts as
+another machine. On Windows, set `OLLAMA_HOST=0.0.0.0:11434` as a user environment variable and
+restart Ollama (quit it from the tray first); on Linux, `systemctl edit ollama` and add
+`Environment="OLLAMA_HOST=0.0.0.0:11434"`. In LM Studio, start the server and turn on **Serve on
+Local Network**. Either way the model server now accepts connections from other computers too:
+keep port 11434 (or 1234) closed to other networks in the firewall (on Windows, allow it only for
+the virtual network Podman or WSL uses, not for public networks). Ollama has no API key, so anyone
+who can reach the port can use it. Both names are on the default `kilnmark.ai.local-hosts`, so
+models there count as local under the operator lock too.
+
+**GPU use comes from the model server.** Kilnmark does not run `nvidia-smi` or look for a GPU: in
+a container it usually cannot see one, and it does not need to, because the model server is what
+uses it. Ollama reports, for each loaded model, how much is in GPU memory, which the page shows as
+"On GPU", "Split · 60% on GPU" or "CPU only" (a model that has not run yet shows "Not loaded
+yet"). This works the same for NVIDIA, AMD and Apple GPUs and for a GPU server elsewhere on your
+network. llama-server, vLLM and LM Studio do not report GPU use, so the page says so; their
+models are still listed.
+
 **Other models.** Ollama: `http://HOST:11434/v1`. vLLM: `http://HOST:8000/v1`. Hosted providers
 need an API key: OpenAI (no base URL needed), Azure OpenAI
 (`https://RESOURCE.openai.azure.com/openai/v1`, model = the deployment name), Anthropic and Google
@@ -487,14 +528,14 @@ runs the server can go further with `KILNMARK_AI_HOSTED_MODELS=forbidden`: admin
 and a model then counts as local only if its address is an IP address on one of the networks in
 `KILNMARK_AI_LOCAL_HOSTS`, or a host name listed there (names are not resolved for this), checked
 when it is saved and before every call; ticking **local** is not enough. With the Compose AI
-services, list their names: `KILNMARK_AI_LOCAL_HOSTS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,ai,ai-cuda,ai-embed`.
+services, list their names: `KILNMARK_AI_LOCAL_HOSTS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,localhost,host.containers.internal,host.docker.internal,ai,ai-cuda,ai-embed`.
 Kilnmark cannot tell when a local server forwards requests to a hosted one. A refused call never
 reaches the model; usage shows it.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `kilnmark.ai.hosted-models` | `allowed` | `forbidden` locks out every model that is not local; admins cannot undo it. Other values stop the server |
-| `kilnmark.ai.local-hosts` | loopback and private networks, and `localhost` | While hosted models are forbidden, where a local model must be: networks (CIDR), IP addresses and host names, comma-separated. Empty means the default. An entry that does not parse stops the server |
+| `kilnmark.ai.local-hosts` | loopback and private networks, `localhost`, `host.containers.internal` and `host.docker.internal` | While hosted models are forbidden, where a local model must be: networks (CIDR), IP addresses and host names (matched as written, never resolved), comma-separated. Setting it replaces the whole default; empty means the default. An entry that does not parse stops the server |
 | `kilnmark.ai.allow-metadata-addresses` | `false` | Allow link-local and cloud metadata addresses as model addresses |
 | `kilnmark.ai.usage-retention` | `90d` | Usage records older than this are deleted; at least `1d` |
 | `kilnmark.ai.max-retries` | `2` | Retries after timeouts, rate limits and server errors, with backoff (scans; a search waits about 10 seconds at most) |

@@ -283,3 +283,22 @@ without a migration.
   the address against the operator's list, but cannot see past a local server that forwards
   requests elsewhere.
 - Hosted calls go straight out; there is no HTTP proxy setting yet.
+
+## Amendment (25 October 2026): container host names are local by default
+
+The default `kilnmark.ai.local-hosts` now also lists `host.containers.internal` and
+`host.docker.internal`. Podman and Docker (and Kilnmark's `compose.yaml`, through `extra_hosts`)
+give these names to the machine a container runs on, so a model server there is as local as one
+on `localhost` is without a container: it is the usual way to reach Ollama or LM Studio running
+natively on the same PC, with its GPU, from Kilnmark in a container. Without them, the operator
+lock refused that set-up unless the operator listed the names by hand. The rule is unchanged:
+names are matched as written and never resolved, so DNS still cannot make a name local; whoever
+runs the server can drop them by setting `kilnmark.ai.local-hosts`, which replaces the whole
+default. Outside a container the names normally do not resolve at all, so a profile using them
+fails as "cannot reach", never as a refusal.
+
+The same change added `POST /api/v1/ai/discover` (admins only), which asks the usual places and
+one typed address for model servers and their models. It reports GPU use as the model server
+sees it (Ollama's `/api/ps`), rather than Kilnmark looking for a GPU itself, which a container
+usually cannot do. It calls only model-server paths, after the address rules above, and returns
+a summary, never the servers' answers.

@@ -986,6 +986,39 @@ legend {
   max-width: 240px;
 }
 
+.ai-found {
+  margin: 16px 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--km-border);
+}
+
+.ai-found h3 {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+
+.ai-found h3 .mono {
+  font-weight: normal;
+  overflow-wrap: anywhere;
+}
+
+.ai-missing ul {
+  padding-left: 1.2rem;
+}
+
+.ai-missing li {
+  margin: 8px 0;
+}
+
+.ai-missing .mono,
+.ai-check p {
+  overflow-wrap: anywhere;
+}
+
+.ai-check p {
+  margin: 8px 0 0;
+}
+
 /* Settings */
 .settings-list { list-style: none; padding: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); }
 .settings-list h2 { margin: 0 0 0.25rem; font-size: 1.1rem; }
