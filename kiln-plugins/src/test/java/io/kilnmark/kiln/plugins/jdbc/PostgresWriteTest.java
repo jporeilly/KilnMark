@@ -146,10 +146,15 @@ class PostgresWriteTest {
             + "loaded_at timestamptz NOT NULL DEFAULT now(), region text NOT NULL DEFAULT 'uk')");
         Schema schema = new Schema(List.of(field("id", Rows.INT32), field("amount", Rows.decimal(8, 2)),
             field("doc", Rows.TEXT), field("ref", Rows.TEXT)));
+        List<MetadataEvent> appended = Rows.events();
         RunResult ok = write(source, options("billing.ledger", "append", List.of(), Map.of()), schema, Rows.list(
             new Object[] {1, new BigDecimal("1.50"), "{\"a\": 1}", "1b4e28ba-2fa1-11d2-883f-0016d3cca427"},
-            new Object[] {2, null, null, null}), 10, -1, Rows.events());
+            new Object[] {2, null, null, null}), 10, -1, appended);
         assertTrue(ok.succeeded(), ok.error());
+        assertEquals(List.of(MetadataEvent.Kind.ROW_COUNT), appended.stream().map(MetadataEvent::kind).toList(),
+            "an append reports the rows it added, not the table");
+        assertEquals("false", appended.get(0).attributes().get("complete"));
+        assertEquals("true", appended.get(0).attributes().get("appended"));
         assertEquals(List.of(List.of(2L)), query("SELECT count(*) FROM billing.ledger"));
         assertEquals("1", query("SELECT doc->>'a' FROM billing.ledger WHERE id = 1").get(0).get(0));
 
@@ -244,6 +249,93 @@ class PostgresWriteTest {
             + "it"), blocked.error());
     }
 
+    @Test
+    void replaceRefusesWhatDroppingTheOldTableWouldBreak() throws Exception {
+        sql("CREATE TABLE billing.parted (customer_id bigint, total numeric(12,2), note text) PARTITION BY RANGE "
+                + "(customer_id)",
+            "CREATE TABLE billing.part1 PARTITION OF billing.parted FOR VALUES FROM (0) TO (1000)",
+            "CREATE TABLE billing.base (customer_id bigint, total numeric(12,2), note text)",
+            "CREATE TABLE billing.child () INHERITS (billing.base)",
+            "CREATE TABLE billing.fn_t (customer_id bigint, total numeric(12,2), note text)",
+            "CREATE FUNCTION billing.total_spend() RETURNS numeric LANGUAGE sql BEGIN ATOMIC "
+                + "SELECT sum(total) FROM billing.fn_t; END",
+            "CREATE TABLE billing.typed_src (customer_id bigint, total numeric(12,2), note text)",
+            "CREATE TABLE billing.typed_use (row billing.typed_src)",
+            "CREATE VIEW billing.a_view AS SELECT 1 AS one");
+        Map<String, String> refusals = Map.of(
+            "billing.part1", "it is a partition of billing.parted",
+            "billing.parted", "it is a partitioned table, not a table",
+            "billing.base", "the table billing.child inherits from it",
+            "billing.child", "it inherits from billing.base",
+            "billing.fn_t", "the function billing.total_spend() depends on it",
+            "billing.typed_src", "depends on it",
+            "billing.a_view", "it is a view, not a table");
+        for (var e : refusals.entrySet()) {
+            RunResult r = write(source, options(e.getKey(), "replace", List.of(), Map.of()), SPEND, spend(0, 1, "x"), 10,
+                -1, Rows.events());
+            assertFalse(r.succeeded(), e.getKey());
+            assertTrue(r.error().contains("Cannot replace " + e.getKey() + ": ") && r.error().contains(e.getValue()),
+                r.error());
+        }
+        assertEquals(List.of(), query("SELECT relname FROM pg_class WHERE relname LIKE 'kiln_%'"));
+    }
+
+    @Test
+    void replaceOfATableWithRowSecurityNeedsAnExplicitYes() throws Exception {
+        sql("CREATE TABLE billing.secure (customer_id bigint, total numeric(12,2), note text)",
+            "ALTER TABLE billing.secure ENABLE ROW LEVEL SECURITY");
+        RunResult refused = write(source, options("billing.secure", "replace", List.of(), Map.of()), SPEND,
+            spend(0, 5, "x"), 10, -1, Rows.events());
+        assertTrue(refused.error().contains("it has row-level security") && refused.error()
+            .contains("allow_dropping_row_security: true"), refused.error());
+        RunResult allowed = write(source, options("billing.secure", "replace", List.of(),
+            Map.of("allow_dropping_row_security", true)), SPEND, spend(0, 5, "x"), 10, -1, Rows.events());
+        assertTrue(allowed.succeeded(), allowed.error());
+        assertEquals(List.of(List.of(5L)), query("SELECT count(*) FROM billing.secure"));
+    }
+
+    @Test
+    void appendToATableWithRowSecurityInsertsRowByRow() throws Exception {
+        sql("CREATE TABLE billing.rls_append (customer_id bigint, total numeric(12,2), note text)",
+            "ALTER TABLE billing.rls_append ENABLE ROW LEVEL SECURITY",
+            "CREATE POLICY everyone ON billing.rls_append USING (true) WITH CHECK (note <> 'refused')",
+            "GRANT INSERT, SELECT ON billing.rls_append TO lab");
+        RunResult r = write(lab, options("billing.rls_append", "append", List.of(), Map.of()), SPEND,
+            spend(0, 50, "ok"), 20, -1, Rows.events());
+        assertTrue(r.succeeded(), r.error());
+        assertEquals(List.of(List.of(50L)), query("SELECT count(*) FROM billing.rls_append"));
+        RunResult checked = write(lab, options("billing.rls_append", "append", List.of(), Map.of()), SPEND,
+            spend(100, 101, "refused"), 20, -1, Rows.events());
+        assertFalse(checked.succeeded(), "the policy still applies");
+    }
+
+    @Test
+    void upsertAcceptsAUniqueIndexWithIncludedColumns() throws Exception {
+        sql("CREATE TABLE billing.inc (customer_id bigint, total numeric(12,2), note text)",
+            "CREATE UNIQUE INDEX ON billing.inc (customer_id) INCLUDE (note)");
+        RunResult r = write(source, options("billing.inc", "upsert", List.of("customer_id"), Map.of()), SPEND,
+            spend(0, 10, "a"), 10, -1, Rows.events());
+        assertTrue(r.succeeded(), r.error());
+    }
+
+    @Test
+    void replaceGivesTheNewTableToTheOldOwnerAndNeverHalfFillsANewTarget() throws Exception {
+        sql("CREATE ROLE owner_role", "GRANT CREATE, USAGE ON SCHEMA billing TO owner_role",
+            "CREATE TABLE billing.owned (customer_id bigint, total numeric(12,2), note text)",
+            "ALTER TABLE billing.owned OWNER TO owner_role");
+        RunResult r = write(source, options("billing.owned", "replace", List.of(), Map.of()), SPEND, spend(0, 10, "n"),
+            10, -1, Rows.events());
+        assertTrue(r.succeeded(), r.error());
+        assertEquals(List.of(List.of("owner_role")), query("SELECT pg_get_userbyid(relowner) FROM pg_class "
+            + "WHERE oid = 'billing.owned'::regclass"));
+
+        RunResult failed = write(source, options("billing.brand_new", "replace", List.of(), Map.of("commit_every", 100)),
+            SPEND, spend(0, 5000, "x"), 500, 4, Rows.events());
+        assertFalse(failed.succeeded());
+        assertEquals(List.of(), query("SELECT relname FROM pg_class WHERE relname IN ('brand_new') OR relname LIKE "
+            + "'kiln_%'"), "neither a half-filled target nor the new table is left");
+    }
+
     /** A source that sends its first batch, then waits for {@code carryOn}. */
     static Step slowSource(Schema schema, List<Object[]> rows, int batch, CountDownLatch sent, CountDownLatch carryOn) {
         Step inner = Rows.source(schema, rows, batch);
@@ -284,7 +376,7 @@ class PostgresWriteTest {
             spend(0, 1, "x"), 10, -1, Rows.events());
         assertFalse(append.succeeded());
         assertTrue(append.error().contains("the login lab cannot write to billing.customer_spend in warehouse: ask a "
-            + "database administrator to grant INSERT on billing.customer_spend"), append.error());
+            + "database administrator to grant INSERT and SELECT on billing.customer_spend"), append.error());
         RunResult create = write(lab, options("billing.lab_new", "create", List.of(), Map.of()), SPEND,
             spend(0, 1, "x"), 10, -1, Rows.events());
         assertTrue(create.error().contains("the login lab cannot write to billing.lab_new in warehouse: ask a database "

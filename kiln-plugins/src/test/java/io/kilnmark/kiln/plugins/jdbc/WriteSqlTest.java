@@ -97,12 +97,42 @@ class WriteSqlTest {
     }
 
     @Test
+    void upsertKeysIgnoreIncludedColumnsAndReplaceHandsTheTableBack() {
+        assertTrue(WriteSql.POSTGRESQL.uniqueKeys(T).text().contains("(i.indkey::int2[])[0:i.indnkeyatts - 1]"));
+        assertEquals("ALTER TABLE \"billing\".\"kiln_new_1\" OWNER TO \"Old \"\"Owner\"",
+            WriteSql.POSTGRESQL.setOwner(new TableName("billing", "kiln_new_1"), "Old \"Owner"));
+        assertEquals("GRANT ALL PRIVILEGES ON \"billing\".\"t\" TO \"o\"",
+            WriteSql.POSTGRESQL.grantOwnerRights(new TableName("billing", "t"), "o"));
+        assertEquals("GRANT CONTROL ON [billing].[t] TO [o]]x]",
+            WriteSql.SQL_SERVER.grantOwnerRights(new TableName("billing", "t"), "o]x"));
+        assertEquals(new WriteSql.Sql("ALTER TABLE \"billing\".\"kiln_new_1\" RENAME TO \"t\""),
+            WriteSql.POSTGRESQL.rename(new TableName("billing", "kiln_new_1"), "t"));
+        assertEquals(List.of("SET LOCAL lock_timeout = 30000"), WriteSql.POSTGRESQL.lockTimeout(30_000));
+        assertEquals(List.of("SET LOCK_TIMEOUT 30000"), WriteSql.SQL_SERVER.lockTimeout(30_000));
+        assertTrue(WriteSql.POSTGRESQL.privileges("append", T, true).get(0).query().text()
+            .contains("has_any_column_privilege"), "column grants count");
+    }
+
+    @Test
+    void twoInputColumnsCannotGoToOneTableColumn() {
+        List<WriteColumn> in = WriteColumn.of(new Schema(List.of(field("name", Rows.TEXT), field("Name", Rows.TEXT))));
+        WritePlan.Plan plan = WritePlan.plan(in, List.of(col("name", "text", Kind.TEXT, 0, 0, 0)), Set.of(), List.of());
+        assertEquals(List.of("the input's columns name and Name would both go to the table's column name"),
+            plan.problems());
+    }
+
+    @Test
     void catalogueQueriesTakeTheNameAsAParameter() {
         WriteSql.Sql exists = WriteSql.POSTGRESQL.exists(ODD);
         assertEquals(List.of("\"zq\"\"x]\".\"jyq]\"\"k\""), exists.params());
         assertTrue(!exists.text().contains("zq"));
         for (WriteSql sql : List.of(WriteSql.POSTGRESQL, WriteSql.SQL_SERVER)) {
-            for (WriteSql.Sql q : List.of(sql.exists(ODD), sql.requiredColumns(ODD), sql.dependents(ODD), sql.grants(ODD))) {
+            List<WriteSql.Sql> queries = new java.util.ArrayList<>(List.of(sql.exists(ODD), sql.requiredColumns(ODD),
+                sql.blockers(ODD), sql.grants(ODD), sql.rowSecurity(ODD), sql.owner(ODD)));
+            if (sql.copyRefused(ODD) != null) {
+                queries.add(sql.copyRefused(ODD));
+            }
+            for (WriteSql.Sql q : queries) {
                 assertTrue(!q.text().contains("zq") && !q.text().contains("jyq"), q.text());
             }
             for (String mode : List.of("create", "append", "replace", "upsert")) {

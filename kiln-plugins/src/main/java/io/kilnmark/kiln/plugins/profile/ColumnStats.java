@@ -292,7 +292,9 @@ final class ColumnStats {
      * With values not kept, most common values are left out.
      */
     private void quality(Map<String, String> a) {
-        switch (shape) {
+        // with every value NaN the quantile sketch is empty: no quantiles, fences or dates to report
+        Shape measured = quantiles.isEmpty() && shape != Shape.TEXT ? Shape.BINARY : shape;
+        switch (measured) {
             case NUMBER, INTEGER -> {
                 a.put("sum", number(sum));
                 a.put("negatives", Long.toString(negatives));

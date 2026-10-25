@@ -192,7 +192,7 @@ class SqlServerWriteTest {
         RunResult append = write(lab, options("billing.customer_spend", "append", List.of(), Map.of()), SPEND,
             Rows.spend(0, 1, "x"), 10, -1);
         assertTrue(append.error().contains("the login lab cannot write to billing.customer_spend in warehouse: ask a "
-            + "database administrator to grant INSERT on billing.customer_spend"), append.error());
+            + "database administrator to grant INSERT and SELECT on billing.customer_spend"), append.error());
         RunResult create = write(lab, options("billing.lab_new", "create", List.of(), Map.of()), SPEND,
             Rows.spend(0, 1, "x"), 10, -1);
         assertTrue(create.error().contains("ask a database administrator to grant CREATE TABLE in the database and "

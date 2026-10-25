@@ -69,6 +69,11 @@ dependencies {
     "testImplementation"(libs.postgresql)
 }
 
+// The version Parquet files written by Kilnmark name in their footer (created_by).
+tasks.named<Jar>("jar") {
+    manifest { attributes("Implementation-Title" to "kiln-plugins", "Implementation-Version" to project.version) }
+}
+
 tasks.withType<Test>().configureEach {
     jvmArgs("--add-opens=java.base/java.nio=ALL-UNNAMED", "--enable-native-access=ALL-UNNAMED")
 }

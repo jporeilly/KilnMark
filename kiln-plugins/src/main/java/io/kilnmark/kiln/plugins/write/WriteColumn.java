@@ -136,11 +136,7 @@ public record WriteColumn(String name, Kind kind, int precision, int scale, Arro
                 case FixedSizeBinaryVector b -> b.get(row);
                 default -> (byte[]) v.getObject(row);
             };
-            case DATE -> switch (v) {
-                case DateDayVector d -> LocalDate.ofEpochDay(d.get(row));
-                case DateMilliVector d -> LocalDate.ofEpochDay(Math.floorDiv(d.get(row), 86_400_000L));
-                default -> throw new IllegalStateException("Unexpected date vector " + v.getClass().getSimpleName());
-            };
+            case DATE -> LocalDate.ofEpochDay(dateDays(v, row));
             case TIME -> LocalTime.ofNanoOfDay(timeMicros(v, row) * 1_000);
             case TIMESTAMP -> {
                 long micros = timestampMicros(v, row);
@@ -178,12 +174,22 @@ public record WriteColumn(String name, Kind kind, int precision, int scale, Arro
         return switch (o) {
             case null -> null;
             case byte[] bytes -> "0x" + HEX.formatHex(bytes);
+            case BigDecimal d -> d.toPlainString(); // decimals over 38 digits, never in scientific notation
             default -> o.toString(); // lists and structs print as JSON, intervals in ISO 8601
         };
     }
 
-    /** Microseconds since midnight. */
-    private static long timeMicros(FieldVector v, int row) {
+    /** Days since 1970 of a date vector's value, whatever its unit. */
+    public static long dateDays(FieldVector v, int row) {
+        return switch (v) {
+            case DateDayVector d -> d.get(row);
+            case DateMilliVector d -> Math.floorDiv(d.get(row), 86_400_000L);
+            default -> throw new IllegalStateException("Unexpected date vector " + v.getClass().getSimpleName());
+        };
+    }
+
+    /** Microseconds since midnight of a time vector's value, whatever its unit. */
+    public static long timeMicros(FieldVector v, int row) {
         return switch (v) {
             case TimeSecVector t -> t.get(row) * 1_000_000L;
             case TimeMilliVector t -> t.get(row) * 1_000L;
@@ -193,10 +199,13 @@ public record WriteColumn(String name, Kind kind, int precision, int scale, Arro
         };
     }
 
-    /** Microseconds since 1970 (nanoseconds are cut to microseconds, as the engine keeps them). */
-    private long timestampMicros(FieldVector v, int row) {
+    /**
+     * Microseconds since 1970 of a timestamp vector's value, whatever its unit (nanoseconds are cut
+     * to microseconds, as the engine keeps them).
+     */
+    public static long timestampMicros(FieldVector v, int row) {
         long raw = ((TimeStampVector) v).get(row);
-        return switch (((ArrowType.Timestamp) arrowType).getUnit()) {
+        return switch (((ArrowType.Timestamp) v.getField().getType()).getUnit()) {
             case SECOND -> raw * 1_000_000L;
             case MILLISECOND -> raw * 1_000L;
             case MICROSECOND -> raw;

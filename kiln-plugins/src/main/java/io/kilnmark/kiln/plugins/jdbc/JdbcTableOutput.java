@@ -77,6 +77,8 @@ final class JdbcTableOutput implements Step {
     private final int textLength;
     private final boolean keepGrants;
     private final boolean bulk;
+    private final boolean allowDroppingRowSecurity;
+    private final long lockTimeoutMillis;
 
     private Connection connection;
     private WriteReport report;
@@ -85,7 +87,11 @@ final class JdbcTableOutput implements Step {
     private Set<String> required = Set.of();
     private List<String> grants = List.of();
     private TableName loadInto;
-    private String newName;
+    /** For replace: the name the new table is filled under, swapped in at the end. */
+    private final String newName;
+    private boolean copyRefused;
+    private String oldOwner;
+    private boolean ownerSettable;
     private List<WriteColumn> input;
     private List<Binding> bindings;
     private List<String> writtenTypes;
@@ -111,6 +117,14 @@ final class JdbcTableOutput implements Step {
         this.keepGrants = settings.bool("keep_grants", true);
         this.bulk = sql == WriteSql.SQL_SERVER && (mode.equals("create") || mode.equals("replace"))
             && settings.bool("bulk_copy", true);
+        this.allowDroppingRowSecurity = settings.bool("allow_dropping_row_security", false);
+        this.lockTimeoutMillis = settings.number("lock_timeout", 30, 1, 3600) * 1000;
+        this.newName = mode.equals("replace") ? "kiln_new_" + WriteSql.hexName() : null;
+    }
+
+    /** Whether the write leaves the table holding exactly what was written (create, replace). */
+    private boolean wholeTable() {
+        return mode.equals("create") || mode.equals("replace");
     }
 
     @Override
@@ -121,7 +135,7 @@ final class JdbcTableOutput implements Step {
     @Override
     public void init(StepContext context) throws StepException {
         try {
-            report = new WriteReport(context.stepName(), assetUrn, settings);
+            report = new WriteReport(context.stepName(), assetUrn, settings, wholeTable());
         } catch (ConnectorException e) {
             throw new StepException("Step " + context.stepName() + ": " + e.getMessage(), e);
         }
@@ -144,21 +158,43 @@ final class JdbcTableOutput implements Step {
                 if (mode.equals("upsert")) {
                     checkKey();
                 }
+                WriteSql.Sql refused = sql.copyRefused(target);
+                copyRefused = refused != null && queryBoolean(refused);
             }
             if (mode.equals("replace") && exists) {
-                List<String> blocking = new ArrayList<>(readNames(sql.dependents(target)));
-                if (!blocking.isEmpty()) {
-                    java.util.Collections.sort(blocking);
-                    throw new StepException("Cannot replace " + target + ": " + String.join(", ", blocking)
-                        + (blocking.size() == 1 ? " depends" : " depend") + " on it, and would stop the old table "
-                        + "being dropped. Drop or change them first, or empty the table yourself and use mode append");
-                }
+                checkReplaceable();
                 if (keepGrants) {
                     grants = readGrants();
+                }
+                try (PreparedStatement ps = prepare(sql.owner(target)); ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        oldOwner = rs.getString(1);
+                        ownerSettable = rs.getBoolean(2);
+                    }
                 }
             }
         } catch (SQLException e) {
             throw new StepException(explain(e, 0), e);
+        }
+    }
+
+    /**
+     * Replace drops the old table: refuse, before anything is written, when that would break
+     * something or silently change who may see what.
+     */
+    private void checkReplaceable() throws SQLException, StepException {
+        List<String> blocking = new ArrayList<>(readNames(sql.blockers(target)));
+        if (!blocking.isEmpty()) {
+            java.util.Collections.sort(blocking);
+            throw new StepException("Cannot replace " + target + ": " + String.join("; ", blocking) + ". Replace "
+                + "drops the old table and puts a new one in its place, which would break that or be refused. Change "
+                + "or drop it first, or empty the table yourself and use mode append");
+        }
+        if (queryBoolean(sql.rowSecurity(target)) && !allowDroppingRowSecurity) {
+            throw new StepException("Cannot replace " + target + ": it has row-level security, which the new table "
+                + "would not have, while its grants would be repeated, so rows the policies hide would become visible "
+                + "to those grants. Set allow_dropping_row_security: true if that is intended (and add the policies "
+                + "again afterwards), or empty the table yourself and use mode append");
         }
     }
 
@@ -246,8 +282,6 @@ final class JdbcTableOutput implements Step {
     }
 
     private List<String> readGrants() throws SQLException {
-        // the statements are built for the new table's name, which is chosen now
-        newName = "kiln_new_" + WriteSql.hexName();
         TableName fresh = new TableName(target.schema(), newName);
         List<String> out = new ArrayList<>();
         try (PreparedStatement ps = prepare(sql.grants(target)); ResultSet rs = ps.executeQuery()) {
@@ -303,14 +337,8 @@ final class JdbcTableOutput implements Step {
         switch (mode) {
             case "create", "replace" -> {
                 checkNames();
-                if (mode.equals("replace") && exists) {
-                    if (newName == null) {
-                        newName = "kiln_new_" + WriteSql.hexName();
-                    }
-                    loadInto = new TableName(target.schema(), newName);
-                } else {
-                    loadInto = target;
-                }
+                // replace always fills a new table and renames it at the end, so the target is never half-filled
+                loadInto = mode.equals("replace") ? new TableName(target.schema(), newName) : target;
                 execute(new WriteSql.Sql(sql.createTable(loadInto, input, textLength)));
                 for (String g : grants) {
                     execute(new WriteSql.Sql(g));
@@ -334,7 +362,7 @@ final class JdbcTableOutput implements Step {
         if (mode.equals("upsert")) {
             List<String> keyNames = bindings.stream().filter(Binding::key).map(Binding::target).toList();
             loader = new BatchLoader(sql.upsert(loadInto, names, keyNames));
-        } else if (sql instanceof WriteSql.Postgres pg) {
+        } else if (sql instanceof WriteSql.Postgres pg && !copyRefused) {
             loader = new CopyLoader(pg.copy(loadInto, names));
         } else {
             loader = new BatchLoader(sql.insert(loadInto, names));
@@ -386,10 +414,8 @@ final class JdbcTableOutput implements Step {
                 return;
             }
             loader.flush();
-            if (newName != null && loadInto != null && !loadInto.equals(target)) {
-                for (WriteSql.Sql s : sql.swap(target, newName, "kiln_old_" + WriteSql.hexName())) {
-                    execute(s);
-                }
+            if (newName != null) {
+                swapIn();
             }
             connection.commit();
             committed = true;
@@ -405,21 +431,41 @@ final class JdbcTableOutput implements Step {
         report.emit(context.metadata(), written, writtenTypes, details);
     }
 
+    /**
+     * Replace's last step: the old owner gets the new table (or, where the login may not hand it
+     * over, the owner's rights on it), then the new table takes the target's name, waiting at most
+     * {@code lock_timeout} for readers of the old table.
+     */
+    private void swapIn() throws SQLException {
+        for (String s : sql.lockTimeout(lockTimeoutMillis)) {
+            execute(new WriteSql.Sql(s));
+        }
+        if (oldOwner != null) {
+            execute(new WriteSql.Sql(ownerSettable ? sql.setOwner(loadInto, oldOwner)
+                : sql.grantOwnerRights(loadInto, oldOwner)));
+        }
+        List<WriteSql.Sql> steps = exists ? sql.swap(target, newName, "kiln_old_" + WriteSql.hexName())
+            : List.of(sql.rename(loadInto, target.table()));
+        for (WriteSql.Sql s : steps) {
+            execute(s);
+        }
+    }
+
     @Override
     public void close() {
+        if (loader != null) {
+            loader.release();
+        }
         if (connection == null) {
             return;
         }
         if (!committed) {
-            if (loader != null) {
-                loader.abort();
-            }
             try {
                 connection.rollback();
             } catch (SQLException | RuntimeException e) {
                 // the connection is closed below; the server rolls back an unfinished transaction
             }
-            if (committedRows > 0 && newName != null && loadInto != null && !loadInto.equals(target)) {
+            if (committedRows > 0 && newName != null && loadInto != null) {
                 // replace with commit_every: the half-filled new table was committed in parts
                 try (Statement s = connection.createStatement()) {
                     s.execute(sql.drop(loadInto));
@@ -439,7 +485,10 @@ final class JdbcTableOutput implements Step {
     /** A failure as a person should read it, with what happened to rows already committed. */
     private String explain(SQLException e, long rows) {
         SQLException cause = e instanceof BatchUpdateException b && b.getNextException() != null ? b.getNextException() : e;
-        String message = sql.permissionDenied(cause) ? denied(cause)
+        String message = sql.lockTimedOut(cause) ? "Could not swap the new table in for " + target + " within "
+            + lockTimeoutMillis / 1000 + " seconds: other sessions were using the old table. Try again when it is "
+            + "quieter, or raise lock_timeout"
+            : sql.permissionDenied(cause) ? denied(cause)
             : "Writing to " + target + " failed" + (rows > 0 ? " after " + rows + " rows" : "") + ": "
             + connector.explain(cause);
         return message + committedNote();
@@ -450,7 +499,7 @@ final class JdbcTableOutput implements Step {
         if (committedRows == 0) {
             return "";
         }
-        return newName != null && loadInto != null && !loadInto.equals(target)
+        return newName != null
             ? ". " + target + " is unchanged; the partly filled new table is dropped"
             : ". " + committedRows + " rows were already committed, because commit_every is set; they stay in "
                 + target;
@@ -521,8 +570,8 @@ final class JdbcTableOutput implements Step {
         /** Sends what is buffered, so a commit includes it. */
         void flush() throws SQLException;
 
-        /** Stops sending after a failure. Never fails. */
-        void abort();
+        /** Stops sending (after a failure) and releases what it holds; called once at the end, whatever happened. Never fails. */
+        void release();
     }
 
     /** PostgreSQL's {@code COPY … FROM STDIN}, as CSV, one {@code COPY} per transaction. */
@@ -569,7 +618,7 @@ final class JdbcTableOutput implements Step {
         }
 
         @Override
-        public void abort() {
+        public void release() {
             if (copy != null && copy.isActive()) {
                 try {
                     copy.cancelCopy();
@@ -620,7 +669,7 @@ final class JdbcTableOutput implements Step {
         }
 
         @Override
-        public void abort() {
+        public void release() {
             if (ps != null) {
                 try {
                     ps.close();

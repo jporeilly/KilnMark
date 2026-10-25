@@ -222,6 +222,12 @@ public final class LocalFileStore implements FileStore {
      * never part of one. Missing folders are created; every folder on the way, links resolved,
      * must be inside the store's folder. Without {@code overwrite} the new file is linked into
      * place, which fails if a file of that name appeared meanwhile.
+     *
+     * <p>The folders are checked by path, then used: someone who can write inside the source's
+     * folder on this server could, in the moment between, swap a checked folder for a link leading
+     * elsewhere. That needs write access to the folder on the server itself; the folders an
+     * administrator allows ({@code kilnmark.files.roots}) should be writable only by Kilnmark and
+     * people trusted with what it can write.
      */
     @Override
     public Upload create(String path, boolean overwrite) throws IOException {
@@ -281,8 +287,9 @@ public final class LocalFileStore implements FileStore {
             throw new IOException("This server cannot write to the folder " + folder
                 + ": give the user the server runs as write access to it");
         }
-        Path temp = folder.resolve("." + name + "." + Long.toHexString(new java.security.SecureRandom().nextLong())
-            + ".kiln-tmp");
+        // short whatever the target's name, so it never exceeds the file system's name limit
+        Path temp = folder.resolve(".kiln-" + Long.toHexString(new java.security.SecureRandom().nextLong() >>> 16)
+            + ".tmp");
         FileChannel channel = FileChannel.open(temp, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
         return new LocalUpload(temp, target, overwrite, channel);
     }

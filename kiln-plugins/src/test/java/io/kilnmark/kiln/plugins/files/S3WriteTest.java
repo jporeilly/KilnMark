@@ -127,6 +127,61 @@ class S3WriteTest {
         assertEquals(rows.size(), FileWriteTest.read(S3, source, "pipelines/big/big.csv").rows.size());
     }
 
+    /** A run that is cancelled interrupts its steps; the upload must still be aborted. */
+    @Test
+    void aCancelledWriteAbortsItsUpload() throws Exception {
+        Schema schema = new Schema(List.of(field("id", Rows.INT64), field("text", Rows.TEXT)));
+        String pad = "c".repeat(1000);
+        io.kilnmark.kiln.Step endless = new io.kilnmark.kiln.Step() {
+            private long next;
+
+            @Override
+            public String type() {
+                return "endless";
+            }
+
+            @Override
+            public void init(io.kilnmark.kiln.StepContext context) {
+                // nothing to open
+            }
+
+            @Override
+            public boolean process(io.kilnmark.kiln.StepContext context) throws io.kilnmark.kiln.StepException {
+                List<Object[]> rows = new ArrayList<>();
+                for (int i = 0; i < 2000; i++) {
+                    rows.add(new Object[] {next++, pad});
+                }
+                io.kilnmark.kiln.Step one = Rows.source(schema, rows, rows.size());
+                one.init(context);
+                one.process(context);
+                return true;
+            }
+        };
+        io.kilnmark.kiln.Step writer = S3.writer(source, options("cancelled/x.csv", Map.of()));
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread run = Thread.ofPlatform().start(() -> {
+            try {
+                Rows.run(endless, writer, Rows.events());
+            } catch (InterruptedException e) {
+                // expected: the run was cancelled
+            } catch (Throwable t) {
+                failure.set(t);
+            }
+        });
+        long deadline = System.currentTimeMillis() + 60_000;
+        while (client.listMultipartUploads(b -> b.bucket(BUCKET)).uploads().isEmpty()) {
+            assertTrue(System.currentTimeMillis() < deadline, "an upload should have started");
+            Thread.sleep(100);
+        }
+        run.interrupt();
+        run.join(60_000);
+        assertFalse(run.isAlive());
+        assertEquals(null, failure.get());
+        assertEquals(0, client.listMultipartUploads(b -> b.bucket(BUCKET)).uploads().size(),
+            "the cancelled upload was aborted");
+        assertFalse(keys().contains("pipelines/cancelled/x.csv"));
+    }
+
     @Test
     void aFailedWriteIsAbortedAndAnExistingObjectRefused() throws Exception {
         Schema schema = new Schema(List.of(field("id", Rows.INT64), field("text", Rows.TEXT)));

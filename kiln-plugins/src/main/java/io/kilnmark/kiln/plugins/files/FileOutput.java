@@ -67,7 +67,7 @@ final class FileOutput implements Step {
     @Override
     public void init(StepContext context) throws StepException {
         try {
-            report = new WriteReport(context.stepName(), assetUrn, settings);
+            report = new WriteReport(context.stepName(), assetUrn, settings, true);
         } catch (ConnectorException e) {
             throw new StepException("Step " + context.stepName() + ": " + e.getMessage(), e);
         }

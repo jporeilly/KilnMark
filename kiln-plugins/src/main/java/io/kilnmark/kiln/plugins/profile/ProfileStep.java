@@ -8,6 +8,7 @@ import java.util.Map;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DateMilliVector;
 import org.apache.arrow.vector.Decimal256Vector;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
@@ -17,6 +18,9 @@ import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.LargeVarCharVector;
 import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.TimeMicroVector;
+import org.apache.arrow.vector.TimeMilliVector;
+import org.apache.arrow.vector.TimeNanoVector;
+import org.apache.arrow.vector.TimeSecVector;
 import org.apache.arrow.vector.TimeStampVector;
 import org.apache.arrow.vector.TinyIntVector;
 import org.apache.arrow.vector.UInt1Vector;
@@ -34,6 +38,7 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Step;
 import io.kilnmark.kiln.StepContext;
 import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.plugins.write.WriteColumn;
 
 /**
  * Profiles every column of the batches passing through, and reports one {@code PROFILE} event per
@@ -209,9 +214,14 @@ public final class ProfileStep implements Step {
                     case BitVector x -> s.addBoolean(x.get(i) == 1);
                     case VarCharVector x -> s.addText(x.get(i));
                     case VarBinaryVector x -> s.addBinary(x.get(i));
+                    // dates in days, times and timestamps in microseconds, whatever unit they arrive in
                     case DateDayVector x -> s.addLong(x.get(i));
+                    case DateMilliVector x -> s.addLong(WriteColumn.dateDays(x, i));
                     case TimeMicroVector x -> s.addLong(x.get(i));
-                    case TimeStampVector x -> s.addLong(x.get(i));
+                    case TimeSecVector x -> s.addLong(WriteColumn.timeMicros(x, i));
+                    case TimeMilliVector x -> s.addLong(WriteColumn.timeMicros(x, i));
+                    case TimeNanoVector x -> s.addLong(WriteColumn.timeMicros(x, i));
+                    case TimeStampVector x -> s.addLong(WriteColumn.timestampMicros(x, i));
                     default -> s.addBinary(new byte[0]);
                 }
             }

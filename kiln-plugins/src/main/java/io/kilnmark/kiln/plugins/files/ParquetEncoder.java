@@ -33,9 +33,9 @@ import io.kilnmark.kiln.plugins.write.WriteColumn;
  * (ADR 0015), so this is Kilnmark's own writer for the flat tables pipelines produce.
  *
  * <p>What it writes, from the Apache Parquet format specification: format version 1, every column
- * {@code OPTIONAL}, data pages v1 of about 1 MiB with {@code PLAIN} values and {@code RLE}
- * definition levels, row groups of about {@value #ROW_GROUP_BYTES_DEFAULT} bytes of encoded pages,
- * and no dictionaries, statistics or indexes. Pages are compressed with Snappy (the default,
+ * {@code OPTIONAL}, data pages v1 of at most 1 MiB or 20,000 values with {@code PLAIN} values and
+ * {@code RLE} definition levels, row groups of at most 2^20 rows or about
+ * {@value #ROW_GROUP_BYTES_DEFAULT} bytes of encoded pages, and no dictionaries, statistics or indexes. Pages are compressed with Snappy (the default,
  * through snappy-java, which reading already uses), ZSTD (zstd-jni), GZIP (the JDK) or not at all.
  *
  * <p>Types, by the engine's kind: boolean as {@code BOOLEAN}; int16 as {@code INT32} with
@@ -54,6 +54,16 @@ final class ParquetEncoder implements RowEncoder {
 
     /** Uncompressed page size at which a page is closed. */
     static final int PAGE_BYTES = 1 << 20;
+
+    /** Values at which a page is closed whatever its size, so mostly-null columns get pages too. */
+    static final int PAGE_VALUES = 20_000;
+
+    /** Rows at which a row group is closed whatever its size. */
+    static final long ROW_GROUP_ROWS = 1L << 20;
+
+    /** What the footer says wrote the file, as Parquet tools expect it: {@code kilnmark version 0.0.3}. */
+    static final String CREATED_BY = "kilnmark version " + java.util.Objects.requireNonNullElse(
+        ParquetEncoder.class.getPackage().getImplementationVersion(), "development");
 
     /** Parquet's codec numbers. */
     enum Codec {
@@ -150,7 +160,7 @@ final class ParquetEncoder implements RowEncoder {
         for (ColumnBuffer b : buffers) {
             buffered += b.buffered();
         }
-        if (buffered >= rowGroupBytes) {
+        if (buffered >= rowGroupBytes || groupRows >= ROW_GROUP_ROWS) {
             flushRowGroup();
         }
     }
@@ -250,7 +260,7 @@ final class ParquetEncoder implements RowEncoder {
             f.i64(6, compressed);
             f.end();
         }
-        f.binary(6, "kilnmark");
+        f.binary(6, CREATED_BY);
         f.end();
         return f.bytes();
     }
@@ -363,7 +373,7 @@ final class ParquetEncoder implements RowEncoder {
         private final int fixedLength;
         private final Bytes values = new Bytes(1 << 12);
         private final Bytes chunk = new Bytes(1 << 12);
-        private boolean[] defined = new boolean[1024];
+        private final boolean[] defined = new boolean[PAGE_VALUES];
         private int pageValues;
         private int bits;
         private int bitCount;
@@ -383,14 +393,11 @@ final class ParquetEncoder implements RowEncoder {
         void add(org.apache.arrow.vector.FieldVector v, int n) throws IOException {
             for (int row = 0; row < n; row++) {
                 Object value = column.value(v, row);
-                if (pageValues == defined.length) {
-                    defined = Arrays.copyOf(defined, defined.length * 2);
-                }
                 defined[pageValues++] = value != null;
                 if (value != null) {
                     encode(value);
                 }
-                if (values.size() >= PAGE_BYTES) {
+                if (values.size() >= PAGE_BYTES || pageValues == PAGE_VALUES) {
                     flushPage();
                 }
             }

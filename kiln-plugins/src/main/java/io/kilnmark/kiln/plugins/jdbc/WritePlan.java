@@ -93,6 +93,7 @@ final class WritePlan {
         List<Binding> bindings = new ArrayList<>();
         List<String> problems = new ArrayList<>();
         List<String> matched = new ArrayList<>();
+        List<String> matchedBy = new ArrayList<>();
         for (int i = 0; i < input.size(); i++) {
             WriteColumn c = input.get(i);
             TargetColumn t = find(table, c.name());
@@ -100,7 +101,14 @@ final class WritePlan {
                 problems.add("the table has no column " + c.name());
                 continue;
             }
+            int earlier = matched.indexOf(t.name());
+            if (earlier >= 0) {
+                problems.add("the input's columns " + matchedBy.get(earlier) + " and " + c.name()
+                    + " would both go to the table's column " + t.name());
+                continue;
+            }
             matched.add(t.name());
+            matchedBy.add(c.name());
             String why = misfit(c, t);
             if (why != null) {
                 problems.add(why);

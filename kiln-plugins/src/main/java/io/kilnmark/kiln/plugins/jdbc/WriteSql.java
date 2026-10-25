@@ -112,8 +112,41 @@ abstract class WriteSql {
         return null;
     }
 
-    /** Views and foreign keys that stop the table being dropped by replace, one name a row. */
-    abstract Sql dependents(TableName t);
+    /**
+     * Why replace cannot swap the table, one reason a row as a clause ("the view x depends on it",
+     * "it is a partition of y"): it is not a plain table, it is part of a partition or inheritance
+     * tree, or other objects depend on it that dropping the old table would break.
+     */
+    abstract Sql blockers(TableName t);
+
+    /** Whether the table has row-level security (PostgreSQL) or a security policy (SQL Server): one row, true or false. */
+    abstract Sql rowSecurity(TableName t);
+
+    /**
+     * Whether rows reach the table only through statements that apply row-level security, so a
+     * bulk load ({@code COPY}) would be refused: one row, true or false. False by default.
+     */
+    Sql copyRefused(TableName t) {
+        return null;
+    }
+
+    /**
+     * The old table's owner when it is not the login: one row (owner name, whether the login may
+     * hand the new table to it); no row when the login owns it or ownership needs no repeating.
+     */
+    abstract Sql owner(TableName t);
+
+    /** Gives {@code t} to {@code owner}. */
+    abstract String setOwner(TableName t, String owner);
+
+    /** Repeats what an owner may do on {@code t}, when ownership itself cannot be given. */
+    abstract String grantOwnerRights(TableName t, String owner);
+
+    /** Statements bounding how long the swap waits for locks, in milliseconds. */
+    abstract List<String> lockTimeout(long millis);
+
+    /** Whether a failure is a lock wait running out. */
+    abstract boolean lockTimedOut(SQLException e);
 
     /** The table's grants, as rows a {@link #grant} turns into statements. */
     abstract Sql grants(TableName t);
@@ -122,7 +155,13 @@ abstract class WriteSql {
     abstract String grant(TableName to, java.sql.ResultSet row) throws SQLException;
 
     /** Swaps the new table in: the old one is renamed out of the way, the new one takes its name, the old one goes. */
-    abstract List<Sql> swap(TableName target, String newName, String oldName);
+    final List<Sql> swap(TableName target, String newName, String oldName) {
+        return List.of(rename(target, oldName), rename(new TableName(target.schema(), newName), target.table()),
+            new Sql(drop(new TableName(target.schema(), oldName))));
+    }
+
+    /** Renames {@code from} to {@code name}, in the same schema. */
+    abstract Sql rename(TableName from, String name);
 
     /** The checks that the login may write as {@code mode} asks, before anything is written. */
     abstract List<Check> privileges(String mode, TableName t, boolean exists);
@@ -298,22 +337,92 @@ abstract class WriteSql {
                 + "AND a.attgenerated = ''", List.of(regName(t)));
         }
 
-        /** Unique, immediate, whole-table indexes on plain columns: those ON CONFLICT can use. */
+        /**
+         * Unique, immediate, whole-table indexes on plain columns: those ON CONFLICT can use, by
+         * their key columns only (columns an index INCLUDEs are not part of its key).
+         */
         @Override
         Sql uniqueKeys(TableName t) {
             return new Sql("SELECT i.indexrelid, a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = "
-                + "i.indrelid AND a.attnum = ANY (i.indkey) WHERE i.indrelid = to_regclass(?) AND i.indisunique "
-                + "AND i.indimmediate AND i.indpred IS NULL AND i.indexprs IS NULL", List.of(regName(t)));
+                + "i.indrelid AND a.attnum = ANY ((i.indkey::int2[])[0:i.indnkeyatts - 1]) WHERE i.indrelid = "
+                + "to_regclass(?) AND i.indisunique AND i.indimmediate AND i.indpred IS NULL AND i.indexprs IS NULL",
+                List.of(regName(t)));
+        }
+
+        /**
+         * Not a plain table; a partition, an inheritance parent or child; or any object depending
+         * on the table or its row type in the normal way (views, foreign keys from other tables,
+         * functions with SQL bodies, columns of its type, ...) that is not part of the table itself
+         * and so would not go with it.
+         */
+        @Override
+        Sql blockers(TableName t) {
+            String r = regName(t);
+            return new Sql("SELECT 'it is ' || CASE c.relkind WHEN 'v' THEN 'a view' WHEN 'm' THEN 'a materialised view' "
+                + "WHEN 'p' THEN 'a partitioned table' WHEN 'f' THEN 'a foreign table' ELSE 'not a table' END "
+                + "|| ', not a table' FROM pg_class c WHERE c.oid = to_regclass(?) AND c.relkind <> 'r' "
+                + "UNION ALL SELECT CASE WHEN c.relispartition THEN 'it is a partition of ' ELSE 'it inherits from ' END "
+                + "|| i.inhparent::regclass::text FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+                + "WHERE i.inhrelid = to_regclass(?) "
+                + "UNION ALL SELECT 'the table ' || i.inhrelid::regclass::text || ' inherits from it' "
+                + "FROM pg_inherits i WHERE i.inhparent = to_regclass(?) "
+                + "UNION SELECT 'the ' || CASE WHEN d.classid = 'pg_rewrite'::regclass THEN 'view ' "
+                + "|| (SELECT w.ev_class::regclass::text FROM pg_rewrite w WHERE w.oid = d.objid) "
+                + "ELSE pg_describe_object(d.classid, d.objid, 0) END || ' depends on it' FROM pg_depend d "
+                + "WHERE d.deptype = 'n' AND (d.refclassid = 'pg_class'::regclass AND d.refobjid = to_regclass(?) "
+                + "OR d.refclassid = 'pg_type'::regclass AND d.refobjid = (SELECT c.reltype FROM pg_class c "
+                + "WHERE c.oid = to_regclass(?))) "
+                + "AND NOT EXISTS (SELECT 1 FROM pg_depend o WHERE o.classid = d.classid AND o.objid = d.objid "
+                + "AND o.refclassid = 'pg_class'::regclass AND o.refobjid = to_regclass(?) AND o.deptype IN ('a', 'i')) "
+                + "AND NOT (d.classid = 'pg_rewrite'::regclass AND EXISTS (SELECT 1 FROM pg_rewrite w "
+                + "WHERE w.oid = d.objid AND w.ev_class = to_regclass(?)))", List.of(r, r, r, r, r, r, r));
         }
 
         @Override
-        Sql dependents(TableName t) {
-            return new Sql("SELECT DISTINCT 'the view ' || v.oid::regclass::text FROM pg_depend d "
-                + "JOIN pg_rewrite r ON r.oid = d.objid JOIN pg_class v ON v.oid = r.ev_class "
-                + "WHERE d.classid = 'pg_rewrite'::regclass AND d.refobjid = to_regclass(?) AND v.oid <> d.refobjid "
-                + "UNION SELECT 'the foreign key ' || c.conname || ' on ' || c.conrelid::regclass::text "
-                + "FROM pg_constraint c WHERE c.contype = 'f' AND c.confrelid = to_regclass(?) "
-                + "AND c.conrelid <> c.confrelid", List.of(regName(t), regName(t)));
+        Sql rowSecurity(TableName t) {
+            return new Sql("SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = to_regclass(?)", List.of(regName(t)));
+        }
+
+        /** COPY FROM is refused on a table whose row-level security applies to the login. */
+        @Override
+        Sql copyRefused(TableName t) {
+            return new Sql("SELECT c.relrowsecurity AND NOT (r.rolsuper OR r.rolbypassrls OR "
+                + "(pg_has_role(c.relowner, 'USAGE') AND NOT c.relforcerowsecurity)) FROM pg_class c, pg_roles r "
+                + "WHERE c.oid = to_regclass(?) AND r.rolname = current_user", List.of(regName(t)));
+        }
+
+        /**
+         * May the login give the new table to the old owner: a superuser always; otherwise it must
+         * be able to SET ROLE to the owner (PostgreSQL 16 and later; membership before) and the
+         * owner must be allowed to create in the schema.
+         */
+        @Override
+        Sql owner(TableName t) {
+            return new Sql("SELECT o.rolname, me.rolsuper OR ((CASE WHEN current_setting('server_version_num')::int "
+                + ">= 160000 THEN pg_has_role(c.relowner, 'SET') ELSE pg_has_role(c.relowner, 'MEMBER') END) "
+                + "AND has_schema_privilege(c.relowner, c.relnamespace, 'CREATE')) FROM pg_class c "
+                + "JOIN pg_roles o ON o.oid = c.relowner JOIN pg_roles me ON me.rolname = current_user "
+                + "WHERE c.oid = to_regclass(?) AND c.relowner <> me.oid", List.of(regName(t)));
+        }
+
+        @Override
+        String setOwner(TableName t, String owner) {
+            return "ALTER TABLE " + table(t) + " OWNER TO " + quote(owner);
+        }
+
+        @Override
+        String grantOwnerRights(TableName t, String owner) {
+            return "GRANT ALL PRIVILEGES ON " + table(t) + " TO " + quote(owner);
+        }
+
+        @Override
+        List<String> lockTimeout(long millis) {
+            return List.of("SET LOCAL lock_timeout = " + Math.max(1, millis));
+        }
+
+        @Override
+        boolean lockTimedOut(SQLException e) {
+            return "55P03".equals(e.getSQLState());
         }
 
         @Override
@@ -338,12 +447,8 @@ abstract class WriteSql {
         }
 
         @Override
-        List<Sql> swap(TableName target, String newName, String oldName) {
-            TableName fresh = new TableName(target.schema(), newName);
-            return List.of(
-                new Sql("ALTER TABLE " + table(target) + " RENAME TO " + quote(oldName)),
-                new Sql("ALTER TABLE " + table(fresh) + " RENAME TO " + quote(target.table())),
-                new Sql(drop(new TableName(target.schema(), oldName))));
+        Sql rename(TableName from, String name) {
+            return new Sql("ALTER TABLE " + table(from) + " RENAME TO " + quote(name));
         }
 
         @Override
@@ -359,19 +464,23 @@ abstract class WriteSql {
                             + "WHERE c.oid = to_regclass(?)", List.of(regName(t))), null));
                     }
                 }
-                case "append" -> out.add(tablePrivilege(t, "INSERT"));
+                case "append" -> {
+                    out.add(columnPrivilege(t, "INSERT"));
+                    out.add(columnPrivilege(t, "SELECT")); // to read the table's columns before writing
+                }
                 case "upsert" -> {
-                    out.add(tablePrivilege(t, "INSERT"));
-                    out.add(tablePrivilege(t, "UPDATE"));
-                    out.add(tablePrivilege(t, "SELECT"));
+                    out.add(columnPrivilege(t, "INSERT"));
+                    out.add(columnPrivilege(t, "UPDATE"));
+                    out.add(columnPrivilege(t, "SELECT"));
                 }
                 default -> { }
             }
             return out;
         }
 
-        private Check tablePrivilege(TableName t, String privilege) {
-            return new Check(new Sql("SELECT has_table_privilege(to_regclass(?), '" + privilege + "')",
+        /** On the table or on at least one of its columns: column grants are checked by the database as rows go in. */
+        private Check columnPrivilege(TableName t, String privilege) {
+            return new Check(new Sql("SELECT has_any_column_privilege(to_regclass(?), '" + privilege + "')",
                 List.of(regName(t))), null);
         }
 
@@ -382,7 +491,7 @@ abstract class WriteSql {
                 case "replace" -> "CREATE on the schema " + t.schema() + (exists ? ", and make it the owner of " + t
                     + " (or a member of the owning role), since replace drops the old table" : "");
                 case "upsert" -> "INSERT, UPDATE and SELECT on " + t;
-                default -> "INSERT on " + t;
+                default -> "INSERT and SELECT on " + t;
             };
         }
 
@@ -506,15 +615,63 @@ abstract class WriteSql {
                 + "AND TYPE_NAME(c.system_type_id) NOT IN ('timestamp', 'rowversion')", List.of(regName(t)));
         }
 
+        /**
+         * Not a table; schema-bound views and functions (which stop it being renamed or dropped);
+         * and foreign keys from other tables.
+         */
         @Override
-        Sql dependents(TableName t) {
-            return new Sql("SELECT N'the schema-bound view ' + OBJECT_SCHEMA_NAME(d.referencing_id) + N'.' "
-                + "+ OBJECT_NAME(d.referencing_id) FROM sys.sql_expression_dependencies d "
+        Sql blockers(TableName t) {
+            String r = regName(t);
+            return new Sql("SELECT N'it is a view, not a table' WHERE OBJECT_ID(?, 'U') IS NULL AND OBJECT_ID(?, 'V') "
+                + "IS NOT NULL "
+                + "UNION SELECT N'the schema-bound ' + CASE o.type WHEN 'V' THEN N'view ' WHEN 'FN' THEN N'function ' "
+                + "WHEN 'IF' THEN N'function ' WHEN 'TF' THEN N'function ' ELSE LOWER(o.type_desc) + N' ' END "
+                + "+ OBJECT_SCHEMA_NAME(d.referencing_id) + N'.' + OBJECT_NAME(d.referencing_id) + N' depends on it' "
+                + "FROM sys.sql_expression_dependencies d JOIN sys.objects o ON o.object_id = d.referencing_id "
                 + "WHERE d.referenced_id = OBJECT_ID(?) AND d.is_schema_bound_reference = 1 "
                 + "UNION SELECT N'the foreign key ' + f.name + N' on ' + OBJECT_SCHEMA_NAME(f.parent_object_id) "
-                + "+ N'.' + OBJECT_NAME(f.parent_object_id) FROM sys.foreign_keys f "
+                + "+ N'.' + OBJECT_NAME(f.parent_object_id) + N' depends on it' FROM sys.foreign_keys f "
                 + "WHERE f.referenced_object_id = OBJECT_ID(?) AND f.parent_object_id <> f.referenced_object_id",
-                List.of(regName(t), regName(t)));
+                List.of(r, r, r, r));
+        }
+
+        @Override
+        Sql rowSecurity(TableName t) {
+            return new Sql("SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.security_predicates p "
+                + "WHERE p.target_object_id = OBJECT_ID(?)) THEN 1 ELSE 0 END", List.of(regName(t)));
+        }
+
+        /**
+         * A table owned through its schema (the usual case) keeps that owner when recreated in the
+         * same schema; a table with an owner of its own is reported, and its owner's rights are
+         * granted on the new table (giving ownership itself needs IMPERSONATE on that owner).
+         */
+        @Override
+        Sql owner(TableName t) {
+            return new Sql("SELECT p.name, 0 FROM sys.objects o JOIN sys.database_principals p "
+                + "ON p.principal_id = o.principal_id WHERE o.object_id = OBJECT_ID(?) AND o.principal_id IS NOT NULL "
+                + "AND p.name <> USER_NAME()", List.of(regName(t)));
+        }
+
+        @Override
+        String setOwner(TableName t, String owner) {
+            return "ALTER AUTHORIZATION ON OBJECT::" + table(t) + " TO " + quote(owner);
+        }
+
+        @Override
+        String grantOwnerRights(TableName t, String owner) {
+            return "GRANT CONTROL ON " + table(t) + " TO " + quote(owner);
+        }
+
+        @Override
+        List<String> lockTimeout(long millis) {
+            return List.of("SET LOCK_TIMEOUT " + Math.max(1, millis));
+        }
+
+        /** 1222: the lock request time-out period was exceeded. */
+        @Override
+        boolean lockTimedOut(SQLException e) {
+            return e.getErrorCode() == 1222;
         }
 
         @Override
@@ -542,12 +699,8 @@ abstract class WriteSql {
         }
 
         @Override
-        List<Sql> swap(TableName target, String newName, String oldName) {
-            TableName fresh = new TableName(target.schema(), newName);
-            return List.of(
-                new Sql("EXEC sp_rename @objname = ?, @newname = ?", List.of(table(target), oldName)),
-                new Sql("EXEC sp_rename @objname = ?, @newname = ?", List.of(table(fresh), target.table())),
-                new Sql(drop(new TableName(target.schema(), oldName))));
+        Sql rename(TableName from, String name) {
+            return new Sql("EXEC sp_rename @objname = ?, @newname = ?", List.of(table(from), name));
         }
 
         @Override
@@ -565,15 +718,26 @@ abstract class WriteSql {
                         out.add(objectPermission(t, "ALTER"));
                     }
                 }
-                case "append" -> out.add(objectPermission(t, "INSERT"));
+                case "append" -> {
+                    out.add(objectPermission(t, "INSERT"));
+                    out.add(anyColumnPermission(t, "SELECT")); // to read the table's columns before writing
+                }
                 case "upsert" -> {
                     out.add(objectPermission(t, "INSERT"));
-                    out.add(objectPermission(t, "UPDATE"));
-                    out.add(objectPermission(t, "SELECT"));
+                    out.add(anyColumnPermission(t, "UPDATE"));
+                    out.add(anyColumnPermission(t, "SELECT"));
                 }
                 default -> { }
             }
             return out;
+        }
+
+        /** UPDATE and SELECT can be granted per column: on the table or on at least one of its columns. */
+        private Check anyColumnPermission(TableName t, String permission) {
+            return new Check(new Sql("SELECT CASE WHEN HAS_PERMS_BY_NAME(?, 'OBJECT', '" + permission + "') = 1 "
+                + "OR EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = OBJECT_ID(?) AND HAS_PERMS_BY_NAME(?, "
+                + "'OBJECT', '" + permission + "', c.name, 'COLUMN') = 1) THEN 1 ELSE 0 END",
+                List.of(regName(t), regName(t), regName(t))), null);
         }
 
         private Check objectPermission(TableName t, String permission) {
@@ -588,7 +752,7 @@ abstract class WriteSql {
                 case "replace" -> "CREATE TABLE in the database and ALTER on the schema " + t.schema()
                     + (exists ? ", and ALTER on " + t + ", since replace renames and drops the old table" : "");
                 case "upsert" -> "INSERT, UPDATE and SELECT on " + t;
-                default -> "INSERT on " + t;
+                default -> "INSERT and SELECT on " + t;
             };
         }
 

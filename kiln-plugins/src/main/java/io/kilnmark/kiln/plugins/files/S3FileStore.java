@@ -320,8 +320,17 @@ public final class S3FileStore implements FileStore {
         };
     }
 
-    /** Bytes per uploaded part: S3's minimum is 5 MiB for every part but the last. */
+    /** Bytes per uploaded part at first: S3's minimum is 5 MiB for every part but the last. */
     static final int PART_BYTES = 8 << 20;
+
+    /**
+     * The size of part {@code number} (1-based): 8 MiB for the first 1,000 parts, 32 MiB up to
+     * 5,000, then 128 MiB, so an object stays within S3's 10,000 parts up to about 780 GB while
+     * small files keep small buffers.
+     */
+    static int partSize(int number) {
+        return number <= 1000 ? PART_BYTES : number <= 5000 ? 32 << 20 : 128 << 20;
+    }
 
     /**
      * Writes an object: a file smaller than one part goes up in one PUT at the end; a larger one as a
@@ -372,7 +381,7 @@ public final class S3FileStore implements FileStore {
     private final class S3Upload implements Upload {
 
         private final String key;
-        private final byte[] part = new byte[PART_BYTES];
+        private byte[] part = new byte[PART_BYTES];
         private final List<software.amazon.awssdk.services.s3.model.CompletedPart> parts = new ArrayList<>();
         private int filled;
         private String uploadId;
@@ -424,6 +433,9 @@ public final class S3FileStore implements FileStore {
                 parts.add(software.amazon.awssdk.services.s3.model.CompletedPart.builder().partNumber(number)
                     .eTag(response.eTag()).build());
                 filled = 0;
+                if (partSize(number + 1) != part.length) {
+                    part = new byte[partSize(number + 1)];
+                }
             } catch (SdkException e) {
                 throw writeError(e, key);
             }
@@ -461,11 +473,18 @@ public final class S3FileStore implements FileStore {
             }
             done = true;
             if (uploadId != null) {
+                // a cancelled run interrupts this thread, and the HTTP client gives up at once on an
+                // interrupted thread: abort with the flag cleared, then set it again
+                boolean interrupted = Thread.interrupted();
                 try {
                     s3.abortMultipartUpload(software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest
                         .builder().bucket(settings.bucket()).key(key).uploadId(uploadId).build());
                 } catch (RuntimeException e) {
                     // the bucket's lifecycle rules remove abandoned uploads; nothing was made visible
+                } finally {
+                    if (interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
                 }
             }
         }

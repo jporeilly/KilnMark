@@ -374,7 +374,8 @@ public abstract class FileSourceConnector implements Connector {
     @Override
     public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
         checkSettings(source);
-        String mode = write.mode() == null || write.mode().isBlank() ? "create" : write.mode().strip();
+        String mode = write.mode() == null || write.mode().isBlank() ? "create"
+            : write.mode().strip().toLowerCase(java.util.Locale.ROOT);
         io.kilnmark.kiln.plugins.write.WriteSettings settings =
             new io.kilnmark.kiln.plugins.write.WriteSettings(write.options());
         boolean overwrite = switch (mode) {
@@ -396,8 +397,34 @@ public abstract class FileSourceConnector implements Connector {
         FileTarget target = FileTarget.of(write.target(), write.format());
         String prefix = prefix(source);
         String under = prefix.isEmpty() || prefix.endsWith("/") ? prefix : prefix + "/";
+        if (!settings.bool("allow_unscanned", false)) {
+            String unseen = unscanned(source, under + target.path());
+            if (unseen != null) {
+                throw new ConnectorException("path: " + target.path() + " would not be found by scans of "
+                    + source.name() + ", because " + unseen + ". Write somewhere the source scans, change the source's "
+                    + "settings, or set allow_unscanned: true to write it anyway");
+            }
+        }
         return new FileOutput(() -> open(source), under + target.path(), target, overwrite, settings,
             write.assetUrn());
+    }
+
+    /**
+     * Why a scan of {@code source} would not find the file at {@code path} (its store path), or null
+     * when it would: the source does not look in sub-folders, or the folder or name is not among
+     * those the source's containers and patterns keep.
+     */
+    String unscanned(SourceConfig source, String path) {
+        if ("false".equalsIgnoreCase(source.setting("recursive")) && path.substring(prefix(source).length())
+            .contains("/")) {
+            return "the source does not look in sub-folders (recursive is false)";
+        }
+        AssetFilter filter = AssetFilter.of(this, source);
+        if (!filter.keeps(top(source, path), path, fileName(path))) {
+            return "it is outside the folders or patterns the source scans (its containers, include and exclude "
+                + "settings)";
+        }
+        return null;
     }
 
     /** A scan of a source has ended: shared copies of its workbooks nobody is using are deleted. */

@@ -328,9 +328,135 @@ class FileWriteTest {
     }
 
     @Test
+    void parquetClosesPagesOfMostlyNullColumnsAndNamesItsWriter() throws Exception {
+        Schema schema = new Schema(List.of(field("id", Rows.INT64), field("empty", Rows.TEXT)));
+        List<Object[]> rows = new ArrayList<>();
+        for (int i = 0; i < 70_000; i++) {
+            rows.add(new Object[] {(long) i, null});
+        }
+        SourceConfig s = folder("pq-nulls");
+        assertTrue(write(files, s, options("nulls.parquet", null, Map.of()), schema, rows, 8192, -1, Rows.events())
+            .succeeded());
+        Rows.Collected back = read(files, s, "nulls.parquet");
+        assertEquals(70_000, back.rows.size());
+        assertTrue(back.rows.stream().allMatch(r -> r.get(1) == null));
+        byte[] bytes = Files.readAllBytes(Path.of(s.setting("path")).resolve("nulls.parquet"));
+        assertTrue(new String(bytes, StandardCharsets.ISO_8859_1).contains("kilnmark version "), "created_by");
+    }
+
+    /**
+     * The files read by another implementation: pyarrow, when this machine has it (CI does not
+     * install Python packages, so there the test is skipped and the Hardwood round trips above stand).
+     */
+    @Test
+    void pyarrowReadsEveryKindAsWritten() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(pyarrow(), "pyarrow is not installed");
+        SourceConfig s = folder("pq-pyarrow");
+        List<Object[]> rows = allRows(3000);
+        Path dir = Path.of(s.setting("path"));
+        for (String codec : List.of("snappy", "zstd", "gzip", "none")) {
+            assertTrue(write(files, s, options(codec + ".parquet", null, Map.of("compression", codec)), ALL, rows, 700,
+                -1, Rows.events()).succeeded());
+        }
+        StringBuilder json = new StringBuilder("{\"types\": [\"int64\", \"int16\", \"int16\", \"int32\", \"float\", "
+            + "\"double\", \"decimal128(9, 2)\", \"decimal128(18, 4)\", \"decimal128(38, 10)\", \"bool\", \"string\", "
+            + "\"binary\", \"date32[day]\", \"time64[us]\", \"timestamp[us]\", \"timestamp[us, tz=UTC]\"], \"rows\": [");
+        for (int r = 0; r < rows.size(); r++) {
+            json.append(r == 0 ? "[" : ",[");
+            for (int c = 0; c < rows.get(r).length; c++) {
+                Object v = rows.get(r)[c];
+                String text = switch (v) {
+                    case null -> null;
+                    case byte[] b -> java.util.HexFormat.of().formatHex(b);
+                    case java.time.LocalTime t -> Long.toString(t.toNanoOfDay() / 1000);
+                    case java.time.LocalDateTime t -> Long.toString(java.time.temporal.ChronoUnit.MICROS.between(
+                        Instant.EPOCH, t.toInstant(java.time.ZoneOffset.UTC)));
+                    case Instant t -> Long.toString(java.time.temporal.ChronoUnit.MICROS.between(Instant.EPOCH, t));
+                    case BigDecimal d -> d.toPlainString();
+                    default -> v.toString();
+                };
+                json.append(c == 0 ? "" : ",").append(text == null ? "null" : jsonString(text));
+            }
+            json.append(']');
+        }
+        Files.writeString(dir.resolve("expected.json"), json.append("]}").toString());
+        Path script = Path.of(FileWriteTest.class.getResource("/parquet/conformance.py").toURI());
+        for (String codec : List.of("snappy", "zstd", "gzip", "none")) {
+            Process p = new ProcessBuilder("python3", "-I", script.toString(), dir.resolve(codec + ".parquet").toString(),
+                dir.resolve("expected.json").toString()).redirectErrorStream(true).start();
+            String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
+            assertEquals(0, p.waitFor(), out);
+            assertEquals("ok", out, codec);
+        }
+    }
+
+    private static boolean pyarrow() {
+        try {
+            Process p = new ProcessBuilder("python3", "-I", "-c", "import pyarrow").redirectErrorStream(true).start();
+            p.getInputStream().readAllBytes();
+            return p.waitFor() == 0;
+        } catch (java.io.IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private static String jsonString(String s) {
+        StringBuilder b = new StringBuilder("\"");
+        for (char c : s.toCharArray()) {
+            if (c == '"' || c == '\\') {
+                b.append('\\').append(c);
+            } else if (c < 0x20) {
+                b.append(String.format("\\u%04x", (int) c));
+            } else {
+                b.append(c);
+            }
+        }
+        return b.append('"').toString();
+    }
+
+    @Test
+    void writesScansWouldNotFindAreRefusedUnlessAsked() throws Exception {
+        Path flat = Files.createDirectories(root.resolve("flat"));
+        SourceConfig topOnly = new SourceConfig("flat", "files", Map.of("path", flat.toString(), "recursive", "false"),
+            null);
+        Schema schema = new Schema(List.of(field("id", Rows.INT64)));
+        ConnectorException e = assertThrows(ConnectorException.class, () -> files.writer(topOnly,
+            options("sub/x.csv", null, Map.of())));
+        assertTrue(e.getMessage().contains("does not look in sub-folders"), e.getMessage());
+        assertTrue(Rows.run(Rows.source(schema, Rows.list(new Object[] {1L}), 10), files.writer(topOnly,
+            options("top.csv", null, Map.of())), Rows.events()).succeeded());
+        assertTrue(Rows.run(Rows.source(schema, Rows.list(new Object[] {1L}), 10), files.writer(topOnly,
+            options("sub/x.csv", null, Map.of("allow_unscanned", true))), Rows.events()).succeeded());
+
+        SourceConfig csvOnly = new SourceConfig("flat", "files", Map.of("path", flat.toString(), "include", "*.csv"),
+            null);
+        e = assertThrows(ConnectorException.class, () -> files.writer(csvOnly, options("x.parquet", null, Map.of())));
+        assertTrue(e.getMessage().contains("outside the folders or patterns the source scans"), e.getMessage());
+        Step upper = files.writer(csvOnly, new Connector.WriteOptions("top.csv", "REPLACE", List.of(), null, Map.of(),
+            "urn:kilnmark:out:top.csv"));
+        assertTrue(Rows.run(Rows.source(schema, Rows.list(new Object[] {2L}), 10), upper, Rows.events()).succeeded());
+    }
+
+    @Test
     void theFileConnectorsListWriting() {
         assertTrue(files.capabilities().contains(Connector.Capability.WRITE));
         assertTrue(new S3Connector().capabilities().contains(Connector.Capability.WRITE));
+    }
+
+    @Test
+    void s3PartsGrowSoLargeObjectsStayWithinTenThousandParts() {
+        assertEquals(8 << 20, S3FileStore.partSize(1));
+        assertEquals(8 << 20, S3FileStore.partSize(1000));
+        assertEquals(32 << 20, S3FileStore.partSize(1001));
+        assertEquals(128 << 20, S3FileStore.partSize(5001));
+        long total = 0;
+        for (int n = 1; n <= 10_000; n++) {
+            total += S3FileStore.partSize(n);
+        }
+        assertTrue(total > 700L << 30, "about 780 GB in 10,000 parts: " + total);
     }
 
     @Test
