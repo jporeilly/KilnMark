@@ -3,6 +3,7 @@ package io.kilnmark.server.ai.assistant;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
@@ -38,14 +39,37 @@ public class Assistant {
     public static final int MAX_TURN = 4000;
     /** Sections retrieved for a question. */
     public static final int TOP = 6;
-    /** Characters of section text sent to the model in all (about 3,000 tokens), and per section. */
+    /** Most characters of section text sent to the model in all, and per section, whatever its context. */
     static final int BUDGET_CHARS = 12_000;
     static final int SECTION_CHARS = 4_000;
     static final int MAX_ANSWER_TOKENS = 500;
-    /** A chat answer takes longer than a search plan: wait up to 45 seconds, without retrying a timeout. */
-    static final AiGateway.Budget BUDGET = new AiGateway.Budget(2_000, false, 45_000, true);
+    /**
+     * Characters per token when sizing the prompt to the model's context. There is no tokenizer for
+     * every model, so this is a cautious estimate: English prose runs at about four, tables and code
+     * at fewer.
+     */
+    static final int CHARS_PER_TOKEN = 3;
+    /** The context assumed when a profile does not say: what the bundled llama-server gives each slot. */
+    static final int DEFAULT_CONTEXT = 4096;
+    /** Tokens kept free besides the answer: tags, numbering and the model's own chat template. */
+    static final int MARGIN_TOKENS = 250;
+    /** Earlier turns are cut to these lengths, newest kept first, and to at most this much in all. */
+    static final int USER_TURN_CHARS = 1000;
+    static final int ASSISTANT_TURN_CHARS = 600;
+    static final int HISTORY_CHARS = 6000;
+    /**
+     * A chat answer takes longer than a search plan: wait up to 45 seconds, without retrying a
+     * timeout, and never mark the profile as down (skipIfDown false), so a slow answer here does not
+     * make "Ask in plain English" skip a shared chat model for 30 seconds.
+     */
+    static final AiGateway.Budget BUDGET = new AiGateway.Budget(2_000, false, 45_000, false);
     static final List<String> DOMAINS = List.of(KnowledgeIndex.DOCS);
-    private static final Pattern TAG = Pattern.compile("(?i)<(/?)(sections?|question|turn|conversation)\\b");
+    private static final Pattern FORMAT = Pattern.compile("\\p{Cf}");
+    private static final Pattern LT = Pattern.compile("(?i)&(?:lt|#0*60|#x0*3c);");
+    private static final Pattern GT = Pattern.compile("(?i)&(?:gt|#0*62|#x0*3e);");
+    /** What a model server says when a prompt is longer than its context. */
+    private static final Pattern TOO_LONG = Pattern.compile(
+        "(?i)context|too long|too many tokens|exceed|maximum.{0,40}tokens|n_ctx|HTTP 400");
 
     private final AiGateway gateway;
     private final KnowledgeSearch search;
@@ -130,13 +154,24 @@ public class Assistant {
             return fallback(q, hits, "No model is set for the assistant, so here are the sections of the documentation "
                 + "that match best. An admin can choose one under AI models.");
         }
-        List<KnowledgeSearch.Hit> sent = withinBudget(hits, BUDGET_CHARS, SECTION_CHARS, q);
-        ModelClient.ChatCall call = new ModelClient.ChatCall(SYSTEM, user(q, sent, turns), null, MAX_ANSWER_TOKENS);
+        Plan plan = fit(profile.get().contextSize(), q, hits, turns);
         String text;
         String model;
+        List<KnowledgeSearch.Hit> sent = plan.sections();
         try {
-            AiGateway.Result<ModelClient.ChatAnswer> r = gateway.chatWith(profile.get(), AiFeature.ASSISTANT.id(), null,
-                call, caller, () -> false, BUDGET, DOMAINS);
+            AiGateway.Result<ModelClient.ChatAnswer> r;
+            try {
+                r = chat(profile.get(), q, plan, caller);
+            } catch (AiException e) {
+                if (e.kind() != AiException.Kind.FAILED || e.unreachable() || !TOO_LONG.matcher(
+                    String.valueOf(e.getMessage())).find()) {
+                    throw e;
+                }
+                // Probably longer than the model's context after all: once more, smaller, without the conversation.
+                plan = smaller(plan, q);
+                sent = plan.sections();
+                r = chat(profile.get(), q, plan, caller);
+            }
             text = r.answer().text() == null ? "" : r.answer().text().strip();
             model = r.profile().name();
         } catch (AiException e) {
@@ -157,6 +192,65 @@ public class Assistant {
             citations.add(new Citation(n, h.sectionId(), h.page(), h.titlePath(), h.href()));
         }
         return new Answer(answerId(q, checked.text()), checked.text(), citations, DOMAINS, model, false, null);
+    }
+
+    private AiGateway.Result<ModelClient.ChatAnswer> chat(ModelProfile p, String q, Plan plan, String caller) {
+        ModelClient.ChatCall call = new ModelClient.ChatCall(SYSTEM, user(q, plan.sections(), plan.history()), null,
+            MAX_ANSWER_TOKENS);
+        return gateway.chatWith(p, AiFeature.ASSISTANT.id(), null, call, caller, () -> false, BUDGET, DOMAINS);
+    }
+
+    /** What goes into the prompt: the sections (cut to fit) and the earlier turns kept. */
+    record Plan(List<KnowledgeSearch.Hit> sections, List<Turn> history) {
+    }
+
+    /**
+     * Sizes the prompt to the model's context ({@code contextSize} tokens, or
+     * {@value #DEFAULT_CONTEXT} when the profile does not say), leaving room for the system prompt,
+     * the question and the answer: the earlier turns get at most a third, newest first and cut
+     * short, and the sections the rest. When too little is left for the sections, the conversation
+     * goes.
+     */
+    static Plan fit(Integer contextSize, String question, List<KnowledgeSearch.Hit> hits, List<Turn> history) {
+        int context = contextSize == null ? DEFAULT_CONTEXT : contextSize;
+        int room = (context - MAX_ANSWER_TOKENS - MARGIN_TOKENS) * CHARS_PER_TOKEN - SYSTEM.length()
+            - question.length();
+        List<Turn> kept = shorten(history, Math.min(HISTORY_CHARS, Math.max(0, room / 3)));
+        int forSections = Math.min(BUDGET_CHARS, room - chars(kept));
+        if (forSections < 1500 && !kept.isEmpty()) {
+            kept = List.of();
+            forSections = Math.min(BUDGET_CHARS, room);
+        }
+        return new Plan(withinBudget(hits, Math.max(600, forSections), SECTION_CHARS, question), kept);
+    }
+
+    /** Half the section text, the first three sections at most, and no conversation. */
+    static Plan smaller(Plan plan, String question) {
+        List<KnowledgeSearch.Hit> first = plan.sections().subList(0, Math.min(3, plan.sections().size()));
+        int total = first.stream().mapToInt(h -> h.body().length()).sum();
+        return new Plan(withinBudget(first, Math.max(600, total / 2), SECTION_CHARS, question), List.of());
+    }
+
+    /** The newest turns that fit in {@code limit} characters, each cut short, in their original order. */
+    static List<Turn> shorten(List<Turn> history, int limit) {
+        List<Turn> out = new ArrayList<>();
+        int used = 0;
+        for (int i = history.size() - 1; i >= 0; i--) {
+            Turn t = history.get(i);
+            int max = "user".equals(t.role()) ? USER_TURN_CHARS : ASSISTANT_TURN_CHARS;
+            String text = t.text().strip();
+            text = text.length() <= max ? text : text.substring(0, max) + " …";
+            if (used + text.length() + 40 > limit) {
+                break;
+            }
+            out.addFirst(new Turn(t.role(), text));
+            used += text.length() + 40;
+        }
+        return out;
+    }
+
+    private static int chars(List<Turn> turns) {
+        return turns.stream().mapToInt(t -> t.text().length() + 40).sum();
     }
 
     /** The best sections as links, with a short message saying why. */
@@ -242,9 +336,17 @@ public class Assistant {
         return b.toString();
     }
 
-    /** Text placed between tags: the tags it could close or open are defused. */
+    /**
+     * Text placed between tags, made unable to open or close one: normalised (NFKC, so fullwidth
+     * brackets become plain ones), invisible format characters removed, and every angle bracket,
+     * written or as an HTML entity, replaced by ‹ or ›.
+     */
     static String data(String text) {
-        return TAG.matcher(text).replaceAll("‹$1$2");
+        String s = Normalizer.normalize(text, Normalizer.Form.NFKC);
+        s = FORMAT.matcher(s).replaceAll("");
+        s = LT.matcher(s).replaceAll("‹");
+        s = GT.matcher(s).replaceAll("›");
+        return s.replace('<', '‹').replace('>', '›');
     }
 
     private static String attr(String text) {

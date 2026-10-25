@@ -35,17 +35,20 @@ details.
   conversation stays while moving around and is cleared on sign-out. New AI feature `assistant`
   (chat), routed under AI models; without it, or when the model fails or the server allows only
   local models, the panel lists the best matching sections. `POST /api/v1/assistant/ask`,
-  `GET /api/v1/assistant/sections`, `POST /api/v1/assistant/feedback` (thumbs up or down) and
-  `GET /api/v1/assistant/feedback` (admins). At start-up the guides and changelog, now bundled in
+  `GET /api/v1/assistant/sections`, `POST /api/v1/assistant/feedback` (**Yes, it helped** or
+  **No**; kept for `kilnmark.ai.usage-retention`) and `GET /api/v1/assistant/feedback` (admins). At start-up the guides and changelog, now bundled in
   the server jar too, are split at `##` and `###` headings into sections with the viewer's anchors
   and stored in `knowledge_section` (migration V11, with `assistant_feedback` and
   `ai_usage.domains`); only changed sections are written again, and sections are embedded in the
-  background when an embedding model is set. Retrieval is PostgreSQL full-text search weighted by
-  word rarity, plus nearest embeddings, with a boost for the page you are on. The model gets the
+  background when an embedding model is set. The changelog's Unreleased part is shown in the viewer but not answered from. Retrieval is
+  PostgreSQL full-text search weighted by word rarity, plus nearest embeddings, with a boost for
+  the page you are on. The prompt is sized to the model profile's context (4,096 tokens when it
+  does not say), the conversation shortened newest first, with one smaller retry if the model
+  still refuses it for length; the assistant never marks a shared chat model as down. The model gets the
   sections as data with no tools, and every citation is checked against the sections sent.
   Questions are limited to 2,000 characters and 20 a minute per token. The MCP server gains
   `search_docs`. Guide: **Asking Kilnmark**. Evaluation set `tests/ai-eval/docs.json` (22
-  questions; recall at 6 with words only is 1.0) runs in `:server:aiEval`.
+  questions) runs in `:server:aiEval`. The UI build needs Node.js 22.12 or later (or 20.19), as Vite does.
 - **Find local models** on the AI models page (`POST /api/v1/ai/discover`, admins only): looks for
   Ollama and LM Studio on the machine running Kilnmark or its container
   (`host.containers.internal`, `host.docker.internal`, `localhost`) and for the bundled Compose

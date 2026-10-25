@@ -88,8 +88,9 @@ tasks.register<Test>("aiEval") {
     testLogging { showStandardStreams = true }
 }
 
-// The web UI is built with npm and served by the server from /. Needs Node.js 22 or later on the
-// PATH; -PskipUi builds the server without it (API only).
+// The web UI is built with npm and served by the server from /. Needs Node.js 22.12 or later (or
+// 20.19 or later: what Vite needs, ui/package.json "engines") on the PATH; -PskipUi builds the
+// server without it (API only).
 val uiDir = rootProject.layout.projectDirectory.dir("ui")
 val uiOut = rootProject.layout.projectDirectory.dir("dist/ui")
 val npm = if (System.getProperty("os.name").lowercase().contains("windows")) "npm.cmd" else "npm"
@@ -111,8 +112,12 @@ val buildUi by tasks.registering(Exec::class) {
     workingDir = uiDir.asFile
     commandLine(npm, "run", "build")
     inputs.dir(uiDir.dir("src"))
+    inputs.dir(uiDir.dir("scripts"))
     inputs.files(uiDir.file("index.html"), uiDir.file("vite.config.ts"), uiDir.file("tsconfig.json"),
-        uiDir.file("package-lock.json"))
+        uiDir.file("package-lock.json"), uiDir.file("package.json"))
+    // The bundled documentation, and the anchor cases the pre-build check reads (scripts/check-slugs.mjs).
+    inputs.files(rootProject.fileTree("docs/guide") { include("*.md") }, rootProject.file("CHANGELOG.md"))
+    inputs.dir(rootProject.file("tests/docs"))
     outputs.dir(uiOut)
 }
 

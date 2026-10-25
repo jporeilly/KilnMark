@@ -300,7 +300,10 @@ public interface KilnmarkConfig {
         @WithDefault("false")
         boolean keepUsageText();
 
-        /** How long usage records are kept. Older ones are deleted every few hours. */
+        /**
+         * How long usage records and ratings of the assistant's answers are kept. Older ones are
+         * deleted every few hours.
+         */
         @WithDefault("90d")
         Duration usageRetention();
 

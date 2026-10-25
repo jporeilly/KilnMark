@@ -14,6 +14,8 @@ public final class CallerRate {
 
     private final int perMinute;
     private final Map<String, Deque<Instant>> seen = new HashMap<>();
+    /** When callers silent for a minute were last forgotten: at most once a minute, not on every call. */
+    private Instant swept = Instant.EPOCH;
 
     public CallerRate(int perMinute) {
         this.perMinute = perMinute;
@@ -33,8 +35,10 @@ public final class CallerRate {
             return false;
         }
         times.addLast(now);
-        if (seen.size() > 10_000) {
-            seen.values().removeIf(Deque::isEmpty);
+        if (now.isAfter(swept.plusSeconds(60))) {
+            swept = now;
+            Instant cutoff = now.minusSeconds(60);
+            seen.values().removeIf(d -> d.isEmpty() || !d.peekLast().isAfter(cutoff));
         }
         return true;
     }

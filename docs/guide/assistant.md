@@ -18,9 +18,10 @@ when you sign out or reload the page. **Clear** starts again.
 
 ## What it answers from
 
-Kilnmark answers only from the documentation that ships with your version: these guides and
-**What's new**. It does not look at your sources, assets or quality results yet, and it does not
-know about other products.
+Kilnmark answers only from the documentation that ships with your version: these guides and the
+released versions in **What's new**. Changes listed there as *Unreleased* are not answered from
+until they are released. It does not look at your sources, assets or quality results yet, and it
+does not know about other products.
 
 The page you are on counts: on the Quality rules page, the guide to quality rules comes first.
 
@@ -42,15 +43,21 @@ Answers are written by the AI model an administrator chooses for the **Assistant
 works: it lists the sections of the documentation that best match your question, each with a
 short extract, like a search.
 
+For administrators: give the Assistant a model profile of its own. Answers take longer than the
+other features' calls, and a profile shared with **Ask in plain English** would make searches wait
+behind them. Set the profile's context size to the model server's: Kilnmark sends as much
+documentation and conversation as fits, and with less room it sends less.
+
 With an embedding model set for **Search by meaning**, sections are found by meaning as well as
 by their words.
 
 ## Rating answers
 
-Use the thumbs up or thumbs down under an answer to say whether it helped. Kilnmark records your
+Under each answer, **Did this help?** offers **Yes, it helped** and **No**. Kilnmark records your
 question, which sections the answer used, and whether it helped, so administrators can see where
 the documentation falls short. Administrators can list recent ratings with
-`GET /api/v1/assistant/feedback`.
+`GET /api/v1/assistant/feedback`. Ratings are deleted with the AI usage records, after
+`kilnmark.ai.usage-retention` (90 days by default).
 
 ## Privacy
 

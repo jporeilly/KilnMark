@@ -3,8 +3,10 @@ package io.kilnmark.server.ai.assistant;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -46,8 +48,13 @@ public class KnowledgeIndex {
     private static final Logger LOG = Logger.getLogger(KnowledgeIndex.class);
     /** pg_advisory_xact_lock key, so two processes starting together index one after the other. */
     private static final long INDEX_LOCK = 0x6b6d_6b6e_6f77L;
+    /** pg_try_advisory_lock key, so only one process embeds the sections at a time. */
+    private static final long EMBED_LOCK = 0x6b6d_6b6e_656dL;
     /** How often a search may start a background pass for sections still without an embedding. */
     private static final long CHECK_EVERY_MS = 60_000;
+    /** After a failed pass, searches wait this long before trying again, doubling up to an hour. */
+    private static final long FIRST_BACKOFF_MS = 5 * 60_000;
+    private static final long MAX_BACKOFF_MS = 60 * 60_000;
 
     private final Db db;
     private final ModelProfiles profiles;
@@ -57,6 +64,8 @@ public class KnowledgeIndex {
     private final AtomicBoolean again = new AtomicBoolean();
     private volatile boolean stopping;
     private volatile long lastCheck;
+    private volatile long backoffMs;
+    private volatile long retryAfter;
 
     public KnowledgeIndex(Db db, ModelProfiles profiles, AiGateway gateway, KilnmarkConfig config) {
         this.db = db;
@@ -90,6 +99,11 @@ public class KnowledgeIndex {
 
     /** Makes a domain's stored sections match {@code sections}, writing only what changed. */
     public Outcome index(String domain, List<DocSections.Section> sections) {
+        if (sections.isEmpty()) {
+            // A build without its documentation: keep what was indexed rather than delete it all.
+            LOG.warnf("Assistant: no sections for %s in this build; the index is left as it was", domain);
+            return new Outcome(0, 0, 0, 0);
+        }
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_xact_lock(?)")) {
                 ps.setLong(1, INDEX_LOCK);
@@ -175,11 +189,18 @@ public class KnowledgeIndex {
 
     /**
      * Embeds, in the background, every section without an embedding from the current embedding
-     * model. A request while a pass runs makes it go round once more.
+     * model. A request while a pass runs makes it go round once more. Asked for explicitly (at
+     * start-up, or after an admin changed the embedding model), so any back-off after failures ends.
      *
      * @return true if a pass started now
      */
     public boolean embedInBackground() {
+        backoffMs = 0;
+        retryAfter = 0;
+        return start();
+    }
+
+    private boolean start() {
         again.set(true);
         if (!running.compareAndSet(false, true)) {
             return false;
@@ -188,7 +209,7 @@ public class KnowledgeIndex {
             do {
                 try {
                     while (again.getAndSet(false) && !stopping) {
-                        embedPending();
+                        embedPendingAlone();
                     }
                 } catch (RuntimeException e) {
                     LOG.warnf("Assistant: embedding the documentation failed; it is searched by words: %s",
@@ -212,7 +233,7 @@ public class KnowledgeIndex {
      */
     void embedIfMissing(ModelProfile p, String domain) {
         long now = System.currentTimeMillis();
-        if (running.get() || now - lastCheck < CHECK_EVERY_MS) {
+        if (running.get() || now - lastCheck < CHECK_EVERY_MS || now < retryAfter) {
             return;
         }
         lastCheck = now;
@@ -227,7 +248,33 @@ public class KnowledgeIndex {
             }
         });
         if (missing) {
-            embedInBackground();
+            start();
+        }
+    }
+
+    /** One pass, while holding a lock that other processes then cannot take: they skip, and this one embeds. */
+    private void embedPendingAlone() {
+        try (Connection c = db.connection()) {
+            c.setAutoCommit(true);
+            if (!lock(c, "pg_try_advisory_lock")) {
+                return;
+            }
+            try {
+                embedPending();
+            } finally {
+                lock(c, "pg_advisory_unlock");
+            }
+        } catch (SQLException e) {
+            LOG.warnf("Assistant: could not embed the documentation: %s", e.getMessage());
+        }
+    }
+
+    private static boolean lock(Connection c, String function) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("SELECT " + function + "(?)")) {
+            ps.setLong(1, EMBED_LOCK);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() && rs.getBoolean(1);
+            }
         }
     }
 
@@ -277,13 +324,18 @@ public class KnowledgeIndex {
                     batch.stream().map(Pending::text).toList(), "assistant: documentation", () -> stopping,
                     AiGateway.Budget.BACKGROUND).answer().vectors();
             } catch (AiException e) {
-                LOG.infof("Assistant: documentation sections not embedded (%d of %d done): %s", done, pending.size(),
+                backoffMs = backoffMs == 0 ? FIRST_BACKOFF_MS : Math.min(MAX_BACKOFF_MS, backoffMs * 2);
+                retryAfter = System.currentTimeMillis() + backoffMs;
+                LOG.infof("Assistant: documentation sections not embedded (%d of %d done), trying again in %d minutes "
+                    + "or when the embedding model changes: %s", done, pending.size(), backoffMs / 60_000,
                     e.publicMessage());
                 return;
             }
             save(batch, vectors, key, p.dimensions());
             done += batch.size();
         }
+        backoffMs = 0;
+        retryAfter = 0;
         if (done > 0) {
             LOG.infof("Assistant: %d documentation sections embedded with %s", done, p.name());
         }

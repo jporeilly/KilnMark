@@ -10,7 +10,7 @@ a container.
 | --- | --- | --- |
 | Java | 17 or later on the PATH | Starting the Gradle wrapper; it fetches JDK 25 itself |
 | Git | any recent | Source control |
-| Node.js | 22 or later | The web UI |
+| Node.js | 22.12 or later (or 20.19 or later), as Vite needs | The web UI |
 | Podman (Podman Desktop with a WSL 2 machine on Windows), or Docker | Podman 5 or later | PostgreSQL and the full stack |
 
 **Java 25 is downloaded for you.** The build runs on JDK 25 (`gradle/gradle-daemon-jvm.properties`)

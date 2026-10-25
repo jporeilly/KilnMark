@@ -205,6 +205,7 @@ class AiEval {
         List<Double> rr = new ArrayList<>();
         List<Double> valid = new ArrayList<>();
         List<Double> relevantCited = new ArrayList<>();
+        List<Double> fallbacks = new ArrayList<>();
         List<Map<String, Object>> items = new ArrayList<>();
         String mode = null;
         for (JsonNode item : set.path("items")) {
@@ -235,6 +236,7 @@ class AiEval {
                 List<String> cited = new ArrayList<>();
                 a.path("citations").forEach(c -> cited.add(c.path("sectionId").asText()));
                 boolean fallback = a.path("fallback").asBoolean();
+                fallbacks.add(fallback ? 1.0 : 0.0);
                 if (!fallback) {
                     boolean allValid = a.path("citations").size() > 0;
                     for (JsonNode c : a.path("citations")) {
@@ -255,6 +257,9 @@ class AiEval {
         out.put("recallAt" + DOCS_K, EvalMetrics.mean(recall));
         out.put("mrr", EvalMetrics.mean(rr));
         if (answers) {
+            // Answers that fell back to a list of sections (model refused, failed or out of context) are
+            // not in the citation scores, so their share is reported beside them.
+            out.put("fallbackRate", EvalMetrics.mean(fallbacks));
             out.put("answered", valid.size());
             out.put("citationValidity", EvalMetrics.mean(valid));
             out.put("citesRelevant", EvalMetrics.mean(relevantCited));
@@ -308,8 +313,9 @@ class AiEval {
         b.append(String.format(Locale.ROOT, "%nAssistant, documentation (%s): recall@%d %.3f, MRR %.3f.",
             docs.get("modeUsed"), DOCS_K, (Double) docs.get("recallAt" + DOCS_K), (Double) docs.get("mrr")));
         if (docs.containsKey("citationValidity")) {
-            b.append(String.format(Locale.ROOT, " Answers: %s, citations valid %.3f, citing a relevant section %.3f.",
-                docs.get("answered"), (Double) docs.get("citationValidity"), (Double) docs.get("citesRelevant")));
+            b.append(String.format(Locale.ROOT, " Fell back to sections: %.3f. Answers: %s, citations valid %.3f, "
+                + "citing a relevant section %.3f.", (Double) docs.get("fallbackRate"), docs.get("answered"),
+                (Double) docs.get("citationValidity"), (Double) docs.get("citesRelevant")));
         }
         b.append('\n');
         return b.toString();

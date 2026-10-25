@@ -40,7 +40,7 @@ public final class AiException extends RuntimeException {
         return kind;
     }
 
-    boolean unreachable() {
+    public boolean unreachable() {
         return unreachable;
     }
 

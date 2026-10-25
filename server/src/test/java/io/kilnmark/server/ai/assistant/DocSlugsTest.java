@@ -55,6 +55,6 @@ class DocSlugsTest {
     void plainHeadingsKeepLinkWordsAndDropMarks() {
         assertEquals("See Choosing a check", DocSlugs.plainHeading("See [Choosing a check](#choosing-a-check)"));
         assertEquals("keep_text", DocSlugs.plainHeading("`keep_text`"));
-        assertEquals("no-break", DocSlugs.plainHeading(" no-break "));
+        assertEquals("no-break", DocSlugs.plainHeading("\u00A0no-break\u00A0"));
     }
 }

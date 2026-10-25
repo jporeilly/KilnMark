@@ -53,11 +53,22 @@ public final class BundledDocs {
         return guides;
     }
 
-    /** Every section of every bundled page. */
+    /**
+     * The sections the assistant answers from: every section of every bundled page, except the
+     * changelog's Unreleased part, which describes work not yet in a release (the viewer still
+     * shows it). A release renames it to its version, and it is answered from then on.
+     */
     public static List<DocSections.Section> sections() {
+        String unreleased = WHATS_NEW_TITLE + DocSections.PATH_SEPARATOR + "Unreleased";
         List<DocSections.Section> out = new ArrayList<>();
         for (DocSections.Page p : pages()) {
-            out.addAll(DocSections.split(p));
+            for (DocSections.Section s : DocSections.split(p)) {
+                boolean draft = p.id().equals(WHATS_NEW) && (s.titlePath().equals(unreleased)
+                    || s.titlePath().startsWith(unreleased + DocSections.PATH_SEPARATOR));
+                if (!draft) {
+                    out.add(s);
+                }
+            }
         }
         return out;
     }
