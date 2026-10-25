@@ -33,17 +33,20 @@ import jakarta.mail.internet.MimeMultipart;
  * database and change at run time, which is why this is not the Quarkus mailer). Each email is
  * plain text and HTML ({@code multipart/alternative}), marked as sent automatically so that
  * out-of-office replies stay away. Failures come back in plain words, never with the password,
- * and say whether trying again could help. Protocol tracing ({@code mail.debug}) is always off: it
- * would write the sign-in to the log.
+ * and say whether trying again could help; any text from the server is scrubbed of the user name
+ * and password in every form it could echo ({@link MailPolicy#scrub}). Protocol tracing
+ * ({@code mail.debug}) is always off: it would write the sign-in to the log. Only the PLAIN and
+ * LOGIN mechanisms are offered (never NTLM or XOAUTH2), and a password never goes unencrypted
+ * unless {@code allowPlainAuth} says an admin allowed it for a password they entered.
  */
 public final class SmtpMailer {
 
     /**
      * Where and how to send. {@link #toString} leaves the password out, so a server never reaches a
-     * log with it.
+     * log with it. {@code allowPlainAuth}: an admin allowed this password to go without encryption.
      */
     public record Server(String host, int port, MailSecurity security, String username, String password,
-                         String fromAddress, String fromName, Duration timeout) {
+                         String fromAddress, String fromName, Duration timeout, boolean allowPlainAuth) {
         @Override
         public String toString() {
             return "Server[" + host + ":" + port + ", " + security.id() + (username == null ? "" : ", as " + username)
@@ -69,6 +72,11 @@ public final class SmtpMailer {
 
     /** Sends {@code mail} to {@code to}. */
     public void send(Server s, String to, MailMessages.Mail mail) throws Failure {
+        if (s.security() == MailSecurity.NONE && s.username() != null && !s.allowPlainAuth()) {
+            throw new Failure("Not sent: with security None the password would go unencrypted. Choose STARTTLS or TLS "
+                + "under Settings, Email, or allow sign-in without encryption there (only for a password entered "
+                + "there).", false, null);
+        }
         Session session = Session.getInstance(properties(s));
         try {
             MimeMessage m = new MimeMessage(session);
@@ -93,9 +101,10 @@ public final class SmtpMailer {
                 t.sendMessage(m, m.getAllRecipients());
             }
         } catch (AddressException e) {
-            throw new Failure("The address '" + clean(e.getRef()) + "' is not one a mail server accepts.", true, null);
+            throw new Failure(MailPolicy.scrub("The address '" + clean(e.getRef()) + "' is not one a mail server "
+                + "accepts.", s.username(), s.password()), true, null);
         } catch (MessagingException | UnsupportedEncodingException e) {
-            throw new Failure(explain(e, s), permanent(e), null);
+            throw new Failure(MailPolicy.scrub(explain(e, s), s.username(), s.password()), permanent(e), null);
         }
     }
 
@@ -112,6 +121,9 @@ public final class SmtpMailer {
         props.put(p + ".host", s.host());
         props.put(p + ".port", Integer.toString(s.port()));
         props.put(p + ".auth", Boolean.toString(s.username() != null));
+        props.put(p + ".auth.mechanisms", "PLAIN LOGIN");
+        props.put(p + ".auth.ntlm.disable", "true");
+        props.put(p + ".auth.xoauth2.disable", "true");
         props.put(p + ".connectiontimeout", millis);
         props.put(p + ".timeout", millis);
         props.put(p + ".writetimeout", millis);

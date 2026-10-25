@@ -59,6 +59,15 @@ public class NotificationPublisher {
     /** After a rule ran: tells of a rule that warns, fails or cannot run, and of one that recovers. */
     public void ruleEvaluated(Rule rule, Rule.Status status, Rule.Status previous, long failing, long total,
                               String error) {
+        try {
+            ruleEvaluatedNow(rule, status, previous, failing, total, error);
+        } catch (RuntimeException ex) {
+            LOG.warnf(ex, "Could not tell of an event (%s)", "ruleEvaluated");
+        }
+    }
+
+    private void ruleEvaluatedNow(Rule rule, Rule.Status status, Rule.Status previous, long failing, long total,
+                              String error) {
         String key = "rule:" + rule.id();
         String where = path(rule.assetUrn());
         String source = source(rule.assetUrn());
@@ -99,6 +108,14 @@ public class NotificationPublisher {
 
     /** A new issue in the issue list. {@code severity} is the issue's: low, medium or high. */
     public void issueOpened(long issueId, String urn, String title, String severity) {
+        try {
+            issueOpenedNow(issueId, urn, title, severity);
+        } catch (RuntimeException ex) {
+            LOG.warnf(ex, "Could not tell of an event (%s)", "issueOpened");
+        }
+    }
+
+    private void issueOpenedNow(long issueId, String urn, String title, String severity) {
         publish(new NotificationEvent(NotificationKind.ISSUE_OPENED, Severity.parse(severity), urn,
             title + " (" + path(urn) + ")", "A new issue is open in the issue list for " + path(urn) + ".",
             NotificationEvent.issuesLink(), source(urn), null, null, "issue:" + issueId, null));
@@ -109,6 +126,14 @@ public class NotificationPublisher {
      * highest severity found. Drift messages hold words, counts and shares only.
      */
     public void driftFound(String urn, long versionId, List<Drift.Event> found) {
+        try {
+            driftFoundNow(urn, versionId, found);
+        } catch (RuntimeException ex) {
+            LOG.warnf(ex, "Could not tell of an event (%s)", "driftFound");
+        }
+    }
+
+    private void driftFoundNow(String urn, long versionId, List<Drift.Event> found) {
         if (found.isEmpty()) {
             return;
         }
@@ -133,16 +158,23 @@ public class NotificationPublisher {
 
     // ---- scans and sources ----
 
-    /**
-     * After a scan: a failed scan is told once until a scan of the source succeeds again. The run's
-     * detail is shown to every role in the UI, so it is the detail here.
-     */
+    /** After a scan: a failed scan is told once until a scan of the source succeeds again. */
     public void scanFinished(String source, long runId, String status, String runDetail) {
+        try {
+            scanFinishedNow(source, runId, status, runDetail);
+        } catch (RuntimeException ex) {
+            LOG.warnf(ex, "Could not tell of an event (%s)", "scanFinished");
+        }
+    }
+
+    private void scanFinishedNow(String source, long runId, String status, String runDetail) {
         String key = "scan:" + source;
         if ("failed".equals(status)) {
+            // The run's own words can name hosts and users and quote the data: for stewards and admins
+            // only, and for admins alone when the source has columns marked sensitive (Exposure).
             publish(new NotificationEvent(NotificationKind.SCAN_FAILED, Severity.HIGH, null, "Scan of " + source
-                + " failed", runDetail == null ? "The scan failed." : runDetail, NotificationEvent.sourceLink(source),
-                source, null, null, key, null));
+                + " failed", "The scan failed. Open the source to see why.", NotificationEvent.sourceLink(source),
+                source, null, runDetail == null || runDetail.isBlank() ? null : "It said: " + runDetail, key, null));
         } else {
             clear(key);
             clear("connection:" + source); // the scan connected, so the connection works
@@ -154,6 +186,14 @@ public class NotificationPublisher {
      * succeeds. The reason is for roles that may test sources (it can name hosts and users).
      */
     public void connectionTested(String source, boolean ok, String problem) {
+        try {
+            connectionTestedNow(source, ok, problem);
+        } catch (RuntimeException ex) {
+            LOG.warnf(ex, "Could not tell of an event (%s)", "connectionTested");
+        }
+    }
+
+    private void connectionTestedNow(String source, boolean ok, String problem) {
         String key = "connection:" + source;
         if (ok) {
             clear(key);
@@ -185,6 +225,15 @@ public class NotificationPublisher {
      * @param link      the run's in-app address ({@code #/...}), or null
      */
     public void pipelineRunFinished(String pipeline, long runId, String status, Double score, Double threshold,
+                                    String link) {
+        try {
+            pipelineRunFinishedNow(pipeline, runId, status, score, threshold, link);
+        } catch (RuntimeException ex) {
+            LOG.warnf(ex, "Could not tell of an event (%s)", "pipelineRunFinished");
+        }
+    }
+
+    private void pipelineRunFinishedNow(String pipeline, long runId, String status, Double score, Double threshold,
                                     String link) {
         String key = "pipeline:" + pipeline;
         if ("failed".equals(status)) {

@@ -5,19 +5,17 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import java.util.function.Function;
 
 import io.kilnmark.server.auth.AccessRole;
-import io.kilnmark.server.quality.Masking;
 import io.kilnmark.server.quality.Sights;
 
 /**
  * Writes the emails: one event on its own, or a day's events as a digest, each as plain text and as
  * simple HTML (no images, no tracking, no styles beyond a readable font and width).
  *
- * <p>Masking: each recipient's email is written for their role, through {@link Sights#recipient},
- * the same rule the UI applies. Events carry no values from the data in their title or detail;
+ * <p>Masking: each recipient's email is written for their role, through {@link Exposure#restricted}
+ * and {@link Sights#recipient}, the same rule the UI applies. Events carry no values from the data in their title or detail;
  * their restricted detail (a database's error text, say) is shown only where the recipient's role
  * may see values of that column of that asset, and never unmasked, whoever the recipient is. A
  * team address gets what a viewer gets.
@@ -45,13 +43,13 @@ public final class MailMessages {
 
     private final MailSettings settings;
     private final ZoneId zone;
-    /** An asset's columns marked sensitive, by URN. */
-    private final Function<String, Set<String>> marks;
+    /** What each event touches that is marked sensitive. */
+    private final Function<NotificationEvent, Exposure> exposure;
 
-    public MailMessages(MailSettings settings, ZoneId zone, Function<String, Set<String>> marks) {
+    public MailMessages(MailSettings settings, ZoneId zone, Function<NotificationEvent, Exposure> exposure) {
         this.settings = settings;
         this.zone = zone;
-        this.marks = marks;
+        this.exposure = exposure;
     }
 
     /** An event as this recipient may see it: its restricted detail only where their role may see it. */
@@ -62,9 +60,7 @@ public final class MailMessages {
         if (e.restrictedDetail() == null) {
             return new Shown(e, null);
         }
-        Set<String> sensitive = e.subjectUrn() == null ? Set.of() : marks.apply(e.subjectUrn());
-        Masking.Sight sight = Sights.recipient(to.sightRole(), sensitive);
-        return new Shown(e, sight.values(e.field()) ? e.restrictedDetail() : null);
+        return new Shown(e, exposure.apply(e).restricted(e, to.sightRole()) ? e.restrictedDetail() : null);
     }
 
     /** The email for one event. */
@@ -185,6 +181,35 @@ public final class MailMessages {
         h.append("<h1 style=\"font-size: 1.25em;\">").append(heading).append("</h1>\n");
         paragraph(h, "This is a test from " + PRODUCT + ", sent by " + by + ". If you can read it, " + PRODUCT
             + " can send email through this mail server.");
+        h.append("</body>\n</html>\n");
+        return new Mail(subject, text, h.toString());
+    }
+
+    /**
+     * Asks a person to confirm their address: a link to their settings carrying the code, and the code
+     * itself to type there when there is no link (no base URL) or the link does not open.
+     */
+    public Mail confirmation(String code) {
+        String heading = "Confirm your email address";
+        String subject = subject(heading);
+        String link = settings.absolute(NotificationEvent.SETTINGS_LINK + "?confirm=" + code);
+        String why = "Someone signed in to " + PRODUCT + " asked for notifications to be sent to this address. "
+            + "Nothing is sent to it until it is confirmed. If it was not you, ignore this email.";
+        String how = link == null
+            ? "To confirm, open " + PRODUCT + ", go to Settings, Notifications, and enter this code: " + code
+            : "To confirm, open this link while signed in to " + PRODUCT + ": " + link
+                + "\n\nOr go to Settings, Notifications, and enter this code: " + code;
+        String text = PRODUCT + "\n\n" + heading + "\n\n" + why + "\n\n" + how + "\n\nThe code works for 7 days.\n";
+        StringBuilder h = new StringBuilder();
+        open(h, subject);
+        h.append("<h1 style=\"font-size: 1.25em;\">").append(heading).append("</h1>\n");
+        paragraph(h, why);
+        if (link != null) {
+            h.append("<p><a href=\"").append(esc(link)).append("\">Confirm this address in ").append(PRODUCT)
+                .append("</a> (sign in first if asked).</p>\n");
+        }
+        paragraph(h, "Or go to Settings, Notifications, and enter this code: " + code);
+        paragraph(h, "The code works for 7 days.");
         h.append("</body>\n</html>\n");
         return new Mail(subject, text, h.toString());
     }

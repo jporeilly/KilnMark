@@ -93,16 +93,19 @@ public record Subscription(String email, boolean enabled, Set<NotificationKind> 
         return sources == null || source == null || sources.contains(source);
     }
 
-    /** As people type it: subscriptions from the API, checked. */
+    /**
+     * As people send it: subscriptions from the API, checked. A field left out keeps its value; for
+     * every source send {@code allSources: true} (a list of sources limits to those).
+     */
     public record Input(String email, Boolean enabled, List<String> kinds, String minSeverity, String mode,
-                        Integer digestHour, List<String> sources, List<String> inAppKinds) {
+                        Integer digestHour, List<String> sources, List<String> inAppKinds, Boolean allSources) {
     }
 
     /** Checks an input, filling what it leaves out from {@code base}. */
     public static Subscription from(Input in, Subscription base) {
         if (in == null) {
             throw new IllegalArgumentException("Send the subscription as JSON: email, enabled, kinds, minSeverity, mode, "
-                + "digestHour, sources (null for every source) and inAppKinds");
+                + "digestHour, sources or allSources, and inAppKinds");
         }
         String email = in.email() == null ? base.email() : email(in.email());
         boolean enabled = in.enabled() == null ? base.enabled() : in.enabled();
@@ -111,7 +114,8 @@ public record Subscription(String email, boolean enabled, Set<NotificationKind> 
         Severity least = in.minSeverity() == null ? base.minSeverity() : Severity.parse(in.minSeverity());
         Mode mode = in.mode() == null ? base.mode() : Mode.parse(in.mode());
         int hour = in.digestHour() == null ? base.digestHour() : in.digestHour();
-        List<String> sources = in.sources() == null ? null : sources(in.sources());
+        List<String> sources = Boolean.TRUE.equals(in.allSources()) ? null
+            : in.sources() == null ? base.sources() : sources(in.sources());
         if (enabled && email == null) {
             throw new IllegalArgumentException("email: give the address to send to, or turn email off");
         }
@@ -150,19 +154,29 @@ public record Subscription(String email, boolean enabled, Set<NotificationKind> 
     }
 
     /**
-     * An email address checked for sending: one address, no display name, no line breaks (which
-     * could add headers), at most 254 characters.
+     * An email address checked for sending: exactly one address, no display name, no line breaks
+     * (which could add headers), at most 254 characters, read strictly as RFC 822 by Jakarta Mail,
+     * and lower-cased so the same address is always counted as one.
      */
     public static String email(String text) {
         String e = text == null ? "" : text.strip();
         if (e.isEmpty()) {
             return null;
         }
+        String problem = "email: '" + e.replaceAll("\\p{Cntrl}", "?") + "' is not one email address such as "
+            + "data-team@example.com";
         if (e.length() > 254 || e.chars().anyMatch(c -> Character.isISOControl(c)) || !EMAIL.matcher(e).matches()
             || e.contains("..") || !e.substring(e.indexOf('@') + 1).contains(".")) {
-            throw new IllegalArgumentException("email: '" + e.replaceAll("\\p{Cntrl}", "?")
-                + "' is not an email address such as data-team@example.com");
+            throw new IllegalArgumentException(problem);
         }
-        return e;
+        try {
+            jakarta.mail.internet.InternetAddress a = new jakarta.mail.internet.InternetAddress(e, true);
+            if (a.isGroup() || a.getPersonal() != null || !e.equals(a.getAddress())) {
+                throw new IllegalArgumentException(problem);
+            }
+        } catch (jakarta.mail.internet.AddressException x) {
+            throw new IllegalArgumentException(problem, x);
+        }
+        return e.toLowerCase(java.util.Locale.ROOT);
     }
 }

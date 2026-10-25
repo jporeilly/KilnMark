@@ -61,8 +61,9 @@ public interface KilnmarkConfig {
     Branding branding();
 
     /**
-     * The outgoing mail server, until an admin saves one under Settings › Email (which then wins,
-     * except that a password configured here is used while none is stored there).
+     * The outgoing mail server and the rules for email, until an admin saves them under Settings ›
+     * Email (which then win, except for settings listed in {@link Mail#locked()}). A password
+     * configured here is used only while the saved server and user name are the ones configured here.
      */
     Mail mail();
 
@@ -96,6 +97,28 @@ public interface KilnmarkConfig {
 
         /** How people reach Kilnmark, for links in emails, such as {@code https://kilnmark.example.com}. */
         Optional<String> baseUrl();
+
+        /**
+         * Whether a password entered under Settings › Email may be sent without encryption (security
+         * none). The configured password never is.
+         */
+        @WithDefault("false")
+        boolean allowPlainAuth();
+
+        /** The domains email may go to, such as {@code example.com} (subdomains included); unset for any. */
+        Optional<List<String>> allowedDomains();
+
+        /** Whether people must confirm their address (a link or code sent to it) before it gets email. */
+        @WithDefault("true")
+        boolean requireConfirmation();
+
+        /**
+         * Settings admins may not change under Settings › Email: they always come from here. Any of
+         * host, port, security, username, from, from-name, base-url, allow-plain-auth,
+         * allowed-domains, require-confirmation, max-attempts, rate-limit-per-hour,
+         * undelivered-after, undelivered-action. Another name stops the server.
+         */
+        Optional<List<String>> locked();
     }
 
     /** Email notifications. */
@@ -104,9 +127,17 @@ public interface KilnmarkConfig {
         @WithDefault("20")
         int rateLimitPerHour();
 
-        /** Tries before an email is given up (with back-off: 1, 3, 9, 27 minutes, then hourly). */
+        /** Tries before an email is given up (1 to 10; back-off: 1, 3, 9, 27 minutes, then hourly). */
         @WithDefault("5")
         int maxAttempts();
+
+        /** An email still not sent after this long (email paused, server down) goes to the digest or is dropped. */
+        @WithDefault("24h")
+        Duration undeliveredAfter();
+
+        /** {@code digest} (the default) or {@code drop}: what happens to an email after {@link #undeliveredAfter()}. */
+        @WithDefault("digest")
+        String undeliveredAction();
 
         /** How often workers look for emails to send. */
         @WithDefault("10s")

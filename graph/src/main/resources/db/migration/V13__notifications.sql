@@ -7,9 +7,14 @@
 
 SET search_path = kilnmark, public;
 
--- The outgoing mail server, one row, edited by admins under Settings › Email. Until it is saved the
--- server uses kilnmark.mail.* from its configuration. The password is sealed with the server's
--- secret key (SecretBox), like source passwords, and never leaves the server through the API.
+-- The outgoing mail server and the rules for email, one row, edited by admins under Settings › Email.
+-- Until it is saved the server uses kilnmark.mail.* from its configuration, and a setting listed in
+-- kilnmark.mail.locked always comes from there. The password is sealed with the server's secret key
+-- (SecretBox), like source passwords, never leaves the server through the API, and is cleared when
+-- the server, port, security or user name it was entered for changes. allow_plain_auth lets a
+-- password entered here go without encryption (security none). allowed_domains empty means any.
+-- undelivered_hours: an email still not sent after this long (email paused, or the server down)
+-- goes into the recipient's digest, or is dropped (undelivered_action).
 CREATE TABLE mail_settings (
     id            smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     enabled       boolean NOT NULL DEFAULT true,
@@ -21,6 +26,13 @@ CREATE TABLE mail_settings (
     from_address  text CHECK (from_address IS NULL OR length(from_address) BETWEEN 3 AND 254),
     from_name     text CHECK (from_name IS NULL OR length(from_name) BETWEEN 1 AND 100),
     base_url      text CHECK (base_url IS NULL OR length(base_url) BETWEEN 8 AND 500),
+    allow_plain_auth      boolean NOT NULL DEFAULT false,
+    allowed_domains       text[] NOT NULL DEFAULT '{}',
+    require_confirmation  boolean NOT NULL DEFAULT true,
+    max_attempts          integer NOT NULL DEFAULT 5 CHECK (max_attempts BETWEEN 1 AND 10),
+    rate_limit_per_hour   integer NOT NULL DEFAULT 20 CHECK (rate_limit_per_hour BETWEEN 1 AND 1000),
+    undelivered_hours     integer NOT NULL DEFAULT 24 CHECK (undelivered_hours BETWEEN 1 AND 168),
+    undelivered_action    text NOT NULL DEFAULT 'digest' CHECK (undelivered_action IN ('digest', 'drop')),
     updated_by    text NOT NULL,
     updated_at    timestamptz NOT NULL DEFAULT now()
 );
@@ -31,6 +43,9 @@ CREATE TABLE mail_settings (
 -- (NotificationKind ids), in_app_kinds those shown in the app; sources NULL means every source.
 -- min_severity applies to email only. digest_hour is in the server's time zone. A person with no
 -- row gets the defaults (Subscription.defaults): every kind in the app, and no email unless admin.
+-- A person's address gets nothing until they confirm it (a link or code sent to it), unless an admin
+-- turned confirmation off; confirm_hash is the SHA-256 of the code, valid 7 days. paused says why an
+-- address gets nothing for now ('domain': outside the allowed domains), without deleting it.
 CREATE TABLE notify_subscriber (
     id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     token_id      bigint UNIQUE REFERENCES api_token (id) ON DELETE CASCADE,
@@ -43,6 +58,10 @@ CREATE TABLE notify_subscriber (
     digest_hour   smallint NOT NULL DEFAULT 8 CHECK (digest_hour BETWEEN 0 AND 23),
     sources       text[],
     in_app_kinds  text[] NOT NULL DEFAULT '{}',
+    email_confirmed_at  timestamptz,
+    confirm_hash        bytea CHECK (confirm_hash IS NULL OR length(confirm_hash) = 32),
+    confirm_sent_at     timestamptz,
+    paused              text CHECK (paused IS NULL OR paused IN ('domain')),
     created_by    text NOT NULL,
     created_at    timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now(),
@@ -98,14 +117,25 @@ CREATE TABLE notify_inbox (
     read_at     timestamptz,
     UNIQUE (token_id, event_id)
 );
-CREATE INDEX notify_inbox_feed_idx ON notify_inbox (token_id, read, created_at DESC);
+CREATE INDEX notify_inbox_feed_idx ON notify_inbox (token_id, created_at DESC, id DESC);
+CREATE INDEX notify_inbox_unread_idx ON notify_inbox (token_id, created_at DESC, id DESC) WHERE NOT read;
 CREATE INDEX notify_inbox_at_idx ON notify_inbox (created_at);
 CREATE INDEX notify_inbox_event_idx ON notify_inbox (event_id);
 
+-- The people who use the app (tokens that have asked for their notifications, as the app does when
+-- it opens), so in-app notifications go to people, not to scripts or AI assistants. last_seen_at
+-- is refreshed at most hourly; someone unseen for the in-app retention period gets none.
+CREATE TABLE notify_person (
+    token_id       bigint PRIMARY KEY REFERENCES api_token (id) ON DELETE CASCADE,
+    first_seen_at  timestamptz NOT NULL DEFAULT now(),
+    last_seen_at   timestamptz NOT NULL DEFAULT now()
+);
+
 -- One event for one subscriber: sent on its own as soon as a worker gets to it, or with the others
 -- in that subscriber's daily digest (digest true, due at their digest hour). Workers claim rows with
--- SELECT ... FOR UPDATE SKIP LOCKED and send outside the transaction; a failed send is due again
--- after a back-off, and failed for good after kilnmark.notifications.max-attempts.
+-- SELECT ... FOR UPDATE SKIP LOCKED, one at a time, and send outside the transaction; a failed send
+-- is due again after a back-off, and failed for good after max_attempts. Delivery is at least once:
+-- a worker that stops after the server accepted an email, before marking it sent, sends it again.
 CREATE TABLE notify_delivery (
     id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     subscriber_id  bigint NOT NULL REFERENCES notify_subscriber (id) ON DELETE CASCADE,
@@ -124,6 +154,7 @@ CREATE TABLE notify_delivery (
 );
 CREATE INDEX notify_delivery_due_idx ON notify_delivery (due_at) WHERE status = 'queued';
 CREATE INDEX notify_delivery_event_idx ON notify_delivery (event_id);
+CREATE INDEX notify_delivery_sending_idx ON notify_delivery (locked_at) WHERE status = 'sending';
 
 -- Every attempt to send an email, for admins (Settings › Sent emails), deleted after
 -- kilnmark.notifications.log-retention (30 days). No foreign keys: the log outlives subscribers.
@@ -133,7 +164,7 @@ CREATE TABLE notify_log (
     at             timestamptz NOT NULL DEFAULT now(),
     recipient      text NOT NULL,
     subscriber_id  bigint,
-    kind           text NOT NULL,              -- an event kind, 'digest' or 'test'
+    kind           text NOT NULL,              -- an event kind, 'digest', 'test' or 'confirm'
     event_ids      bigint[] NOT NULL DEFAULT '{}',
     subject        text,
     status         text NOT NULL CHECK (status IN ('sent', 'retrying', 'failed', 'rate_limited')),
