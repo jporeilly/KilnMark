@@ -1,4 +1,5 @@
-# Builds Kilnmark on Windows and restarts it with Podman (or Docker).
+# Builds Kilnmark on Windows and restarts it with Podman (or Docker): the developer setup, with the
+# root compose.yaml. A release folder (dist/release) has its own compose.yaml for customers.
 #
 #   .\build.ps1            build the release, both images, then restart the stack
 #   .\build.ps1 -NoRestart build only
