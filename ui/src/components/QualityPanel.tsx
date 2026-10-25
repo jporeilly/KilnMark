@@ -184,7 +184,7 @@ export function QualityPanel({ asset }: { asset: Asset }) {
             <Rules rules={rules} urn={urn} steward={steward} onRun={runRules} round={round} />
             {steward && (
               <Recommendations
-                key={round}
+                round={round}
                 urn={urn}
                 unmask={unmask}
                 canUnmask={quality.canUnmask}
@@ -472,7 +472,10 @@ function Recommendations({
   unmask,
   canUnmask,
   onAdded,
+  round,
 }: {
+  /** Changes when the asset's rules were reloaded: the suggestions are fetched again, the message stays. */
+  round: number;
   urn: string;
   unmask: boolean;
   canUnmask: boolean;
@@ -494,7 +497,7 @@ function Recommendations({
         setPicked(new Set(l.filter((r) => !withheld(r) && fitOf(r) === 1).map(recKey)));
       })
       .catch(() => setList([]));
-  }, [urn, unmask]);
+  }, [urn, unmask, round]);
 
   useEffect(() => {
     if (summary) summaryRef.current?.focus();

@@ -4,7 +4,7 @@ import { useBranding, useConnectorInfo } from "../theme/looks";
 import { useAppearance } from "../theme/appearance";
 import { familyIcon, Icon } from "./icons";
 
-/** Tints in tokens.css (--km-tile-1 … --km-tile-8), each checked for contrast in every theme. */
+/** Tints in tokens.css (sky, green, orange, violet, pink, teal, amber, red), each checked for contrast in every theme. */
 const TINTS = 8;
 
 /** The same connector always gets the same tint: FNV-1a over its id. */

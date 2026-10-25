@@ -156,7 +156,8 @@ function Shell({ me }: { me: Me }) {
   }, [drawerMode]);
   useEffect(() => {
     if (!drawerOpen) return;
-    sidebar.current?.querySelector<HTMLElement>(".nav-item")?.focus();
+    // After the drawer becomes visible (it slides in), focus its first item.
+    const raf = window.requestAnimationFrame(() => sidebar.current?.querySelector<HTMLElement>(".nav-item")?.focus());
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -164,7 +165,10 @@ function Shell({ me }: { me: Me }) {
       }
     };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [drawerOpen]);
 
   useEffect(() => {
