@@ -494,8 +494,8 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
   YAML; an invalid pipeline can be saved as a draft but not run.
 - **Run** queues a job; a worker compiles the YAML of that exact version into a graph, resolves
   sources (credentials, allowed hosts, write permission) and runs it.
-- Each run records its pipeline version, status, timings, and per step: rows in and out per port,
-  peak memory, duration and the error if it failed. A run can be cancelled.
+- Each run records its pipeline version, status, timings, and per step: how it ended, rows in and
+  out per port, peak memory, duration and the error if it failed. A run can be cancelled.
 - **Quality on the way:** every `write` profiles what it writes in the same pass and registers or
   updates the target as an asset, with lineage from the assets that were read (OpenLineage
   events), so the next pipeline downstream starts from metadata. Rows per port show where rows
@@ -539,8 +539,8 @@ asset's previous profile.
 - **Storage (V12).** `pipeline` (fixed name, display name, description, latest version),
   `pipeline_version` (never changed once saved: YAML, message, author, whether it was valid and its
   problems), `pipeline_run` (one version, status `queued`, `running`, `succeeded`, `failed` or
-  `cancelled`, who asked and with which role, error, a JSON result), `pipeline_step_run` (rows in
-  and out, rows per port, peak memory, error) and `pipeline_lineage` (written asset from read
+  `cancelled`, who asked and with which role, error, a JSON result), `pipeline_step_run` (outcome,
+  rows in and out, rows per port, peak memory, error) and `pipeline_lineage` (written asset from read
   asset, kept when the pipeline is deleted). Deleting a pipeline deletes its versions and runs;
   refused while a run is queued or running.
 - **Saving.** Names are `[a-z][a-z0-9-]{0,62}` and never change; the YAML's `name` must match.
@@ -569,15 +569,17 @@ asset's previous profile.
   a run records has the secrets it resolved blanked out.
 - **Writers own profiling.** A write profiles what it writes in the same pass and reports it as
   "What a write reports" (above) says; the server passes the source's own profiling settings
-  (whether values are kept, sampling) to the writer in `WriteOptions.options` and never profiles a
-  write itself. After a successful run each write's target is registered from the writer's events,
+  (whether values are kept, sampling: `QualityService.profileSettings`, as for a scan of the written
+  asset) to the writer in `WriteOptions.profiling` and never profiles a write itself. After a successful run each write's target is registered from the writer's events,
   as the scan registers what it finds (asset, fields from `SCHEMA`, row count, profiles, quality
   profile version and evaluation), under a finished run of kind `pipeline` on the written source;
   source run lists show scans only. For `append` and `upsert` the server records the run's row count
   and lineage, and keeps the table's fields, row count and profile from its last scan (a table the
   catalogue does not know yet is registered with its columns, and the run notes to scan it). A
-  writer that could not profile says so in an event, never by failing: the write counts, and the run
-  gets a note whose detail is held back as other engine messages are. The written asset's URN comes
+  writer that could not profile says so on its `ROW_COUNT` (`profiled=false`, `profile_error`), never
+  by failing: the write counts, the asset keeps its previous profile, and the run gets a note whose
+  detail (the reason) is held back as other engine messages are; the stored row count keeps no
+  reason. The written asset's URN comes
   from the connector (`writtenAssetPath`: for a prefixed S3 source, prefix + path), so it is what a
   scan records. Cataloguing takes the written source's scan lock (waiting as above); if a scan
   holds it, the run notes that the source should be scanned. A scan does not mark removed an asset
@@ -588,11 +590,11 @@ asset's previous profile.
 - **Write permission stays with admins.** Only admins change `allow_writing`, and while it is on
   only admins change where the source points (any setting but its description, display name,
   sampling, AI rule and include and exclude patterns). A write step takes its own settings (where
-  and how) and the writer settings its connector's writer declares (`Connector.writeOptions()`;
-  the writers' settings of docs/guide/writing-data.md for a writer that declares none), passed to
-  the writer in `WriteOptions.options`. Nothing else is accepted, and never a name that says where
-  or as whom to connect (url, host, bucket, credentials, `profile` and the like), even when a writer
-  declares one.
+  and how) and exactly the writer settings its connector's writer declares
+  (`Connector.writeOptions()`; a connector that declares none takes none), written beside them in
+  the YAML and passed to the writer in `WriteOptions.options`. Nothing else is accepted, and never a
+  name that says where or as whom to connect (url, host, bucket, credentials, `profile` and the
+  like), even when a writer declares one.
 - **Messages from the data.** A failed run's error, its steps' errors and the details of its notes
   (whatever the run's status) may quote values from the rows. Viewers see that a step failed, or a
   note's own words, not the detail; when the run read or wrote an asset with columns marked
@@ -605,7 +607,6 @@ asset's previous profile.
   run left running by a worker that stopped is finished by a cancel, and by workers' recovery once
   its job is done or failed, so it never blocks its pipeline. A worker shutting down marks its runs failed rather
   than queueing them again.
-
 
 ## 6. API and UI in step 1
 
@@ -625,10 +626,10 @@ asset's previous profile.
 - `GET /api/v1/steps` lists every `StepFactory`: those on the class path (`ServiceLoader`:
   kiln-steps' transforms) and the server's `read` and `write`. `write` takes `target`, or `table` and
   `path` as other names for it, and `mode` defaults to `create`, which never overwrites.
-- The writers' contract parts kiln-core does not have yet (`Connector.writeOptions()`,
-  `Connector.writtenAssetPath(...)`, the profile settings and profile-failure attribute names) are
-  reached through one adapter, `WriterContract`, found by name until the connector writers are
-  merged.
+- The write step calls the writers' contract directly: `Connector.writeOptions()` for its
+  allow-list, `Connector.writtenAssetPath(...)` for the written asset's URN, `WriteOptions.profiling`
+  for the source's profiling settings, and `WriteReport.PROFILED` and `PROFILE_ERROR` for a profile
+  failure.
 - The server reaches the compiler through `PipelineCompilerPort` (adapter `KilnPipelineCompiler`)
   and the runner as a `GraphRunner` bean, both produced in `PipelineCompilers`; tests replace
   the runner with an alternative bean.

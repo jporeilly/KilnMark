@@ -110,13 +110,17 @@ details.
   file; the `write` step writes to a source only when an admin has set its new **Allow writing**
   setting (`allow_writing`, off by default; stewards cannot change it). Allowed hosts and the
   role of whoever asked are checked again when a run starts, and no message carries a source's
-  secret. A write step takes the writer settings its source's writer declares, and nothing that says
-  where or as whom to connect. What a write wrote is registered in the catalogue from what the
-  writer reports (its columns, row count and profile, measured as it wrote; for append and upsert
-  only the rows written) with its lineage from the assets read, under a run of kind `pipeline` that source run lists do not show (migration
-  V12; `kilnmark.pipelines.max-yaml-kb`, `memory-limit-mb`, `row-set-capacity` and
+  secret. A write step takes exactly the settings its source's writer declares
+  (`Connector.writeOptions()`), written beside its other settings, and nothing that says where or
+  as whom to connect. The source's profiling settings reach the writer in `WriteOptions.profiling`,
+  so what is written is sampled as a scan would sample it, and a writer that could not profile
+  leaves a note on the run. What a write wrote is registered in the catalogue from what the writer
+  reports (its columns, row count and profile, measured as it wrote; for append and upsert only the
+  rows written), under the URN a scan would give it (`Connector.writtenAssetPath`), with its
+  lineage from the assets read, under a run of kind `pipeline` that source run lists do not show
+  (migration V12; `kilnmark.pipelines.max-yaml-kb`, `memory-limit-mb`, `row-set-capacity` and
   `wait-for-target`). While a source allows writing, only admins change where it points, and a
-  write's options cannot redirect it. A pipeline runs once at a time, and one run at a time writes
+  write's settings cannot redirect it. A pipeline runs once at a time, and one run at a time writes
   each table or file. Viewers see that a step failed but not its message, which may quote the data;
   for runs touching columns marked sensitive, only admins see it.
 - **Pipelines page:** a list with Run now, and for each pipeline a YAML editor that checks as you

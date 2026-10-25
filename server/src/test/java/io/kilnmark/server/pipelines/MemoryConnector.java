@@ -24,6 +24,7 @@ import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.SourceConfig;
+import io.kilnmark.kiln.plugins.write.WriteReport;
 
 /**
  * A test connector that reads synthetic people (id, name) and writes by counting rows, so the
@@ -107,10 +108,11 @@ public final class MemoryConnector implements Connector {
     }
 
     /**
-     * The write options this writer takes (the writers' contract, found by name until it is in
-     * kiln-core): {@code fail} fails the write at the end, {@code break_profile} reports that the
-     * profile could not be made.
+     * The write options this writer takes ({@link Connector#writeOptions()}): {@code fail} fails the
+     * write at the end, {@code break_profile} reports that the profile could not be made, as a writer
+     * does ({@code ROW_COUNT} with {@code profiled=false} and {@code profile_error}).
      */
+    @Override
     public List<io.kilnmark.kiln.SettingSpec> writeOptions() {
         return List.of(
             io.kilnmark.kiln.SettingSpec.optional("fail", "Fail", io.kilnmark.kiln.SettingSpec.Kind.BOOLEAN, false,
@@ -123,8 +125,11 @@ public final class MemoryConnector implements Connector {
                 "An address name: never offered to pipelines"));
     }
 
-    /** The options last given to a writer (tests read the profile settings the server passed). */
+    /** The options last given to a writer. */
     static volatile Map<String, Object> lastOptions = Map.of();
+
+    /** The profiling settings last given to a writer ({@code WriteOptions.profiling}). */
+    static volatile Map<String, String> lastProfiling = Map.of();
 
     @Override
     public Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
@@ -132,6 +137,7 @@ public final class MemoryConnector implements Connector {
             throw new ConnectorException("Cannot write there with password " + source.secret());
         }
         lastOptions = write.options();
+        lastProfiling = write.profiling();
         return new Counter(write.assetUrn(), Boolean.TRUE.equals(write.options().get("fail")), source.secret(),
             write.mode(), Boolean.TRUE.equals(write.options().get("break_profile")));
     }
@@ -254,13 +260,14 @@ public final class MemoryConnector implements Connector {
             context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.SCHEMA, Map.of("columns",
                 "[{\"name\":\"id\",\"kind\":\"int64\",\"type\":\"bigint\"},"
                     + "{\"name\":\"name\",\"kind\":\"text\",\"type\":\"text\"}]", "mode", mode), now));
-            context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.ROW_COUNT, Map.of("rows",
-                Long.toString(rows), "complete", "true", "written", "true"), now));
             if (breakProfile) {
-                context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.PROFILE, Map.of(
-                    WriterContract.PROFILE_ERROR, "cannot profile a column of maps (test)"), now));
+                context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.ROW_COUNT, Map.of("rows",
+                    Long.toString(rows), "complete", "true", "written", "true", WriteReport.PROFILED, "false",
+                    WriteReport.PROFILE_ERROR, "cannot profile a column of maps (test)"), now));
                 return;
             }
+            context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.ROW_COUNT, Map.of("rows",
+                Long.toString(rows), "complete", "true", "written", "true"), now));
             for (String field : List.of("id", "name")) {
                 context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.PROFILE, Map.of("field", field,
                     "shape", field.equals("id") ? "integer" : "text", "rows", Long.toString(rows), "nulls", "0",

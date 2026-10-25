@@ -90,8 +90,9 @@ The `write` step takes `source` and where to write: `table` for a database, `pat
 
 A write step also takes the settings of the source's writer, such as `commit_every` for large
 table writes, `overwrite` and `delimiter` for files, `compression` for Parquet, and
-`profile_output: false` to skip profiling what is written. The guide "Writing data from a
-pipeline" describes them; a setting the source's writer does not take is a problem, with its line.
+`profile_output: false` to skip profiling what is written. They are written beside the step's other
+settings, as in [Writing data from a pipeline](writing-data.md), which describes them; a setting the
+source's writer does not take is a problem, with its line.
 
 The steps between reading and writing (filter, compute, select, lookup, aggregate, union, dedupe,
 route and limit) are described in [Pipeline steps and expressions](pipeline-steps.md). The step

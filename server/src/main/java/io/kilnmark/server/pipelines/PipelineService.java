@@ -32,6 +32,7 @@ import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.graph.GraphRunner;
 import io.kilnmark.kiln.graph.PipelineGraph;
+import io.kilnmark.kiln.plugins.write.WriteReport;
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.api.ApiError;
 import io.kilnmark.server.auth.AccessRole;
@@ -387,9 +388,7 @@ public class PipelineService {
             for (JsonNode n : result.path("notes")) {
                 // A note's text is the server's own; its detail may quote the engine, so it is held back as
                 // the run's other messages are.
-                String text = n.isTextual() ? n.asText() : n.path("text").asText();
-                String detail = n.hasNonNull("detail") ? n.get("detail").asText() : null;
-                notes.add(detail == null ? text : withheld == null ? text + " (" + detail + ")" : text + ". " + withheld);
+                notes.add(noteText(n, withheld));
             }
         }
         List<PipelineViews.LineageLink> lineage = store.lineageOfRun(id).stream()
@@ -628,13 +627,11 @@ public class PipelineService {
                 total += rows == null ? 0 : rows;
                 boolean registered = false;
                 if (o.status().equals("succeeded")) {
-                    // Writers profile what they write; one that could not says so in an event, never by failing.
-                    String profileFailure = o.events().stream().filter(e -> e.assetUrn().equals(w.urn()))
-                        .map(e -> e.attributes().get(WriterContract.PROFILE_ERROR)).filter(java.util.Objects::nonNull)
-                        .findFirst().orElse(null);
+                    // Writers profile what they write; one that could not says so on its ROW_COUNT, never by
+                    // failing. The reason may quote the data, so it is the note's detail, held back via Sights.
+                    String profileFailure = profileFailure(o.events(), w.urn());
                     if (profileFailure != null) {
-                        note(notes, w.step() + ": what it wrote could not be profiled; scan " + w.source() + " to profile "
-                            + w.target(), context.scrub(profileFailure));
+                        profileFailureNote(notes, w, context.scrub(profileFailure));
                     }
                     registered = register(w, rows, o.events(), profileFailure == null, c, context, notes, lease,
                         shutdown);
@@ -754,6 +751,61 @@ public class PipelineService {
     }
 
     /**
+     * Why a writer could not profile what it wrote to {@code urn}, from its {@code ROW_COUNT} event
+     * ({@code profiled=false} with {@code profile_error}, docs/design/pipelines.md, "What a write
+     * reports"); null when it profiled it, or reported no row count.
+     */
+    static String profileFailure(List<MetadataEvent> events, String urn) {
+        for (MetadataEvent e : events) {
+            if (e.kind() == MetadataEvent.Kind.ROW_COUNT && e.assetUrn().equals(urn)
+                && "false".equals(e.attributes().get(WriteReport.PROFILED))) {
+                String why = e.attributes().get(WriteReport.PROFILE_ERROR);
+                return why == null || why.isBlank() ? "the writer did not say why" : why;
+            }
+        }
+        return null;
+    }
+
+    /** The run's note for a write whose profile failed: the server's words, the writer's reason as its detail. */
+    static void profileFailureNote(ArrayNode notes, PipelineExecution.WriteTarget w, String reason) {
+        note(notes, w.step() + ": what it wrote could not be profiled; scan " + w.source() + " to profile "
+            + w.target(), reason);
+    }
+
+    /**
+     * A note as a caller sees it: its text, and its detail only when nothing is {@code withheld}
+     * (otherwise why it is held back, {@link #withheld}).
+     */
+    static String noteText(JsonNode n, String withheld) {
+        String text = n.isTextual() ? n.asText() : n.path("text").asText();
+        String detail = n.hasNonNull("detail") ? n.get("detail").asText() : null;
+        return detail == null ? text : withheld == null ? text + " (" + detail + ")" : text + ". " + withheld;
+    }
+
+    /**
+     * The events a writer reported for {@code urn}, as the catalogue stores them: a {@code ROW_COUNT}
+     * loses the profile failure's attributes, whose reason may quote the data and is kept only in the
+     * run's note.
+     */
+    static List<MetadataEvent> reported(List<MetadataEvent> events, String urn) {
+        List<MetadataEvent> out = new ArrayList<>();
+        for (MetadataEvent e : events) {
+            if (!e.assetUrn().equals(urn)) {
+                continue;
+            }
+            if (e.kind() == MetadataEvent.Kind.ROW_COUNT && (e.attributes().containsKey(WriteReport.PROFILED)
+                || e.attributes().containsKey(WriteReport.PROFILE_ERROR))) {
+                Map<String, String> a = new LinkedHashMap<>(e.attributes());
+                a.remove(WriteReport.PROFILED);
+                a.remove(WriteReport.PROFILE_ERROR);
+                e = new MetadataEvent(e.assetUrn(), e.kind(), a, e.observedAt());
+            }
+            out.add(e);
+        }
+        return out;
+    }
+
+    /**
      * A note on the run: {@code text} is the server's own words, shown to everyone; {@code detail},
      * an engine's or database's message, is shown only to those who may read the run's messages.
      */
@@ -778,8 +830,7 @@ public class PipelineService {
         long recordRun = store.recordWrite(s.id(), rows == null ? 0 : rows, "Written by pipeline "
             + context.pipeline() + " (run " + context.runId() + ", step " + w.step() + ")");
         Records.AssetDetail known = graph.asset(w.urn()).orElse(null);
-        List<MetadataEvent> mine = events.stream().filter(e -> e.assetUrn().equals(w.urn()))
-            .filter(e -> !e.attributes().containsKey(WriterContract.PROFILE_ERROR)).toList();
+        List<MetadataEvent> mine = reported(events, w.urn());
         MetadataEvent schema = mine.stream().filter(e -> e.kind() == MetadataEvent.Kind.SCHEMA).findFirst().orElse(null);
         boolean appended = mine.stream().anyMatch(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT
             && "true".equals(e.attributes().get("appended"))) || schema == null && !w.wholeTarget();

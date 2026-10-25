@@ -18,13 +18,19 @@ final class FakeSources implements PipelineSources {
     final Map<String, Records.AssetDetail> assets = new HashMap<>();
     final Map<String, Connector> connectors = new HashMap<>();
     HostPolicy hosts = new HostPolicy(List.of());
+    /** The profiling settings every source gives its writes; null: keep-values from keep_samples, sample-size 10. */
+    Map<String, String> profiling;
 
     FakeSources() {
         connectors.put(MemoryConnector.KIND, new MemoryConnector());
     }
 
     FakeSources add(String name, Map<String, String> settings, String secret) {
-        sources.put(name, new Records.Source(sources.size() + 1L, name, MemoryConnector.KIND, settings, secret != null,
+        return add(name, MemoryConnector.KIND, settings, secret);
+    }
+
+    FakeSources add(String name, String kind, Map<String, String> settings, String secret) {
+        sources.put(name, new Records.Source(sources.size() + 1L, name, kind, settings, secret != null,
             Instant.now(), name));
         if (secret != null) {
             secrets.put(name, secret);
@@ -76,6 +82,9 @@ final class FakeSources implements PipelineSources {
     @Override
     public Map<String, String> profileSettings(Records.Source source, Connector connector, String target,
                                                List<String> key, String urn) {
+        if (profiling != null) {
+            return profiling;
+        }
         return Map.of("keep-values", Boolean.toString(!"false".equals(source.settings().get("keep_samples"))),
             "sample-size", "10");
     }

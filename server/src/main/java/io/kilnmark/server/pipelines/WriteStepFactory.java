@@ -95,66 +95,40 @@ public final class WriteStepFactory implements StepFactory {
         SettingSpec.choice("format", "File format", false, null,
             "For files: csv or parquet. Taken from the path's extension when left out", FORMATS));
 
-    /**
-     * The writers' settings (docs/guide/writing-data.md), passed to the connector's writer in
-     * {@code WriteOptions.options} as written. Used as the allow-list for a connector that does not
-     * declare its own ({@link WriterContract#writeOptions}); one that does is allowed exactly what it
-     * declares.
-     */
-    static final List<SettingSpec> WRITER_SETTINGS = List.of(
-        SettingSpec.optional("commit_every", "Commit every", SettingSpec.Kind.NUMBER, null,
-            "Tables: commit after this many rows; rows already committed stay if the run fails later"),
-        SettingSpec.optional("batch_size", "Batch size", SettingSpec.Kind.NUMBER, null,
-            "Tables: rows sent to the database at a time (1,000, or 5,000 for SQL Server inserts)"),
-        SettingSpec.optional("bulk_copy", "Bulk copy", SettingSpec.Kind.BOOLEAN, true,
-            "SQL Server: load tables the step creates with the driver's bulk copy"),
-        SettingSpec.optional("text_length", "Text length", SettingSpec.Kind.NUMBER, null,
-            "Tables the step creates: the length of text columns (at most 4000 on SQL Server); unlimited when left out"),
-        SettingSpec.optional("keep_grants", "Keep grants", SettingSpec.Kind.BOOLEAN, true,
-            "replace: give the new table the old table's grants"),
-        SettingSpec.optional("lock_timeout", "Lock timeout", SettingSpec.Kind.NUMBER, 30,
-            "replace: seconds to wait for people using the old table before the swap"),
-        SettingSpec.optional("allow_dropping_row_security", "Allow dropping row security", SettingSpec.Kind.BOOLEAN,
-            false, "replace: let the new table go without the old table's row-level security policies"),
-        SettingSpec.optional("overwrite", "Overwrite", SettingSpec.Kind.BOOLEAN, false,
-            "Files: replace a file that exists (mode replace does too)"),
-        SettingSpec.optional("allow_unscanned", "Allow unscanned", SettingSpec.Kind.BOOLEAN, false,
-            "Files: write where scans of the source would not look"),
-        SettingSpec.optional("delimiter", "Delimiter", SettingSpec.Kind.TEXT, ",", "CSV files: the delimiter"),
-        SettingSpec.choice("compression", "Compression", false, "snappy", "Parquet files: how pages are compressed",
-            List.of("snappy", "zstd", "gzip", "none")),
-        SettingSpec.optional("profile_output", "Profile what is written", SettingSpec.Kind.BOOLEAN, true,
-            "Profile the rows as they are written, so the catalogue has the written asset's profile"),
-        SettingSpec.optional("keep_values", "Keep example values", SettingSpec.Kind.BOOLEAN, true,
-            "Let the profile keep example values and sample rows (the source's own rules still apply)"));
-
     private static final java.util.Set<String> BASE_KEYS = java.util.Set.of("source", "target", "table", "path",
         "mode", "key", "format");
 
     @Override
     public List<SettingSpec> settings() {
-        // The step's own settings, the writers' settings, and any further option a connector's writer
-        // declares (never an address or credential name).
+        // The step's own settings, then every setting a connector's writer declares
+        // (Connector.writeOptions()), never an address or credential name. Which of them a step may use
+        // depends on its source's writer: see writerKeys.
         Map<String, SettingSpec> out = new LinkedHashMap<>();
         BASE.forEach(spec -> out.put(spec.key(), spec));
-        WRITER_SETTINGS.forEach(spec -> out.putIfAbsent(spec.key(), spec));
         for (Connector c : sources.connectors()) {
-            for (SettingSpec spec : WriterContract.writeOptions(c)) {
-                if (!LOCATION_KEYS.contains(spec.key()) && !c.addressKeys().contains(spec.key())) {
-                    out.putIfAbsent(spec.key(), spec);
-                }
+            for (String key : writerKeys(c)) {
+                c.writeOptions().stream().filter(spec -> spec.key().equals(key)).findFirst()
+                    .ifPresent(spec -> out.putIfAbsent(key, spec));
             }
         }
         return List.copyOf(out.values());
     }
 
-    /** The writer settings a connector's writer takes: those it declares, else {@link #WRITER_SETTINGS}. */
+    /**
+     * The writer settings a step writing to a source of this kind may use: exactly those its writer
+     * declares in {@link Connector#writeOptions()}, less any name that says where or as whom to connect.
+     * None for a connector that declares none.
+     */
     static java.util.Set<String> writerKeys(Connector c) {
-        List<SettingSpec> declared = c == null ? List.of() : WriterContract.writeOptions(c);
         java.util.Set<String> keys = new java.util.LinkedHashSet<>();
-        (declared.isEmpty() ? WRITER_SETTINGS : declared).forEach(spec -> keys.add(spec.key()));
-        if (c != null && !declared.isEmpty()) {
-            keys.removeIf(k -> LOCATION_KEYS.contains(k) || c.addressKeys().contains(k));
+        if (c == null) {
+            return keys;
+        }
+        for (SettingSpec spec : c.writeOptions()) {
+            if (!LOCATION_KEYS.contains(spec.key()) && !c.addressKeys().contains(spec.key())
+                && !BASE_KEYS.contains(spec.key())) {
+                keys.add(spec.key());
+            }
         }
         return keys;
     }
@@ -324,27 +298,29 @@ public final class WriteStepFactory implements StepFactory {
         }
         Object f = config.get("format");
         String format = f instanceof String s ? s.strip().toLowerCase(Locale.ROOT) : null;
-        // The writer's settings as written (the connector's options take no nulls), and the source's own
-        // profiling settings: writers profile what they write.
+        // The writer's settings as written (the connector's options take no nulls).
         Map<String, Object> options = new LinkedHashMap<>();
         config.forEach((k, v) -> {
             if (v != null && !BASE_KEYS.contains(k)) {
                 options.put(k, v);
             }
         });
-        Map<String, String> profile = sources.profileSettings(r.source(), r.connector(), target, key,
-            PipelineSources.urn(source, target));
-        if (!profile.isEmpty()) {
-            options.put(WriterContract.PROFILE_SETTINGS, Map.copyOf(profile));
-            if ("false".equals(profile.get("keep-values"))) {
-                options.put("keep_values", false); // the source keeps no values: the pipeline cannot ask for them
-            }
+        // The written asset's URN as a scan of the source records it (for a prefixed S3 source, prefix +
+        // path), then the source's own profiling settings for that asset: writers profile what they
+        // write, as a scan would (when the source keeps no values, keep-values is false).
+        String urn;
+        try {
+            urn = PipelineSources.urn(source, r.connector().writtenAssetPath(r.config(),
+                new Connector.WriteOptions(target, mode, key, format, options, PipelineSources.urn(source, target))));
+        } catch (ConnectorException | RuntimeException e) {
+            throw new StepException("Cannot write " + target + " to " + source + ": " + run.scrub(String.valueOf(
+                e.getMessage())));
         }
-        Connector.WriteOptions draft = new Connector.WriteOptions(target, mode, key, format, options,
-            PipelineSources.urn(source, target));
-        String urn = PipelineSources.urn(source, WriterContract.writtenAssetPath(r.connector(), r.config(), draft));
-        Connector.WriteOptions write = new Connector.WriteOptions(target, mode, key, format, options,
-            urn == null ? draft.assetUrn() : urn);
+        if (urn == null) {
+            urn = PipelineSources.urn(source, target);
+        }
+        Map<String, String> profiling = sources.profileSettings(r.source(), r.connector(), target, key, urn);
+        Connector.WriteOptions write = new Connector.WriteOptions(target, mode, key, format, options, urn, profiling);
         run.wrote(source, target, write.assetUrn());
         try {
             return r.connector().writer(r.config(), write);

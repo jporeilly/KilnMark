@@ -28,6 +28,7 @@ class ServerStepFactoriesTest {
         .add("lab-db", Map.of(), SECRET)
         .add("warehouse", Map.of("allow_writing", "true"), SECRET)
         .add("far-away", Map.of("allow_writing", "true", "host", "db.elsewhere.example"), SECRET)
+        .add("private-warehouse", Map.of("allow_writing", "true", "keep_samples", "false"), SECRET)
         .asset("urn:kilnmark:lab-db:crm.customers", "customer_id:int64", "email:text", "joined:date");
     private final ReadStepFactory read = new ReadStepFactory(sources);
     private final WriteStepFactory write = new WriteStepFactory(sources);
@@ -210,10 +211,10 @@ class ServerStepFactoriesTest {
 
     @Test
     void writerSettingsAreThoseTheWriterTakes() {
+        // Only the writers the server has declare step settings: here the test writer alone.
         List<String> keys = write.settings().stream().map(io.kilnmark.kiln.SettingSpec::key).toList();
-        assertTrue(keys.containsAll(List.of("commit_every", "overwrite", "allow_unscanned", "delimiter", "compression",
-            "lock_timeout", "keep_values", "profile_output", "allow_dropping_row_security", "fail", "break_profile")),
-            keys.toString());
+        assertTrue(keys.containsAll(List.of("fail", "break_profile", "delimiter")), keys.toString());
+        assertFalse(keys.contains("commit_every"), "no fallback list: no writer here declares commit_every");
         assertFalse(keys.contains("host"), "an address a writer declares is never a step setting");
         assertFalse(keys.contains("profile"), "profile is an AWS credentials profile; profiling is profile_output");
         assertEquals(List.of(), write.check(Map.of("source", "warehouse", "path", "out/x.csv", "delimiter", ";")),
@@ -222,8 +223,10 @@ class ServerStepFactoriesTest {
         assertEquals(1, p.size(), p.toString());
         assertTrue(p.get(0).startsWith("commit_every: Memory (test) sources' writer does not take"), p.get(0));
         assertTrue(write.check(Map.of("source", "warehouse", "table", "a.b", "host", "x")).get(0).startsWith("host:"));
-        // Without a writer that declares its options, the writers' own settings are allowed.
-        assertEquals(List.of("commit_every", "batch_size"), WriteStepFactory.writerKeys(null).stream().limit(2).toList());
+        // The allow-list is the writer's own writeOptions(), less address and credential names.
+        assertEquals(java.util.Set.of("fail", "break_profile", "delimiter"),
+            WriteStepFactory.writerKeys(new MemoryConnector()));
+        assertEquals(java.util.Set.of(), WriteStepFactory.writerKeys(null), "no writer, no writer settings");
     }
 
     @Test
@@ -240,8 +243,20 @@ class ServerStepFactoriesTest {
         assertEquals(";", options.get("delimiter"));
         assertEquals(true, options.get("fail"));
         assertFalse(options.containsKey("source") || options.containsKey("path"), options.toString());
-        assertEquals(Map.of("keep-values", "true", "sample-size", "10"), options.get(WriterContract.PROFILE_SETTINGS));
+        assertEquals(Map.of("keep-values", "true", "sample-size", "10"), MemoryConnector.lastProfiling,
+            "the source's profiling settings reach the writer in WriteOptions.profiling");
+        assertFalse(options.containsKey("profile_settings") || options.containsKey("keep_values"), options.toString());
         assertEquals("urn:kilnmark:warehouse:out/x.csv", ctx.writtenUrn("warehouse", "out/x.csv", null));
+
+        ctx.run(() -> {
+            try {
+                return write.create(Map.of("source", "private-warehouse", "path", "out/y.csv"));
+            } catch (StepException x) {
+                throw new IllegalStateException(x);
+            }
+        });
+        assertEquals("false", MemoryConnector.lastProfiling.get("keep-values"),
+            "a source that keeps no values tells the writer so");
 
         IllegalStateException e = assertThrows(IllegalStateException.class, () -> ctx.run(() -> {
             try {

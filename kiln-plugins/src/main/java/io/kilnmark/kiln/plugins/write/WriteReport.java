@@ -40,6 +40,12 @@ import io.kilnmark.kiln.plugins.profile.ProfileStep;
  */
 public final class WriteReport {
 
+    /** {@code ROW_COUNT} attribute: {@code false} when what was written could not be profiled. */
+    public static final String PROFILED = "profiled";
+
+    /** {@code ROW_COUNT} attribute, with {@link #PROFILED} {@code false}: why, in words a person can read. */
+    public static final String PROFILE_ERROR = "profile_error";
+
     private final String assetUrn;
     private final boolean wholeAsset;
     private ProfileStep profile;
@@ -138,8 +144,8 @@ public final class WriteReport {
             }
         }
         if (profileError != null) {
-            count.put("profiled", "false");
-            count.put("profile_error", profileError);
+            count.put(PROFILED, "false");
+            count.put(PROFILE_ERROR, profileError);
         }
         StringBuilder json = new StringBuilder("[");
         for (int i = 0; i < columns.size(); i++) {
