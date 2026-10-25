@@ -141,7 +141,7 @@ class CombiningStepsTest {
             h.connect("out");
             StepException e = assertThrows(StepException.class, () -> h.run(new LookupFactory(),
                 config("on", Map.of("customer_id", "id"), "memory_limit_mb", 1)));
-            assertTrue(e.getMessage().startsWith("the lookup side holds more than 1 MB (4,000 rows read so far"),
+            assertTrue(e.getMessage().startsWith("the lookup side takes more than 1 MB (4,000 lookup rows read so far"),
                 e.getMessage());
         }
     }
@@ -353,6 +353,41 @@ class CombiningStepsTest {
             upstream.join();
             assertEquals(6, h.rows.get("out").size());
         }
+    }
+
+    /** Inputs that send no batch at all: the columns the pipeline check worked out are used. */
+    @Test
+    void declaredColumnsStandInForInputsThatSendNothing() throws Exception {
+        Map<String, Object> agg = config("values", new LinkedHashMap<>(Map.of("n", "count(*)", "total", "sum(amount)")));
+        try (Harness h = new Harness().input("in").declare("in", TXNS).connect("out")) {
+            h.run(new AggregateFactory(), agg);
+            assertEquals(List.of(0L), h.column("out", "n"));
+            assertEquals(new AggregateFactory().outputSchema("out", Map.of("in", TXNS), agg), h.schemas.get("out"));
+        }
+        Schema a = schema(field("id", INT64));
+        Schema b = schema(field("id", INT64), field("note", UTF8));
+        try (Harness h = new Harness()) {
+            h.input("in", h.batch(a, row(1L))).input("in").declare("in[0]", a).declare("in[1]", b).connect("out");
+            h.run(new UnionFactory(), config());
+            assertEquals(List.of("id", "note"), h.schemas.get("out").getFields().stream().map(f -> f.getName()).toList());
+            assertEquals(Arrays.asList((Object) null), h.column("out", "note"));
+        }
+        Map<String, Object> look = config("on", Map.of("customer_id", "id"), "keep", List.of("name"));
+        try (Harness h = new Harness()) {
+            h.input("main", h.batch(SPEND, row(1L, dec("1.00")))).input("lookup").declare("lookup", CUSTOMERS);
+            h.connect("out");
+            h.run(new LookupFactory(), look);
+            assertEquals(Arrays.asList((Object) null), h.column("out", "name"));
+            assertEquals(new LookupFactory().outputSchema("out", Map.of("main", SPEND, "lookup", CUSTOMERS), look),
+                h.schemas.get("out"));
+        }
+    }
+
+    @Test
+    void numberSettingsAcceptDecimals() throws Exception {
+        assertEquals(List.of(), new LimitFactory().check(config("rows", new java.math.BigDecimal("2"))));
+        assertEquals(List.of("rows: must be a whole number"),
+            new LimitFactory().check(config("rows", new java.math.BigDecimal("2.5"))));
     }
 
     @Test

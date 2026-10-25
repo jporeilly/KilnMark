@@ -233,6 +233,8 @@ public final class LookupFactory implements StepFactory {
     /** The running step. */
     static final class LookupStep extends BaseStep {
         private static final int NO_MATCH = -1;
+        /** How long the lookup side may be quiet before a waiting main batch is taken. */
+        private static final long IDLE_MILLIS = 250;
         private final Settings settings;
         private RowSet main;
         private RowSet lookup;
@@ -285,18 +287,27 @@ public final class LookupFactory implements StepFactory {
          * would otherwise wait for room on main and never finish the lookup side.
          */
         private void load(StepContext ctx) throws StepException, InterruptedException {
-            VectorSchemaRoot batch = lookup.poll(ctx.allocator(), 0, TimeUnit.MILLISECONDS);
+            VectorSchemaRoot batch = lookup.poll(ctx.allocator(), IDLE_MILLIS, TimeUnit.MILLISECONDS);
             if (batch == null && !lookup.atEnd()) {
-                VectorSchemaRoot early = main.poll(ctx.allocator(), 0, TimeUnit.MILLISECONDS);
+                // Nothing on the lookup side for a while. If both inputs come from one step upstream,
+                // that step may be waiting for room on main: take one main batch to let it go on.
+                VectorSchemaRoot early = main.atEnd() ? null : main.poll(ctx.allocator(), 0, TimeUnit.MILLISECONDS);
                 if (early != null) {
                     waiting.add(early);
                     checkMemory(ctx);
-                    return;
                 }
-                batch = lookup.poll(ctx.allocator(), 5, TimeUnit.MILLISECONDS);
+                return;
             }
             if (batch == null) {
-                loaded = lookup.atEnd();
+                loaded = true;
+                if (plan == null) {
+                    // no lookup rows at all: its columns as the pipeline check worked them out, if known
+                    Schema declared = ctx.inputSchema("lookup");
+                    if (declared != null) {
+                        plan = plan(declared, settings, "");
+                        lookupSchema = declared;
+                    }
+                }
                 return;
             }
             index(batch, ctx);
@@ -305,9 +316,10 @@ public final class LookupFactory implements StepFactory {
         private void checkMemory(StepContext ctx) throws StepException {
             long held = ctx.allocator().getAllocatedMemory() + indexBytes;
             if (held > megabytes(settings.limitMb())) {
-                throw fail("the lookup side holds more than " + settings.limitMb() + " MB (" + count(lookupRows)
-                    + " rows read so far, and " + count(waiting.size()) + " main batches waiting); raise "
-                    + "memory_limit_mb, or keep fewer columns from the lookup side");
+                throw fail("the lookup side" + (waiting.isEmpty() ? "" : " and " + count(waiting.size())
+                    + " main batches held while it loads") + (waiting.isEmpty() ? " takes" : " take") + " more than " + settings.limitMb() + " MB ("
+                    + count(lookupRows) + " lookup rows read so far); raise memory_limit_mb, or keep fewer columns "
+                    + "from the lookup side");
             }
         }
 

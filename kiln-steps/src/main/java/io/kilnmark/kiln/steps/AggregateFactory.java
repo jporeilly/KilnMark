@@ -156,8 +156,17 @@ public final class AggregateFactory implements StepFactory {
             VectorSchemaRoot batch = take(ctx, "in");
             if (batch == null) {
                 ended = true;
-                // With no input at all the columns are unknown, so there is nothing to write.
-                return state != null && emit(ctx);
+                if (state == null) {
+                    // No batch at all: use the columns the pipeline check worked out, so an aggregate
+                    // without group_by still writes SQL's one row. Unknown columns: nothing to write.
+                    Schema declared = ctx.inputSchema("in");
+                    if (declared == null) {
+                        return false;
+                    }
+                    plan = plan(declared, settings, "");
+                    state = plan.newState(now);
+                }
+                return emit(ctx);
             }
             try {
                 if (!batch.getSchema().equals(boundTo)) {

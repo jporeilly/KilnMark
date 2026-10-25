@@ -29,9 +29,10 @@ import io.kilnmark.kiln.steps.expr.Type;
  * is an error. With {@code strict}, every input must have the same columns.
  *
  * <p>Inputs are read as batches arrive, whichever input they come from ({@link RowSet#takeAny}).
- * Until every input has sent its first batch (or ended), the output's columns are not known, so
- * batches wait in memory, up to {@code memory_limit_mb}. An input that ends without sending any
- * batch adds no columns.
+ * The output's columns come from the inputs' columns as the pipeline check worked them out
+ * ({@link StepContext#inputSchema(String, int)}). When they are not known, batches wait in memory
+ * (up to {@code memory_limit_mb}) until every input has sent its first batch or ended, and an input
+ * that sends nothing adds no columns.
  */
 public final class UnionFactory implements StepFactory {
 
@@ -204,6 +205,7 @@ public final class UnionFactory implements StepFactory {
         private final long limitMb;
         private List<RowSet> sources;
         private Schema[] schemas;
+        private Schema[] declared;
         private final List<VectorSchemaRoot> waiting = new ArrayList<>();
         private Schema out;
 
@@ -218,6 +220,16 @@ public final class UnionFactory implements StepFactory {
             super.init(ctx);
             sources = ctx.inputs("in");
             schemas = new Schema[sources.size()];
+            declared = new Schema[sources.size()];
+            boolean allDeclared = true;
+            for (int i = 0; i < declared.length; i++) {
+                declared[i] = ctx.inputSchema("in", i);
+                allDeclared &= declared[i] != null;
+            }
+            if (allDeclared && declared.length > 0) {
+                // the pipeline check worked out every input's columns: no need to wait for first batches
+                out = combine(List.of(declared), strict, "");
+            }
         }
 
         @Override
@@ -268,7 +280,9 @@ public final class UnionFactory implements StepFactory {
 
         private void decide() throws StepException {
             List<Schema> seen = new ArrayList<>();
-            for (Schema s : schemas) {
+            for (int i = 0; i < schemas.length; i++) {
+                // an input that sent nothing still adds its columns, when the pipeline check knows them
+                Schema s = schemas[i] != null ? schemas[i] : declared[i];
                 if (s != null) {
                     seen.add(s);
                 }

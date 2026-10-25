@@ -241,19 +241,25 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   regular expressions over the expression text. Keywords are case-insensitive; bare column names
   are case-sensitive and cannot be keywords (quote them: `"date"`). Precedence, loosest first:
   `or`, `and`, `not`, comparisons / `is null` / `in` / `between` / `like`, `||`, `+ -`,
-  `* / %`, unary minus. Limits: 10,000 characters, nesting 64 deep (brackets, calls, `case`,
-  `cast`, `in`, `not`, minus), and at most 1,000 operations inside each other (so a chain like
-  `a + b + …` cannot overflow the stack).
+  `* / %`, unary minus. Comparisons do not chain (`a = b = c` and `x between 1 and 2 between …`
+  need brackets). Limits: 10,000 characters, nesting 64 deep (brackets, calls, `case`, `cast`,
+  `in`, `not`, minus), at most 1,000 operations inside each other (so a chain like `a + b + …`
+  cannot overflow the stack) and 10,000 parts in a compiled expression. Every node is compiled
+  once (a `between` operand, a simple `case` operand), so checking and evaluation stay linear in
+  the expression's size.
 - **Types.** `boolean`, `int64` (every Arrow integer), `float64` (every Arrow float), `decimal(p,s)`
   (up to 38 digits), `utf8` (also large and view text), `date`, `timestamp` (microseconds, UTC;
   any Arrow unit or time zone reads as the same instant, and text without an offset is UTC), and
-  the type of a bare `null`. Other Arrow types (binary, lists, structs, times) pass through steps
+  the type of a bare `null`. Dates and timestamps are limited to years -9999 to 9999 (literals,
+  parsing and date arithmetic), so every date is also a timestamp; arithmetic that still leaves the
+  range is a plain error. Other Arrow types (binary, lists, structs, times) pass through steps
   untouched but cannot be used in expressions. Results are written as `Int64`, `Float64`,
   `Decimal(38,s)`, `Utf8`, `Date(DAY)` and `Timestamp(MICROSECOND, "UTC")`.
 - **Implicit conversion only widens**: `int64` → `decimal` → `float64`, and `date` → `timestamp`
   (midnight UTC); `null` becomes anything. Everything else needs `cast`. `int64 / int64` gives a
   `float64` (`7 / 2` is `3.5`). Decimal results keep precision 38 with scale: `+ - %` the larger
-  scale, `*` the sum of the scales, `/` at least 6, capped at 18, rounded half up. Whole-number
+  scale, `*` the sum of the scales, `/` at least 6; every result scale is capped at 18, rounded half
+  up. Decimal literals over 38 digits are refused. Whole-number
   overflow and division by zero are errors (guard with `nullif`); `date ± n` adds days and
   `date - date` counts them.
 - **Nulls** follow SQL: three-valued `and`/`or`/`not`, `in` with a null item gives null rather
@@ -266,19 +272,28 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 - **Casts** from text are strict: whole numbers for `int64`; plain decimals with an optional
   exponent for `float64` and `decimal` (no hexadecimal, `NaN` or suffixes, and the size checked
   before anything is built); `true/false/yes/no/1/0` for `boolean`; ISO forms for dates and
-  timestamps. A failed cast is an error that never quotes the value (it may be sensitive);
+  timestamps. Digits are ASCII only, and a float that would be infinite is refused. A failed cast
+  is an error that never quotes the value (it may be sensitive);
   `parse_date` and `parse_timestamp` give null instead.
 - **Functions as built:** `trim lower upper length substring replace coalesce nullif abs round
   floor ceil concat regex_match regex_replace now today date_trunc date_part parse_date
   parse_timestamp format_date`. `now()` is fixed when the step starts. Date patterns use
   `DateTimeFormatter` letters, read strictly (31 February is rejected) and must be written out;
   so must `date_trunc` / `date_part` units and `round`'s digits, so mistakes are found before a run.
-- **Regular expressions** are safe on any data and pattern: patterns with a quantified group that
-  itself repeats (`(a+)+`, `(\w+\s?)*`) or with back-references are rejected; values over 100,000
-  characters are an error; and the matcher reads text through a wrapper that counts character
-  reads, stopping a value after 10 million (tens of milliseconds) with an error. Compiled
-  patterns are cached, 128 per expression. `regex_match` finds the pattern anywhere (anchor with
-  `^ $`). `like` is matched without regular expressions.
+- **Regular expressions** are safe on any data and pattern. Refused: a repeated group that itself
+  repeats (`(a+)+`, `(\w+\s?)*`) unless each repetition starts with a punctuation character
+  nothing else in the group can match (`(\.[\w-]+)+`, which cannot backtrack badly), alternatives
+  inside such a group, back-references and comment mode `(?x)`. Values over 100,000 characters are
+  an error, and over 2,000 for patterns that repeat a group (Java's matcher recurses per
+  repetition); a stack overflow in the matcher is caught and reported. The matcher reads text
+  through a wrapper that counts character reads: 10 million per value (roughly a fifth of a
+  second) and 250 million per batch for each function call. Compiled patterns are cached, 128 per
+  call. `regex_match` finds the pattern anywhere (anchor with `^ $`). `like` is matched without
+  regular expressions, with the same value cap and a budget of 50 million steps per value.
+- **Text results** (`||`, `concat`, `replace`, `regex_replace`) are capped at 1,000,000 characters
+  per value, checked while they are built. Text compares in Unicode code point order (the order of
+  UTF-8 bytes). `trim` strips characters Java counts as whitespace (spaces, tabs, line breaks and
+  the like, but not the no-break space U+00A0).
 - **Aggregates** (`aggregate` only) may be combined in expressions with group-by columns
   (`sum(price * qty) / count(*)`); a column outside an aggregate must be grouped by, and
   aggregates cannot nest. `count_distinct` is exact, counted against the step's memory limit.
@@ -308,24 +323,30 @@ found through `ServiceLoader`. Settings, with defaults:
 - `filter`: `condition`. `compute`: `columns` (name → expression, worked out in order; each sees
   the columns computed before it; a new name is added at the end, an existing one replaced in
   place). `select`: `keep` or `drop`, `rename`, `order`, `cast` (column → type); every setting
-  names columns as they arrive.
+  names columns as they arrive. `cast` is declared as kind `EXPRESSIONS` (a map of names to free
+  text) for want of a column-to-type kind in `SettingSpec`.
 - `lookup`: `on` (main column → lookup column), `keep` (default: every lookup column but the
   keys), `join` (`left`), `unmatched` (`keep` for left, `drop` for inner, or `rejected`),
   `duplicates` (`first` or `error`), `memory_limit_mb` (256). The lookup side is held as its
   Arrow batches plus a hash table from key to row. Keys match by value across number types
   (1, 1.0 and 1.00) and dates match timestamps at midnight; null keys never match. While the
   lookup side loads, main batches that are ready are read and held (counted against the memory
-  limit), so a main input fed by the same step as the lookup input does not stall the run.
+  limit) after the lookup side has been quiet for 250 ms, so a main input fed by the same step
+  as the lookup input does not stall the run, while a merely slow lookup side does not pull main
+  into memory. An empty lookup side uses the columns the pipeline check worked out
+  (`StepContext.inputSchema`).
 - `aggregate`: `group_by` (none: one row for everything, even with no rows), `values` (name →
   expression of aggregates), `memory_limit_mb` (256). Groups are emitted in the order first
-  seen, 8,192 rows a batch; nulls form one group. With no input batch at all nothing is written,
-  because the columns are unknown.
+  seen, 8,192 rows a batch; nulls form one group. With no input batch at all the columns come
+  from `StepContext.inputSchema`, so an aggregate without `group_by` still writes SQL's one row;
+  only when those are unknown is nothing written.
 - `union`: `strict` (false), `memory_limit_mb` (256). Inputs are read with `RowSet.takeAny`.
   Columns are matched by name in the order first seen across the inputs as listed; a missing
   column is null; differing types widen as expressions do (int32 and int64 to int64, whole numbers
-  and decimals to decimal …) or are an error naming both. Batches wait in memory until every
-  input has sent its first batch or ended, so the output's columns are known; an input that ends
-  with no batch adds no columns.
+  and decimals to decimal …) or are an error naming both. The output's columns come from the
+  inputs' columns as the pipeline check worked them out (`StepContext.inputSchema("in", i)`);
+  only when those are unknown do batches wait in memory until every input has sent its first
+  batch or ended (an input that then sends nothing adds no columns).
 - `dedupe`: `key` (default: whole rows), `memory_limit_mb` (256); nulls equal each other.
 - `route`: `routes` (port → condition, in order; port names are lower case, not `in` or `out`).
 - `limit`: `rows`. Stops reading once it has its rows; the runner ends the steps before it that

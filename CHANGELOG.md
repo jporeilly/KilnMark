@@ -53,11 +53,16 @@ details.
   hand and type-checked against the input columns (`boolean`, `int64`, `float64`, `decimal`,
   `utf8`, `date`, `timestamp` in UTC; numbers widen, anything else needs `cast`), with errors
   giving the position and a suggestion; they are worked out a batch at a time into Arrow vectors.
-  Limits: 10,000 characters, nesting 64 deep. Regular expressions refuse patterns that repeat a
-  repeating group or use back-references, cap values at 100,000 characters and budget the work
-  per value. `lookup`, `aggregate`, `dedupe` and `union` stop at `memory_limit_mb` (256 by
-  default) with a message saying what to change; `lookup` reads main rows while its lookup side
-  loads, `union` reads whichever input has rows, and `limit` stops reading once it has its rows.
+  Limits: 10,000 characters, nesting 64 deep, comparisons that do not chain, text values up to
+  1,000,000 characters, dates in years -9999 to 9999. Regular expressions refuse patterns that
+  repeat a repeating group (unless each repetition starts with its own separator), back-references
+  and comment mode, cap values at 100,000 characters (2,000 for patterns that repeat a group),
+  catch stack overflows and budget the work per value and per batch; `like` is capped too.
+  `lookup`, `aggregate`, `dedupe` and `union` stop at `memory_limit_mb` (256 by default) with a
+  message saying what to change. `lookup` takes waiting main rows only when its lookup side is
+  quiet, `union` reads whichever input has rows, and `limit` stops reading once it has its rows.
+  Inputs that send no rows use the columns the pipeline check worked out, so an aggregate without
+  `group_by` writes one row and union and lookup keep their declared columns.
   Guide: **Pipeline steps and expressions**.
 - **Find local models** on the AI models page (`POST /api/v1/ai/discover`, admins only): looks for
   Ollama and LM Studio on the machine running Kilnmark or its container

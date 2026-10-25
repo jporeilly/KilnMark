@@ -120,6 +120,8 @@ Good to know:
   or rename one side with `select`.
 - If the lookup input is larger than the memory limit, the run stops with a message saying so.
   Raise `memory_limit_mb`, or keep fewer columns.
+- While the lookup input loads, main rows that are ready may be held in memory too (counted
+  against the same limit), so a pipeline where both inputs come from one step keeps moving.
 
 ## aggregate
 
@@ -178,7 +180,8 @@ Appends the rows of all its inputs, matching columns by name.
 
 Good to know:
 
-- Columns come out in the order they first appear across the inputs, as listed.
+- Columns come out in the order they first appear across the inputs, as listed, including the
+  columns of an input that turns out to have no rows.
 - A column missing from an input is empty in that input's rows.
 - A column whose type differs between inputs is widened to a type that holds both: whole numbers of
   different sizes to `int64`, whole numbers and decimals to `decimal`, numbers to `float64` when
@@ -275,7 +278,7 @@ From loosest to tightest:
 | `or` | Either is true. |
 | `and` | Both are true. |
 | `not` | The opposite. |
-| `=`, `<>` (or `!=`), `<`, `<=`, `>`, `>=` | Comparisons. |
+| `=`, `<>` (or `!=`), `<`, `<=`, `>`, `>=` | Comparisons. Text compares character by character in Unicode order. |
 | `is null`, `is not null` | Whether a value is empty. |
 | `x in (a, b, c)`, `not in` | Whether `x` equals any of them. |
 | `x between a and b`, `not between` | `x >= a and x <= b`. |
@@ -335,7 +338,7 @@ Whole numbers that overflow, and division by zero, stop the run. Guard a divisio
 
 | Function | Gives |
 | --- | --- |
-| `trim(s)` | `s` without spaces at either end. |
+| `trim(s)` | `s` without spaces, tabs, line breaks or other whitespace at either end (a no-break space is kept). |
 | `lower(s)`, `upper(s)` | `s` in small or capital letters. |
 | `length(s)` | The number of characters. |
 | `substring(s, start)`, `substring(s, start, length)` | Part of `s`, counting characters from 1. |
@@ -367,14 +370,27 @@ mistakes are found before the pipeline runs. Dates are read strictly: 31 Februar
 Some regular expressions can take practically for ever on unlucky text. To keep every pipeline
 running:
 
-- Patterns that repeat a group which itself repeats, such as `(a+)+` or `(\w+\s?)*`, and patterns
-  with back-references such as `\1`, are refused. They can almost always be simplified: `(a+)+`
-  matches the same as `a+`.
-- Text longer than 100,000 characters is an error.
-- Each value gets a fixed amount of work (about tens of milliseconds). A pattern that needs more on
-  some value stops the run with a message naming the expression.
+- Patterns that repeat a group which itself repeats, such as `(a+)+` or `(\w+\s?)*`, are refused.
+  They can almost always be simplified: `(a+)+` matches the same as `a+`, and `(a|b)*` as
+  `[ab]*`. A repeated group that starts with its own separator is fine, as in
+  `^[\w-]+(\.[\w-]+)+$` for host names.
+- Back-references such as `\1` and comment mode `(?x)` are refused.
+- Text longer than 100,000 characters is an error, and longer than 2,000 characters for patterns
+  that repeat a group.
+- Each value gets a fixed amount of work (roughly a fifth of a second), and each batch of rows a
+  larger one. A pattern that needs more stops the run with a message naming the expression.
+- `like` has the same 100,000-character limit and a work limit of its own.
 
 ### Limits
 
-An expression may be up to 10,000 characters long and nested up to 64 levels deep (brackets,
-function calls, `case`, `cast`). For longer logic, split it over several `compute` columns.
+- An expression may be up to 10,000 characters long.
+- It may be nested up to 64 levels deep: brackets, function calls, `case`, `cast`, `in (...)`,
+  `not` and a leading minus each count as a level.
+- It may have at most 1,000 operations inside each other, counting a chain such as `a + b + c`
+  as one operation inside the next.
+- Comparisons do not chain: write `a = b and b = c`, or use brackets.
+- A text value may grow to at most 1,000,000 characters (`||`, `concat`, `replace`,
+  `regex_replace`).
+- Dates and timestamps run from year -9999 to 9999.
+
+For longer logic, split it over several `compute` columns.

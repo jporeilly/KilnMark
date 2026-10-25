@@ -47,6 +47,7 @@ final class Harness implements AutoCloseable {
     final Map<String, List<Map<String, Object>>> rows = new LinkedHashMap<>();
     final Map<String, Schema> schemas = new LinkedHashMap<>();
     final Map<String, Integer> batches = new LinkedHashMap<>();
+    private final Map<String, Schema> declared = new LinkedHashMap<>();
 
     // ---- building batches ----
 
@@ -144,16 +145,33 @@ final class Harness implements AutoCloseable {
         assertEquals(List.of(), factory.check(config), "settings should be valid");
         Step step = factory.create(config);
         Context ctx = new Context(config);
+        Throwable failure = null;
         try {
             step.init(ctx);
             while (step.process(ctx)) {
                 // next unit of work
             }
+        } catch (Throwable t) {
+            failure = t;
+            throw t;
         } finally {
             step.close();
             collect();
+            long left = stepMemory.getAllocatedMemory();
+            if (left != 0) { // checked on failures too: a step must free its memory however it ends
+                AssertionError leak = new AssertionError("the step leaked " + left + " bytes");
+                if (failure != null) {
+                    leak.addSuppressed(failure);
+                }
+                throw leak;
+            }
         }
-        assertEquals(0, stepMemory.getAllocatedMemory(), "the step leaked memory");
+        return this;
+    }
+
+    /** Columns the pipeline check would give a step for an input: {@code in}, {@code lookup}, {@code in[0]} ... */
+    Harness declare(String key, Schema schema) {
+        declared.put(key, schema);
         return this;
     }
 
@@ -321,6 +339,16 @@ final class Harness implements AutoCloseable {
         @Override
         public RowSet output(String port) {
             return outputs.get(port);
+        }
+
+        @Override
+        public Schema inputSchema(String port) {
+            return declared.get(port);
+        }
+
+        @Override
+        public Schema inputSchema(String port, int index) {
+            return declared.get(port + "[" + index + "]");
         }
     }
 }

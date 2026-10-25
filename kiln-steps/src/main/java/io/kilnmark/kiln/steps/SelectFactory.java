@@ -74,7 +74,9 @@ public final class SelectFactory implements StepFactory {
                 "New names: each column as it arrives, and its new name."),
             SettingSpec.optional("order", "Order", SettingSpec.Kind.COLUMNS, null,
                 "Columns to put first, in this order; the rest follow as they were."),
-            SettingSpec.optional("cast", "Change types", SettingSpec.Kind.COLUMN_MAP, null,
+            // EXPRESSIONS is the nearest kind: a map of names to free text (here type names). A kind of its own
+            // for column-to-type maps would let the canvas offer the types; that needs a kiln-core addition.
+            SettingSpec.optional("cast", "Change types", SettingSpec.Kind.EXPRESSIONS, null,
                 "Columns to convert, and the type for each: boolean, int64, float64, decimal(p,s), utf8, date or "
                     + "timestamp."));
     }
