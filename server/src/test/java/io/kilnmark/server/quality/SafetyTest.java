@@ -71,6 +71,18 @@ class SafetyTest {
     }
 
     @Test
+    void functionsThatReachOtherDatabasesAreRefused() {
+        refused("SELECT * FROM dblink('dbname=other', 'SELECT secret FROM t') AS x(secret text)");
+        refused("SELECT * FROM public.\"dblink\"('host=elsewhere', 'SELECT 1') AS x(n int)");
+        refused("SELECT \"DBLINK_CONNECT\"('c', 'dbname=other') FROM ${table}");
+        refused("SELECT dblink_connect_u('c', 'dbname=other') FROM ${table}");
+        refused("SELECT * FROM postgres_fdw_get_connections()");
+        refused("SELECT postgres_fdw_disconnect_all() FROM ${table}");
+        refused("SELECT \"postgres_fdw_handler\"() FROM ${table}");
+        refused("SELECT * FROM ${table} WHERE pg_catalog.dblink_get_connections() IS NOT NULL");
+    }
+
+    @Test
     void ordinaryReadingSqlIsAccepted() {
         assertEquals("SELECT * FROM ${table} WHERE amount < 0",
             SqlTokens.checkCustomSql(" SELECT * FROM ${table} WHERE amount < 0; ", 10_000));

@@ -38,7 +38,8 @@ import io.kilnmark.server.quality.RowChecks.Evaluation;
  * <p>Custom SQL runs only when the administrator turned it on, only on PostgreSQL, never under a
  * login that is a superuser or a member of {@code pg_read_server_files},
  * {@code pg_write_server_files}, {@code pg_execute_server_program} or {@code pg_signal_backend},
- * and only when the generated query is exactly one statement.
+ * nor under one that may reach other databases (dblink's functions, a foreign server or a user
+ * mapping), and only when the generated query is exactly one statement.
  */
 public final class RuleRunner {
 
@@ -83,19 +84,33 @@ public final class RuleRunner {
         return null;
     }
 
-    /** Roles of the login that make custom SQL unsafe however it is written. */
+    /**
+     * Rights of the login that make custom SQL unsafe however it is written: superuser, the roles
+     * that touch the server's files, programs or sessions, and anything that reaches another
+     * database. A read-only transaction does not stop a dblink call or a foreign table, which run
+     * on the other side: so any of dblink's functions the login may execute (whatever schema the
+     * extension is in), any foreign server it may use, and any user mapping for it or for PUBLIC
+     * (through which foreign tables it may read reach elsewhere) count.
+     */
     static final String PRIVILEGED_LOGIN = """
         SELECT r.rolsuper OR pg_has_role(current_user, 'pg_read_server_files', 'MEMBER')
             OR pg_has_role(current_user, 'pg_write_server_files', 'MEMBER')
             OR pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')
             OR pg_has_role(current_user, 'pg_signal_backend', 'MEMBER')
+            OR EXISTS (SELECT 1 FROM pg_catalog.pg_extension e
+                       JOIN pg_catalog.pg_depend d ON d.refclassid = 'pg_catalog.pg_extension'::regclass
+                            AND d.refobjid = e.oid AND d.classid = 'pg_catalog.pg_proc'::regclass AND d.deptype = 'e'
+                       WHERE e.extname = 'dblink' AND has_function_privilege(d.objid, 'EXECUTE'))
+            OR EXISTS (SELECT 1 FROM pg_catalog.pg_foreign_server s WHERE has_server_privilege(s.oid, 'USAGE'))
+            OR EXISTS (SELECT 1 FROM pg_catalog.pg_user_mappings m WHERE m.umuser IN (0, r.oid))
         FROM pg_roles r WHERE r.rolname = current_user""";
 
-    static final String PRIVILEGED_REFUSAL = "Custom SQL does not run under this source's login: it is a superuser "
-        + "or may read or write the server's files, run programs or stop other sessions. Give the source a read-only "
-        + "login without those rights.";
+    static final String PRIVILEGED_REFUSAL = "Custom SQL does not run under this source's login: it is a superuser, "
+        + "may read or write the server's files, run programs or stop other sessions, or may reach other databases "
+        + "(dblink, or a foreign server or user mapping). Give the source a read-only login without those rights.";
 
-    private static boolean privileged(Connection c) throws SQLException {
+    /** Whether the login of {@code c} holds any right in {@link #PRIVILEGED_LOGIN}; {@code c} is not in auto-commit. */
+    static boolean privileged(Connection c) throws SQLException {
         try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery(PRIVILEGED_LOGIN)) {
             return !rs.next() || rs.getBoolean(1);
         } finally {

@@ -13,9 +13,10 @@ import java.util.Set;
  * line comments and nested block comments.
  *
  * <p>{@link #checkCustomSql} accepts one {@code SELECT} or {@code WITH} statement and refuses
- * anything that writes, calls out of the database or reaches the server's files. It is a first
- * line of defence: the query also runs in a read-only transaction with a statement timeout, and
- * not at all under a login that is a superuser or may read files or signal other sessions.
+ * anything that writes, calls out of the database (dblink, postgres_fdw) or reaches the server's
+ * files. It is a first line of defence: the query also runs in a read-only transaction with a
+ * statement timeout, and not at all under a login that is a superuser, may read files or signal
+ * other sessions, or may reach other databases.
  */
 public final class SqlTokens {
 
@@ -31,7 +32,7 @@ public final class SqlTokens {
         "notify", "unlisten", "prepare", "deallocate", "discard", "into", "checkpoint");
     /** Functions refused, by prefix (any identifier, quoted or not, schema-qualified or not). */
     static final List<String> FORBIDDEN_FUNCTIONS = List.of("pg_read_", "pg_ls_", "pg_stat_file", "pg_file_",
-        "lo_", "dblink", "pg_terminate", "pg_cancel", "pg_reload", "pg_rotate", "pg_sleep", "set_config",
+        "lo_", "dblink", "postgres_fdw", "pg_terminate", "pg_cancel", "pg_reload", "pg_rotate", "pg_sleep", "set_config",
         "pg_advisory", "pg_try_advisory", "pg_notify", "query_to_xml", "table_to_xml", "cursor_to_xml",
         "schema_to_xml", "database_to_xml", "pg_switch_wal", "pg_create_", "pg_drop_", "pg_promote",
         "pg_backup", "pg_start_backup", "pg_stop_backup", "pg_logdir", "pg_import", "pg_replication",
@@ -223,7 +224,7 @@ public final class SqlTokens {
                 for (String f : FORBIDDEN_FUNCTIONS) {
                     if (name.startsWith(f)) {
                         throw new IllegalArgumentException("params.sql: '" + t.text() + "' is not allowed: it acts "
-                            + "outside the query (files, other sessions, settings, locks or sequences)");
+                            + "outside the query (files, other sessions or databases, settings, locks or sequences)");
                     }
                 }
             }
