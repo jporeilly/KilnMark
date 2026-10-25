@@ -137,9 +137,15 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](../guide/writing-data.md)):
 
 - **The contract.** A `write` step is `Connector.writer(source, WriteOptions)`: target, mode, key,
-  format, further settings and the asset URN. Connectors that write list `Capability.WRITE`. The
-  pipeline service checks that the source allows writing and that its hosts are allowed before it
-  asks for the step; the step reads its `in` port and has no outputs.
+  format, further settings (`options`), the asset URN and the source's profiling settings
+  (`profiling`; see "What a write reports" in section 5). Connectors that write list
+  `Capability.WRITE`, declare the settings they take in `Connector.writeOptions()` (`SettingSpec`s
+  with kind, default and help; the service passes only those keys), and say in
+  `Connector.writtenAssetPath(source, write)` which catalogue path the written asset has: the table
+  (`schema.table`), or for files the path below the source's prefix, escaped as the catalogue
+  escapes it (`raw/` + `out/a.csv` on a prefixed S3 source). The pipeline service checks that the
+  source allows writing and that its hosts are allowed before it asks for the step; the step reads
+  its `in` port and has no outputs.
 - **Databases** (PostgreSQL, SQL Server), target `schema.table`, names used exactly and always
   quoted, values always bound or streamed, never pasted into SQL:
   - `create` makes the table from the input's columns and fails if it exists. Types: int16
@@ -167,9 +173,13 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
     - Not kept: indexes, constraints, triggers, comments, row-level security policies.
     - Refused before anything is written: a target that is not a plain table (a view, a
       partitioned or foreign table); a partition, an inheritance parent or child; any object that
-      depends on the table or its row type in the normal way and is not part of it (views,
-      foreign keys from other tables, functions with SQL bodies, columns of its type), found
-      through `pg_depend`; on SQL Server schema-bound views and functions and foreign keys. A
+      depends in the normal way on the table, its row type, the array of its row type or a sequence
+      it owns, and is not part of it (views, foreign keys from other tables, functions with SQL
+      bodies or taking its rows, columns of its type, other tables' defaults using its sequences),
+      found through `pg_depend`; a publication naming the table (`pg_publication_rel`;
+      publications `FOR ALL TABLES` or `FOR TABLES IN SCHEMA` take in the new table by themselves);
+      on SQL Server schema-bound views and functions, foreign keys, replication and change data
+      capture. A
       table with row-level security (or a SQL Server security policy) is refused unless the step
       sets `allow_dropping_row_security: true`, since the repeated grants would then see every row.
   - `upsert` with `key`: PostgreSQL `INSERT … ON CONFLICT (key) DO UPDATE`, which needs a unique
@@ -187,9 +197,11 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
   - The login's rights are checked first (`has_any_column_privilege`, `has_schema_privilege`,
     `HAS_PERMS_BY_NAME`, counting column grants) and refused writes are explained: "the login lab
     cannot write to billing.customer_spend in warehouse: ask a database administrator to grant
-    INSERT and SELECT on billing.customer_spend" (append reads the table's columns first, hence
-    SELECT). Re-granting on SQL Server is not checked first: a login without the right to grant
-    fails at that statement, and the transaction is rolled back.
+    INSERT on billing.customer_spend". Append reads the table's columns from a prepared statement's
+    description without running it, so an insert-only login can append. Re-granting on SQL Server
+    (including `GRANT CONTROL` for a table's own owner) is not checked first: a login without the
+    right to grant fails at that statement, and the transaction is rolled back. A row a row-level
+    security policy refuses is reported as such, not as a missing grant.
   - Timestamps are written in UTC; decimals keep their digits; text too long for a column is
     refused with the row and column before the database truncates or fails.
 - **Files** (folders and S3), `format` csv or parquet (or from the extension), `path` relative to
@@ -216,7 +228,7 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
     against Hardwood in every build and against pyarrow where it is installed (not on CI).
 - **Profile as written.** The writer profiles each batch with `ProfileStep`'s own code as it
   writes it and reports only after the commit (or once the file is in place); see "What a write
-  reports" in section 5. `profile: false` turns profiling off; `keep_values: false` keeps no
+  reports" in section 5. `profile_output: false` turns profiling off; `keep_values: false` keeps no
   example values.
 
 ## 5. Running and recording
@@ -236,17 +248,34 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
 
 ### What a write reports
 
-The contract between the writers and the pipeline service. A writer emits metadata events for
-`WriteOptions.assetUrn` only after the write has succeeded; a failed or cancelled write emits
-nothing (with `commit_every`, rows already committed remain, and the step's error says so).
+The contract between the writers and the pipeline service. The writer owns the profile of what it
+writes; the service adds no profile step of its own. It catalogues the asset under
+`urn:kilnmark:<source>:<Connector.writtenAssetPath(source, write)>`, and passes that URN as
+`WriteOptions.assetUrn`. A writer emits metadata events for that URN only after the write has
+succeeded; a failed or cancelled write emits nothing (with `commit_every`, rows already committed
+remain, and the step's error says so).
+
+**Profiling settings.** `WriteOptions.profiling` is a map the service fills from the source's own
+profiling settings, exactly as it builds the profile step's settings for a scan of that source,
+under the same keys: `keep-values`, `examples`, `sample-size`, `sample-mode`, `sample-key`,
+`sample-seed`, `sample-max-bytes` and `sketch-fields` (the fields whose distinct-value sketch is
+kept). It never comes from the YAML. The step's own `keep_values: false` can keep fewer values than
+the source allows, never more; `profile_output: false` turns profiling off. An empty map means the
+profile step's defaults.
 
 | Write | Events | Meaning for the service |
 | --- | --- | --- |
-| Table `create`, `replace`; any file | `SCHEMA` (`columns`: JSON array of `{name, kind, type}`, `type` as written; `target`, `mode` or `format`, `location`), `ROW_COUNT` (`rows`, `complete=true`, `written=true`), `PROFILE` per column, `SAMPLE` unless `keep_values: false` | The asset now holds exactly these rows: register or update it, replace its fields, row count and profile, apply the source's sample controls to `SAMPLE` |
+| Table `create`, `replace`; any file | `SCHEMA` (`columns`: JSON array of `{name, kind, type}`, `type` as written; `target`, `mode` or `format`, `location`), `ROW_COUNT` (`rows`, `complete=true`, `written=true`), `PROFILE` per column, `SAMPLE` when values are kept | The asset now holds exactly these rows: register or update it, replace its fields, row count and profile, apply the source's sample controls to `SAMPLE` |
 | Table `append`, `upsert` | `ROW_COUNT` only (`rows` written, `complete=false`, `written=true`, `appended=true`, `mode`) | Rows were added to or merged into an existing table: record the run's lineage and row count, but keep the table's fields, row count and profile from its last scan; a scan refreshes them |
 
 Columns, kinds and profile attributes are those a scan reports (`JdbcColumn.Kind` names,
 `ColumnStats` attributes), so the service stores them the same way.
+
+**Profiling never fails a write.** If profiling fails (settings it cannot read, or an error while
+profiling or computing the profile), the write completes, `ROW_COUNT` is still emitted and carries
+`profiled=false` and `profile_error` (the reason, in words a person can read), and no `PROFILE` or
+`SAMPLE` events follow. The service turns `profile_error` into a note on the run and keeps the
+asset's previous profile.
 
 ## 6. API and UI in step 1
 

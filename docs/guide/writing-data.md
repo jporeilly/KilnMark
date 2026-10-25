@@ -96,6 +96,7 @@ the old table is unchanged.
 | The rows you wrote, with the column types `create` would choose | Indexes, primary keys and other constraints |
 | Grants on the table (set `keep_grants: false` to skip them) | Triggers and comments |
 | The owner, where the login may hand the table over; otherwise the owner keeps full rights on it | Row-level security policies (only with `allow_dropping_row_security: true`) |
+| Publications `FOR ALL TABLES` or `FOR TABLES IN SCHEMA`, which take in the new table themselves | Publications naming the table (refused, below), replication and change data capture on SQL Server (refused) |
 
 On PostgreSQL the new table goes back to the old owner when the source's login may give it away
 (a superuser, or a login that can act as the owner); otherwise the login owns it and the old owner
@@ -107,10 +108,13 @@ be refused, and names what is in the way:
 
 - the target is a view, a partitioned table or a foreign table rather than a plain table;
 - it is a partition, or takes part in inheritance (as parent or child);
-- views, foreign keys from other tables, functions written in SQL, or columns of its type in other
-  tables depend on it (on SQL Server: views and functions created `WITH SCHEMABINDING`, and foreign
-  keys; other views follow the new table by name, so run `sp_refreshview` on those that use
-  `SELECT *`);
+- views, foreign keys from other tables, functions written in SQL or taking its rows, columns of
+  its type in other tables, or other tables' defaults using a sequence it owns depend on it (on SQL
+  Server: views and functions created `WITH SCHEMABINDING`, and foreign keys; other views follow
+  the new table by name, so run `sp_refreshview` on those that use `SELECT *`);
+- a publication names it for logical replication (on SQL Server: it is published for replication,
+  or change data capture tracks it). Replace would leave the publication without the table;
+  remove it from the publication first, and add the new table afterwards;
 - it has row-level security (on SQL Server, a security policy). The new table would not have the
   policies, but would get the same grants, so everyone granted access would see every row. Set
   `allow_dropping_row_security: true` if that is what you want, and add the policies again
@@ -189,14 +193,15 @@ with pyarrow.
 | Mode | PostgreSQL | SQL Server |
 | --- | --- | --- |
 | `create` | `CREATE` on the schema | `CREATE TABLE` in the database and `ALTER` on the schema |
-| `append` | `INSERT` and `SELECT` on the table | `INSERT` and `SELECT` on the table |
+| `append` | `INSERT` on the table | `INSERT` on the table |
 | `upsert` | `INSERT`, `UPDATE` and `SELECT` on the table | `INSERT`, `UPDATE` and `SELECT` on the table |
 | `replace` | as `create`, and owning the table (or belonging to its owning role) | as `create`, and `ALTER` on the table |
 
 Grants on some columns only count: the database then checks each column as rows go in. Append
-needs `SELECT` to read the table's columns before writing. Kilnmark checks these before writing,
-except, on SQL Server, the right to repeat the old table's grants after a replace: a login without
-it fails at that point and nothing changes. If something is missing, the run stops with a message such
+reads the table's columns from the database's description of it, so a login that may only insert
+can append. Kilnmark checks these before writing, except, on SQL Server, the right to repeat the
+old table's grants after a replace, and to give a table's own owner `CONTROL` of the new one: a
+login without it fails at that point and nothing changes. If something is missing, the run stops with a message such
 as "the login lab cannot write to billing.customer_spend in warehouse: ask a database
 administrator to grant INSERT on billing.customer_spend". Pass it on as it is.
 
@@ -206,7 +211,7 @@ When a write creates or replaces a table, or writes a file, Kilnmark profiles th
 writes them, in the same pass, and once the write has succeeded registers (or updates) the target
 as an asset with that profile: its columns and the type each was written as, the row count, and
 each column's statistics and value patterns, as a scan would record them. The next pipeline that
-reads it starts from that metadata. Set `profile: false` to skip the profile, or
+reads it starts from that metadata. Set `profile_output: false` to skip the profile, or
 `keep_values: false` to keep statistics without example values.
 
 An `append` or `upsert` adds rows to a table that holds others too, so Kilnmark records only how

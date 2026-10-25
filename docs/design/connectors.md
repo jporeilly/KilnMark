@@ -34,6 +34,8 @@ line in a services file; nothing in the server changes.
 | `addressSettings(host, port, database)` | Optional. Settings built from a host, port and database, for bulk import (default: none) |
 | `catalogWithRelationships(source)` | Optional (default: `catalog` with no relationships). The catalogue plus the relationships the source declares, such as foreign keys; the scan calls this one |
 | `writer(source, write)` | Optional (default: refuses). The pipeline step that writes its `in` port's rows to the source; see [The writer step](#the-writer-step). List `WRITE` in `capabilities()` when you override it |
+| `writeOptions()` | Optional (default: none). The settings a write step takes, as `SettingSpec`s (key, kind, default, help); the service passes only these keys in `WriteOptions.options` |
+| `writtenAssetPath(source, write)` | Optional (default: the target). The catalogue path of the written asset, as a scan would give it |
 
 **Choosing assets.** `AssetFilter` (in `kiln-core`) holds the containers chosen and the `include`
 and `exclude` patterns every source has. Use `AssetFilter.of(this, source)` while reading the
@@ -97,8 +99,10 @@ own: the target, the mode and the settings. Refuse what is wrong at once with a
 
 `WriteOptions` holds the `target` (`schema.table`, or a path inside the source), the `mode`
 (`create`, `append`, `replace` or `upsert`), the upsert `key`, the file `format`, the step's
-further settings as written in the YAML (`options`; read them with `WriteSettings`, which ignores
-keys it is not asked for) and the `assetUrn` the written asset is recorded under.
+further settings as written in the YAML (`options`, limited to the keys `writeOptions()` declares;
+read them with `WriteSettings`, whose `withProfiling` adds the `profile_output` and `keep_values`
+settings every writer takes), the `assetUrn` the written asset is recorded under, and the
+source's `profiling` settings, which the writer hands to its profile.
 
 The step is an ordinary Kiln `Step` with an input and no output:
 

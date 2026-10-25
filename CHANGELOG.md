@@ -26,6 +26,14 @@ details.
   (`SCHEMA`, `ROW_COUNT`, `PROFILE`, `SAMPLE`) once the write has succeeded; an append or upsert
   reports only the rows it wrote (`ROW_COUNT`, `complete=false`, `appended=true`), so the table's
   own profile is kept.
+- **The write contract for the pipeline service:** `Connector.writeOptions()` declares each
+  writer's settings (`SettingSpec`s; the profiling switch is now `profile_output`),
+  `Connector.writtenAssetPath()` gives the catalogue path of what is written (below an S3 source's
+  prefix), and `WriteOptions.profiling` carries the source's own profiling settings, which the
+  writer's profile follows. A profiling failure never fails a write: `ROW_COUNT` then says
+  `profiled=false` with `profile_error`. Replace also refuses tables a publication names (and, on
+  SQL Server, replicated or change-tracked tables) and tables whose row-type array or owned
+  sequences others use; append no longer needs `SELECT`.
 - **Parquet is written by Kilnmark's own encoder** (`ParquetEncoder`, from the Apache Parquet
   specification): Hardwood only reads, and parquet-java needs Hadoop (ADR 0015, amended). No new
   dependency: snappy-java and zstd-jni, already shipped for reading, are now compiled against,
