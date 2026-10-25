@@ -18,7 +18,8 @@ import java.util.regex.PatternSyntaxException;
  * <ol>
  *   <li><b>Patterns are checked</b> before use: a repeated group that itself contains a repeat
  *   ({@code (a+)+}, {@code (\w+\s?)*}) is refused, unless each repetition starts with a character
- *   nothing inside the group can match ({@code (\.[\w-]+)+}, which cannot backtrack badly).
+ *   nothing inside the group can match, repeated with {@code +} or {@code *} ({@code (\.[\w-]+)+}),
+ *   which leaves the matcher one way to split the text; see {@link #startsWithItsOwnSeparator}.
  *   Back-references ({@code \1}, {@code \k<name>}) and comment mode ({@code (?x)}) are refused.</li>
  *   <li><b>Values are capped</b>: text longer than {@value #MAX_INPUT} characters is an error, and
  *   {@value #MAX_INPUT_REPEATED_GROUP} for patterns that repeat a group. A stack overflow inside
@@ -27,7 +28,8 @@ import java.util.regex.PatternSyntaxException;
  *   character reads: {@value #BUDGET} for one value (roughly a fifth of a second) and
  *   {@value #BATCH_BUDGET} for one batch of rows per function call. This catches what the check
  *   cannot see, such as {@code .*,.*,.*,.*,.*,.*,.*,.*,P}.</li>
- *   <li><b>Results are capped</b> at {@value Casts#MAX_TEXT} characters per value.</li>
+ *   <li><b>Results are capped</b> at {@value Casts#MAX_TEXT} characters per value and
+ *   {@value TextBudget#PER_BATCH} per batch.</li>
  * </ol>
  *
  * <p>Compiled patterns are cached ({@value #CACHE_SIZE} per function call), so a pattern taken from
@@ -64,10 +66,12 @@ final class Regexes {
         }
     };
     private long batchLeft = BATCH_BUDGET;
+    private final TextBudget text = new TextBudget();
 
-    /** Starts a new batch of rows: the batch budget is full again. */
+    /** Starts a new batch of rows: the batch budgets are full again. */
     void newBatch() {
         batchLeft = BATCH_BUDGET;
+        text.newBatch();
     }
 
     /** A compiled pattern from the cache, or the error it gave. */
@@ -135,6 +139,9 @@ final class Regexes {
                         if (e == 'Q') {
                             int end = regex.indexOf("\\E", i + 2);
                             i = end < 0 ? n : end + 1;
+                        } else if ("NpPxk".indexOf(e) >= 0 && i + 2 < n && regex.charAt(i + 2) == '{') {
+                            int end = regex.indexOf('}', i + 2); // \N{NAME}, \p{L}, \x{2e}: one character or class
+                            i = end < 0 ? n : end;
                         } else {
                             i++;
                         }
@@ -190,16 +197,18 @@ final class Regexes {
                     boolean repeat = c != '?';
                     if (c == '{') {
                         end = regex.indexOf('}', i);
-                        if (end < 0) {
-                            break;
+                        if (end < 0 || !regex.substring(i + 1, end).matches("\\d+(,\\d*)?")) {
+                            break; // not a counted repeat: plain characters
                         }
                         repeat = repeatsMoreThanOnce(regex.substring(i + 1, end));
                     }
                     if (repeat && closedGroupRepeats >= 0) {
                         repeatsGroup = true;
-                        if (closedGroupRepeats == 1
-                            && !startsWithItsOwnSeparator(regex.substring(Math.min(closedBodyStart, closedBodyEnd),
-                                closedBodyEnd))) {
+                        // the separator exception holds only for + and *: a counted repeat such as {30}
+                        // defeats the matcher's own caching, so it is refused whatever the group holds
+                        if (closedGroupRepeats == 1 && (c == '{'
+                            || !startsWithItsOwnSeparator(regex.substring(Math.min(closedBodyStart, closedBodyEnd),
+                                closedBodyEnd)))) {
                             return new Scan("repeats a group that itself repeats, which can take forever on some text",
                                 true);
                         }
@@ -223,9 +232,17 @@ final class Regexes {
     }
 
     /**
-     * Whether a group's body starts with a plain punctuation character that nothing else in the
-     * body can match, and has no alternatives: then each repetition must begin at that character,
-     * so the matcher has only one way to split the text and cannot backtrack badly.
+     * Whether a group's body starts with a separator nothing else in the body can match, and has no
+     * alternatives: then each repetition must begin at that character, so the matcher has only one
+     * way to split the text and cannot backtrack badly. Deliberately strict:
+     *
+     * <ul>
+     *   <li>the separator is ASCII punctuation other than {@code _} (so {@code \w}, {@code \d} and
+     *   {@code \s} never match it, in any mode), written plainly or escaped;</li>
+     *   <li>the rest of the body may not contain it, an unescaped {@code .}, a negated or nested
+     *   class, a class range with any non-letter or non-digit between its ends, or an escape that can
+     *   spell or stand for many characters ({@code \x}, {@code \0}, {@code \c}, {@code \N}, a Unicode escape, {@code \p}, {@code \P}, {@code \W}, {@code \S}, {@code \D}, {@code \X}, {@code \R}, {@code \Q}).</li>
+     * </ul>
      */
     static boolean startsWithItsOwnSeparator(String body) {
         if (body.isEmpty() || body.indexOf('|') >= 0) {
@@ -234,17 +251,21 @@ final class Regexes {
         char sep;
         int i;
         if (body.charAt(0) == '\\') {
-            if (body.length() < 2 || Character.isLetterOrDigit(body.charAt(1))) {
+            if (body.length() < 2) {
                 return false;
             }
             sep = body.charAt(1);
             i = 2;
         } else {
             sep = body.charAt(0);
-            if (Character.isLetterOrDigit(sep) || Character.isWhitespace(sep) || "[(.^$*+?{|)".indexOf(sep) >= 0) {
+            if ("[(.^$*+?{|)".indexOf(sep) >= 0) {
                 return false;
             }
             i = 1;
+        }
+        if (sep > 127 || sep == '_' || Character.isLetterOrDigit(sep) || Character.isWhitespace(sep)
+            || Character.isISOControl(sep)) {
+            return false;
         }
         if (i < body.length() && "*+?{".indexOf(body.charAt(i)) >= 0) {
             return false;
@@ -252,13 +273,18 @@ final class Regexes {
         boolean inClass = false;
         for (int k = i; k < body.length(); k++) {
             char c = body.charAt(k);
-            if (c == sep) {
+            boolean range = inClass && c == '-' && k + 1 < body.length() && body.charAt(k + 1) != ']'
+                && body.charAt(k - 1) != '[';
+            if (c == sep && !range) { // a range's dash, as in [a-z], is not the character -
                 return false;
             }
-            if (c == '\\' && k + 1 < body.length()) {
+            if (c == '\\') {
+                if (k + 1 >= body.length()) {
+                    return false;
+                }
                 char e = body.charAt(k + 1);
-                if (e == sep || "WSDpPXRNQ".indexOf(e) >= 0) {
-                    return false; // could match the separator
+                if (e == sep || "xu0cNWSDpPXRQ".indexOf(e) >= 0) {
+                    return false; // could spell or match the separator
                 }
                 k++;
             } else if (!inClass && c == '[') {
@@ -266,14 +292,20 @@ final class Regexes {
                 if (k + 1 < body.length() && body.charAt(k + 1) == '^') {
                     return false;
                 }
+            } else if (inClass && c == '[') {
+                return false; // a nested class, such as [a[^b]] or [a-z&&[^b]]
             } else if (inClass && c == ']') {
                 inClass = false;
-            } else if (inClass && c == '-' && k > 0 && k + 1 < body.length() && body.charAt(k + 1) != ']'
-                && body.charAt(k - 1) != '[') {
+            } else if (range) {
                 char lo = body.charAt(k - 1);
                 char hi = body.charAt(k + 1);
-                if (!Character.isLetterOrDigit(lo) || !Character.isLetterOrDigit(hi)) {
-                    return false; // a range of punctuation might hold the separator
+                if (hi == '\\') {
+                    return false;
+                }
+                for (int cp = Math.min(lo, hi); cp <= Math.max(lo, hi); cp++) {
+                    if (!Character.isLetterOrDigit(cp)) {
+                        return false; // [0-z] holds : ; < = > ? @ [ \ ] ^ _ and `
+                    }
                 }
             } else if (!inClass && c == '.') {
                 return false;
@@ -342,6 +374,7 @@ final class Regexes {
             if (sb.length() > Casts.MAX_TEXT) {
                 throw Casts.tooLong(pos);
             }
+            this.text.spend(sb.length(), pos);
             return sb.toString();
         } catch (BudgetExceeded e) {
             throw tooSlow(pos);

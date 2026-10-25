@@ -81,6 +81,49 @@ class HardeningTest {
     }
 
     @Test
+    void theSeparatorExceptionIsStrict() throws ExprException {
+        String[] refused = {
+            "^(_\\w+)+$",              // \w matches _
+            "^(_\\w+){30}$",           // counted repeats are never excepted
+            "^(_\\w+){1,40}$",
+            "^(\\.[a-z]+){2,5}$",
+            "^(:[0-z]+)+$",             // [0-z] holds : ; < = > ? @ [ \ ] ^ _ and the backtick
+            "^(\\.[A-z]+)+$",
+            "^(\\.[a-z\\x2e]+)+$",      // escapes that spell the separator
+            "^(\\.[a-z\\x{2e}]+)+$",
+            "^(\\.a\\056+)+$",
+            "^(\\.a\\cN+)+$",
+            "^(\\.a\\N{FULL STOP}+)+$",
+            "^(\\.[a[^b]]+)+$",          // nested class unions
+            "^(\\.[a-z&&[^q]]+)+$",
+            "^(\\.[\\w.]+)+$",
+        };
+        for (String p : refused) {
+            assertTrue(error("regex_match(s, '" + p + "')").contains("repeats a group"), p);
+        }
+        assertEquals(true, eval("regex_match('a.b-c.d', '^[\\w-]+(\\.[\\w-]+)+$')"));
+        assertEquals(true, eval("regex_match('x-a1-b2', '^x(-[a-z0-9]+)*$')"));
+        assertEquals(true, eval("regex_match('a:b', '^a(:[a-z]+)+$')"));
+    }
+
+    @Test
+    void textResultsHaveABatchBudget() {
+        Object[] values = new Object[65];
+        java.util.Arrays.fill(values, "a".repeat(1_000));
+        String literal = "y".repeat(999);
+        ExprException e = assertThrows(ExprException.class,
+            () -> evalColumn("replace(x, 'a', '" + literal + "')", "x", Type.UTF8, values));
+        assertTrue(e.getMessage().startsWith("the text this produces for one batch of rows would be more than "
+            + "64,000,000 characters"), e.getMessage());
+        Object[] halves = new Object[65];
+        java.util.Arrays.fill(halves, "h".repeat(500_000));
+        assertThrows(ExprException.class, () -> evalColumn("x || x", "x", Type.UTF8, halves));
+        assertThrows(ExprException.class, () -> evalColumn("concat(x, x)", "x", Type.UTF8, halves));
+        assertThrows(ExprException.class, () -> evalColumn("regex_replace(x, 'a', '" + literal + "')", "x", Type.UTF8,
+            values));
+    }
+
+    @Test
     void valuesAtTheEdges() throws ExprException {
         assertTrue(error("0." + "0".repeat(50) + "1").contains("has more than 38 digits"));
         assertTrue(error("date '+999999999-12-31'").contains("is not a date"));

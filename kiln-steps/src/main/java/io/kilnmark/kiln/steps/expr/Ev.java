@@ -345,6 +345,7 @@ abstract class Ev {
             Col l = left.eval(b, mask);
             Col r = right.eval(b, mask);
             Col out = Col.blank(type, l.rows);
+            TextBudget budget = new TextBudget(); // one eval is one batch
             for (int i = 0; i < l.rows; i++) {
                 if (l.nulls[i] || r.nulls[i]) {
                     out.nulls[i] = true;
@@ -354,6 +355,7 @@ abstract class Ev {
                     if ((long) a.length() + z.length() > Casts.MAX_TEXT) {
                         throw Casts.tooLong(pos);
                     }
+                    budget.spend((long) a.length() + z.length(), pos);
                     out.objects[i] = a + z;
                 }
             }

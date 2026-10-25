@@ -240,6 +240,8 @@ public final class LookupFactory implements StepFactory {
         private RowSet lookup;
         private final List<VectorSchemaRoot> waiting = new ArrayList<>();
         private boolean loaded;
+        /** Whether the lookup side has been quiet long enough that ready main batches are taken. */
+        private boolean idle;
         private Schema lookupSchema;
         private Plan plan;
         private final List<VectorSchemaRoot> stored = new ArrayList<>();
@@ -287,17 +289,24 @@ public final class LookupFactory implements StepFactory {
          * would otherwise wait for room on main and never finish the lookup side.
          */
         private void load(StepContext ctx) throws StepException, InterruptedException {
-            VectorSchemaRoot batch = lookup.poll(ctx.allocator(), IDLE_MILLIS, TimeUnit.MILLISECONDS);
+            VectorSchemaRoot batch = lookup.poll(ctx.allocator(), idle ? 0 : IDLE_MILLIS, TimeUnit.MILLISECONDS);
             if (batch == null && !lookup.atEnd()) {
                 // Nothing on the lookup side for a while. If both inputs come from one step upstream,
-                // that step may be waiting for room on main: take one main batch to let it go on.
+                // that step may be waiting for room on main: take the main batches that are ready, until
+                // the lookup side moves again.
+                idle = true;
                 VectorSchemaRoot early = main.atEnd() ? null : main.poll(ctx.allocator(), 0, TimeUnit.MILLISECONDS);
                 if (early != null) {
                     waiting.add(early);
                     checkMemory(ctx);
+                    return;
                 }
-                return;
+                batch = lookup.poll(ctx.allocator(), 5, TimeUnit.MILLISECONDS);
+                if (batch == null && !lookup.atEnd()) {
+                    return;
+                }
             }
+            idle = false;
             if (batch == null) {
                 loaded = true;
                 if (plan == null) {

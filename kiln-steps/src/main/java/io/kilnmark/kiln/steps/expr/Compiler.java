@@ -419,8 +419,9 @@ final class Compiler {
             }
             case "replace" -> {
                 arity(c, 3, 3);
+                TextBudget budget = new TextBudget();
                 yield new Ev.Call(List.of(text(c, args, 0), text(c, args, 1), text(c, args, 2)), Type.UTF8, true,
-                    a -> Casts.replace((String) a[0], (String) a[1], (String) a[2], pos), pos);
+                    a -> Casts.replace((String) a[0], (String) a[1], (String) a[2], pos, budget), pos, budget::newBatch);
             }
             case "coalesce" -> {
                 arity(c, 1, Integer.MAX_VALUE);
@@ -477,6 +478,7 @@ final class Compiler {
                 arity(c, 1, Integer.MAX_VALUE);
                 List<Ev> in = List.copyOf(args);
                 Col[] holder = new Col[1];
+                TextBudget budget = new TextBudget();
                 yield new Ev.Call(in, Type.UTF8, false, a -> {
                     StringBuilder sb = new StringBuilder();
                     for (int i = 0; i < a.length; i++) {
@@ -492,8 +494,9 @@ final class Compiler {
                             }
                         }
                     }
+                    budget.spend(sb.length(), pos);
                     return sb.toString();
-                }, pos);
+                }, pos, budget::newBatch);
             }
             case "regex_match" -> {
                 arity(c, 2, 2);

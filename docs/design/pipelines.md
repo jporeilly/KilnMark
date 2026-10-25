@@ -281,17 +281,26 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   `DateTimeFormatter` letters, read strictly (31 February is rejected) and must be written out;
   so must `date_trunc` / `date_part` units and `round`'s digits, so mistakes are found before a run.
 - **Regular expressions** are safe on any data and pattern. Refused: a repeated group that itself
-  repeats (`(a+)+`, `(\w+\s?)*`) unless each repetition starts with a punctuation character
-  nothing else in the group can match (`(\.[\w-]+)+`, which cannot backtrack badly), alternatives
-  inside such a group, back-references and comment mode `(?x)`. Values over 100,000 characters are
-  an error, and over 2,000 for patterns that repeat a group (Java's matcher recurses per
-  repetition); a stack overflow in the matcher is caught and reported. The matcher reads text
-  through a wrapper that counts character reads: 10 million per value (roughly a fifth of a
-  second) and 250 million per batch for each function call. Compiled patterns are cached, 128 per
-  call. `regex_match` finds the pattern anywhere (anchor with `^ $`). `like` is matched without
-  regular expressions, with the same value cap and a budget of 50 million steps per value.
+  repeats (`(a+)+`, `(\w+\s?)*`), with one exception: an unbounded repeat (`+` or `*`, never a
+  counted `{n}` or `{n,m}`, which defeats the matcher's own caching) of a group that starts with
+  an ASCII punctuation separator nothing else in the group can match, such as `(\.[\w-]+)+`.
+  Each repetition must then begin at the separator, so there is only one way to split the text.
+  The test is deliberately strict: no `_` separator (which `\w` matches), no alternatives in the
+  group, no unescaped `.`, no negated or nested classes, no class range with any non-letter or
+  non-digit between its ends (`[0-z]` holds `: ; < = > ? @ [ \ ] ^ _` and the backtick), and no
+  escape that can spell or stand for many characters (`\x`, `\0`, `\c`, `\N`, Unicode escapes,
+  `\p`, `\W` and the like). Alternatives are refused only inside such an excepted group: a plain
+  `(a|b)*` is accepted, but run on values of at most 2,000 characters. Back-references and comment
+  mode `(?x)` are refused too. Values over 100,000 characters are an error, and over 2,000 for any
+  pattern that repeats a group (Java's matcher recurses per repetition); a stack overflow in the
+  matcher is caught and reported. The matcher reads text through a wrapper that counts character
+  reads: 10 million per value (roughly a fifth of a second) and 250 million per batch for each
+  function call. Compiled patterns are cached, 128 per call. `regex_match` finds the pattern
+  anywhere (anchor with `^ $`). `like` is matched without regular expressions, with the same value
+  cap and a budget of 50 million steps per value.
 - **Text results** (`||`, `concat`, `replace`, `regex_replace`) are capped at 1,000,000 characters
-  per value, checked while they are built. Text compares in Unicode code point order (the order of
+  per value, checked while they are built, and at 64,000,000 characters per batch for each
+  operator or call, so a modest result repeated over a full batch cannot exhaust memory. Text compares in Unicode code point order (the order of
   UTF-8 bytes). `trim` strips characters Java counts as whitespace (spaces, tabs, line breaks and
   the like, but not the no-break space U+00A0).
 - **Aggregates** (`aggregate` only) may be combined in expressions with group-by columns
@@ -331,7 +340,7 @@ found through `ServiceLoader`. Settings, with defaults:
   Arrow batches plus a hash table from key to row. Keys match by value across number types
   (1, 1.0 and 1.00) and dates match timestamps at midnight; null keys never match. While the
   lookup side loads, main batches that are ready are read and held (counted against the memory
-  limit) after the lookup side has been quiet for 250 ms, so a main input fed by the same step
+  limit) once the lookup side has been quiet for 250 ms, until it moves again, so a main input fed by the same step
   as the lookup input does not stall the run, while a merely slow lookup side does not pull main
   into memory. An empty lookup side uses the columns the pipeline check worked out
   (`StepContext.inputSchema`).

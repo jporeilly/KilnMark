@@ -20,6 +20,12 @@ final class Casts {
     }
 
     /** {@code s} with every {@code from} replaced by {@code to}, refusing results over {@link #MAX_TEXT}. */
+    static String replace(String s, String from, String to, int pos, TextBudget budget) throws ExprException {
+        String out = replace(s, from, to, pos);
+        budget.spend(out.length(), pos);
+        return out;
+    }
+
     static String replace(String s, String from, String to, int pos) throws ExprException {
         if (from.isEmpty()) {
             return s;

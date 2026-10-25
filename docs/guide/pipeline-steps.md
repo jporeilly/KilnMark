@@ -372,8 +372,9 @@ running:
 
 - Patterns that repeat a group which itself repeats, such as `(a+)+` or `(\w+\s?)*`, are refused.
   They can almost always be simplified: `(a+)+` matches the same as `a+`, and `(a|b)*` as
-  `[ab]*`. A repeated group that starts with its own separator is fine, as in
-  `^[\w-]+(\.[\w-]+)+$` for host names.
+  `[ab]*`. One kind is allowed: a group repeated with `+` or `*` that starts with a punctuation
+  separator nothing else in it can match, as in `^[\w-]+(\.[\w-]+)+$` for host names. A group
+  repeated a counted number of times, such as `(\.[a-z]+){2,5}`, must not repeat inside.
 - Back-references such as `\1` and comment mode `(?x)` are refused.
 - Text longer than 100,000 characters is an error, and longer than 2,000 characters for patterns
   that repeat a group.
@@ -390,7 +391,8 @@ running:
   as one operation inside the next.
 - Comparisons do not chain: write `a = b and b = c`, or use brackets.
 - A text value may grow to at most 1,000,000 characters (`||`, `concat`, `replace`,
-  `regex_replace`).
+  `regex_replace`), and each of them may produce at most 64,000,000 characters for one batch of
+  rows.
 - Dates and timestamps run from year -9999 to 9999.
 
 For longer logic, split it over several `compute` columns.
