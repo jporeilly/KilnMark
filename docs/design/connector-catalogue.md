@@ -144,8 +144,9 @@ coming. An admin setting hides the planned list.
 
 - Category tabs (All, Databases, NoSQL, Files, Streaming, Applications, Lakehouse) and a search
   box.
-- Cards show the connector's **tile**, the name, and capability badges with text, not colour
-  alone. The family appears as a small heading within the tab, with its icon.
+- Cards show the connector's **tile**, the name, its family as a small label, and capability
+  badges with text, not colour alone. Within a category the cards flow in one responsive grid,
+  available connectors first and planned ones after, lighter and dashed.
 - **Tiles:** letters on a tint for products, the family icon for generic connectors. The tint
   comes from the connector id (eight tints, each checked for 4.5:1 letter contrast in every
   theme); large tiles add the family icon in a corner. The same tile is used in the sources list,
