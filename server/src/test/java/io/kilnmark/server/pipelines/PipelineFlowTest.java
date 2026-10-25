@@ -216,7 +216,7 @@ class PipelineFlowTest {
         assertEquals(2500L, run.getLong("steps.find { it.step == 'out' }.rowsIn"));
         assertEquals(2500L, run.getLong("steps.find { it.step == 'out' }.ports.in.in"));
         assertEquals(List.of("finished", "finished"), run.getList("steps.outcome"));
-        assertEquals(2, run.getList("steps").size(), "the profile step in front of the write is not listed");
+        assertEquals(2, run.getList("steps").size(), "the pipeline's two steps, and only those");
         assertEquals(WRITE_URN, run.getString("written[0].urn"));
         assertTrue(run.getBoolean("written[0].registered"), run.prettify());
         assertEquals(List.of(READ_URN), run.getList("read"));

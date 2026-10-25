@@ -50,6 +50,15 @@ public final class MemoryConnector implements Connector {
         return "Memory (test)";
     }
 
+    /**
+     * Listed with the databases (it holds tables), so the catalogue's categories stay those shipped;
+     * the kind's test- prefix keeps it out of the catalogue tests' lists.
+     */
+    @Override
+    public String category() {
+        return "databases";
+    }
+
     @Override
     public List<Setting> settings() {
         return List.of(new Setting("rows", "Rows", false, "How many people to read", false),
