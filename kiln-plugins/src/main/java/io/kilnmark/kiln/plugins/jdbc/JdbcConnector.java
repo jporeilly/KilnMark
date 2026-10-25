@@ -211,6 +211,15 @@ public abstract class JdbcConnector implements Connector {
         return JdbcCatalog.read(connection, filter, catalogDialect());
     }
 
+    /**
+     * {@link #readCatalog(Connection, AssetFilter)} for {@code source}, for databases whose
+     * catalogue depends on the source's own settings; by default the source is not needed.
+     */
+    protected List<JdbcCatalog.Table> readCatalog(Connection connection, AssetFilter filter, SourceConfig source)
+        throws SQLException {
+        return readCatalog(connection, filter);
+    }
+
     /** The URL for a host, port (null for the usual one) and database; null if this database has no such form. */
     protected String addressUrl(String host, Integer port, String database) {
         return null;
@@ -302,6 +311,26 @@ public abstract class JdbcConnector implements Connector {
 
     @Override
     public List<String> validate(SourceConfig source) {
+        List<String> problems = new ArrayList<>(validateAddress(source));
+        String above = source.setting(TABLE_SAMPLE_ABOVE);
+        if (above != null) {
+            try {
+                if (Long.parseLong(above) < 1000) {
+                    problems.add(TABLE_SAMPLE_ABOVE + ": at least 1000 rows");
+                }
+            } catch (NumberFormatException e) {
+                problems.add(TABLE_SAMPLE_ABOVE + ": a whole number of rows, for example 10000000");
+            }
+        }
+        return problems;
+    }
+
+    /**
+     * Problems with the settings that say where the database is and how to log in: by default the
+     * {@code url}, which must hold no password and no property that makes the driver use this
+     * server's identity, files or code. A database with settings of its own overrides this.
+     */
+    protected List<String> validateAddress(SourceConfig source) {
         List<String> problems = new ArrayList<>();
         String url = source.setting("url");
         if (url == null || !url.startsWith(urlPrefix())) {
@@ -322,16 +351,6 @@ public abstract class JdbcConnector implements Connector {
             }
             if (denied != null) {
                 problems.add(denied);
-            }
-        }
-        String above = source.setting(TABLE_SAMPLE_ABOVE);
-        if (above != null) {
-            try {
-                if (Long.parseLong(above) < 1000) {
-                    problems.add(TABLE_SAMPLE_ABOVE + ": at least 1000 rows");
-                }
-            } catch (NumberFormatException e) {
-                problems.add(TABLE_SAMPLE_ABOVE + ": a whole number of rows, for example 10000000");
             }
         }
         return problems;
@@ -447,7 +466,7 @@ public abstract class JdbcConnector implements Connector {
                 String table = path.substring(dot + 1);
                 // only that table's keys and comments are read; a name a pattern cannot hold reads its schema
                 String only = table.matches(".*[,;.].*") ? null : table.replaceAll("([\\\\*?\\[\\]{}])", "\\\\$1");
-                for (JdbcCatalog.Table t : readCatalog(c, AssetFilter.of(List.of(schema), only, null, "."))) {
+                for (JdbcCatalog.Table t : readCatalog(c, AssetFilter.of(List.of(schema), only, null, "."), source)) {
                     if (t.path().equals(path)) {
                         return info(t);
                     }
@@ -464,8 +483,11 @@ public abstract class JdbcConnector implements Connector {
             col.position(), col.sourceType(), col.kind().name().toLowerCase(Locale.ROOT), col.nullable(),
             col.comment())).toList();
         boolean table = t.type().equals("table") || t.type().equals("partitioned table");
+        Map<String, String> hints = new HashMap<>(t.hints());
+        hints.put("schema", t.schema());
+        hints.put("table", t.name());
         return new AssetInfo(t.path(), t.type(), t.schema(), t.name(), t.comment(), fields, t.primaryKey(),
-            !table, true, Map.of("schema", t.schema(), "table", t.name()));
+            !table, true, hints);
     }
 
     /**
@@ -499,7 +521,8 @@ public abstract class JdbcConnector implements Connector {
         }
     }
 
-    private void checkValid(SourceConfig source) throws ConnectorException {
+    /** Refuses a source whose settings are not valid, naming every problem. */
+    protected void checkValid(SourceConfig source) throws ConnectorException {
         List<String> problems = validate(source);
         if (!problems.isEmpty()) {
             throw new ConnectorException("Check the settings of " + source.name() + ": " + String.join("; ", problems));
@@ -515,7 +538,7 @@ public abstract class JdbcConnector implements Connector {
     }
 
     /** Connects with the source's user name and secret and, for checks, the driver's own timeouts. */
-    private Connection connect(SourceConfig source, Duration timeout) throws SQLException {
+    protected Connection connect(SourceConfig source, Duration timeout) throws SQLException {
         return connectWith(source, timeout == null ? new Properties() : timeouts(timeout));
     }
 
@@ -527,6 +550,15 @@ public abstract class JdbcConnector implements Connector {
      */
     Connection connectForWrite(SourceConfig source, boolean bulk) throws SQLException {
         return connectWith(source, writeProperties(bulk));
+    }
+
+    /**
+     * The columns of an existing {@code table}, as a write step matches its input to them, or null
+     * (the default) to read them from a prepared statement's description.
+     */
+    List<WritePlan.TargetColumn> targetColumns(Connection connection, SourceConfig source, TableName table)
+        throws SQLException {
+        return null;
     }
 
     /** Driver properties for writing; none by default. */
@@ -541,10 +573,33 @@ public abstract class JdbcConnector implements Connector {
         if (source.secret() != null) {
             p.setProperty("password", source.secret());
         }
-        return DriverManager.getConnection(source.setting("url"), p);
+        return open(source, p);
     }
 
-    private AssetFilter filter(SourceConfig source) throws ConnectorException {
+    /**
+     * The JDBC URL for {@code source}: by default its {@code url} setting. A database whose
+     * settings give the host, port and database apart builds it here.
+     */
+    protected String jdbcUrl(SourceConfig source) {
+        return source.setting("url");
+    }
+
+    /**
+     * Opens a connection to {@code source} with driver properties {@code p} (user name, password,
+     * timeouts, write settings). By default {@link DriverManager} with {@link #jdbcUrl}; override to
+     * add settings of the database's own or to set up the session.
+     */
+    protected Connection open(SourceConfig source, Properties p) throws SQLException {
+        return DriverManager.getConnection(jdbcUrl(source), p);
+    }
+
+    /** The step that reads a table; {@link JdbcTableInput}'s defaults unless a database reads differently. */
+    protected JdbcTableInput tableInput() {
+        return new JdbcTableInput();
+    }
+
+    /** The source's patterns and containers, refused with the setting at fault when not valid. */
+    protected AssetFilter filter(SourceConfig source) throws ConnectorException {
         try {
             return AssetFilter.of(this, source);
         } catch (IllegalArgumentException e) {
@@ -579,7 +634,7 @@ public abstract class JdbcConnector implements Connector {
         checkValid(source); // also for sources saved before a rule existed
         AssetFilter filter = filter(source);
         try (Connection c = connect(source)) {
-            List<JdbcCatalog.Table> tables = readCatalog(c, filter);
+            List<JdbcCatalog.Table> tables = readCatalog(c, filter, source);
             List<AssetInfo> assets = new ArrayList<>();
             java.util.Set<String> paths = new java.util.HashSet<>();
             for (JdbcCatalog.Table t : tables) {
@@ -701,7 +756,7 @@ public abstract class JdbcConnector implements Connector {
     @Override
     public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
         Map<String, String> s = new HashMap<>();
-        s.put("url", source.setting("url"));
+        s.put("url", jdbcUrl(source));
         if (source.setting("username") != null) {
             s.put("user", source.setting("username"));
         }
@@ -724,6 +779,6 @@ public abstract class JdbcConnector implements Connector {
             }
         }
         s.putAll(readSettings(source));
-        return new StepSpec("read", new JdbcTableInput(), s);
+        return new StepSpec("read", tableInput(), s);
     }
 }
