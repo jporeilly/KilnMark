@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { docHref } from "../docs/links";
 import {
   ApiError,
   formatShare,
@@ -727,9 +728,14 @@ export function RuleForm({
 
   return (
     <section aria-labelledby="rule-form-h" className="panel">
-      <h2 id="rule-form-h" tabIndex={-1}>
-        {editing ? "Edit rule" : "Add a rule"}
-      </h2>
+      <div className="km-card-head">
+        <h2 id="rule-form-h" tabIndex={-1} className="km-card-title">
+          {editing ? "Edit rule" : "Add a rule"}
+        </h2>
+        <div className="km-card-actions">
+          <a href={docHref("quality-rules")}>How rules work</a>
+        </div>
+      </div>
       {rule && <p className="hint">Changing “{rule.name}”. Its results so far are kept.</p>}
       {error && (
         <p id="rule-error" role="alert" className="error" tabIndex={-1} ref={errorRef}>

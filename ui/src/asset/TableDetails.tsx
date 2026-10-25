@@ -7,11 +7,11 @@ import { ColumnStats } from "./ColumnStats";
 import "../browse/browse.css";
 
 /**
- * The metadata and statistics of a table, view or file with columns: a summary, its
- * relationships in and out, and per-column statistics. The asset page shows it for assets with
- * columns; documents have their own view.
+ * The metadata and statistics of a table, view or file with columns: on the Overview tab a summary
+ * and its relationships in and out, on the Columns tab per-column statistics. The asset page shows
+ * it for assets with columns; documents have their own view.
  */
-export function TableDetails({ asset }: { asset: Asset }) {
+export function TableDetails({ asset, part }: { asset: Asset; part: "overview" | "columns" }) {
   const [relationships, setRelationships] = useState<Relationship[] | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +59,8 @@ export function TableDetails({ asset }: { asset: Asset }) {
   };
   const onChange = (updated: Relationship) =>
     setRelationships((rs) => rs && rs.map((r) => (r.id === updated.id ? updated : r)));
+
+  if (part === "columns") return <ColumnStats asset={asset} foreignKeys={foreignKeys} />;
 
   return (
     <>
@@ -129,8 +131,6 @@ export function TableDetails({ asset }: { asset: Asset }) {
           </>
         )}
       </section>
-
-      <ColumnStats asset={asset} foreignKeys={foreignKeys} />
     </>
   );
 }

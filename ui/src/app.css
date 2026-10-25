@@ -578,6 +578,12 @@ main:focus {
 }
 
 .km-card-actions a:hover,
+.km-card-foot .link-button {
+  padding: 0;
+  text-decoration: none;
+}
+
+.km-card-foot .link-button:hover,
 .km-card-foot a:hover,
 .km-card-next a:hover,
 .km-popover-foot a:hover,
@@ -1410,6 +1416,18 @@ table {
   border-collapse: collapse;
   width: 100%;
   font-size: var(--km-text-md);
+}
+
+/* On a phone a table keeps a readable width and scrolls inside its region, rather than squeezing
+   every column into a sliver. */
+.table-scroll > table {
+  min-width: 520px;
+}
+
+td .km-code,
+th .km-code {
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 th,
@@ -2736,6 +2754,57 @@ table.sample td {
   width: 100%;
 }
 
+.km-section {
+  margin-top: var(--km-gap);
+}
+
+.km-card > .hint,
+.panel > .hint {
+  margin-bottom: 12px;
+}
+
+.km-push-right {
+  margin-left: auto;
+}
+
+.km-gap-top {
+  margin-top: 12px;
+}
+
+.km-violet-icon {
+  color: var(--km-tint-violet-fg);
+}
+
+.km-dim-why {
+  margin-top: 8px;
+}
+
+.km-summary:focus {
+  outline: none;
+}
+
+.km-summary:focus-visible .km-callout {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 2px;
+}
+
+.km-summary ul {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+
+.km-summary p:last-child {
+  margin-bottom: 0;
+}
+
+.km-reco-actions {
+  margin-top: 14px;
+}
+
+.km-filters + .km-reco-list {
+  margin-top: 10px;
+}
+
 /* Recommended rules: a compact list with checkboxes. */
 .km-reco-list {
   list-style: none;
@@ -3504,7 +3573,16 @@ h1.with-tile {
   }
 
   .km-scores {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .km-dim {
+    padding: 14px;
+  }
+
+  .km-dim-value {
+    font-size: 22px;
   }
 
   .km-hero {
