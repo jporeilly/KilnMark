@@ -227,7 +227,7 @@ function ContainerView({ source, container, words }: { source: string; container
                       </th>
                       <td>
                         <span className="kind-label">
-                          <Icon name={a.format} />
+                          <Icon name={a.format} file={a.name} />
                           {formatLabel(a.format)}
                         </span>
                       </td>

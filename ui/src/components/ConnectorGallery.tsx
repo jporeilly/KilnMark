@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Capability, Connector, ConnectorCatalogue, PlannedConnector } from "../api";
-import { Icon } from "./Icon";
+import { ConnectorTile, plannedTileProps, tileProps } from "./ConnectorTile";
+import { Icon } from "./icons";
 
 const CAPABILITY: Record<Capability, string> = {
   discover: "Discover",
@@ -17,7 +18,8 @@ type Card =
  * "Add connection": tabs by category (the ARIA tabs pattern: arrow keys move between tabs, Tab
  * goes into the panel), a search box whose result count is announced, family subheadings, and a
  * card per connector. Cards are buttons; planned ones say "Planned · wave N", are announced as
- * unavailable and do nothing. Icons are generic, never vendor logos.
+ * unavailable and do nothing. Each card has the connector's tile: letters on a tint, or the
+ * operator's own logo from the branding folder; never a vendor logo shipped with Kilnmark.
  */
 export function ConnectorGallery({
   catalogue,
@@ -94,10 +96,12 @@ export function ConnectorGallery({
     tabRefs.current[tabs[to].id]?.focus();
   };
 
+  // Within a category, one grid: available connectors first, then planned ones; the family is a
+  // label on each card, so a family with one connector does not take a row of its own.
   const groups = (tab === "all" ? catalogue.categories.map((c) => c.id) : [tab]).map((cat) => ({
     cat,
     label: catalogue.categories.find((c) => c.id === cat)?.label ?? cat,
-    families: [...new Set(shown.filter((c) => c.category === cat).map((c) => c.family))],
+    cards: shown.filter((c) => c.category === cat).sort((a, b) => Number(b.built) - Number(a.built)),
   }));
 
   return (
@@ -143,7 +147,7 @@ export function ConnectorGallery({
         {shown.length === 0 && <p>No connector matches. Try another word, or the All tab.</p>}
         {groups.map(
           (g) =>
-            g.families.length > 0 && (
+            g.cards.length > 0 && (
               <section key={g.cat} aria-labelledby={`${id}-cat-${g.cat}`}>
                 {tab === "all" ? (
                   <h3 id={`${id}-cat-${g.cat}`} className="gallery-category">
@@ -154,46 +158,45 @@ export function ConnectorGallery({
                     {g.label}
                   </h3>
                 )}
-                {g.families.map((family) => (
-                  <div key={family}>
-                    <h4 className="gallery-family">{family}</h4>
-                    <ul className="cards">
-                      {shown
-                        .filter((c) => c.category === g.cat && c.family === family)
-                        .map((c) => (
-                          <li key={c.name}>
-                            {c.built ? (
-                              <button
-                                type="button"
-                                className="card"
-                                aria-pressed={chosen === c.connector.kind}
-                                onClick={(e) => onChoose(c.connector, e.currentTarget)}
-                              >
-                                <Icon name={c.connector.icon} />
-                                <span className="card-name">{c.name}</span>
-                                <Badges caps={c.capabilities} formats={c.connector.formats} />
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="card planned"
-                                aria-disabled="true"
-                                aria-describedby={`${id}-unavailable`}
-                                onClick={(e) => e.preventDefault()}
-                              >
-                                <Icon name={c.category} />
-                                <span className="card-name">{c.name}</span>
-                                <span className="planned-label">
-                                  Planned · {/^\d/.test(c.planned.wave) ? `wave ${c.planned.wave}` : c.planned.wave}
-                                </span>
-                                <Badges caps={c.capabilities} formats={[]} />
-                              </button>
-                            )}
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                ))}
+                <ul className="cards">
+                  {g.cards.map((c) => (
+                    <li key={c.name}>
+                      {c.built ? (
+                        <button
+                          type="button"
+                          className="card"
+                          aria-pressed={chosen === c.connector.kind}
+                          onClick={(e) => onChoose(c.connector, e.currentTarget)}
+                        >
+                          <ConnectorTile {...tileProps(c.connector)} size="lg" />
+                          <span className="card-text">
+                            <span className="card-name">{c.name}</span>
+                            <span className="card-family">{c.family}</span>
+                          </span>
+                          <Badges caps={c.capabilities} formats={c.connector.formats} />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="card planned"
+                          aria-disabled="true"
+                          aria-describedby={`${id}-unavailable`}
+                          onClick={(e) => e.preventDefault()}
+                        >
+                          <ConnectorTile {...plannedTileProps(c.planned)} size="lg" />
+                          <span className="card-text">
+                            <span className="card-name">{c.name}</span>
+                            <span className="card-family">{c.family}</span>
+                            <span className="planned-label">
+                              Planned · {/^\d/.test(c.planned.wave) ? `wave ${c.planned.wave}` : c.planned.wave}
+                            </span>
+                          </span>
+                          <Badges caps={c.capabilities} formats={[]} />
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
               </section>
             ),
         )}

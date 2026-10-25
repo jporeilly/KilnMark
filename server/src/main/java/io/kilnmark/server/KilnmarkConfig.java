@@ -57,6 +57,23 @@ public interface KilnmarkConfig {
     /** Limits for reading documents (PDF, Office, mail, ...); see docs/adr/0017-documents.md. */
     Documents documents();
 
+    /** The operator's branding folder: the organisation's name and logo, and connector logos. */
+    Branding branding();
+
+    /** See docs/guide/branding.md. */
+    interface Branding {
+        /**
+         * Folder holding {@code manifest.json} and the images it names, read-only for the server.
+         * Missing or empty: Kilnmark's own look, with monogram tiles for connectors.
+         */
+        @WithDefault("/etc/kilnmark/branding")
+        String dir();
+
+        /** The largest image served, in KB; larger ones are ignored. */
+        @WithDefault("256")
+        int maxFileKb();
+    }
+
     /** Documents are untrusted input: how much of each one is read, and for how long. */
     interface Documents {
         /** Documents larger than this are recorded but not read, in MB. */

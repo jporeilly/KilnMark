@@ -52,4 +52,19 @@ class CatalogueUnitTest {
         assertEquals("databases", Connectors.load().get("sqlserver").orElseThrow().category());
         assertEquals("bucket", Connectors.load().get("s3").orElseThrow().icon());
     }
+
+    @Test
+    void productsHaveMonogramsAndPlannedConnectorsHaveIds() {
+        assertEquals("Pg", Connectors.load().get("postgresql").orElseThrow().monogram());
+        assertEquals(null, Connectors.load().get("files").orElseThrow().monogram(), "a folder shows its icon");
+        Set<String> ids = new java.util.HashSet<>();
+        for (Views.PlannedConnector p : PlannedConnectors.ALL) {
+            assertTrue(p.id().matches("[a-z0-9][a-z0-9-]{0,63}"), p.id());
+            assertTrue(ids.add(p.id()), "unique: " + p.id());
+            assertTrue(p.monogram() == null || p.monogram().length() <= 3, p.name());
+        }
+        for (Connector c : Connectors.load().all()) {
+            assertFalse(ids.contains(c.kind()), "a built connector is not also planned: " + c.kind());
+        }
+    }
 }

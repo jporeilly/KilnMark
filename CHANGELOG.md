@@ -48,7 +48,31 @@ details.
   refused, including IPv4-mapped IPv6. Model addresses with an IPv4 address in an unusual form
   (leading zeros, hexadecimal, a single number, fewer than four parts) or a host name ending in a
   dot are refused with a 400.
-
+- **Themes and appearance:** every signed-in user chooses, for themselves under **Settings**,
+  **Appearance** (now open to every role), a theme (System, Light, Dark, High contrast), an
+  accent colour (six presets, each with a shade per theme) and a density (Comfortable or Compact);
+  kept in their browser. The top bar has a quick theme switch. Every colour is now a token in
+  `ui/src/tokens.css`; `npm run build` checks every theme and accent against WCAG AA
+  (`npm run check:contrast`). Schema diagrams, score and heat bars and badges follow the theme
+  (diagram arrowheads now take the edge's colour); Windows contrast themes and reduced motion are
+  respected.
+- **Icons:** Tabler Icons (MIT, pinned 3.48.0, only the icons used are bundled) for categories,
+  connector families, file formats (CSV, JSON, XML, Parquet, Excel, PDF, Word, email and more) and
+  the browse tree, mapped by name in one module.
+- **Connector tiles:** products show letters on a tint (`Pg`, `SQL`, `S3`), generic connectors an
+  icon; in the gallery, the sources list, a source's page and the browse tree. Connector SPI:
+  `monogram()` (default none); `GET /api/v1/connectors` gains `monogram`, and planned connectors
+  in the catalogue gain `id` and `monogram`. No vendor logos are shipped.
+- **Branding folder** (docs/guide/branding.md): `kilnmark.branding.dir` (default
+  `/etc/kilnmark/branding`) holds a `manifest.json` with the organisation's product name and logo
+  and logos, brand colours and labels per connector, for logos the customer is licensed to use.
+  Served without sign-in at `GET /api/v1/branding` and `/api/v1/branding/files/{name}`: only
+  listed SVG, PNG and WebP files up to `kilnmark.branding.max-file-kb` (256), content checked, no
+  symbolic links or sub-folders, with `nosniff` and a Content-Security-Policy that stops scripts;
+  the UI shows them only with `<img>`. Invalid entries are logged and fall back to the tile.
+  `compose.yaml` has a commented read-only mount.
+- **Third-party notices for the UI:** the build writes the licences of the UI's packages to
+  `dist/ui/third-party-notices.txt` (docs/legal/third-party-ui.md).
 - **Data quality** (docs/design/data-quality.md, build step 1). Profiling now keeps, over every
   row, each text column's value shapes (`SW1A 1AA` is `AA9A 9AA`; the top 20 with counts and the
   share outside them), detected formats (email, phone, UK postcode, NI number, IBAN, card numbers

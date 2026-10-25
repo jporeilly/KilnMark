@@ -16,6 +16,7 @@ import { formatNumber } from "../api";
 import { go, href } from "../router";
 import type { DiagramTable, Relationship } from "./browseApi";
 import { formatLabel } from "./icons";
+import { useColourScheme } from "../theme/appearance";
 
 /** Columns a box lists before "and N more"; key columns are always listed. */
 const MAX_COLUMNS = 12;
@@ -92,6 +93,7 @@ export default function SchemaDiagram({
   centre?: string;
   label: string;
 }) {
+  const scheme = useColourScheme();
   const { nodes, edges } = useMemo(() => {
     const boxes = new Map(tables.map((t) => [t.urn, { table: t, ...visibleColumns(t) }]));
     const drawn = relationships.filter((r) => r.status !== "rejected" && boxes.has(r.from.urn) && boxes.has(r.to.urn));
@@ -140,7 +142,17 @@ export default function SchemaDiagram({
         label: text,
         className: `dg-edge dg-edge-${r.kind} dg-edge-${r.status}`,
         style: proposed ? { strokeDasharray: "6 4" } : undefined,
-        markerEnd: { type: MarkerType.ArrowClosed },
+        // Arrowheads take the edge's colour from the tokens (xyflow's default grey is too faint).
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: proposed
+            ? "var(--km-warn)"
+            : r.kind === "declared"
+              ? "var(--km-ink)"
+              : r.status === "accepted"
+                ? "var(--km-good)"
+                : "var(--km-muted)",
+        },
         ariaLabel: `${r.from.name} (${r.from.fields.join(", ")}) refers to ${r.to.name} (${r.to.fields.join(", ")}), ${
           r.kind
         }, ${r.status}`,
@@ -158,7 +170,7 @@ export default function SchemaDiagram({
         fitView
         minZoom={0.1}
         maxZoom={2}
-        colorMode="system"
+        colorMode={scheme}
         nodesConnectable={false}
         edgesFocusable={false}
         elementsSelectable={false}

@@ -106,8 +106,10 @@ val buildUi by tasks.registering(Exec::class) {
     workingDir = uiDir.asFile
     commandLine(npm, "run", "build")
     inputs.dir(uiDir.dir("src"))
+    // scripts/: the contrast check and the third-party notices both run as part of the build.
+    inputs.dir(uiDir.dir("scripts"))
     inputs.files(uiDir.file("index.html"), uiDir.file("vite.config.ts"), uiDir.file("tsconfig.json"),
-        uiDir.file("package-lock.json"))
+        uiDir.file("package.json"), uiDir.file("package-lock.json"))
     outputs.dir(uiOut)
 }
 
