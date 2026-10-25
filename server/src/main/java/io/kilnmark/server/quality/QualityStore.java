@@ -425,10 +425,19 @@ public class QualityStore {
     }
 
     public Optional<Rule> updateRule(long id, Rule r) {
+        return updateRule(id, r, null);
+    }
+
+    /**
+     * Replaces a rule's settings. With {@code expected}, only while its {@code updated_at} is still
+     * that: empty when the rule is gone or was changed since.
+     */
+    public Optional<Rule> updateRule(long id, Rule r, Instant expected) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.quality_rule SET field_name = ?, name = ?, "
                 + "type = ?, dimension = ?, params = ?::jsonb, threshold_unit = ?, warn_above = ?, fail_above = ?, "
-                + "actions = ?::jsonb, enabled = ?, updated_at = now() WHERE id = ? RETURNING " + RULE_COLUMNS)) {
+                + "actions = ?::jsonb, enabled = ?, updated_at = now() WHERE id = ? "
+                + "AND (?::timestamptz IS NULL OR updated_at = ?::timestamptz) RETURNING " + RULE_COLUMNS)) {
                 ps.setString(1, r.field());
                 ps.setString(2, r.name());
                 ps.setString(3, r.type().id());
@@ -440,6 +449,8 @@ public class QualityStore {
                 ps.setString(9, actionsJson(r.actions()));
                 ps.setBoolean(10, r.enabled());
                 ps.setLong(11, id);
+                ps.setTimestamp(12, Db.timestamp(expected));
+                ps.setTimestamp(13, Db.timestamp(expected));
                 try (ResultSet rs = ps.executeQuery()) {
                     return rs.next() ? Optional.of(rule(rs)) : Optional.empty();
                 }

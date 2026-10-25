@@ -15,8 +15,8 @@ fails.
   - On an asset's page, the **Quality** section shows its scores, value patterns, rules and
     results, drift and recommended rules.
   - The **Quality rules** page lists every rule on every asset and has the form for writing a
-    new one. Open it from the navigation, or with **Manage rules for this asset** on an asset
-    page, which filters the list to that asset.
+    new one or editing one. Open it from the navigation, or with **Manage rules for this asset**
+    on an asset page, which filters the list to that asset.
   - The **Issues** page lists rules that fail or warn, if the rule asks for a task, and
     significant drift.
 
@@ -62,19 +62,27 @@ rule** turns it into a rule, so that you notice when the data stops obeying it.
 
 ## Writing a rule yourself
 
-Open **Quality rules** and fill in **Add a rule**.
+Open **Quality rules** and fill in **Add a rule**. You don't need to know any identifiers, column
+spellings or JSON: you choose from lists and fill in plain fields.
 
-1. **Asset URN.** The asset's identifier, shown at the foot of its page, for example
-   `urn:kilnmark:lab:crm.customers`. It is filled in already if you came from **Manage rules for
+1. **Asset.** Type part of the table, view or file name under **Find an asset** and choose it from
+   the matches, which show each asset's source and path. The chosen asset is shown with its URN
+   underneath, for example `urn:kilnmark:lab:crm.customers`. You can also paste a URN into the box
+   and choose **Use this URN**. The asset is chosen already if you came from **Manage rules for
    this asset**.
-2. **Check.** The kind of rule. See [Choosing a check](#choosing-a-check).
-3. **Column.** The column the rule checks, spelled exactly as on the asset page. Row count checks
-   and custom SQL don't need one.
+2. **Check.** The kind of rule. The line under the list says what fails. See [Choosing a
+   check](#choosing-a-check).
+3. **Column.** Choose the column from the list, which shows each column's name and type. Only
+   columns that suit the check are listed: **Freshness** lists date and time columns, **In range**
+   lists number, date and time columns. If none of the asset's columns suits the check, the form
+   says so. Row count checks don't take a column, and for custom SQL it is optional.
 4. **Name** (optional). How the rule appears in lists and alerts. If you leave it empty, Kilnmark
    names it after the column and check, for example *email not null*.
-5. **Parameters.** The details of the check, written as JSON. The box is filled with an example
-   for the check you chose. Edit the values and keep the shape.
-6. **Thresholds.** How many failing rows are acceptable. See [Thresholds](#thresholds).
+5. **Settings for this check.** Plain fields for the details of the check, such as the allowed
+   values, one per line, or the regular expression. The table in [Choosing a
+   check](#choosing-a-check) lists them.
+6. **Thresholds.** How many failing rows are acceptable. See [Thresholds](#thresholds). Checks that
+   pass or fail as a whole have none, and the form says so.
 7. **When it warns or fails.** Open a task for stewards, call a webhook, or both. See [Alerts and
    tasks](#alerts-and-tasks).
 8. Choose **Preview on the sample** to see what the rule would find. See [Trying a rule before you
@@ -82,32 +90,43 @@ Open **Quality rules** and fill in **Add a rule**.
 9. Choose **Save rule**. The rule runs after the next scan, or straight away when you choose **Run
    now**.
 
-If something is wrong, the form says what and where, for example *params.regex: unbalanced
-bracket* or *field: the asset has no field called emial*.
+If something is wrong, the form says what and where, and marks the field, for example *Allowed
+values: type at least one value, one per line*. Some problems are found only by the server, which
+names the setting it means, for example *params.regex: unbalanced bracket* or *field: the asset
+has no field called emial*.
+
+### Advanced: the parameters as JSON
+
+Under the form, **Advanced: edit as JSON** shows the parameters your fields make, as the API takes
+them. Choose **Edit as JSON** to type them yourself, for example to paste a rule from elsewhere.
+The JSON is then used instead of the fields, which are set aside until you choose **Use the fields
+instead**. In JSON, and when you send a rule to the API, backslashes in a regular expression are
+doubled: `\s` is written `\\s`. In the **Pattern** field you type it once, as `\s`.
 
 ## Choosing a check
 
 Each check is tagged with a quality dimension, which decides which score it affects.
 
-| Check | What fails | Parameters (example) | Dimension |
+| Check | What fails | What you fill in | Dimension |
 | --- | --- | --- | --- |
-| **Not null** | Empty values. With `blankIsMissing`, blank text such as `""` or `"  "` fails too | `{"blankIsMissing": true}` | Completeness |
-| **Unique** | Values that appear more than once. For a key of several columns, list them in `fields` and leave **Column** empty | `{}` or `{"fields": ["order_id", "line_no"]}` | Uniqueness |
-| **Allowed values** | Any value not in the list (up to 1,000 values, matched exactly, case included) | `{"values": ["Retail", "Trade", "Staff"]}` | Validity |
-| **Matches pattern** | Any value that does not match the regular expression | `{"regex": "^[A-Z]{2}[0-9]{6}[A-D]$"}` | Validity |
-| **In range** | Values below `min` or above `max`. Both limits count as inside. Give one or both. Dates are written `2024-01-31` | `{"min": 0, "max": 10000}` | Accuracy |
-| **Freshness** | The whole check fails when the newest value in a date or timestamp column is older than `maxAgeHours` | `{"maxAgeHours": 24}` | Timeliness |
-| **Row count** | The whole check fails when the asset has fewer than `min` or more than `max` rows | `{"min": 1}` | Volume |
-| **Row count change** | The whole check fails when the row count moved by more than `maxChange` since the last scan. `0.2` means 20% | `{"maxChange": 0.2}` | Volume |
-| **References** | Values that don't appear in a column of another asset in the same source: a foreign key that does not hold | `{"asset": "urn:kilnmark:lab:crm.customers", "field": "customer_id"}` | Referential integrity |
-| **Custom SQL** | The rows your query returns. Admins only; see [Custom SQL](#custom-sql-admins) | `{"sql": "SELECT * FROM ${table} WHERE amount < 0"}` | Validity |
+| **Not null** | Empty values. With **Also count blank text as missing**, blank text such as `""` or `"  "` fails too | The tick box | Completeness |
+| **Unique** | Values that appear more than once | Either the column, or **A key of several columns together** and the key columns ticked | Uniqueness |
+| **Allowed values** | Any value not in the list | The values, one per line: up to 1,000, matched exactly, capital letters included | Validity |
+| **Matches pattern** | Any value that does not match the regular expression | The **Pattern**, for example `^[A-Z]{2}[0-9]{6}[A-D]$`. **Use the suggested expression** fills in the profile's suggestion when there is one | Validity |
+| **In range** | Values below the minimum or above the maximum. Both limits count as inside | **Minimum**, **Maximum** or both: numbers for number columns (with a full stop for decimals), dates for date columns, and a date and time in UTC for date-and-time columns | Accuracy |
+| **Freshness** | The whole check fails when the newest value in a date or time column is too old | **Newest value at most** so many **hours old** | Timeliness |
+| **Row count** | The whole check fails when the asset has too few or too many rows | **Minimum rows**, **Maximum rows** or both, as whole numbers | Volume |
+| **Row count change** | The whole check fails when the row count moved by too much since the last scan, up or down | **Largest change since the last scan**, in percent: `20` means 20% | Volume |
+| **References** | Values that don't appear in a column of another asset in the same source: a foreign key that does not hold | **Asset referred to**, found by name in the same source, and its **Column referred to** | Referential integrity |
+| **Custom SQL** | The rows your query returns. Admins only; see [Custom SQL](#custom-sql-admins) | The **SQL**, for example `SELECT * FROM ${table} WHERE amount < 0` | Validity |
 
 **Where each check runs.** On a database, a rule runs as SQL inside the database, so the data stays
 where it is. On files, Kilnmark checks the rows while it reads them, in one pass. Two checks need
 a database: **References**, and **Custom SQL**, which needs PostgreSQL.
 
 **Changing the dimension.** A rule can be tagged with a different dimension through the API, for
-example a pattern rule counted as Consistency. The form uses each check's usual dimension.
+example a pattern rule counted as Consistency. The form uses each check's usual dimension for new
+rules. Editing a rule keeps its dimension unless you change its check.
 
 **Times.** Timestamps stored without a time zone are read as UTC.
 
@@ -221,10 +240,24 @@ On the **Quality rules** page, each rule has:
 - **Run now:** runs it at once.
 - **Switch off / Switch on:** a rule that is off keeps its history but does not run. Use this
   instead of deleting a rule you may want back.
+- **Edit:** opens the rule in the form, headed **Edit rule**. Change what you need and choose
+  **Save changes**, or **Cancel** to leave it as it was. The rule keeps its results so far, and
+  the next run uses the new settings. A rule stays on its asset: to check another asset, add a new
+  rule there. Only admins can edit custom SQL rules.
+
+  On a column marked sensitive, the allowed values and range limits may be hidden from you. The
+  form then shows **Hidden: this column is sensitive**, and saving keeps the hidden values. The
+  check and column stay fixed, and the preview is off, until you choose **Replace the values** and
+  type new ones. A webhook address hidden from your role is kept unless you type a new one.
 - **Delete:** removes the rule and its results, after you confirm.
 
-To change a rule's settings in this release, add the corrected rule, then delete the old one.
-Editing in place is coming to the form; the API supports it already (`PUT /api/v1/quality/rules/{id}`).
+While a rule is open in the form, its **Switch off** and **Delete** buttons wait, so saving cannot
+undo them. If someone else changes the rule after you opened it, saving is refused rather than
+undoing their change: choose **Load the rule as it is now** and make your change again.
+
+Rules can also be changed through the API, with `PUT /api/v1/quality/rules/{id}`. Send the
+rule's `updatedAt`, as you read it, in an `If-Match` header to have the change refused (409) if the
+rule has changed since.
 
 ## Custom SQL (admins)
 
@@ -247,21 +280,23 @@ When no check in the library fits, an admin can write the query that finds the f
 
 ## Recipes
 
-| Goal | Check | Column | Parameters | Thresholds |
+| Goal | Check | Column | Settings | Thresholds |
 | --- | --- | --- | --- | --- |
-| Every customer has an email | Not null | `email` | `{"blankIsMissing": true}` | Fail above 0 |
-| Emails look like emails | Matches pattern | `email` | `{"regex": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"}` | Warn above 0.5, fail above 2 |
-| UK postcodes are well formed | Matches pattern | `postcode` | `{"regex": "^[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}$"}` | Warn above 1, fail above 5 |
-| No duplicate order lines | Unique | (empty) | `{"fields": ["order_id", "line_no"]}` | Fail above 0 |
-| Status is a known value | Allowed values | `status` | `{"values": ["open", "shipped", "cancelled"]}` | Fail above 0 |
-| Amounts are sensible | In range | `amount` | `{"min": 0, "max": 50000}` | Number of rows, warn above 0, fail above 20 |
-| Dates of birth are plausible | In range | `date_of_birth` | `{"min": "1900-01-01", "max": "2026-12-31"}` | Fail above 0 |
-| The nightly load arrived | Freshness | `loaded_at` | `{"maxAgeHours": 26}` | (pass or fail) |
-| The table is never empty | Row count | (empty) | `{"min": 1}` | (pass or fail) |
-| No sudden drop or spike in volume | Row count change | (empty) | `{"maxChange": 0.3}` | (pass or fail) |
-| Every order has a real customer | References | `customer_id` | `{"asset": "urn:kilnmark:lab:crm.customers", "field": "customer_id"}` | Fail above 0 |
+| Every customer has an email | Not null | `email` | Also count blank text as missing: ticked | Fail above 0 |
+| Emails look like emails | Matches pattern | `email` | Pattern: `^[^@\s]+@[^@\s]+\.[^@\s]+$` | Warn above 0.5, fail above 2 |
+| UK postcodes are well formed | Matches pattern | `postcode` | Pattern: `^[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}$` | Warn above 1, fail above 5 |
+| No duplicate order lines | Unique | (none) | A key of several columns together: `order_id` and `line_no` ticked | Fail above 0 |
+| Status is a known value | Allowed values | `status` | `open`, `shipped` and `cancelled`, one per line | Fail above 0 |
+| Amounts are sensible | In range | `amount` | Minimum 0, maximum 50000 | Number of rows, warn above 0, fail above 20 |
+| Dates of birth are plausible | In range | `date_of_birth` | Minimum 1900-01-01, maximum 2026-12-31 | Fail above 0 |
+| The nightly load arrived | Freshness | `loaded_at` | Newest value at most 26 hours old | (pass or fail) |
+| The table is never empty | Row count | (none) | Minimum rows 1 | (pass or fail) |
+| No sudden drop or spike in volume | Row count change | (none) | Largest change since the last scan 30% | (pass or fail) |
+| Every order has a real customer | References | `customer_id` | Asset referred to: `customers`, column referred to: `customer_id` | Fail above 0 |
 
-Backslashes in a regular expression are doubled inside JSON: `\s` is written `\\s`.
+Through the API or the JSON view, the same settings are JSON parameters, for example
+`{"regex": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"}` for the email pattern (backslashes doubled),
+`{"fields": ["order_id", "line_no"]}` for the key and `{"maxChange": 0.3}` for 30%.
 
 ## Sharing rules with other tools
 
@@ -274,11 +309,11 @@ you try it with your token.
 | Message | What to do |
 | --- | --- |
 | *Not profiled yet* | Scan the source, then come back |
-| *field: the asset has no field called …* | Check the column's spelling on the asset page. Names are case sensitive |
-| *Parameters: not valid JSON* | Keep the quotes and brackets of the example. Text goes in double quotes |
+| *field: the asset has no field called …* | The column was renamed or dropped since the form loaded. Choose it again from the list |
+| *Parameters (JSON): not valid JSON* | Only in the JSON view. Keep the quotes and brackets, put text in double quotes and double each backslash, or choose **Use the fields instead** |
 | *params.regex: …* | The regular expression does not compile, or is too costly to run. Test it in the preview |
 | *freshness needs a date or timestamp field* | Pick a column whose type is a date or timestamp. A date stored as text needs a pattern rule instead |
 | *references rules run in the database* | References need a database source. On files, use Allowed values |
 | *… is not on this server's webhook allow-list* | Ask an administrator to add the address prefix |
 | *custom SQL rules are turned off on this server* | Ask an administrator, or use a library check |
-| **Could not run** after a schema change | The column was renamed or dropped. Switch the rule off, or add it again for the new column |
+| **Could not run** after a schema change | The column was renamed or dropped. Choose **Edit** and pick the new column, or switch the rule off |

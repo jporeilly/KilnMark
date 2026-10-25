@@ -3,7 +3,9 @@ package io.kilnmark.server.ai;
 import static io.kilnmark.server.Tokens.admin;
 import static io.kilnmark.server.Tokens.as;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
@@ -217,6 +219,13 @@ class AiSearchTest {
             .body("mode", equalTo("keyword"))
             .body("hits.urn", not(hasItem("urn:kilnmark:ai-shop:aishop.customers")));
         as(viewer).queryParam("q", "x").queryParam("mode", "psychic").get("/api/v1/search").then().statusCode(400);
+        // Narrowed to one source by its name.
+        as(viewer).queryParam("q", "customers").queryParam("mode", "keyword").queryParam("source", "ai-shop")
+            .get("/api/v1/search").then().statusCode(200)
+            .body("hits.urn", hasItem("urn:kilnmark:ai-shop:aishop.customers"))
+            .body("hits.source", everyItem(equalTo("ai-shop")));
+        as(viewer).queryParam("q", "customers").queryParam("mode", "keyword").queryParam("source", "no-such-source")
+            .get("/api/v1/search").then().statusCode(200).body("hits", empty());
     }
 
     @Test

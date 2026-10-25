@@ -88,7 +88,8 @@ public class HybridSearch {
         if (q.isEmpty()) {
             return new Result("keyword", null, listing(filters, limit));
         }
-        List<Records.SearchHit> keyword = store.search(q, filters.any() ? CANDIDATES * 2 : CANDIDATES);
+        List<Records.SearchHit> keyword = store.search(q, filters.any() ? CANDIDATES * 2 : CANDIDATES,
+            filters.sources());
         List<String> keywordUrns = keyword.stream().map(Records.SearchHit::urn).toList();
         Map<String, Records.SearchHit> keywordHits = new HashMap<>();
         keyword.forEach(h -> keywordHits.put(h.urn(), h));

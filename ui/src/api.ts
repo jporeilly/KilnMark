@@ -336,7 +336,10 @@ export async function call<T>(path: string, init?: RequestInit, contentType = "a
   try {
     response = await fetch(path, {
       ...init,
-      headers: headers(init?.body ? { "Content-Type": contentType } : {}, token),
+      headers: headers(
+        { ...(init?.body ? { "Content-Type": contentType } : {}), ...((init?.headers as Record<string, string>) ?? {}) },
+        token,
+      ),
     });
   } catch {
     throw new ApiError("Cannot reach the Kilnmark server. Is it running?", 0);
@@ -450,6 +453,13 @@ export const api = {
   scan: (name: string) => call<Run>(`/api/v1/sources/${encodeURIComponent(name)}/scans`, { method: "POST" }),
   run: (id: number) => call<Run>(`/api/v1/runs/${id}`),
   search: (q: string) => call<{ query: string; hits: SearchHit[] }>(`/api/v1/search?q=${encodeURIComponent(q)}`),
+  /** Assets by words in their names (no model call), optionally in one source: for pickers. */
+  findAssets: (q: string, source?: string, limit = 50) =>
+    call<{ query: string; hits: SearchHit[] }>(
+      `/api/v1/search?q=${encodeURIComponent(q)}&mode=keyword&limit=${limit}${
+        source ? `&source=${encodeURIComponent(source)}` : ""
+      }`,
+    ),
   asset: (urn: string) => call<Asset>(`/api/v1/assets/${encodeURIComponent(urn)}`),
 };
 
@@ -924,10 +934,23 @@ export type Recommendation = {
 export type QualityRun = { id: number; status: "queued" | "running" | "succeeded" | "failed"; detail: string | null };
 
 const q = (urn: string) => `urn=${encodeURIComponent(urn)}`;
+/** Admins may ask for sensitive values unmasked; servers that do not mask ignore it. */
+const unmasked = (unmask: boolean) => (unmask ? "&unmask=true" : "");
+
+/**
+ * Parameters the server held back because the column is sensitive (or the SQL from viewers):
+ * exactly {"hidden": true}. Sent back unchanged, they keep the stored values.
+ */
+export const isHidden = (params: Record<string, unknown> | null | undefined) =>
+  params != null && Object.keys(params).length === 1 && params.hidden === true;
+
+/** A webhook address the server held back from this role. */
+export const HIDDEN_WEBHOOK = "(set)";
 
 export const qualityApi = {
   asset: (urn: string, unmask = false) => call<AssetQuality>(`/api/v1/quality/asset?${q(urn)}&unmask=${unmask}`),
-  drift: (urn: string) => call<DriftEvent[]>(`/api/v1/quality/asset/drift?${q(urn)}&limit=20`),
+  drift: (urn: string, unmask = false) =>
+    call<DriftEvent[]>(`/api/v1/quality/asset/drift?${q(urn)}&limit=20${unmasked(unmask)}`),
   samples: (urn: string, unmask = false) =>
     call<SampleRows>(`/api/v1/quality/asset/samples?${q(urn)}&unmask=${unmask}`),
   setSensitive: (urn: string, field: string, sensitive: boolean) =>
@@ -942,23 +965,32 @@ export const qualityApi = {
     }),
   unaccept: (urn: string, id: number) =>
     call<null>(`/api/v1/quality/asset/patterns/${id}?${q(urn)}`, { method: "DELETE" }),
-  recommendations: (urn: string) => call<Recommendation[]>(`/api/v1/quality/asset/recommendations?${q(urn)}`),
+  recommendations: (urn: string, unmask = false) =>
+    call<Recommendation[]>(`/api/v1/quality/asset/recommendations?${q(urn)}${unmasked(unmask)}`),
   runAsset: (urn: string) => call<QualityRun>(`/api/v1/quality/asset/runs?${q(urn)}`, { method: "POST" }),
   run: (id: number) => call<QualityRun>(`/api/v1/quality/runs/${id}`),
-  rules: (filter: { urn?: string; source?: string } = {}) =>
+  rules: (filter: { urn?: string; source?: string } = {}, unmask = false) =>
     call<RuleView[]>(
       `/api/v1/quality/rules?${filter.urn ? q(filter.urn) : ""}${
         filter.source ? `&source=${encodeURIComponent(filter.source)}` : ""
-      }`,
+      }${unmasked(unmask)}`,
     ),
   addRule: (r: RuleDraft) => call<QualityRule>("/api/v1/quality/rules", { method: "POST", body: JSON.stringify(r) }),
-  updateRule: (id: number, r: RuleDraft) =>
-    call<QualityRule>(`/api/v1/quality/rules/${id}`, { method: "PUT", body: JSON.stringify(r) }),
+  /** version: the rule's updatedAt as read; the server refuses the change (409) if it has changed since. */
+  updateRule: (id: number, r: RuleDraft, version?: string) =>
+    call<QualityRule>(`/api/v1/quality/rules/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(r),
+      headers: version ? { "If-Match": `"${version}"` } : undefined,
+    }),
+  rule: (id: number, unmask = false) =>
+    call<RuleView>(`/api/v1/quality/rules/${id}${unmask ? "?unmask=true" : ""}`),
   deleteRule: (id: number) => call<null>(`/api/v1/quality/rules/${id}`, { method: "DELETE" }),
   preview: (r: RuleDraft) =>
     call<RulePreview>("/api/v1/quality/rules/preview", { method: "POST", body: JSON.stringify(r) }),
   runRule: (id: number) => call<QualityRun>(`/api/v1/quality/rules/${id}/run`, { method: "POST" }),
-  result: (id: number) => call<RuleResult>(`/api/v1/quality/results/${id}`),
+  result: (id: number, unmask = false) =>
+    call<RuleResult>(`/api/v1/quality/results/${id}${unmask ? "?unmask=true" : ""}`),
   issues: (status: string) => call<Issue[]>(`/api/v1/quality/issues?status=${encodeURIComponent(status)}`),
   setIssue: (id: number, status: Issue["status"]) =>
     call<Issue>(`/api/v1/quality/issues/${id}`, { method: "PUT", body: JSON.stringify({ status }) }),

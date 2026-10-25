@@ -14,17 +14,28 @@ export type Route =
   | { page: "ai" }
   | { page: "ai-usage" }
   | { page: "home" }
+  // The bundled user guides (src/docs): a page, and optionally a section of it
+  | { page: "docs"; doc: string | null; section: string | null }
   // Browsing and relationships
   | { page: "browse"; source: string | null; container: string | null; asset: string | null }
   | { page: "relationships"; status: string };
+
+/** A path part decoded, or as it is when it is not valid percent-encoding. */
+function decode(part: string): string {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return part;
+  }
+}
 
 export function parse(hash: string): Route {
   const [path, query = ""] = hash.replace(/^#/, "").split("?");
   const params = new URLSearchParams(query);
   if (path === "/search") return { page: "search", q: params.get("q") ?? "", ask: params.get("ask") === "1" };
-  if (path.startsWith("/asset/")) return { page: "asset", urn: decodeURIComponent(path.slice("/asset/".length)) };
+  if (path.startsWith("/asset/")) return { page: "asset", urn: decode(path.slice("/asset/".length)) };
   if (path === "/sources") return { page: "sources" };
-  if (path.startsWith("/source/")) return { page: "source", name: decodeURIComponent(path.slice("/source/".length)) };
+  if (path.startsWith("/source/")) return { page: "source", name: decode(path.slice("/source/".length)) };
   if (path === "/tokens") return { page: "tokens" };
   if (path === "/settings") return { page: "settings" };
   if (path === "/quality/rules") return { page: "rules", urn: params.get("urn") ?? "" };
@@ -39,6 +50,10 @@ export function parse(hash: string): Route {
       container: params.get("container"),
       asset: params.get("asset"),
     };
+  if (path === "/docs" || path.startsWith("/docs/")) {
+    const [doc, section] = path.slice("/docs/".length).split("/").map((p) => (p ? decode(p) : null));
+    return { page: "docs", doc: doc ?? null, section: section ?? null };
+  }
   if (path === "/relationships") return { page: "relationships", status: params.get("status") ?? "proposed" };
   return { page: "home" };
 }

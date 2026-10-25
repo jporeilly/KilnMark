@@ -29,7 +29,7 @@ class RulesUnitTest {
             @Override
             public Map<String, String> fields() {
                 return Map.of("id", "int64", "email", "text", "amount", "decimal", "placed_at", "timestamp_tz",
-                    "customer_id", "int64", "odd \"name\"]", "text");
+                    "customer_id", "int64", "odd \"name\"]", "text", "loaded_at", "timestamp");
             }
 
             @Override
@@ -145,7 +145,7 @@ class RulesUnitTest {
 
     private static RowChecks.Evaluation check(Rule r, List<String> columns, List<List<String>> rows) {
         RowChecks.Check c = RowChecks.of(r, columns, Map.of("id", "int64", "email", "text", "amount", "decimal",
-            "placed_at", "timestamp_tz"), 100L, Instant.parse("2026-10-10T00:00:00Z"), 2, "sample");
+            "placed_at", "timestamp_tz", "loaded_at", "timestamp"), 100L, Instant.parse("2026-10-10T00:00:00Z"), 2, "sample");
         for (List<String> row : rows) {
             c.row(row::get);
         }
@@ -182,6 +182,64 @@ class RulesUnitTest {
             rows);
         assertEquals(1, change.failing(), "100 to 4 rows");
         assertTrue(change.message().contains("-96%"), change.message());
+    }
+
+    @Test
+    void timesAreReadWithOrWithoutSecondsZoneOrT() {
+        Instant t = Instant.parse("2024-01-31T09:30:00Z");
+        assertEquals(t, ProfileFacts.instant("2024-01-31T09:30Z"));
+        assertEquals(t, ProfileFacts.instant("2024-01-31T09:30:00Z"));
+        assertEquals(t, ProfileFacts.instant("2024-01-31 09:30"));
+        assertEquals(t, ProfileFacts.instant("2024-01-31 09:30:00.000"));
+        assertEquals(t, ProfileFacts.instant("2024-01-31T10:30+01:00"));
+        assertEquals(Instant.parse("2024-01-31T00:00:00Z"), ProfileFacts.instant("2024-01-31"));
+        assertNull(ProfileFacts.instant("2024-01-31T9"));
+        assertNull(ProfileFacts.instant("31/01/2024"));
+    }
+
+    @Test
+    void rangeLimitsOnTimesWorkWithOrWithoutSeconds() {
+        List<String> cols = List.of("id", "placed_at", "loaded_at");
+        List<List<String>> rows = List.of(
+            List.of("1", "2024-01-31T09:29:59Z", "2024-01-31T09:29:59"),
+            List.of("2", "2024-01-31T09:30:00Z", "2024-01-31T09:30:00"),
+            List.of("3", "2024-01-31T11:00:00+01:00", "2024-02-01T00:00:00"));
+        for (String field : List.of("placed_at", "loaded_at")) {
+            for (String min : List.of("2024-01-31T09:30Z", "2024-01-31T09:30:00Z", "2024-01-31 09:30")) {
+                RowChecks.Evaluation e = check(rule("in_range", field, "{'min':'" + min + "'}", null, null, null), cols,
+                    rows);
+                assertNull(e.error(), field + " from " + min);
+                assertEquals(1, e.failing(), field + " from " + min + ": only the row a second early");
+                assertNull(e.message(), field + " from " + min);
+            }
+        }
+        assertEquals(3, check(rule("in_range", "placed_at", "{'min':'2024-02-01'}", null, null, null), cols, rows)
+            .failing(), "a date-only limit starts at midnight UTC");
+        assertEquals(2, check(rule("in_range", "loaded_at", "{'min':'2024-02-01'}", null, null, null), cols, rows)
+            .failing());
+        // A time that cannot be read fails its row, and the result says how many.
+        RowChecks.Evaluation odd = check(rule("in_range", "loaded_at", "{'min':'2024-01-31 09:30'}", null, null, null),
+            cols, List.of(List.of("1", "2024-01-31T09:00:00Z", "soon"), List.of("2", "2024-01-31T09:00:00Z",
+                "2024-02-01T00:00:00")));
+        assertEquals(1, odd.failing());
+        assertTrue(odd.message().contains("could not be read as dates and times"), odd.message());
+    }
+
+    @Test
+    void anUnreadableRangeLimitIsRefusedAndCannotRun() {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> rule("in_range", "loaded_at", "{'min':'2024-01-31T9'}", null, null, null));
+        assertTrue(e.getMessage().startsWith("params.min: "), e.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> rule("in_range", "placed_at", "{'max':'31/01/2024'}", null,
+            null, null));
+        // A rule saved before this check, or changed in the database, gives "could not run", not failing rows.
+        Rule ok = rule("in_range", "loaded_at", "{'min':'2024-01-31'}", null, null, null);
+        Rule stored = new Rule(ok.id(), ok.assetUrn(), ok.field(), ok.name(), ok.type(), ok.dimension(),
+            (ObjectNode) json("{'min':'2024-01-31T9'}"), ok.thresholdUnit(), ok.warnAbove(), ok.failAbove(),
+            ok.actions(), ok.enabled(), ok.origin(), ok.originRef(), ok.createdBy(), ok.createdAt(), ok.updatedAt());
+        RowChecks.Evaluation r = check(stored, List.of("id", "loaded_at"), List.of(List.of("1", "2024-02-01T00:00:00")));
+        assertEquals(0, r.failing());
+        assertTrue(r.error() != null && r.error().contains("cannot be read as dates and times"), String.valueOf(r.error()));
     }
 
     @Test

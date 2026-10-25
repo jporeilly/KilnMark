@@ -124,6 +124,24 @@ details.
 - **Web UI:** a Quality section on asset pages (scores by dimension, value patterns with share
   bars and examples, accept a pattern, rules and results, drift, sample rows, recommended rules),
   a **Quality rules** page and an **Issues** page.
+- **Rule form for stewards:** the form on the Quality rules page finds the asset by name (or takes
+  a pasted URN) and offers the columns that suit the check, with their types. Each check has plain
+  fields instead of JSON: allowed values one per line, a pattern typed as it is (with the profile's
+  suggested expression one click away), minimum and maximum as numbers or dates, hours, rows, a
+  percentage, and the referred-to asset found by name in the same source. The JSON parameters stay
+  under "Advanced: edit as JSON", which can take over from the fields. Rules are edited in place
+  (**Edit**, saved with `PUT /api/v1/quality/rules/{id}`), keeping their results and any dimension
+  set through the API. A `PUT` with `If-Match` set to the rule's `updatedAt` is refused (409) when
+  someone else changed the rule since, and the form sends it, so an edit never undoes another
+  unseen. `GET /api/v1/search` takes `source` to keep to one source's assets. Values held back
+  for a sensitive column (`{"hidden": true}`) are shown as hidden and sent back unchanged unless
+  replaced; admins load rules unmasked, and recommendations without their values have no
+  one-click Add.
+- **Documentation in the app:** the guides in `docs/guide` and this changelog (as What's new) are
+  bundled into the web UI at build time and shown under **Documentation**, so they work offline.
+  Each section has its own address, `#/docs/<page>/<section>`, from its heading as GitHub makes
+  anchors. The navigation shows the running version with a link to What's new. Markdown is
+  rendered with marked 18.1.0 (MIT); HTML inside it is shown as text, never run.
 - **Database:** migration V9 adds profile versions, samples, rules, accepted patterns, quality
   runs, results, measures, scores, drift events and issues, a `sensitive` flag on fields, and
   lets the job queue hold jobs of other kinds.

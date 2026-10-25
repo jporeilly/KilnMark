@@ -1,0 +1,39 @@
+/* In-app documentation (src/docs) and the version line under the navigation. Uses the tokens in tokens.css. */
+
+.nav-version {
+  margin: 16px 12px 0;
+}
+
+.sidenav .nav-version a {
+  display: inline;
+  padding: 0;
+  color: var(--km-link);
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+.doc-body {
+  max-width: 75ch;
+}
+
+.doc-body pre {
+  overflow-x: auto;
+  padding: 12px;
+  background: var(--km-ground);
+  border: 1px solid var(--km-border);
+  border-radius: 8px;
+}
+
+.doc-body code {
+  font-family: var(--km-mono);
+}
+
+.doc-body blockquote {
+  margin: 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--km-border);
+}
+
+.doc-body [id^="doc-"] {
+  scroll-margin-top: 16px;
+}
