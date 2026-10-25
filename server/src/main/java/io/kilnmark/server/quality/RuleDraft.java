@@ -164,20 +164,31 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
     }
 
     /**
-     * A path with no dot segments ({@code .} or {@code ..}) and no encoded dots, slashes or
-     * backslashes, so it cannot climb out of an allowed prefix once the receiving server
-     * normalises it.
+     * A path with no dot segments ({@code .} or {@code ..}), no encoded dots, slashes or
+     * backslashes and no semicolons, so it cannot climb out of an allowed prefix once the
+     * receiving server normalises it.
+     *
+     * <p>Semicolons are refused outright, raw or encoded ({@code %3b}): some servers (Tomcat,
+     * Jetty) strip a segment's matrix parameters ({@code ..;x} becomes {@code ..}) before or after
+     * normalising, so a segment that looks like a name here can climb there. Webhook receivers take
+     * plain paths and put anything else in the query, where a semicolon stays allowed; the only
+     * common use of path parameters, Java's {@code ;jsessionid}, has no place in a webhook URL.
+     * Segments are also read without their parameters, so the rule holds should the blanket
+     * refusal ever be loosened.
      */
     static boolean plainPath(String rawPath) {
         if (rawPath == null || rawPath.isEmpty()) {
             return true;
         }
         String lower = rawPath.toLowerCase(Locale.ROOT);
-        if (lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c") || lower.contains("\\")) {
+        if (lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c") || lower.contains("\\")
+            || lower.contains(";") || lower.contains("%3b")) {
             return false;
         }
         for (String segment : rawPath.split("/", -1)) {
-            if (segment.equals(".") || segment.equals("..")) {
+            int params = segment.indexOf(';');
+            String bare = params < 0 ? segment : segment.substring(0, params);
+            if (bare.equals(".") || bare.equals("..")) {
                 return false;
             }
         }

@@ -83,6 +83,9 @@ details.
 - **Database:** migration V9 adds profile versions, samples, rules, accepted patterns, quality
   runs, results, measures, scores, drift events and issues, a `sensitive` flag on fields, and
   lets the job queue hold jobs of other kinds.
+- **Webhooks, after review:** a webhook path may not hold a semicolon, raw or encoded (`%3b`), so a
+  segment such as `..;x`, which some servers read as `..` once they drop its parameters, cannot
+  climb out of an allowed prefix. Checked when a rule is saved and again before each call.
 
 - **Sign-in with API tokens:** every API call needs a token (`Authorization: Bearer km_...`)
   with a role: viewer (read), steward (also start scans) or admin (also add sources and manage

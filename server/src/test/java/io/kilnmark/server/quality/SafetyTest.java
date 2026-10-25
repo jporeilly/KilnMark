@@ -171,6 +171,25 @@ class SafetyTest {
     }
 
     @Test
+    void webhookPathsCannotClimbOutThroughMatrixParameters() {
+        List<String> allow = List.of("https://hooks.example.com/kilnmark/", "http://127.0.0.1:47391/hooks/");
+        // Servers that strip ";..." from a segment (Tomcat, Jetty) then read it as a dot segment.
+        for (String url : List.of("https://hooks.example.com/kilnmark/..;x/admin",
+            "https://hooks.example.com/kilnmark/..;/admin", "https://hooks.example.com/kilnmark/.;x/a",
+            "https://hooks.example.com/kilnmark/a/..;jsessionid=1/../admin", "http://127.0.0.1:47391/hooks/..;/q/health",
+            // An encoded semicolon, decoded before the segment is read.
+            "https://hooks.example.com/kilnmark/..%3bx/admin", "https://hooks.example.com/kilnmark/..%3Bx/admin",
+            // Any semicolon at all: no webhook needs one (see RuleDraft.plainPath).
+            "https://hooks.example.com/kilnmark/quality;v=1")) {
+            assertFalse(RuleDraft.allowed(url, allow), url);
+            assertEquals("not on the allow-list", new Webhooks(allow, Duration.ofSeconds(1)).send(url, "{}"),
+                "and checked again, with the same function, at send time: " + url);
+        }
+        assertTrue(RuleDraft.allowed("https://hooks.example.com/kilnmark/hook?a=1;b=2", allow),
+            "semicolons in the query are not part of the path");
+    }
+
+    @Test
     void regexesStayInTheSubsetBothEnginesRead() {
         for (String ok : List.of("^[A-Z]{2}[0-9]{4}$", "^\\p{Lu}\\p{Ll}+$", "^(?:ab|cd)*?x$", "^[^@\\s]+@[^@]+\\.[a-z]{2,}$",
             "^\\d{3}-\\d{4}$", "^a\\.b\\+c$")) {
