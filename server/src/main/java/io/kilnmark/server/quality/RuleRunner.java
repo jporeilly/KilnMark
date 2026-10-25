@@ -88,7 +88,7 @@ public final class RuleRunner {
     /**
      * What makes custom SQL unsafe however it is written, as a reason code, or null: superuser and
      * the roles that touch the server's files, programs or sessions ({@code roles}); dblink's
-     * functions the login may execute, in whatever schema ({@code dblink:<schema>}); a foreign
+     * functions the login may execute, in whatever schema ({@code dblink:<their signatures>}); a foreign
      * server it may use ({@code server:<name>}); and any user mapping ({@code mapping}) or foreign
      * table ({@code foreign}) in the database at all. A read-only transaction does not hold on the
      * other side of a dblink call or a foreign table, and a view owned by a role with a user mapping
@@ -107,13 +107,13 @@ public final class RuleRunner {
                  WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_foreign_table) THEN 'foreign'
                END
         FROM pg_roles r
-        LEFT JOIN LATERAL (SELECT quote_ident(n.nspname) AS schema
+        LEFT JOIN LATERAL (SELECT string_agg(d.objid::regprocedure::text, ', ' ORDER BY d.objid::regprocedure::text)
+                                  AS schema
                            FROM pg_catalog.pg_extension e
-                           JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
                            JOIN pg_catalog.pg_depend d ON d.refclassid = 'pg_catalog.pg_extension'::regclass
                                 AND d.refobjid = e.oid AND d.classid = 'pg_catalog.pg_proc'::regclass
                                 AND d.deptype = 'e'
-                           WHERE e.extname = 'dblink' AND has_function_privilege(d.objid, 'EXECUTE') LIMIT 1) x ON true
+                           WHERE e.extname = 'dblink' AND has_function_privilege(d.objid, 'EXECUTE')) x ON true
         LEFT JOIN LATERAL (SELECT quote_ident(s.srvname) AS server FROM pg_catalog.pg_foreign_server s
                            WHERE has_server_privilege(s.oid, 'USAGE') LIMIT 1) v ON true
         WHERE r.rolname = current_user""";
@@ -124,10 +124,12 @@ public final class RuleRunner {
             return null;
         }
         if (reason.startsWith("dblink:")) {
+            // dblink's own functions by name: a whole-schema revoke would take every function of a shared schema
+            // (such as public) from everyone.
             return "Custom SQL does not run under this source's login: it may run dblink's functions, which reach other "
-                + "databases (they are granted to everyone when the extension is created). Revoke them: REVOKE EXECUTE "
-                + "ON ALL FUNCTIONS IN SCHEMA " + reason.substring(7) + " FROM PUBLIC (and from the login, if granted "
-                + "to it).";
+                + "databases (they are granted to everyone when the extension is created). Revoke them from PUBLIC (and "
+                + "from the login, if granted to it): REVOKE EXECUTE ON FUNCTION " + reason.substring(7)
+                + " FROM PUBLIC; or drop dblink from this database if nothing uses it.";
         }
         if (reason.startsWith("server:")) {
             String server = reason.substring(7);

@@ -75,7 +75,10 @@ class CustomSqlLoginTest {
 
             // dblink's functions are granted to PUBLIC when the extension is created, whatever its schema.
             admin(DB, "CREATE SCHEMA ext", "CREATE EXTENSION dblink SCHEMA ext");
-            says(refused(), "REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ext FROM PUBLIC");
+            String dblink = refused();
+            says(dblink, "REVOKE EXECUTE ON FUNCTION ");
+            says(dblink, "dblink_connect(text,text)");
+            assertTrue(!dblink.contains("IN SCHEMA"), "never a whole-schema revoke: " + dblink);
             admin(DB, "REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA ext FROM PUBLIC");
             assertNull(refused(), "dblink is installed but not executable");
 
