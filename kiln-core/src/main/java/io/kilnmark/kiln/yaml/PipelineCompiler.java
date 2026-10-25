@@ -1,5 +1,7 @@
 package io.kilnmark.kiln.yaml;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -18,6 +20,7 @@ import java.util.regex.Pattern;
 
 import org.apache.arrow.vector.types.pojo.Schema;
 
+import io.kilnmark.kiln.Decimals;
 import io.kilnmark.kiln.SettingSpec;
 import io.kilnmark.kiln.StepException;
 import io.kilnmark.kiln.StepFactories;
@@ -43,6 +46,9 @@ import io.kilnmark.kiln.yaml.PipelineDefinition.StepDefinition;
  */
 public final class PipelineCompiler {
 
+    /** Most digits a number setting may have, and furthest its decimal point may sit from them. */
+    static final int MAX_DIGITS = 1000;
+
     /** A step id: a lower-case letter, then up to 63 lower-case letters, digits, dashes and underscores. */
     public static final Pattern STEP_ID = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
 
@@ -54,20 +60,27 @@ public final class PipelineCompiler {
 
     /** Reads and checks a pipeline's YAML. */
     public Compiled compile(String yaml) {
-        PipelineDefinition.Parsed parsed = PipelineDefinition.parse(yaml);
-        return compile(parsed.definition(), parsed.problems());
-    }
-
-    /** Checks a pipeline already read. */
-    public Compiled compile(PipelineDefinition definition) {
-        return compile(definition, List.of());
-    }
-
-    private Compiled compile(PipelineDefinition definition, List<Problem> parseProblems) {
-        if (definition == null) {
-            return new Compiled(null, parseProblems, List.of(), Map.of(), Map.of(), List.of());
+        Set<String> inputProblems = new HashSet<>();
+        PipelineDefinition.Parsed parsed = PipelineDefinition.parse(yaml, inputProblems);
+        if (parsed.definition() == null) {
+            return new Compiled(null, parsed.problems(), List.of(), Map.of(), Map.of(), List.of(), Map.of(), Map.of());
         }
-        return new Check(definition, parseProblems).run();
+        return new Check(parsed.definition(), parsed.problems(), inputProblems, false).run();
+    }
+
+    /**
+     * Checks a pipeline built in code, including what reading YAML checks: the name, step ids
+     * (pattern and uniqueness) and that each step has a type.
+     */
+    public Compiled compile(PipelineDefinition definition) {
+        Objects.requireNonNull(definition, "definition");
+        return new Check(definition, List.of(), Set.of(), true).run();
+    }
+
+    /** The problem with a step id that does not match {@link #STEP_ID}. */
+    static String badId(String id) {
+        return "Step id '" + Suggest.clip(id)
+            + "' must start with a lower-case letter and use only a-z, 0-9, - and _, up to 64 characters";
     }
 
     /** A port name as edges use it: a many-input port {@code in*} is {@code in}. */
@@ -88,17 +101,46 @@ public final class PipelineCompiler {
         private final Set<String> badInputs = new HashSet<>();
         private final List<Edge> edges = new ArrayList<>();
         private final Map<Edge, InputRef> refOf = new HashMap<>();
+        /** The steps checked: those written, less any whose id is used twice. */
+        private final List<StepDefinition> list = new ArrayList<>();
+        /** Each step's settings as its factory and step receive them. */
+        private final Map<String, Map<String, Object>> configs = new LinkedHashMap<>();
+        /** The columns arriving on each step's input ports, where known. */
+        private final Map<String, Map<String, Schema>> inputSchemas = new LinkedHashMap<>();
 
-        Check(PipelineDefinition definition, List<Problem> parseProblems) {
+        Check(PipelineDefinition definition, List<Problem> parseProblems, Set<String> inputProblems,
+              boolean checkDefinition) {
             this.definition = definition;
             this.problems = new ArrayList<>(parseProblems);
-            definition.steps().forEach(s -> steps.put(s.id(), s));
-            // a step already reported while reading is not also reported for a missing input
-            parseProblems.stream().map(Problem::stepId).filter(Objects::nonNull).forEach(badInputs::add);
+            badInputs.addAll(inputProblems); // already reported while reading: not also "needs an input"
+            if (checkDefinition && (definition.name() == null || definition.name().isBlank())) {
+                problems.add(Problem.at(Position.START, null, "The pipeline needs a name"));
+            }
+            if (checkDefinition && definition.steps().isEmpty()) {
+                problems.add(Problem.at(Position.START, null, "The pipeline needs at least one step"));
+            }
+            for (StepDefinition s : definition.steps()) {
+                if (checkDefinition) {
+                    if (!STEP_ID.matcher(s.id()).matches()) {
+                        problems.add(Problem.at(s.position(), Suggest.clip(s.id()), badId(s.id())));
+                    }
+                    if (steps.containsKey(s.id())) {
+                        problems.add(Problem.at(s.position(), Suggest.clip(s.id()), "Step id '" + Suggest.clip(s.id())
+                            + "' is used twice (first on line " + steps.get(s.id()).position().line() + ")"));
+                        continue;
+                    }
+                    if (s.type() == null) {
+                        problems.add(Problem.at(s.position(), s.id(), "Step " + Suggest.clip(s.id()) + " needs a type"));
+                    }
+                }
+                if (steps.putIfAbsent(s.id(), s) == null) {
+                    list.add(s);
+                }
+            }
         }
 
         Compiled run() {
-            for (StepDefinition s : definition.steps()) {
+            for (StepDefinition s : list) {
                 if (s.type() == null) {
                     broken.add(s.id());
                     continue;
@@ -112,10 +154,10 @@ public final class PipelineCompiler {
                 factoryOf.put(s.id(), f);
                 settings(s, f);
             }
-            for (StepDefinition s : definition.steps()) {
+            for (StepDefinition s : list) {
                 inputs(s);
             }
-            for (StepDefinition s : definition.steps()) {
+            for (StepDefinition s : list) {
                 connected(s);
             }
             List<String> order = order();
@@ -123,7 +165,7 @@ public final class PipelineCompiler {
             if (order != null) {
                 sharedUpstream();
             }
-            return new Compiled(definition, problems, notes, schemas, factoryOf, edges);
+            return new Compiled(definition, problems, notes, schemas, factoryOf, edges, configs, inputSchemas);
         }
 
         private String unknownType(String type) {
@@ -131,9 +173,14 @@ public final class PipelineCompiler {
             factories.all().forEach(f -> types.add(f.type()));
             String closest = Suggest.closest(type, types);
             if (closest != null) {
-                return "Unknown step type '" + type + "' (did you mean '" + closest + "'?)";
+                return "Unknown step type '" + Suggest.clip(type) + "' (did you mean '" + closest + "'?)";
             }
-            return "Unknown step type '" + type + "'. The step types are: " + String.join(", ", types);
+            return "Unknown step type '" + Suggest.clip(type) + "'. The step types are: " + String.join(", ", types);
+        }
+
+        /** A step's settings as its factory receives them (as written, if they could not be checked). */
+        private Map<String, Object> config(StepDefinition s) {
+            return configs.getOrDefault(s.id(), s.config());
         }
 
         // ---- settings ----
@@ -148,9 +195,10 @@ public final class PipelineCompiler {
                     String known = specs.isEmpty() ? "it takes no settings"
                         : "its settings are " + String.join(", ", specs.keySet());
                     problems.add(Problem.at(s.at(key), s.id(), "Step " + s.id() + " (" + s.type()
-                        + ") has no setting '" + key + "'" + hint + ": " + known));
+                        + ") has no setting '" + Suggest.clip(key) + "'" + hint + ": " + known));
                 }
             }
+            Map<String, Object> config = new LinkedHashMap<>(s.config());
             for (SettingSpec spec : specs.values()) {
                 Object value = s.config().get(spec.key());
                 if (value == null) {
@@ -160,15 +208,18 @@ public final class PipelineCompiler {
                     }
                     continue;
                 }
-                String wrong = kind(spec, value);
-                if (wrong != null) {
+                Checked c = kind(spec, value, s.configText().get(spec.key()));
+                if (c.wrong() != null) {
                     problems.add(Problem.at(s.at(spec.key()), s.id(), "Setting '" + spec.key() + "' of step "
-                        + s.id() + " " + wrong));
+                        + s.id() + " " + c.wrong()));
+                } else {
+                    config.put(spec.key(), c.value());
                 }
             }
+            configs.put(s.id(), Collections.unmodifiableMap(config));
             if (problems.size() == before) {
                 try {
-                    for (String message : f.check(s.config())) {
+                    for (String message : f.check(config)) {
                         problems.add(Problem.at(s.at(firstWord(message, s.config().keySet())), s.id(),
                             "Step " + s.id() + ": " + message));
                     }
@@ -182,26 +233,91 @@ public final class PipelineCompiler {
             }
         }
 
-        /** What is wrong with a value for its kind of setting, or null. */
-        private static String kind(SettingSpec spec, Object v) {
+        /** A setting's value as the step receives it, or what is wrong with it. */
+        private record Checked(Object value, String wrong) {
+            static Checked ok(Object value) {
+                return new Checked(value, null);
+            }
+
+            static Checked wrong(String wrong) {
+                return new Checked(null, wrong);
+            }
+        }
+
+        /**
+         * Checks a value against its kind of setting and gives it the form the step receives: a
+         * setting that is text keeps the text as written (007, 2024.10), a number is a whole number
+         * or a BigDecimal, never infinite or not-a-number.
+         */
+        private static Checked kind(SettingSpec spec, Object v, Object text) {
             boolean scalar = v instanceof String || v instanceof Number || v instanceof Boolean;
+            boolean name = v instanceof String || v instanceof Number;
             return switch (spec.kind()) {
-                case TEXT, EXPRESSION -> scalar ? null : "must be a single value, not a list or mapping";
-                case COLUMN, SOURCE, ASSET -> v instanceof String || v instanceof Number ? null
-                    : "must be a name, such as customer_id";
-                case NUMBER -> v instanceof Number ? null : "must be a number";
-                case BOOLEAN -> v instanceof Boolean ? null : "must be true or false";
-                case CHOICE -> scalar && spec.choices().contains(String.valueOf(v)) ? null
-                    : "must be one of " + String.join(", ", spec.choices());
-                case COLUMNS -> v instanceof List<?> l && l.stream().allMatch(i -> i instanceof String || i instanceof Number)
-                    ? null : "must be a list of columns, such as [customer_id, email]";
-                case EXPRESSIONS, CONDITIONS -> v instanceof Map<?, ?> m && m.values().stream()
-                    .allMatch(i -> i instanceof String || i instanceof Number || i instanceof Boolean)
-                    ? null : "must be a mapping of names to expressions, such as { total: \"sum(amount)\" }";
-                case COLUMN_MAP -> v instanceof Map<?, ?> m && m.values().stream()
-                    .allMatch(i -> i instanceof String || i instanceof Number)
-                    ? null : "must be a mapping of column names to column names, such as { id: customer_id }";
+                case TEXT, EXPRESSION -> scalar ? Checked.ok(written(v, text))
+                    : Checked.wrong("must be a single value, not a list or mapping");
+                case COLUMN, SOURCE, ASSET -> name ? Checked.ok(written(v, text))
+                    : Checked.wrong("must be a name, such as customer_id");
+                case CHOICE -> scalar && spec.choices().contains(written(v, text)) ? Checked.ok(written(v, text))
+                    : Checked.wrong("must be one of " + String.join(", ", spec.choices()));
+                case NUMBER -> number(v);
+                case BOOLEAN -> v instanceof Boolean ? Checked.ok(v) : Checked.wrong("must be true or false");
+                case COLUMNS -> {
+                    if (!(v instanceof List<?> l) || !l.stream().allMatch(i -> i instanceof String || i instanceof Number)) {
+                        yield Checked.wrong("must be a list of columns, such as [customer_id, email]");
+                    }
+                    List<?> t = text instanceof List<?> tl && tl.size() == l.size() ? tl : l;
+                    List<Object> out = new ArrayList<>();
+                    for (int i = 0; i < l.size(); i++) {
+                        out.add(written(l.get(i), t.get(i)));
+                    }
+                    yield Checked.ok(Collections.unmodifiableList(out));
+                }
+                case EXPRESSIONS, CONDITIONS, COLUMN_MAP -> {
+                    boolean columns = spec.kind() == SettingSpec.Kind.COLUMN_MAP;
+                    if (!(v instanceof Map<?, ?> m) || !m.values().stream().allMatch(i -> i instanceof String
+                        || i instanceof Number || !columns && i instanceof Boolean)) {
+                        yield Checked.wrong(columns
+                            ? "must be a mapping of column names to column names, such as { id: customer_id }"
+                            : "must be a mapping of names to expressions, such as { total: \"sum(amount)\" }");
+                    }
+                    Map<?, ?> t = text instanceof Map<?, ?> tm ? tm : m;
+                    Map<String, Object> out = new LinkedHashMap<>();
+                    m.forEach((k, x) -> out.put(String.valueOf(k), written(x, t.get(k))));
+                    yield Checked.ok(Collections.unmodifiableMap(out));
+                }
             };
+        }
+
+        /** A scalar as written. */
+        private static String written(Object value, Object text) {
+            if (text instanceof String t) {
+                return t;
+            }
+            return value instanceof BigDecimal d ? Decimals.text(d) : String.valueOf(value);
+        }
+
+        private static Checked number(Object v) {
+            if (v instanceof Integer || v instanceof Long) {
+                return Checked.ok(v);
+            }
+            if (v instanceof BigInteger) {
+                return Checked.wrong("is too large: whole numbers go up to " + Long.MAX_VALUE);
+            }
+            if (v instanceof BigDecimal d) {
+                if (d.precision() > MAX_DIGITS || Math.abs((long) d.scale()) > MAX_DIGITS) {
+                    return Checked.wrong("has too many digits: at most " + MAX_DIGITS
+                        + ", with the decimal point no more than " + MAX_DIGITS + " places from them");
+                }
+                return d.abs().compareTo(BigDecimal.valueOf(Double.MAX_VALUE)) > 0
+                    ? Checked.wrong("is too large") : Checked.ok(d);
+            }
+            if (v instanceof Double d) {
+                return d.isNaN() || d.isInfinite() ? Checked.wrong("must be a finite number") : Checked.ok(BigDecimal.valueOf(d));
+            }
+            if (v instanceof Number n) {
+                return number(new BigDecimal(n.toString()));
+            }
+            return Checked.wrong("must be a number");
         }
 
         /** The setting a factory's message starts with, so the problem points at it. */
@@ -224,8 +340,8 @@ public final class PipelineCompiler {
                 PortRef from = PortRef.parse(ref.from(), "out");
                 StepDefinition source = steps.get(from.step());
                 if (source == null) {
-                    problems.add(Problem.at(ref.position(), s.id(), "Step " + s.id() + " reads from '" + from.step()
-                        + "', which is not a step in this pipeline" + Suggest.hint(from.step(), steps.keySet())));
+                    problems.add(Problem.at(ref.position(), s.id(), "Step " + s.id() + " reads from '"
+                        + Suggest.clip(from.step()) + "', which is not a step in this pipeline" + Suggest.hint(from.step(), steps.keySet())));
                     bad(s.id());
                     continue;
                 }
@@ -247,8 +363,8 @@ public final class PipelineCompiler {
                 }
                 Edge e = new Edge(from, new PortRef(s.id(), port));
                 if (refOf.containsKey(e)) {
-                    problems.add(Problem.at(ref.position(), s.id(), "Step " + s.id() + " reads from " + ref.from()
-                        + " twice on its input '" + port + "'"));
+                    problems.add(Problem.at(ref.position(), s.id(), "Step " + s.id() + " reads from "
+                        + Suggest.clip(ref.from()) + " twice on its input '" + port + "'"));
                     bad(s.id());
                     continue;
                 }
@@ -269,7 +385,7 @@ public final class PipelineCompiler {
             }
             List<String> outs;
             try {
-                outs = sf.outputPorts(source.config());
+                outs = sf.outputPorts(config(source));
             } catch (RuntimeException e) {
                 return true; // its settings are reported against it
             }
@@ -282,7 +398,7 @@ public final class PipelineCompiler {
                     + ") has no outputs, so step " + s.id() + " cannot read from it"));
             } else {
                 problems.add(Problem.at(ref.position(), s.id(), "Step " + source.id() + " (" + source.type()
-                    + ") has no output '" + port + "'" + Suggest.hint(port, outs) + ": its outputs are "
+                    + ") has no output '" + Suggest.clip(port) + "'" + Suggest.hint(port, outs) + ": its outputs are "
                     + String.join(", ", outs)));
             }
             return false;
@@ -306,7 +422,7 @@ public final class PipelineCompiler {
             }
             String port = portName(ref.port());
             if (!declared.contains(port)) {
-                problems.add(Problem.at(ref.position(), s.id(), what + " has no input '" + port + "'"
+                problems.add(Problem.at(ref.position(), s.id(), what + " has no input '" + Suggest.clip(port) + "'"
                     + Suggest.hint(port, declared) + ": its inputs are " + String.join(", ", declared)));
                 return null;
             }
@@ -427,6 +543,7 @@ public final class PipelineCompiler {
                         }
                     }
                 }
+                inputSchemas.put(id, inputs);
                 if (silent || origin != null) {
                     if (!silent) {
                         unknownBecause.put(id, origin);
@@ -436,7 +553,7 @@ public final class PipelineCompiler {
                 }
                 List<String> outs;
                 try {
-                    outs = f.outputPorts(s.config());
+                    outs = f.outputPorts(config(s));
                 } catch (RuntimeException e) {
                     problems.add(Problem.at(s.position(), id, "Step " + id + ": its outputs could not be worked out: "
                         + message(e)));
@@ -446,7 +563,7 @@ public final class PipelineCompiler {
                 for (String port : outs) {
                     Schema schema;
                     try {
-                        schema = f.outputSchema(port, inputs, s.config());
+                        schema = f.outputSchema(port, inputs, config(s));
                     } catch (StepException e) {
                         problems.add(Problem.at(s.position(), id, "Step " + id + ": " + message(e)));
                         mine = null;
@@ -485,11 +602,15 @@ public final class PipelineCompiler {
          */
         private void sharedUpstream() {
             Map<String, Set<String>> above = new HashMap<>();
-            for (StepDefinition s : definition.steps()) {
-                Map<String, Set<String>> byPort = new LinkedHashMap<>();
+            for (StepDefinition s : list) {
+                Map<String, Set<String>> byPort = new LinkedHashMap<>(); // a port taking many: one entry per input
+                Map<String, Integer> seen = new HashMap<>();
                 for (Edge e : edges) {
                     if (e.to().step().equals(s.id())) {
-                        Set<String> a = byPort.computeIfAbsent(e.to().port(), k -> new HashSet<>());
+                        int k = seen.merge(e.to().port(), 1, Integer::sum) - 1;
+                        boolean many = into(s.id(), e.to().port()).size() > 1;
+                        String key = many ? e.to().port() + "[" + k + "]" : e.to().port();
+                        Set<String> a = byPort.computeIfAbsent(key, x -> new HashSet<>());
                         a.add(e.from().step());
                         a.addAll(ancestors(e.from().step(), above));
                     }

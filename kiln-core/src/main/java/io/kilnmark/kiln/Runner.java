@@ -1,5 +1,6 @@
 package io.kilnmark.kiln;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +31,15 @@ public final class Runner {
      */
     public Runner(long memoryLimitBytes, int rowSetCapacity) {
         this.graphRunner = new KilnGraphRunner(memoryLimitBytes, rowSetCapacity);
+    }
+
+    /**
+     * @param memoryLimitBytes Arrow memory the whole run may hold at once
+     * @param rowSetCapacity   batches each row set holds before the step before it waits
+     * @param stallTimeout     how long no batch may move while every step waits before the run fails
+     */
+    public Runner(long memoryLimitBytes, int rowSetCapacity, Duration stallTimeout) {
+        this.graphRunner = new KilnGraphRunner(memoryLimitBytes, rowSetCapacity, stallTimeout);
     }
 
     /**

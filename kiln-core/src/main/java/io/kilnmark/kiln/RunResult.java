@@ -19,6 +19,18 @@ public record RunResult(String pipeline, Status status, Instant startedAt, Insta
 
     public enum Status { SUCCEEDED, FAILED }
 
+    /** How one step ended. */
+    public enum Outcome {
+        /** It read all its input and wrote all its output. */
+        FINISHED,
+        /** It stopped before its input ended (a limit), or every step reading it had finished: not a failure. */
+        ENDED_EARLY,
+        /** The engine stopped it: another step failed, the run stalled or was stopped. */
+        STOPPED,
+        /** The run failed here: its own error, or it did not free its memory. */
+        FAILED
+    }
+
     /**
      * One step's part in a run. {@code error} is null unless this step is where the run failed.
      *
@@ -28,18 +40,27 @@ public record RunResult(String pipeline, Status status, Instant startedAt, Insta
      * @param rowsInByPort  rows that arrived on each connected input port
      * @param rowsOutByPort rows handed on through each connected output port, counted once however
      *                      many steps read the port
+     * @param outcome       how the step ended, so a step the engine stopped is not shown as a clean finish
      */
     public record StepResult(String name, String type, long rowsOut, long peakMemoryBytes, String error,
-                             long rowsIn, Map<String, Long> rowsInByPort, Map<String, Long> rowsOutByPort) {
+                             long rowsIn, Map<String, Long> rowsInByPort, Map<String, Long> rowsOutByPort,
+                             Outcome outcome) {
 
         public StepResult {
             rowsInByPort = copy(rowsInByPort);
             rowsOutByPort = copy(rowsOutByPort);
+            outcome = error != null ? Outcome.FAILED : outcome != null ? outcome : Outcome.FINISHED;
+        }
+
+        /** A step with rows per port; its outcome follows from {@code error}. */
+        public StepResult(String name, String type, long rowsOut, long peakMemoryBytes, String error,
+                          long rowsIn, Map<String, Long> rowsInByPort, Map<String, Long> rowsOutByPort) {
+            this(name, type, rowsOut, peakMemoryBytes, error, rowsIn, rowsInByPort, rowsOutByPort, null);
         }
 
         /** A step in a line: rows out only. */
         public StepResult(String name, String type, long rowsOut, long peakMemoryBytes, String error) {
-            this(name, type, rowsOut, peakMemoryBytes, error, 0, Map.of(), Map.of());
+            this(name, type, rowsOut, peakMemoryBytes, error, 0, Map.of(), Map.of(), null);
         }
 
         private static Map<String, Long> copy(Map<String, Long> m) {

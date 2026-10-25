@@ -57,9 +57,25 @@ Added while building the engine (round 3, step 1):
   share a step upstream (a route followed by a union), because that step waits for room on the
   input not being read.
 - `RunResult.edges()`: `EdgeResult(fromStep, fromPort, toStep, toPort, rows)` per edge, in the
-  graph's order. `StepResult` gains `rowsIn`, `rowsInByPort` and `rowsOutByPort`; `rowsOut` is
-  the sum over connected output ports, each port counted once however many steps read it. The
-  old constructors remain. `RunResult.step(name)` finds one step.
+  graph's order: the rows that edge's reader was given. `StepResult` gains `rowsIn`,
+  `rowsInByPort` and `rowsOutByPort`; `rowsOut` is the sum over connected output ports, each port
+  counted once however many steps read it. Rows dropped because a reader stopped early, or because
+  a step failed, are not counted (`RowSet.rows()` counts rows when they are taken). The old
+  constructors remain. `RunResult.step(name)` finds one step.
+- `StepContext.inputSchema(port)` and `inputSchema(port, index)` (for a port taking many): the
+  columns arriving on an input, as worked out when the pipeline was checked, or `null` when they
+  were not known before the run. A step can then act on an input that sends no batch: an
+  aggregate of no rows writes SQL's one row, a union adds the columns of an empty input, a lookup
+  knows the columns of an empty lookup side. The compiler puts them on `GraphStep.inputSchemas`
+  (keyed `in`, `main`, `in[0]`, …; a new record component, the three-argument constructor
+  remains) and the runner hands them to the step.
+- In a graph run `hasInput()` and `hasOutput()` mean the `in` and `out` ports, as they did for a
+  step in a line; `inputPorts()` and `outputPorts()` list every connected port.
+- `RowSet.fail(cause)` never waits: it drops batches still queued (the run is failing) to make
+  room for the end, so a failure always reaches the next step. `finish()` still waits for room.
+  `RowSet.put` closes its batch if interrupted while waiting. Added for the engine: `discard`
+  (drop a batch without counting it), `isCancelled`, and `progress`, `readerWaiting` and
+  `writerWaiting` for the stall watchdog.
 
 ### Running a graph (`KilnGraphRunner`)
 
@@ -72,24 +88,58 @@ Added while building the engine (round 3, step 1):
   allocator, as any batch waiting on an edge is. One slow reader holds the others back by at most
   the row set capacity.
 - **A step that ends early** (it stops before its input ends, like a `limit`) releases its
-  inputs: a step writing only to it is stopped without failing; a step that also writes
-  elsewhere goes on, and what it still writes to the finished step is read and dropped. A tee
-  whose readers have all finished stops in the same way.
-- **Failures.** A failing step fails its outputs (the steps after it end, not blamed) and
-  cancels its inputs (the steps before it stop, not blamed), along every edge, so the whole
-  connected graph stops. Steps not joined to it at all are stopped too. The run's error is the
-  first failure in time; a step that did not free its memory is named when nothing failed first.
-  A tee that cannot copy (the memory limit) is reported against the writing step.
-- **Interruption** of the calling thread stops every step and waits for all of them before
-  `run` throws `InterruptedException`.
+  inputs. Each step counts its readers that have not finished, over all its ports and the readers
+  behind a tee; when the last finishes, the step is stopped without failing. Until then, what it
+  still writes to a finished reader is read and dropped (a tee simply stops copying to it).
+- **Failures.** A failing step first cancels its inputs (the steps before it stop, not blamed),
+  then fails its outputs without waiting (the steps after it end, not blamed), along every edge,
+  so the whole connected graph stops even if a step after it is stuck. The steps before it are
+  also interrupted, so one waiting on a database or a file stops too. Steps not joined to it at
+  all are stopped. The run's error is the first failure in time; a step that did not free its
+  memory is named when nothing failed first (a step stopped mid-batch is only logged). Running out
+  of memory names the run's limit ("ran out of memory: the run may hold 256 MB of Arrow memory in
+  all"). A tee that cannot copy is reported against the writing step.
+- **Stalls.** If no batch moves through any row set for the stall timeout (120 seconds unless
+  set on `KilnGraphRunner` or `Runner`) while every running step is waiting on a row set, the run
+  fails: "The run stalled: no rows moved for 120 seconds while every running step waited for
+  another. Waiting: seq (to read from p1.out->seq.a); p2 (to write to p2.out->seq.b) …". A step
+  busy outside the row sets (a slow query) is never taken for a stall.
+- **Interruption** of the calling thread stops every step and waits for every thread ever
+  started before `run` throws `InterruptedException`; no thread starts once a stop has begun.
 - The linear `Runner` builds a graph (`a.out -> b.in -> ...`, settings as configuration) and runs
   it with `KilnGraphRunner`. One difference from before: if one step fails and another leaks, the
   run reports the failure, not whichever step came first in the line. A step that ends before its
   input does no longer leaves the step before it waiting for ever.
 - **Known limit.** A step that reads one input to its end before another (a lookup reads its
   lookup side first) stalls when both inputs come from the same step and more rows are waiting
-  than the edges hold. The compiler adds a note to such pipelines; reading the source twice
-  avoids it.
+  than the edges hold. The compiler adds a note to such pipelines (also when the inputs of a port
+  taking many share a step, in case the step reads them one after another); reading the source
+  twice avoids it, and the stall watchdog ends such a run with a plain message instead of hanging.
+- **Outcomes.** Each `StepResult` has an `outcome`: `FINISHED`, `ENDED_EARLY` (it stopped before
+  its input ended, or every step reading it had finished), `STOPPED` (the engine stopped it
+  because another step failed, the run stalled or was stopped) or `FAILED`. A UI shows a stopped
+  writer as stopped, not as a clean finish. The older constructors derive it from `error`.
+- If anything fails while the run is starting (building a step's context, starting a thread),
+  the steps already started are stopped and waited for before the failure is thrown. Decimal
+  settings are turned into text in full only when that is short, otherwise in scientific form
+  (`1E-999999999`), so a number can never become a string of a billion zeros.
+
+### Writing a step for graphs
+
+- Read with `input(port)` or, for a port taking many, `inputs(port)` with `RowSet.takeAny`; write
+  with `emit(port, batch)`, which drops rows for an unconnected port.
+- A step that polls with a timeout counts as waiting only while it waits; work between polls (a
+  commit, a remote call) is never taken for a stall.
+- **Close what you hold in `close()` or a `finally`.** When another step fails, the steps before
+  it are interrupted wherever they are, and every step can be stopped mid-batch. A batch taken but
+  not yet handed on must still be closed, or the step is reported (or, when stopped, logged) for
+  not freeing its memory.
+- **Interruption closes sockets.** Interrupting a thread blocked in socket or channel I/O closes
+  that socket. A step using a connection pool must validate connections before reuse, and must not
+  return a connection to the pool after it was interrupted mid-call. Writers should roll back in
+  `close()` when the step did not finish.
+- `inputSchema(port)` gives an input's columns when they were known before the run, so a step can
+  act correctly on an input that sends no batch.
 
 ## 2. The YAML format
 
@@ -158,17 +208,29 @@ steps:
 - YAML is read with **SnakeYAML Engine 3.2** (YAML 1.2, Apache-2.0; its licence is listed in the
   generated third-party notices). Kilnmark builds its own tree from the parser's events, so no
   object is ever constructed from a tag. Scalars follow the YAML 1.2 core schema: `yes` and `on`
-  are text, quoted values are always text, `${VAR}` is never substituted.
+  are text, quoted values are always text, `${VAR}` is never substituted. Decimals are read as
+  exact `BigDecimal`s. The text written is kept beside each value
+  (`StepDefinition.configText`), and mapping keys are always the text written (`007` stays
+  `007`).
+- Settings reach the step in the form their kind needs (`Compiled.configs()`): a setting that is
+  text (text, expression, column, source, asset, choice, and the values of columns, expressions,
+  conditions and column maps) holds exactly what was written, so `asset: 2024.10` is `"2024.10"`
+  and `007` is `"007"`; a number is a whole number (Integer or Long) or a BigDecimal, never
+  not-a-number, infinite, beyond a long or a double, or with more than 1,000 digits or its decimal
+  point more than 1,000 places away (`1e-999999999` is refused). `settings()` at run time is the text of
+  those values.
 - Refused, each with its line and column: files over 1,000,000 characters, more than one
   document, anchors and aliases (a pipeline is written out in full, so the canvas can rewrite it),
-  tags, duplicate keys, keys that are lists or mappings, nesting deeper than 64 and more than
-  100,000 values.
+  tags, duplicate keys, keys that are lists or mappings, nesting deeper than 64, more than
+  100,000 values, and characters YAML forbids. Values echoed in messages are cut to 80 characters.
 - `PipelineDefinition.parse(yaml)` reads the format line, names, steps, ids, inputs and settings
   with their positions. `PipelineCompiler(stepFactories).compile(yaml)` checks it against the step
   types and returns `Compiled`: `problems()` (line, column, step id, message), `notes()`,
   `schemas()` (columns per step and output port) and `graph()`. Checking never creates a step or
   opens a connection; `graph()` creates new steps for one run, and closes those already made if one
   fails.
+- `compile(PipelineDefinition)`, for a pipeline built in code, also checks what reading does: the
+  name, step ids (pattern and uniqueness) and that each step has a type.
 - Checks: the format line; unknown top-level keys; step ids (`[a-z][a-z0-9_-]{0,63}`, unique);
   unknown step types, suggesting the closest; settings against the step type's `SettingSpec`s
   (unknown keys with a suggestion, required, kind, choices) and then the factory's `check`, whose
@@ -199,6 +261,81 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   a type mismatch is an error naming the step, the expression and the position.
 - Later, a read followed by filters and computes on the same database can be pushed down as SQL.
 
+### As built (`kiln-steps`, `io.kilnmark.kiln.steps.expr`)
+
+- **Parsing.** A hand-written lexer and recursive-descent parser; no `eval`, no reflection, no
+  regular expressions over the expression text. Keywords are case-insensitive; bare column names
+  are case-sensitive and cannot be keywords (quote them: `"date"`). Precedence, loosest first:
+  `or`, `and`, `not`, comparisons / `is null` / `in` / `between` / `like`, `||`, `+ -`,
+  `* / %`, unary minus. Comparisons do not chain (`a = b = c` and `x between 1 and 2 between …`
+  need brackets). Limits: 10,000 characters, nesting 64 deep (brackets, calls, `case`, `cast`,
+  `in`, `not`, minus), at most 1,000 operations inside each other (so a chain like `a + b + …`
+  cannot overflow the stack) and 10,000 parts in a compiled expression. Every node is compiled
+  once (a `between` operand, a simple `case` operand), so checking and evaluation stay linear in
+  the expression's size.
+- **Types.** `boolean`, `int64` (every Arrow integer), `float64` (every Arrow float), `decimal(p,s)`
+  (up to 38 digits), `utf8` (also large and view text), `date`, `timestamp` (microseconds, UTC;
+  any Arrow unit or time zone reads as the same instant, and text without an offset is UTC), and
+  the type of a bare `null`. Dates and timestamps are limited to years -9999 to 9999 (literals,
+  parsing and date arithmetic), so every date is also a timestamp; arithmetic that still leaves the
+  range is a plain error. Other Arrow types (binary, lists, structs, times) pass through steps
+  untouched but cannot be used in expressions. Results are written as `Int64`, `Float64`,
+  `Decimal(38,s)`, `Utf8`, `Date(DAY)` and `Timestamp(MICROSECOND, "UTC")`.
+- **Implicit conversion only widens**: `int64` → `decimal` → `float64`, and `date` → `timestamp`
+  (midnight UTC); `null` becomes anything. Everything else needs `cast`. `int64 / int64` gives a
+  `float64` (`7 / 2` is `3.5`). Decimal results keep precision 38 with scale: `+ - %` the larger
+  scale, `*` the sum of the scales, `/` at least 6; every result scale is capped at 18, rounded half
+  up. Decimal literals over 38 digits are refused. Whole-number
+  overflow and division by zero are errors (guard with `nullif`); `date ± n` adds days and
+  `date - date` counts them.
+- **Nulls** follow SQL: three-valued `and`/`or`/`not`, `in` with a null item gives null rather
+  than false, `filter` and `route` treat null as not true, `coalesce`, `nullif` and `concat`
+  (which skips nulls) are the exceptions to null-in, null-out.
+- **Evaluation** works a whole batch at a time into plain Java arrays, then writes each result to
+  an Arrow vector from the step's allocator. A row mask passed down the tree means `case`,
+  `and`, `or` and `coalesce` only work out the rows that need it, so
+  `case when x <> 0 then 10 / x end` never divides by zero and a guarded `cast` never fails.
+- **Casts** from text are strict: whole numbers for `int64`; plain decimals with an optional
+  exponent for `float64` and `decimal` (no hexadecimal, `NaN` or suffixes, and the size checked
+  before anything is built); `true/false/yes/no/1/0` for `boolean`; ISO forms for dates and
+  timestamps. Digits are ASCII only, and a float that would be infinite is refused. A failed cast
+  is an error that never quotes the value (it may be sensitive);
+  `parse_date` and `parse_timestamp` give null instead.
+- **Functions as built:** `trim lower upper length substring replace coalesce nullif abs round
+  floor ceil concat regex_match regex_replace now today date_trunc date_part parse_date
+  parse_timestamp format_date`. `now()` is fixed when the step starts. Date patterns use
+  `DateTimeFormatter` letters, read strictly (31 February is rejected) and must be written out;
+  so must `date_trunc` / `date_part` units and `round`'s digits, so mistakes are found before a run.
+- **Regular expressions** are safe on any data and pattern. Refused: a repeated group that itself
+  repeats (`(a+)+`, `(\w+\s?)*`), with one exception: an unbounded repeat (`+` or `*`, never a
+  counted `{n}` or `{n,m}`, which defeats the matcher's own caching) of a group that starts with
+  an ASCII punctuation separator nothing else in the group can match, such as `(\.[\w-]+)+`.
+  Each repetition must then begin at the separator, so there is only one way to split the text.
+  The test is deliberately strict: no `_` separator (which `\w` matches), no alternatives in the
+  group, no unescaped `.`, no negated or nested classes, no class range with any non-letter or
+  non-digit between its ends (`[0-z]` holds `: ; < = > ? @ [ \ ] ^ _` and the backtick), and no
+  escape that can spell or stand for many characters (`\x`, `\0`, `\c`, `\N`, Unicode escapes,
+  `\p`, `\W` and the like). Alternatives are refused only inside such an excepted group: a plain
+  `(a|b)*` is accepted, but run on values of at most 2,000 characters. Back-references and comment
+  mode `(?x)` are refused too. Values over 100,000 characters are an error, and over 2,000 for any
+  pattern that repeats a group (Java's matcher recurses per repetition); a stack overflow in the
+  matcher is caught and reported. The matcher reads text through a wrapper that counts character
+  reads: 10 million per value (roughly a fifth of a second) and 250 million per batch for each
+  function call. Compiled patterns are cached, 128 per call. `regex_match` finds the pattern
+  anywhere (anchor with `^ $`). `like` is matched without regular expressions, with the same value
+  cap and a budget of 50 million steps per value.
+- **Text results** (`||`, `concat`, `replace`, `regex_replace`) are capped at 1,000,000 characters
+  per value, checked while they are built, and at 64,000,000 characters per batch for each
+  operator or call, so a modest result repeated over a full batch cannot exhaust memory. Text compares in Unicode code point order (the order of
+  UTF-8 bytes). `trim` strips characters Java counts as whitespace (spaces, tabs, line breaks and
+  the like, but not the no-break space U+00A0).
+- **Aggregates** (`aggregate` only) may be combined in expressions with group-by columns
+  (`sum(price * qty) / count(*)`); a column outside an aggregate must be grouped by, and
+  aggregates cannot nest. `count_distinct` is exact, counted against the step's memory limit.
+- **Errors** say what, where (character position from 1) and, when there is one, a suggestion:
+  `column full_name: unknown column 'frist_name' at 7; did you mean first_name?`. Validation adds
+  `Step tidy: ` in front; at run time the runner adds `Step tidy (compute) failed: `.
+
 ## 4. Steps in step 1
 
 | Type | Ports | What it does |
@@ -214,6 +351,45 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 | `route` | `in` → named outputs, `out` | Sends each row to the first matching condition's port, others to `out` |
 | `limit` | `in` → `out` | First N rows, for trying a pipeline out |
 | `write` | `in` → | Writes to a database table or a file in a saved source |
+
+The row steps live in the `kiln-steps` module (`io.kilnmark.kiln.steps`), one `StepFactory` each,
+found through `ServiceLoader`. Settings, with defaults:
+
+- `filter`: `condition`. `compute`: `columns` (name → expression, worked out in order; each sees
+  the columns computed before it; a new name is added at the end, an existing one replaced in
+  place). `select`: `keep` or `drop`, `rename`, `order`, `cast` (column → type); every setting
+  names columns as they arrive. `cast` is declared as kind `EXPRESSIONS` (a map of names to free
+  text) for want of a column-to-type kind in `SettingSpec`.
+- `lookup`: `on` (main column → lookup column), `keep` (default: every lookup column but the
+  keys), `join` (`left`), `unmatched` (`keep` for left, `drop` for inner, or `rejected`),
+  `duplicates` (`first` or `error`), `memory_limit_mb` (256). The lookup side is held as its
+  Arrow batches plus a hash table from key to row. Keys match by value across number types
+  (1, 1.0 and 1.00) and dates match timestamps at midnight; null keys never match. While the
+  lookup side loads, main batches that are ready are read and held (counted against the memory
+  limit) once the lookup side has been quiet for 250 ms, until it moves again, so a main input fed by the same step
+  as the lookup input does not stall the run, while a merely slow lookup side does not pull main
+  into memory. An empty lookup side uses the columns the pipeline check worked out
+  (`StepContext.inputSchema`).
+- `aggregate`: `group_by` (none: one row for everything, even with no rows), `values` (name →
+  expression of aggregates), `memory_limit_mb` (256). Groups are emitted in the order first
+  seen, 8,192 rows a batch; nulls form one group. With no input batch at all the columns come
+  from `StepContext.inputSchema`, so an aggregate without `group_by` still writes SQL's one row;
+  only when those are unknown is nothing written.
+- `union`: `strict` (false), `memory_limit_mb` (256). Inputs are read with `RowSet.takeAny`.
+  Columns are matched by name in the order first seen across the inputs as listed; a missing
+  column is null; differing types widen as expressions do (int32 and int64 to int64, whole numbers
+  and decimals to decimal …) or are an error naming both. The output's columns come from the
+  inputs' columns as the pipeline check worked them out (`StepContext.inputSchema("in", i)`);
+  only when those are unknown do batches wait in memory until every input has sent its first
+  batch or ended (an input that then sends nothing adds no columns).
+- `dedupe`: `key` (default: whole rows), `memory_limit_mb` (256); nulls equal each other.
+- `route`: `routes` (port → condition, in order; port names are lower case, not `in` or `out`).
+- `limit`: `rows`. Stops reading once it has its rows; the runner ends the steps before it that
+  feed nothing else.
+
+Memory: a step closes every batch it takes or hands it on, and splits batches by copying only
+when rows go to more than one port (a batch whose rows all go one way is handed on whole).
+Memory limits are checked after each batch, with messages that say what to change.
 
 Writing:
 

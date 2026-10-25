@@ -3,6 +3,7 @@ package io.kilnmark.kiln.yaml;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,19 +38,48 @@ public record PipelineDefinition(String name, String description, List<StepDefin
      * @param id       its id, unique in the pipeline
      * @param type     its step type, or null if none was given
      * @param inputs   the inputs it names, in the order written
-     * @param config   its settings: every key except {@code id}, {@code type}, {@code input} and
-     *                 {@code inputs}, as maps, lists, strings, numbers, booleans and nulls
-     * @param position where the step starts
-     * @param keys     where each of the step's keys is written
+     * @param config     its settings: every key except {@code id}, {@code type}, {@code input} and
+     *                   {@code inputs}, as maps, lists, strings, numbers (whole numbers as Integer, Long
+     *                   or BigInteger, decimals as BigDecimal), booleans and nulls
+     * @param position   where the step starts
+     * @param keys       where each of the step's keys is written
+     * @param configText the same settings with every scalar as the text written ({@code 007},
+     *                   {@code 2024.10}), so a setting that is text keeps exactly what was typed
      */
     public record StepDefinition(String id, String type, List<InputRef> inputs, Map<String, Object> config,
-                                 Position position, Map<String, Position> keys) {
+                                 Position position, Map<String, Position> keys, Map<String, Object> configText) {
 
         public StepDefinition {
             Objects.requireNonNull(id, "id");
             inputs = List.copyOf(inputs);
             config = Collections.unmodifiableMap(new LinkedHashMap<>(config));
             keys = Collections.unmodifiableMap(new LinkedHashMap<>(keys));
+            configText = configText == null ? textOf(config)
+                : Collections.unmodifiableMap(new LinkedHashMap<>(configText));
+        }
+
+        /** A step built in code: the text of each setting is its value written out. */
+        public StepDefinition(String id, String type, List<InputRef> inputs, Map<String, Object> config,
+                              Position position, Map<String, Position> keys) {
+            this(id, type, inputs, config, position, keys, null);
+        }
+
+        @SuppressWarnings("unchecked")
+        private static <T> T textOf(T value) {
+            if (value instanceof Map<?, ?> m) {
+                Map<Object, Object> out = new LinkedHashMap<>();
+                m.forEach((k, v) -> out.put(k, textOf(v)));
+                return (T) Collections.unmodifiableMap(out);
+            }
+            if (value instanceof List<?> l) {
+                List<Object> out = new ArrayList<>();
+                l.forEach(v -> out.add(textOf(v)));
+                return (T) Collections.unmodifiableList(out);
+            }
+            if (value instanceof java.math.BigDecimal d) {
+                return (T) io.kilnmark.kiln.Decimals.text(d);
+            }
+            return value == null ? null : (T) String.valueOf(value);
         }
 
         /** Where {@code key} is written, or where the step starts if it is not. */
@@ -93,6 +123,11 @@ public record PipelineDefinition(String name, String description, List<StepDefin
      * with a problem are kept where they can be, so later checks still find them.
      */
     public static Parsed parse(String yaml) {
+        return parse(yaml, new HashSet<>());
+    }
+
+    /** As {@link #parse(String)}, also collecting the ids of steps whose inputs could not be read. */
+    static Parsed parse(String yaml, Set<String> inputProblems) {
         List<Problem> problems = new ArrayList<>();
         YamlReader.Node root;
         try {
@@ -112,11 +147,11 @@ public record PipelineDefinition(String name, String description, List<StepDefin
                 "The pipeline must start with kilnmark: " + FORMAT + ", naming its format"));
         } else if (!FORMAT.equals(format.value().value())) {
             problems.add(Problem.at(format.value().position(), null, "This pipeline is in the format '"
-                + format.value().value() + "', but this version of Kilnmark reads " + FORMAT));
+                + Suggest.clip(String.valueOf(format.value().text())) + "', but this version of Kilnmark reads " + FORMAT));
         }
         for (YamlReader.Entry e : top.entries().values()) {
             if (!TOP_LEVEL_KEYS.contains(e.key())) {
-                problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + e.key() + "'"
+                problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + Suggest.clip(e.key()) + "'"
                     + Suggest.hint(e.key(), TOP_LEVEL_KEYS) + ": a pipeline has kilnmark, name, description and steps"));
             }
         }
@@ -138,7 +173,7 @@ public record PipelineDefinition(String name, String description, List<StepDefin
         } else {
             Map<String, Position> ids = new HashMap<>();
             for (YamlReader.Node item : list.items()) {
-                StepDefinition s = step(item, ids, problems);
+                StepDefinition s = step(item, ids, problems, inputProblems);
                 if (s != null) {
                     steps.add(s);
                 }
@@ -147,7 +182,8 @@ public record PipelineDefinition(String name, String description, List<StepDefin
         return new Parsed(new PipelineDefinition(name, description, steps), problems);
     }
 
-    private static StepDefinition step(YamlReader.Node item, Map<String, Position> ids, List<Problem> problems) {
+    private static StepDefinition step(YamlReader.Node item, Map<String, Position> ids, List<Problem> problems,
+                                       Set<String> inputProblems) {
         if (!(item instanceof YamlReader.Mapping m)) {
             problems.add(Problem.at(item.position(), null, "Each step is a mapping starting with - id: …"));
             return null;
@@ -163,8 +199,10 @@ public record PipelineDefinition(String name, String description, List<StepDefin
             return null;
         }
         if (!PipelineCompiler.STEP_ID.matcher(id).matches()) {
-            problems.add(Problem.at(idEntry.value().position(), id, "Step id '" + id
-                + "' must start with a lower-case letter and use only a-z, 0-9, - and _, up to 64 characters"));
+            problems.add(Problem.at(idEntry.value().position(), Suggest.clip(id), PipelineCompiler.badId(id)));
+            if (id.length() > Suggest.MAX_ECHO) {
+                return null; // too long to name in later messages
+            }
         }
         Position first = ids.putIfAbsent(id, idEntry.value().position());
         if (first != null) {
@@ -179,10 +217,12 @@ public record PipelineDefinition(String name, String description, List<StepDefin
 
         Map<String, Position> keys = new LinkedHashMap<>();
         Map<String, Object> config = new LinkedHashMap<>();
+        Map<String, Object> configText = new LinkedHashMap<>();
         for (YamlReader.Entry e : m.entries().values()) {
             keys.put(e.key(), e.keyPosition());
             if (!STEP_KEYS.contains(e.key())) {
                 config.put(e.key(), e.value().value());
+                configText.put(e.key(), e.value().text());
             }
         }
         List<InputRef> inputs = new ArrayList<>();
@@ -192,6 +232,7 @@ public record PipelineDefinition(String name, String description, List<StepDefin
             problems.add(Problem.at(inputsEntry.keyPosition(), id,
                 "Step " + id + " has both input and inputs: use input for one, inputs to name ports"));
         }
+        int before = problems.size();
         if (input != null) {
             refs(input.value(), null, id, inputs, problems);
         }
@@ -205,7 +246,10 @@ public record PipelineDefinition(String name, String description, List<StepDefin
                     "inputs names each input port and the step feeding it, such as inputs: { main: spend, lookup: tidy }"));
             }
         }
-        return new StepDefinition(id, type, inputs, config, m.position(), keys);
+        if (problems.size() != before) {
+            inputProblems.add(id);
+        }
+        return new StepDefinition(id, type, inputs, config, m.position(), keys, configText);
     }
 
     /** {@code step}, {@code step.port}, or a list of them. */
@@ -229,9 +273,8 @@ public record PipelineDefinition(String name, String description, List<StepDefin
         if (e == null) {
             return null;
         }
-        Object v = e.value().value();
-        if (v instanceof String s && !s.isBlank()) {
-            return s;
+        if (e.value() instanceof YamlReader.Scalar sc && sc.value() != null && !sc.written().isBlank()) {
+            return sc.written(); // name: 2024 is the name "2024"
         }
         problems.add(Problem.at(e.value().position(), stepId, key + " must be text"));
         return null;

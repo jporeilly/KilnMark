@@ -348,7 +348,7 @@ class PipelineCompilerTest {
         assertEquals(12, c.get("i"));
         assertEquals(12345678901L, c.get("big"));
         assertEquals(31, c.get("hex"));
-        assertEquals(1.5, c.get("f"));
+        assertEquals(new java.math.BigDecimal("1.5"), c.get("f"));
         assertEquals(Double.NEGATIVE_INFINITY, c.get("inf"));
         assertEquals("yes", c.get("yes"), "YAML 1.2: yes is text");
         assertEquals(true, c.get("t"));
@@ -383,5 +383,205 @@ class PipelineCompilerTest {
         assertTrue(c.ok(), c.problems().toString());
         io.kilnmark.kiln.StepException e = assertThrows(io.kilnmark.kiln.StepException.class, c::graph);
         assertTrue(e.getMessage().contains("Step b (broken) could not be created: no connection"), e.getMessage());
+    }
+
+    private static final String FILTER_HEAD = "kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: a, type: numbers }\n"
+        + "  - id: f\n    type: filter\n    input: a\n";
+
+    @Test
+    void settingsThatAreTextKeepWhatWasWritten() throws Exception {
+        Compiled c = compile(FILTER_HEAD + """
+                condition: 007
+                mode: drop
+                columns: [007, 1.0E-4, 2024.10]
+                rename: { 007: 0x10 }
+                limit: 0x10
+              - { id: s, type: sink, input: f, path: 2024.10 }
+            """);
+        assertTrue(c.ok(), c.problems().toString());
+        Map<String, Object> f = c.configs().get("f");
+        assertEquals("007", f.get("condition"));
+        assertEquals(List.of("007", "1.0E-4", "2024.10"), f.get("columns"));
+        assertEquals(Map.of("007", "0x10"), f.get("rename"));
+        assertEquals(16, f.get("limit"), "a number setting is a number");
+        assertEquals("2024.10", c.configs().get("s").get("path"));
+        assertEquals("2024.10", c.graph().step("s").config().get("path"), "the step receives the text as written");
+        assertEquals("007", c.definition().steps().get(1).configText().get("condition"));
+        assertEquals(7, c.definition().steps().get(1).config().get("condition"), "the definition keeps the YAML value too");
+    }
+
+    @Test
+    void numberSettingsAreExactAndFinite() {
+        Compiled ok = compile(FILTER_HEAD + "    condition: x\n    limit: 2.50\n");
+        assertTrue(ok.ok(), ok.problems().toString());
+        assertEquals(new java.math.BigDecimal("2.50"), ok.configs().get("f").get("limit"));
+        contains(only(compile(FILTER_HEAD + "    condition: x\n    limit: .nan\n"), 9), "must be a finite number");
+        contains(only(compile(FILTER_HEAD + "    condition: x\n    limit: -.inf\n"), 9), "must be a finite number");
+        contains(only(compile(FILTER_HEAD + "    condition: x\n    limit: 1e999\n"), 9), "too large");
+        contains(only(compile(FILTER_HEAD + "    condition: x\n    limit: 99999999999999999999\n"), 9), "too large");
+    }
+
+    @Test
+    void mappingKeysAreTheTextWritten() {
+        PipelineDefinition.Parsed p = PipelineDefinition.parse("kilnmark: pipeline/v1\nname: x\nsteps:\n"
+            + "  - { id: a, type: t, m: { 007: x, 1.10: y, true: z } }\n");
+        assertTrue(p.problems().isEmpty(), p.problems().toString());
+        assertEquals(List.of("007", "1.10", "true"),
+            List.copyOf(((Map<?, ?>) p.definition().steps().getFirst().config().get("m")).keySet()));
+    }
+
+    @Test
+    void hugeValuesAreEchoedShort() {
+        String type = "x".repeat(999_000);
+        Compiled c = compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - id: a\n    type: " + type + "\n");
+        Problem p = only(c, 5);
+        assertTrue(p.message().length() < 300, p.message().length() + " characters");
+        contains(p, "Unknown step type 'xxx", "…'");
+        String key = "k".repeat(5_000);
+        Problem k = only(compile(FILTER_HEAD + "    condition: x\n    " + key + ": 1\n"), 9);
+        assertTrue(k.message().length() < 400, k.message());
+        String id = "a".repeat(5_000) + "B";
+        Problem i = only(compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: " + id + ", type: numbers }\n"), 4);
+        assertTrue(i.message().length() < 300 && i.stepId().length() <= 80, i.message());
+    }
+
+    @Test
+    void aPipelineBuiltInCodeGetsTheChecksReadingWouldGive() {
+        PipelineDefinition.StepDefinition a = new PipelineDefinition.StepDefinition("a", "numbers", List.of(), Map.of(),
+            new Position(1, 1), Map.of());
+        PipelineDefinition.StepDefinition again = new PipelineDefinition.StepDefinition("a", "numbers", List.of(),
+            Map.of(), new Position(2, 1), Map.of());
+        PipelineDefinition.StepDefinition bad = new PipelineDefinition.StepDefinition("Bad", null, List.of(), Map.of(),
+            new Position(3, 1), Map.of());
+        Compiled c = COMPILER.compile(new PipelineDefinition(" ", null, List.of(a, again, bad)));
+        List<String> messages = c.problems().stream().map(Problem::message).toList();
+        assertEquals(4, messages.size(), messages.toString());
+        assertTrue(messages.get(0).contains("needs a name"), messages.toString());
+        assertTrue(messages.get(1).contains("used twice (first on line 1)"), messages.toString());
+        assertTrue(messages.get(2).contains("Step id 'Bad' must start"), messages.toString());
+        assertTrue(messages.get(3).contains("Step Bad needs a type"), messages.toString());
+    }
+
+    @Test
+    void aDuplicateIdStillLetsTheFirstStepBeChecked() {
+        Compiled c = compile("""
+            kilnmark: pipeline/v1
+            name: x
+            steps:
+              - { id: a, type: numbers }
+              - { id: p, type: pass }
+              - { id: p, type: pass, input: a }
+            """);
+        List<String> messages = c.problems().stream().map(Problem::message).toList();
+        assertEquals(2, messages.size(), messages.toString());
+        assertTrue(messages.get(0).contains("needs an input on port 'in'"), messages.toString());
+        assertTrue(messages.get(1).contains("used twice"), messages.toString());
+    }
+
+    @Test
+    void manyInputsSharingAStepUpstreamGetANote() {
+        Compiled c = compile("""
+            kilnmark: pipeline/v1
+            name: x
+            steps:
+              - { id: a, type: numbers }
+              - { id: p1, type: pass, input: a }
+              - { id: p2, type: pass, input: a }
+              - { id: u, type: union, input: [p1, p2] }
+            """);
+        assertTrue(c.ok(), c.problems().toString());
+        assertTrue(c.notes().stream().anyMatch(n -> n.line() == 7 && n.message().contains("in[0] and in[1] both come from step a")),
+            c.notes().toString());
+    }
+
+    @Test
+    void aForbiddenCharacterIsReportedWhereItIs() {
+        Problem p = only(compile("kilnmark: pipeline/v1\nname: x\u0007\n"), 2);
+        assertEquals(8, p.column());
+        contains(p, "U+0007");
+    }
+
+    @Test
+    void inputColumnsReachTheGraph() throws Exception {
+        Compiled c = compile(GOOD);
+        assertEquals(List.of("main", "lookup"), List.copyOf(c.inputSchemas().get("joined").keySet()));
+        assertEquals(List.of("in[0]", "in[1]"), List.copyOf(c.inputSchemas().get("all").keySet()));
+        PipelineGraph g = c.graph();
+        assertEquals(List.of("n"), names(g.step("joined").inputSchemas().get("lookup")));
+        assertEquals(List.of("n", "lookup_n"), names(g.step("all").inputSchemas().get("in[0]")));
+        assertTrue(g.step("a").inputSchemas().isEmpty());
+    }
+
+    @Test
+    void anErrorWhileCreatingStepsClosesThoseAlreadyMade() {
+        java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
+        io.kilnmark.kiln.StepFactories f = ToyFactories.all()
+            .register(new ToyFactories.Pass() {
+                @Override
+                public String type() {
+                    return "tracked";
+                }
+
+                @Override
+                public io.kilnmark.kiln.Step create(Map<String, Object> config) {
+                    return new io.kilnmark.kiln.Step() {
+                        @Override
+                        public String type() {
+                            return "tracked";
+                        }
+
+                        @Override
+                        public void init(io.kilnmark.kiln.StepContext context) {
+                        }
+
+                        @Override
+                        public boolean process(io.kilnmark.kiln.StepContext context) {
+                            return false;
+                        }
+
+                        @Override
+                        public void close() {
+                            closed.set(true);
+                        }
+                    };
+                }
+            })
+            .register(new ToyFactories.Pass() {
+                @Override
+                public String type() {
+                    return "boom";
+                }
+
+                @Override
+                public io.kilnmark.kiln.Step create(Map<String, Object> config) {
+                    throw new LinkageError("boom");
+                }
+            });
+        Compiled c = new PipelineCompiler(f).compile("""
+            kilnmark: pipeline/v1
+            name: x
+            steps:
+              - { id: a, type: numbers }
+              - { id: t, type: tracked, input: a }
+              - { id: b, type: boom, input: t }
+            """);
+        assertTrue(c.ok(), c.problems().toString());
+        assertThrows(LinkageError.class, c::graph);
+        assertTrue(closed.get());
+    }
+
+    @Test
+    void hugeDecimalsAreRefusedAsNumbersAndKeptAsWrittenText() {
+        long start = System.nanoTime();
+        contains(only(compile(FILTER_HEAD + "    condition: x\n    limit: 1e-999999999\n"), 9), "too many digits");
+        contains(only(compile(FILTER_HEAD + "    condition: x\n    limit: 1" + "0".repeat(1_200) + ".5\n"), 9),
+            "too many digits");
+        Compiled text = compile(FILTER_HEAD + "    condition: 1e-999999999\n");
+        assertTrue(text.ok(), text.problems().toString());
+        assertEquals("1e-999999999", text.configs().get("f").get("condition"));
+        PipelineDefinition.StepDefinition built = new PipelineDefinition.StepDefinition("a", "numbers", List.of(),
+            Map.of("x", new java.math.BigDecimal("1e-999999999")), new Position(1, 1), Map.of());
+        assertEquals("1E-999999999", built.configText().get("x"));
+        assertTrue(java.time.Duration.ofNanos(System.nanoTime() - start).toSeconds() < 10);
     }
 }

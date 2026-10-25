@@ -80,6 +80,11 @@ The reader is an ordinary Kiln `Step` with no input:
   `complete` (false when a row limit cut the read short);
 - it closes everything it opened in `close()`, which runs even after a failure.
 
+In a pipeline graph, a step can be interrupted when another step fails, and interrupting a thread
+blocked in socket I/O closes the socket: readers and writers must close any batch they hold in
+`close()` or a `finally`, validate pooled connections before reuse, and roll back in `close()` when
+they did not finish (docs/design/pipelines.md, "Writing a step for graphs").
+
 Use the engine's field kinds (`JdbcColumn.Kind`: boolean, int16, int32, int64, float32,
 float64, decimal, text, binary, date, time, timestamp, timestamp_tz) and the Arrow types
 `JdbcColumn` maps them to, so the profiler treats every source alike. Timestamps are

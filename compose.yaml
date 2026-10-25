@@ -6,6 +6,7 @@
 #   podman build -t localhost/kilnmark-postgres:dev -f containers/postgres/Containerfile containers/postgres
 #   podman build -t localhost/kilnmark-server:dev -f containers/server/Containerfile .
 #   podman compose up
+# On Windows, .\build.ps1 does all of this (release, both images, restart).
 services:
   postgres:
     image: localhost/kilnmark-postgres:dev

@@ -216,6 +216,73 @@ public final class Toys {
         }
     }
 
+    /** Reads port {@code a} to its end, then port {@code b}, dropping the rows: the way a lookup reads. */
+    public static final class Sequential implements Step {
+        private String port = "a";
+
+        @Override
+        public String type() {
+            return "sequential";
+        }
+
+        @Override
+        public void init(StepContext context) {
+        }
+
+        @Override
+        public boolean process(StepContext context) throws StepException {
+            try {
+                VectorSchemaRoot b = context.input(port).take(context.allocator());
+                if (b != null) {
+                    b.close();
+                    return true;
+                }
+                if (port.equals("a")) {
+                    port = "b";
+                    return true;
+                }
+                return false;
+            } catch (InterruptedException e) {
+                throw interrupted(e);
+            }
+        }
+    }
+
+    /** Emits one batch, then waits a long time outside any row set, as a step waiting on a database does. */
+    public static final class Slow implements Step {
+        final AtomicBoolean closed = new AtomicBoolean();
+        private boolean sent;
+
+        @Override
+        public String type() {
+            return "slow";
+        }
+
+        @Override
+        public void init(StepContext context) {
+        }
+
+        @Override
+        public boolean process(StepContext context) throws StepException {
+            try {
+                if (!sent) {
+                    sent = true;
+                    context.emit("out", batch(context.allocator(), 0, 10));
+                    return true;
+                }
+                Thread.sleep(60_000);
+                return false;
+            } catch (InterruptedException e) {
+                throw interrupted(e);
+            }
+        }
+
+        @Override
+        public void close() {
+            closed.set(true);
+        }
+    }
+
     /**
      * Collects the numbers it is given; optionally slow, scribbling over each batch before freeing
      * it, stopping after {@code limit} batches, failing, or leaking a batch.
