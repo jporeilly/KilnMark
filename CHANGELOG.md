@@ -25,6 +25,8 @@ details.
 - **The Pipelines page.** Under **Pipelines**, a YAML editor that checks as you type, a graph of
   the steps with the columns leaving each, every saved version with who saved it and why, and each
   run with what every step did and what was written.
+- **A lab bucket for pipeline output.** The reference lab has an empty bucket, `lab-warehouse`,
+  that pipelines may write to, so the lab's synthetic source data stays read-only.
 
 ### Details
 
@@ -127,6 +129,10 @@ details.
   type (choosing a problem moves to its line), Save with a message, a graph of the steps with the
   columns leaving each, versions and runs with a per-step breakdown. The guide "Building and
   running a pipeline" (docs/guide/pipelines.md) walks through it.
+- **Reference lab: `lab-warehouse`** (lab/README.md): a second bucket on the lab's VersityGW server,
+  an anonymous volume that starts empty (no new service). `lab/sources.csv` registers it with
+  `allow_writing=true`; the column's empty cells keep `lab-db`, `lab-bucket` and `lab-share`
+  read-only, also on a later import. Reset it by emptying the bucket.
 
 ## 0.0.3 (25 October 2026)
 
