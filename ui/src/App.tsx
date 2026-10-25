@@ -16,6 +16,9 @@ import { RelationshipsPage } from "./browse/RelationshipsPage";
 import { RoleContext } from "./components/role";
 import { RulesPage } from "./pages/RulesPage";
 import { IssuesPage } from "./pages/IssuesPage";
+import { PipelinesPage } from "./pipelines/PipelinesPage";
+import { PipelinePage } from "./pipelines/PipelinePage";
+import { PipelineRunPage } from "./pipelines/PipelineRunPage";
 import { docHref, WHATS_NEW } from "./docs/links";
 import "./docs/docs.css";
 
@@ -203,6 +206,16 @@ function Shell({ me }: { me: Me }) {
               </a>
             </li>
             <li>
+              <a
+                href={href.pipelines()}
+                aria-current={
+                  route.page === "pipelines" ? "page" : ["pipeline", "pipeline-run"].includes(route.page) ? "true" : undefined
+                }
+              >
+                Pipelines
+              </a>
+            </li>
+            <li>
               <a href={href.rules()} aria-current={current("rules")}>
                 Quality rules
               </a>
@@ -254,6 +267,11 @@ function Shell({ me }: { me: Me }) {
           {route.page === "relationships" && <RelationshipsPage status={route.status} />}
           {route.page === "rules" && <RulesPage role={me.role} urn={route.urn} />}
           {route.page === "issues" && <IssuesPage role={me.role} />}
+          {route.page === "pipelines" && <PipelinesPage role={me.role} />}
+          {route.page === "pipeline" && (
+            <PipelinePage key={route.name ?? "#new"} name={route.name} version={route.version} role={me.role} />
+          )}
+          {route.page === "pipeline-run" && <PipelineRunPage id={route.id} role={me.role} />}
           {route.page === "docs" && (
             <Suspense fallback={<p role="status">Loading the documentation…</p>}>
               <DocsPage doc={route.doc} section={route.section} />

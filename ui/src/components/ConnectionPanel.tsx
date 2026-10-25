@@ -10,6 +10,7 @@ import {
 } from "../api";
 import { ContainerPicker } from "./ContainerPicker";
 import { ConnectorTile, tileProps } from "./ConnectorTile";
+import { useRole } from "./role";
 
 const STEPS = ["Connect", "Test", "Choose what to scan", "Save"] as const;
 /** File settings that say how to read files: chosen in step 3, beside the preview that shows their effect. */
@@ -20,7 +21,11 @@ const AI_LABELS: Record<string, string> = {
   local_only: "Local models only (default)",
   allowed: "Any configured model",
   none: "No AI models",
+  false: "No: read-only (default)",
+  true: "Yes: pipelines may write tables or files here",
 };
+/** Whether pipelines may write to the source: only admins see and change it. */
+const ADMIN_STEP = new Set(["allow_writing"]);
 
 /**
  * A connection, step by step: 1 Connect (fields with help and examples; host, port and database
@@ -42,6 +47,7 @@ export function ConnectionPanel({
   onSaved: (s: Source, scanQueued: boolean) => void;
 }) {
   const id = useId();
+  const role = useRole();
   // Once saved, the panel edits what it saved: a retry after a failed scan updates, never adds twice.
   const [saved, setSaved] = useState<Source | undefined>(initial);
   const existing = saved;
@@ -492,6 +498,7 @@ export function ConnectionPanel({
             </p>
           </div>
           {commonOf(SAVE_STEP).map(commonField)}
+          {role === "admin" && commonOf(ADMIN_STEP).map(commonField)}
           <div className="buttons">
             <button type="button" className="primary" onClick={() => !saving && save(true)} aria-disabled={saving}>
               {saving ? "Saving…" : "Save and scan"}
