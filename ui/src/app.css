@@ -1313,14 +1313,14 @@ table.sample td {
   font-size: 13px;
 }
 
-.tile-tint-1 { background: var(--km-tile-1-bg); color: var(--km-tile-1-fg); }
-.tile-tint-2 { background: var(--km-tile-2-bg); color: var(--km-tile-2-fg); }
-.tile-tint-3 { background: var(--km-tile-3-bg); color: var(--km-tile-3-fg); }
-.tile-tint-4 { background: var(--km-tile-4-bg); color: var(--km-tile-4-fg); }
-.tile-tint-5 { background: var(--km-tile-5-bg); color: var(--km-tile-5-fg); }
-.tile-tint-6 { background: var(--km-tile-6-bg); color: var(--km-tile-6-fg); }
-.tile-tint-7 { background: var(--km-tile-7-bg); color: var(--km-tile-7-fg); }
-.tile-tint-8 { background: var(--km-tile-8-bg); color: var(--km-tile-8-fg); }
+.tile-tint-1 { background: var(--km-tint-sky-bg); color: var(--km-tint-sky-fg); }
+.tile-tint-2 { background: var(--km-tint-green-bg); color: var(--km-tint-green-fg); }
+.tile-tint-3 { background: var(--km-tint-orange-bg); color: var(--km-tint-orange-fg); }
+.tile-tint-4 { background: var(--km-tint-violet-bg); color: var(--km-tint-violet-fg); }
+.tile-tint-5 { background: var(--km-tint-pink-bg); color: var(--km-tint-pink-fg); }
+.tile-tint-6 { background: var(--km-tint-teal-bg); color: var(--km-tint-teal-fg); }
+.tile-tint-7 { background: var(--km-tint-amber-bg); color: var(--km-tint-amber-fg); }
+.tile-tint-8 { background: var(--km-tint-red-bg); color: var(--km-tint-red-fg); }
 
 /* Not built yet: no tint, a dashed edge, like the planned card around it. */
 .tile-planned:not(.tile-image) {
