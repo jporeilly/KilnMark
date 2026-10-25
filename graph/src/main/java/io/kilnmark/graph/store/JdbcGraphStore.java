@@ -547,7 +547,7 @@ public final class JdbcGraphStore implements GraphStore {
     /**
      * Keyword search over asset names, descriptions and field names: full-text words plus trigram
      * similarity, so partial and misspelt names still match. Field-name matches rank a little
-     * below asset-name matches.
+     * below asset-name matches; exact names come first.
      */
     @Override
     public List<SearchHit> search(String query, int limit) {
@@ -557,49 +557,7 @@ public final class JdbcGraphStore implements GraphStore {
         }
         return tx(c -> {
             List<SearchHit> out = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement("""
-                WITH q AS (SELECT ?::text AS t, plainto_tsquery('simple', ?) AS ts, ? AS like_t),
-                hits AS (
-                    SELECT a.urn,
-                           greatest(public.word_similarity(q.t, lower(a.name)),
-                                    public.word_similarity(q.t, lower(a.container || '.' || a.name)),
-                                    CASE WHEN a.search @@ q.ts THEN 0.6 ELSE 0 END) AS asset_score
-                    FROM kilnmark.asset a, q
-                    WHERE a.removed_at IS NULL
-                ),
-                fields AS (
-                    SELECT f.asset_urn, f.name, public.word_similarity(q.t, lower(f.name)) AS score
-                    FROM kilnmark.field f, q
-                    WHERE lower(f.name) LIKE q.like_t OR public.word_similarity(q.t, lower(f.name)) >= 0.5
-                ),
-                texts AS (
-                    -- documents whose text has every word: below name and description matches (0.41 to 0.5)
-                    -- candidates first: the documents with the most matching chunks (counted through the
-                    -- index, nothing ranked yet; ties by name, never by age), then each one's best chunk
-                    SELECT d.asset_urn, 0.41 + 0.09 * (r.best / (r.best + 1)) AS score
-                    FROM (SELECT c.asset_urn FROM kilnmark.document_chunk c, q WHERE c.search @@ q.ts
-                          GROUP BY c.asset_urn ORDER BY count(*) DESC, c.asset_urn LIMIT %d) d
-                    CROSS JOIN LATERAL (SELECT max(ts_rank_cd(c.search, q.ts)) AS best
-                                        FROM kilnmark.document_chunk c, q
-                                        WHERE c.asset_urn = d.asset_urn AND c.search @@ q.ts) r
-                )
-                SELECT a.urn, s.name, a.kind, a.container, a.name, a.description, a.row_count,
-                       coalesce(array_agg(f.name ORDER BY f.score DESC) FILTER (WHERE f.name IS NOT NULL), '{}'),
-                       greatest(h.asset_score, coalesce(max(f.score) * 0.9, 0), coalesce(t.score, 0)) AS score,
-                       t.asset_urn IS NOT NULL
-                FROM hits h
-                JOIN kilnmark.asset a ON a.urn = h.urn
-                JOIN kilnmark.data_source s ON s.id = a.source_id
-                LEFT JOIN fields f ON f.asset_urn = a.urn
-                LEFT JOIN texts t ON t.asset_urn = a.urn
-                GROUP BY a.urn, s.name, h.asset_score, t.asset_urn, t.score
-                HAVING greatest(h.asset_score, coalesce(max(f.score) * 0.9, 0), coalesce(t.score, 0)) >= 0.4
-                ORDER BY score DESC, h.asset_score DESC, a.container, a.name
-                LIMIT ?""".formatted(TEXT_CANDIDATES))) {
-                ps.setString(1, q);
-                ps.setString(2, q);
-                ps.setString(3, "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%");
-                ps.setInt(4, limit);
+            try (PreparedStatement ps = prepareKeywordSearch(c, "", q, limit)) {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         long rows = rs.getLong(7);
@@ -620,6 +578,116 @@ public final class JdbcGraphStore implements GraphStore {
      * A document is missed only when this many others match the words more often.
      */
     static final int TEXT_CANDIDATES = 200;
+    /** Assets gathered by each kind of name match (at least; more when more results are asked for). */
+    static final int NAME_CANDIDATES = 100;
+    /** Assets gathered whose words (name, schema, description) hold every word searched for. */
+    static final int WORD_CANDIDATES = 200;
+    /** Fields gathered whose names are alike enough. */
+    static final int FIELD_CANDIDATES = 300;
+    /** Matching document chunks looked at, at most: documents are ranked from these alone. */
+    static final int CHUNK_SAMPLE = 2000;
+    /** A document's matching chunks, in order, from which its snippet's chunk is chosen. */
+    static final int SNIPPET_CHUNKS = 50;
+    /** How alike a field name must be (word similarity) to match. */
+    static final double FIELD_SIMILARITY = 0.5;
+
+    /**
+     * The keyword search, ready to run on {@code c} (in a transaction): {@code prefix} goes before
+     * the query, so the container tests can {@code EXPLAIN} exactly what runs.
+     *
+     * <p>Bounded however common the words: candidates are gathered first, a fixed number at most
+     * and each through an index (exact names; the names nearest the query in a GiST trigram index's
+     * own distance order, by word and by whole name; names and descriptions holding every word;
+     * field names alike enough; a sample of matching document chunks), and only those are scored,
+     * as before: the work grows with the candidates and their columns, not with the catalogue. A
+     * word in every asset, field or chunk ("id", "the") costs about what a rare one does. Words and
+     * descriptions all score alike (0.6), so any so many of them serve.
+     */
+    public static PreparedStatement prepareKeywordSearch(Connection c, String prefix, String q, int limit)
+        throws SQLException {
+        try (Statement st = c.createStatement()) {
+            // the threshold of the <% operator below: fields whose word similarity is at least this
+            st.execute("SET LOCAL pg_trgm.word_similarity_threshold = " + FIELD_SIMILARITY);
+            // planned for the words given each time: a plan cached for any words could scan every
+            // field for a rare one to find the few a common one finds at once
+            st.execute("SET LOCAL plan_cache_mode = force_custom_plan");
+        }
+        PreparedStatement ps = c.prepareStatement(prefix + """
+            WITH q AS (SELECT ?::text AS t, plainto_tsquery('simple', ?) AS ts, ? AS like_t),
+            candidates AS (
+                (SELECT a.urn FROM kilnmark.asset a, q
+                 WHERE (lower(a.name) = q.t OR lower(a.container || '.' || a.name) = q.t) AND a.removed_at IS NULL
+                 LIMIT ?)
+                UNION
+                (SELECT a.urn FROM kilnmark.asset a WHERE a.removed_at IS NULL
+                 ORDER BY ?::text OPERATOR(public.<<->) a.name LIMIT ?)
+                UNION
+                (SELECT a.urn FROM kilnmark.asset a WHERE a.removed_at IS NULL
+                 ORDER BY ?::text OPERATOR(public.<->) a.name LIMIT ?)
+                UNION
+                (SELECT a.urn FROM kilnmark.asset a WHERE strpos(?::text, '.') > 0 AND a.removed_at IS NULL
+                 ORDER BY ?::text OPERATOR(public.<<->) (a.container || '.' || a.name) LIMIT ?)
+                UNION
+                (SELECT a.urn FROM kilnmark.asset a, q WHERE a.search @@ q.ts AND a.removed_at IS NULL LIMIT %1$d)
+                UNION
+                (SELECT f.asset_urn FROM kilnmark.field f WHERE ?::text OPERATOR(public.<%%) f.name LIMIT %2$d)
+            ),
+            chunks AS (
+                SELECT c.asset_urn, ts_rank_cd(c.search, q.ts) AS rank
+                FROM (SELECT c.asset_urn, c.search FROM kilnmark.document_chunk c, q WHERE c.search @@ q.ts
+                      LIMIT %3$d) c, q
+            ),
+            texts AS (
+                -- documents whose text has every word: below name and description matches (0.41 to 0.5),
+                -- those with the most matching chunks in the sample first; ties by name, never by age
+                SELECT c.asset_urn, 0.41 + 0.09 * (max(c.rank) / (max(c.rank) + 1)) AS score
+                FROM chunks c GROUP BY c.asset_urn ORDER BY count(*) DESC, c.asset_urn LIMIT %4$d
+            ),
+            scored AS (
+                SELECT a.urn, a.source_id, a.kind, a.container, a.name, a.description, a.row_count,
+                       lower(a.name) = q.t OR lower(a.container || '.' || a.name) = q.t AS exact,
+                       greatest(public.word_similarity(q.t, lower(a.name)),
+                                public.word_similarity(q.t, lower(a.container || '.' || a.name)),
+                                CASE WHEN a.search @@ q.ts THEN 0.6 ELSE 0 END) AS asset_score,
+                       fs.names, fs.best
+                FROM (SELECT urn FROM candidates UNION SELECT asset_urn FROM texts) x
+                JOIN kilnmark.asset a ON a.urn = x.urn AND a.removed_at IS NULL
+                CROSS JOIN q
+                CROSS JOIN LATERAL (
+                    SELECT coalesce(array_agg(f.name ORDER BY f.score DESC), '{}') AS names, max(f.score) AS best
+                    FROM (SELECT f.name, public.word_similarity(q.t, lower(f.name)) AS score
+                          FROM kilnmark.field f WHERE f.asset_urn = a.urn) f
+                    WHERE f.score >= %5$s OR lower(f.name) LIKE q.like_t) fs
+            )
+            SELECT h.urn, s.name, h.kind, h.container, h.name, h.description, h.row_count, h.names,
+                   greatest(h.asset_score, coalesce(h.best * 0.9, 0), coalesce(t.score, 0)) AS score,
+                   t.asset_urn IS NOT NULL
+            FROM scored h
+            JOIN kilnmark.data_source s ON s.id = h.source_id
+            LEFT JOIN texts t ON t.asset_urn = h.urn
+            CROSS JOIN q
+            WHERE greatest(h.asset_score, coalesce(h.best * 0.9, 0), coalesce(t.score, 0)) >= 0.4
+            ORDER BY h.exact DESC, score DESC, h.asset_score DESC, public.similarity(q.t, h.name) DESC,
+                     h.container, h.name
+            LIMIT ?""".formatted(WORD_CANDIDATES, FIELD_CANDIDATES, CHUNK_SAMPLE, TEXT_CANDIDATES,
+                FIELD_SIMILARITY));
+        int names = Math.max(limit, NAME_CANDIDATES);
+        int i = 0;
+        ps.setString(++i, q);
+        ps.setString(++i, q);
+        ps.setString(++i, "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%");
+        ps.setInt(++i, names);
+        ps.setString(++i, q);
+        ps.setInt(++i, names);
+        ps.setString(++i, q);
+        ps.setInt(++i, names);
+        ps.setString(++i, q);
+        ps.setString(++i, q);
+        ps.setInt(++i, names);
+        ps.setString(++i, q);
+        ps.setInt(++i, limit);
+        return ps;
+    }
 
     /** Fills in the snippets of hits whose text matched: a passage of each one's best chunk. */
     private static List<SearchHit> snippets(Connection c, String q, List<SearchHit> hits) throws SQLException {
@@ -628,20 +696,18 @@ public final class JdbcGraphStore implements GraphStore {
             return hits;
         }
         java.util.Map<String, DocumentRecords.Snippet> found = new java.util.HashMap<>();
-        // the best chunk of each document first, then a headline for that one chunk only
+        // the best of each document's first matching chunks, then a headline for that one chunk only
         try (PreparedStatement ps = c.prepareStatement("""
-            WITH q AS (SELECT plainto_tsquery('simple', ?) AS ts),
-            best AS (
-                SELECT DISTINCT ON (c.asset_urn) c.asset_urn, c.text
-                FROM kilnmark.document_chunk c, q
-                WHERE c.asset_urn = ANY (?) AND c.search @@ q.ts
-                ORDER BY c.asset_urn, ts_rank_cd(c.search, q.ts) DESC, c.seq
-            )
-            SELECT b.asset_urn,
+            WITH q AS (SELECT plainto_tsquery('simple', ?) AS ts)
+            SELECT u.urn,
                    ts_headline('simple', b.text, q.ts,
                                'StartSel=' || chr(57344) || ', StopSel=' || chr(57345)
                                || ', MaxWords=30, MinWords=12, ShortWord=2, MaxFragments=1')
-            FROM best b, q""")) {
+            FROM unnest(?::text[]) u(urn), q
+            CROSS JOIN LATERAL (
+                SELECT c.text FROM (SELECT c.text, c.search, c.seq FROM kilnmark.document_chunk c
+                                    WHERE c.asset_urn = u.urn AND c.search @@ q.ts ORDER BY c.seq LIMIT %d) c
+                ORDER BY ts_rank_cd(c.search, q.ts) DESC, c.seq LIMIT 1) b""".formatted(SNIPPET_CHUNKS))) {
             ps.setString(1, q);
             ps.setArray(2, c.createArrayOf("text", urns.toArray()));
             try (ResultSet rs = ps.executeQuery()) {

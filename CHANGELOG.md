@@ -94,6 +94,13 @@ details.
   `kilnmark.sources.allowed-hosts` again just before a scan, quality run, preview, listing, test or
   on-demand read connects, not only when the source is saved, so a narrowed list applies at once;
   the job fails saying which host is no longer allowed.
+- **Search, after review:** keyword search stays quick however common the words ("id", "the", a word
+  in most documents). It gathers a fixed number of candidates through indexes (exact names, the
+  nearest names in order of distance, matching words, alike field names, a sample of matching
+  document chunks) and ranks only those, instead of ranking every match before the limit; snippets
+  are chosen from a document's first matching chunks. Exact names now always come first, then the
+  closest whole names. Migration V10 adds GiST trigram indexes on asset names and expression indexes
+  for exact names.
 
 - **Sign-in with API tokens:** every API call needs a token (`Authorization: Bearer km_...`)
   with a role: viewer (read), steward (also start scans) or admin (also add sources and manage
