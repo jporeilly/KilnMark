@@ -8,6 +8,10 @@ export type Route =
   | { page: "source"; name: string }
   | { page: "tokens" }
   | { page: "settings" }
+  // Notifications: each person's own choices; email settings and the send log for admins
+  | { page: "notifications" }
+  | { page: "email" }
+  | { page: "email-log" }
   | { page: "rules"; urn: string }
   | { page: "issues" }
   | { page: "signout" }
@@ -38,6 +42,9 @@ export function parse(hash: string): Route {
   if (path.startsWith("/source/")) return { page: "source", name: decode(path.slice("/source/".length)) };
   if (path === "/tokens") return { page: "tokens" };
   if (path === "/settings") return { page: "settings" };
+  if (path === "/settings/notifications") return { page: "notifications" };
+  if (path === "/settings/email") return { page: "email" };
+  if (path === "/settings/email/sent") return { page: "email-log" };
   if (path === "/quality/rules") return { page: "rules", urn: params.get("urn") ?? "" };
   if (path === "/quality/issues") return { page: "issues" };
   if (path === "/sign-out") return { page: "signout" };
@@ -67,6 +74,9 @@ export const href = {
   source: (name: string) => `#/source/${encodeURIComponent(name)}`,
   tokens: () => "#/tokens",
   settings: () => "#/settings",
+  notifications: () => "#/settings/notifications",
+  email: () => "#/settings/email",
+  emailLog: () => "#/settings/email/sent",
   rules: (urn?: string) => (urn ? `#/quality/rules?urn=${encodeURIComponent(urn)}` : "#/quality/rules"),
   issues: () => "#/quality/issues",
   signOut: () => "#/sign-out",

@@ -16,6 +16,9 @@ import { RelationshipsPage } from "./browse/RelationshipsPage";
 import { RoleContext } from "./components/role";
 import { RulesPage } from "./pages/RulesPage";
 import { IssuesPage } from "./pages/IssuesPage";
+import { NotificationsPage } from "./pages/NotificationsPage";
+import { EmailSettingsPage } from "./pages/EmailSettingsPage";
+import { SentEmailsPage } from "./pages/SentEmailsPage";
 import { docHref, WHATS_NEW } from "./docs/links";
 import "./docs/docs.css";
 import { AssistantPanel } from "./assistant/AssistantPanel";
@@ -278,7 +281,11 @@ function Shell({ me }: { me: Me }) {
             <li>
               <a
                 href={href.settings()}
-                aria-current={["settings", "tokens", "ai", "ai-usage"].includes(route.page) ? "page" : undefined}
+                aria-current={
+                  ["settings", "tokens", "ai", "ai-usage", "notifications", "email", "email-log"].includes(route.page)
+                    ? "page"
+                    : undefined
+                }
               >
                 Settings
               </a>
@@ -293,6 +300,16 @@ function Shell({ me }: { me: Me }) {
         <main id="main" tabIndex={-1} inert={covered}>
           {route.page === "home" && <HomePage />}
           {route.page === "settings" && <SettingsPage role={me.role} />}
+          {route.page === "notifications" && <NotificationsPage />}
+          {(route.page === "email" || route.page === "email-log") &&
+            (allows(me.role, "admin") ? (
+              route.page === "email" ? <EmailSettingsPage /> : <SentEmailsPage />
+            ) : (
+              <>
+                <h1 tabIndex={-1}>Email</h1>
+                <p>Only admins can set up email. Choose your own notifications under Settings, Notifications.</p>
+              </>
+            ))}
           {route.page === "search" && <SearchPage q={route.q} ask={route.ask} />}
           {route.page === "asset" && <AssetPage urn={route.urn} />}
           {route.page === "sources" && <SourcesPage role={me.role} />}

@@ -1005,3 +1005,135 @@ export function rating(score: number): { word: string; tone: "good" | "fair" | "
   if (score >= 0.8) return { word: "Fair", tone: "fair" };
   return { word: "Poor", tone: "poor" };
 }
+
+// ---- Notifications (docs/guide/notifications.md): the in-app feed, each person's choices, and email for admins.
+
+export type NotificationKindId =
+  | "rule_failed"
+  | "rule_recovered"
+  | "issue_opened"
+  | "scan_failed"
+  | "drift"
+  | "connection_failed"
+  | "pipeline_failed"
+  | "pipeline_low_quality";
+export type NotificationSeverity = "high" | "medium" | "low" | "info";
+export type EmailStatus = "sent" | "queued" | "failed" | "skipped";
+export type NotificationChannel = { type: "in_app" } | { type: "email"; status: EmailStatus; at: string };
+/** One in-app notification, written for the signed-in person's role. teamEmails is there for admins only. */
+export type NotificationItem = {
+  id: string;
+  kind: NotificationKindId;
+  severity: NotificationSeverity;
+  title: string;
+  detail: string | null;
+  link: string | null;
+  createdAt: string;
+  read: boolean;
+  channels: NotificationChannel[];
+  teamEmails?: { name: string; status: EmailStatus }[];
+};
+export type NotificationFeed = { items: NotificationItem[]; unread: number };
+export type KindChoice = { id: NotificationKindId; label: string; description: string };
+/** What a person hears about; sources null means every source. */
+export type MyNotifications = {
+  available: boolean;
+  unavailable: string | null;
+  saved: boolean;
+  email: string | null;
+  enabled: boolean;
+  kinds: NotificationKindId[];
+  minSeverity: NotificationSeverity;
+  mode: "immediate" | "digest";
+  digestHour: number;
+  sources: string[] | null;
+  inAppKinds: NotificationKindId[];
+  timeZone: string;
+  mailReady: boolean;
+  mailNote: string | null;
+  kindChoices: KindChoice[];
+};
+export type SubscriptionInput = {
+  email: string;
+  enabled: boolean;
+  kinds: NotificationKindId[];
+  minSeverity: NotificationSeverity;
+  mode: "immediate" | "digest";
+  digestHour: number;
+  sources: string[] | null;
+};
+export type MailSecurity = "none" | "starttls" | "tls";
+export type MailSettingsView = {
+  enabled: boolean;
+  host: string | null;
+  port: number | null;
+  effectivePort: number;
+  security: MailSecurity;
+  username: string | null;
+  hasPassword: boolean;
+  fromAddress: string | null;
+  fromName: string | null;
+  baseUrl: string | null;
+  saved: boolean;
+  updatedBy: string | null;
+  updatedAt: string | null;
+  ready: boolean;
+  notReady: string | null;
+  timeZone: string;
+};
+/** password: leave it out to keep the stored one, "" to remove it. */
+export type MailSettingsInput = {
+  enabled: boolean;
+  host: string;
+  port: number | null;
+  security: MailSecurity;
+  username: string;
+  password?: string;
+  fromAddress: string;
+  fromName: string;
+  baseUrl: string;
+};
+export type TeamAddress = SubscriptionInput & {
+  id: number;
+  name: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+export type MailLogEntry = {
+  id: number;
+  at: string;
+  recipient: string;
+  subscriberId: number | null;
+  kind: string;
+  eventIds: number[];
+  subject: string | null;
+  status: "sent" | "retrying" | "failed" | "rate_limited";
+  attempt: number;
+  error: string | null;
+};
+
+export const notifyApi = {
+  feed: (limit = 20, unread = false) =>
+    call<NotificationFeed>(`/api/v1/notifications?limit=${limit}&unread=${unread}`),
+  unreadCount: () => call<{ unread: number }>("/api/v1/notifications/unread-count"),
+  markRead: (ids: string[]) =>
+    call<null>("/api/v1/notifications/read", { method: "POST", body: JSON.stringify({ ids }) }),
+  markAllRead: () => call<null>("/api/v1/notifications/read", { method: "POST", body: JSON.stringify({ all: true }) }),
+  mine: () => call<MyNotifications>("/api/v1/me/notifications"),
+  saveMine: (s: SubscriptionInput & { inAppKinds: NotificationKindId[] }) =>
+    call<MyNotifications>("/api/v1/me/notifications", { method: "PUT", body: JSON.stringify(s) }),
+  settings: () => call<MailSettingsView>("/api/v1/mail/settings"),
+  saveSettings: (s: MailSettingsInput) =>
+    call<MailSettingsView>("/api/v1/mail/settings", { method: "PUT", body: JSON.stringify(s) }),
+  test: (to: string) =>
+    call<{ ok: boolean; message: string }>("/api/v1/mail/test", { method: "POST", body: JSON.stringify({ to }) }),
+  teams: () => call<TeamAddress[]>("/api/v1/mail/teams"),
+  addTeam: (t: SubscriptionInput & { name: string }) =>
+    call<TeamAddress>("/api/v1/mail/teams", { method: "POST", body: JSON.stringify(t) }),
+  updateTeam: (id: number, t: SubscriptionInput & { name: string }) =>
+    call<TeamAddress>(`/api/v1/mail/teams/${id}`, { method: "PUT", body: JSON.stringify(t) }),
+  deleteTeam: (id: number) => call<null>(`/api/v1/mail/teams/${id}`, { method: "DELETE" }),
+  log: (status: string, limit = 200) =>
+    call<MailLogEntry[]>(`/api/v1/mail/log?status=${encodeURIComponent(status)}&limit=${limit}`),
+};

@@ -27,6 +27,8 @@ export function SettingsPage({ role }: { role: AccessRole }) {
   const product = useProductName();
   const items: { title: string; link: string; text: string; external?: boolean }[] = [
     { title: "API tokens", link: href.tokens(), text: "Create, list and revoke tokens for people, scripts and AI assistants." },
+    { title: "Email", link: href.email(), text: "The mail server notifications go through, a test email, and team addresses." },
+    { title: "Sent emails", link: href.emailLog(), text: "Every email sent or tried in the last 30 days, with errors." },
     { title: "AI models", link: href.ai(), text: "Local and hosted models, which feature uses which, and the rule for hosted models." },
     { title: "AI usage", link: href.aiUsage(), text: "Model calls by day and model, with failures and refusals." },
     {
@@ -42,6 +44,12 @@ export function SettingsPage({ role }: { role: AccessRole }) {
       <p className="lead">
         {admin ? `How ${product} looks for you, and administration for this server.` : `How ${product} looks for you.`}
       </p>
+      <section className="panel" aria-labelledby="notifications-heading">
+        <h2 id="notifications-heading">
+          <a href={href.notifications()}>Notifications</a>
+        </h2>
+        <p>What {product} tells you about in the app, and by email if you turn it on.</p>
+      </section>
       <Appearance />
       {admin && (
         <section aria-labelledby="admin-heading">
