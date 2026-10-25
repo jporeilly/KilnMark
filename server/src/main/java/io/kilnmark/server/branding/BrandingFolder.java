@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -32,12 +33,19 @@ import org.jboss.logging.Logger;
  *
  * <p>The folder is untrusted input. Only files the manifest names are ever read or served; names
  * are plain file names (no folders, no {@code ..}); symbolic links are not followed; only SVG, PNG
- * and WebP whose content matches the extension are accepted, each up to a size cap; SVGs with a
- * DOCTYPE, entities or scripts are refused. Anything invalid is left out with a warning in the log,
- * and the UI falls back to its monogram tiles.
+ * and WebP whose content matches the extension are accepted, each up to a size cap. Anything
+ * invalid is left out with a warning in the log, and the UI falls back to its letter tiles.
  *
- * <p>The folder is read again whenever the manifest or a file it names changes (checked by size
- * and modification time on each request), so an operator can change it without a restart.
+ * <p>What stops an SVG running script is how it is served and shown: a sandboxing
+ * Content-Security-Policy and {@code nosniff} on the response ({@link BrandingResource}), and the
+ * UI showing it only through {@code <img>}. Refusing SVGs with a DOCTYPE, entities, scripts, event
+ * attributes, {@code javascript:} links or {@code foreignObject} is defence in depth on top.
+ *
+ * <p>The endpoints are public, so the work per request is bounded: the folder's size and
+ * modification stamps are rechecked at most once per {@link #RECHECK_NANOS}, a reload reads only
+ * the manifest and the files of valid entries, and at most {@link #MAX_ENTRIES} entries are looked
+ * at. Each stamp is taken before its file is read, so a change during a reload is seen at the next
+ * check rather than lost.
  */
 @ApplicationScoped
 public class BrandingFolder {
@@ -46,18 +54,21 @@ public class BrandingFolder {
 
     /** The manifest's own size cap. */
     static final int MAX_MANIFEST_BYTES = 64 * 1024;
-    /** Connector entries read from one manifest; the rest are ignored. */
-    static final int MAX_CONNECTORS = 200;
-    /** All images held in memory together. */
+    /** Connector entries looked at in one manifest, valid or not; the rest are ignored. */
+    static final int MAX_ENTRIES = 200;
+    /** All images held in memory together, and so the largest one image can be. */
     static final long MAX_TOTAL_BYTES = 8L * 1024 * 1024;
     /** Longest product name or label kept. */
     static final int MAX_TEXT = 60;
+    /** How often the folder is checked for changes, at most. */
+    static final long RECHECK_NANOS = TimeUnit.MILLISECONDS.toNanos(1500);
 
     private static final Pattern FILE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_-]*(\\.[A-Za-z0-9_-]+)*\\.(svg|png|webp)",
         Pattern.CASE_INSENSITIVE);
     private static final Pattern CONNECTOR_ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,63}");
     private static final Pattern COLOUR = Pattern.compile("#[0-9A-Fa-f]{6}");
-    private static final Pattern SVG_REFUSED = Pattern.compile("<!DOCTYPE|<!ENTITY|<script", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SVG_REFUSED = Pattern.compile(
+        "<!DOCTYPE|<!ENTITY|<script|<foreignObject|javascript:|\\son[a-z]+\\s*=", Pattern.CASE_INSENSITIVE);
     private static final byte[] PNG = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
 
     /** What the UI reads: links to images, never their content. */
@@ -73,24 +84,34 @@ public class BrandingFolder {
     public record Image(String name, String contentType, byte[] bytes, String etag) {
     }
 
-    /** What was loaded, and the file names watched for changes (every name the manifest gave). */
-    private record State(String fingerprint, View view, Map<String, Image> images, List<String> watched) {
+    /**
+     * What was loaded. {@code stamps} holds the manifest's and every named file's stamp as taken
+     * before reading it (valid or not, so adding or fixing a file is noticed).
+     */
+    private record State(Map<String, String> stamps, View view, Map<String, Image> images, long checkedAt) {
     }
+
+    private static final String MANIFEST = "manifest.json";
 
     private final Path dir;
     private final long maxFileBytes;
+    private final long recheckNanos;
     private final ObjectMapper json = new ObjectMapper();
-    private volatile State state = new State("", View.EMPTY, Map.of(), List.of());
+    private volatile State state;
 
     @Inject
     public BrandingFolder(KilnmarkConfig config) {
-        this(Path.of(config.branding().dir()), config.branding().maxFileKb() * 1024L);
+        this(Path.of(config.branding().dir()), config.branding().maxFileKb() * 1024L, RECHECK_NANOS);
     }
 
-    /** For tests: a folder and the largest image it may serve, in bytes. */
-    public BrandingFolder(Path dir, long maxFileBytes) {
+    /**
+     * For tests: a folder, the largest image it may serve in bytes (clamped to 1 byte ..
+     * {@link #MAX_TOTAL_BYTES}), and how often to look for changes (0: on every call).
+     */
+    BrandingFolder(Path dir, long maxFileBytes, long recheckNanos) {
         this.dir = dir.toAbsolutePath().normalize();
-        this.maxFileBytes = maxFileBytes;
+        this.maxFileBytes = Math.clamp(maxFileBytes, 1, MAX_TOTAL_BYTES);
+        this.recheckNanos = recheckNanos;
     }
 
     /** The current branding: product name, logo and connector looks, with links to the images. */
@@ -110,159 +131,167 @@ public class BrandingFolder {
 
     private State current() {
         State s = state;
-        String now = fingerprint(s.watched());
-        if (!s.fingerprint().equals(now)) {
-            synchronized (this) {
-                s = state;
-                if (!s.fingerprint().equals(fingerprint(s.watched()))) {
-                    s = load();
-                    state = s;
-                }
-            }
+        long now = System.nanoTime();
+        if (s != null && now - s.checkedAt() < recheckNanos) {
+            return s;
         }
-        return s;
+        synchronized (this) {
+            s = state;
+            now = System.nanoTime();
+            if (s == null || (now - s.checkedAt() >= recheckNanos && changed(s))) {
+                s = load();
+            } else if (now - s.checkedAt() >= recheckNanos) {
+                s = new State(s.stamps(), s.view(), s.images(), now);
+            }
+            state = s;
+            return s;
+        }
     }
 
-    /**
-     * Sizes and modification times of the manifest and every file it named at the last load, valid
-     * or not (so adding or fixing a file is noticed): cheap enough to check on each request.
-     */
-    private String fingerprint(List<String> names) {
-        StringBuilder b = new StringBuilder(stamp(dir.resolve("manifest.json")));
-        for (String name : names) {
-            b.append('|').append(name).append(stamp(dir.resolve(name)));
+    private boolean changed(State s) {
+        for (Map.Entry<String, String> e : s.stamps().entrySet()) {
+            if (!stamp(dir.resolve(e.getKey())).equals(e.getValue())) {
+                return true;
+            }
         }
-        return b.toString();
+        return false;
     }
 
     private static String stamp(Path p) {
         try {
             BasicFileAttributes a = Files.readAttributes(p, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-            return ":" + a.size() + ":" + a.lastModifiedTime().toMillis() + ":" + a.isRegularFile();
+            return a.size() + ":" + a.lastModifiedTime().toMillis() + ":" + a.isRegularFile() + ":" + a.fileKey();
         } catch (IOException e) {
-            return ":none";
+            return "none";
         }
+    }
+
+    /** One reload: what has been stamped, read and found wrong so far. */
+    private final class Load {
+        final Map<String, String> stamps = new LinkedHashMap<>();
+        final Map<String, Image> images = new LinkedHashMap<>();
+        final List<String> problems = new ArrayList<>();
+        long total;
     }
 
     private State load() {
-        Path manifest = dir.resolve("manifest.json");
-        List<String> problems = new ArrayList<>();
-        List<String> watched = new ArrayList<>();
-        Map<String, Image> images = new LinkedHashMap<>();
+        Load l = new Load();
+        Path manifest = dir.resolve(MANIFEST);
+        // Stamp first, then read: a change after the stamp makes the next check reload.
+        l.stamps.put(MANIFEST, stamp(manifest));
         View view = View.EMPTY;
         if (Files.isRegularFile(manifest, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                view = parse(readCapped(manifest, MAX_MANIFEST_BYTES), images, problems, watched);
+                view = parse(readCapped(manifest, MAX_MANIFEST_BYTES), l);
             } catch (IOException | RuntimeException e) {
-                problems.add("manifest.json: " + e.getMessage());
+                l.problems.add(MANIFEST + ": " + e.getMessage());
             }
         } else if (Files.exists(manifest, LinkOption.NOFOLLOW_LINKS)) {
-            problems.add("manifest.json: not a regular file (symbolic links are not followed)");
+            l.problems.add(MANIFEST + ": not a regular file (symbolic links are not followed)");
         }
-        for (String p : problems) {
+        for (String p : l.problems) {
             LOG.warnf("Branding folder %s: %s", dir, p);
         }
-        List<String> names = List.copyOf(watched);
-        return new State(fingerprint(names), view, Map.copyOf(images), names);
+        return new State(Map.copyOf(l.stamps), view, Map.copyOf(l.images), System.nanoTime());
     }
 
-    private View parse(byte[] bytes, Map<String, Image> images, List<String> problems, List<String> watched)
-        throws IOException {
+    private View parse(byte[] bytes, Load l) throws IOException {
         JsonNode root = json.readTree(bytes);
         if (root == null || !root.isObject()) {
             throw new IllegalArgumentException("must be a JSON object");
         }
-        long[] total = {0};
         String productName = null;
         String logo = null;
         JsonNode product = root.path("product");
         if (product.isObject()) {
-            productName = text(product.path("name"), "product.name", problems);
-            Image i = image(product.path("logo"), "product.logo", images, problems, watched, total);
+            productName = text(product.path("name"), "product.name", l.problems);
+            Image i = image(product.path("logo"), "product.logo", l);
             logo = i == null ? null : link(i);
         } else if (!product.isMissingNode()) {
-            problems.add("product: must be an object");
+            l.problems.add("product: must be an object");
         }
         Map<String, ConnectorLook> looks = new LinkedHashMap<>();
         JsonNode connectors = root.path("connectors");
         if (connectors.isObject()) {
+            int seen = 0;
             for (Map.Entry<String, JsonNode> e : connectors.properties()) {
-                String id = e.getKey();
-                String where = "connectors." + id;
-                if (looks.size() >= MAX_CONNECTORS) {
-                    problems.add("connectors: more than " + MAX_CONNECTORS + " entries; the rest are ignored");
+                if (++seen > MAX_ENTRIES) {
+                    l.problems.add("connectors: more than " + MAX_ENTRIES + " entries; the rest are ignored");
                     break;
                 }
-                if (!CONNECTOR_ID.matcher(id).matches()) {
-                    problems.add(where + ": not a connector id (lower-case letters, digits and hyphens)");
-                    continue;
-                }
-                if (!e.getValue().isObject()) {
-                    problems.add(where + ": must be an object");
-                    continue;
-                }
+                String id = e.getKey();
+                String where = "connectors." + id;
                 JsonNode c = e.getValue();
-                Image i = image(c.path("file"), where + ".file", images, problems, watched, total);
-                String colour = colour(c.path("color"), where + ".color", problems);
-                String label = text(c.path("label"), where + ".label", problems);
+                if (!CONNECTOR_ID.matcher(id).matches()) {
+                    l.problems.add(where + ": not a connector id (lower-case letters, digits and hyphens)");
+                    continue;
+                }
+                if (!c.isObject()) {
+                    l.problems.add(where + ": must be an object");
+                    continue;
+                }
+                // Everything that needs no disk is checked before the file is touched.
+                String colour = colour(c.path("color"), where + ".color", l.problems);
+                String label = text(c.path("label"), where + ".label", l.problems);
+                Image i = image(c.path("file"), where + ".file", l);
                 if (i != null || colour != null || label != null) {
                     looks.put(id, new ConnectorLook(i == null ? null : link(i), colour, label));
                 }
             }
         } else if (!connectors.isMissingNode()) {
-            problems.add("connectors: must be an object");
+            l.problems.add("connectors: must be an object");
         }
         return new View(productName, logo, Map.copyOf(looks));
     }
 
-    private Image image(JsonNode node, String where, Map<String, Image> images, List<String> problems,
-                        List<String> watched, long[] total) {
+    private Image image(JsonNode node, String where, Load l) {
         if (node.isMissingNode() || node.isNull()) {
             return null;
         }
         String name = node.isTextual() ? node.asText() : "";
-        if (!FILE.matcher(name).matches() || name.length() > 100) {
-            problems.add(where + ": a plain file name ending .svg, .png or .webp, without folders");
+        if (name.length() > 100 || !FILE.matcher(name).matches()) {
+            l.problems.add(where + ": a plain file name ending .svg, .png or .webp, without folders");
             return null;
         }
-        Image known = images.get(name);
+        Image known = l.images.get(name);
         if (known != null) {
             return known;
         }
-        if (!watched.contains(name)) {
-            watched.add(name);
+        if (l.stamps.containsKey(name)) {
+            return null; // named before and refused then: already reported
         }
         Path p = dir.resolve(name).normalize();
         if (!dir.equals(p.getParent())) {
-            problems.add(where + ": outside the branding folder");
+            l.problems.add(where + ": outside the branding folder");
             return null;
         }
+        l.stamps.put(name, stamp(p));
         try {
             if (!Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) {
-                problems.add(where + ": " + name + " is missing or not a regular file (symbolic links are not followed)");
+                l.problems.add(where + ": " + name + " is missing or not a regular file (symbolic links are not followed)");
                 return null;
             }
             if (Files.size(p) > maxFileBytes) {
-                problems.add(where + ": " + name + " is larger than " + maxFileBytes / 1024 + " KB");
+                l.problems.add(where + ": " + name + " is larger than " + maxFileBytes / 1024 + " KB");
+                return null;
+            }
+            if (l.total + Files.size(p) > MAX_TOTAL_BYTES) {
+                l.problems.add(where + ": images together exceed " + MAX_TOTAL_BYTES / (1024 * 1024) + " MB");
                 return null;
             }
             byte[] bytes = readCapped(p, maxFileBytes);
             String type = contentType(name, bytes);
             if (type == null) {
-                problems.add(where + ": " + name + " is not a valid " + extension(name).toUpperCase(Locale.ROOT)
-                    + " image, or holds a DOCTYPE, entities or a script");
+                l.problems.add(where + ": " + name + " is not a valid " + extension(name).toUpperCase(Locale.ROOT)
+                    + " image, or is an SVG holding a DOCTYPE, entities, scripts or event attributes");
                 return null;
             }
-            if (total[0] + bytes.length > MAX_TOTAL_BYTES) {
-                problems.add(where + ": images together exceed " + MAX_TOTAL_BYTES / (1024 * 1024) + " MB");
-                return null;
-            }
-            total[0] += bytes.length;
+            l.total += bytes.length;
             Image i = new Image(name, type, bytes, hash(bytes));
-            images.put(name, i);
+            l.images.put(name, i);
             return i;
         } catch (IOException e) {
-            problems.add(where + ": " + name + " cannot be read (" + e.getMessage() + ")");
+            l.problems.add(where + ": " + name + " cannot be read (" + e.getMessage() + ")");
             return null;
         }
     }
@@ -331,10 +360,10 @@ public class BrandingFolder {
         return node.asText().toLowerCase(Locale.ROOT);
     }
 
-    /** Reads at most {@code cap} bytes; a longer file (grown since it was measured) is refused. */
+    /** Reads at most {@code cap} bytes (cap at most 8 MB); a longer file (grown since it was measured) is refused. */
     private static byte[] readCapped(Path p, long cap) throws IOException {
         try (InputStream in = Files.newInputStream(p, LinkOption.NOFOLLOW_LINKS)) {
-            byte[] bytes = in.readNBytes((int) cap + 1);
+            byte[] bytes = in.readNBytes((int) Math.min(cap, MAX_TOTAL_BYTES) + 1);
             if (bytes.length > cap) {
                 throw new IOException("larger than " + cap / 1024 + " KB");
             }

@@ -88,8 +88,8 @@ Every field is optional.
 | `product.logo` | An image shown before the name, at 28 pixels high |
 | `connectors` | Keyed by connector id: `postgresql`, `sqlserver`, `files`, `s3`, or a planned connector's id (below) |
 | `connectors.<id>.file` | An image that replaces the tile |
-| `connectors.<id>.color` | A brand colour as `#rrggbb`. With a file, the background behind the image; without one, the tile's colour, with black or white letters, whichever contrasts more |
-| `connectors.<id>.label` | The logo's text alternative, used where the tile is the only label. At most 60 characters |
+| `connectors.<id>.color` | A brand colour as `#rrggbb`. With a file, the background behind the image; without one, the tile's colour, with black or white letters, whichever contrasts more. Not used in the High contrast theme, nor for a planned connector without a file (its tile stays neutral until it is available) |
+| `connectors.<id>.label` | The name of the logo: shown as a tooltip on the tile, and read out as the tile's name wherever the tile stands without its connector name beside it. At most 60 characters |
 
 Planned connector ids, for when they arrive: `mysql`, `oracle`, `jdbc`, `db2`, `sqlite`,
 `snowflake`, `redshift`, `bigquery`, `databricks`, `hana`, `teradata`, `mongodb`, `elasticsearch`,
@@ -101,16 +101,20 @@ Planned connector ids, for when they arrive: `mysql`, `oracle`, `jdbc`, `db2`, `
 ### Images
 
 - **Formats:** SVG, PNG or WebP. The content must match the extension.
-- **Size:** at most 256 KB each (`kilnmark.branding.max-file-kb`), 8 MB together.
+- **Size:** at most 256 KB each (`kilnmark.branding.max-file-kb`, which cannot be set above 8 MB),
+  8 MB together.
 - **Names:** plain file names in the folder itself, made of letters, digits, `.`, `_` and `-`.
-  No sub-folders and no `..`. Symbolic links are not followed.
+  No sub-folders and no `..`. Symbolic links are not followed. A hard link is an ordinary file to
+  the server and is read, so do not hard-link files you would not publish into the folder.
 - **Shape:** tiles are square; a square image with a little padding looks best. The product logo
   is shown 28 pixels high and up to 160 pixels wide.
-- **SVG:** files with a `DOCTYPE`, entities or `<script>` are refused. Every SVG is shown as an
-  image, never placed in the page, so nothing in it can run.
+- **SVG:** every SVG is served with a Content-Security-Policy that forbids scripts and shown as an
+  image, never placed in the page, so nothing in it can run. As a further safeguard, files with a
+  `DOCTYPE`, entities, `<script>`, event attributes (`onload=` and so on), `javascript:` links or
+  `<foreignObject>` are refused.
 
-Kilnmark checks the manifest whenever it, or a file it names, changes, so there is no need to
-restart. An entry that is invalid (a missing file, a wrong type, too large, a bad colour) is left
+Kilnmark notices within a couple of seconds when the manifest, or a file it names, changes, so
+there is no need to restart. It looks at the first 200 connector entries only. An entry that is invalid (a missing file, a wrong type, too large, a bad colour) is left
 out and the server log says why, in a warning starting `Branding folder`. That connector keeps its
 letter tile.
 

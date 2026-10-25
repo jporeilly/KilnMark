@@ -34,7 +34,7 @@ class BrandingUnitTest {
 
     @Test
     void noFolderMeansNoBranding() {
-        BrandingFolder f = new BrandingFolder(dir.resolve("missing"), 256 * 1024);
+        BrandingFolder f = new BrandingFolder(dir.resolve("missing"), 256 * 1024, 0);
         assertNull(f.view().productName());
         assertNull(f.view().logo());
         assertTrue(f.view().connectors().isEmpty());
@@ -51,7 +51,7 @@ class BrandingUnitTest {
                "postgresql": {"file": "pg.png", "color": "#336791", "label": "PostgreSQL"},
                "oracle": {"color": "#C74634"}
              }}""");
-        BrandingFolder f = new BrandingFolder(dir, 256 * 1024);
+        BrandingFolder f = new BrandingFolder(dir, 256 * 1024, 0);
         BrandingFolder.View v = f.view();
         assertEquals("Acme Data", v.productName());
         assertTrue(v.logo().startsWith("/api/v1/branding/files/acme.svg?v="), v.logo());
@@ -70,7 +70,7 @@ class BrandingUnitTest {
         write("other.svg", SVG);
         write("secret.txt", "not for you");
         write("manifest.json", "{\"product\": {\"logo\": \"listed.svg\"}}");
-        BrandingFolder f = new BrandingFolder(dir, 256 * 1024);
+        BrandingFolder f = new BrandingFolder(dir, 256 * 1024, 0);
         assertTrue(f.image("listed.svg").isPresent());
         assertTrue(f.image("other.svg").isEmpty());
         assertTrue(f.image("secret.txt").isEmpty());
@@ -111,7 +111,7 @@ class BrandingUnitTest {
                "Bad Id": {"color": "#000000"},
                "l": {"color": "red", "label": 42}
              }}""");
-        BrandingFolder f = new BrandingFolder(inside, 1024);
+        BrandingFolder f = new BrandingFolder(inside, 1024, 0);
         assertTrue(f.view().connectors().isEmpty(), f.view().connectors().toString());
         for (String n : new String[] {"x.svg", "y.svg", "page.html", "big.svg", "fake.png", "fake.svg", "script.svg",
             "entity.svg", "link.svg"}) {
@@ -122,15 +122,15 @@ class BrandingUnitTest {
     @Test
     void invalidManifestFallsBackToNoBranding() throws IOException {
         write("manifest.json", "{ not json");
-        assertTrue(new BrandingFolder(dir, 1024).view().connectors().isEmpty());
+        assertTrue(new BrandingFolder(dir, 1024, 0).view().connectors().isEmpty());
         write("manifest.json", "[1, 2]");
-        assertNull(new BrandingFolder(dir, 1024).view().productName());
+        assertNull(new BrandingFolder(dir, 1024, 0).view().productName());
     }
 
     @Test
     void picksUpChangesWithoutARestart() throws IOException {
         write("manifest.json", "{\"connectors\": {\"kafka\": {\"file\": \"kafka.svg\"}}}");
-        BrandingFolder f = new BrandingFolder(dir, 256 * 1024);
+        BrandingFolder f = new BrandingFolder(dir, 256 * 1024, 0);
         assertTrue(f.view().connectors().isEmpty());
         // The file named but missing at first is watched, so adding it is noticed.
         write("kafka.svg", SVG);
@@ -144,7 +144,7 @@ class BrandingUnitTest {
     void imagesAreServedSoNothingInThemCanRun() throws IOException {
         write("logo.svg", SVG);
         write("manifest.json", "{\"product\": {\"logo\": \"logo.svg\"}}");
-        BrandingFolder.Image i = new BrandingFolder(dir, 1024).image("logo.svg").orElseThrow();
+        BrandingFolder.Image i = new BrandingFolder(dir, 1024, 0).image("logo.svg").orElseThrow();
         Response r = BrandingResource.image(i, null);
         assertEquals(200, r.getStatus());
         assertEquals("image/svg+xml", r.getMediaType().toString());
@@ -154,6 +154,46 @@ class BrandingUnitTest {
         assertTrue(csp.contains("sandbox"), csp);
         assertFalse(csp.contains("script-src"), csp);
         assertEquals(304, BrandingResource.image(i, "\"" + i.etag() + "\"").getStatus());
+    }
+
+    @Test
+    void checksForChangesAtMostOncePerInterval() throws IOException {
+        write("logo.svg", SVG);
+        write("manifest.json", "{\"product\": {\"name\": \"First\"}}");
+        BrandingFolder f = new BrandingFolder(dir, 1024, java.util.concurrent.TimeUnit.HOURS.toNanos(1));
+        assertEquals("First", f.view().productName());
+        write("manifest.json", "{\"product\": {\"name\": \"Second, longer\"}}");
+        assertEquals("First", f.view().productName(), "not rechecked within the interval");
+        assertEquals("Second, longer", new BrandingFolder(dir, 1024, 0).view().productName());
+    }
+
+    @Test
+    void everyEntryCountsAgainstTheCap() throws IOException {
+        StringBuilder b = new StringBuilder("{\"connectors\": {");
+        for (int i = 0; i < BrandingFolder.MAX_ENTRIES; i++) {
+            b.append("\"Bad").append(i).append("\": {\"color\": \"#000000\"}, ");
+        }
+        b.append("\"late\": {\"color\": \"#000000\"}}}");
+        write("manifest.json", b.toString());
+        assertTrue(new BrandingFolder(dir, 1024, 0).view().connectors().isEmpty(), "entries past the cap are ignored");
+    }
+
+    @Test
+    void svgsWithActiveContentAreRefused() {
+        for (String bad : new String[] {
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"/>",
+            "<svg><a href=\"javascript:alert(1)\"><rect/></a></svg>",
+            "<svg><foreignObject><div/></foreignObject></svg>",
+            "<svg><SCRIPT>x</SCRIPT></svg>"}) {
+            assertNull(BrandingFolder.contentType("a.svg", bad.getBytes(StandardCharsets.UTF_8)), bad);
+        }
+    }
+
+    @Test
+    void oversizedCapIsClampedNotOverflowed() throws IOException {
+        write("logo.svg", SVG);
+        write("manifest.json", "{\"product\": {\"logo\": \"logo.svg\"}}");
+        assertTrue(new BrandingFolder(dir, Long.MAX_VALUE, 0).image("logo.svg").isPresent());
     }
 
     @Test

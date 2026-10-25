@@ -1,7 +1,7 @@
 // Checks the colour tokens in src/tokens.css against WCAG 2.2 AA for every theme and accent:
 // text 4.5:1 (7:1 for the main text colours in high contrast), and 3:1 for borders of controls,
-// focus rings, indicators and bars (1.4.11). Also checks that the two copies of the dark and the
-// high-contrast dark sets agree. Run by `npm run build`, or alone with `npm run check:contrast`.
+// focus rings, indicators and bars (1.4.11). Also checks that the dark set's two copies (chosen
+// Dark, and System when the OS is dark) agree. Run by `npm run build`, or alone with `npm run check:contrast`.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -95,6 +95,10 @@ for (const [name, t] of Object.entries(themes)) {
     need("--km-focus", bg, 3, "focus ring");
     for (const a of accents) need(a, bg, 3, "accent indicators");
   }
+  // Bars (fill, top values, heat, score): every fill against the track, which is --km-ground with
+  // a --km-border-control edge (app.css, browse.css).
+  for (const fill of ["--km-good", "--km-warn", "--km-bad", "--km-link"]) need(fill, "--km-ground", 3, "bar fill vs track");
+  need("--km-border-control", "--km-ground", 3, "bar track edge");
   for (const a of accents) need("--km-on-accent", a, 4.5, "text on accent buttons");
   for (let n = 1; n <= 8; n++) need(`--km-tile-${n}-fg`, `--km-tile-${n}-bg`, 4.5, "monogram letters");
 }

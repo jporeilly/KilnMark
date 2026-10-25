@@ -561,7 +561,8 @@ format, the image rules and an example are in the [branding guide](guide/brandin
 `GET /api/v1/branding` and `GET /api/v1/branding/files/{name}` need no token: the sign-in page
 shows the logo, and `<img>` cannot send one. Only files the manifest lists are served (SVG, PNG,
 WebP, content checked against the extension, no symbolic links or sub-folders), with `nosniff` and
-a Content-Security-Policy that stops SVGs running scripts. Problems are logged as warnings
+a Content-Security-Policy that stops SVGs running scripts; the UI shows them only with `<img>`.
+Refusing SVGs with scripts or event attributes is defence in depth on top of that. Problems are logged as warnings
 starting `Branding folder`.
 
 ## Web UI

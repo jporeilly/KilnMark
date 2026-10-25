@@ -10,8 +10,8 @@
  *
  * Contrast is checked to WCAG 2.2 AA by `npm run check:contrast` (scripts/check-contrast.mjs):
  * text 4.5:1 (7:1 in high contrast), borders, focus rings and indicators 3:1, for every theme and
- * accent. The script also checks that the two copies of the dark and high-contrast dark sets agree.
- * Edit a set's copies together.
+ * accent. The dark set appears twice (chosen Dark, and System when the OS is dark); the script
+ * checks the two copies agree, so edit them together.
  */
 
 /* ---- Light (the default, and System when the OS is light) ---- */

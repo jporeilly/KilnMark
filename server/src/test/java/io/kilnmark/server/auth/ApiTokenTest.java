@@ -62,6 +62,17 @@ class ApiTokenTest {
     void publicPagesNeedNoToken() {
         given().get("/api/v1/info").then().statusCode(200);
         given().get("/q/health").then().statusCode(200);
+        // Branding: the sign-in page shows the organisation's name and logo, and <img> sends no token.
+        // A stale or bogus token kept in the browser must not break it either.
+        for (String authorization : new String[] {null, "Bearer km_" + "x".repeat(43)}) {
+            var request = authorization == null ? given() : given().header("Authorization", authorization);
+            request.get("/api/v1/branding").then().statusCode(200).contentType(ContentType.JSON)
+                .header("X-Content-Type-Options", equalTo("nosniff"))
+                .body("$", hasKey("connectors"));
+            var again = authorization == null ? given() : given().header("Authorization", authorization);
+            again.get("/api/v1/branding/files/missing.svg").then().statusCode(404).contentType(ContentType.JSON)
+                .body("error", containsString("No branding image"));
+        }
     }
 
     @Test

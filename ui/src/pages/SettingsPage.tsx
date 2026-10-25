@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { allows, type AccessRole } from "../api";
+import { useProductName } from "../components/Brand";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { Icon } from "../components/icons";
@@ -22,6 +24,7 @@ import {
 export function SettingsPage({ role }: { role: AccessRole }) {
   useTitle("Settings");
   const admin = allows(role, "admin");
+  const product = useProductName();
   const items: { title: string; link: string; text: string; external?: boolean }[] = [
     { title: "API tokens", link: href.tokens(), text: "Create, list and revoke tokens for people, scripts and AI assistants." },
     { title: "AI models", link: href.ai(), text: "Local and hosted models, which feature uses which, and the rule for hosted models." },
@@ -37,7 +40,7 @@ export function SettingsPage({ role }: { role: AccessRole }) {
     <>
       <h1 tabIndex={-1}>Settings</h1>
       <p className="lead">
-        {admin ? "How Kilnmark looks for you, and administration for this server." : "How Kilnmark looks for you."}
+        {admin ? `How ${product} looks for you, and administration for this server.` : `How ${product} looks for you.`}
       </p>
       <Appearance />
       {admin && (
@@ -67,6 +70,7 @@ function Appearance() {
   const a = useAppearance();
   const branding = useBranding();
   const logos = Object.values(branding.connectors).filter((c) => c.image).length;
+  const [brokenLogo, setBrokenLogo] = useState<string | null>(null);
   return (
     <section className="panel appearance" aria-labelledby="appearance-heading">
       <h2 id="appearance-heading">Appearance</h2>
@@ -164,7 +168,18 @@ function Appearance() {
             <div>
               <dt className="muted small">Logo</dt>
               <dd>
-                {branding.logo ? <img className="org-logo" src={branding.logo} alt="The organisation's logo" /> : "None"}
+                {!branding.logo ? (
+                  "None"
+                ) : brokenLogo === branding.logo ? (
+                  "Set, but the image could not be loaded"
+                ) : (
+                  <img
+                    className="org-logo"
+                    src={branding.logo}
+                    alt="The organisation's logo"
+                    onError={() => setBrokenLogo(branding.logo)}
+                  />
+                )}
               </dd>
             </div>
             <div>

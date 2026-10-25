@@ -433,12 +433,15 @@ tbody th {
   white-space: nowrap;
 }
 
+/* Bars: a ground-coloured track with a control border, so the fill stands out in every theme
+   (the fill against the track is checked at 3:1 by check-contrast.mjs). */
 .fill-bar {
   display: inline-block;
   width: 60px;
   height: 8px;
   border-radius: 4px;
-  background: var(--km-border);
+  background: var(--km-ground);
+  border: 1px solid var(--km-border-control);
   overflow: hidden;
 }
 
@@ -692,31 +695,38 @@ button.danger {
   margin: 16px 0 4px;
 }
 
-.gallery-family {
-  margin: 12px 0 6px;
-  font-size: 13px;
-  text-transform: capitalize;
-  color: var(--km-muted);
-}
-
 .cards {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  gap: 8px;
 }
 
+/* A card: tile beside the name and family, capability badges underneath. */
 .card {
   width: 100%;
   height: 100%;
   display: grid;
-  justify-items: start;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 6px;
+  align-items: start;
   align-content: start;
-  gap: 6px;
+  padding: 10px 12px;
   text-align: left;
   font-weight: 400;
+}
+
+.card .badges {
+  grid-column: 1 / -1;
+}
+
+.card-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .card[aria-pressed="true"] {
@@ -726,13 +736,29 @@ button.danger {
 
 .card-name {
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
+.card-family {
+  display: block;
+  font-size: 12px;
+  color: var(--km-muted);
+}
+
+.card-family::first-letter {
+  text-transform: uppercase;
+}
+
+/* Not available yet: lighter, after the available ones, and said in words ("Planned · wave 2"). */
 .card.planned {
   cursor: not-allowed;
   border-style: dashed;
   color: var(--km-muted);
   background: var(--km-ground);
+}
+
+.card.planned .tag {
+  background: transparent;
 }
 
 .planned-label {
@@ -744,6 +770,10 @@ button.danger {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.badges .tag {
+  margin-right: 0;
 }
 
 .card-formats {
@@ -1295,10 +1325,6 @@ h1.with-tile {
   gap: 12px;
 }
 
-.card .tile {
-  margin-bottom: 2px;
-}
-
 /* ---- Appearance: theme switch in the top bar and the settings section ---- */
 .theme-quick {
   display: inline-flex;
@@ -1423,10 +1449,11 @@ h1.with-tile {
   border-color: var(--km-ink);
 }
 
-/* Unavailable controls keep full contrast here: their words ("Planned", disabled styling) say so. */
+/* Unavailable controls keep full contrast here and show it with a dashed edge, not a fade. */
 :root[data-theme="contrast"] button:disabled,
 :root[data-theme="contrast"] button[aria-disabled="true"] {
   opacity: 1;
+  border-style: dashed;
 }
 
 /* ---- Forced colours (Windows high contrast): the system replaces our colours and drops box

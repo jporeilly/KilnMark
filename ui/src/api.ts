@@ -396,8 +396,15 @@ export const api = {
   info: () => call<{ product: string; version: string; roles: string[] }>("/api/v1/info"),
   sources: () => call<Source[]>("/api/v1/sources"),
   connectors: () => call<Connector[]>("/api/v1/connectors"),
-  /** Public: the sign-in page shows the organisation's name and logo. */
-  branding: () => call<Branding>("/api/v1/branding"),
+  /**
+   * Public: the sign-in page shows the organisation's name and logo. Sent without the token, so a
+   * stale one in this tab can never sign anyone out from here.
+   */
+  branding: async (): Promise<Branding> => {
+    const r = await fetch("/api/v1/branding", { headers: { Accept: "application/json" } });
+    if (!r.ok) throw new ApiError(`The server answered ${r.status}`, r.status);
+    return (await r.json()) as Branding;
+  },
   addSource: (s: NewSource) => call<Source>("/api/v1/sources", { method: "POST", body: JSON.stringify(s) }),
   importSources: (text: string, format: "csv" | "json", o: ImportOptions) =>
     call<ImportReport>(

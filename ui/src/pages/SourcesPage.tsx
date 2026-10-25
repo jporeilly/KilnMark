@@ -12,6 +12,7 @@ import {
 } from "../api";
 import { AddConnection } from "../components/AddConnection";
 import { SourceTile } from "../components/ConnectorTile";
+import { useProductName } from "../components/Brand";
 import { ScanAction } from "../components/ScanAction";
 import { Status } from "../components/Status";
 import { useTitle } from "../components/useTitle";
@@ -33,6 +34,7 @@ const busy = (s: Source) => s.lastRun?.status === "queued" || s.lastRun?.status 
 /** Sources and their scans. Stewards can start scans and open a source to change it; admins can also add and import sources. */
 export function SourcesPage({ role }: { role: AccessRole }) {
   useTitle("Sources");
+  const product = useProductName();
   const canScan = allows(role, "steward");
   const canAdd = allows(role, "admin");
   const [sources, setSources] = useState<Source[] | null>(null);
@@ -147,7 +149,7 @@ export function SourcesPage({ role }: { role: AccessRole }) {
     <>
       <h1 tabIndex={-1}>Sources</h1>
       <p className="lead">
-        Databases, folders and buckets Kilnmark reads. A scan records every table, view and file, and profiles each
+        Databases, folders and buckets {product} reads. A scan records every table, view and file, and profiles each
         column. Open a source to edit, test or delete it.
       </p>
       <p role="status" className="notice">

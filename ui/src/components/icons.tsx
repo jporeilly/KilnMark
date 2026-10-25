@@ -139,7 +139,7 @@ const ICONS: Record<string, TablerIcon> = {
 };
 
 /** True if there is an icon of this name (so a caller can choose another). */
-export const hasIcon = (name: string) => name.toLowerCase() in ICONS;
+export const hasIcon = (name: string) => Object.hasOwn(ICONS, name.toLowerCase());
 
 /**
  * An icon by name; unknown names get a plain file. Decorative (hidden from assistive technology)

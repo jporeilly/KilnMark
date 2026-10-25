@@ -2,10 +2,12 @@
 
 The server's libraries are checked and listed by the build (`THIRD-PARTY-NOTICES.md`,
 [ADR 0007](../adr/0007-dependency-policy.md)). The web UI's are npm packages, pinned in
-`ui/package-lock.json`. `npm run build` writes the licence of every package in the UI bundle to
-`dist/ui/third-party-notices.txt`, served with the UI and included in each release. The licences
-are MIT, plus ISC and BSD-3-Clause for the d3 packages that @xyflow/react brings, all permissive.
-(`config/allowed-licenses.json` is checked against the server's libraries only.)
+`ui/package-lock.json`. `npm run build` writes the licence text of every runtime package the UI
+bundle is built from (type-only `@types/*` packages left out) to `dist/ui/third-party-notices.txt`.
+The server serves it at `/third-party-notices.txt`, and `./gradlew release` copies it to the top of
+the release folder as `THIRD-PARTY-NOTICES-UI.txt`, next to the server's `THIRD-PARTY-NOTICES.md`.
+The licences are MIT, plus ISC and BSD-3-Clause for the d3 packages that @xyflow/react brings, all
+permissive. (`config/allowed-licenses.json` is checked against the server's libraries only.)
 
 Direct dependencies:
 

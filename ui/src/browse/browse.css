@@ -473,7 +473,8 @@ tr.is-open > td {
 .top-bar {
   display: inline-block;
   height: 8px;
-  background: var(--km-border);
+  background: var(--km-ground);
+  border: 1px solid var(--km-border-control);
   border-radius: 4px;
   overflow: hidden;
 }

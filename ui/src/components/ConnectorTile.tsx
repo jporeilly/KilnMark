@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Connector, PlannedConnector } from "../api";
 import { useBranding, useConnectorInfo } from "../theme/looks";
+import { useAppearance } from "../theme/appearance";
 import { familyIcon, Icon } from "./icons";
 
 /** Tints in tokens.css (--km-tile-1 … --km-tile-8), each checked for contrast in every theme. */
@@ -76,17 +77,21 @@ export function ConnectorTile({
 }) {
   const branding = useBranding();
   const look = branding.connectors[id];
+  // High contrast keeps its own black and white tiles: operator brand colours are not used there.
+  const colour = useAppearance().theme === "contrast" ? null : look?.color ?? null;
+  // The operator's label names the logo: the tile's accessible name where it stands alone, and a tooltip.
+  const label = look?.label ?? null;
   const [broken, setBroken] = useState<string | null>(null);
   const a11y = labelled
-    ? { role: "img" as const, "aria-label": look?.label ?? name, title: look?.label ?? name }
-    : { "aria-hidden": true as const };
+    ? { role: "img" as const, "aria-label": label ?? name, title: label ?? name }
+    : { "aria-hidden": true as const, ...(label ? { title: label } : {}) };
   const base = `tile tile-${size}${planned ? " tile-planned" : ""}`;
 
   if (look?.image && broken !== look.image) {
     return (
       <span
         className={`${base} tile-image`}
-        style={look.color ? { background: look.color } : undefined}
+        style={colour ? { background: colour } : undefined}
         {...a11y}
       >
         {/* An <img>, never inline SVG: nothing in an operator's file can run. */}
@@ -96,7 +101,8 @@ export function ConnectorTile({
   }
 
   const letters = monogram === null && icon ? null : (monogram ?? deriveMonogram(name)).slice(0, 3);
-  const brand = look?.color && !planned ? { background: look.color, color: lettersOn(look.color) } : undefined;
+  // A planned connector without a logo keeps its neutral "not yet" tile; its colour is not used.
+  const brand = colour && !planned ? { background: colour, color: lettersOn(colour) } : undefined;
   const tint = brand ? " tile-brand" : planned ? "" : ` tile-tint-${tintFor(id)}`;
   return (
     <span className={`${base}${tint}${letters ? ` letters-${letters.length}` : ""}`} style={brand} {...a11y}>
