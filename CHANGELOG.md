@@ -107,9 +107,11 @@ details.
   in most documents). It gathers a fixed number of candidates through indexes (exact names, the
   nearest names in order of distance, matching words, alike field names, a sample of matching
   document chunks) and ranks only those, instead of ranking every match before the limit; snippets
-  are chosen from a document's first matching chunks. Exact names now always come first, then the
-  closest whole names. Migration V10 adds GiST trigram indexes on asset names and expression indexes
-  for exact names.
+  are chosen from a document's first matching chunks. Where more match alike than are taken, the
+  first by URN are taken (the chunk sample is the first matching chunks of documents in URN order),
+  so the same search gives the same results. Exact names now always come first, then the closest
+  whole names. Migration V10 adds GiST trigram indexes on asset names and expression indexes for
+  exact names, and has the asset words index take entries at once (no pending list).
 
 - **Sign-in with API tokens:** every API call needs a token (`Authorization: Bearer km_...`)
   with a role: viewer (read), steward (also start scans) or admin (also add sources and manage

@@ -600,19 +600,28 @@ public final class JdbcGraphStore implements GraphStore {
      * own distance order, by word and by whole name; names and descriptions holding every word;
      * field names alike enough; a sample of matching document chunks), and only those are scored,
      * as before: the work grows with the candidates and their columns, not with the catalogue. A
-     * word in every asset, field or chunk ("id", "the") costs about what a rare one does. Words and
-     * descriptions all score alike (0.6), so any so many of them serve.
+     * word in every asset, field or chunk ("id", "the") costs about what a rare one does.
+     *
+     * <p>Where a fixed number is taken from more matches that score alike, it is the first by URN
+     * (and field name, or chunk number), so the same search always gathers the same candidates:
+     * words and descriptions all score 0.6; fields are scored again with the asset; the chunk
+     * sample is the first matching chunks of documents in URN order. The searched words are
+     * written into each branch (not read from the {@code q} row) so the planner, planning afresh
+     * for every search, sees how common they are and picks an index or an ordered scan to match.
+     * Package-private: the container tests reach it to {@code EXPLAIN} exactly what runs.
      */
-    public static PreparedStatement prepareKeywordSearch(Connection c, String prefix, String q, int limit)
+    static PreparedStatement prepareKeywordSearch(Connection c, String prefix, String q, int limit)
         throws SQLException {
-        try (Statement st = c.createStatement()) {
-            // the threshold of the <% operator below: fields whose word similarity is at least this
-            st.execute("SET LOCAL pg_trgm.word_similarity_threshold = " + FIELD_SIMILARITY);
-            // planned for the words given each time: a plan cached for any words could scan every
-            // field for a rare one to find the few a common one finds at once
-            st.execute("SET LOCAL plan_cache_mode = force_custom_plan");
+        try (PreparedStatement st = c.prepareStatement("""
+                SELECT set_config('pg_trgm.word_similarity_threshold', ?, true),
+                       set_config('plan_cache_mode', 'force_custom_plan', true)""")) {
+            // the threshold of the <% operator below: fields whose word similarity is at least this;
+            // and planned for the words given each time, as a plan cached for any words could scan
+            // every field for a rare one to find the few a common one finds at once
+            st.setString(1, Double.toString(FIELD_SIMILARITY));
+            st.executeQuery().close();
         }
-        PreparedStatement ps = c.prepareStatement(prefix + """
+        PreparedStatement ps = c.prepareStatement(prefix + String.format(java.util.Locale.ROOT, """
             WITH q AS (SELECT ?::text AS t, plainto_tsquery('simple', ?) AS ts, ? AS like_t),
             candidates AS (
                 (SELECT a.urn FROM kilnmark.asset a, q
@@ -628,14 +637,16 @@ public final class JdbcGraphStore implements GraphStore {
                 (SELECT a.urn FROM kilnmark.asset a WHERE strpos(?::text, '.') > 0 AND a.removed_at IS NULL
                  ORDER BY ?::text OPERATOR(public.<<->) (a.container || '.' || a.name) LIMIT ?)
                 UNION
-                (SELECT a.urn FROM kilnmark.asset a, q WHERE a.search @@ q.ts AND a.removed_at IS NULL LIMIT %1$d)
+                (SELECT a.urn FROM kilnmark.asset a
+                 WHERE a.search @@ plainto_tsquery('simple', ?) AND a.removed_at IS NULL ORDER BY a.urn LIMIT %1$d)
                 UNION
-                (SELECT f.asset_urn FROM kilnmark.field f WHERE ?::text OPERATOR(public.<%%) f.name LIMIT %2$d)
+                (SELECT f.asset_urn FROM kilnmark.field f WHERE ?::text OPERATOR(public.<%%) f.name
+                 ORDER BY f.asset_urn, f.name LIMIT %2$d)
             ),
             chunks AS (
                 SELECT c.asset_urn, ts_rank_cd(c.search, q.ts) AS rank
-                FROM (SELECT c.asset_urn, c.search FROM kilnmark.document_chunk c, q WHERE c.search @@ q.ts
-                      LIMIT %3$d) c, q
+                FROM (SELECT c.asset_urn, c.search FROM kilnmark.document_chunk c
+                      WHERE c.search @@ plainto_tsquery('simple', ?) ORDER BY c.asset_urn, c.seq LIMIT %3$d) c, q
             ),
             texts AS (
                 -- documents whose text has every word: below name and description matches (0.41 to 0.5),
@@ -669,8 +680,7 @@ public final class JdbcGraphStore implements GraphStore {
             WHERE greatest(h.asset_score, coalesce(h.best * 0.9, 0), coalesce(t.score, 0)) >= 0.4
             ORDER BY h.exact DESC, score DESC, h.asset_score DESC, public.similarity(q.t, h.name) DESC,
                      h.container, h.name
-            LIMIT ?""".formatted(WORD_CANDIDATES, FIELD_CANDIDATES, CHUNK_SAMPLE, TEXT_CANDIDATES,
-                FIELD_SIMILARITY));
+            LIMIT ?""", WORD_CANDIDATES, FIELD_CANDIDATES, CHUNK_SAMPLE, TEXT_CANDIDATES, FIELD_SIMILARITY));
         int names = Math.max(limit, NAME_CANDIDATES);
         int i = 0;
         ps.setString(++i, q);
@@ -684,7 +694,9 @@ public final class JdbcGraphStore implements GraphStore {
         ps.setString(++i, q);
         ps.setString(++i, q);
         ps.setInt(++i, names);
-        ps.setString(++i, q);
+        ps.setString(++i, q); // words and descriptions
+        ps.setString(++i, q); // field names
+        ps.setString(++i, q); // document chunks
         ps.setInt(++i, limit);
         return ps;
     }
@@ -707,7 +719,7 @@ public final class JdbcGraphStore implements GraphStore {
             CROSS JOIN LATERAL (
                 SELECT c.text FROM (SELECT c.text, c.search, c.seq FROM kilnmark.document_chunk c
                                     WHERE c.asset_urn = u.urn AND c.search @@ q.ts ORDER BY c.seq LIMIT %d) c
-                ORDER BY ts_rank_cd(c.search, q.ts) DESC, c.seq LIMIT 1) b""".formatted(SNIPPET_CHUNKS))) {
+                ORDER BY ts_rank_cd(c.search, q.ts) DESC, c.seq LIMIT 1) b""".formatted(SNIPPET_CHUNKS))) { // ints only
             ps.setString(1, q);
             ps.setArray(2, c.createArrayOf("text", urns.toArray()));
             try (ResultSet rs = ps.executeQuery()) {

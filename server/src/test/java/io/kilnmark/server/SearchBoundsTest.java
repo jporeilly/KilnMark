@@ -40,6 +40,19 @@ class SearchBoundsTest {
     @Inject
     AgroalDataSource db;
 
+    /** The search's own statement; package-private in the graph module, so reached by reflection. */
+    private static final java.lang.reflect.Method PREPARE;
+
+    static {
+        try {
+            PREPARE = JdbcGraphStore.class.getDeclaredMethod("prepareKeywordSearch", Connection.class, String.class,
+                String.class, int.class);
+            PREPARE.setAccessible(true);
+        } catch (NoSuchMethodException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
     private void load() throws Exception {
         try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
             s.execute("INSERT INTO kilnmark.data_source (name, display_name, kind) VALUES ('" + SOURCE
@@ -68,9 +81,11 @@ class SearchBoundsTest {
                                  || '; the invoice follows the shipment.', 0, 80
                 FROM kilnmark.asset a, generate_series(0, 19) k
                 WHERE a.urn LIKE 'urn:kilnmark:search-bounds:%' AND a.kind = 'document'""");
-            s.execute("ANALYZE kilnmark.asset");
-            s.execute("ANALYZE kilnmark.field");
-            s.execute("ANALYZE kilnmark.document_chunk");
+        }
+        // As autovacuum would, in time: statistics, and GIN pending lists merged (outside a transaction).
+        try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
+            c.setAutoCommit(true);
+            s.execute("VACUUM (ANALYZE) kilnmark.asset, kilnmark.field, kilnmark.document_chunk");
         }
     }
 
@@ -85,8 +100,8 @@ class SearchBoundsTest {
     private Map<String, Long> touched(String q) throws Exception {
         try (Connection c = db.getConnection()) {
             c.setAutoCommit(false);
-            try (PreparedStatement ps = JdbcGraphStore.prepareKeywordSearch(c, "EXPLAIN (ANALYZE, FORMAT JSON) ", q,
-                     100); ResultSet rs = ps.executeQuery()) {
+            try (PreparedStatement ps = (PreparedStatement) PREPARE.invoke(null, c, "EXPLAIN (ANALYZE, FORMAT JSON) ",
+                     q, 100); ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 Map<String, Long> out = new HashMap<>();
                 count(JSON.readTree(rs.getString(1)).get(0).get("Plan"), out);
