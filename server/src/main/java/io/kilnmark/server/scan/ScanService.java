@@ -58,6 +58,7 @@ public class ScanService {
     private final Connectors connectors;
     private final JobQueue jobs;
     private final RelationshipService relationships;
+    private final io.kilnmark.server.sources.HostPolicy hosts;
 
     /** Reads documents' text (ADR 0017); injected here so the constructor stays as other streams know it. */
     @jakarta.inject.Inject
@@ -76,6 +77,7 @@ public class ScanService {
         this.connectors = connectors;
         this.jobs = jobs;
         this.relationships = relationships;
+        this.hosts = io.kilnmark.server.sources.HostPolicy.of(config);
     }
 
     /** Queues a scan of {@code source} for a worker to run, and returns the queued run. */
@@ -174,6 +176,11 @@ public class ScanService {
                 "This server has no connector for sources of kind '" + source.kind() + "'"));
             String secret = store.sourceSecret(source.name()).map(secrets::open).orElse(null);
             SourceConfig config = new SourceConfig(source.name(), source.kind(), source.settings(), secret);
+            // The allow-list as it is now, not as it was when the source was saved.
+            String refused = hosts.refusal(connector, config);
+            if (refused != null) {
+                throw new ConnectorException(refused);
+            }
             ending = connector;
             endingConfig = config;
             // Containers and include/exclude patterns, applied to every connector's catalogue alike;

@@ -307,6 +307,7 @@ public final class RowChecks {
         private final double maxAgeHours;
         private final Instant now;
         private Instant latest;
+        private long unreadable;
 
         Freshness(String method, int col, double maxAgeHours, Instant now) {
             this.method = method;
@@ -317,15 +318,28 @@ public final class RowChecks {
 
         @Override
         public void row(Row row) {
-            Instant t = ProfileFacts.instant(row.cell(col));
-            if (t != null && (latest == null || t.isAfter(latest))) {
+            String v = row.cell(col);
+            if (v == null) {
+                return;
+            }
+            Instant t = ProfileFacts.instant(v);
+            if (t == null) {
+                unreadable++; // counted and said, not skipped silently
+            } else if (latest == null || t.isAfter(latest)) {
                 latest = t;
             }
         }
 
         @Override
         public Evaluation finish() {
-            return freshness(latest, maxAgeHours, now, method);
+            Evaluation e = freshness(latest, maxAgeHours, now, method);
+            if (unreadable == 0) {
+                return e;
+            }
+            String note = Measures.count(unreadable) + (unreadable == 1 ? " value" : " values")
+                + " could not be read as a date or time and " + (unreadable == 1 ? "was" : "were") + " left out";
+            return new Evaluation(e.total(), e.failing(), e.method(), e.failingQuery(), e.failingRows(),
+                e.message() == null ? note : e.message() + "; " + note, e.error());
         }
     }
 

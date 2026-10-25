@@ -21,6 +21,8 @@ import { PipelinePage } from "./pipelines/PipelinePage";
 import { PipelineRunPage } from "./pipelines/PipelineRunPage";
 import { docHref, WHATS_NEW } from "./docs/links";
 import "./docs/docs.css";
+import { AssistantPanel } from "./assistant/AssistantPanel";
+import { useAssistant } from "./assistant/useAssistant";
 
 // The documentation viewer carries the guides and a Markdown reader, so it loads when first opened.
 const DocsPage = lazy(() => import("./pages/DocsPage"));
@@ -96,6 +98,37 @@ function Shell({ me }: { me: Me }) {
   const [query, setQuery] = useState(route.page === "search" ? route.q : "");
   const first = useRef(true);
   const [version, setVersion] = useState<string | null>(null);
+  // The Ask panel (src/assistant): its conversation lives here, so it stays across pages and goes on sign-out.
+  const assistant = useAssistant();
+  const [askOpen, setAskOpen] = useState(false);
+  const [askFocus, setAskFocus] = useState(0);
+  const askReturn = useRef<HTMLElement | null>(null);
+  const askButton = useRef<HTMLButtonElement>(null);
+  const openAsk = () => {
+    if (!document.getElementById("assistant")?.contains(document.activeElement)) {
+      askReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+    setAskOpen(true);
+    setAskFocus((n) => n + 1);
+  };
+  // Below 1100px the panel covers the page, so the page behind it is inert (the panel acts as a modal).
+  const [narrow, setNarrow] = useState(() => window.matchMedia?.("(max-width: 1099px)").matches ?? false);
+  useEffect(() => {
+    const m = window.matchMedia?.("(max-width: 1099px)");
+    if (!m) return;
+    const onChange = () => setNarrow(m.matches);
+    m.addEventListener("change", onChange);
+    return () => m.removeEventListener("change", onChange);
+  }, []);
+  const covered = askOpen && narrow;
+  const closeAsk = (returnFocus = true) => {
+    setAskOpen(false);
+    if (!returnFocus) return; // a link was followed: the page it opened takes focus
+    const back = askReturn.current;
+    // Back where focus was, or to the Ask button if that was nowhere in particular or has gone.
+    const target = back && back !== document.body && document.contains(back) ? back : askButton.current;
+    window.setTimeout(() => target?.focus(), 0);
+  };
 
   useEffect(() => {
     api
@@ -103,6 +136,9 @@ function Shell({ me }: { me: Me }) {
       .then((i) => setVersion(i.version))
       .catch(() => setVersion(null));
   }, []);
+
+  const openAskRef = useRef(openAsk);
+  openAskRef.current = openAsk;
 
   // Ctrl+K or / jumps to search from anywhere, as the design rules promise.
   useEffect(() => {
@@ -112,6 +148,16 @@ function Shell({ me }: { me: Me }) {
         e.preventDefault();
         searchBox.current?.focus();
         searchBox.current?.select();
+      }
+      // Alt+A opens the Ask panel, or moves focus into it. By the letter typed, so it is A on AZERTY
+      // keyboards too; by the key where the layout types no Latin letter (Cyrillic, Greek), and on a
+      // Mac, where Option changes the letter (å), and not while typing there.
+      const mac = /Mac/.test(navigator.platform);
+      const latin = /^[a-z]$/i.test(e.key);
+      const isA = mac ? e.code === "KeyA" && !typing : latin ? e.key.toLowerCase() === "a" : e.code === "KeyA";
+      if (e.altKey && !e.ctrlKey && !e.metaKey && isA) {
+        e.preventDefault();
+        openAskRef.current();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -144,14 +190,14 @@ function Shell({ me }: { me: Me }) {
 
   return (
     <>
-      <a href="#main" className="skip" onClick={(e) => {
+      <a href="#main" className="skip" inert={covered} onClick={(e) => {
         e.preventDefault();
         document.getElementById("main")?.focus();
       }}>
         Skip to main content
       </a>
-      <div className="shell">
-        <header className="topbar">
+      <div className={askOpen ? "shell assistant-open" : "shell"}>
+        <header className="topbar" inert={covered}>
           <a className="brand" href={href.home()}>
             <Brand />
           </a>
@@ -174,6 +220,18 @@ function Shell({ me }: { me: Me }) {
             </span>
             <button type="submit">Search</button>
           </form>
+          <button
+            type="button"
+            ref={askButton}
+            className="ask-button"
+            aria-expanded={askOpen}
+            aria-controls={askOpen ? "assistant" : undefined}
+            aria-keyshortcuts="Alt+A"
+            title="Ask a question about Kilnmark (Alt+A)"
+            onClick={() => (askOpen ? closeAsk() : openAsk())}
+          >
+            Ask
+          </button>
           <div className="who">
             <ThemeQuickSwitch />
             <span>
@@ -183,7 +241,7 @@ function Shell({ me }: { me: Me }) {
             {me.signInRequired && <a href={href.signOut()}>Sign out</a>}
           </div>
         </header>
-        <nav aria-label="Main" className="sidenav">
+        <nav aria-label="Main" className="sidenav" inert={covered}>
           <ul>
             <li>
               <a href={href.home()} aria-current={current("home")}>
@@ -245,7 +303,7 @@ function Shell({ me }: { me: Me }) {
           </p>
         </nav>
         <RoleContext.Provider value={me.role}>
-        <main id="main" tabIndex={-1}>
+        <main id="main" tabIndex={-1} inert={covered}>
           {route.page === "home" && <HomePage />}
           {route.page === "settings" && <SettingsPage role={me.role} />}
           {route.page === "search" && <SearchPage q={route.q} ask={route.ask} />}
@@ -288,6 +346,15 @@ function Shell({ me }: { me: Me }) {
             ))}
         </main>
         </RoleContext.Provider>
+        {askOpen && (
+          <AssistantPanel
+            route={route}
+            state={assistant}
+            onClose={closeAsk}
+            focusSignal={askFocus}
+            covering={narrow}
+          />
+        )}
       </div>
     </>
   );

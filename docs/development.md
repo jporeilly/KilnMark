@@ -10,7 +10,7 @@ a container.
 | --- | --- | --- |
 | Java | 17 or later on the PATH | Starting the Gradle wrapper; it fetches JDK 25 itself |
 | Git | any recent | Source control |
-| Node.js | 22 or later | The web UI |
+| Node.js | 22.12 or later (or 20.19 or later), as Vite needs | The web UI |
 | Podman (Podman Desktop with a WSL 2 machine on Windows), or Docker | Podman 5 or later | PostgreSQL and the full stack |
 
 **Java 25 is downloaded for you.** The build runs on JDK 25 (`gradle/gradle-daemon-jvm.properties`)
@@ -228,7 +228,26 @@ Source settings, for any kind of source: `keep_samples` (`true` by default; `fal
 sample rows, example values, most common values or failing rows, though numeric statistics are
 kept), `sample_rows` (up to 10,000) and, for databases, `table_sample_above_rows`. Seeing values
 (samples, examples, failing rows, previews, and values in measures, drift and exports) needs the
-steward role; only admins unmask sensitive columns or unmark them.
+steward role; only admins unmask sensitive columns or unmark them. A column marked sensitive has
+every value drawn from it masked for everyone else, wherever it appears: samples, examples, the
+profile's most common values, range, quantiles and histogram, measure evidence, drift detail,
+allowed values and range bounds of its rules and recommendations, failing rows, failing-rows
+queries and database error text, exports, live previews and the MCP server (which always masks).
+Shapes, counts and shares stay. Quality endpoints take `unmask=true` from an admin. A rule on a
+sensitive column is not previewed for anyone else and its results give counts only, since failing
+rows would show which rows hold which values. A workbook whose sheets have a sensitive column keeps
+its text, find and snippets for admins. Marks outlive the column (a dropped or renamed column's
+stored values stay masked). Embeddings and prompts carry names, types and descriptions only, never
+values.
+
+**Known limit:** marks protect the catalogued source and its stored data. A steward who can reach
+the same folder, bucket or database another way, for example by drafting a new connection to the
+same folder path (folders need no password), can preview it unmasked under the new connection. The
+control for that is where sources may point: limit folder sources to the folders an administrator
+lists (`KILNMARK_FILES_ROOTS`) and give database and object storage sources their own credentials,
+which a steward drafting a new connection would also need. Objects in a bucket whose keys start with
+`/` or contain empty, `.` or `..` parts are still scanned from the listing, but cannot be previewed
+or read on demand.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -247,10 +266,21 @@ superuser** and has no rights to server files, programs or other sessions:
 - Custom SQL rules (off by default; admins only) run as that login and **can read anything it can
   see**, not only the schemas the source lists. They refuse to run when the login is a superuser
   or a member of `pg_read_server_files`, `pg_write_server_files`, `pg_execute_server_program` or
-  `pg_signal_backend`, and on SQL Server, which has no read-only transactions.
+  `pg_signal_backend`, when it may reach other databases (it may execute any of dblink's functions,
+  which are granted to everyone when the extension is created, or use a foreign server), on a
+  database with any user mapping or foreign table (a view owned by another role can reach one), and
+  on SQL Server, which has no read-only transactions. The refusal names the fix, such as
+  `REVOKE EXECUTE ON FUNCTION dblink_connect(text,text), ... FROM PUBLIC` with dblink's own functions. dblink and postgres_fdw functions
+  are also refused in the SQL itself.
 - PostgreSQL's read-only transactions do not stop functions that act outside the database
   (reading files, advisory locks, signalling sessions), which is why such functions are refused
   in custom SQL and why the login must not hold those rights.
+
+**Known limit: counts.** A steward who may not unmask a sensitive column cannot preview rules on
+it or see their failing rows, but can still save such a rule, run it and read how many rows fail.
+Repeated with different bounds or values, counts tell how the column's values are spread (never
+which row holds which value). Marking a column sensitive limits what is shown, not which rules may be
+run; keep the steward role for people trusted with that.
 
 For PostgreSQL, for example:
 
@@ -314,8 +344,10 @@ length, and a preview stops at about 2 MB. For files it also shows what was dete
 delimiter, header row, encoding); if that is wrong, set `delimiter`, `header` (false when the
 first row is data) or `encoding` on the source: they apply to every file of it, in previews and
 scans. A preview reads the table or file named even when the source's include or exclude patterns
-leave it out of scans, and it is not masked yet: sensitive-column masking arrives with column
-flags. Previews are sent with `Cache-Control: no-store`.
+leave it out of scans. Columns marked sensitive on the catalogued table or file are masked for
+anyone but an admin. For a source with marks, only admins may change how it is read (folders,
+patterns, header rows, formats) or preview such changes, as other settings could read the marked
+columns under other names; new connections, which have no marks, preview as before. Previews are sent with `Cache-Control: no-store`.
 
 **Name and display name.** A source's name is its ID: it is part of every asset's reference
 (`urn:kilnmark:<name>:<path>`), so it is set when the source is added and never changes. An edit
@@ -397,7 +429,10 @@ forgery). To limit it:
   hosts sources may reach: names, addresses or `*.example.com`, comma-separated. Every host a
   source names is checked (each host of a PostgreSQL host list, SQL Server's `serverName` and
   `failoverPartner`, S3 endpoints, and AWS's S3 host when there is none) whenever a source is added,
-  edited, imported, tested or listed. Hosts are read with the database driver's own parser, and URL
+  edited, imported, tested or listed, and again just before every scan, quality run, preview, test
+  or on-demand read connects: narrow the list (and restart) and saved sources naming other hosts stop
+  at once, their jobs failing with a message that names the host. Names are compared as written;
+  what a name resolves to is not checked. Hosts are read with the database driver's own parser, and URL
   properties that would name another host, port or database (PostgreSQL `PGHOST`, `PGPORT`,
   `PGDBNAME`; SQL Server `server`, `address`, `addr`, `network address`) are refused, so the
   address is always the URL's. Empty, the default, allows any host.

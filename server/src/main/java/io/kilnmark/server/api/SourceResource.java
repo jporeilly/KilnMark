@@ -116,6 +116,7 @@ public class SourceResource {
         // allow_writing: only admins may change it; a steward's form that leaves it out keeps it.
         SourceForm form = SourceService.writingAsAllowed(body, existing, identity.hasRole(AccessRole.ADMIN_ROLE));
         SourceService.Draft d = sources.draft(form, existing, true);
+        sources.readingUnchangedOrAdmin(existing, d.config().settings(), "change how this source is read");
         byte[] secret = d.replaceSecret() && d.newSecret() != null ? secrets.seal(d.newSecret()) : null;
         Records.Source s = conflicts(() -> store.updateSource(existing.id(), new Records.SourceChange(d.displayName(),
             d.config().settings(), d.replaceSecret(), secret, d.keepSecretIf()))).orElseThrow(() -> ApiError.of(

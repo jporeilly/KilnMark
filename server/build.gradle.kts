@@ -56,6 +56,12 @@ dependencies {
 tasks.withType<Test>().configureEach {
     jvmArgs("--add-opens=java.base/java.nio=ALL-UNNAMED", "--enable-native-access=ALL-UNNAMED")
     systemProperty("java.util.logging.manager", "org.jboss.logmanager.LogManager")
+    // Not under kilnmark.*: that prefix is the server configuration, which refuses names it does not know.
+    // The assistant's shared fixtures: section anchors (also checked by the UI build) and the docs evaluation set.
+    systemProperty("kmtest.docs.cases", rootProject.file("tests/docs").absolutePath)
+    systemProperty("kmtest.eval.docs", rootProject.file("tests/ai-eval/docs.json").absolutePath)
+    inputs.dir(rootProject.file("tests/docs"))
+    inputs.file(rootProject.file("tests/ai-eval/docs.json"))
 }
 
 // AI evaluation (ADR 0016): scores a running server's search and question answering against
@@ -83,8 +89,9 @@ tasks.register<Test>("aiEval") {
     testLogging { showStandardStreams = true }
 }
 
-// The web UI is built with npm and served by the server from /. Needs Node.js 22 or later on the
-// PATH; -PskipUi builds the server without it (API only).
+// The web UI is built with npm and served by the server from /. Needs Node.js 22.12 or later (or
+// 20.19 or later: what Vite needs, ui/package.json "engines") on the PATH; -PskipUi builds the
+// server without it (API only).
 val uiDir = rootProject.layout.projectDirectory.dir("ui")
 val uiOut = rootProject.layout.projectDirectory.dir("dist/ui")
 val npm = if (System.getProperty("os.name").lowercase().contains("windows")) "npm.cmd" else "npm"
@@ -106,12 +113,39 @@ val buildUi by tasks.registering(Exec::class) {
     workingDir = uiDir.asFile
     commandLine(npm, "run", "build")
     inputs.dir(uiDir.dir("src"))
-    // scripts/: the contrast check and the third-party notices both run as part of the build.
+    // scripts/: the contrast check, the third-party notices and the anchor check all run as part of the build.
     inputs.dir(uiDir.dir("scripts"))
     inputs.files(uiDir.file("index.html"), uiDir.file("vite.config.ts"), uiDir.file("tsconfig.json"),
         uiDir.file("package.json"), uiDir.file("package-lock.json"))
+    // The bundled documentation, and the anchor cases the pre-build check reads (scripts/check-slugs.mjs).
+    inputs.files(rootProject.fileTree("docs/guide") { include("*.md") }, rootProject.file("CHANGELOG.md"))
+    inputs.dir(rootProject.file("tests/docs"))
     outputs.dir(uiOut)
 }
+
+// The user guides and the changelog, for the assistant (docs/design/assistant.md): the same files
+// the web UI bundles, one source of truth. Copied into the server's resources under kilnmark/docs,
+// with a list of the guides (a jar cannot be listed reliably at run time).
+val guideDir = rootProject.layout.projectDirectory.dir("docs/guide")
+val docsResources = layout.buildDirectory.dir("generated/docs-resources")
+val bundleDocs by tasks.registering(Sync::class) {
+    description = "Copies docs/guide/*.md and CHANGELOG.md into the server's resources."
+    from(guideDir) {
+        include("*.md")
+        into("kilnmark/docs/guide")
+    }
+    from(rootProject.layout.projectDirectory.file("CHANGELOG.md")) {
+        into("kilnmark/docs")
+    }
+    into(docsResources)
+    val listFile = docsResources.map { it.file("kilnmark/docs/guide.list").asFile }
+    val guideNames = guideDir.asFileTree.matching { include("*.md") }.elements
+        .map { files -> files.map { it.asFile.name }.sorted() }
+    doLast {
+        listFile.get().writeText(guideNames.get().joinToString("\n", postfix = "\n"))
+    }
+}
+sourceSets["main"].resources.srcDir(bundleDocs)
 
 tasks.named<ProcessResources>("processResources") {
     dependsOn(buildUi)

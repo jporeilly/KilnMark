@@ -38,7 +38,9 @@ import io.kilnmark.server.quality.RowChecks.Evaluation;
  * <p>Custom SQL runs only when the administrator turned it on, only on PostgreSQL, never under a
  * login that is a superuser or a member of {@code pg_read_server_files},
  * {@code pg_write_server_files}, {@code pg_execute_server_program} or {@code pg_signal_backend},
- * and only when the generated query is exactly one statement.
+ * nor under one that may reach other databases (dblink's functions, a foreign server), nor on a
+ * database with any user mapping or foreign table, and only when the generated query is exactly
+ * one statement.
  */
 public final class RuleRunner {
 
@@ -83,21 +85,74 @@ public final class RuleRunner {
         return null;
     }
 
-    /** Roles of the login that make custom SQL unsafe however it is written. */
+    /**
+     * What makes custom SQL unsafe however it is written, as a reason code, or null: superuser and
+     * the roles that touch the server's files, programs or sessions ({@code roles}); dblink's
+     * functions the login may execute, in whatever schema ({@code dblink:<their signatures>}); a foreign
+     * server it may use ({@code server:<name>}); and any user mapping ({@code mapping}) or foreign
+     * table ({@code foreign}) in the database at all. A read-only transaction does not hold on the
+     * other side of a dblink call or a foreign table, and a view owned by a role with a user mapping
+     * reaches a foreign table for anyone who may read the view, so mappings and foreign tables count
+     * whoever they belong to.
+     */
     static final String PRIVILEGED_LOGIN = """
-        SELECT r.rolsuper OR pg_has_role(current_user, 'pg_read_server_files', 'MEMBER')
-            OR pg_has_role(current_user, 'pg_write_server_files', 'MEMBER')
-            OR pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')
-            OR pg_has_role(current_user, 'pg_signal_backend', 'MEMBER')
-        FROM pg_roles r WHERE r.rolname = current_user""";
+        SELECT CASE
+                 WHEN r.rolsuper OR pg_has_role(current_user, 'pg_read_server_files', 'MEMBER')
+                      OR pg_has_role(current_user, 'pg_write_server_files', 'MEMBER')
+                      OR pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')
+                      OR pg_has_role(current_user, 'pg_signal_backend', 'MEMBER') THEN 'roles'
+                 WHEN x.schema IS NOT NULL THEN 'dblink:' || x.schema
+                 WHEN v.server IS NOT NULL THEN 'server:' || v.server
+                 WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_user_mappings) THEN 'mapping'
+                 WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_foreign_table) THEN 'foreign'
+               END
+        FROM pg_roles r
+        LEFT JOIN LATERAL (SELECT string_agg(d.objid::regprocedure::text, ', ' ORDER BY d.objid::regprocedure::text)
+                                  AS schema
+                           FROM pg_catalog.pg_extension e
+                           JOIN pg_catalog.pg_depend d ON d.refclassid = 'pg_catalog.pg_extension'::regclass
+                                AND d.refobjid = e.oid AND d.classid = 'pg_catalog.pg_proc'::regclass
+                                AND d.deptype = 'e'
+                           WHERE e.extname = 'dblink' AND has_function_privilege(d.objid, 'EXECUTE')) x ON true
+        LEFT JOIN LATERAL (SELECT quote_ident(s.srvname) AS server FROM pg_catalog.pg_foreign_server s
+                           WHERE has_server_privilege(s.oid, 'USAGE') LIMIT 1) v ON true
+        WHERE r.rolname = current_user""";
+
+    /** Why custom SQL does not run, in plain words naming the fix, for a reason from {@link #PRIVILEGED_LOGIN}. */
+    static String refusal(String reason) {
+        if (reason == null) {
+            return null;
+        }
+        if (reason.startsWith("dblink:")) {
+            // dblink's own functions by name: a whole-schema revoke would take every function of a shared schema
+            // (such as public) from everyone.
+            return "Custom SQL does not run under this source's login: it may run dblink's functions, which reach other "
+                + "databases (they are granted to everyone when the extension is created). Revoke them from PUBLIC (and "
+                + "from the login, if granted to it): REVOKE EXECUTE ON FUNCTION " + reason.substring(7)
+                + " FROM PUBLIC; or drop dblink from this database if nothing uses it.";
+        }
+        if (reason.startsWith("server:")) {
+            String server = reason.substring(7);
+            return "Custom SQL does not run under this source's login: it may use the foreign server " + server
+                + ", which reaches another database. Revoke it: REVOKE USAGE ON FOREIGN SERVER " + server + " FROM "
+                + "PUBLIC (and from the login and its roles).";
+        }
+        if (reason.equals("mapping") || reason.equals("foreign")) {
+            return "Custom SQL does not run on this database: it has " + (reason.equals("mapping") ? "user mappings"
+                : "foreign tables") + ", which reach other databases, also through views owned by others. Run "
+                + "custom SQL rules on a database without user mappings or foreign tables.";
+        }
+        return PRIVILEGED_REFUSAL;
+    }
 
     static final String PRIVILEGED_REFUSAL = "Custom SQL does not run under this source's login: it is a superuser "
         + "or may read or write the server's files, run programs or stop other sessions. Give the source a read-only "
         + "login without those rights.";
 
-    private static boolean privileged(Connection c) throws SQLException {
+    /** Why custom SQL may not run on {@code c}'s login and database, or null; {@code c} is not in auto-commit. */
+    static String privileged(Connection c) throws SQLException {
         try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery(PRIVILEGED_LOGIN)) {
-            return !rs.next() || rs.getBoolean(1);
+            return refusal(rs.next() ? rs.getString(1) : "roles");
         } finally {
             c.rollback();
         }
@@ -135,17 +190,19 @@ public final class RuleRunner {
                 try (Connection c = jdbc.connect(t.source())) {
                     c.setAutoCommit(false);
                     c.setReadOnly(true);
-                    Boolean unsafeLogin = null;
+                    String unsafeLogin = null;
+                    boolean loginChecked = false;
                     for (int i = 0; i < rules.size(); i++) {
                         if (plans.get(i) == null) {
                             continue;
                         }
                         if (rules.get(i).type() == RuleType.CUSTOM_SQL) {
-                            if (unsafeLogin == null) {
+                            if (!loginChecked) {
                                 unsafeLogin = privileged(c);
+                                loginChecked = true;
                             }
-                            if (unsafeLogin) {
-                                out.put(i, Evaluation.error("sql", PRIVILEGED_REFUSAL));
+                            if (unsafeLogin != null) {
+                                out.put(i, Evaluation.error("sql", unsafeLogin));
                                 continue;
                             }
                         }
