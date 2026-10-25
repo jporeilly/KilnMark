@@ -16,6 +16,7 @@ import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.server.KilnmarkConfig;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 
 /**
  * Connection tests and container listings, each limited in time
@@ -71,6 +72,7 @@ public class SourceChecks {
     private final int maxPlaces;
     private final HostPolicy hosts;
 
+    @Inject
     public SourceChecks(KilnmarkConfig config) {
         this(config.sources().checkTimeout(), config.sources().checkConcurrency(), HostPolicy.of(config));
     }
