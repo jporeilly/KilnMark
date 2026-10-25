@@ -1,6 +1,8 @@
 package io.kilnmark.kiln;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.arrow.memory.BufferAllocator;
 
@@ -44,5 +46,50 @@ public interface StepContext {
     default String setting(String key, String fallback) {
         String value = settings().get(key);
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    // ---- Pipelines as graphs (docs/design/pipelines.md, ADR 0022) ----
+
+    /**
+     * The step's settings as written in the pipeline YAML: maps, lists, strings, numbers and
+     * booleans. Steps built from flat settings see each value as a string.
+     */
+    default Map<String, Object> config() {
+        return new LinkedHashMap<>(settings());
+    }
+
+    /** The names of the input ports that are connected. A step in a line has {@code in}, or none. */
+    default Set<String> inputPorts() {
+        return hasInput() ? Set.of("in") : Set.of();
+    }
+
+    /** The names of the output ports that are connected. A step in a line has {@code out}, or none. */
+    default Set<String> outputPorts() {
+        return hasOutput() ? Set.of("out") : Set.of();
+    }
+
+    /**
+     * Batches arriving on an input port; {@code in} is {@link #input()}.
+     *
+     * @throws StepException if the port is not connected
+     */
+    default RowSet input(String port) throws StepException {
+        if ("in".equals(port) && hasInput()) {
+            return input();
+        }
+        throw new StepException("Step " + stepName() + " has no input connected to port '" + port + "'");
+    }
+
+    /**
+     * Where batches leave through an output port; {@code out} is {@link #output()}. A port that
+     * exists on the step but is not connected returns {@code null}: the step drops those rows.
+     *
+     * @throws StepException if the step has no such port at all
+     */
+    default RowSet output(String port) throws StepException {
+        if ("out".equals(port)) {
+            return hasOutput() ? output() : null;
+        }
+        throw new StepException("Step " + stepName() + " has no output port '" + port + "'");
     }
 }
