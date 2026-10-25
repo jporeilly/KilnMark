@@ -270,6 +270,22 @@ pick it up from `settings()`.
   `PostgresIngestTest`.
 - Keep test containers small; CI runs on a 2-CPU runner.
 
+## Definition of done
+
+A connector is done when:
+
+- Its tests above pass in CI.
+- **It ships with a lab dataset.** The reference lab ([lab/README.md](../../lab/README.md)) gets
+  synthetic data for it: a compose service in `lab/compose.yaml` with a profile named after the
+  source (plus `all`) and a seed that loads on first start, or files under `lab/files`. It also
+  gets a row in `lab/sources.csv`, a line in the source tables of `lab/lab.ps1` and `lab/lab.sh`,
+  a README section saying what is in the data and what discovery should find, and its row in the
+  README's lab coverage table. All of it is synthetic: invented names, example.com addresses,
+  numbers from ranges reserved for fiction.
+- **SaaS and cloud-only connectors** that cannot run locally ship instead with a documented mock or
+  emulator in the lab (an emulator for a cloud store, a mock server for an API) and a recipe for a
+  free test account: how to create it, what to load into it, and which settings the source needs.
+
 ## Rules
 
 - Libraries yes, platforms no ([ADR 0007](../adr/0007-dependency-policy.md)); Apache-2.0, MIT or

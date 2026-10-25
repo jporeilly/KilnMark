@@ -5,6 +5,32 @@ details.
 
 ## Unreleased
 
+### What's new
+
+- **A sample SQL Server database in the reference lab.** `.\lab\lab.ps1 start sqlserver` (or
+  `./lab/lab.sh start sqlserver`) starts SQL Server 2022 Developer with `labdb`, a synthetic
+  field-service and sales database with problems planted for profiling and rules to find. Start,
+  stop and reset each demo source on its own, and every new connector now comes with a lab dataset.
+
+### Details
+
+- **Reference lab: SQL Server and per-source scripts** (lab/README.md): service `lab-sqlserver`
+  (`mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04`, the tag `SqlServerIngestTest`
+  pins; port 14330; named volume; about 2 GB of memory; starting it accepts Microsoft's Developer
+  licence, `ACCEPT_EULA=Y`) and a one-shot `lab-sqlserver-init` that loads `labdb` once with the
+  image's `sqlcmd`: schemas `sales`, `hr`, `ops` (9 tables, a view, 6,901 rows, synthetic personal
+  data marked in descriptions and sensitivity classifications) and an empty `warehouse` for
+  pipeline writes. Logins `kiln_reader` (read-only) and `kiln_writer` (tables in `warehouse` only).
+  Planted: null emails, duplicate keys in a staging table with no primary key, out-of-range dates
+  and five phone formats. `lab/sources.csv` adds `lab-sqlserver`; its JDBC URL needs
+  `;trustServerCertificate=true` added after import (self-signed certificate). Every lab service
+  is now in a compose profile named after its demo source plus `all`, so a bare `up` starts
+  nothing; `lab/lab.ps1` and `lab/lab.sh` (`list`, `start`, `stop`, `status`, `reset`, `logs`,
+  `sources`) start just what is needed, and `build.ps1 -Lab` takes names
+  (`-Lab postgres,sqlserver`). docs/design/connectors.md gains a definition of done: a connector
+  ships with a lab dataset, or for SaaS and cloud-only connectors a mock or emulator and a test
+  account recipe; lab/README.md has a lab coverage table.
+
 ## 0.0.3 (25 October 2026)
 
 ### What's new

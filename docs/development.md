@@ -78,7 +78,8 @@ podman compose up --build       # PostgreSQL (AGE, pgvector) and the Kilnmark se
 On Windows, `.\build.ps1` in PowerShell does the whole thing: it checks Node.js, runs
 `gradlew.bat release`, builds both images directly (podman-compose on Windows cannot build an
 image whose Containerfile is in a sub-folder), restarts the stack and waits until the server
-answers. `-NoRestart` builds only; `-Lab` also starts the reference lab.
+answers. `-NoRestart` builds only; `-Lab` also starts every demo source of the reference lab, and
+`-Lab postgres,sqlserver` just those (see `lab/README.md`).
 
 If `podman compose` reports `failed to connect to the docker API at npipe:////./pipe/podman-machine-default`,
 the compose tool cannot find Podman: start the machine (`podman machine start`), or point it at
@@ -297,12 +298,15 @@ GRANT SELECT ON ALL TABLES IN SCHEMA sales TO kilnmark_reader;
 
 ## Try it on the reference lab
 
-Start Kilnmark first, then the lab, which joins Kilnmark's network (`kilnmark`):
+Start Kilnmark first, then the lab's demo sources, which join Kilnmark's network (`kilnmark`):
 
 ```
 podman compose up -d                          # Kilnmark on http://localhost:8780
-podman compose -f lab/compose.yaml up -d      # the lab, reachable from Kilnmark by name
+./lab/lab.sh start postgres                   # Windows: .\lab\lab.ps1 start postgres; or: start all
 ```
+
+Each demo source is a compose profile (`podman compose -f lab/compose.yaml --profile all up -d`
+starts them all); `lab/README.md` lists them, with `list`, `stop`, `reset` and `logs`.
 
 Open http://localhost:8780, sign in, go to **Sources**, and add the lab. Kilnmark reaches it by service
 name, the same under Podman and Docker:
