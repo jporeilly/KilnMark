@@ -46,7 +46,7 @@ class SearchBoundsTest {
     static {
         try {
             PREPARE = JdbcGraphStore.class.getDeclaredMethod("prepareKeywordSearch", Connection.class, String.class,
-                String.class, int.class);
+                String.class, int.class, java.util.List.class);
             PREPARE.setAccessible(true);
         } catch (NoSuchMethodException e) {
             throw new ExceptionInInitializerError(e);
@@ -97,11 +97,11 @@ class SearchBoundsTest {
     }
 
     /** Rows each table's scans touched, from EXPLAIN ANALYZE of the search's own statement. */
-    private Map<String, Long> touched(String q) throws Exception {
+    private Map<String, Long> touched(String q, java.util.List<String> sources) throws Exception {
         try (Connection c = db.getConnection()) {
             c.setAutoCommit(false);
             try (PreparedStatement ps = (PreparedStatement) PREPARE.invoke(null, c, "EXPLAIN (ANALYZE, FORMAT JSON) ",
-                     q, 100); ResultSet rs = ps.executeQuery()) {
+                     q, 100, sources); ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 Map<String, Long> out = new HashMap<>();
                 count(JSON.readTree(rs.getString(1)).get(0).get("Plan"), out);
@@ -127,13 +127,19 @@ class SearchBoundsTest {
         load();
         // Every bulk asset is named and described with "customer"; every field set has "id" and
         // "the_notes"; every chunk has "the" and "customer".
-        for (String q : new String[] {"customer", "id", "the", "zebra"}) {
-            Map<String, Long> t = touched(q);
-            assertTrue(t.getOrDefault("asset", 0L) <= 5_000, q + ": " + t);
-            // candidates (about 1,000 at most) times their 5 columns, plus the field candidates
-            assertTrue(t.getOrDefault("field", 0L) <= 20_000, q + ": " + t);
-            assertTrue(t.getOrDefault("document_chunk", 0L) <= 5_000, q + ": " + t);
+        for (java.util.List<String> sources : java.util.List.of(java.util.List.<String>of(), java.util.List.of(SOURCE))) {
+            for (String q : new String[] {"customer", "id", "the", "zebra"}) {
+                Map<String, Long> t = touched(q, sources);
+                assertTrue(t.getOrDefault("asset", 0L) <= 5_000, q + " " + sources + ": " + t);
+                // candidates (about 1,000 at most) times their 5 columns, plus the field candidates
+                assertTrue(t.getOrDefault("field", 0L) <= 20_000, q + " " + sources + ": " + t);
+                assertTrue(t.getOrDefault("document_chunk", 0L) <= 5_000, q + " " + sources + ": " + t);
+            }
         }
+        // Kept to one source before any limit: every hit is that source's.
+        admin().queryParam("q", "customer").queryParam("mode", "keyword").queryParam("source", SOURCE)
+            .get("/api/v1/search").then().statusCode(200)
+            .body("hits.source", org.hamcrest.Matchers.everyItem(equalTo(SOURCE)));
         // Exact names first, however many others match as well.
         admin().queryParam("q", "customer").queryParam("mode", "keyword").get("/api/v1/search").then()
             .statusCode(200).body("hits[0].urn", equalTo("urn:kilnmark:search-bounds:crm.customer"));

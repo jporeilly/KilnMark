@@ -233,6 +233,16 @@ public interface Connector {
         return category();
     }
 
+    /**
+     * Two or three letters the UI shows on a tinted tile for a product, for example {@code Pg} or
+     * {@code SQL}; never a vendor logo. Null (the default) for generic kinds such as a folder: the UI
+     * then shows the {@link #icon()} on the tile. Operators can replace either with a logo they are
+     * licensed to use, through the branding folder.
+     */
+    default String monogram() {
+        return null;
+    }
+
     /** The section of the connector documentation about this kind; its kind by default. */
     default String docsAnchor() {
         return kind();

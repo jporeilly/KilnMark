@@ -283,3 +283,44 @@ without a migration.
   the address against the operator's list, but cannot see past a local server that forwards
   requests elsewhere.
 - Hosted calls go straight out; there is no HTTP proxy setting yet.
+
+## Amendment (25 October 2026): container host names and Podman's host address
+
+**Local hosts.** When Kilnmark runs in a container (`KILNMARK_IN_CONTAINER=true`, which the image
+sets, or `/.dockerenv` or `/run/.containerenv`), the default `kilnmark.ai.local-hosts` also lists
+`host.containers.internal` and `host.docker.internal`. These are the names Podman and Docker (and
+Kilnmark's `compose.yaml`, through `extra_hosts`) give the machine a container runs on, which is
+the usual way to reach Ollama or LM Studio running natively on the same PC, with its GPU. Without
+them, the operator lock refused that set-up unless the operator listed the names by hand.
+
+Unlike other listed names, these two are not taken on the operator's word alone, because nobody
+chose them: DNS decides where a listed name goes. Inside a container the engine answers for them;
+outside one, Docker Desktop writes `host.docker.internal` into the host's own hosts file, and a
+search domain, a wildcard record or a hostile resolver could point either name at a remote
+machine. So they are on the default list only in a container, and they count as local only while
+every address they resolve to is loopback, private (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+fc00::/7) or 169.254.1.2, checked when a profile is saved and before every call (within the
+call's time limit, and remembered for 5 seconds so a search over many sources looks the name up
+once). A name that does
+not resolve (or not within 2 seconds) is not refused, which would delete embeddings; the call
+fails as unreachable instead. As for every address, the lookup at call time and the connection
+are separate, so a resolver that answers differently between the two is not caught.
+
+**Podman's host address.** Rootless Podman 5.3 and later (pasta, `--map-guest-addr`) maps
+`host.containers.internal` to 169.254.1.2, a link-local address that the metadata rule refuses.
+Exactly that address is now accepted, only while Kilnmark runs in a container and only when
+reached through one of the two container host names; typed as an address, behind any other name,
+and every other link-local or metadata address (169.254.169.254, 169.254.170.2, fd00:ec2::254 and
+the rest) stays refused. IPv4 addresses written in unusual forms (leading zeros, hexadecimal, one
+32-bit number, fewer than four parts) are refused rather than reinterpreted, because resolvers
+disagree on what they mean (the JDK reads `0177.0.0.1` as 177.0.0.1, C libraries as 127.0.0.1);
+IPv4-mapped IPv6 is read as the IPv4 address it carries. A host name ending in a dot is refused
+too: the local-hosts list would match it without the dot, while the name service would look it
+up as an absolute name, outside the local search domains.
+
+**Discovery.** The same change added `POST /api/v1/ai/discover` (admins only), which asks the usual
+places and one typed address for model servers and their models. It reports GPU use as the model
+server sees it (Ollama's `/api/ps`), rather than Kilnmark looking for a GPU itself, which a
+container usually cannot do. It calls only model-server paths, after the address rules above
+(under the lock, unlisted hosts are not even looked up), within a time limit, and returns a
+summary, never the servers' answers.

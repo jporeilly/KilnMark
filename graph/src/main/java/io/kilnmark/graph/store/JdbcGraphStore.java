@@ -551,13 +551,22 @@ public final class JdbcGraphStore implements GraphStore {
      */
     @Override
     public List<SearchHit> search(String query, int limit) {
+        return search(query, limit, List.of());
+    }
+
+    /**
+     * The source filter is applied in every candidate branch, before any limit, so a small source is
+     * not crowded out by others.
+     */
+    @Override
+    public List<SearchHit> search(String query, int limit, List<String> sources) {
         String q = query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
         if (q.isEmpty()) {
             return List.of();
         }
         return tx(c -> {
             List<SearchHit> out = new ArrayList<>();
-            try (PreparedStatement ps = prepareKeywordSearch(c, "", q, limit)) {
+            try (PreparedStatement ps = prepareKeywordSearch(c, "", q, limit, sources)) {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         long rows = rs.getLong(7);
@@ -610,8 +619,25 @@ public final class JdbcGraphStore implements GraphStore {
      * for every search, sees how common they are and picks an index or an ordered scan to match.
      * Package-private: the container tests reach it to {@code EXPLAIN} exactly what runs.
      */
-    static PreparedStatement prepareKeywordSearch(Connection c, String prefix, String q, int limit)
-        throws SQLException {
+    static PreparedStatement prepareKeywordSearch(Connection c, String prefix, String q, int limit,
+                                                  List<String> sources) throws SQLException {
+        // Kept to these sources (none means all) inside every branch, their ids written in so each branch's plan
+        // stays as simple as without (ids are numbers read from the database, never text from the caller).
+        String inSources = "";
+        if (!sources.isEmpty()) {
+            List<String> ids = new ArrayList<>();
+            try (PreparedStatement st = c.prepareStatement("SELECT id FROM kilnmark.data_source WHERE name = ANY (?)")) {
+                st.setArray(1, c.createArrayOf("text", sources.toArray()));
+                try (ResultSet rs = st.executeQuery()) {
+                    while (rs.next()) {
+                        ids.add(Long.toString(rs.getLong(1)));
+                    }
+                }
+            }
+            inSources = ids.isEmpty() ? "AND false" : "AND a.source_id IN (" + String.join(", ", ids) + ")";
+        }
+        String urnInSources = inSources.isEmpty() || inSources.equals("AND false") ? inSources
+            : "AND %s IN (SELECT a.urn FROM kilnmark.asset a WHERE true " + inSources + ")";
         try (PreparedStatement st = c.prepareStatement("""
                 SELECT set_config('pg_trgm.word_similarity_threshold', ?, true),
                        set_config('plan_cache_mode', 'force_custom_plan', true)""")) {
@@ -625,28 +651,30 @@ public final class JdbcGraphStore implements GraphStore {
             WITH q AS (SELECT ?::text AS t, plainto_tsquery('simple', ?) AS ts, ? AS like_t),
             candidates AS (
                 (SELECT a.urn FROM kilnmark.asset a, q
-                 WHERE (lower(a.name) = q.t OR lower(a.container || '.' || a.name) = q.t) AND a.removed_at IS NULL
+                 WHERE (lower(a.name) = q.t OR lower(a.container || '.' || a.name) = q.t) AND a.removed_at IS NULL %6$s
                  LIMIT ?)
                 UNION
-                (SELECT a.urn FROM kilnmark.asset a WHERE a.removed_at IS NULL
+                (SELECT a.urn FROM kilnmark.asset a WHERE a.removed_at IS NULL %6$s
                  ORDER BY ?::text OPERATOR(public.<<->) a.name LIMIT ?)
                 UNION
-                (SELECT a.urn FROM kilnmark.asset a WHERE a.removed_at IS NULL
+                (SELECT a.urn FROM kilnmark.asset a WHERE a.removed_at IS NULL %6$s
                  ORDER BY ?::text OPERATOR(public.<->) a.name LIMIT ?)
                 UNION
-                (SELECT a.urn FROM kilnmark.asset a WHERE strpos(?::text, '.') > 0 AND a.removed_at IS NULL
+                (SELECT a.urn FROM kilnmark.asset a WHERE strpos(?::text, '.') > 0 AND a.removed_at IS NULL %6$s
                  ORDER BY ?::text OPERATOR(public.<<->) (a.container || '.' || a.name) LIMIT ?)
                 UNION
                 (SELECT a.urn FROM kilnmark.asset a
-                 WHERE a.search @@ plainto_tsquery('simple', ?) AND a.removed_at IS NULL ORDER BY a.urn LIMIT %1$d)
+                 WHERE a.search @@ plainto_tsquery('simple', ?) AND a.removed_at IS NULL %6$s ORDER BY a.urn
+                 LIMIT %1$d)
                 UNION
-                (SELECT f.asset_urn FROM kilnmark.field f WHERE ?::text OPERATOR(public.<%%) f.name
+                (SELECT f.asset_urn FROM kilnmark.field f WHERE ?::text OPERATOR(public.<%%) f.name %7$s
                  ORDER BY f.asset_urn, f.name LIMIT %2$d)
             ),
             chunks AS (
                 SELECT c.asset_urn, ts_rank_cd(c.search, q.ts) AS rank
                 FROM (SELECT c.asset_urn, c.search FROM kilnmark.document_chunk c
-                      WHERE c.search @@ plainto_tsquery('simple', ?) ORDER BY c.asset_urn, c.seq LIMIT %3$d) c, q
+                      WHERE c.search @@ plainto_tsquery('simple', ?) %8$s ORDER BY c.asset_urn, c.seq
+                      LIMIT %3$d) c, q
             ),
             texts AS (
                 -- documents whose text has every word: below name and description matches (0.41 to 0.5),
@@ -680,7 +708,9 @@ public final class JdbcGraphStore implements GraphStore {
             WHERE greatest(h.asset_score, coalesce(h.best * 0.9, 0), coalesce(t.score, 0)) >= 0.4
             ORDER BY h.exact DESC, score DESC, h.asset_score DESC, public.similarity(q.t, h.name) DESC,
                      h.container, h.name
-            LIMIT ?""", WORD_CANDIDATES, FIELD_CANDIDATES, CHUNK_SAMPLE, TEXT_CANDIDATES, FIELD_SIMILARITY));
+            LIMIT ?""", WORD_CANDIDATES, FIELD_CANDIDATES, CHUNK_SAMPLE, TEXT_CANDIDATES, FIELD_SIMILARITY, inSources,
+            String.format(java.util.Locale.ROOT, urnInSources, "f.asset_urn"),
+            String.format(java.util.Locale.ROOT, urnInSources, "c.asset_urn")));
         int names = Math.max(limit, NAME_CANDIDATES);
         int i = 0;
         ps.setString(++i, q);

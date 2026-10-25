@@ -7,6 +7,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
+
 import io.kilnmark.server.ai.AiException;
 import io.kilnmark.server.ai.AiFeature;
 import io.kilnmark.server.ai.AiGateway;
@@ -15,6 +19,7 @@ import io.kilnmark.server.ai.Callers;
 import io.kilnmark.server.ai.EgressPolicy;
 import io.kilnmark.server.ai.Embeddings;
 import io.kilnmark.server.ai.ModelClient;
+import io.kilnmark.server.ai.ModelDiscovery;
 import io.kilnmark.server.ai.ModelHosts;
 import io.kilnmark.server.ai.ModelProfile;
 import io.kilnmark.server.ai.ModelProfiles;
@@ -51,10 +56,12 @@ public class AiResource {
     private final Embeddings embeddings;
     private final UsageLog usage;
     private final ModelHosts hosts;
+    private final ModelDiscovery discovery;
     private final SecurityIdentity identity;
 
     public AiResource(ModelProfiles profiles, AiGateway gateway, EgressPolicy egress, Embeddings embeddings,
-                      UsageLog usage, ModelHosts hosts, SecurityIdentity identity) {
+                      UsageLog usage, ModelHosts hosts, ModelDiscovery discovery, SecurityIdentity identity) {
+        this.discovery = discovery;
         this.profiles = profiles;
         this.gateway = gateway;
         this.egress = egress;
@@ -67,6 +74,9 @@ public class AiResource {
     /** The operator's address rules (ADR 0016), checked on every save and again on every call. */
     private ModelProfile.Valid checkAddress(ModelProfile.Valid v) {
         String url = v.effectiveBaseUrl();
+        ModelHosts.addressProblem(url).ifPresent(problem -> {
+            throw new IllegalArgumentException(problem);
+        });
         hosts.forbidden(url).ifPresent(reason -> {
             throw new IllegalArgumentException("baseUrl: " + reason);
         });
@@ -182,6 +192,30 @@ public class AiResource {
         } catch (AiException e) {
             return new AiViews.TestResult(false, e.getMessage(), 0, null);
         }
+    }
+
+    /**
+     * Looks for model servers Kilnmark can reach, and the models and GPU use they report. Calls
+     * only model-server paths with short timeouts, after the address rules; bodies are never
+     * returned.
+     */
+    @POST
+    @Path("discover")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Operation(summary = "Find local model servers (admins only)", description = "With no baseUrl, checks Ollama and "
+        + "LM Studio on the machine running Kilnmark's container and on localhost, and the bundled Compose services; "
+        + "with a baseUrl (with or without /v1), only that address. Each address passes the server's address rules "
+        + "first: metadata and link-local addresses are refused, and while kilnmark.ai.hosted-models=forbidden, "
+        + "hosts not in kilnmark.ai.local-hosts are reported without being called. GPU use comes from the model "
+        + "server (Ollama), not from Kilnmark. Role: admin.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "One entry per address checked, found or not, with the "
+            + "reason in plain words"),
+        @APIResponse(responseCode = "400", description = "baseUrl is not a plain http or https address"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not an admin")})
+    public AiViews.Discovery discover(AiViews.DiscoverRequest body) {
+        return discovery.discover(body == null ? null : body.baseUrl());
     }
 
     private static String seconds(long ms) {

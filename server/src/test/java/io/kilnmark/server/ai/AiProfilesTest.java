@@ -130,6 +130,24 @@ class AiProfilesTest {
         fake.clear();
     }
 
+    @Test
+    @Order(10)
+    void adminsCanLookForModelServers() {
+        as(viewer).contentType(ContentType.JSON).body(Map.of()).post("/api/v1/ai/discover").then().statusCode(403);
+        JsonPath found = admin().contentType(ContentType.JSON).body(Map.of("baseUrl", fake.baseUrl()))
+            .post("/api/v1/ai/discover").then().statusCode(200).extract().jsonPath();
+        assertEquals(1, found.getList("servers").size());
+        assertEquals("found", found.getString("servers[0].outcome"));
+        assertEquals(fake.baseUrl(), found.getString("servers[0].baseUrl"));
+        assertTrue(found.getList("servers[0].models.name").contains("fake-chat"));
+        assertEquals(Boolean.TRUE, found.getBoolean("servers[0].models.find { it.name == 'fake-embed-64' }.embedding"));
+        assertEquals("unknown", found.getString("servers[0].models[0].gpu"));
+        admin().contentType(ContentType.JSON).body(Map.of("baseUrl", "http://169.254.169.254/"))
+            .post("/api/v1/ai/discover").then().statusCode(200).body("servers[0].outcome", equalTo("refused"));
+        admin().contentType(ContentType.JSON).body(Map.of("baseUrl", "ftp://example/"))
+            .post("/api/v1/ai/discover").then().statusCode(400).body("error", containsString("baseUrl"));
+    }
+
     private Map<String, Object> profile(String name, String provider, String purpose, String model, boolean local) {
         Map<String, Object> m = new HashMap<>();
         m.put("name", name);

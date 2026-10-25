@@ -130,7 +130,16 @@ public final class RowChecks {
             case IN_RANGE -> {
                 Bound min = Bound.of(p.path("min"), kind);
                 Bound max = Bound.of(p.path("max"), kind);
-                yield new Counting(method, failing, r -> {
+                // A limit that cannot be read would make every row fail: the rule cannot run instead.
+                Bound unreadable = min != null && min.value() == null ? min : max != null && max.value() == null ? max
+                    : null;
+                if (unreadable != null) {
+                    yield fixed(Evaluation.error(method, "The range limit " + unreadable.text() + " cannot be read as "
+                        + Bound.what(kind) + ", so the rule cannot run. Edit the rule and give it as, for example, "
+                        + Bound.example(kind) + "."));
+                }
+                long[] unread = new long[1];
+                Counting c = new Counting(method, failing, r -> {
                     String v = r.cell(col);
                     if (v == null) {
                         return false;
@@ -138,9 +147,13 @@ public final class RowChecks {
                     try {
                         return (min != null && min.compareTo(v) > 0) || (max != null && max.compareTo(v) < 0);
                     } catch (RuntimeException e) {
-                        return true; // a value that cannot be compared is not in range
+                        unread[0]++;
+                        return true; // a value that cannot be compared is not in range, and is counted as such
                     }
                 });
+                c.note = () -> unread[0] == 0 ? null : Measures.count(unread[0]) + " values could not be read as "
+                    + Bound.what(kind) + " and count as failing";
+                yield c;
             }
             case UNIQUE -> new Unique(method, failing, keyColumns(rule, columns));
             case FRESHNESS -> new Freshness(method, col, p.path("maxAgeHours").asDouble(), now);
@@ -382,10 +395,48 @@ public final class RowChecks {
             + Measures.percent(change) + " (" + Measures.count(previous) + " to " + Measures.count(rows) + ")", null);
     }
 
-    /** A range bound compared with cell text according to the field's kind. */
-    private record Bound(String text, String kind) {
+    /**
+     * A range bound, read once according to the field's kind ({@code value} is null when it cannot
+     * be), and compared with cell text. Comparing with a cell that cannot be read throws.
+     */
+    private record Bound(String text, String kind, Object value) {
+        private static final Set<String> NUMBERS = Set.of("int16", "int32", "int64", "float32", "float64", "decimal");
+
         static Bound of(JsonNode n, String kind) {
-            return n == null || n.isMissingNode() || n.isNull() ? null : new Bound(n.asText(), kind);
+            if (n == null || n.isMissingNode() || n.isNull()) {
+                return null;
+            }
+            String text = n.asText();
+            return new Bound(text, kind, read(text, kind));
+        }
+
+        private static Object read(String text, String kind) {
+            if (kind == null) {
+                return text;
+            }
+            try {
+                return switch (kind) {
+                    case "int16", "int32", "int64", "float32", "float64", "decimal" -> new BigDecimal(text);
+                    case "date" -> LocalDate.parse(text.substring(0, 10));
+                    case "timestamp", "timestamp_tz" -> ProfileFacts.instant(text);
+                    default -> text;
+                };
+            } catch (RuntimeException e) {
+                return null;
+            }
+        }
+
+        static String what(String kind) {
+            if (kind == null) {
+                return "text";
+            }
+            return NUMBERS.contains(kind) ? "numbers" : kind.equals("date") ? "dates"
+                : kind.startsWith("timestamp") ? "dates and times" : "text";
+        }
+
+        static String example(String kind) {
+            return kind == null ? "A" : NUMBERS.contains(kind) ? "12.5" : kind.equals("date") ? "2024-01-31"
+                : kind.startsWith("timestamp") ? "2024-01-31T09:30:00Z" : "A";
         }
 
         int compareTo(String v) {
@@ -394,9 +445,15 @@ public final class RowChecks {
             }
             return switch (kind) {
                 case "int16", "int32", "int64", "float32", "float64", "decimal" ->
-                    new BigDecimal(text).compareTo(new BigDecimal(v));
-                case "date" -> LocalDate.parse(text.substring(0, 10)).compareTo(LocalDate.parse(v.substring(0, 10)));
-                case "timestamp", "timestamp_tz" -> ProfileFacts.instant(text).compareTo(ProfileFacts.instant(v));
+                    ((BigDecimal) value).compareTo(new BigDecimal(v));
+                case "date" -> ((LocalDate) value).compareTo(LocalDate.parse(v.substring(0, 10)));
+                case "timestamp", "timestamp_tz" -> {
+                    Instant cell = ProfileFacts.instant(v);
+                    if (cell == null) {
+                        throw new IllegalArgumentException("not a date and time: " + v);
+                    }
+                    yield ((Instant) value).compareTo(cell);
+                }
                 default -> text.compareTo(v);
             };
         }

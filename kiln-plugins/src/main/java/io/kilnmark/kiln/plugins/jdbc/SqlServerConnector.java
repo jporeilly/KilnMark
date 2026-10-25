@@ -73,6 +73,11 @@ public final class SqlServerConnector extends JdbcConnector {
     }
 
     @Override
+    public String monogram() {
+        return "SQL";
+    }
+
+    @Override
     protected String urlPrefix() {
         return "jdbc:sqlserver://";
     }

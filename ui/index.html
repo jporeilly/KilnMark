@@ -4,6 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Kilnmark</title>
+    <script>
+      // The viewer's theme before the first paint (src/theme/appearance.ts takes over from here).
+      try {
+        var a = JSON.parse(localStorage.getItem("kilnmark.appearance") || "{}"), d = document.documentElement;
+        if (/^(system|light|dark|contrast)$/.test(a.theme)) d.dataset.theme = a.theme;
+        if (/^(orange|blue|green|purple|pink|teal)$/.test(a.accent)) d.dataset.accent = a.accent;
+        if (/^(comfortable|compact)$/.test(a.density)) d.dataset.density = a.density;
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

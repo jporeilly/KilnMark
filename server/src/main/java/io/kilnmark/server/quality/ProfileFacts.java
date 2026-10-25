@@ -163,20 +163,40 @@ public record ProfileFacts(long versionId, String assetUrn, Instant observedAt, 
         return out;
     }
 
-    /** A date ({@code 2024-03-01}, taken as its start in UTC) or an instant, or null. */
+    /**
+     * A date ({@code 2024-03-01}, taken as its start in UTC) or an instant, or null. Seconds may be
+     * left out ({@code 2024-03-01T09:30Z}), a space may stand for the T, and a time without a zone
+     * is taken as UTC.
+     */
     static Instant instant(String text) {
         if (text == null || text.isBlank()) {
             return null;
         }
-        try {
-            return text.length() == 10 ? LocalDate.parse(text).atStartOfDay(ZoneOffset.UTC).toInstant()
-                : Instant.parse(text);
-        } catch (DateTimeParseException e) {
+        String t = text.trim();
+        if (t.length() == 10) {
             try {
-                return java.time.LocalDateTime.parse(text).toInstant(ZoneOffset.UTC);
-            } catch (DateTimeParseException e2) {
+                return LocalDate.parse(t).atStartOfDay(ZoneOffset.UTC).toInstant();
+            } catch (DateTimeParseException e) {
                 return null;
             }
+        }
+        if (t.length() > 10 && t.charAt(10) == ' ') {
+            t = t.substring(0, 10) + 'T' + t.substring(11);
+        }
+        try {
+            return Instant.parse(t);
+        } catch (DateTimeParseException e) {
+            // Instant.parse needs seconds; the offset form does not.
+        }
+        try {
+            return java.time.OffsetDateTime.parse(t).toInstant();
+        } catch (DateTimeParseException e) {
+            // no zone: UTC, below
+        }
+        try {
+            return java.time.LocalDateTime.parse(t).toInstant(ZoneOffset.UTC);
+        } catch (DateTimeParseException e) {
+            return null;
         }
     }
 }

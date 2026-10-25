@@ -39,13 +39,17 @@ public final class Views {
      */
     public record Connector(String kind, String displayName, List<Setting> settings, String containerSetting,
                             String containerLabel, String containerCounted, String category, String family,
-                            List<String> capabilities, List<String> formats, String icon, String docsAnchor,
-                            boolean addressFields, boolean driverBundled) {
+                            List<String> capabilities, List<String> formats, String icon, String monogram,
+                            String docsAnchor, boolean addressFields, boolean driverBundled) {
     }
 
-    /** A connector that is planned, not built: shown greyed out. */
-    public record PlannedConnector(String name, String category, String family, List<String> capabilities,
-                                   String wave) {
+    /**
+     * A connector that is planned, not built: shown greyed out. {@code id} is the kind it is expected
+     * to have, so a branding manifest can name it; {@code monogram} is the letters on its tile, or
+     * null for a generic connector, whose tile shows an icon.
+     */
+    public record PlannedConnector(String id, String name, String category, String family,
+                                   List<String> capabilities, String wave, String monogram) {
     }
 
     /** One category of the catalogue, with its built connectors and, unless hidden, the planned ones. */

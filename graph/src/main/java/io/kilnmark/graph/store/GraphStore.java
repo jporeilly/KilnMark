@@ -91,6 +91,12 @@ public interface GraphStore {
 
     List<SearchHit> search(String query, int limit);
 
+    /** As {@link #search(String, int)}, kept to the assets of these sources (by name); none means all. */
+    default List<SearchHit> search(String query, int limit, List<String> sources) {
+        return sources.isEmpty() ? search(query, limit)
+            : search(query, limit).stream().filter(h -> sources.contains(h.source())).toList();
+    }
+
     Optional<AssetDetail> asset(String urn);
 
     /** Someone changed the source between reading it and saving a change to it. */

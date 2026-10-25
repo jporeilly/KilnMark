@@ -130,7 +130,10 @@ The connector SPI adds default methods, so existing connectors keep compiling:
   storage or message broker.
 - `capabilities()`: the set from discover, read, write and stream.
 - `formats()`: for file and stream connectors, the formats it reads.
-- `icon()`: a name from the UI's icon set, never a vendor logo.
+- `icon()`: a name from the UI's icon set (Tabler Icons), never a vendor logo.
+- `monogram()`: for a product, the two or three letters on its tile (`Pg`, `SQL`); none for
+  generic connectors such as a folder, whose tile shows the icon. Planned connectors carry an
+  `id` and a monogram too.
 - `docsAnchor()`: the section of the connector docs.
 
 `GET /api/v1/connectors` returns built connectors grouped by category. Planned connectors come from
@@ -141,8 +144,18 @@ coming. An admin setting hides the planned list.
 
 - Category tabs (All, Databases, NoSQL, Files, Streaming, Applications, Lakehouse) and a search
   box.
-- Cards show a generic icon for the category or format, the name, and capability badges with text,
-  not colour alone. The family appears as a small heading within the tab.
+- Cards show the connector's **tile**, the name, its family as a small label, and capability
+  badges with text, not colour alone. Within a category the cards flow in one responsive grid,
+  available connectors first and planned ones after, lighter and dashed.
+- **Tiles:** letters on a tint for products, the family icon for generic connectors. The tint
+  comes from the connector id (eight tints, each checked for 4.5:1 letter contrast in every
+  theme); large tiles add the family icon in a corner. The same tile is used in the sources list,
+  a source's page and the browse tree. An operator can replace a tile with a logo they are
+  licensed to use, or give it a brand colour, through the branding folder
+  ([branding guide](../guide/branding.md)); anything missing or invalid falls back to the tile.
+  Kilnmark itself ships no vendor logos.
+- **Icons** for categories, families, file formats and the browse tree are Tabler Icons, mapped
+  by name in one module (`ui/src/components/icons.tsx`).
 - Choosing a card opens the existing dynamic form for that connector.
 - The sources list can be filtered and grouped by category, and file sources show the formats they
   found with counts.

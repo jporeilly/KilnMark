@@ -836,4 +836,32 @@ class QualityFlowTest {
         List<List<String>> rows = same.getList("rows");
         assertTrue(col >= 0 && rows.stream().allMatch(r -> r.get(col) == null || r.get(col).equals("••••")));
     }
+
+    @Test
+    @Order(17)
+    void rulesAreEditedInPlaceAndStaleEditsAreRefused() {
+        long id = rules.get("quantity");
+        JsonPath before = as(steward).get("/api/v1/quality/rules/" + id).then().statusCode(200).extract().jsonPath();
+        String version = before.getString("rule.updatedAt");
+        Map<String, Object> body = Map.of("assetUrn", CUSTOMERS, "field", "quantity", "type", "in_range",
+            "params", Map.of("min", 0, "max", 1000), "enabled", true);
+        // quantity is marked sensitive by now: an admin who unmasks sees the bounds in the answer.
+        JsonPath saved = admin().contentType(ContentType.JSON).header("If-Match", "\"" + version + "\"")
+            .queryParam("unmask", true).body(body).put("/api/v1/quality/rules/" + id).then().statusCode(200).extract()
+            .jsonPath();
+        assertEquals("1000", saved.getString("params.max"));
+        assertEquals(before.getString("rule.createdBy"), saved.getString("createdBy"));
+        assertEquals(before.getString("rule.origin"), saved.getString("origin"));
+        assertEquals(before.getString("rule.createdAt"), saved.getString("createdAt"));
+        // An edit made from what was read before that change is refused, not applied over it.
+        as(steward).contentType(ContentType.JSON).header("If-Match", version).body(body)
+            .put("/api/v1/quality/rules/" + id).then().statusCode(409).body("error", containsString("changed"));
+        as(steward).contentType(ContentType.JSON).header("If-Match", "soon").body(body)
+            .put("/api/v1/quality/rules/" + id).then().statusCode(400).body("error", containsString("If-Match"));
+        // Without If-Match, the API replaces the settings as before.
+        as(steward).contentType(ContentType.JSON).body(body).put("/api/v1/quality/rules/" + id).then().statusCode(200);
+        as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", ORDERS, "field", "quantity",
+            "type", "in_range", "params", Map.of("min", 0))).put("/api/v1/quality/rules/" + id).then().statusCode(400)
+            .body("error", containsString("assetUrn"));
+    }
 }

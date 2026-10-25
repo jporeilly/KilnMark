@@ -355,8 +355,11 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
             return v.isNumber() ? v.decimalValue().toPlainString() : text;
         }
         if (kind != null && TEMPORAL.contains(kind)) {
-            if (!text.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T ][0-9:.]+(?:Z|[+-][0-9:]+)?)?")) {
-                throw new IllegalArgumentException(name + ": a date or timestamp, for example 2024-01-31");
+            // Rules on files and previews compare through ProfileFacts.instant, so it must read the bound.
+            if (!text.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T ][0-9:.]+(?:Z|[+-][0-9:]+)?)?")
+                || ProfileFacts.instant(text) == null) {
+                throw new IllegalArgumentException(name + ": a date or timestamp, for example 2024-01-31 or "
+                    + "2024-01-31T09:30:00Z");
             }
             return text;
         }
