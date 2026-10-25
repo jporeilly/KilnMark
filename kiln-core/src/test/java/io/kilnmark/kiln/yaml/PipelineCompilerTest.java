@@ -571,4 +571,19 @@ class PipelineCompilerTest {
         assertThrows(LinkageError.class, c::graph);
         assertTrue(closed.get());
     }
+
+    @Test
+    void hugeDecimalsAreRefusedAsNumbersAndKeptAsWrittenText() {
+        long start = System.nanoTime();
+        contains(only(compile(FILTER_HEAD + "    condition: x\n    limit: 1e-999999999\n"), 9), "too many digits");
+        contains(only(compile(FILTER_HEAD + "    condition: x\n    limit: 1" + "0".repeat(1_200) + ".5\n"), 9),
+            "too many digits");
+        Compiled text = compile(FILTER_HEAD + "    condition: 1e-999999999\n");
+        assertTrue(text.ok(), text.problems().toString());
+        assertEquals("1e-999999999", text.configs().get("f").get("condition"));
+        PipelineDefinition.StepDefinition built = new PipelineDefinition.StepDefinition("a", "numbers", List.of(),
+            Map.of("x", new java.math.BigDecimal("1e-999999999")), new Position(1, 1), Map.of());
+        assertEquals("1E-999999999", built.configText().get("x"));
+        assertTrue(java.time.Duration.ofNanos(System.nanoTime() - start).toSeconds() < 5);
+    }
 }

@@ -64,7 +64,7 @@ public final class RowSet {
         return moves.get();
     }
 
-    /** Whether the reader is waiting for a batch (or, through {@link #poll}, was the last time it looked). */
+    /** Whether the reader is waiting for a batch right now ({@link #take}, a timed {@link #poll}, {@link #takeAny}). */
     public boolean readerWaiting() {
         return readerWaitingSince != 0;
     }
@@ -170,7 +170,7 @@ public final class RowSet {
      */
     public VectorSchemaRoot poll(BufferAllocator into, long timeout, TimeUnit unit)
         throws InterruptedException, StepException {
-        Object o = next(timeout, unit);
+        Object o = next(timeout, unit, true);
         return o == null ? null : received(o, into);
     }
 
@@ -181,7 +181,7 @@ public final class RowSet {
      * @throws UpstreamFailedException if the step before this one failed
      */
     public boolean discard(long timeout, TimeUnit unit) throws InterruptedException, StepException {
-        Object o = next(timeout, unit);
+        Object o = next(timeout, unit, true);
         if (o == null) {
             return !ended;
         }
@@ -194,20 +194,26 @@ public final class RowSet {
         return true;
     }
 
-    /** The next item, waiting up to {@code timeout}; a wait that finds nothing leaves the reader marked waiting. */
-    private Object next(long timeout, TimeUnit unit) throws InterruptedException {
+    /**
+     * The next item, waiting up to {@code timeout}. With {@code mark}, the reader counts as waiting
+     * only while it waits here: a reader that finds nothing and goes off to work (a commit, a remote
+     * call) is not taken for a stalled one.
+     */
+    private Object next(long timeout, TimeUnit unit, boolean mark) throws InterruptedException {
         if (ended) {
             return null;
         }
         Object o = queue.poll();
         if (o == null && timeout > 0) {
-            if (readerWaitingSince == 0) {
-                readerWaitingSince = System.nanoTime();
+            if (!mark) {
+                return queue.poll(timeout, unit);
             }
-            o = queue.poll(timeout, unit);
-        }
-        if (o != null) {
-            readerWaitingSince = 0;
+            readerWaitingSince = System.nanoTime();
+            try {
+                o = queue.poll(timeout, unit);
+            } finally {
+                readerWaitingSince = 0;
+            }
         }
         return o;
     }
@@ -246,27 +252,44 @@ public final class RowSet {
      */
     public static Taken takeAny(List<RowSet> from, BufferAllocator into) throws InterruptedException, StepException {
         int n = from.size();
-        while (true) {
-            int start = n == 0 ? 0 : ThreadLocalRandom.current().nextInt(n);
-            RowSet waitOn = null;
-            for (int k = 0; k < n; k++) {
-                int i = (start + k) % n;
-                RowSet r = from.get(i);
-                VectorSchemaRoot b = r.poll(into, 0, TimeUnit.MILLISECONDS);
-                if (b != null) {
-                    return new Taken(i, b);
+        List<RowSet> marked = new ArrayList<>(); // waiting on all of them for as long as this call waits
+        try {
+            while (true) {
+                int start = n == 0 ? 0 : ThreadLocalRandom.current().nextInt(n);
+                RowSet waitOn = null;
+                for (int k = 0; k < n; k++) {
+                    int i = (start + k) % n;
+                    RowSet r = from.get(i);
+                    Object o = r.next(0, TimeUnit.MILLISECONDS, false);
+                    if (o != null) {
+                        VectorSchemaRoot b = r.received(o, into);
+                        if (b != null) {
+                            return new Taken(i, b);
+                        }
+                    }
+                    if (!r.atEnd() && waitOn == null) {
+                        waitOn = r;
+                    }
                 }
-                if (!r.atEnd() && waitOn == null) {
-                    waitOn = r;
+                if (waitOn == null) {
+                    return null;
+                }
+                for (RowSet r : from) {
+                    if (!r.atEnd() && r.readerWaitingSince == 0) {
+                        r.readerWaitingSince = System.nanoTime();
+                        marked.add(r);
+                    }
+                }
+                Object o = waitOn.next(TAKE_ANY_WAIT_MILLIS, TimeUnit.MILLISECONDS, false);
+                if (o != null) {
+                    VectorSchemaRoot b = waitOn.received(o, into);
+                    if (b != null) {
+                        return new Taken(from.indexOf(waitOn), b);
+                    }
                 }
             }
-            if (waitOn == null) {
-                return null;
-            }
-            VectorSchemaRoot b = waitOn.poll(into, TAKE_ANY_WAIT_MILLIS, TimeUnit.MILLISECONDS);
-            if (b != null) {
-                return new Taken(from.indexOf(waitOn), b);
-            }
+        } finally {
+            marked.forEach(r -> r.readerWaitingSince = 0);
         }
     }
 

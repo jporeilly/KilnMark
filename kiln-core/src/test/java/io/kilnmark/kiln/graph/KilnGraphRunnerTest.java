@@ -527,4 +527,169 @@ class KilnGraphRunnerTest {
             assertEquals(0, root.getAllocatedMemory(), "the batch that never reached the queue was closed");
         }
     }
+
+    @Test
+    @Timeout(30)
+    void aFailureWhileStartingStopsTheStepsAlreadyStarted() throws Exception {
+        Generate endless = new Generate(Integer.MAX_VALUE, 10);
+        Collect b = new Collect();
+        b.sleepMillis = 5;
+        Collect c = new Collect();
+        KilnGraphRunner.beforeStart = name -> {
+            if (name.endsWith("-c")) {
+                throw new IllegalStateException("cannot start c");
+            }
+        };
+        try {
+            G g = new G().step("a", endless).step("b", b).step("c", c).edge("a", "b").edge("a", "c");
+            IllegalStateException e = assertThrows(IllegalStateException.class, g::run);
+            assertEquals("cannot start c", e.getMessage());
+        } finally {
+            KilnGraphRunner.beforeStart = null;
+        }
+        assertTrue(endless.closed.get() && b.closed.get(), "the steps already started were stopped before run threw");
+        assertFalse(c.closed.get(), "c never started");
+    }
+
+    @Test
+    @SuppressWarnings("serial")
+    void aFailureBuildingAContextStartsNothing() {
+        Generate gen = new Generate(10, 10);
+        G g = new G().step("gen", gen).step("sink", new Collect()).edge("gen", "sink");
+        g.configs.put("sink", Map.of("bad", new Number() {
+            @Override
+            public int intValue() {
+                return 0;
+            }
+
+            @Override
+            public long longValue() {
+                return 0;
+            }
+
+            @Override
+            public float floatValue() {
+                return 0;
+            }
+
+            @Override
+            public double doubleValue() {
+                return 0;
+            }
+
+            @Override
+            public String toString() {
+                throw new LinkageError("no text");
+            }
+        }));
+        assertThrows(LinkageError.class, g::run);
+        assertEquals(0, gen.sent.get());
+        assertFalse(gen.closed.get(), "no step started");
+    }
+
+    @Test
+    void aHugeDecimalSettingStaysShortText() throws Exception {
+        Collect sink = new Collect();
+        G g = new G().step("gen", new Generate(1, 1)).step("sink", sink).edge("gen", "sink");
+        g.configs.put("sink", Map.of("tiny", new java.math.BigDecimal("1e-999999999"), "small", new java.math.BigDecimal("2.50")));
+        RunResult r = g.run();
+        assertTrue(r.succeeded(), r.error());
+        assertEquals("1E-999999999", sink.settings.get("tiny"));
+        assertEquals("2.50", sink.settings.get("small"));
+    }
+
+    @Test
+    @Timeout(30)
+    void aReaderThatPollsAndThenWorksIsNotStalled() throws Exception {
+        AtomicReference<Long> rows = new AtomicReference<>(0L);
+        Step flushing = new Step() {
+            boolean flushed;
+
+            @Override
+            public String type() {
+                return "flushing";
+            }
+
+            @Override
+            public void init(StepContext context) {
+            }
+
+            @Override
+            public boolean process(StepContext context) throws StepException {
+                try {
+                    VectorSchemaRoot b = context.input().poll(context.allocator(), 20, TimeUnit.MILLISECONDS);
+                    if (b == null) {
+                        if (context.input().atEnd()) {
+                            return false;
+                        }
+                        if (!flushed) { // a long commit, outside any row set
+                            flushed = true;
+                            long until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(900);
+                            while (System.nanoTime() < until) {
+                                Thread.onSpinWait();
+                            }
+                        }
+                        return true;
+                    }
+                    rows.set(rows.get() + b.getRowCount());
+                    b.close();
+                    return true;
+                } catch (InterruptedException e) {
+                    throw Toys.interrupted(e);
+                }
+            }
+        };
+        Step delayed = new Step() {
+            int k;
+
+            @Override
+            public String type() {
+                return "delayed";
+            }
+
+            @Override
+            public void init(StepContext context) {
+            }
+
+            @Override
+            public boolean process(StepContext context) throws StepException {
+                try {
+                    if (k == 0) {
+                        Thread.sleep(100);
+                    }
+                    context.emit("out", Toys.batch(context.allocator(), k * 10, 10));
+                    return ++k < 50;
+                } catch (InterruptedException e) {
+                    throw Toys.interrupted(e);
+                }
+            }
+        };
+        RunResult r = new G().step("src", delayed).step("w", flushing).edge("src", "w")
+            .run(64L << 20, 2, Duration.ofMillis(300));
+        assertTrue(r.succeeded(), r.error());
+        assertEquals(500L, rows.get());
+    }
+
+    @Test
+    void eachStepSaysHowItEnded() throws Exception {
+        Collect head = new Collect();
+        head.limit = 2;
+        RunResult early = new G().step("gen", new Generate(100_000, 10)).step("head", head).edge("gen", "head")
+            .run(64L << 20, 2);
+        assertEquals(RunResult.Outcome.ENDED_EARLY, early.step("head").outcome());
+        assertEquals(RunResult.Outcome.ENDED_EARLY, early.step("gen").outcome());
+
+        RunResult fine = new G().step("gen", new Generate(5, 10)).step("sink", new Collect()).edge("gen", "sink").run();
+        assertEquals(RunResult.Outcome.FINISHED, fine.step("gen").outcome());
+        assertEquals(RunResult.Outcome.FINISHED, fine.step("sink").outcome());
+
+        RunResult failed = new G().step("gen", new Generate(100_000, 100)).step("left", new Pass())
+            .step("right", new Pass(0, 5)).step("merge", new Merge()).step("sink", new Collect())
+            .edge("gen", "left").edge("gen", "right").edge("left", "merge.a").edge("right", "merge.b")
+            .edge("merge", "sink").run(64L << 20, 2);
+        assertEquals(RunResult.Outcome.FAILED, failed.step("right").outcome());
+        for (String other : List.of("gen", "left", "merge", "sink")) {
+            assertEquals(RunResult.Outcome.STOPPED, failed.step(other).outcome(), other);
+        }
+    }
 }

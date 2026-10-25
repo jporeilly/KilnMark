@@ -45,6 +45,9 @@ import io.kilnmark.kiln.yaml.PipelineDefinition.StepDefinition;
  */
 public final class PipelineCompiler {
 
+    /** Most digits a number setting may have, and furthest its decimal point may sit from them. */
+    static final int MAX_DIGITS = 1000;
+
     /** A step id: a lower-case letter, then up to 63 lower-case letters, digits, dashes and underscores. */
     public static final Pattern STEP_ID = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
 
@@ -289,7 +292,7 @@ public final class PipelineCompiler {
             if (text instanceof String t) {
                 return t;
             }
-            return value instanceof BigDecimal d ? d.toPlainString() : String.valueOf(value);
+            return value instanceof BigDecimal d ? PipelineDefinition.decimal(d) : String.valueOf(value);
         }
 
         private static Checked number(Object v) {
@@ -300,6 +303,10 @@ public final class PipelineCompiler {
                 return Checked.wrong("is too large: whole numbers go up to " + Long.MAX_VALUE);
             }
             if (v instanceof BigDecimal d) {
+                if (d.precision() > MAX_DIGITS || Math.abs((long) d.scale()) > MAX_DIGITS) {
+                    return Checked.wrong("has too many digits: at most " + MAX_DIGITS
+                        + ", with the decimal point no more than " + MAX_DIGITS + " places from them");
+                }
                 return d.abs().compareTo(BigDecimal.valueOf(Double.MAX_VALUE)) > 0
                     ? Checked.wrong("is too large") : Checked.ok(d);
             }

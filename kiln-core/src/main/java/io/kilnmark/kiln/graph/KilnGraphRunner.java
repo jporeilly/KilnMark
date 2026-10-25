@@ -17,6 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.OutOfMemoryException;
@@ -199,28 +200,23 @@ public final class KilnGraphRunner implements GraphRunner {
 
         RunResult execute() throws InterruptedException {
             Instant started = Instant.now();
-            try (RootAllocator root = new RootAllocator(memoryLimitBytes)) {
-                for (Node n : nodes) {
-                    n.allocator = root.newChildAllocator(n.id(), 0, memoryLimitBytes);
-                    for (Port p : n.outputs.values()) {
-                        if (p.readers.size() > 1) {
-                            p.copies = n.allocator.newChildAllocator(n.id() + "." + p.port + " copies", 0,
-                                memoryLimitBytes);
-                        }
-                    }
-                }
-                synchronized (lock) { // a failure while starting waits until every thread is known
+            RootAllocator root = new RootAllocator(memoryLimitBytes);
+            try {
+                try {
                     for (Node n : nodes) {
-                        Context ctx = new Context(n, metadata);
-                        n.stepThread = start(n, "kiln-" + graph.name() + "-" + n.id(), () -> runStep(n, ctx));
+                        n.allocator = root.newChildAllocator(n.id(), 0, memoryLimitBytes);
                         for (Port p : n.outputs.values()) {
-                            if (p.copies != null) {
-                                p.teeThread = start(n, "kiln-" + graph.name() + "-" + n.id() + "." + p.port + "-copies",
-                                    () -> runTee(p));
+                            if (p.readers.size() > 1) {
+                                p.copies = n.allocator.newChildAllocator(n.id() + "." + p.port + " copies", 0,
+                                    memoryLimitBytes);
                             }
                         }
                     }
+                } catch (Throwable t) {
+                    nodes.forEach(n -> n.closeAllocators(true));
+                    throw t;
                 }
+                startAll();
                 try {
                     watch();
                 } catch (InterruptedException e) {
@@ -238,10 +234,45 @@ public final class KilnGraphRunner implements GraphRunner {
                         recordError(n, "Step " + n.id() + " did not free all its memory: " + leak, true);
                     }
                 }
-            } catch (IllegalStateException leak) {
-                // reported per step above
+            } finally {
+                try {
+                    root.close();
+                } catch (IllegalStateException leak) {
+                    // reported per step, or the run is being abandoned
+                }
             }
             return result(started);
+        }
+
+        /**
+         * Builds every step's context, then starts every thread. If anything goes wrong on the way, the
+         * threads already started are stopped and waited for before the failure is thrown, so no step
+         * outlives the call.
+         */
+        private void startAll() {
+            try {
+                Map<Node, Context> contexts = new LinkedHashMap<>();
+                for (Node n : nodes) {
+                    contexts.put(n, new Context(n, metadata));
+                }
+                synchronized (lock) { // a failure while starting waits until every thread is known
+                    for (Node n : nodes) {
+                        Context ctx = contexts.get(n);
+                        n.stepThread = start(n, "kiln-" + graph.name() + "-" + n.id(), () -> runStep(n, ctx));
+                        for (Port p : n.outputs.values()) {
+                            if (p.copies != null) {
+                                p.teeThread = start(n, "kiln-" + graph.name() + "-" + n.id() + "." + p.port + "-copies",
+                                    () -> runTee(p));
+                            }
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                stopAll();
+                joinAll();
+                nodes.forEach(n -> n.closeAllocators(true));
+                throw t;
+            }
         }
 
         /** Starts a thread for {@code owner}, unless the run or that step is being stopped; then null. */
@@ -249,6 +280,10 @@ public final class KilnGraphRunner implements GraphRunner {
             synchronized (lock) {
                 if (stopping || owner.stoppedByEngine) {
                     return null;
+                }
+                Consumer<String> hook = beforeStart;
+                if (hook != null) {
+                    hook.accept(name);
                 }
                 Thread t = Thread.ofVirtual().name(name).unstarted(body);
                 owner.threads.add(t);
@@ -282,8 +317,8 @@ public final class KilnGraphRunner implements GraphRunner {
                     List<String> waiting = waiting();
                     if (waiting != null) {
                         stalled(waiting);
-                    }
-                    since = now;
+                        since = now;
+                    } // else some step is busy: look again at the next tick
                 }
             }
         }
@@ -363,7 +398,9 @@ public final class KilnGraphRunner implements GraphRunner {
                     out.put(p.port, p.rowSet.rows());
                     rowsOut += p.rowSet.rows();
                 }
-                steps.add(new RunResult.StepResult(n.id(), n.step().type(), rowsOut, n.peak, n.error, rowsIn, in, out));
+                RunResult.Outcome outcome = n.outcome != null ? n.outcome : RunResult.Outcome.STOPPED; // never started
+                steps.add(new RunResult.StepResult(n.id(), n.step().type(), rowsOut, n.peak, n.error, rowsIn, in, out,
+                    outcome));
                 if (n.error != null && (first == null || n.errorOrder < first.errorOrder)) {
                     first = n;
                 }
@@ -393,6 +430,8 @@ public final class KilnGraphRunner implements GraphRunner {
                         throw new InterruptedException();
                     }
                 }
+                boolean early = n.inputs.values().stream().flatMap(List::stream).anyMatch(r -> !r.rowSet.atEnd());
+                n.outcome = early ? RunResult.Outcome.ENDED_EARLY : RunResult.Outcome.FINISHED;
                 releaseInputs(n);
                 finishOutputs(n);
             } catch (Throwable t) {
@@ -402,9 +441,11 @@ public final class KilnGraphRunner implements GraphRunner {
                 }
                 if (t instanceof RowSet.CancelledException && !failed.get()) {
                     // every step reading this one has finished and nothing failed: end early too
+                    n.outcome = RunResult.Outcome.ENDED_EARLY;
                     releaseInputs(n);
                     finishOutputs(n);
                 } else {
+                    n.outcome = RunResult.Outcome.STOPPED; // or FAILED, when it recorded an error of its own
                     cancelInputs(n); // first, so the steps before stop even if a step after is stuck
                     failOutputs(n, t);
                 }
@@ -690,6 +731,18 @@ public final class KilnGraphRunner implements GraphRunner {
             : e.from() + "->" + e.to();
     }
 
+    /**
+     * A decimal as text: written out in full when that is short, otherwise in scientific form, so a
+     * number such as 1e-999999999 never becomes a string of a billion zeros.
+     */
+    static String decimal(BigDecimal d) {
+        long plainLength = d.scale() >= 0 ? Math.max(d.precision(), d.scale()) : d.precision() - (long) d.scale();
+        return plainLength <= 100 ? d.toPlainString() : d.toString();
+    }
+
+    /** Called with each thread's name just before it starts; for tests that make starting fail. */
+    static volatile Consumer<String> beforeStart;
+
     private static String megabytes(long bytes) {
         return bytes >= 1 << 20 ? (bytes >> 20) + " MB" : (bytes >> 10) + " KB";
     }
@@ -713,6 +766,7 @@ public final class KilnGraphRunner implements GraphRunner {
         volatile Thread stepThread;
         long peak;
         volatile boolean stoppedByEngine;
+        volatile RunResult.Outcome outcome;
         String error; // guarded by the run's lock until the threads have ended
         int errorOrder;
 
@@ -740,7 +794,9 @@ public final class KilnGraphRunner implements GraphRunner {
                     leak = close(p.copies, leak);
                 }
             }
-            leak = close(allocator, leak);
+            if (allocator != null) {
+                leak = close(allocator, leak);
+            }
             if (quietly && leak != null) {
                 LOG.log(System.Logger.Level.WARNING, "Step {0} was stopped and did not free all its memory: {1}",
                     id(), leak);
@@ -814,7 +870,7 @@ public final class KilnGraphRunner implements GraphRunner {
 
         private static String scalar(Object v) {
             if (v instanceof BigDecimal d) {
-                return d.toPlainString();
+                return decimal(d);
             }
             if (v instanceof String || v instanceof Number || v instanceof Boolean || v instanceof Character) {
                 return v.toString();
