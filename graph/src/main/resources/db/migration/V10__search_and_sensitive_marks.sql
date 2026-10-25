@@ -1,3 +1,5 @@
+-- Round 2 leftovers: bounded keyword search, and marks of sensitive columns kept apart from field rows.
+
 -- Keyword search that stays bounded however common the words (JdbcGraphStore.search): candidates
 -- are gathered through indexes, a fixed number at most, before anything is ranked.
 --   * GiST trigram indexes give names in order of distance from the query (<<-> and <->), so the
@@ -19,6 +21,24 @@ CREATE INDEX IF NOT EXISTS asset_exact_name_idx ON asset (lower(name));
 CREATE INDEX IF NOT EXISTS asset_exact_qualified_idx ON asset (lower(container || '.' || name));
 ALTER INDEX asset_search_idx SET (fastupdate = off);
 SELECT gin_clean_pending_list('asset_search_idx'::regclass);
+
+-- Columns marked sensitive, kept per asset and column name apart from the field rows a scan
+-- replaces. A column dropped or renamed keeps its mark, so values stored under its name (sample
+-- rows, failing rows, drift detail) stay masked; a detected rename carries the mark to the new
+-- name as well. Marks go with their asset.
+
+CREATE TABLE IF NOT EXISTS sensitive_column (
+    asset_urn  text NOT NULL REFERENCES asset (urn) ON DELETE CASCADE,
+    name       text NOT NULL,
+    marked_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (asset_urn, name)
+);
+
+INSERT INTO sensitive_column (asset_urn, name)
+SELECT asset_urn, name FROM field WHERE sensitive
+ON CONFLICT DO NOTHING;
+
+ALTER TABLE field DROP COLUMN IF EXISTS sensitive;
 
 INSERT INTO install_info (key, value) VALUES ('schema_search', '10')
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();

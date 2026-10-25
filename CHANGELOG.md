@@ -102,7 +102,7 @@ details.
     not yet saved are for admins.
   - A workbook's text holds its sheets' cells: when a sheet has a sensitive column, the workbook's
     text, find, chunks and search snippets are for admins only.
-  - Marks are kept apart from the column rows a scan replaces (migration V11, `sensitive_column`), so a
+  - Marks are kept apart from the column rows a scan replaces (migration V10, `sensitive_column`), so a
     dropped or renamed column keeps its mark and the values stored under its name stay masked; a
     detected rename carries the mark to the new name.
   - One request-scoped `Sights` bean decides masking for every endpoint and MCP tool, and a test over
