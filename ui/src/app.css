@@ -2190,13 +2190,13 @@ a.km-stat--link:hover {
 
 .facts dd {
   margin: 4px 0 0;
-  font: 700 17px/1.3 var(--km-font-display);
+  font: 700 15px/1.35 var(--km-font-display);
   color: var(--km-ink-strong);
   overflow-wrap: anywhere;
 }
 
 .facts dd.mono {
-  font: 500 var(--km-text-md) var(--km-mono);
+  font: 500 var(--km-text-sm) / 1.4 var(--km-mono);
 }
 
 .top {
@@ -2858,6 +2858,91 @@ table.sample td {
   flex-basis: 100%;
   font-size: var(--km-text-xs);
   color: var(--km-muted);
+}
+
+/* A gallery of cards on the page (sources). */
+.km-gallery {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+}
+
+.km-gallery-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+}
+
+.km-gallery-card p {
+  margin: 0;
+}
+
+.km-gallery-actions {
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.km-gallery-actions .scan-action {
+  justify-items: start;
+}
+
+.km-row-detail .mono {
+  white-space: nowrap;
+}
+
+.km-gallery-actions button {
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: var(--km-text-sm);
+}
+
+.km-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  margin-bottom: 14px;
+}
+
+.km-toolbar-switch {
+  margin-left: auto;
+  min-width: 220px;
+}
+
+.km-toolbar-switch .km-switch-row {
+  border: 0;
+  padding: 0;
+}
+
+.km-group-title {
+  margin: 20px 0 10px;
+}
+
+/* On/off options under a heading (the connection panel). */
+.km-options {
+  border-top: 1px solid var(--km-divider);
+  padding-top: 12px;
+}
+
+.km-options-title {
+  margin: 0 0 2px;
+  font-size: var(--km-text-md);
+}
+
+.km-options-fieldset {
+  gap: 0;
+}
+
+.km-close {
+  flex: none;
+  background: var(--km-surface-3);
+  width: 36px;
+  min-height: 36px;
+  border-radius: var(--km-radius-control);
 }
 
 /* Source cards inside a card (home), three across where there is room. */

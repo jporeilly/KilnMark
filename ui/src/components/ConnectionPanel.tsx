@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   api,
   type CommonSetting,
@@ -10,6 +10,9 @@ import {
 } from "../api";
 import { ContainerPicker } from "./ContainerPicker";
 import { ConnectorTile, tileProps } from "./ConnectorTile";
+import { Icon } from "./icons";
+import { settingKind } from "./settingKinds";
+import { Switch } from "./ui";
 
 const STEPS = ["Connect", "Test", "Choose what to scan", "Save"] as const;
 /** File settings that say how to read files: chosen in step 3, beside the preview that shows their effect. */
@@ -193,33 +196,97 @@ export function ConnectionPanel({
   const commonOf = (keys: Set<string>) => common.filter((c) => keys.has(c.key));
   const containerSetting = connector.settings.find((s) => s.key === connector.containerSetting);
 
-  const settingField = (s: ConnectorSetting) => (
-    <div className="field" key={s.key}>
-      <label htmlFor={field(`s-${s.key}`)}>
-        {s.label}
-        {!s.required && " (optional)"}
-      </label>
-      <input
-        id={field(`s-${s.key}`)}
-        value={settings[s.key] ?? ""}
-        required={s.required}
-        autoComplete="off"
-        spellCheck={false}
-        placeholder={s.example ?? undefined}
-        aria-describedby={field(`s-${s.key}-hint`)}
-        onChange={(e) => set(s.key, e.target.value)}
-      />
-      <p id={field(`s-${s.key}-hint`)} className="hint">
-        {s.hint}
-        {s.multiple && ". Separate several with commas"}
-        {s.example && (
-          <>
-            . Example: <span className="mono">{s.example}</span>
-          </>
+  /** A connector setting with the control its kind needs: switch, list, number, secret or text. */
+  const settingField = (s: ConnectorSetting) => {
+    const k = settingKind(s);
+    const value = settings[s.key] ?? "";
+    if (k.kind === "switch") {
+      const on = value === "" ? k.defaultOn : value.toLowerCase() === "true";
+      return (
+        <Switch
+          key={s.key}
+          id={field(`s-${s.key}`)}
+          label={s.label}
+          help={k.help}
+          defaultNote={value === "" ? `Not set: ${k.defaultOn ? "on" : "off"}, the default.` : undefined}
+          checked={on}
+          onChange={(v) => set(s.key, v ? "true" : "false")}
+        />
+      );
+    }
+    if (k.kind === "select") {
+      return (
+        <div className="field" key={s.key}>
+          <label htmlFor={field(`s-${s.key}`)}>{s.label}</label>
+          <select
+            id={field(`s-${s.key}`)}
+            value={value || k.defaultValue}
+            onChange={(e) => set(s.key, e.target.value)}
+            aria-describedby={field(`s-${s.key}-hint`)}
+          >
+            {k.choices.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+          <p id={field(`s-${s.key}-hint`)} className="hint">
+            {k.help}
+          </p>
+        </div>
+      );
+    }
+    return (
+      <div className="field" key={s.key}>
+        <label htmlFor={field(`s-${s.key}`)}>
+          {s.label}
+          {!s.required && " (optional)"}
+        </label>
+        <input
+          id={field(`s-${s.key}`)}
+          type={k.kind === "number" ? "number" : k.kind === "password" ? "password" : "text"}
+          inputMode={k.kind === "number" ? "numeric" : undefined}
+          min={k.kind === "number" ? k.min : undefined}
+          value={value}
+          required={s.required}
+          autoComplete={k.kind === "password" ? "new-password" : "off"}
+          spellCheck={false}
+          placeholder={s.example ?? undefined}
+          aria-describedby={field(`s-${s.key}-hint`)}
+          onChange={(e) => set(s.key, e.target.value)}
+        />
+        <p id={field(`s-${s.key}-hint`)} className="hint">
+          {s.hint}
+          {s.multiple && ". Separate several with commas"}
+          {s.example && (
+            <>
+              . Example: <span className="mono">{s.example}</span>
+            </>
+          )}
+        </p>
+      </div>
+    );
+  };
+
+  /** Text fields first, then the on/off options together under one heading, as in the mockup. */
+  const fieldGroup = (list: ConnectorSetting[], heading: string, between?: ReactNode) => {
+    const switches = list.filter((s) => settingKind(s).kind === "switch");
+    const others = list.filter((s) => settingKind(s).kind !== "switch");
+    return (
+      <>
+        {others.map(settingField)}
+        {between}
+        {switches.length > 0 && (
+          <div className="km-options" role="group" aria-labelledby={field(`opts-${heading}`)}>
+            <h4 id={field(`opts-${heading}`)} className="km-options-title">
+              {heading}
+            </h4>
+            {switches.map(settingField)}
+          </div>
         )}
-      </p>
-    </div>
-  );
+      </>
+    );
+  };
 
   const commonField = (c: CommonSetting) =>
     c.choices.length > 0 ? (
@@ -271,13 +338,15 @@ export function ConnectionPanel({
     );
 
   return (
-    <section className="connection-panel panel" aria-labelledby={`${id}-title`} onKeyDown={onKeyDown}>
-      <div className="panel-head">
-        <h2 id={`${id}-title`}>
-          <ConnectorTile {...tileProps(connector)} size="md" /> {editing ? `Edit ${existing.displayName}` : `New ${connector.displayName} connection`}
-        </h2>
-        <button type="button" onClick={requestClose}>
-          Close<span className="visually-hidden"> the connection panel</span>
+    <section className="connection-panel km-sheet" aria-labelledby={`${id}-title`} onKeyDown={onKeyDown}>
+      <div className="km-panel-head">
+        <ConnectorTile {...tileProps(connector)} size="md" />
+        <div className="km-panel-title">
+          <h2 id={`${id}-title`}>{editing ? `Edit ${existing.displayName}` : `New ${connector.displayName} connection`}</h2>
+          <p className="hint">{connector.displayName} connection</p>
+        </div>
+        <button type="button" className="km-icon-button km-close" onClick={requestClose} aria-label="Close the connection panel">
+          <Icon name="close" size={20} />
         </button>
       </div>
       <nav aria-label="Steps">
@@ -376,7 +445,7 @@ export function ConnectionPanel({
               </details>
             </fieldset>
           )}
-          {connectFields.map(settingField)}
+          {fieldGroup(connectFields, "Connection options", (
           <div className="field">
             <label htmlFor={field("pass")}>Password or secret (optional)</label>
             <input
@@ -397,20 +466,19 @@ export function ConnectionPanel({
                 : "Stored encrypted. Use a read-only account."}
             </p>
             {editing && existing.hasPassword && (
-              <div className="check">
-                <input
-                  id={field("clear")}
-                  type="checkbox"
-                  checked={clearPassword}
-                  onChange={(e) => {
-                    setClearPassword(e.target.checked);
-                    if (e.target.checked) setPassword("");
-                  }}
-                />
-                <label htmlFor={field("clear")}>Remove the stored password</label>
-              </div>
+              <Switch
+                id={field("clear")}
+                label="Remove the stored password"
+                help="On save, the stored password or secret is deleted."
+                checked={clearPassword}
+                onChange={(on) => {
+                  setClearPassword(on);
+                  if (on) setPassword("");
+                }}
+              />
             )}
           </div>
+          ))}
         </div>
       )}
 
@@ -425,9 +493,11 @@ export function ConnectionPanel({
           <div role="status" aria-live="polite">
             {test &&
               (test.ok ? (
-                <p className="notice">Connected in {(test.millis / 1000).toFixed(1)} s.</p>
+                <p className="km-status-line good">
+                  <Icon name="circle-check" size={18} /> Connected · {test.millis} ms
+                </p>
               ) : (
-                <p className="warning">
+                <p className="km-callout km-callout--bad">
                   <strong>Could not connect.</strong> {test.problem}
                 </p>
               ))}
@@ -469,7 +539,7 @@ export function ConnectionPanel({
                 Kilnmark detects these. If a preview looks wrong, set them here: they apply to every file of this
                 source, in previews and scans.
               </p>
-              {readingFields.map(settingField)}
+              {fieldGroup(readingFields, "Options")}
             </fieldset>
           )}
         </div>

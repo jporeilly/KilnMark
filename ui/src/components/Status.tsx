@@ -1,4 +1,5 @@
 import type { Run } from "../api";
+import { StatusChip, type Tone } from "./ui";
 
 const LABEL: Record<Run["status"], string> = {
   queued: "Queued",
@@ -7,9 +8,14 @@ const LABEL: Record<Run["status"], string> = {
   partial: "Partly scanned",
   failed: "Failed",
 };
+const TONE: Record<Run["status"], Tone> = { queued: "info", running: "info", succeeded: "good", partial: "warn", failed: "bad" };
 
-/** A run's status as words and colour, never colour alone. */
+/** A scan's status as a chip: words with a tint, never colour alone. */
 export function Status({ run }: { run: Run | null }) {
-  if (!run) return <span className="badge badge-none">Never scanned</span>;
-  return <span className={`badge badge-${run.status}`}>{LABEL[run.status]}</span>;
+  if (!run) return <StatusChip tone="neutral">Never scanned</StatusChip>;
+  return (
+    <StatusChip tone={TONE[run.status]} dot>
+      {LABEL[run.status]}
+    </StatusChip>
+  );
 }

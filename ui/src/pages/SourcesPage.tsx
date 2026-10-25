@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import {
   allows,
   api,
   formatNumber,
-  formatTime,
   type AccessRole,
   type ImportBatch,
   type ImportOptions,
@@ -14,8 +13,10 @@ import { AddConnection } from "../components/AddConnection";
 import { SourceTile } from "../components/ConnectorTile";
 import { useProductName } from "../components/Brand";
 import { ScanAction } from "../components/ScanAction";
-import { Status } from "../components/Status";
 import { useTitle } from "../components/useTitle";
+import { Icon } from "../components/icons";
+import { useConnectorInfo } from "../theme/looks";
+import { Button, Card, DataTable, EmptyState, FilterChips, PageHeader, Switch, type Tone } from "../components/ui";
 import { href } from "../router";
 
 const ORDER = ["databases", "nosql", "files", "streaming", "applications", "lakehouse", "other"];
@@ -31,17 +32,37 @@ const CATEGORY: Record<string, string> = {
 
 const busy = (s: Source) => s.lastRun?.status === "queued" || s.lastRun?.status === "running";
 
-/** Sources and their scans. Stewards can start scans and open a source to change it; admins can also add and import sources. */
-export function SourcesPage({ role }: { role: AccessRole; add?: boolean }) {
+const HEALTH: Record<string, { tone: Tone; word: string }> = {
+  queued: { tone: "info", word: "Scan queued" },
+  running: { tone: "info", word: "Scanning…" },
+  succeeded: { tone: "good", word: "Healthy" },
+  partial: { tone: "warn", word: "Partly scanned" },
+  failed: { tone: "bad", word: "Last scan failed" },
+};
+const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
+
+/**
+ * Sources as a gallery of cards: tile, name, kind, health in words, assets and when it was last
+ * scanned, with Scan now for stewards. Admins add a connection (the connector gallery with the
+ * connection panel beside it) or import sources from a file, from the buttons at the top.
+ */
+export function SourcesPage({ role, add = false }: { role: AccessRole; add?: boolean }) {
   useTitle("Sources");
   const product = useProductName();
   const canScan = allows(role, "steward");
   const canAdd = allows(role, "admin");
+  const connectors = useConnectorInfo();
   const [sources, setSources] = useState<Source[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [category, setCategory] = useState("all");
   const [grouped, setGrouped] = useState(false);
+  const [adding, setAdding] = useState(add && canAdd);
+  const [importing, setImporting] = useState(false);
+  const addHeading = useRef<HTMLHeadingElement>(null);
+  const importHeading = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => setAdding(add && canAdd), [add, canAdd]);
 
   const load = useCallback(() => {
     api
@@ -62,136 +83,157 @@ export function SourcesPage({ role }: { role: AccessRole; add?: boolean }) {
     return () => window.clearInterval(t);
   }, [sources, load]);
 
+  const open = (which: "add" | "import") => {
+    if (which === "add") setAdding(true);
+    else setImporting(true);
+    window.setTimeout(() => {
+      const h = (which === "add" ? addHeading : importHeading).current;
+      h?.scrollIntoView({ block: "start" });
+      h?.focus();
+    }, 0);
+  };
+
   const categories = [...new Set((sources ?? []).map((s) => s.category))].sort(
     (a, b) => ORDER.indexOf(a) - ORDER.indexOf(b),
   );
+  const healthy = (sources ?? []).filter((s) => s.lastRun?.status === "succeeded").length;
 
-  const table = (list: Source[], label: string) => (
-    <div className="table-scroll" role="region" aria-label={`${label} (scrolls sideways on small screens)`} tabIndex={0}>
-      <table>
-        <thead>
-          <tr>
-            <th scope="col">Name</th>
-            <th scope="col">Where</th>
-            <th scope="col">Last scan</th>
+  const gallery = (list: Source[], label: string) => (
+    <ul className="km-gallery" aria-label={label}>
+      {list.map((s) => {
+        const h = s.lastRun ? HEALTH[s.lastRun.status] : { tone: "neutral" as Tone, word: "Never scanned" };
+        const when = s.lastRun?.finishedAt ?? s.lastRun?.requestedAt;
+        return (
+          <li key={s.name} className="km-card km-gallery-card">
+            <div className="with-tile">
+              <SourceTile kind={s.kind} size="md" />
+              <div className="km-row-body">
+                <h3 className="km-row-title">
+                  <a href={href.source(s.name)} className="km-strong-link km-card-link">
+                    {s.displayName}
+                  </a>
+                </h3>
+                <p className="km-row-detail">
+                  {connectors[s.kind]?.displayName ?? s.kind}
+                  {s.displayName !== s.name && <span className="mono"> · {s.name}</span>}
+                </p>
+              </div>
+            </div>
+            <p className={`km-state km-text-${h.tone}`}>
+              <span className="km-chip-dot" aria-hidden="true" />
+              {h.word}
+            </p>
+            <p className="km-row-detail">
+              {formatNumber(s.assets)} {s.assets === 1 ? "asset" : "assets"}
+              {when && s.lastRun?.status !== "running" && ` · scanned ${day.format(new Date(when))}`}
+              {Object.keys(s.formats).length > 0 &&
+                ` · ${Object.entries(s.formats)
+                  .map(([f, n]) => `${f} ${formatNumber(n)}`)
+                  .join(", ")}`}
+            </p>
+            {s.lastRun?.detail && s.lastRun.status !== "succeeded" && <p className="hint">{s.lastRun.detail}</p>}
             {canScan && (
-              <th scope="col">
-                <span className="visually-hidden">Actions</span>
-              </th>
+              <div className="km-gallery-actions">
+                <ScanAction
+                  source={s}
+                  onQueued={(m) => {
+                    setNotice(m);
+                    load();
+                  }}
+                  onError={setError}
+                />
+              </div>
             )}
-          </tr>
-        </thead>
-        <tbody>
-          {list.map((s) => (
-            <tr key={s.name}>
-              <th scope="row">
-                <div className="with-tile">
-                  <SourceTile kind={s.kind} />
-                  <div>
-                    <a href={href.source(s.name)}>{s.displayName}</a>
-                    {s.displayName !== s.name && <div className="small muted mono">{s.name}</div>}
-                  </div>
-                </div>
-              </th>
-              <td className="small">
-                <div className="muted">
-                  {CATEGORY[s.category] ?? s.category} · {s.kind}
-                </div>
-                <div className="mono">{s.settings.url ?? s.settings.path ?? s.settings.bucket ?? "–"}</div>
-                {s.settings.schemas && <div className="muted">schemas: {s.settings.schemas}</div>}
-                {s.settings.containers && <div className="muted">folders: {s.settings.containers}</div>}
-                {Object.keys(s.formats).length > 0 && (
-                  <div>
-                    Formats found:{" "}
-                    {Object.entries(s.formats)
-                      .map(([f, n]) => `${f} ${formatNumber(n)}`)
-                      .join(", ")}
-                  </div>
-                )}
-              </td>
-              <td>
-                <Status run={s.lastRun} />
-                {s.lastRun && (
-                  <div className="small muted">
-                    {formatTime(s.lastRun.finishedAt ?? s.lastRun.startedAt ?? s.lastRun.requestedAt)}
-                    {s.lastRun.status !== "queued" && (
-                      <>
-                        {" · "}
-                        {s.lastRun.assetsSeen} assets, {formatNumber(s.lastRun.rowsRead)} rows
-                      </>
-                    )}
-                  </div>
-                )}
-                {s.lastRun?.detail && s.lastRun.status !== "succeeded" && (
-                  <div className="small">{s.lastRun.detail}</div>
-                )}
-              </td>
-              {canScan && (
-                <td>
-                  <ScanAction
-                    source={s}
-                    onQueued={(m) => {
-                      setNotice(m);
-                      load();
-                    }}
-                    onError={setError}
-                  />
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </li>
+        );
+      })}
+    </ul>
   );
+
+  const shown = (sources ?? []).filter((s) => category === "all" || s.category === category);
 
   return (
     <>
-      <h1 tabIndex={-1}>Sources</h1>
-      <p className="lead">
-        Databases, folders and buckets {product} reads. A scan records every table, view and file, and profiles each
-        column. Open a source to edit, test or delete it.
-      </p>
+      <PageHeader
+        title="Sources"
+        meta={
+          sources
+            ? `${sources.length} connected${sources.length ? ` · ${healthy} healthy` : ""}`
+            : "Databases, folders and buckets"
+        }
+        actions={
+          canAdd && (
+            <>
+              <Button icon={<Icon name="import" size={16} />} onClick={() => open("import")} aria-expanded={importing}>
+                Import from a file
+              </Button>
+              <Button variant="primary" icon={<Icon name="plus" size={16} />} onClick={() => open("add")} aria-expanded={adding}>
+                Add a connection
+              </Button>
+            </>
+          )
+        }
+        lead={`Databases, folders and buckets ${product} reads. A scan records every table, view and file, and profiles each column. Open a source to edit, test or delete it.`}
+      />
       <p role="status" className="notice">
         {notice}
       </p>
       {error && <p role="alert" className="error">{error}</p>}
 
-      <section aria-labelledby="list-h" className="panel">
-        <h2 id="list-h">Registered sources</h2>
-        {sources === null && !error && <p>Loading…</p>}
-        {sources?.length === 0 && <p>None yet. Add one below.</p>}
-        {sources && sources.length > 0 && (
-          <div className="field-row list-controls">
-            <div className="field">
-              <label htmlFor="src-category">Show</label>
-              <select id="src-category" value={category} onChange={(e) => setCategory(e.target.value)}>
-                <option value="all">Every category</option>
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {CATEGORY[c] ?? c}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="check">
-              <input id="src-group" type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
-              <label htmlFor="src-group">Group by category</label>
-            </div>
-          </div>
+      <section aria-labelledby="list-h" className="km-section-plain">
+        <h2 id="list-h" className="visually-hidden">
+          Connected sources
+        </h2>
+        {sources === null && !error && <p role="status" className="muted">Loading…</p>}
+        {sources?.length === 0 && (
+          <Card>
+            <EmptyState
+              icon={<Icon name="sources" size={22} />}
+              title="No sources yet"
+              action={canAdd ? <Button variant="primary" onClick={() => open("add")}>Add a connection</Button> : undefined}
+            >
+              {canAdd ? "Add a database, folder or bucket, then scan it to fill the catalogue." : "Only admins can add sources."}
+            </EmptyState>
+          </Card>
         )}
-        {sources &&
-          sources.length > 0 &&
-          (grouped
-            ? categories
-                .filter((c) => category === "all" || c === category)
-                .map((c) => (
-                  <section key={c} aria-labelledby={`cat-${c}`}>
-                    <h3 id={`cat-${c}`}>{CATEGORY[c] ?? c}</h3>
-                    {table(sources.filter((s) => s.category === c), CATEGORY[c] ?? c)}
-                  </section>
-                ))
-            : table(sources.filter((s) => category === "all" || s.category === category), "Sources"))}
+        {sources && sources.length > 0 && (
+          <>
+            <div className="km-toolbar">
+              {categories.length > 1 && (
+                <FilterChips
+                  label="Show sources by category"
+                  selected={category}
+                  onSelect={setCategory}
+                  options={[
+                    { id: "all", label: "All", count: sources.length },
+                    ...categories.map((c) => ({
+                      id: c,
+                      label: CATEGORY[c] ?? c,
+                      count: sources.filter((s) => s.category === c).length,
+                    })),
+                  ]}
+                />
+              )}
+              {categories.length > 1 && (
+                <div className="km-toolbar-switch">
+                  <Switch label="Group by category" checked={grouped} onChange={setGrouped} />
+                </div>
+              )}
+            </div>
+            {grouped
+              ? categories
+                  .filter((c) => category === "all" || c === category)
+                  .map((c) => (
+                    <section key={c} aria-labelledby={`cat-${c}`}>
+                      <h3 id={`cat-${c}`} className="km-group-title">
+                        {CATEGORY[c] ?? c}
+                      </h3>
+                      {gallery(sources.filter((s) => s.category === c), CATEGORY[c] ?? c)}
+                    </section>
+                  ))
+              : gallery(shown, "Sources")}
+          </>
+        )}
       </section>
 
       {!canScan && (
@@ -199,17 +241,21 @@ export function SourcesPage({ role }: { role: AccessRole; add?: boolean }) {
       )}
       {canAdd ? (
         <>
-          <AddConnection
-            onSaved={(s, queued) => {
-              setNotice(
-                queued
-                  ? `Source ${s.displayName} added, and its scan queued.`
-                  : `Source ${s.displayName} added. Scan it to fill the catalogue.`,
-              );
-              load();
-            }}
-          />
-          <ImportSources onImported={load} />
+          {adding && (
+            <AddConnection
+              headingRef={addHeading}
+              onClose={() => setAdding(false)}
+              onSaved={(s, queued) => {
+                setNotice(
+                  queued
+                    ? `Source ${s.displayName} added, and its scan queued.`
+                    : `Source ${s.displayName} added. Scan it to fill the catalogue.`,
+                );
+                load();
+              }}
+            />
+          )}
+          {importing && <ImportSources onImported={load} headingRef={importHeading} onClose={() => setImporting(false)} />}
         </>
       ) : (
         <p className="hint">Only admins can add sources. Ask an admin if a database is missing.</p>
@@ -243,7 +289,15 @@ const SCAN: Record<string, string> = { waiting: "Waiting", queued: "Scan queued"
  * Import many sources from a CSV or JSON file. Re-runnable: rows create sources, update them to
  * match, or leave them unchanged. Optionally tests each one and queues scans, with progress here.
  */
-function ImportSources({ onImported }: { onImported: () => void }) {
+function ImportSources({
+  onImported,
+  headingRef,
+  onClose,
+}: {
+  onImported: () => void;
+  headingRef: RefObject<HTMLHeadingElement | null>;
+  onClose: () => void;
+}) {
   const [file, setFile] = useState<File | null>(null);
   const [options, setOptions] = useState<Omit<ImportOptions, "dryRun">>({
     skipErrors: false,
@@ -291,19 +345,13 @@ function ImportSources({ onImported }: { onImported: () => void }) {
   };
 
   const option = (key: keyof typeof options, label: string, hint: string) => (
-    <div className="check">
-      <input
-        type="checkbox"
-        id={`import-${key}`}
-        checked={options[key]}
-        onChange={(e) => setOptions({ ...options, [key]: e.target.checked })}
-        aria-describedby={`import-${key}-hint`}
-      />
-      <label htmlFor={`import-${key}`}>{label}</label>
-      <p id={`import-${key}-hint`} className="hint">
-        {hint}
-      </p>
-    </div>
+    <Switch
+      id={`import-${key}`}
+      label={label}
+      help={hint}
+      checked={options[key]}
+      onChange={(on) => setOptions({ ...options, [key]: on })}
+    />
   );
 
   const progress = (line: number) => batch?.rows.find((b) => b.line === line);
@@ -321,8 +369,17 @@ function ImportSources({ onImported }: { onImported: () => void }) {
   };
 
   return (
-    <section aria-labelledby="import-h" className="panel">
-      <h2 id="import-h">Import sources from a file</h2>
+    <section aria-labelledby="import-h" className="km-card km-section">
+      <div className="km-card-head">
+        <h2 id="import-h" className="km-card-title" tabIndex={-1} ref={headingRef}>
+          Import sources from a file
+        </h2>
+        <div className="km-card-actions">
+          <button type="button" className="km-icon-button" onClick={onClose} aria-label="Close the import">
+            <Icon name="close" size={20} />
+          </button>
+        </div>
+      </div>
       <p className="hint">
         A CSV with a header row: <span className="mono">name</span> (the source ID),{" "}
         <span className="mono">kind</span>, <span className="mono">display_name</span>,{" "}
@@ -348,7 +405,7 @@ function ImportSources({ onImported }: { onImported: () => void }) {
             }}
           />
         </div>
-        <fieldset className="group">
+        <fieldset className="group km-options-fieldset">
           <legend>Options</legend>
           {option("skipErrors", "Import the rows that are right, even if others need fixing", "Otherwise nothing changes until every row is right.")}
           {option("remapHosts", "Rewrite host names for this server", "Uses the host map an administrator set (kilnmark.sources.host-map), for example localhost to host.docker.internal, so sources written from a desktop work from inside the container.")}
@@ -376,8 +433,7 @@ function ImportSources({ onImported }: { onImported: () => void }) {
         )}
       </div>
       {report && (
-        <div className="table-scroll" role="region" aria-label="Import results by line" tabIndex={0}>
-          <table>
+        <DataTable label="Import results by line">
             <thead>
               <tr>
                 <th scope="col">Line</th>
@@ -416,8 +472,7 @@ function ImportSources({ onImported }: { onImported: () => void }) {
                 );
               })}
             </tbody>
-          </table>
-        </div>
+        </DataTable>
       )}
     </section>
   );
