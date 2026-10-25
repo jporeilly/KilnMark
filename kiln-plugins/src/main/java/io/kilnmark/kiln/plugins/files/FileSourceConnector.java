@@ -368,7 +368,8 @@ public abstract class FileSourceConnector implements Connector {
      * (below an S3 source's prefix); see {@link FileTarget} for what is refused. Mode {@code create}
      * (or none) refuses an existing file unless the setting {@code overwrite} is true;
      * {@code replace} replaces it. Further settings: {@code overwrite}, {@code delimiter} (CSV),
-     * {@code compression} (Parquet: snappy, zstd, gzip or none), {@code profile} and
+     * {@code compression} (Parquet: snappy, zstd, gzip or none), {@code allow_unscanned},
+     * {@code profile_output} and
      * {@code keep_values}.
      */
     @Override
@@ -395,18 +396,44 @@ public abstract class FileSourceConnector implements Connector {
             throw new ConnectorException("key: only upsert into a database table takes key columns");
         }
         FileTarget target = FileTarget.of(write.target(), write.format());
-        String prefix = prefix(source);
-        String under = prefix.isEmpty() || prefix.endsWith("/") ? prefix : prefix + "/";
+        String storePath = storePath(source, target);
         if (!settings.bool("allow_unscanned", false)) {
-            String unseen = unscanned(source, under + target.path());
+            String unseen = unscanned(source, storePath);
             if (unseen != null) {
                 throw new ConnectorException("path: " + target.path() + " would not be found by scans of "
                     + source.name() + ", because " + unseen + ". Write somewhere the source scans, change the source's "
                     + "settings, or set allow_unscanned: true to write it anyway");
             }
         }
-        return new FileOutput(() -> open(source), under + target.path(), target, overwrite, settings,
-            write.assetUrn());
+        return new FileOutput(() -> open(source), storePath, target, overwrite, settings, write.assetUrn(),
+            write.profiling());
+    }
+
+    /** Where the store puts a written file: below an S3 source's prefix, as a folder or key path. */
+    private String storePath(SourceConfig source, FileTarget target) {
+        String prefix = prefix(source);
+        String under = prefix.isEmpty() || prefix.endsWith("/") ? prefix : prefix + "/";
+        return under + target.path();
+    }
+
+    /** The written file's asset path, as the catalogue gives it: below the prefix, with % and # escaped. */
+    @Override
+    public String writtenAssetPath(SourceConfig source, WriteOptions write) throws ConnectorException {
+        return urnPath(storePath(source, FileTarget.of(write.target(), write.format())));
+    }
+
+    /** The settings a file write takes; see {@link #writer}. */
+    @Override
+    public List<io.kilnmark.kiln.SettingSpec> writeOptions() {
+        return io.kilnmark.kiln.plugins.write.WriteSettings.withProfiling(
+            io.kilnmark.kiln.plugins.write.WriteSettings.flag("overwrite", "Overwrite", false,
+                "Replace a file of the same name; otherwise an existing file stops the write"),
+            io.kilnmark.kiln.SettingSpec.optional("delimiter", "Delimiter", io.kilnmark.kiln.SettingSpec.Kind.TEXT, ",",
+                "CSV only: one character, or \\t for a tab"),
+            io.kilnmark.kiln.SettingSpec.choice("compression", "Compression", false, "snappy",
+                "Parquet only: how pages are compressed", List.of("snappy", "zstd", "gzip", "none")),
+            io.kilnmark.kiln.plugins.write.WriteSettings.flag("allow_unscanned", "Allow paths scans skip", false,
+                "Write even where scans of this source would not find the file"));
     }
 
     /**

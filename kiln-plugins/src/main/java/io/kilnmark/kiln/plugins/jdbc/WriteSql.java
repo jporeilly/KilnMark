@@ -172,6 +172,11 @@ abstract class WriteSql {
     /** Whether a failure is the database refusing permission. */
     abstract boolean permissionDenied(SQLException e);
 
+    /** Whether a failure is a row-level security policy refusing a row, rather than a missing grant. */
+    boolean policyRefused(SQLException e) {
+        return false;
+    }
+
     /** The JDBC type for a null of {@code kind}. */
     abstract int nullType(Kind kind);
 
@@ -350,32 +355,46 @@ abstract class WriteSql {
         }
 
         /**
-         * Not a plain table; a partition, an inheritance parent or child; or any object depending
-         * on the table or its row type in the normal way (views, foreign keys from other tables,
-         * functions with SQL bodies, columns of its type, ...) that is not part of the table itself
-         * and so would not go with it.
+         * Not a plain table; a partition, an inheritance parent or child; a table a publication
+         * replicates by name (publications FOR ALL TABLES or FOR TABLES IN SCHEMA take in the new
+         * table by themselves); or any object depending in the normal way on the table, its row
+         * type, the array of its row type, or a sequence it owns, that is not part of the table
+         * itself and so would not go with it (views, foreign keys from other tables, functions with
+         * SQL bodies or taking the row type, columns of its type, other tables' defaults using its
+         * sequences).
          */
         @Override
         Sql blockers(TableName t) {
-            String r = regName(t);
-            return new Sql("SELECT 'it is ' || CASE c.relkind WHEN 'v' THEN 'a view' WHEN 'm' THEN 'a materialised view' "
-                + "WHEN 'p' THEN 'a partitioned table' WHEN 'f' THEN 'a foreign table' ELSE 'not a table' END "
-                + "|| ', not a table' FROM pg_class c WHERE c.oid = to_regclass(?) AND c.relkind <> 'r' "
-                + "UNION ALL SELECT CASE WHEN c.relispartition THEN 'it is a partition of ' ELSE 'it inherits from ' END "
-                + "|| i.inhparent::regclass::text FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
-                + "WHERE i.inhrelid = to_regclass(?) "
-                + "UNION ALL SELECT 'the table ' || i.inhrelid::regclass::text || ' inherits from it' "
-                + "FROM pg_inherits i WHERE i.inhparent = to_regclass(?) "
+            return new Sql("WITH t AS (SELECT c.oid, c.relkind, c.relispartition, c.reltype, ty.typarray "
+                + "FROM pg_class c LEFT JOIN pg_type ty ON ty.oid = c.reltype WHERE c.oid = to_regclass(?)), "
+                + "refs AS (SELECT 'pg_class'::regclass AS cls, t.oid AS obj FROM t "
+                + "UNION ALL SELECT 'pg_type'::regclass, t.reltype FROM t WHERE t.reltype <> 0 "
+                + "UNION ALL SELECT 'pg_type'::regclass, t.typarray FROM t WHERE t.typarray <> 0 "
+                + "UNION ALL SELECT 'pg_class'::regclass, d.objid FROM pg_depend d JOIN t ON d.refobjid = t.oid "
+                + "JOIN pg_class s ON s.oid = d.objid WHERE d.classid = 'pg_class'::regclass "
+                + "AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i') AND s.relkind = 'S') "
+                + "SELECT 'it is ' || CASE t.relkind WHEN 'v' THEN 'a view' WHEN 'm' THEN 'a materialised view' "
+                + "WHEN 'p' THEN 'a partitioned table' WHEN 'f' THEN 'a foreign table' WHEN 'S' THEN 'a sequence' "
+                + "WHEN 'i' THEN 'an index' WHEN 'I' THEN 'a partitioned index' WHEN 'c' THEN 'a composite type' "
+                + "ELSE 'another kind of object' END || ', not a table' FROM t WHERE t.relkind <> 'r' "
+                + "UNION SELECT CASE WHEN t.relispartition THEN 'it is a partition of ' ELSE 'it inherits from ' END "
+                + "|| i.inhparent::regclass::text FROM pg_inherits i JOIN t ON i.inhrelid = t.oid "
+                + "UNION SELECT 'the table ' || i.inhrelid::regclass::text || ' inherits from it' "
+                + "FROM pg_inherits i JOIN t ON i.inhparent = t.oid "
+                + "UNION SELECT 'the publication ' || p.pubname || ' replicates it' FROM pg_publication_rel r "
+                + "JOIN pg_publication p ON p.oid = r.prpubid JOIN t ON r.prrelid = t.oid "
                 + "UNION SELECT 'the ' || CASE WHEN d.classid = 'pg_rewrite'::regclass THEN 'view ' "
                 + "|| (SELECT w.ev_class::regclass::text FROM pg_rewrite w WHERE w.oid = d.objid) "
-                + "ELSE pg_describe_object(d.classid, d.objid, 0) END || ' depends on it' FROM pg_depend d "
-                + "WHERE d.deptype = 'n' AND (d.refclassid = 'pg_class'::regclass AND d.refobjid = to_regclass(?) "
-                + "OR d.refclassid = 'pg_type'::regclass AND d.refobjid = (SELECT c.reltype FROM pg_class c "
-                + "WHERE c.oid = to_regclass(?))) "
+                + "ELSE pg_describe_object(d.classid, d.objid, 0) END || ' depends on it' "
+                + "FROM pg_depend d JOIN refs ON d.refclassid = refs.cls AND d.refobjid = refs.obj, t "
+                + "WHERE d.deptype = 'n' "
                 + "AND NOT EXISTS (SELECT 1 FROM pg_depend o WHERE o.classid = d.classid AND o.objid = d.objid "
-                + "AND o.refclassid = 'pg_class'::regclass AND o.refobjid = to_regclass(?) AND o.deptype IN ('a', 'i')) "
+                + "AND o.refclassid = 'pg_class'::regclass AND o.refobjid = t.oid AND o.deptype IN ('a', 'i')) "
                 + "AND NOT (d.classid = 'pg_rewrite'::regclass AND EXISTS (SELECT 1 FROM pg_rewrite w "
-                + "WHERE w.oid = d.objid AND w.ev_class = to_regclass(?)))", List.of(r, r, r, r, r, r, r));
+                + "WHERE w.oid = d.objid AND w.ev_class = t.oid)) "
+                + "AND NOT (d.classid = 'pg_class'::regclass AND d.objid = t.oid) "
+                + "AND NOT (d.classid = 'pg_class'::regclass AND EXISTS (SELECT 1 FROM pg_inherits i "
+                + "WHERE i.inhrelid = d.objid AND i.inhparent = t.oid))", List.of(regName(t)));
         }
 
         @Override
@@ -464,10 +483,7 @@ abstract class WriteSql {
                             + "WHERE c.oid = to_regclass(?)", List.of(regName(t))), null));
                     }
                 }
-                case "append" -> {
-                    out.add(columnPrivilege(t, "INSERT"));
-                    out.add(columnPrivilege(t, "SELECT")); // to read the table's columns before writing
-                }
+                case "append" -> out.add(columnPrivilege(t, "INSERT"));
                 case "upsert" -> {
                     out.add(columnPrivilege(t, "INSERT"));
                     out.add(columnPrivilege(t, "UPDATE"));
@@ -491,13 +507,20 @@ abstract class WriteSql {
                 case "replace" -> "CREATE on the schema " + t.schema() + (exists ? ", and make it the owner of " + t
                     + " (or a member of the owning role), since replace drops the old table" : "");
                 case "upsert" -> "INSERT, UPDATE and SELECT on " + t;
-                default -> "INSERT and SELECT on " + t;
+                default -> "INSERT on " + t;
             };
         }
 
         @Override
         boolean permissionDenied(SQLException e) {
             return "42501".equals(e.getSQLState());
+        }
+
+        /** 42501 too, but "new row violates row-level security policy": a policy, not a missing grant. */
+        @Override
+        boolean policyRefused(SQLException e) {
+            return "42501".equals(e.getSQLState()) && e.getMessage() != null
+                && e.getMessage().contains("row-level security");
         }
 
         @Override
@@ -617,7 +640,8 @@ abstract class WriteSql {
 
         /**
          * Not a table; schema-bound views and functions (which stop it being renamed or dropped);
-         * and foreign keys from other tables.
+         * foreign keys from other tables; replication and change data capture, which renaming would
+         * break.
          */
         @Override
         Sql blockers(TableName t) {
@@ -631,8 +655,12 @@ abstract class WriteSql {
                 + "WHERE d.referenced_id = OBJECT_ID(?) AND d.is_schema_bound_reference = 1 "
                 + "UNION SELECT N'the foreign key ' + f.name + N' on ' + OBJECT_SCHEMA_NAME(f.parent_object_id) "
                 + "+ N'.' + OBJECT_NAME(f.parent_object_id) + N' depends on it' FROM sys.foreign_keys f "
-                + "WHERE f.referenced_object_id = OBJECT_ID(?) AND f.parent_object_id <> f.referenced_object_id",
-                List.of(r, r, r, r));
+                + "WHERE f.referenced_object_id = OBJECT_ID(?) AND f.parent_object_id <> f.referenced_object_id "
+                + "UNION SELECT N'it is published for replication' FROM sys.tables x WHERE x.object_id = OBJECT_ID(?) "
+                + "AND (x.is_published = 1 OR x.is_merge_published = 1 OR x.is_schema_published = 1) "
+                + "UNION SELECT N'change data capture tracks it' FROM sys.tables x WHERE x.object_id = OBJECT_ID(?) "
+                + "AND x.is_tracked_by_cdc = 1",
+                List.of(r, r, r, r, r, r));
         }
 
         @Override
@@ -718,10 +746,7 @@ abstract class WriteSql {
                         out.add(objectPermission(t, "ALTER"));
                     }
                 }
-                case "append" -> {
-                    out.add(objectPermission(t, "INSERT"));
-                    out.add(anyColumnPermission(t, "SELECT")); // to read the table's columns before writing
-                }
+                case "append" -> out.add(objectPermission(t, "INSERT"));
                 case "upsert" -> {
                     out.add(objectPermission(t, "INSERT"));
                     out.add(anyColumnPermission(t, "UPDATE"));
@@ -752,7 +777,7 @@ abstract class WriteSql {
                 case "replace" -> "CREATE TABLE in the database and ALTER on the schema " + t.schema()
                     + (exists ? ", and ALTER on " + t + ", since replace renames and drops the old table" : "");
                 case "upsert" -> "INSERT, UPDATE and SELECT on " + t;
-                default -> "INSERT and SELECT on " + t;
+                default -> "INSERT on " + t;
             };
         }
 

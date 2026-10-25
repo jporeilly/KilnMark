@@ -615,6 +615,35 @@ public abstract class JdbcConnector implements Connector {
         return null;
     }
 
+    /** The settings a write step to this database takes; see {@link #writer}. */
+    @Override
+    public List<io.kilnmark.kiln.SettingSpec> writeOptions() {
+        if (writeSql() == null) {
+            return List.of();
+        }
+        return io.kilnmark.kiln.plugins.write.WriteSettings.withProfiling(writeOptionsOfOwn().toArray(
+            io.kilnmark.kiln.SettingSpec[]::new));
+    }
+
+    /** This database's write settings, before the profiling ones every writer takes. */
+    List<io.kilnmark.kiln.SettingSpec> writeOptionsOfOwn() {
+        return List.of(
+            io.kilnmark.kiln.plugins.write.WriteSettings.number("commit_every", "Commit every N rows", 0,
+                "0 (the default) writes in one transaction; otherwise commit after each batch reaching N rows. A "
+                    + "failure then keeps the rows already committed"),
+            io.kilnmark.kiln.plugins.write.WriteSettings.number("batch_size", "Rows per batch", 1000,
+                "Rows sent to the database at a time (1,000; 5,000 for SQL Server inserts)"),
+            io.kilnmark.kiln.plugins.write.WriteSettings.number("text_length", "Text column length", 0,
+                "For create and replace: the length of text columns; 0 (the default) for unlimited"),
+            io.kilnmark.kiln.plugins.write.WriteSettings.flag("keep_grants", "Keep grants", true,
+                "For replace: repeat the old table's grants on the new one"),
+            io.kilnmark.kiln.plugins.write.WriteSettings.flag("allow_dropping_row_security",
+                "Allow dropping row-level security", false,
+                "For replace: replace a table with row-level security, whose policies the new table will not have"),
+            io.kilnmark.kiln.plugins.write.WriteSettings.number("lock_timeout", "Lock timeout (seconds)", 30,
+                "For replace: how long the swap waits for others using the old table"));
+    }
+
     /** Discover and read, and write where this database can be written to. */
     @Override
     public Set<Capability> capabilities() {
@@ -629,7 +658,7 @@ public abstract class JdbcConnector implements Connector {
      * failure then leaves the rows already committed), {@code batch_size}, {@code text_length}
      * (the length of text columns a create or replace makes; unlimited by default),
      * {@code keep_grants} (replace; default true), {@code bulk_copy} (SQL Server; default true),
-     * {@code profile} and {@code keep_values}.
+     * {@code profile_output} and {@code keep_values}; {@link #writeOptions()} lists them.
      */
     @Override
     public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
@@ -666,7 +695,7 @@ public abstract class JdbcConnector implements Connector {
             }
         }
         return new JdbcTableOutput(this, sql, source, table, mode, key,
-            new io.kilnmark.kiln.plugins.write.WriteSettings(write.options()), write.assetUrn());
+            new io.kilnmark.kiln.plugins.write.WriteSettings(write.options()), write.assetUrn(), write.profiling());
     }
 
     @Override

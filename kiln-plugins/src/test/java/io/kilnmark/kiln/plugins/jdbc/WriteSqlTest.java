@@ -114,6 +114,22 @@ class WriteSqlTest {
     }
 
     @Test
+    void databaseWritersDeclareTheirSettingsAndTheAssetPathIsTheTable() throws Exception {
+        assertEquals(List.of("commit_every", "batch_size", "text_length", "keep_grants", "allow_dropping_row_security",
+            "lock_timeout", "profile_output", "keep_values"),
+            new PostgresConnector().writeOptions().stream().map(io.kilnmark.kiln.SettingSpec::key).toList());
+        assertTrue(new SqlServerConnector().writeOptions().stream().anyMatch(o -> o.key().equals("bulk_copy")));
+        assertEquals("billing.t", new PostgresConnector().writtenAssetPath(PG, write("billing.t", "create", List.of(),
+            null)));
+        String blockers = WriteSql.POSTGRESQL.blockers(T).text();
+        assertTrue(blockers.contains("pg_publication_rel") && blockers.contains("typarray")
+            && blockers.contains("s.relkind = 'S'"), blockers);
+        assertEquals(1, WriteSql.POSTGRESQL.blockers(T).params().size());
+        assertTrue(WriteSql.SQL_SERVER.blockers(T).text().contains("is_published"));
+        assertEquals("INSERT on billing.customer_spend", WriteSql.POSTGRESQL.needs("append", T, true));
+    }
+
+    @Test
     void twoInputColumnsCannotGoToOneTableColumn() {
         List<WriteColumn> in = WriteColumn.of(new Schema(List.of(field("name", Rows.TEXT), field("Name", Rows.TEXT))));
         WritePlan.Plan plan = WritePlan.plan(in, List.of(col("name", "text", Kind.TEXT, 0, 0, 0)), Set.of(), List.of());

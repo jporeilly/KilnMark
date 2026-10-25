@@ -353,21 +353,57 @@ public interface Connector {
     }
 
     /**
+     * The further settings a {@code write} step to this kind of source accepts (the keys of
+     * {@link WriteOptions#options()}), with their kind, default and help, so the pipeline service
+     * can pass only these and the canvas can show them. Empty (the default) for connectors that
+     * cannot write.
+     */
+    default List<io.kilnmark.kiln.SettingSpec> writeOptions() {
+        return List.of();
+    }
+
+    /**
+     * The path the asset written by {@code write} has in this source's catalogue, the same a scan
+     * gives it, so the server records the write under the URN a later scan finds
+     * ({@code urn:kilnmark:<source>:<path>}). The default is the target as given ({@code schema.table}
+     * for databases); file connectors add the source's prefix and escape as their catalogue does.
+     *
+     * @throws ConnectorException if the target is not one this connector writes
+     */
+    default String writtenAssetPath(SourceConfig source, WriteOptions write) throws ConnectorException {
+        return write.target();
+    }
+
+    /**
      * Where and how a pipeline's {@code write} step writes.
      *
-     * @param target   a table ({@code schema.table}) for databases, or a path inside the source for
-     *                 files and object storage
-     * @param mode     {@code create}, {@code append}, {@code replace} or {@code upsert}
-     * @param key      the key columns for {@code upsert}; empty otherwise
-     * @param format   for files: {@code csv} or {@code parquet}; null for databases
-     * @param options  any further step settings from the pipeline YAML, as written
-     * @param assetUrn the URN the written asset is recorded under, for metadata and lineage
+     * @param target    a table ({@code schema.table}) for databases, or a path inside the source for
+     *                  files and object storage
+     * @param mode      {@code create}, {@code append}, {@code replace} or {@code upsert}
+     * @param key       the key columns for {@code upsert}; empty otherwise
+     * @param format    for files: {@code csv} or {@code parquet}; null for databases
+     * @param options   any further step settings from the pipeline YAML, as written; only the keys in
+     *                  {@link Connector#writeOptions()} are read
+     * @param assetUrn  the URN the written asset is recorded under, for metadata and lineage
+     * @param profiling how to profile what is written, set by the server from the source's own
+     *                  profiling settings: the settings a scan gives the profile step
+     *                  ({@code keep-values}, {@code examples}, {@code sample-size},
+     *                  {@code sample-mode}, {@code sample-key}, {@code sample-seed},
+     *                  {@code sample-max-bytes}, {@code sketch-fields}); never from the YAML.
+     *                  Empty: the profile step's defaults
      */
     record WriteOptions(String target, String mode, java.util.List<String> key, String format,
-                        Map<String, Object> options, String assetUrn) {
+                        Map<String, Object> options, String assetUrn, Map<String, String> profiling) {
         public WriteOptions {
             key = key == null ? java.util.List.of() : java.util.List.copyOf(key);
             options = options == null ? Map.of() : Map.copyOf(options);
+            profiling = profiling == null ? Map.of() : Map.copyOf(profiling);
+        }
+
+        /** Without profiling settings: the profile step's defaults apply. */
+        public WriteOptions(String target, String mode, java.util.List<String> key, String format,
+                            Map<String, Object> options, String assetUrn) {
+            this(target, mode, key, format, options, assetUrn, Map.of());
         }
     }
 

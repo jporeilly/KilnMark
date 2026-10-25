@@ -1,6 +1,7 @@
 package io.kilnmark.kiln.plugins.write;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,12 +15,10 @@ import io.kilnmark.kiln.plugins.profile.ProfileStep;
 
 /**
  * What a writer reports about the asset it wrote, so the server can register it with its profile
- * (docs/design/pipelines.md, section 5): the batches are profiled in the same pass as they are
- * written, by {@link ProfileStep}'s own logic, and nothing is reported until the write has
- * succeeded (committed, or the file is in place).
- *
- * <p>Events, all for {@code WriteOptions.assetUrn} (docs/design/pipelines.md, section 5, "What a
- * write reports"):
+ * (docs/design/pipelines.md, section 5, "What a write reports"). The writer owns the profile of
+ * what it writes: batches are profiled in the same pass by {@link ProfileStep}'s own logic, with
+ * the source's profiling settings ({@code WriteOptions.profiling()}), and nothing is reported until
+ * the write has succeeded (committed, or the file is in place).
  *
  * <ul>
  *   <li>When the write leaves the asset holding exactly what was written (a table created or
@@ -33,38 +32,67 @@ import io.kilnmark.kiln.plugins.profile.ProfileStep;
  *       {@code written=true}, {@code appended=true} and the {@code mode}. The rows written are not
  *       the table, so no schema or profile is reported for it, and no profile is computed.</li>
  * </ul>
+ *
+ * <p>Profiling never fails a write. If it fails (bad profiling settings, or an error profiling a
+ * batch or computing the profile), profiling stops, the write goes on, and the {@code ROW_COUNT}
+ * event says {@code profiled=false} with {@code profile_error}, the reason, which the server can
+ * show as a note; no {@code PROFILE} or {@code SAMPLE} events follow.
  */
 public final class WriteReport {
 
     private final String assetUrn;
     private final boolean wholeAsset;
-    private final ProfileStep profile;
+    private ProfileStep profile;
+    private String profileError;
     private long rows;
 
     /**
-     * @param assetUrn the written asset's URN
+     * @param assetUrn   the written asset's URN
      * @param settings   the write step's settings: {@value WriteSettings#PROFILE} and
      *                   {@value WriteSettings#KEEP_VALUES} are read
+     * @param profiling  the source's profiling settings ({@code WriteOptions.profiling()}): the
+     *                   profile step's settings, as a scan of the source would give them
      * @param wholeAsset whether the asset will hold exactly what is written (false for append and upsert)
+     * @throws StepException without a valid URN
      */
-    public WriteReport(String stepName, String assetUrn, WriteSettings settings, boolean wholeAsset)
-        throws StepException, io.kilnmark.kiln.connect.ConnectorException {
+    public WriteReport(String stepName, String assetUrn, WriteSettings settings, Map<String, String> profiling,
+                       boolean wholeAsset) throws StepException, io.kilnmark.kiln.connect.ConnectorException {
         this.assetUrn = assetUrn;
         this.wholeAsset = wholeAsset;
         if (assetUrn == null || !assetUrn.startsWith("urn:kilnmark:")) {
             throw new StepException("Step " + stepName + " needs the URN of the asset it writes (urn:kilnmark:...)");
         }
-        this.profile = wholeAsset && settings.bool(WriteSettings.PROFILE, true)
-            ? ProfileStep.tap(stepName, Map.of("asset-urn", assetUrn,
-                "keep-values", Boolean.toString(settings.bool(WriteSettings.KEEP_VALUES, true))))
-            : null;
+        boolean wanted = settings.bool(WriteSettings.PROFILE, true);
+        boolean keepValues = settings.bool(WriteSettings.KEEP_VALUES, true);
+        if (wholeAsset && wanted) {
+            Map<String, String> p = new HashMap<>(profiling == null ? Map.of() : profiling);
+            p.put("asset-urn", assetUrn);
+            // the source's rule wins: the step can keep fewer values than the source allows, never more
+            boolean sourceKeeps = !"false".equalsIgnoreCase(p.getOrDefault("keep-values", "true"));
+            p.put("keep-values", Boolean.toString(sourceKeeps && keepValues));
+            try {
+                profile = ProfileStep.tap(stepName, p);
+            } catch (StepException | RuntimeException e) {
+                stopProfiling(e);
+            }
+        }
     }
 
-    /** Counts and profiles a batch being written; the caller keeps the batch. */
+    private void stopProfiling(Throwable e) {
+        profile = null;
+        String m = e.getMessage() == null || e.getMessage().isBlank() ? e.getClass().getSimpleName() : e.getMessage();
+        profileError = "Profiling what was written stopped: " + m;
+    }
+
+    /** Counts and profiles a batch being written; the caller keeps the batch. Never fails. */
     public void accept(VectorSchemaRoot batch) {
         rows += batch.getRowCount();
         if (profile != null) {
-            profile.accept(batch);
+            try {
+                profile.accept(batch);
+            } catch (RuntimeException | StackOverflowError e) {
+                stopProfiling(e);
+            }
         }
     }
 
@@ -73,8 +101,13 @@ public final class WriteReport {
         return rows;
     }
 
+    /** Why profiling stopped, or null while it works. */
+    public String profileError() {
+        return profileError;
+    }
+
     /**
-     * Reports the written asset; call once the write has succeeded.
+     * Reports the written asset; call once the write has succeeded. Never fails because of profiling.
      *
      * @param columns the written columns with the type each was written as (a database type, or a
      *                Parquet or CSV type), in order
@@ -83,17 +116,30 @@ public final class WriteReport {
     public void emit(MetadataEmitter metadata, List<WriteColumn> columns, List<String> types,
                      Map<String, String> details) {
         Instant now = Instant.now();
+        Map<String, String> count = new LinkedHashMap<>();
+        count.put("rows", Long.toString(rows));
+        count.put("written", "true");
         if (!wholeAsset) {
-            Map<String, String> count = new LinkedHashMap<>();
-            count.put("rows", Long.toString(rows));
             count.put("complete", "false");
-            count.put("written", "true");
             count.put("appended", "true");
             if (details.containsKey("mode")) {
                 count.put("mode", details.get("mode"));
             }
             metadata.emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.ROW_COUNT, count, now));
             return;
+        }
+        count.put("complete", "true");
+        List<MetadataEvent> profileEvents = List.of();
+        if (profile != null) {
+            try {
+                profileEvents = profile.events();
+            } catch (RuntimeException e) {
+                stopProfiling(e);
+            }
+        }
+        if (profileError != null) {
+            count.put("profiled", "false");
+            count.put("profile_error", profileError);
         }
         StringBuilder json = new StringBuilder("[");
         for (int i = 0; i < columns.size(); i++) {
@@ -105,15 +151,8 @@ public final class WriteReport {
         Map<String, String> schema = new LinkedHashMap<>(details);
         schema.put("columns", json.append(']').toString());
         metadata.emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.SCHEMA, schema, now));
-        metadata.emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.ROW_COUNT,
-            Map.of("rows", Long.toString(rows), "complete", "true", "written", "true"), now));
-        if (profile != null) {
-            try {
-                profile.report(metadata);
-            } catch (RuntimeException e) {
-                // the data is written; a profile that cannot be computed is left out rather than failing the run
-            }
-        }
+        metadata.emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.ROW_COUNT, count, now));
+        profileEvents.forEach(metadata::emit);
     }
 
     static String jsonString(String s) {

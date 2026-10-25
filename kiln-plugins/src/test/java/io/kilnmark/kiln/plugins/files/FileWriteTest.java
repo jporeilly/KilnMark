@@ -319,7 +319,7 @@ class FileWriteTest {
         assertTrue(events.stream().anyMatch(e -> e.kind() == MetadataEvent.Kind.SAMPLE));
 
         List<MetadataEvent> quiet = Rows.events();
-        assertTrue(write(files, s, options("quiet.csv", null, Map.of("profile", false)), schema, rows, 16, -1, quiet)
+        assertTrue(write(files, s, options("quiet.csv", null, Map.of("profile_output", false)), schema, rows, 16, -1, quiet)
             .succeeded());
         assertTrue(quiet.stream().noneMatch(e -> e.kind() == MetadataEvent.Kind.PROFILE));
         List<MetadataEvent> failed = Rows.events();
@@ -342,6 +342,8 @@ class FileWriteTest {
         assertTrue(back.rows.stream().allMatch(r -> r.get(1) == null));
         byte[] bytes = Files.readAllBytes(Path.of(s.setting("path")).resolve("nulls.parquet"));
         assertTrue(new String(bytes, StandardCharsets.ISO_8859_1).contains("kilnmark version "), "created_by");
+        assertTrue(ParquetEncoder.version().matches("\\d+\\.\\d+\\.\\d+.*"),
+            "the build's version, from the resource when there is no manifest: " + ParquetEncoder.version());
     }
 
     /**
@@ -438,6 +440,29 @@ class FileWriteTest {
         Step upper = files.writer(csvOnly, new Connector.WriteOptions("top.csv", "REPLACE", List.of(), null, Map.of(),
             "urn:kilnmark:out:top.csv"));
         assertTrue(Rows.run(Rows.source(schema, Rows.list(new Object[] {2L}), 10), upper, Rows.events()).succeeded());
+    }
+
+    @Test
+    void writtenFilesAreCataloguedUnderThePathAScanGives() throws Exception {
+        SourceConfig s = folder("assets");
+        assertEquals("out/a%23b.csv", files.writtenAssetPath(s, options("out/a#b.csv", null, Map.of())));
+        S3Connector s3 = new S3Connector();
+        for (String prefix : List.of("raw", "raw/")) {
+            SourceConfig b = new SourceConfig("b", "s3", Map.of("bucket", "lab", "prefix", prefix,
+                "access_key_id", "k"), "secret");
+            assertEquals("raw/out/a.parquet", s3.writtenAssetPath(b, options("out/a.parquet", null, Map.of())));
+        }
+        SourceConfig none = new SourceConfig("b", "s3", Map.of("bucket", "lab", "access_key_id", "k"), "secret");
+        assertEquals("out/a.parquet", s3.writtenAssetPath(none, options("out/a.parquet", null, Map.of())));
+        assertThrows(ConnectorException.class, () -> s3.writtenAssetPath(none, options("../a.csv", null, Map.of())));
+    }
+
+    @Test
+    void fileWritersDeclareTheSettingsTheyTake() {
+        assertEquals(List.of("overwrite", "delimiter", "compression", "allow_unscanned", "profile_output",
+            "keep_values"), files.writeOptions().stream().map(io.kilnmark.kiln.SettingSpec::key).toList());
+        assertEquals(files.writeOptions(), new S3Connector().writeOptions());
+        assertEquals(List.of("snappy", "zstd", "gzip", "none"), files.writeOptions().get(2).choices());
     }
 
     @Test

@@ -261,15 +261,27 @@ class PostgresWriteTest {
                 + "SELECT sum(total) FROM billing.fn_t; END",
             "CREATE TABLE billing.typed_src (customer_id bigint, total numeric(12,2), note text)",
             "CREATE TABLE billing.typed_use (row billing.typed_src)",
-            "CREATE VIEW billing.a_view AS SELECT 1 AS one");
-        Map<String, String> refusals = Map.of(
-            "billing.part1", "it is a partition of billing.parted",
-            "billing.parted", "it is a partitioned table, not a table",
-            "billing.base", "the table billing.child inherits from it",
-            "billing.child", "it inherits from billing.base",
-            "billing.fn_t", "the function billing.total_spend() depends on it",
-            "billing.typed_src", "depends on it",
-            "billing.a_view", "it is a view, not a table");
+            "CREATE VIEW billing.a_view AS SELECT 1 AS one",
+            "CREATE TABLE billing.pubbed (customer_id bigint, total numeric(12,2), note text)",
+            "CREATE PUBLICATION spend_pub FOR TABLE billing.pubbed",
+            "CREATE TABLE billing.arr_src (customer_id bigint, total numeric(12,2), note text)",
+            "CREATE FUNCTION billing.count_rows(rows billing.arr_src[]) RETURNS int LANGUAGE sql "
+                + "AS 'SELECT cardinality(rows)'",
+            "CREATE TABLE billing.seq_src (customer_id bigserial, total numeric(12,2), note text)",
+            "CREATE TABLE billing.seq_user (id bigint DEFAULT nextval('billing.seq_src_customer_id_seq'))",
+            "CREATE SEQUENCE billing.a_sequence");
+        Map<String, String> refusals = new java.util.LinkedHashMap<>();
+        refusals.put("billing.part1", "it is a partition of billing.parted");
+        refusals.put("billing.parted", "it is a partitioned table, not a table");
+        refusals.put("billing.base", "the table billing.child inherits from it");
+        refusals.put("billing.child", "it inherits from billing.base");
+        refusals.put("billing.fn_t", "the function billing.total_spend() depends on it");
+        refusals.put("billing.typed_src", "depends on it");
+        refusals.put("billing.a_view", "it is a view, not a table");
+        refusals.put("billing.pubbed", "the publication spend_pub replicates it");
+        refusals.put("billing.arr_src", "the function billing.count_rows(billing.arr_src[]) depends on it");
+        refusals.put("billing.seq_src", "billing.seq_user");
+        refusals.put("billing.a_sequence", "it is a sequence, not a table");
         for (var e : refusals.entrySet()) {
             RunResult r = write(source, options(e.getKey(), "replace", List.of(), Map.of()), SPEND, spend(0, 1, "x"), 10,
                 -1, Rows.events());
@@ -307,6 +319,22 @@ class PostgresWriteTest {
         RunResult checked = write(lab, options("billing.rls_append", "append", List.of(), Map.of()), SPEND,
             spend(100, 101, "refused"), 20, -1, Rows.events());
         assertFalse(checked.succeeded(), "the policy still applies");
+        assertTrue(checked.error().contains("A row-level security policy on billing.rls_append refused a row"),
+            checked.error());
+    }
+
+    @Test
+    void aLoginThatMayOnlyInsertCanAppend() throws Exception {
+        sql("CREATE TABLE billing.inbox (customer_id bigint, total numeric(12,2), note text, secret text)",
+            "GRANT INSERT ON billing.inbox TO lab",
+            "CREATE TABLE billing.partly (customer_id bigint, total numeric(12,2), note text, secret text)",
+            "GRANT INSERT ON billing.partly TO lab", "GRANT SELECT (customer_id) ON billing.partly TO lab");
+        for (String table : List.of("billing.inbox", "billing.partly")) {
+            RunResult r = write(lab, options(table, "append", List.of(), Map.of()), SPEND, spend(0, 25, "in"), 10, -1,
+                Rows.events());
+            assertTrue(r.succeeded(), table + ": " + r.error());
+            assertEquals(List.of(List.of(25L)), query("SELECT count(*) FROM " + table));
+        }
     }
 
     @Test
@@ -376,7 +404,7 @@ class PostgresWriteTest {
             spend(0, 1, "x"), 10, -1, Rows.events());
         assertFalse(append.succeeded());
         assertTrue(append.error().contains("the login lab cannot write to billing.customer_spend in warehouse: ask a "
-            + "database administrator to grant INSERT and SELECT on billing.customer_spend"), append.error());
+            + "database administrator to grant INSERT on billing.customer_spend"), append.error());
         RunResult create = write(lab, options("billing.lab_new", "create", List.of(), Map.of()), SPEND,
             spend(0, 1, "x"), 10, -1, Rows.events());
         assertTrue(create.error().contains("the login lab cannot write to billing.lab_new in warehouse: ask a database "

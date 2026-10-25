@@ -420,6 +420,16 @@ public final class S3FileStore implements FileStore {
             this.key = key;
         }
 
+        /**
+         * The filled part as a request body, read from the buffer itself rather than a copy (a
+         * 128 MiB part would otherwise be held twice). The call that sends it returns before the
+         * buffer is filled again; a retry rereads it from the start.
+         */
+        private software.amazon.awssdk.core.sync.RequestBody body() {
+            return software.amazon.awssdk.core.sync.RequestBody.fromInputStream(
+                new java.io.ByteArrayInputStream(part, 0, filled), filled);
+        }
+
         @Override
         public java.io.OutputStream stream() {
             return stream;
@@ -438,7 +448,7 @@ public final class S3FileStore implements FileStore {
                 var response = s3.uploadPart(software.amazon.awssdk.services.s3.model.UploadPartRequest.builder()
                         .bucket(settings.bucket()).key(key).uploadId(uploadId).partNumber(number)
                         .contentLength((long) filled).build(),
-                    software.amazon.awssdk.core.sync.RequestBody.fromBytes(java.util.Arrays.copyOf(part, filled)));
+                    body());
                 parts.add(software.amazon.awssdk.services.s3.model.CompletedPart.builder().partNumber(number)
                     .eTag(response.eTag()).build());
                 filled = 0;
@@ -459,7 +469,7 @@ public final class S3FileStore implements FileStore {
                 if (uploadId == null) {
                     s3.putObject(software.amazon.awssdk.services.s3.model.PutObjectRequest.builder()
                             .bucket(settings.bucket()).key(key).contentLength((long) filled).build(),
-                        software.amazon.awssdk.core.sync.RequestBody.fromBytes(java.util.Arrays.copyOf(part, filled)));
+                        body());
                 } else {
                     if (filled > 0) {
                         sendPart();

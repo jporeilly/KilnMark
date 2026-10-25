@@ -72,6 +72,7 @@ final class JdbcTableOutput implements Step {
     private final List<String> key;
     private final WriteSettings settings;
     private final String assetUrn;
+    private final Map<String, String> profiling;
     private final long commitEvery;
     private final int batchSize;
     private final int textLength;
@@ -101,7 +102,9 @@ final class JdbcTableOutput implements Step {
     private boolean committed;
 
     JdbcTableOutput(JdbcConnector connector, WriteSql sql, SourceConfig source, TableName target, String mode,
-                    List<String> key, WriteSettings settings, String assetUrn) throws ConnectorException {
+                    List<String> key, WriteSettings settings, String assetUrn, Map<String, String> profiling)
+        throws ConnectorException {
+        this.profiling = profiling;
         this.connector = connector;
         this.sql = sql;
         this.source = source;
@@ -135,7 +138,7 @@ final class JdbcTableOutput implements Step {
     @Override
     public void init(StepContext context) throws StepException {
         try {
-            report = new WriteReport(context.stepName(), assetUrn, settings, wholeTable());
+            report = new WriteReport(context.stepName(), assetUrn, settings, profiling, wholeTable());
         } catch (ConnectorException e) {
             throw new StepException("Step " + context.stepName() + ": " + e.getMessage(), e);
         }
@@ -253,10 +256,17 @@ final class JdbcTableOutput implements Step {
         }
     }
 
+    /**
+     * The table's columns, from a prepared statement's description without running it, so a login
+     * that may only insert (or select some columns) can still append.
+     */
     private List<TargetColumn> readTargetColumns() throws SQLException {
         List<TargetColumn> out = new ArrayList<>();
-        try (Statement s = connection.createStatement(); ResultSet rs = s.executeQuery(sql.probe(target))) {
-            ResultSetMetaData md = rs.getMetaData();
+        try (PreparedStatement ps = connection.prepareStatement(sql.probe(target))) {
+            ResultSetMetaData md = ps.getMetaData();
+            if (md == null) {
+                throw new SQLException("The database did not describe the columns of " + target);
+            }
             for (int i = 1; i <= md.getColumnCount(); i++) {
                 JdbcColumn c = JdbcColumn.of(md, i);
                 int type = md.getColumnType(i);
@@ -485,7 +495,10 @@ final class JdbcTableOutput implements Step {
     /** A failure as a person should read it, with what happened to rows already committed. */
     private String explain(SQLException e, long rows) {
         SQLException cause = e instanceof BatchUpdateException b && b.getNextException() != null ? b.getNextException() : e;
-        String message = sql.lockTimedOut(cause) ? "Could not swap the new table in for " + target + " within "
+        String message = sql.policyRefused(cause) ? "A row-level security policy on " + target + " refused a row"
+            + (rows > 0 ? " after " + rows + " rows" : "") + " (" + cause.getMessage() + "); the rows the policy "
+            + "allows were not written either, since the write is one transaction"
+            : sql.lockTimedOut(cause) ? "Could not swap the new table in for " + target + " within "
             + lockTimeoutMillis / 1000 + " seconds: other sessions were using the old table. Try again when it is "
             + "quieter, or raise lock_timeout"
             : sql.permissionDenied(cause) ? denied(cause)

@@ -237,16 +237,26 @@ public final class ProfileStep implements Step {
      * for what {@link #accept} was given. Nothing when it was given no batch.
      */
     public void report(MetadataEmitter metadata) {
+        events().forEach(metadata::emit);
+    }
+
+    /**
+     * The events {@link #report(MetadataEmitter)} emits, all computed before any is returned, so a
+     * failure computing one leaves none half-reported. Empty when it was given no batch.
+     */
+    public List<MetadataEvent> events() {
+        List<MetadataEvent> out = new ArrayList<>();
         if (stats == null) {
-            return;
+            return out;
         }
         Instant now = Instant.now();
         for (ColumnStats s : stats) {
-            metadata.emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.PROFILE, s.attributes(), now));
+            out.add(new MetadataEvent(assetUrn, MetadataEvent.Kind.PROFILE, s.attributes(), now));
         }
         if (keepValues) {
-            metadata.emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.SAMPLE, sample(), now));
+            out.add(new MetadataEvent(assetUrn, MetadataEvent.Kind.SAMPLE, sample(), now));
         }
+        return out;
     }
 
     /** The {@code SAMPLE} event's attributes: the sampled rows, and example values per shape. */

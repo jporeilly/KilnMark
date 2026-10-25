@@ -62,8 +62,29 @@ final class ParquetEncoder implements RowEncoder {
     static final long ROW_GROUP_ROWS = 1L << 20;
 
     /** What the footer says wrote the file, as Parquet tools expect it: {@code kilnmark version 0.0.3}. */
-    static final String CREATED_BY = "kilnmark version " + java.util.Objects.requireNonNullElse(
-        ParquetEncoder.class.getPackage().getImplementationVersion(), "development");
+    static final String CREATED_BY = "kilnmark version " + version();
+
+    /** The jar manifest's version, else the build's version resource, else {@code development}. */
+    static String version() {
+        String v = ParquetEncoder.class.getPackage().getImplementationVersion();
+        if (v != null && !v.isBlank()) {
+            return v;
+        }
+        try (java.io.InputStream in = ParquetEncoder.class.getResourceAsStream(
+            "/io/kilnmark/kiln/plugins/kiln-plugins.properties")) {
+            if (in != null) {
+                java.util.Properties p = new java.util.Properties();
+                p.load(in);
+                v = p.getProperty("version");
+                if (v != null && !v.isBlank() && !v.startsWith("$")) {
+                    return v.strip();
+                }
+            }
+        } catch (IOException e) {
+            // fall through to the default
+        }
+        return "development";
+    }
 
     /** Parquet's codec numbers. */
     enum Codec {

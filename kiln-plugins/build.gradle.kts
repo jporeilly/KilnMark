@@ -69,9 +69,15 @@ dependencies {
     "testImplementation"(libs.postgresql)
 }
 
-// The version Parquet files written by Kilnmark name in their footer (created_by).
+// The version Parquet files written by Kilnmark name in their footer (created_by): in the manifest,
+// and in a resource, which packagings that drop the manifest (Quarkus fast-jar) still carry.
 tasks.named<Jar>("jar") {
     manifest { attributes("Implementation-Title" to "kiln-plugins", "Implementation-Version" to project.version) }
+}
+tasks.named<ProcessResources>("processResources") {
+    val version = project.version.toString()
+    inputs.property("version", version)
+    filesMatching("io/kilnmark/kiln/plugins/kiln-plugins.properties") { expand("version" to version) }
 }
 
 tasks.withType<Test>().configureEach {

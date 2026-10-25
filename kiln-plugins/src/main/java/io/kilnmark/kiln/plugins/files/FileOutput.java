@@ -34,6 +34,7 @@ final class FileOutput implements Step {
     private final ParquetEncoder.Codec codec;
     private final WriteSettings settings;
     private final String assetUrn;
+    private final Map<String, String> profiling;
 
     private FileStore store;
     private FileStore.Upload upload;
@@ -48,7 +49,8 @@ final class FileOutput implements Step {
      * @param overwrite whether an existing file may be replaced
      */
     FileOutput(FileStore.Opener opener, String storePath, FileTarget target, boolean overwrite, WriteSettings settings,
-               String assetUrn) throws ConnectorException {
+               String assetUrn, Map<String, String> profiling) throws ConnectorException {
+        this.profiling = profiling;
         this.opener = opener;
         this.storePath = storePath;
         this.target = target;
@@ -67,7 +69,7 @@ final class FileOutput implements Step {
     @Override
     public void init(StepContext context) throws StepException {
         try {
-            report = new WriteReport(context.stepName(), assetUrn, settings, true);
+            report = new WriteReport(context.stepName(), assetUrn, settings, profiling, true);
         } catch (ConnectorException e) {
             throw new StepException("Step " + context.stepName() + ": " + e.getMessage(), e);
         }
