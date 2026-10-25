@@ -15,6 +15,9 @@ details.
   duplicates, send rows down different paths and keep the first rows. Conditions and new columns
   are written in one expression language, checked against the columns before the pipeline runs,
   with the position of any mistake and a suggestion.
+- **Writing to databases and files.** A pipeline can write its results to PostgreSQL or SQL Server
+  tables (create, add to, replace or update by key) and to CSV or Parquet files in folders and S3
+  storage. What it writes is profiled on the way and shows up in the catalogue straight away.
 
 ### Details
 
@@ -55,6 +58,40 @@ details.
   Inputs that send no rows use the columns the pipeline check worked out, so an aggregate without
   `group_by` writes one row and union and lookup keep their declared columns.
   Guide: **Pipeline steps and expressions**.
+- **Writing from pipelines** (docs/guide/writing-data.md): PostgreSQL, SQL Server, folder and S3
+  sources can now be written to by a pipeline's `write` step (`Connector.writer`, capability
+  `WRITE`). Tables: modes `create`, `append` (every input column checked against the table
+  first, all mismatches named), `replace` (filled under a temporary name and swapped in one
+  transaction, waiting at most `lock_timeout`; grants and the owner kept, indexes, constraints and
+  triggers not; refused for views, partitions, inheritance, anything else depending on the table,
+  and row-level security unless `allow_dropping_row_security` is set) and `upsert` by `key`
+  (PostgreSQL `ON CONFLICT`, which needs a unique index on the key, INCLUDE columns allowed; SQL
+  Server `MERGE … WITH (HOLDLOCK)`). PostgreSQL loads with `COPY`;
+  SQL Server with batched inserts, bulk-copied into tables the step creates. One transaction per
+  run, or `commit_every` rows (a failure then keeps the committed rows, and says so). The login's
+  rights are checked first and a refusal names the grant to ask for. Files: CSV (RFC 4180, UTF-8,
+  `delimiter`) and Parquet (Snappy, ZSTD, GZIP or none) to a path inside the source, written to a
+  temporary name and renamed (folders) or uploaded and completed at the end (S3); existing files
+  need `overwrite: true`, and paths scans would not find need `allow_unscanned: true`. A created
+  or replaced table, or a file, is profiled in the same pass and reported for the written asset
+  (`SCHEMA`, `ROW_COUNT`, `PROFILE`, `SAMPLE`) once the write has succeeded; an append or upsert
+  reports only the rows it wrote (`ROW_COUNT`, `complete=false`, `appended=true`), so the table's
+  own profile is kept.
+- **The write contract for the pipeline service:** `Connector.writeOptions()` declares each
+  writer's settings (`SettingSpec`s; the profiling switch is now `profile_output`),
+  `Connector.writtenAssetPath()` gives the catalogue path of what is written (below an S3 source's
+  prefix), and `WriteOptions.profiling` carries the source's own profiling settings, which the
+  writer's profile follows. A profiling failure never fails a write: `ROW_COUNT` then says
+  `profiled=false` with `profile_error`. Replace also refuses tables a publication names (and, on
+  SQL Server, replicated or change-tracked tables) and tables whose row-type array or owned
+  sequences others use; append no longer needs `SELECT`.
+- **Parquet is written by Kilnmark's own encoder** (`ParquetEncoder`, from the Apache Parquet
+  specification): Hardwood only reads, and parquet-java needs Hadoop (ADR 0015, amended). No new
+  dependency: snappy-java and zstd-jni, already shipped for reading, are now compiled against,
+  and the PostgreSQL driver the server ships is compiled against for `COPY`.
+- **Profiling no longer fails on an empty piece of text** (a quoted `""` in a CSV file), on a
+  column whose values are all NaN, or on 8-bit and unsigned integer, 256-bit decimal and large
+  text columns, and reads dates, times and timestamps in any unit.
 
 ## 0.0.3 (25 October 2026)
 

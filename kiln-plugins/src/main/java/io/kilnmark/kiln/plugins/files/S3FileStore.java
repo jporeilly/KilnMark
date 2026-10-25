@@ -329,6 +329,186 @@ public final class S3FileStore implements FileStore {
         };
     }
 
+    /** Bytes per uploaded part at first: S3's minimum is 5 MiB for every part but the last. */
+    static final int PART_BYTES = 8 << 20;
+
+    /**
+     * The size of part {@code number} (1-based): 8 MiB for the first 1,000 parts, 32 MiB up to
+     * 5,000, then 128 MiB, so an object stays within S3's 10,000 parts up to about 780 GB while
+     * small files keep small buffers.
+     */
+    static int partSize(int number) {
+        return number <= 1000 ? PART_BYTES : number <= 5000 ? 32 << 20 : 128 << 20;
+    }
+
+    /**
+     * Writes an object: a file smaller than one part goes up in one PUT at the end; a larger one as a
+     * multipart upload whose parts are sent as they fill and which is completed only at the end, so
+     * nobody sees the object before it is whole. A failure or {@link Upload#abort()} aborts the
+     * upload, and S3 discards the parts. Without {@code overwrite}, an existing object is refused
+     * before anything is sent (a HEAD request; an object created by someone else during the upload
+     * would still be replaced).
+     */
+    @Override
+    public Upload create(String key, boolean overwrite) throws IOException {
+        if (key == null || key.isBlank() || key.endsWith("/")
+            || settings.prefix() != null && !key.startsWith(settings.prefix())) {
+            throw new IOException("Refusing to write '" + key + "': it is outside this source's prefix");
+        }
+        if (cancelled) {
+            throw new IOException("The write of " + describe(key) + " was stopped");
+        }
+        if (!overwrite) {
+            try {
+                s3.headObject(software.amazon.awssdk.services.s3.model.HeadObjectRequest.builder()
+                    .bucket(settings.bucket()).key(key).build());
+                throw new IOException(describe(key) + " already exists: set overwrite to true to replace it, or "
+                    + "write to another path");
+            } catch (S3Exception e) {
+                if (e.statusCode() != 404) {
+                    throw writeError(e, key);
+                }
+            } catch (SdkException e) {
+                throw writeError(e, key);
+            }
+        }
+        return new S3Upload(key);
+    }
+
+    /** {@link #explain}, with what writing needs when access is denied. */
+    private IOException writeError(SdkException e, String key) {
+        if (e instanceof S3Exception s3e && (s3e.statusCode() == 403 || s3e.awsErrorDetails() != null
+            && "AccessDenied".equals(s3e.awsErrorDetails().errorCode()))) {
+            return new IOException("Cannot write " + describe(key) + ": access denied: give the access key "
+                + "permission to write objects in the bucket '" + settings.bucket() + "' (s3:PutObject and "
+                + "s3:AbortMultipartUpload, and s3:GetObject to check whether the object exists)", e);
+        }
+        return explain(e, "write " + describe(key));
+    }
+
+    /** An object being uploaded. */
+    private final class S3Upload implements Upload {
+
+        private final String key;
+        private byte[] part = new byte[PART_BYTES];
+        private final List<software.amazon.awssdk.services.s3.model.CompletedPart> parts = new ArrayList<>();
+        private int filled;
+        private String uploadId;
+        private boolean done;
+        private final java.io.OutputStream stream = new java.io.OutputStream() {
+            @Override
+            public void write(int b) throws IOException {
+                write(new byte[] {(byte) b}, 0, 1);
+            }
+
+            @Override
+            public void write(byte[] b, int off, int len) throws IOException {
+                while (len > 0) {
+                    int n = Math.min(len, part.length - filled);
+                    System.arraycopy(b, off, part, filled, n);
+                    filled += n;
+                    off += n;
+                    len -= n;
+                    if (filled == part.length) {
+                        sendPart();
+                    }
+                }
+            }
+        };
+
+        S3Upload(String key) {
+            this.key = key;
+        }
+
+        /**
+         * The filled part as a request body, read from the buffer itself rather than a copy (a
+         * 128 MiB part would otherwise be held twice). The call that sends it returns before the
+         * buffer is filled again; a retry rereads it from the start.
+         */
+        private software.amazon.awssdk.core.sync.RequestBody body() {
+            return software.amazon.awssdk.core.sync.RequestBody.fromInputStream(
+                new java.io.ByteArrayInputStream(part, 0, filled), filled);
+        }
+
+        @Override
+        public java.io.OutputStream stream() {
+            return stream;
+        }
+
+        private void sendPart() throws IOException {
+            if (done || cancelled) {
+                throw new IOException("The write of " + describe(key) + " was stopped");
+            }
+            try {
+                if (uploadId == null) {
+                    uploadId = s3.createMultipartUpload(software.amazon.awssdk.services.s3.model
+                        .CreateMultipartUploadRequest.builder().bucket(settings.bucket()).key(key).build()).uploadId();
+                }
+                int number = parts.size() + 1;
+                var response = s3.uploadPart(software.amazon.awssdk.services.s3.model.UploadPartRequest.builder()
+                        .bucket(settings.bucket()).key(key).uploadId(uploadId).partNumber(number)
+                        .contentLength((long) filled).build(),
+                    body());
+                parts.add(software.amazon.awssdk.services.s3.model.CompletedPart.builder().partNumber(number)
+                    .eTag(response.eTag()).build());
+                filled = 0;
+                if (partSize(number + 1) != part.length) {
+                    part = new byte[partSize(number + 1)];
+                }
+            } catch (SdkException e) {
+                throw writeError(e, key);
+            }
+        }
+
+        @Override
+        public void commit() throws IOException {
+            if (done || cancelled) {
+                throw new IOException("The write of " + describe(key) + " was stopped");
+            }
+            try {
+                if (uploadId == null) {
+                    s3.putObject(software.amazon.awssdk.services.s3.model.PutObjectRequest.builder()
+                            .bucket(settings.bucket()).key(key).contentLength((long) filled).build(),
+                        body());
+                } else {
+                    if (filled > 0) {
+                        sendPart();
+                    }
+                    s3.completeMultipartUpload(software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest
+                        .builder().bucket(settings.bucket()).key(key).uploadId(uploadId)
+                        .multipartUpload(software.amazon.awssdk.services.s3.model.CompletedMultipartUpload.builder()
+                            .parts(parts).build()).build());
+                }
+                done = true;
+            } catch (SdkException e) {
+                throw writeError(e, key);
+            }
+        }
+
+        @Override
+        public void abort() {
+            if (done) {
+                return;
+            }
+            done = true;
+            if (uploadId != null) {
+                // a cancelled run interrupts this thread, and the HTTP client gives up at once on an
+                // interrupted thread: abort with the flag cleared, then set it again
+                boolean interrupted = Thread.interrupted();
+                try {
+                    s3.abortMultipartUpload(software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest
+                        .builder().bucket(settings.bucket()).key(key).uploadId(uploadId).build());
+                } catch (RuntimeException e) {
+                    // the bucket's lifecycle rules remove abandoned uploads; nothing was made visible
+                } finally {
+                    if (interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        }
+    }
+
     @Override
     public String copyKey(String key) {
         return "s3\n" + settings.endpoint() + "\n" + settings.region() + "\n" + settings.accessKeyId() + "\n"

@@ -33,6 +33,9 @@ line in a services file; nothing in the server changes.
 | `secretScope()` | Optional. Settings that decide where the secret goes; changing one needs the secret again (default: every setting) |
 | `addressSettings(host, port, database)` | Optional. Settings built from a host, port and database, for bulk import (default: none) |
 | `catalogWithRelationships(source)` | Optional (default: `catalog` with no relationships). The catalogue plus the relationships the source declares, such as foreign keys; the scan calls this one |
+| `writer(source, write)` | Optional (default: refuses). The pipeline step that writes its `in` port's rows to the source; see [The writer step](#the-writer-step). List `WRITE` in `capabilities()` when you override it |
+| `writeOptions()` | Optional (default: none). The settings a write step takes, as `SettingSpec`s (key, kind, default, help); the service passes only these keys in `WriteOptions.options` |
+| `writtenAssetPath(source, write)` | Optional (default: the target). The catalogue path of the written asset, as a scan would give it |
 
 **Choosing assets.** `AssetFilter` (in `kiln-core`) holds the containers chosen and the `include`
 and `exclude` patterns every source has. Use `AssetFilter.of(this, source)` while reading the
@@ -89,6 +92,47 @@ Use the engine's field kinds (`JdbcColumn.Kind`: boolean, int16, int32, int64, f
 float64, decimal, text, binary, date, time, timestamp, timestamp_tz) and the Arrow types
 `JdbcColumn` maps them to, so the profiler treats every source alike. Timestamps are
 microseconds. Types with no Arrow equivalent are read as text rather than dropped.
+
+## The writer step
+
+A connector that can write overrides `writer(source, WriteOptions)` and adds `Capability.WRITE`
+to `capabilities()`. The pipeline service calls it for a `write` step after checking that the
+source allows writing and that its hosts are allowed, so the connector checks only what is its
+own: the target, the mode and the settings. Refuse what is wrong at once with a
+`ConnectorException` whose message starts with the setting (`table: ...`, `path: ...`,
+`mode: ...`), before connecting to anything.
+
+`WriteOptions` holds the `target` (`schema.table`, or a path inside the source), the `mode`
+(`create`, `append`, `replace` or `upsert`), the upsert `key`, the file `format`, the step's
+further settings as written in the YAML (`options`, limited to the keys `writeOptions()` declares;
+read them with `WriteSettings`, whose `withProfiling` adds the `profile_output` and `keep_values`
+settings every writer takes), the `assetUrn` the written asset is recorded under, and the
+source's `profiling` settings, which the writer hands to its profile.
+
+The step is an ordinary Kiln `Step` with an input and no output:
+
+- each `process` call takes one batch from `context.input()` (the `in` port), writes it and closes
+  it; the end of the input (`null`) is where it commits or puts the file in place;
+- nothing is visible until then: one transaction, a temporary file renamed at the end, or an
+  upload completed at the end. `close()` runs after a failure too, and must roll back, delete or
+  abort what was started;
+- it reports only after success, through `WriteReport`, as
+  [pipelines.md, "What a write reports"](pipelines.md#what-a-write-reports) sets out: for a write
+  that leaves the asset holding exactly what was written, `SCHEMA`, `ROW_COUNT` and the profile
+  (computed in the same pass with `ProfileStep`'s own code); for rows added to an existing table,
+  a `ROW_COUNT` with `complete=false` and `appended=true` only;
+- it takes the columns from the batches with `WriteColumn`, which turns any Arrow type into the
+  engine's kinds (`JdbcColumn.Kind`) and gives each value as one Java type per kind, so every
+  writer handles the same set; types with no kind of their own are written as text;
+- messages say what to do: which column does not fit, which grant to ask for, which setting to
+  change.
+
+The built-in writers: `JdbcTableOutput` (PostgreSQL and SQL Server; the SQL is in `WriteSql`, the
+matching of input to table in `WritePlan`) and `FileOutput` (folders and S3; `FileTarget` checks
+paths, `CsvEncoder` and `ParquetEncoder` write the formats, and each `FileStore` writes with
+`create(path, overwrite)`, which returns an `Upload` to commit or abort). The decisions are in
+[pipelines.md, section 4](pipelines.md#4-steps-in-step-1) and the guide for people is
+[Writing data from a pipeline](../guide/writing-data.md).
 
 ## JDBC databases
 
@@ -269,10 +313,14 @@ pick it up from `settings()`.
 
 ## Testing it
 
-- Unit tests for `validate` and type mapping.
+- Unit tests for `validate` and type mapping, and for a writer's SQL or encoding (`WriteSqlTest`,
+  `FileWriteTest`).
 - An integration test with Testcontainers against the real system: catalogue, a read through
   `Runner` with `ProfileStep`, a row limit, and a clear failure for a missing asset. Follow
   `PostgresIngestTest`.
+- A writer: an integration test writing each mode and reading back with the connector's own
+  reader, a permission error, and a failure that must leave nothing behind (`PostgresWriteTest`,
+  `SqlServerWriteTest`, `S3WriteTest`).
 - Keep test containers small; CI runs on a 2-CPU runner.
 
 ## Rules
