@@ -11,6 +11,10 @@ dependencies {
     "implementation"(libs.datasketches)
     // SQL Server's JDBC driver (MIT); loaded through DriverManager, so only needed at run time.
     "runtimeOnly"(libs.mssql.jdbc)
+    // MySQL and MariaDB: MariaDB Connector/J (LGPL-2.1-or-later), shipped unmodified as its own jar
+    // (ADR 0007). Compiled against for LOAD DATA LOCAL INFILE from a stream. Its optional
+    // dependencies (Waffle, AWS IAM, Bouncy Castle, SLF4J) are not wanted and not shipped.
+    "implementation"(libs.mariadb.java.client)
     // PostgreSQL's JDBC driver (BSD-2-Clause): writers stream rows with its COPY API. The server
     // ships it already (quarkus-jdbc-postgresql), so it is compiled against, not bundled again.
     "compileOnly"(libs.postgresql)
