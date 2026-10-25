@@ -12,7 +12,7 @@ details.
   you can choose another under **Settings**, **Appearance**.
 - **A home page that shows what matters.** A greeting with what needs attention, your sources at a
   glance with their health and quality score, the issues that need a look, and a checklist that
-  shows how far set-up has got.
+  shows how far set-up has got, which shrinks to one line once everything is done.
 - **Add recommended rules together.** On an asset's new **Quality** tab, tick the suggested rules
   you want (the ones that fit every row are ticked already) and add them in one go. Each rule
   shows a bar for each of its last ten results.
@@ -59,6 +59,10 @@ details.
   **On** switch instead of Switch on and Switch off buttons; other on/off options (blank text
   counts as missing, open a task, local model server, remove the stored key, local AI assistant,
   import options) are switches too.
+- Layout: home pairs runs and sources with the issue and notification lists (which scroll inside
+  fixed heights) so the columns end level; Getting set up runs across the page and shrinks to a
+  dismissible **All set up** line once done; the connection panel is a modal side sheet (scrim,
+  focus kept inside, page scroll locked); fieldsets inside cards are titled sections, not boxes.
 - The rule form links to the quality rules guide (**How rules work**). The documentation's page list
   puts What's new first. `#/sources?add=1` opens Add a connection.
 

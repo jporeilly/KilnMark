@@ -336,11 +336,11 @@ other columns and options; `lab/sources.csv` registers the whole lab (see `lab/R
 (Databases, NoSQL, Files, Streaming, Applications, Lakehouse), with what each can do. Connectors
 that are planned but not built are shown greyed out with their wave; set
 `kilnmark.connectors.show-planned=false` (`KILNMARK_CONNECTORS_SHOW_PLANNED`) to hide them. Choosing
-one opens its panel beside the gallery, in four steps you can move between: **Connect** (a
+one opens its panel as a side sheet over the page, in four steps you can move between: **Connect** (a
 database's host, port and database build its URL; the full URL is under Advanced), **Test**,
 **Choose what to scan** (schemas or folders with counts, patterns, and a preview of any table or
 file), and **Save** (display name, description, AI rule; Save, or Save and scan). Edit on a
-source's page opens the same panel. Escape closes it. On and off settings (sub-folders, header
+source's page opens the same panel. Escape, the close button or a click beside it closes it. On and off settings (sub-folders, header
 row, keep document text, read text on demand, path-style addressing) are switches; the form knows
 which settings are which from `ui/src/components/settingKinds.ts`, because the connectors API
 gives settings a label and a hint but no type.
