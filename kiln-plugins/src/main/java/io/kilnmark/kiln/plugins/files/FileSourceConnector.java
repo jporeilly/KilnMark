@@ -357,6 +357,49 @@ public abstract class FileSourceConnector implements Connector {
         }
     }
 
+    /** Discover and read, and write CSV and Parquet files (docs/guide/writing-data.md). */
+    @Override
+    public java.util.Set<Capability> capabilities() {
+        return java.util.Set.of(Capability.DISCOVER, Capability.READ, Capability.WRITE);
+    }
+
+    /**
+     * A step writing one CSV or Parquet file at {@code write.target()}, a path inside the source
+     * (below an S3 source's prefix); see {@link FileTarget} for what is refused. Mode {@code create}
+     * (or none) refuses an existing file unless the setting {@code overwrite} is true;
+     * {@code replace} replaces it. Further settings: {@code overwrite}, {@code delimiter} (CSV),
+     * {@code compression} (Parquet: snappy, zstd, gzip or none), {@code profile} and
+     * {@code keep_values}.
+     */
+    @Override
+    public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+        checkSettings(source);
+        String mode = write.mode() == null || write.mode().isBlank() ? "create" : write.mode().strip();
+        io.kilnmark.kiln.plugins.write.WriteSettings settings =
+            new io.kilnmark.kiln.plugins.write.WriteSettings(write.options());
+        boolean overwrite = switch (mode) {
+            case "create" -> settings.bool("overwrite", false);
+            case "replace" -> {
+                if (!settings.bool("overwrite", true)) {
+                    throw new ConnectorException("overwrite: false contradicts mode replace; use mode create to "
+                        + "refuse an existing file");
+                }
+                yield true;
+            }
+            case "append", "upsert" -> throw new ConnectorException("mode: files are written whole, so " + mode
+                + " is for database tables; use create (a new file) or replace (replace the file)");
+            default -> throw new ConnectorException("mode: create or replace for files, not '" + mode + "'");
+        };
+        if (!write.key().isEmpty()) {
+            throw new ConnectorException("key: only upsert into a database table takes key columns");
+        }
+        FileTarget target = FileTarget.of(write.target(), write.format());
+        String prefix = prefix(source);
+        String under = prefix.isEmpty() || prefix.endsWith("/") ? prefix : prefix + "/";
+        return new FileOutput(() -> open(source), under + target.path(), target, overwrite, settings,
+            write.assetUrn());
+    }
+
     /** A scan of a source has ended: shared copies of its workbooks nobody is using are deleted. */
     @Override
     public void finished(SourceConfig source) {

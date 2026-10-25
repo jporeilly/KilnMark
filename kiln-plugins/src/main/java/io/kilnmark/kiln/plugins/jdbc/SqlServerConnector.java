@@ -165,6 +165,27 @@ public final class SqlServerConnector extends JdbcConnector {
     }
 
     @Override
+    WriteSql writeSql() {
+        return WriteSql.SQL_SERVER;
+    }
+
+    /**
+     * Times sent as {@code time}, not {@code datetime} (which would round them to 1/300 of a
+     * second); and, for a table the step created, batches of inserts sent through the driver's bulk
+     * copy ({@code useBulkCopyForBatchInsert}), which checks no constraints and fires no triggers,
+     * so it is used only where there are none.
+     */
+    @Override
+    protected java.util.Properties writeProperties(boolean bulk) {
+        java.util.Properties p = new java.util.Properties();
+        p.setProperty("sendTimeAsDatetime", "false");
+        if (bulk) {
+            p.setProperty("useBulkCopyForBatchInsert", "true");
+        }
+        return p;
+    }
+
+    @Override
     protected String estimateRowsSql(AssetInfo asset) {
         String name = quote(asset.hints().get("schema")) + "." + quote(asset.hints().get("table"));
         return "SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = OBJECT_ID(" + dialect().literal(name)

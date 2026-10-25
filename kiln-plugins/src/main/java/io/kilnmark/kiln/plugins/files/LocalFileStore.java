@@ -217,6 +217,157 @@ public final class LocalFileStore implements FileStore {
     }
 
     /**
+     * Writes to a hidden temporary file in the target's own folder, flushed to disk, then moved
+     * onto the target's name in one rename, so readers see the old file or the whole new one,
+     * never part of one. Missing folders are created; every folder on the way, links resolved,
+     * must be inside the store's folder. Without {@code overwrite} the new file is linked into
+     * place, which fails if a file of that name appeared meanwhile.
+     */
+    @Override
+    public Upload create(String path, boolean overwrite) throws IOException {
+        if (path == null || path.isBlank() || path.startsWith("/") || path.contains("\\") || path.contains("\0")) {
+            throw new IOException("Refusing to write '" + path + "': give a path relative to " + root);
+        }
+        String[] parts = path.split("/");
+        Path folder = root;
+        for (int i = 0; i < parts.length - 1; i++) {
+            String part = parts[i];
+            if (part.isEmpty() || part.equals(".") || part.equals("..")) {
+                throw new IOException("Refusing to write '" + path + "': it leads outside the folder " + root);
+            }
+            Path next = folder.resolve(part);
+            if (Files.exists(next)) {
+                Path real = next.toRealPath();
+                if (!real.startsWith(root)) {
+                    throw new IOException("Refusing to write '" + path + "': " + next + " is a link to " + real
+                        + ", outside the folder " + root);
+                }
+                if (!Files.isDirectory(real)) {
+                    throw new IOException("Cannot write '" + path + "': " + next + " is a file, not a folder");
+                }
+                folder = real;
+            } else {
+                try {
+                    Files.createDirectory(next);
+                } catch (java.nio.file.FileAlreadyExistsException e) {
+                    // created meanwhile: checked below like any other
+                } catch (java.nio.file.AccessDeniedException e) {
+                    throw new IOException("This server cannot create the folder " + next
+                        + ": give the user the server runs as write access to " + folder, e);
+                }
+                Path real = next.toRealPath();
+                if (!real.startsWith(root)) {
+                    throw new IOException("Refusing to write '" + path + "': it leads outside the folder " + root);
+                }
+                folder = real;
+            }
+        }
+        String name = parts[parts.length - 1];
+        if (name.isEmpty() || name.equals(".") || name.equals("..")) {
+            throw new IOException("Refusing to write '" + path + "': give a file name");
+        }
+        Path target = folder.resolve(name);
+        if (!target.normalize().startsWith(root)) {
+            throw new IOException("Refusing to write '" + path + "': it is outside the folder " + root);
+        }
+        if (Files.isDirectory(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Cannot write '" + path + "': " + target + " is a folder");
+        }
+        if (!overwrite && Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException(target + " already exists: set overwrite to true to replace it, or write to "
+                + "another path");
+        }
+        if (!Files.isWritable(folder)) {
+            throw new IOException("This server cannot write to the folder " + folder
+                + ": give the user the server runs as write access to it");
+        }
+        Path temp = folder.resolve("." + name + "." + Long.toHexString(new java.security.SecureRandom().nextLong())
+            + ".kiln-tmp");
+        FileChannel channel = FileChannel.open(temp, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        return new LocalUpload(temp, target, overwrite, channel);
+    }
+
+    /** A file being written next to its target. */
+    private static final class LocalUpload implements Upload {
+
+        private final Path temp;
+        private final Path target;
+        private final boolean overwrite;
+        private final FileChannel channel;
+        private final java.io.OutputStream stream;
+        private boolean done;
+
+        LocalUpload(Path temp, Path target, boolean overwrite, FileChannel channel) {
+            this.temp = temp;
+            this.target = target;
+            this.overwrite = overwrite;
+            this.channel = channel;
+            this.stream = new java.io.BufferedOutputStream(java.nio.channels.Channels.newOutputStream(channel), 1 << 16);
+        }
+
+        @Override
+        public java.io.OutputStream stream() {
+            return stream;
+        }
+
+        @Override
+        public void commit() throws IOException {
+            if (done) {
+                throw new IOException("The file " + target + " was already finished");
+            }
+            stream.flush();
+            channel.force(true);
+            stream.close();
+            if (overwrite) {
+                try {
+                    Files.move(temp, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                    Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+            } else {
+                boolean linked = false;
+                try {
+                    Files.createLink(target, temp); // fails if the name was taken meanwhile
+                    linked = true;
+                } catch (java.nio.file.FileAlreadyExistsException e) {
+                    throw new IOException(target + " was created by someone else while this file was written: "
+                        + "set overwrite to true to replace it, or write to another path", e);
+                } catch (UnsupportedOperationException | java.nio.file.FileSystemException e) {
+                    // no hard links on this file system (some network shares): check, then rename
+                    if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                        throw new IOException(target + " was created by someone else while this file was written: "
+                            + "set overwrite to true to replace it, or write to another path", e);
+                    }
+                    Files.move(temp, target);
+                }
+                if (linked) {
+                    Files.deleteIfExists(temp);
+                }
+            }
+            done = true;
+        }
+
+        @Override
+        public void abort() {
+            if (done) {
+                return;
+            }
+            done = true;
+            try {
+                stream.close();
+            } catch (IOException | RuntimeException e) {
+                // discarded anyway
+            }
+            try {
+                Files.deleteIfExists(temp);
+            } catch (IOException | RuntimeException e) {
+                // a leftover hidden temporary file; scans skip it
+            }
+        }
+    }
+
+    /**
      * A local file read with positional reads rather than Hardwood's memory mapping, so memory use
      * stays in proportion to what is read and nothing is left mapped after a read stops early.
      */

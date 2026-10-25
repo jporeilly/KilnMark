@@ -11,11 +11,15 @@ dependencies {
     "implementation"(libs.datasketches)
     // SQL Server's JDBC driver (MIT); loaded through DriverManager, so only needed at run time.
     "runtimeOnly"(libs.mssql.jdbc)
+    // PostgreSQL's JDBC driver (BSD-2-Clause): writers stream rows with its COPY API. The server
+    // ships it already (quarkus-jdbc-postgresql), so it is compiled against, not bundled again.
+    "compileOnly"(libs.postgresql)
 
     // Files and object storage (ADR 0015): Parquet without Hadoop, JSON, and S3.
     "implementation"(libs.hardwood)
-    "runtimeOnly"(libs.zstd.jni)       // Parquet's ZSTD codec (the lab's invoices file uses it)
-    "runtimeOnly"(libs.snappy.java)    // Parquet's Snappy codec, the most common default
+    // Parquet's ZSTD and Snappy codecs: read through Hardwood, and called directly to write Parquet.
+    "implementation"(libs.zstd.jni)    // ZSTD (the lab's invoices file uses it)
+    "implementation"(libs.snappy.java) // Snappy, the most common default
     "runtimeOnly"(libs.lz4.java)       // Parquet's LZ4 and LZ4_RAW codecs (pyarrow's "lz4")
     "implementation"(libs.jackson.core)
     "implementation"(libs.awssdk.s3) {
@@ -62,7 +66,7 @@ dependencies {
     "testImplementation"(libs.testcontainers.postgresql)
     "testImplementation"(libs.testcontainers.mssqlserver)
     "testImplementation"(libs.testcontainers.junit)
-    "testRuntimeOnly"(libs.postgresql)
+    "testImplementation"(libs.postgresql)
 }
 
 tasks.withType<Test>().configureEach {

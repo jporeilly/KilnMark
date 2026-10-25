@@ -295,7 +295,8 @@ public abstract class JdbcConnector implements Connector {
     public List<Setting> settings() {
         return List.of(
             new Setting("url", "JDBC URL", true, "For example " + exampleUrl(), false),
-            new Setting("username", "User name", false, "A read-only account is enough", false),
+            new Setting("username", "User name", false, "A read-only account is enough for scanning; "
+                + "pipelines that write to this source need a login with write rights", false),
             new Setting("schemas", "Schemas", false, "Leave empty to scan every schema, or choose them from a list", true));
     }
 
@@ -515,7 +516,25 @@ public abstract class JdbcConnector implements Connector {
 
     /** Connects with the source's user name and secret and, for checks, the driver's own timeouts. */
     private Connection connect(SourceConfig source, Duration timeout) throws SQLException {
-        Properties p = timeout == null ? new Properties() : timeouts(timeout);
+        return connectWith(source, timeout == null ? new Properties() : timeouts(timeout));
+    }
+
+    /**
+     * A connection for a pipeline's write step, with the source's user name and secret and the
+     * driver properties writing needs ({@link #writeProperties}); the caller closes it.
+     *
+     * @param bulk whether the step loads a table it created itself, which some drivers can load faster
+     */
+    Connection connectForWrite(SourceConfig source, boolean bulk) throws SQLException {
+        return connectWith(source, writeProperties(bulk));
+    }
+
+    /** Driver properties for writing; none by default. */
+    protected Properties writeProperties(boolean bulk) {
+        return new Properties();
+    }
+
+    private Connection connectWith(SourceConfig source, Properties p) throws SQLException {
         if (source.setting("username") != null) {
             p.setProperty("user", source.setting("username"));
         }
@@ -588,6 +607,67 @@ public abstract class JdbcConnector implements Connector {
     }
 
     // ---- end of relationships ----
+
+    // ---- Writing (docs/design/pipelines.md, section 4; docs/guide/writing-data.md) ----
+
+    /** How this database is written to, or null when Kilnmark cannot write to it (the default). */
+    WriteSql writeSql() {
+        return null;
+    }
+
+    /** Discover and read, and write where this database can be written to. */
+    @Override
+    public Set<Capability> capabilities() {
+        return writeSql() == null ? Set.of(Capability.DISCOVER, Capability.READ)
+            : Set.of(Capability.DISCOVER, Capability.READ, Capability.WRITE);
+    }
+
+    /**
+     * A step writing to the table {@code write.target()} ({@code schema.table}) in mode
+     * {@code create}, {@code append}, {@code replace} or {@code upsert} (with {@code key}); see
+     * {@link JdbcTableOutput}. Further settings: {@code commit_every} (rows per transaction; a
+     * failure then leaves the rows already committed), {@code batch_size}, {@code text_length}
+     * (the length of text columns a create or replace makes; unlimited by default),
+     * {@code keep_grants} (replace; default true), {@code bulk_copy} (SQL Server; default true),
+     * {@code profile} and {@code keep_values}.
+     */
+    @Override
+    public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+        WriteSql sql = writeSql();
+        if (sql == null) {
+            throw new ConnectorException(displayName() + " sources cannot be written to yet");
+        }
+        checkValid(source);
+        String mode = write.mode() == null ? "" : write.mode().strip().toLowerCase(Locale.ROOT);
+        if (!JdbcTableOutput.MODES.contains(mode)) {
+            throw new ConnectorException("mode: " + String.join(", ", JdbcTableOutput.MODES.subList(0, 3)) + " or "
+                + "upsert" + (mode.isEmpty() ? "" : ", not '" + write.mode() + "'"));
+        }
+        if (write.format() != null && !write.format().isBlank()) {
+            throw new ConnectorException("format: only files have a format; a table's columns decide its types");
+        }
+        List<String> key = write.key();
+        if (mode.equals("upsert")) {
+            if (key.isEmpty()) {
+                throw new ConnectorException("key: upsert needs the key columns that identify a row, for example "
+                    + "[customer_id]");
+            }
+            if (new java.util.HashSet<>(key).size() != key.size() || key.stream().anyMatch(k -> k == null || k.isBlank())) {
+                throw new ConnectorException("key: each key column once, by name");
+            }
+        } else if (!key.isEmpty()) {
+            throw new ConnectorException("key: only mode upsert takes key columns");
+        }
+        TableName table = TableName.parse(write.target());
+        for (String part : List.of(table.schema(), table.table())) {
+            String problem = sql.identifierProblem(part);
+            if (problem != null) {
+                throw new ConnectorException("table: " + problem);
+            }
+        }
+        return new JdbcTableOutput(this, sql, source, table, mode, key,
+            new io.kilnmark.kiln.plugins.write.WriteSettings(write.options()), write.assetUrn());
+    }
 
     @Override
     public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
