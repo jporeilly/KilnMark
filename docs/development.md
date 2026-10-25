@@ -75,6 +75,11 @@ podman machine start            # Windows and macOS only, once per boot
 podman compose up --build       # PostgreSQL (AGE, pgvector) and the Kilnmark server
 ```
 
+On Windows, `.\build.ps1` in PowerShell does the whole thing: it checks Node.js, runs
+`gradlew.bat release`, builds both images directly (podman-compose on Windows cannot build an
+image whose Containerfile is in a sub-folder), restarts the stack and waits until the server
+answers. `-NoRestart` builds only; `-Lab` also starts the reference lab.
+
 If `podman compose` reports `failed to connect to the docker API at npipe:////./pipe/podman-machine-default`,
 the compose tool cannot find Podman: start the machine (`podman machine start`), or point it at
 the machine's pipe (`podman machine inspect --format "{{.ConnectionInfo.PodmanPipe.Path}}"`, then
