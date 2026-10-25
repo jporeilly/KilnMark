@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, formatTime, type Source } from "../api";
+import { api, formatTime, type Me, type Source } from "../api";
 import { href } from "../router";
 import { Status } from "../components/Status";
 import { SourceTile } from "../components/ConnectorTile";
 import { useTitle } from "../components/useTitle";
 
-export function HomePage() {
+export function HomePage(_: { me: Me }) {
   useTitle("");
   const [sources, setSources] = useState<Source[] | null>(null);
   const [error, setError] = useState<string | null>(null);

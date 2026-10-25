@@ -33,7 +33,7 @@ export function Brand() {
           {firstCharacter(branding.productName ?? "K").toUpperCase()}
         </span>
       )}
-      {branding.productName ?? "Kilnmark"}
+      <span className="brand-name">{branding.productName ?? "Kilnmark"}</span>
     </>
   );
 }

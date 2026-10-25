@@ -32,7 +32,7 @@ const CATEGORY: Record<string, string> = {
 const busy = (s: Source) => s.lastRun?.status === "queued" || s.lastRun?.status === "running";
 
 /** Sources and their scans. Stewards can start scans and open a source to change it; admins can also add and import sources. */
-export function SourcesPage({ role }: { role: AccessRole }) {
+export function SourcesPage({ role }: { role: AccessRole; add?: boolean }) {
   useTitle("Sources");
   const product = useProductName();
   const canScan = allows(role, "steward");

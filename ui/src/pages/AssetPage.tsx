@@ -8,7 +8,7 @@ import { DocumentReader } from "../components/DocumentReader";
 import { KindIcon } from "../components/KindIcon";
 import { QualityPanel } from "../components/QualityPanel";
 
-export function AssetPage({ urn }: { urn: string }) {
+export function AssetPage({ urn }: { urn: string; tab?: string | null }) {
   const [asset, setAsset] = useState<Asset | null>(null);
   const [error, setError] = useState<string | null>(null);
   useTitle(asset ? `${asset.container}.${asset.name}` : "Asset");
