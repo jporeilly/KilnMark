@@ -61,8 +61,11 @@ numeric(10,2), which cannot hold every value". A column fits when the table can 
 it might have: a wider whole number, a decimal with enough digits before and after the point, a
 date into a timestamp, or anything except bytes into text. Text is never turned into numbers or
 dates: add a `select` step to cast columns first. Columns the input lacks are left to their
-defaults, so a column that is `NOT NULL` without a default must be in the input. Text longer than
-a column holds is refused with the row and column named.
+defaults, so a column that is `NOT NULL` without a default must be in the input. Two input
+columns whose names differ only in capitals cannot both go to one column. Text longer than a
+column holds is refused with the row and column named. On PostgreSQL, a table with row-level
+security that applies to the login is filled row by row, so its policies are checked for every
+row (and the write is slower).
 
 **upsert** needs `key`, the columns that identify a row:
 
@@ -84,21 +87,38 @@ a column holds is refused with the row and column named.
 `replace` creates the new table under a temporary name (`kiln_new_…`), fills it, and then, in the
 same transaction, renames the old table out of the way, gives the new table its name and drops
 the old one. Anyone reading the table sees the old rows until that moment and the new rows after
-it, and never an empty or half-filled table.
+it, and never an empty or half-filled table. The swap waits up to 30 seconds for people using the
+old table to finish (set `lock_timeout` in seconds to change it); if they do not, the run stops and
+the old table is unchanged.
 
 | Kept | Not kept |
 | --- | --- |
 | The rows you wrote, with the column types `create` would choose | Indexes, primary keys and other constraints |
-| Grants on the table (set `keep_grants: false` to skip them) | Triggers, comments and row-level security policies |
-| The table's name and schema | The owner: the source's login owns the new table |
+| Grants on the table (set `keep_grants: false` to skip them) | Triggers and comments |
+| The owner, where the login may hand the table over; otherwise the owner keeps full rights on it | Row-level security policies (only with `allow_dropping_row_security: true`) |
 
-Views that use the table, and foreign keys from other tables to it, would stop the old table
-being dropped, so `replace` refuses before writing anything and names them. On SQL Server only
-views created `WITH SCHEMABINDING` stop it; other views follow the new table by name (run
-`sp_refreshview` on views that use `SELECT *`). If you need to keep indexes or constraints,
-empty the table yourself and use `append`.
+On PostgreSQL the new table goes back to the old owner when the source's login may give it away
+(a superuser, or a login that can act as the owner); otherwise the login owns it and the old owner
+is granted every privilege on it. On SQL Server a table owned through its schema keeps that owner,
+and a table with an owner of its own gives that owner `CONTROL` of the new table.
 
-If the table does not exist yet, `replace` simply creates it.
+`replace` refuses, before writing anything, when dropping the old table would break something or
+be refused, and names what is in the way:
+
+- the target is a view, a partitioned table or a foreign table rather than a plain table;
+- it is a partition, or takes part in inheritance (as parent or child);
+- views, foreign keys from other tables, functions written in SQL, or columns of its type in other
+  tables depend on it (on SQL Server: views and functions created `WITH SCHEMABINDING`, and foreign
+  keys; other views follow the new table by name, so run `sp_refreshview` on those that use
+  `SELECT *`);
+- it has row-level security (on SQL Server, a security policy). The new table would not have the
+  policies, but would get the same grants, so everyone granted access would see every row. Set
+  `allow_dropping_row_security: true` if that is what you want, and add the policies again
+  afterwards.
+
+If you need to keep indexes, constraints or policies, empty the table yourself and use `append`.
+
+If the table does not exist yet, `replace` fills a new table and gives it the name at the end.
 
 ### Large writes
 
@@ -136,6 +156,10 @@ used only for tables the step creates.
   the file name must end in the same extension.
 - **`overwrite`**: an existing file is refused unless you set `overwrite: true`, or use
   `mode: replace`. A replaced file changes in one step: readers see the old file or the new one.
+- **Somewhere scans look.** Kilnmark records the file it writes as an asset, so it refuses a path
+  that scans of the source would never find: a sub-folder of a source that does not include
+  sub-folders, or a folder or name outside the source's chosen folders and include and exclude
+  patterns. Set `allow_unscanned: true` to write there anyway.
 
 On S3, small files are uploaded in one request at the end, larger ones in parts that are
 completed only when the last row is written. If the run fails, the upload is abandoned and S3
@@ -165,19 +189,26 @@ with pyarrow.
 | Mode | PostgreSQL | SQL Server |
 | --- | --- | --- |
 | `create` | `CREATE` on the schema | `CREATE TABLE` in the database and `ALTER` on the schema |
-| `append` | `INSERT` on the table | `INSERT` on the table |
+| `append` | `INSERT` and `SELECT` on the table | `INSERT` and `SELECT` on the table |
 | `upsert` | `INSERT`, `UPDATE` and `SELECT` on the table | `INSERT`, `UPDATE` and `SELECT` on the table |
 | `replace` | as `create`, and owning the table (or belonging to its owning role) | as `create`, and `ALTER` on the table |
 
-Kilnmark checks these before writing. If something is missing, the run stops with a message such
+Grants on some columns only count: the database then checks each column as rows go in. Append
+needs `SELECT` to read the table's columns before writing. Kilnmark checks these before writing,
+except, on SQL Server, the right to repeat the old table's grants after a replace: a login without
+it fails at that point and nothing changes. If something is missing, the run stops with a message such
 as "the login lab cannot write to billing.customer_spend in warehouse: ask a database
 administrator to grant INSERT on billing.customer_spend". Pass it on as it is.
 
 ## What Kilnmark records
 
-Every write profiles the rows as it writes them, in the same pass, and when the write has
-succeeded the target is registered (or updated) as an asset with that profile: its columns and
-the type each was written as, the row count, and each column's statistics and value patterns, as
-a scan would record them. The next pipeline that reads it starts from that metadata. Set
-`profile: false` to skip the profile, or `keep_values: false` to keep statistics without example
-values.
+When a write creates or replaces a table, or writes a file, Kilnmark profiles the rows as it
+writes them, in the same pass, and once the write has succeeded registers (or updates) the target
+as an asset with that profile: its columns and the type each was written as, the row count, and
+each column's statistics and value patterns, as a scan would record them. The next pipeline that
+reads it starts from that metadata. Set `profile: false` to skip the profile, or
+`keep_values: false` to keep statistics without example values.
+
+An `append` or `upsert` adds rows to a table that holds others too, so Kilnmark records only how
+many rows the run wrote; the table's columns, row count and profile stay as its last scan found
+them until it is scanned again.

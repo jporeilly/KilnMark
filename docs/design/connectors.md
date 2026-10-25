@@ -107,9 +107,11 @@ The step is an ordinary Kiln `Step` with an input and no output:
 - nothing is visible until then: one transaction, a temporary file renamed at the end, or an
   upload completed at the end. `close()` runs after a failure too, and must roll back, delete or
   abort what was started;
-- it profiles each batch in the same pass and reports only after success, through
-  `WriteReport`: `SCHEMA` (each column with the type it was written as), `ROW_COUNT`
-  (`written=true`), then `ProfileStep`'s `PROFILE` and `SAMPLE` events, for `assetUrn`;
+- it reports only after success, through `WriteReport`, as
+  [pipelines.md, "What a write reports"](pipelines.md#what-a-write-reports) sets out: for a write
+  that leaves the asset holding exactly what was written, `SCHEMA`, `ROW_COUNT` and the profile
+  (computed in the same pass with `ProfileStep`'s own code); for rows added to an existing table,
+  a `ROW_COUNT` with `complete=false` and `appended=true` only;
 - it takes the columns from the batches with `WriteColumn`, which turns any Arrow type into the
   engine's kinds (`JdbcColumn.Kind`) and gives each value as one Java type per kind, so every
   writer handles the same set; types with no kind of their own are written as text;

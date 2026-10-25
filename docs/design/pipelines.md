@@ -149,14 +149,29 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
     Anything else (lists, structs) is written as text.
   - `append` needs the table. Before any row is sent, every input column is matched by name and
     must fit its column (wider integers, decimals with room, dates into timestamps, anything but
-    bytes into text); required columns the input lacks are named too, all in one message.
-  - `replace` creates and fills `kiln_new_<random>`, then in the same transaction renames the old
-    table to `kiln_old_<random>`, gives the new table its name and drops the old one. PostgreSQL's
-    DDL is transactional; SQL Server renames with `sp_rename` inside the transaction. Readers see
-    the old rows until the commit. Kept: the old table's grants (re-granted on the new table;
-    `keep_grants: false` to skip). Not kept: indexes, constraints, triggers, comments, owner (the
-    login becomes it) and row-level security. Views (PostgreSQL) or schema-bound views (SQL Server)
-    and foreign keys that depend on the old table stop the replace before anything is written.
+    bytes into text); required columns the input lacks, and two input names (differing in case)
+    meeting one column, are named too, all in one message. On PostgreSQL a table whose row-level
+    security applies to the login is loaded with `INSERT` instead of `COPY` (which RLS refuses).
+  - `replace` always creates and fills `kiln_new_<random>`, then in the same transaction renames
+    the old table to `kiln_old_<random>`, gives the new table its name and drops the old one (or,
+    when there was no table, only renames the new one, so a failure never leaves a half-filled
+    target). PostgreSQL's DDL is transactional; SQL Server renames with `sp_rename` inside the
+    transaction. The swap waits at most `lock_timeout` seconds (default 30) for the locks it needs.
+    Readers see the old rows until the commit.
+    - Kept: the old table's grants (re-granted on the new table; `keep_grants: false` to skip) and
+      its owner: on PostgreSQL `ALTER TABLE … OWNER TO` when the login may (a superuser, or able to
+      `SET ROLE` to the owner on 16+, a member before, with the owner allowed to create in the
+      schema); otherwise the owner is granted all privileges on the new table, which the login
+      then owns. On SQL Server a table owned through its schema keeps that owner; one with an owner
+      of its own gets `GRANT CONTROL` for that owner.
+    - Not kept: indexes, constraints, triggers, comments, row-level security policies.
+    - Refused before anything is written: a target that is not a plain table (a view, a
+      partitioned or foreign table); a partition, an inheritance parent or child; any object that
+      depends on the table or its row type in the normal way and is not part of it (views,
+      foreign keys from other tables, functions with SQL bodies, columns of its type), found
+      through `pg_depend`; on SQL Server schema-bound views and functions and foreign keys. A
+      table with row-level security (or a SQL Server security policy) is refused unless the step
+      sets `allow_dropping_row_security: true`, since the repeated grants would then see every row.
   - `upsert` with `key`: PostgreSQL `INSERT … ON CONFLICT (key) DO UPDATE`, which needs a unique
     index or primary key on exactly the key columns (checked first, with the `CREATE UNIQUE INDEX`
     to ask for); SQL Server one `MERGE … WITH (HOLDLOCK)` per row. Empty keys are refused; a
@@ -169,9 +184,12 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
   - One transaction per run. `commit_every: N` commits after each batch that reaches N rows; a
     failure then leaves the rows already committed, and the message says how many (a replace
     still swaps only at the end, and drops its half-filled table).
-  - The login's rights are checked first (`has_table_privilege`, `HAS_PERMS_BY_NAME`) and refused
-    writes are explained: "the login lab cannot write to billing.customer_spend in warehouse: ask a
-    database administrator to grant INSERT on billing.customer_spend".
+  - The login's rights are checked first (`has_any_column_privilege`, `has_schema_privilege`,
+    `HAS_PERMS_BY_NAME`, counting column grants) and refused writes are explained: "the login lab
+    cannot write to billing.customer_spend in warehouse: ask a database administrator to grant
+    INSERT and SELECT on billing.customer_spend" (append reads the table's columns first, hence
+    SELECT). Re-granting on SQL Server is not checked first: a login without the right to grant
+    fails at that statement, and the transaction is rolled back.
   - Timestamps are written in UTC; decimals keep their digits; text too long for a column is
     refused with the row and column before the database truncates or fails.
 - **Files** (folders and S3), `format` csv or parquet (or from the extension), `path` relative to
@@ -179,19 +197,27 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
   wrong extension are refused, and the stores check again with links resolved. A local file is
   written to a hidden temporary file in its folder, flushed, and renamed into place (linked, when
   `overwrite` is false, so a file that appeared meanwhile is not replaced). An S3 object is one PUT
-  when small, otherwise a multipart upload completed at the end and aborted on failure. Existing
-  files are refused unless `overwrite: true` (or mode `replace`).
+  when small, otherwise a multipart upload (parts of 8 MiB, growing to 32 and 128 MiB after 1,000
+  and 5,000 parts, so objects to about 780 GB stay within 10,000 parts) completed at the end and
+  aborted on failure or cancellation. Existing files are refused unless `overwrite: true` (or mode
+  `replace`). A path a scan of the source would not find (a sub-folder of a source that is not
+  recursive, or outside its containers, include and exclude) is refused unless
+  `allow_unscanned: true`, since the asset registered for it would never be scanned again. Folders
+  are checked by path and then used: someone able to write inside an allowed folder on the server
+  could swap a checked folder for a link in between, so allowed folders should be writable only by
+  Kilnmark and trusted people.
   - CSV: RFC 4180, UTF-8, header row, CRLF, configurable `delimiter`; a null is an empty field and
     an empty string `""`, so Kilnmark's reader tells them apart; ISO 8601 dates and times.
   - Parquet: Kilnmark's own streaming writer (Hardwood cannot write; parquet-java needs Hadoop,
-    ADR 0015): flat optional columns, PLAIN values, RLE definition levels, 1 MiB pages, 64 MiB row
-    groups, Snappy by default (`compression`: zstd, gzip, none) through the codec jars reading
-    already uses. Logical types as the reader maps them back. Checked against pyarrow.
+    ADR 0015): flat optional columns, PLAIN values, RLE definition levels, pages of at most 1 MiB
+    or 20,000 values, row groups of at most 64 MiB or 2^20 rows, Snappy by default
+    (`compression`: zstd, gzip, none) through the codec jars reading already uses, and
+    `created_by` naming the Kilnmark version. Logical types as the reader maps them back. Checked
+    against Hardwood in every build and against pyarrow where it is installed (not on CI).
 - **Profile as written.** The writer profiles each batch with `ProfileStep`'s own code as it
-  writes it, and only after the commit (or once the file is in place) reports `SCHEMA` (columns
-  with the type each was written as), `ROW_COUNT` (`written=true`) and the `PROFILE` and `SAMPLE`
-  events for `WriteOptions.assetUrn`, so the service can register the asset. `profile: false`
-  turns it off; `keep_values: false` keeps no example values.
+  writes it and reports only after the commit (or once the file is in place); see "What a write
+  reports" in section 5. `profile: false` turns profiling off; `keep_values: false` keeps no
+  example values.
 
 ## 5. Running and recording
 
@@ -207,6 +233,20 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
   went.
 - Runs respect the same rules as scans: allowed hosts, source egress for AI, masking of sensitive
   columns in previews.
+
+### What a write reports
+
+The contract between the writers and the pipeline service. A writer emits metadata events for
+`WriteOptions.assetUrn` only after the write has succeeded; a failed or cancelled write emits
+nothing (with `commit_every`, rows already committed remain, and the step's error says so).
+
+| Write | Events | Meaning for the service |
+| --- | --- | --- |
+| Table `create`, `replace`; any file | `SCHEMA` (`columns`: JSON array of `{name, kind, type}`, `type` as written; `target`, `mode` or `format`, `location`), `ROW_COUNT` (`rows`, `complete=true`, `written=true`), `PROFILE` per column, `SAMPLE` unless `keep_values: false` | The asset now holds exactly these rows: register or update it, replace its fields, row count and profile, apply the source's sample controls to `SAMPLE` |
+| Table `append`, `upsert` | `ROW_COUNT` only (`rows` written, `complete=false`, `written=true`, `appended=true`, `mode`) | Rows were added to or merged into an existing table: record the run's lineage and row count, but keep the table's fields, row count and profile from its last scan; a scan refreshes them |
+
+Columns, kinds and profile attributes are those a scan reports (`JdbcColumn.Kind` names,
+`ColumnStats` attributes), so the service stores them the same way.
 
 ## 6. API and UI in step 1
 
