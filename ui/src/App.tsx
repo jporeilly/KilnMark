@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import { allows, api, ApiError, session, SIGNED_OUT, type Me } from "./api";
 import { go, href, useRoute } from "./router";
 import { HomePage } from "./pages/HomePage";
@@ -16,6 +16,11 @@ import { RelationshipsPage } from "./browse/RelationshipsPage";
 import { RoleContext } from "./components/role";
 import { RulesPage } from "./pages/RulesPage";
 import { IssuesPage } from "./pages/IssuesPage";
+import { docHref, WHATS_NEW } from "./docs/links";
+import "./docs/docs.css";
+
+// The documentation viewer carries the guides and a Markdown reader, so it loads when first opened.
+const DocsPage = lazy(() => import("./pages/DocsPage"));
 
 /**
  * Checks who is signed in, then shows either the sign-in page or the app. Signing out (the
@@ -85,6 +90,14 @@ function Shell({ me }: { me: Me }) {
   const searchBox = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState(route.page === "search" ? route.q : "");
   const first = useRef(true);
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .info()
+      .then((i) => setVersion(i.version))
+      .catch(() => setVersion(null));
+  }, []);
 
   // Ctrl+K or / jumps to search from anywhere, as the design rules promise.
   useEffect(() => {
@@ -197,6 +210,11 @@ function Shell({ me }: { me: Me }) {
                 Issues
               </a>
             </li>
+            <li>
+              <a href={docHref()} aria-current={current("docs")}>
+                Documentation
+              </a>
+            </li>
             {allows(me.role, "admin") && (
               <li>
                 <a
@@ -210,6 +228,10 @@ function Shell({ me }: { me: Me }) {
               </li>
             )}
           </ul>
+          <p className="small muted nav-version">
+            {version && <>Kilnmark {version} · </>}
+            <a href={docHref(WHATS_NEW)}>What's new</a>
+          </p>
         </nav>
         <RoleContext.Provider value={me.role}>
         <main id="main" tabIndex={-1}>
@@ -242,6 +264,11 @@ function Shell({ me }: { me: Me }) {
           {route.page === "relationships" && <RelationshipsPage status={route.status} />}
           {route.page === "rules" && <RulesPage role={me.role} urn={route.urn} />}
           {route.page === "issues" && <IssuesPage role={me.role} />}
+          {route.page === "docs" && (
+            <Suspense fallback={<p role="status">Loading the documentation…</p>}>
+              <DocsPage doc={route.doc} section={route.section} />
+            </Suspense>
+          )}
           {route.page === "tokens" &&
             (allows(me.role, "admin") ? (
               <TokensPage me={me} />
