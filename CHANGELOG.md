@@ -89,7 +89,10 @@ details.
   (**Edit**, saved with `PUT /api/v1/quality/rules/{id}`), keeping their results and any dimension
   set through the API. A `PUT` with `If-Match` set to the rule's `updatedAt` is refused (409) when
   someone else changed the rule since, and the form sends it, so an edit never undoes another
-  unseen. `GET /api/v1/search` takes `source` to keep to one source's assets.
+  unseen. `GET /api/v1/search` takes `source` to keep to one source's assets. Values held back
+  for a sensitive column (`{"hidden": true}`) are shown as hidden and sent back unchanged unless
+  replaced; admins load rules unmasked, and recommendations without their values have no
+  one-click Add.
 - **Documentation in the app:** the guides in `docs/guide` and this changelog (as What's new) are
   bundled into the web UI at build time and shown under **Documentation**, so they work offline.
   Each section has its own address, `#/docs/<page>/<section>`, from its heading as GitHub makes

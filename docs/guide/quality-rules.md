@@ -244,6 +244,11 @@ On the **Quality rules** page, each rule has:
   **Save changes**, or **Cancel** to leave it as it was. The rule keeps its results so far, and
   the next run uses the new settings. A rule stays on its asset: to check another asset, add a new
   rule there. Only admins can edit custom SQL rules.
+
+  On a column marked sensitive, the allowed values and range limits may be hidden from you. The
+  form then shows **Hidden: this column is sensitive**, and saving keeps the hidden values. The
+  check and column stay fixed, and the preview is off, until you choose **Replace the values** and
+  type new ones. A webhook address hidden from your role is kept unless you type a new one.
 - **Delete:** removes the rule and its results, after you confirm.
 
 While a rule is open in the form, its **Switch off** and **Delete** buttons wait, so saving cannot

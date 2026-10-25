@@ -29,13 +29,14 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
   // keepError: refresh the list but leave the message about what just went wrong showing.
   const load = useCallback((keepError?: boolean) => {
     qualityApi
-      .rules(filter.trim() ? { urn: filter.trim() } : {})
+      // Admins edit with the real values of sensitive columns; others get them held back ({"hidden": true}).
+      .rules(filter.trim() ? { urn: filter.trim() } : {}, admin)
       .then((r) => {
         setRules(r);
         if (keepError !== true) setError(null);
       })
       .catch((e: Error) => setError(e.message));
-  }, [filter]);
+  }, [filter, admin]);
 
   useEffect(() => setFilter(urn), [urn]);
   useEffect(() => load(), [load]);
@@ -200,7 +201,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
             rule={editing}
             onReload={() =>
               qualityApi
-                .rule(editing.id)
+                .rule(editing.id, admin)
                 .then((v) => {
                   focusForm.current = true;
                   setEditing(v.rule);

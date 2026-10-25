@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import {
   ApiError,
   formatShare,
+  HIDDEN_WEBHOOK,
+  isHidden,
   qualityApi,
   type ColumnPatterns,
   type Field,
@@ -448,7 +450,10 @@ export function RuleForm({
   onReload?: () => void;
 }) {
   const editing = rule != null;
-  const startJson = rule != null && !fitsFields(rule.type, rule.params, null);
+  // Values the server holds back (a sensitive column) are kept as they are unless replaced.
+  const hiddenAtStart = rule != null && isHidden(rule.params);
+  const [keepHidden, setKeepHidden] = useState(hiddenAtStart);
+  const startJson = rule != null && !hiddenAtStart && !fitsFields(rule.type, rule.params, null);
   const [assetUrn, setAssetUrn] = useState(rule?.assetUrn ?? urn);
   const [type, setType] = useState<RuleType>(rule?.type ?? "not_null");
   const [column, setColumn] = useState(rule?.field ?? "");
@@ -464,7 +469,8 @@ export function RuleForm({
     v == null ? "" : rule?.thresholdUnit === "share" ? percent(v) : String(v);
   const [warn, setWarn] = useState(rule ? shown(rule.warnAbove) : "");
   const [fail, setFail] = useState(rule ? shown(rule.failAbove) : "0");
-  const [webhook, setWebhook] = useState(rule?.actions.webhook ?? "");
+  const webhookHidden = rule?.actions.webhook === HIDDEN_WEBHOOK;
+  const [webhook, setWebhook] = useState(webhookHidden ? "" : rule?.actions.webhook ?? "");
   const [task, setTask] = useState(rule?.actions.task ?? false);
   const [error, setError] = useState<string | null>(null);
   const [errorAt, setErrorAt] = useState<string | null>(null);
@@ -495,7 +501,7 @@ export function RuleForm({
   // date-and-time column) is shown as JSON instead, once the column's kind is known.
   const checkedKind = useRef(false);
   useEffect(() => {
-    if (!rule || checkedKind.current || !kind) return;
+    if (!rule || checkedKind.current || !kind || hiddenAtStart) return;
     checkedKind.current = true;
     if (!jsonMode && rule.type === type && !fitsFields(rule.type, rule.params, kind)) {
       setJsonText(json(rule.params));
@@ -522,7 +528,7 @@ export function RuleForm({
     patterns?.urn === assetUrn.trim() ? patterns.list.find((p) => p.field === column)?.suggestion : undefined;
 
   const usingKey = type === "unique" && (jsonMode ? false : f.several);
-  const generated = paramsFrom(type, f, kind);
+  const generated = keepHidden ? { hidden: true } : paramsFrom(type, f, kind);
   const invalid = (id: string) => (errorAt === id ? true : undefined);
   const describedBy = (id: string, ...hints: string[]) =>
     [...hints, errorAt === id ? "rule-error" : ""].filter(Boolean).join(" ") || undefined;
@@ -530,7 +536,10 @@ export function RuleForm({
   const draft = (): RuleDraft => {
     if (!assetUrn.trim()) throw new Fault("Asset: choose the asset to check.", "rule-asset-search");
     let params: Record<string, unknown>;
-    if (jsonMode) {
+    if (keepHidden) {
+      // Exactly as the server sent it: it then keeps the stored values.
+      params = { hidden: true };
+    } else if (jsonMode) {
       let parsed: unknown;
       try {
         parsed = jsonText.trim() ? JSON.parse(jsonText) : {};
@@ -577,7 +586,8 @@ export function RuleForm({
       thresholdUnit: spec.whole ? "count" : unit,
       warnAbove,
       failAbove,
-      actions: { webhook: webhook.trim() || null, task },
+      // A webhook hidden from this role is sent back as it came, which keeps it.
+      actions: { webhook: webhook.trim() || (webhookHidden ? HIDDEN_WEBHOOK : null), task },
       enabled: rule?.enabled,
     };
   };
@@ -659,6 +669,14 @@ export function RuleForm({
     setPreview(null);
     setF((old) => ({ ...old, keyFields: [], refUrn: "", refField: "" }));
   }
+
+  const replaceHidden = () => {
+    setKeepHidden(false);
+    setPreview(null);
+    // The values box takes the place of the button; start there.
+    const first: Partial<Record<RuleType, string>> = { allowed_values: "rule-values", in_range: "rule-min", custom_sql: "rule-sql" };
+    window.setTimeout(() => document.getElementById(first[type] ?? "rule-type")?.focus(), 0);
+  };
 
   const editJson = () => {
     setJsonText(json(generated));
@@ -745,7 +763,8 @@ export function RuleForm({
               id="rule-type"
               value={type}
               onChange={(e) => changeType(e.target.value as RuleType)}
-              aria-describedby="rule-type-hint"
+              disabled={keepHidden}
+              aria-describedby={keepHidden ? "rule-type-hint rule-hidden-hint" : "rule-type-hint"}
             >
               {CHECKS.filter((c) => admin || c.type !== "custom_sql" || c.type === rule?.type).map((c) => (
                 <option key={c.type} value={c.type}>
@@ -764,8 +783,9 @@ export function RuleForm({
                 id="rule-field"
                 value={column}
                 onChange={(e) => changeColumn(e.target.value)}
+                disabled={keepHidden}
                 aria-invalid={invalid("rule-field")}
-                aria-describedby={describedBy("rule-field", "rule-field-hint")}
+                aria-describedby={describedBy("rule-field", "rule-field-hint", keepHidden ? "rule-hidden-hint" : "")}
               >
                 <option value="">{spec.column === "optional" ? "No column" : "Choose a column"}</option>
                 {options.map((c) => (
@@ -805,6 +825,20 @@ export function RuleForm({
           {jsonMode && (
             <p className="hint">Set by the JSON under “Advanced: edit as JSON” below, which the fields have handed over to.</p>
           )}
+          {keepHidden ? (
+            <>
+              <p id="rule-hidden-hint">
+                <strong>Hidden: this column is sensitive.</strong> The saved values stay as they are when you save. The
+                check and column stay fixed while the values are hidden.
+              </p>
+              <div className="buttons">
+                <button type="button" onClick={replaceHidden}>
+                  Replace the values
+                </button>
+              </div>
+            </>
+          ) : (
+          <>
           {type === "not_null" && (
             <label className="check">
               <input type="checkbox" checked={f.blankIsMissing} onChange={(e) => set("blankIsMissing", e.target.checked)} />{" "}
@@ -1078,6 +1112,8 @@ export function RuleForm({
               </p>
             </div>
           )}
+          </>
+          )}
         </fieldset>
 
         <details open={jsonOpen} onToggle={(e) => setJsonOpen((e.target as HTMLDetailsElement).open)}>
@@ -1117,7 +1153,7 @@ export function RuleForm({
                 {json(generated)}
               </code>
               <div className="buttons">
-                <button type="button" onClick={editJson}>
+                <button type="button" onClick={editJson} disabled={keepHidden}>
                   Edit as JSON
                 </button>
               </div>
@@ -1184,12 +1220,20 @@ export function RuleForm({
               autoComplete="off"
             />
             <p id="rule-hook-hint" className="hint">
+              {webhookHidden
+                ? "A webhook is set, but its address is hidden from your role. Leave this empty to keep it, or type an address to replace it. "
+                : ""}
               Only addresses on the administrator's allow-list are accepted.
             </p>
           </div>
         </fieldset>
         <div className="buttons">
-          <button type="button" onClick={doPreview}>
+          <button
+            type="button"
+            onClick={doPreview}
+            disabled={keepHidden}
+            aria-describedby={keepHidden ? "rule-preview-hint" : undefined}
+          >
             Preview on the sample
           </button>
           <button type="submit" className="primary" disabled={saving}>
@@ -1201,6 +1245,11 @@ export function RuleForm({
             </button>
           )}
         </div>
+        {keepHidden && (
+          <p id="rule-preview-hint" className="hint">
+            A preview needs the values, which are hidden from you. Save, then use Run now.
+          </p>
+        )}
         <div aria-live="polite">
           {preview && (
             <div className="preview">
