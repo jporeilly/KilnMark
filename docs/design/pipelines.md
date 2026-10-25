@@ -115,6 +115,31 @@ Added while building the engine (round 3, step 1):
   than the edges hold. The compiler adds a note to such pipelines (also when the inputs of a port
   taking many share a step, in case the step reads them one after another); reading the source
   twice avoids it, and the stall watchdog ends such a run with a plain message instead of hanging.
+- **Outcomes.** Each `StepResult` has an `outcome`: `FINISHED`, `ENDED_EARLY` (it stopped before
+  its input ended, or every step reading it had finished), `STOPPED` (the engine stopped it
+  because another step failed, the run stalled or was stopped) or `FAILED`. A UI shows a stopped
+  writer as stopped, not as a clean finish. The older constructors derive it from `error`.
+- If anything fails while the run is starting (building a step's context, starting a thread),
+  the steps already started are stopped and waited for before the failure is thrown. Decimal
+  settings are turned into text in full only when that is short, otherwise in scientific form
+  (`1E-999999999`), so a number can never become a string of a billion zeros.
+
+### Writing a step for graphs
+
+- Read with `input(port)` or, for a port taking many, `inputs(port)` with `RowSet.takeAny`; write
+  with `emit(port, batch)`, which drops rows for an unconnected port.
+- A step that polls with a timeout counts as waiting only while it waits; work between polls (a
+  commit, a remote call) is never taken for a stall.
+- **Close what you hold in `close()` or a `finally`.** When another step fails, the steps before
+  it are interrupted wherever they are, and every step can be stopped mid-batch. A batch taken but
+  not yet handed on must still be closed, or the step is reported (or, when stopped, logged) for
+  not freeing its memory.
+- **Interruption closes sockets.** Interrupting a thread blocked in socket or channel I/O closes
+  that socket. A step using a connection pool must validate connections before reuse, and must not
+  return a connection to the pool after it was interrupted mid-call. Writers should roll back in
+  `close()` when the step did not finish.
+- `inputSchema(port)` gives an input's columns when they were known before the run, so a step can
+  act correctly on an input that sends no batch.
 
 ## 2. The YAML format
 
@@ -191,7 +216,8 @@ steps:
   text (text, expression, column, source, asset, choice, and the values of columns, expressions,
   conditions and column maps) holds exactly what was written, so `asset: 2024.10` is `"2024.10"`
   and `007` is `"007"`; a number is a whole number (Integer or Long) or a BigDecimal, never
-  not-a-number, infinite, or beyond a long or a double. `settings()` at run time is the text of
+  not-a-number, infinite, beyond a long or a double, or with more than 1,000 digits or its decimal
+  point more than 1,000 places away (`1e-999999999` is refused). `settings()` at run time is the text of
   those values.
 - Refused, each with its line and column: files over 1,000,000 characters, more than one
   document, anchors and aliases (a pipeline is written out in full, so the canvas can rewrite it),
