@@ -31,7 +31,11 @@ details.
   role of whoever asked are checked again when a run starts, and no message carries a source's
   secret. What a write wrote is registered in the catalogue with its profile and its lineage from
   the assets read, under a run of kind `pipeline` that source run lists do not show (migration
-  V12; `kilnmark.pipelines.max-yaml-kb`, `memory-limit-mb` and `row-set-capacity`).
+  V12; `kilnmark.pipelines.max-yaml-kb`, `memory-limit-mb`, `row-set-capacity` and
+  `wait-for-target`). While a source allows writing, only admins change where it points, and a
+  write's options cannot redirect it. A pipeline runs once at a time, and one run at a time writes
+  each table or file. Viewers see that a step failed but not its message, which may quote the data;
+  for runs touching columns marked sensitive, only admins see it.
 - **Pipelines page:** a list with Run now, and for each pipeline a YAML editor that checks as you
   type (choosing a problem moves to its line), Save with a message, a graph of the steps with the
   columns leaving each, versions and runs with a per-step breakdown. The guide "Building and
