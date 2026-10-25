@@ -85,3 +85,25 @@ publicly pullable.
 - Hardwood's tuning goes through JVM-wide system properties, set once when the first Parquet file
   is read: one server, one setting.
 - Hardwood logs one INFO line through `java.util.logging` saying whether SIMD is in use.
+
+## Amendment: writing Parquet (25 October 2026)
+
+Pipelines write Parquet (docs/design/pipelines.md, section 4). Hardwood 1.0.1 only reads, and
+parquet-java's writer needs Hadoop on the class path as its reader does (above), so Kilnmark
+writes Parquet with its own encoder, `ParquetEncoder` (about 700 lines, from the Apache Parquet
+format specification; the Thrift compact encoding follows the test writer already in the repository).
+
+- **What it writes:** format version 1, flat `OPTIONAL` columns, data pages v1 with `PLAIN` values
+  and `RLE` definition levels, pages of about 1 MiB and row groups of about 64 MiB, no
+  dictionaries, statistics or page indexes. Types follow what `ParquetFields` reads back: integer
+  widths, `DECIMAL` on `INT32`, `INT64` or a fixed-length array, `STRING`, `DATE`,
+  `TIME(MICROS)`, `TIMESTAMP(MICROS)` adjusted to UTC or not. Nested values are written as text.
+- **Codecs:** Snappy by default, ZSTD, GZIP (the JDK) or none. snappy-java and zstd-jni were
+  already shipped for reading; they are now compiled against as well. No dependency is added.
+- **Streaming:** row groups are written as they fill and the footer at the end, so the same code
+  writes a local temporary file and an S3 multipart upload.
+- **Checked** by reading back through Hardwood in the tests, for every type and codec, several
+  row groups and pages, and by pyarrow 26 during development.
+- **Cost:** files are larger than a dictionary-encoding writer's for repetitive text, and carry no
+  statistics for readers to skip row groups. Either can be added to the encoder without changing
+  its callers; if a Hadoop-free writer library appears, `ParquetEncoder` is the one class to replace.

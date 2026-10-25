@@ -29,6 +29,28 @@ details.
 
 ### Details
 
+- **Writing from pipelines** (docs/guide/writing-data.md): PostgreSQL, SQL Server, folder and S3
+  sources can now be written to by a pipeline's `write` step (`Connector.writer`, capability
+  `WRITE`). Tables: modes `create`, `append` (every input column checked against the table
+  first, all mismatches named), `replace` (filled under a temporary name and swapped in one
+  transaction; grants kept, indexes, constraints, triggers and owner not; refused when views or
+  foreign keys depend on the table) and `upsert` by `key` (PostgreSQL `ON CONFLICT`, which needs
+  a unique index on the key; SQL Server `MERGE … WITH (HOLDLOCK)`). PostgreSQL loads with `COPY`;
+  SQL Server with batched inserts, bulk-copied into tables the step creates. One transaction per
+  run, or `commit_every` rows (a failure then keeps the committed rows, and says so). The login's
+  rights are checked first and a refusal names the grant to ask for. Files: CSV (RFC 4180, UTF-8,
+  `delimiter`) and Parquet (Snappy, ZSTD, GZIP or none) to a path inside the source, written to a
+  temporary name and renamed (folders) or uploaded and completed at the end (S3); existing files
+  need `overwrite: true`. What is written is profiled in the same pass and reported for the
+  written asset (`SCHEMA`, `ROW_COUNT`, `PROFILE`, `SAMPLE`) once the write has succeeded.
+- **Parquet is written by Kilnmark's own encoder** (`ParquetEncoder`, from the Apache Parquet
+  specification): Hardwood only reads, and parquet-java needs Hadoop (ADR 0015, amended). No new
+  dependency: snappy-java and zstd-jni, already shipped for reading, are now compiled against,
+  and the PostgreSQL driver the server ships is compiled against for `COPY`.
+- **Profiling no longer fails on an empty piece of text** (a quoted `""` in a CSV file), on a
+  column whose values are all NaN, or on 8-bit and unsigned integer, 256-bit decimal and large
+  text columns.
+
 - **Find local models** on the AI models page (`POST /api/v1/ai/discover`, admins only): looks for
   Ollama and LM Studio on the machine running Kilnmark or its container
   (`host.containers.internal`, `host.docker.internal`, `localhost`) and for the bundled Compose
