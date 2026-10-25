@@ -302,11 +302,10 @@ public final class StandardFormats {
 
     /**
      * One rule in ODCS's quality section as {@code sight} may see it: allowed values and range
-     * bounds only where the rule's column's values may be shown, custom SQL only to roles that may
-     * see data.
+     * bounds only where the rule's column's values may be shown, custom SQL only where every
+     * column's may be (as {@link Masking#params}).
      */
     static ObjectNode quality(Rule r, QualityStore.Result last, Masking.Sight sight) {
-        boolean data = sight.data();
         ObjectNode q = J.objectNode();
         q.put("id", "rule-" + r.id());
         q.put("name", r.name());
@@ -355,8 +354,8 @@ public final class StandardFormats {
                 }
             }
             case CUSTOM_SQL -> {
-                if (!data) {
-                    q.put("type", "text"); // the SQL itself may quote values
+                if (sight.anyHidden()) {
+                    q.put("type", "text"); // the SQL itself may quote values, of any column
                 } else if (share) {
                     kilnmark(q, r, sight);
                 } else {

@@ -89,9 +89,25 @@ details.
   range bounds of its rules and recommendations, failing-rows queries and database error text, the
   ODCS export's rule values, the profile's histogram bounds, live previews of the catalogued table
   or file, and the MCP server's `get_asset`, which always masks. Shapes, counts and shares stay. Drift,
-  rules, results and recommendations take `unmask=true` from an admin. Saving a rule whose values
-  were shown hidden keeps them. Embedded text and prompts were checked: names, types and descriptions
-  only, never values.
+  rules, results and recommendations take `unmask=true` from an admin. Embedded text and prompts were
+  checked: names, types and descriptions only, never values.
+  - A rule on a sensitive column cannot be previewed by anyone who may not unmask it, and its results
+    give counts only (no failing rows or query): failing rows would show which rows hold which values.
+    Custom SQL's text, like its failing query, is hidden while the asset has any sensitive column. A
+    freshness result on a sensitive timestamp says only whether the latest value is within the limit.
+  - Saving a rule as shown keeps what was masked: parameters `{"hidden": true}` keep the stored ones
+    (same column and type only, otherwise 400) and webhook `"(set)"` keeps the stored webhook; both
+    markers are refused on new rules and previews.
+  - Live previews find marks by the saved source and the connector's own path; previews of settings
+    not yet saved are for admins.
+  - A workbook's text holds its sheets' cells: when a sheet has a sensitive column, the workbook's
+    text, find, chunks and search snippets are for admins only.
+  - Marks are kept apart from the column rows a scan replaces (migration V11, `sensitive_column`), so a
+    dropped or renamed column keeps its mark and the values stored under its name stay masked; a
+    detected rename carries the mark to the new name.
+  - One request-scoped `Sights` bean decides masking for every endpoint and MCP tool, and a test over
+    the source tree fails if one shows values without it.
+- **Freshness rules** count the values they could not read as a date or time, and say so.
 - **Webhooks, after review:** a webhook path may not hold a semicolon, raw or encoded (`%3b`), so a
   segment such as `..;x`, which some servers read as `..` once they drop its parameters, cannot
   climb out of an allowed prefix. Percent-escapes in the path are allowed only for letters, digits,

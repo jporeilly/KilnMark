@@ -263,20 +263,26 @@ public class QualityService {
         int rules = 0;
         int failing = 0;
         int drift = 0;
+        String refused = null;
         for (QualityStore.Version v : versions) {
             if (cancelled.getAsBoolean()) {
                 return null;
             }
             drift += analyse(v.id());
-            Outcome o = evaluate(v.assetUrn(), store.rules(v.assetUrn(), null, true), r.id());
-            rules += o.ran();
-            failing += o.failing();
+            try {
+                Outcome o = evaluate(v.assetUrn(), store.rules(v.assetUrn(), null, true), r.id());
+                rules += o.ran();
+                failing += o.failing();
+            } catch (HostRefused e) {
+                // Measures and drift need no connection: they go on for every asset; the rules wait for the host.
+                refused = e.getMessage();
+            }
             rescore(v.assetUrn());
             store.pruneVersions(v.assetUrn(), config.quality().keepVersions());
         }
         return versions.size() + (versions.size() == 1 ? " asset" : " assets") + " analysed, " + rules
             + (rules == 1 ? " rule" : " rules") + " run (" + failing + " failing or warning), " + drift
-            + " drift " + (drift == 1 ? "event" : "events");
+            + " drift " + (drift == 1 ? "event" : "events") + (refused == null ? "" : ". Rules not run: " + refused);
     }
 
     private String manualJob(QualityStore.Run r, BooleanSupplier cancelled) throws InterruptedException {
@@ -312,6 +318,9 @@ public class QualityService {
             events += found.size();
             for (int i = 0; i < found.size(); i++) {
                 Drift.Event e = found.get(i);
+                if (e.change().equals("column_renamed")) {
+                    store.carrySensitive(now.assetUrn(), e.evidence().path("from").asText(), e.field());
+                }
                 if (!e.severity().equals("low")) {
                     store.openDriftIssue(now.assetUrn(), e.field(), e.change(), ids.get(i), "Drift: " + e.message(),
                         "Found when comparing with the previous scan (" + previous.observedAt() + ").", e.severity());
@@ -414,9 +423,12 @@ public class QualityService {
                 store.resolveRuleIssue(rule.id());
             } else {
                 String severity = status == Rule.Status.FAIL ? "high" : status == Rule.Status.WARN ? "medium" : "low";
+                // Issues are read by every role: a freshness message states the age of a value, not said of a
+                // column marked sensitive.
+                boolean quiet = rule.type() == RuleType.FRESHNESS && store.sensitive(rule.assetUrn()).contains(rule.field());
                 String detail = status == Rule.Status.ERROR ? "The rule could not run: " + e.error()
                     : Measures.count(e.failing()) + " of " + Measures.count(e.total()) + " rows fail"
-                        + (e.message() == null ? "" : " (" + e.message() + ")");
+                        + (e.message() == null || quiet ? "" : " (" + e.message() + ")");
                 store.openRuleIssue(rule, "Rule '" + rule.name() + "' " + status.id() + "s", detail, severity);
             }
         }

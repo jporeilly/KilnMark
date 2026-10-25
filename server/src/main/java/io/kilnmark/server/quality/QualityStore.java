@@ -354,18 +354,67 @@ public class QualityStore {
         });
     }
 
-    /** Fields marked sensitive. */
+    /**
+     * Columns marked sensitive, including columns since dropped or renamed (their stored values stay
+     * masked). Callers outside {@link Sights} and the marking itself should not need this.
+     */
     public Set<String> sensitive(String urn) {
-        return new HashSet<>(query("SELECT name FROM kilnmark.field WHERE asset_urn = ? AND sensitive",
+        return new HashSet<>(query("SELECT name FROM kilnmark.sensitive_column WHERE asset_urn = ?",
             ps -> ps.setString(1, urn), rs -> rs.getString(1)));
     }
 
+    /** Columns marked sensitive, for several assets at once. */
+    public Map<String, Set<String>> sensitive(java.util.Collection<String> urns) {
+        Map<String, Set<String>> out = new HashMap<>();
+        urns.forEach(u -> out.put(u, new HashSet<>()));
+        if (urns.isEmpty()) {
+            return out;
+        }
+        query("SELECT asset_urn, name FROM kilnmark.sensitive_column WHERE asset_urn = ANY (?)",
+            ps -> ps.setArray(1, ps.getConnection().createArrayOf("text", urns.toArray())),
+            rs -> out.computeIfAbsent(rs.getString(1), k -> new HashSet<>()).add(rs.getString(2)));
+        return out;
+    }
+
+    /**
+     * Marks a column sensitive or not. Marking needs the column to exist now; unmarking does not,
+     * so an admin can clear the mark of a column since dropped.
+     */
     public boolean setSensitive(String urn, String field, boolean sensitive) {
-        return update("UPDATE kilnmark.field SET sensitive = ? WHERE asset_urn = ? AND name = ?", ps -> {
-            ps.setBoolean(1, sensitive);
-            ps.setString(2, urn);
-            ps.setString(3, field);
-        }) == 1;
+        if (!sensitive) {
+            return update("DELETE FROM kilnmark.sensitive_column WHERE asset_urn = ? AND name = ?", ps -> {
+                ps.setString(1, urn);
+                ps.setString(2, field);
+            }) == 1 || query("SELECT 1 FROM kilnmark.field WHERE asset_urn = ? AND name = ?", ps -> {
+                ps.setString(1, urn);
+                ps.setString(2, field);
+            }, rs -> 1).size() == 1;
+        }
+        return update("INSERT INTO kilnmark.sensitive_column (asset_urn, name) SELECT asset_urn, name "
+            + "FROM kilnmark.field WHERE asset_urn = ? AND name = ? ON CONFLICT DO NOTHING", ps -> {
+                ps.setString(1, urn);
+                ps.setString(2, field);
+            }) == 1 || sensitive(urn).contains(field);
+    }
+
+    /** Of {@code urns}, the assets that or any of whose parts (a workbook's sheets) have a column marked sensitive. */
+    public Set<String> textWithheld(java.util.Collection<String> urns) {
+        return new HashSet<>(query("""
+            SELECT u FROM unnest(?::text[]) u
+            WHERE EXISTS (SELECT 1 FROM kilnmark.sensitive_column s WHERE s.asset_urn = u)
+               OR EXISTS (SELECT 1 FROM kilnmark.sensitive_column s JOIN kilnmark.asset a ON a.urn = s.asset_urn
+                          WHERE a.parent_urn = u)""",
+            ps -> ps.setArray(1, ps.getConnection().createArrayOf("text", urns.toArray())), rs -> rs.getString(1)));
+    }
+
+    /** A column renamed from {@code from} to {@code to} keeps its mark under both names. */
+    public void carrySensitive(String urn, String from, String to) {
+        update("INSERT INTO kilnmark.sensitive_column (asset_urn, name) SELECT asset_urn, ? "
+            + "FROM kilnmark.sensitive_column WHERE asset_urn = ? AND name = ? ON CONFLICT DO NOTHING", ps -> {
+                ps.setString(1, to);
+                ps.setString(2, urn);
+                ps.setString(3, from);
+            });
     }
 
     // ---- rules ----
@@ -683,6 +732,20 @@ public class QualityStore {
         query("SELECT DISTINCT ON (rule_id) " + RESULT_COLUMNS + " FROM kilnmark.quality_result WHERE asset_urn = ? "
             + "ORDER BY rule_id, observed_at DESC, id DESC", ps -> ps.setString(1, urn), this::result)
             .forEach(r -> out.put(r.ruleId(), r));
+        return out;
+    }
+
+    /** The latest result of each rule of several assets at once, by asset. */
+    public Map<String, Map<Long, Result>> latestResults(java.util.Collection<String> urns) {
+        Map<String, Map<Long, Result>> out = new HashMap<>();
+        urns.forEach(u -> out.put(u, new LinkedHashMap<>()));
+        if (urns.isEmpty()) {
+            return out;
+        }
+        query("SELECT DISTINCT ON (rule_id) " + RESULT_COLUMNS + " FROM kilnmark.quality_result WHERE asset_urn = ANY (?) "
+            + "ORDER BY rule_id, observed_at DESC, id DESC",
+            ps -> ps.setArray(1, ps.getConnection().createArrayOf("text", urns.toArray())), this::result)
+            .forEach(r -> out.computeIfAbsent(r.assetUrn(), k -> new LinkedHashMap<>()).put(r.ruleId(), r));
         return out;
     }
 

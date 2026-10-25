@@ -52,7 +52,7 @@ public class CatalogTools {
 
     /** Columns marked sensitive: an assistant is a model, so their values are always masked for it. */
     @Inject
-    io.kilnmark.server.quality.QualityStore quality;
+    io.kilnmark.server.quality.Sights sights;
 
     public CatalogTools(HybridSearch search, GraphStore store, Db db, ObjectMapper json) {
         this.search = search;
@@ -135,7 +135,7 @@ public class CatalogTools {
             out.put("removedAt", a.removedAt().toString());
         }
         List<Map<String, Object>> fields = new ArrayList<>();
-        Set<String> sensitive = quality.sensitive(a.urn());
+        io.kilnmark.server.quality.Masking.Sight sight = sights.model(a.urn());
         for (Records.FieldDetail f : a.fields()) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", f.name());
@@ -143,7 +143,7 @@ public class CatalogTools {
             m.put("kind", f.kind());
             m.put("nullable", f.nullable());
             m.put("description", f.description());
-            m.put("profile", profile(f.profileJson(), sensitive.contains(f.name())));
+            m.put("profile", profile(f.profileJson(), f.name(), sight));
             fields.add(m);
         }
         out.put("fields", fields);
@@ -232,12 +232,12 @@ public class CatalogTools {
      * marked sensitive keeps its counts and has its values masked: they never go to an assistant,
      * whoever's token it uses (an assistant cannot ask to unmask).
      */
-    private Map<String, Object> profile(String stats, boolean sensitive) {
+    private Map<String, Object> profile(String stats, String field, io.kilnmark.server.quality.Masking.Sight sight) {
         if (stats == null) {
             return null;
         }
         try {
-            JsonNode n = io.kilnmark.server.quality.Masking.profile(json.readTree(stats), sensitive, false);
+            JsonNode n = io.kilnmark.server.quality.Masking.profile(json.readTree(stats), field, sight);
             Map<String, Object> m = new LinkedHashMap<>();
             for (String k : List.of("rows", "nulls", "distinct", "min_length", "max_length")) {
                 if (n.has(k)) {

@@ -1,0 +1,84 @@
+package io.kilnmark.server.quality;
+
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import io.kilnmark.server.auth.AccessRole;
+import io.quarkus.security.identity.SecurityIdentity;
+import jakarta.enterprise.context.RequestScoped;
+import jakarta.inject.Inject;
+
+/**
+ * Who is looking, for one request: the one place where the caller's roles and an asset's columns
+ * marked sensitive become a {@link Masking.Sight}. Every resource, preview and MCP tool that shows
+ * values from the data (profiles, samples, examples, evidence, drift, rules, results, failing
+ * rows, exports, previews, document text) asks here; {@code SightsUseTest} fails the build when
+ * one reads them without.
+ */
+@RequestScoped
+public class Sights {
+
+    /** The least role that may see data values. */
+    public static final String DATA_ROLE = AccessRole.STEWARD_ROLE;
+    /** The least role that may see values of columns marked sensitive. */
+    public static final String UNMASK_ROLE = AccessRole.ADMIN_ROLE;
+
+    @Inject
+    SecurityIdentity identity;
+    @Inject
+    QualityStore store;
+    private final Map<String, Set<String>> marks = new HashMap<>();
+
+    /** Whether the caller may see data values at all. */
+    public boolean data() {
+        return identity.hasRole(DATA_ROLE);
+    }
+
+    /** Whether the caller may see values of columns marked sensitive, when asking to. */
+    public boolean mayUnmask() {
+        return identity.hasRole(UNMASK_ROLE);
+    }
+
+    /** The asset's columns marked sensitive (once per request). */
+    public Set<String> marks(String urn) {
+        return marks.computeIfAbsent(urn, store::sensitive);
+    }
+
+    /** Reads the marks of several assets in one query, for listings. */
+    public void load(Collection<String> urns) {
+        List<String> missing = urns.stream().filter(u -> !marks.containsKey(u)).distinct().toList();
+        if (!missing.isEmpty()) {
+            marks.putAll(store.sensitive(missing));
+        }
+    }
+
+    /** Quality views: values for roles that may see data; sensitive columns only for an admin who asks. */
+    public Masking.Sight of(String urn, boolean unmask) {
+        return new Masking.Sight(data(), marks(urn), unmask && mayUnmask());
+    }
+
+    /**
+     * The catalogue's own views (an asset's column profiles, live previews): their statistics are
+     * shown to every role, as before; sensitive columns are masked for all but admins.
+     */
+    public Masking.Sight catalogue(String urn) {
+        return new Masking.Sight(true, marks(urn), mayUnmask());
+    }
+
+    /** What a model may be shown (the MCP server): never a sensitive column's values, whoever's token. */
+    public Masking.Sight model(String urn) {
+        return new Masking.Sight(true, marks(urn), false);
+    }
+
+    /**
+     * Documents whose text is withheld from the caller: a document's text holds its sheets' cells
+     * (a workbook), so when it or any part of it has a column marked sensitive, only an admin reads
+     * its text, finds in it or sees its snippets.
+     */
+    public Set<String> textWithheld(Collection<String> urns) {
+        return mayUnmask() || urns.isEmpty() ? Set.of() : store.textWithheld(urns);
+    }
+}

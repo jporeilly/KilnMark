@@ -84,9 +84,9 @@ public final class Masking {
         return copy;
     }
 
-    /** Masks the profile's most common values of every sensitive field; for {@code CatalogResource}. */
-    public static JsonNode profile(String field, JsonNode profile, Set<String> sensitive, boolean unmasked) {
-        return profile(profile, sensitive.contains(field), unmasked);
+    /** A column profile as {@code s} may see it (see {@link Sights#catalogue} and {@link Sights#model}). */
+    public static JsonNode profile(JsonNode profile, String field, Sight s) {
+        return profile(profile, !s.values(field), false);
     }
 
     /** Measure or drift evidence without the values in it, for roles that may not see data. */
@@ -133,12 +133,13 @@ public final class Masking {
     /**
      * A rule's parameters as {@code s} may see them: allowed values and range bounds are values of
      * the rule's column (often taken from the data by a recommendation), hidden where the column's
-     * values are; custom SQL is hidden from roles that may not see data.
+     * values are; custom SQL (which may quote values of any column) where any column's are, the same
+     * rule as for its failing query.
      */
     public static JsonNode params(Rule r, Sight s) {
         boolean hide = switch (r.type()) {
             case ALLOWED_VALUES, IN_RANGE -> !s.values(r.field());
-            case CUSTOM_SQL -> !s.data();
+            case CUSTOM_SQL -> s.anyHidden();
             default -> false;
         };
         return hide ? J.objectNode().put("hidden", true) : r.params();
@@ -162,11 +163,24 @@ public final class Masking {
     }
 
     /**
-     * Whether the values a rule's checks touch may be shown: its column's, or for custom SQL
-     * (which can read any column) every column's. {@code rule} null (deleted) counts as custom.
+     * Whether the values a rule's checks touch may be shown: its column's (and a unique key's other
+     * columns), or for custom SQL (which can read any column) every column's. {@code rule} null
+     * (deleted) counts as custom. Where not, the rule is not previewed and its results give counts
+     * only: failing rows would show which rows hold which values.
      */
-    static boolean ruleValues(Rule rule, Sight s) {
-        return rule == null || rule.type() == RuleType.CUSTOM_SQL ? !s.anyHidden() : s.values(rule.field());
+    public static boolean ruleValues(Rule rule, Sight s) {
+        if (rule == null || rule.type() == RuleType.CUSTOM_SQL) {
+            return !s.anyHidden();
+        }
+        if (!s.values(rule.field())) {
+            return false;
+        }
+        for (JsonNode f : rule.params().path("fields")) {
+            if (!s.values(f.asText())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -179,8 +193,14 @@ public final class Masking {
             return null;
         }
         boolean show = ruleValues(rule, s);
+        String message = r.message();
+        if (rule != null && rule.type() == RuleType.FRESHNESS && s.sensitive().contains(rule.field()) && !s.unmasked()
+            && message != null && r.failing() != null) {
+            // the latest value's age is a value of the column
+            message = r.failing() > 0 ? "The latest value is older than the limit" : "The latest value is within the limit";
+        }
         return new QualityStore.Result(r.id(), r.ruleId(), r.qualityRunId(), r.assetUrn(), r.status(), r.total(),
-            r.failing(), r.method(), show ? r.failingQuery() : null, null, r.message(), r.observedAt(), r.origin(),
+            r.failing(), r.method(), show ? r.failingQuery() : null, null, message, r.observedAt(), r.origin(),
             show ? r.errorDetail() : null, r.estimate());
     }
 

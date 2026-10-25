@@ -3,6 +3,7 @@ package io.kilnmark.server.quality;
 import static io.kilnmark.server.Tokens.admin;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.equalTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -587,7 +588,10 @@ class QualityFlowTest {
         JsonNode contract = JSON.readTree(as(steward).queryParam("urn", CUSTOMERS).get("/api/v1/quality/export/odcs")
             .then().statusCode(200).extract().asString());
         assertTrue(contract.toString().contains("\"validValues\""), "stewards see allowed values");
-        assertTrue(contract.toString().contains("{property} < 0"), "custom SQL with ODCS placeholders");
+        assertFalse(contract.toString().contains("< 0"), "custom SQL may quote any column: hidden while the asset "
+            + "has sensitive columns");
+        assertTrue(admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true).get("/api/v1/quality/export/odcs")
+            .then().statusCode(200).extract().asString().contains("{property} < 0"), "custom SQL with ODCS placeholders");
         Set<ValidationMessage> odcsErrors = validate("classpath:schemas/odcs/odcs-json-schema-v3.1.0.json", contract,
             SpecVersion.VersionFlag.V201909);
         assertEquals(Set.of(), odcsErrors, odcsErrors + " in " + contract);
@@ -766,5 +770,70 @@ class QualityFlowTest {
         List<List<String>> rows = preview.getList("rows");
         assertTrue(col >= 0 && rows.stream().allMatch(r -> r.get(col) == null || r.get(col).equals("••••")),
             rows.toString());
+    }
+
+    @Test
+    @Order(16)
+    void probingASensitiveColumnAndTheMarkersForMaskedValues() {
+        // quantity is still marked sensitive; its in_range rule ran in step 4.
+        Map<String, Object> range = Map.of("assetUrn", CUSTOMERS, "field", "quantity", "type", "in_range",
+            "params", Map.of("min", 0, "max", 5));
+        as(steward).contentType(ContentType.JSON).body(range).post("/api/v1/quality/rules/preview").then()
+            .statusCode(403).body("error", containsString("sensitive"));
+        admin().contentType(ContentType.JSON).body(range).queryParam("unmask", true)
+            .post("/api/v1/quality/rules/preview").then().statusCode(200);
+        long resultId = admin().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
+            .statusCode(200).extract().jsonPath().getLong("latest.id");
+        JsonPath result = as(steward).get("/api/v1/quality/results/" + resultId).then().statusCode(200).extract()
+            .jsonPath();
+        assertNull(result.get("failingRows"), "counts only: the rows would show which rows hold which values");
+        assertNull(result.get("failingQuery"));
+        assertNotNull(result.get("failing"));
+
+        // Markers: refused where nothing is stored to keep, kept on a saved rule's own column and type.
+        as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "quantity",
+            "type", "in_range", "params", Map.of("hidden", true))).post("/api/v1/quality/rules").then().statusCode(400);
+        as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "postcode",
+            "type", "not_null", "actions", Map.of("webhook", "(set)"))).post("/api/v1/quality/rules").then()
+            .statusCode(400);
+        as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "quantity",
+            "type", "not_null", "params", Map.of("hidden", true))).put("/api/v1/quality/rules/" + rules.get("quantity"))
+            .then().statusCode(400).body("error", containsString("same column and type"));
+        as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "id",
+            "type", "in_range", "params", Map.of("hidden", true))).put("/api/v1/quality/rules/" + rules.get("quantity"))
+            .then().statusCode(400);
+
+        // The rules page's on/off switch sends the rule back as shown: hidden parameters, "(set)" webhook.
+        Map<String, Object> shown = new HashMap<>(as(steward).get("/api/v1/quality/rules/" + rules.get("quantity"))
+            .then().statusCode(200).extract().jsonPath().getMap("rule"));
+        shown.put("enabled", false);
+        as(steward).contentType(ContentType.JSON).body(shown).put("/api/v1/quality/rules/" + rules.get("quantity"))
+            .then().statusCode(200).body("enabled", equalTo(false)).body("params.hidden", equalTo(true));
+        JsonPath kept = admin().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
+            .statusCode(200).extract().jsonPath();
+        assertNotNull(kept.get("rule.params.min"), kept.prettify());
+        assertEquals(false, kept.get("rule.enabled"));
+        Map<String, Object> email = new HashMap<>(as(steward).get("/api/v1/quality/rules/" + rules.get("email")).then()
+            .statusCode(200).extract().jsonPath().getMap("rule"));
+        email.put("actions", Map.of("webhook", "(set)", "task", true));
+        as(steward).contentType(ContentType.JSON).body(email).put("/api/v1/quality/rules/" + rules.get("email")).then()
+            .statusCode(200);
+        assertEquals("http://127.0.0.1:47391/hooks/quality", admin().get("/api/v1/quality/rules/" + rules.get("email"))
+            .then().statusCode(200).extract().jsonPath().getString("rule.actions.webhook"), "the stored webhook is kept");
+
+        // Previews of settings not saved are for admins; the saved settings preview, masked.
+        Map<String, String> saved = new HashMap<>(Map.of("url", url, "username", "qa_reader", "schemas", "qa",
+            "sample_rows", "200", "table_sample_above_rows", "10000"));
+        Map<String, String> changed = new HashMap<>(saved);
+        changed.put("schemas", "qa,public");
+        as(steward).contentType(ContentType.JSON).queryParam("asset", "qa.Customers")
+            .body(Map.of("source", "quality-db", "name", "quality-db", "kind", "postgresql", "settings", changed))
+            .post("/api/v1/drafts/preview").then().statusCode(403).body("error", containsString("admin"));
+        JsonPath same = as(steward).contentType(ContentType.JSON).queryParam("asset", "qa.Customers")
+            .body(Map.of("source", "quality-db", "name", "quality-db", "kind", "postgresql", "settings", saved))
+            .post("/api/v1/drafts/preview").then().statusCode(200).extract().jsonPath();
+        int col = same.getList("columns.name").indexOf("quantity");
+        List<List<String>> rows = same.getList("rows");
+        assertTrue(col >= 0 && rows.stream().allMatch(r -> r.get(col) == null || r.get(col).equals("••••")));
     }
 }

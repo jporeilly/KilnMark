@@ -264,29 +264,28 @@ public class SourceService {
         if (n < 1 || n > io.kilnmark.kiln.connect.Preview.MAX_ROWS) {
             throw new IllegalArgumentException("rows: from 1 to " + io.kilnmark.kiln.connect.Preview.MAX_ROWS);
         }
+        java.util.concurrent.atomic.AtomicReference<String> path = new java.util.concurrent.atomic.AtomicReference<>();
         io.kilnmark.kiln.connect.Preview p = run(connector, config, "preview " + asset, () -> {
             io.kilnmark.kiln.connect.AssetInfo info = connector.asset(config, asset);
+            path.set(info.path()); // the connector's own spelling, as the catalogue holds it
             return connector.preview(config, info, n);
         });
         return new Views.Preview(asset, p.columns().stream()
             .map(c -> new Views.PreviewColumn(c.name(), c.kind(), c.sourceType())).toList(),
-            masked(config, asset, p), p.rows().size(), p.truncated(), p.details());
+            masked(config, path.get() == null ? asset : path.get(), p), p.rows().size(), p.truncated(), p.details());
     }
 
-    /** The preview's rows with the catalogued asset's sensitive columns masked, unless an admin asks. */
-    private List<List<String>> masked(SourceConfig config, String asset, io.kilnmark.kiln.connect.Preview p) {
-        if (identity.hasRole(io.kilnmark.server.auth.AccessRole.ADMIN_ROLE)) {
-            return p.rows();
-        }
-        java.util.Set<String> sensitive;
+    /** The preview's rows with the catalogued asset's sensitive columns masked, for all but admins. */
+    private List<List<String>> masked(SourceConfig config, String path, io.kilnmark.kiln.connect.Preview p) {
+        io.kilnmark.server.quality.Masking.Sight sight;
         try {
-            sensitive = quality.sensitive(new io.kilnmark.graph.Urn(config.name(), asset).toString());
+            sight = sights.catalogue(new io.kilnmark.graph.Urn(config.name(), path).toString());
         } catch (IllegalArgumentException e) {
             return p.rows(); // no asset can have that URN, so none has marks
         }
         List<Integer> hide = new ArrayList<>();
         for (int i = 0; i < p.columns().size(); i++) {
-            if (sensitive.contains(p.columns().get(i).name())) {
+            if (!sight.values(p.columns().get(i).name())) {
                 hide.add(i);
             }
         }
@@ -306,12 +305,39 @@ public class SourceService {
         return out;
     }
 
-    /** Columns marked sensitive, for masking previews (data quality, stream E). */
-    @jakarta.inject.Inject
-    io.kilnmark.server.quality.QualityStore quality;
+    /** Settings that do not change what a preview reads. */
+    private static final java.util.Set<String> NOT_READING = java.util.Set.of("description", "ai_egress", "display_name");
 
+    /**
+     * Previews of settings not yet saved are for admins. Masking finds a table's sensitive columns by
+     * the saved source's name and the column names it read; changed settings (another folder, no
+     * header row, another source's address under this name) could read the same data under other
+     * names. So a steward previews a saved source exactly as saved.
+     */
+    void previewDraftAllowed(Records.Source existing, SourceConfig draft) {
+        if (sights.mayUnmask()) {
+            return;
+        }
+        if (existing == null || !existing.name().equals(draft.name())
+            || !reading(existing.settings()).equals(reading(draft.settings()))) {
+            throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can preview settings that are not saved. Save "
+                + "the source first, then preview it, so columns marked sensitive are found and masked.");
+        }
+    }
+
+    private static Map<String, String> reading(Map<String, String> settings) {
+        Map<String, String> out = new java.util.TreeMap<>();
+        settings.forEach((k, v) -> {
+            if (!NOT_READING.contains(k) && v != null && !v.isBlank()) {
+                out.put(k, v.trim());
+            }
+        });
+        return out;
+    }
+
+    /** Who is looking: columns marked sensitive are masked in previews for all but admins. */
     @jakarta.inject.Inject
-    io.quarkus.security.identity.SecurityIdentity identity;
+    io.kilnmark.server.quality.Sights sights;
 
     /** A preview as a response no browser or proxy keeps: the rows are the source's data. */
     static Response noStore(Views.Preview preview) {

@@ -30,6 +30,7 @@ import io.kilnmark.server.quality.QualityStore;
 import io.kilnmark.server.quality.Recommendations;
 import io.kilnmark.server.quality.Rule;
 import io.kilnmark.server.quality.RuleDraft;
+import io.kilnmark.server.quality.Sights;
 import io.kilnmark.server.quality.StandardFormats;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.RolesAllowed;
@@ -63,9 +64,9 @@ import jakarta.ws.rs.core.Response;
 public class QualityResource {
 
     /** The least role that may see data values. */
-    public static final String DATA_ROLE = AccessRole.STEWARD_ROLE;
+    public static final String DATA_ROLE = Sights.DATA_ROLE;
     /** The least role that may see values of columns marked sensitive. */
-    public static final String UNMASK_ROLE = AccessRole.ADMIN_ROLE;
+    public static final String UNMASK_ROLE = Sights.UNMASK_ROLE;
     static final String MASK = Masking.MASK;
 
     private final GraphStore graph;
@@ -73,6 +74,9 @@ public class QualityResource {
     private final QualityService quality;
     private final Connectors connectors;
     private final SecurityIdentity identity;
+    /** Who is looking: every value shown goes through here. */
+    @jakarta.inject.Inject
+    Sights sights;
     private final ObjectMapper json;
     private final String version;
 
@@ -97,9 +101,9 @@ public class QualityResource {
         Records.AssetDetail a = asset(urn);
         ObjectNode out = json.createObjectNode();
         out.put("urn", a.urn());
-        boolean data = identity.hasRole(DATA_ROLE);
+        boolean data = sights.data();
         out.put("canSeeData", data);
-        out.put("canUnmask", identity.hasRole(UNMASK_ROLE));
+        out.put("canUnmask", sights.mayUnmask());
         Optional<QualityStore.Version> v = store.latestVersion(urn);
         v.ifPresentOrElse(x -> out.set("version", json.valueToTree(x)), () -> out.putNull("version"));
         ObjectNode scores = out.putObject("scores");
@@ -114,8 +118,8 @@ public class QualityResource {
                 fieldScores.withArrayProperty(s.field()).add(o);
             }
         }
-        Set<String> sensitive = store.sensitive(urn);
-        Masking.Sight sight = sight(sensitive, unmask);
+        Set<String> sensitive = sights.marks(urn);
+        Masking.Sight sight = sights.of(urn, unmask);
         ArrayNode measures = out.putArray("measures");
         v.ifPresent(x -> store.measures(x.id()).forEach(m -> {
             ObjectNode o = measures.addObject().put("field", m.field()).put("dimension", m.dimension())
@@ -184,7 +188,7 @@ public class QualityResource {
     public List<QualityStore.DriftRow> drift(@QueryParam("urn") String urn, @QueryParam("limit") Integer limit,
                                              @QueryParam("unmask") boolean unmask) {
         asset(urn);
-        Masking.Sight sight = sight(urn, unmask);
+        Masking.Sight sight = sights.of(urn, unmask);
         return store.drift(urn, limit == null ? 50 : Math.max(1, Math.min(limit, 500))).stream()
             .map(d -> Masking.drift(d, sight))
             .toList();
@@ -230,8 +234,7 @@ public class QualityResource {
                 + "been scanned since sampling began.");
             return out;
         }
-        Set<String> sensitive = store.sensitive(urn);
-        boolean showSensitive = unmask && identity.hasRole(UNMASK_ROLE);
+        Masking.Sight sight = sights.of(urn, unmask);
         QualityStore.Sample x = s.get();
         out.put("kept", true);
         out.put("method", x.method());
@@ -241,23 +244,23 @@ public class QualityResource {
         out.set("columns", x.columns());
         List<String> masked = new ArrayList<>();
         x.columns().forEach(c -> {
-            if (sensitive.contains(c.asText()) && !showSensitive) {
+            if (!sight.values(c.asText())) {
                 masked.add(c.asText());
             }
         });
         out.set("masked", json.valueToTree(masked));
-        out.set("rows", maskRows(x.columns(), x.rows(), sensitive, showSensitive));
+        out.set("rows", maskRows(x.columns(), x.rows(), sight));
         return out;
     }
 
-    private ArrayNode maskRows(JsonNode columns, JsonNode rows, Set<String> sensitive, boolean show) {
+    private ArrayNode maskRows(JsonNode columns, JsonNode rows, Masking.Sight sight) {
         ArrayNode out = json.createArrayNode();
         if (rows == null) {
             return out;
         }
         Set<Integer> hide = new HashSet<>();
         for (int i = 0; columns != null && i < columns.size(); i++) {
-            if (sensitive.contains(columns.get(i).asText()) && !show) {
+            if (!sight.values(columns.get(i).asText())) {
                 hide.add(i);
             }
         }
@@ -283,7 +286,7 @@ public class QualityResource {
         if (body == null || body.field() == null || body.sensitive() == null) {
             throw new IllegalArgumentException("Send {\"field\": \"...\", \"sensitive\": true or false}");
         }
-        if (!body.sensitive() && !identity.hasRole(UNMASK_ROLE)) {
+        if (!body.sensitive() && !sights.mayUnmask()) {
             throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can stop treating a column as sensitive.");
         }
         if (!store.setSensitive(urn, body.field(), body.sensitive())) {
@@ -340,7 +343,7 @@ public class QualityResource {
             quality.settings().defaultCadence());
         // Allowed-value lists and ranges are values: without sight of the column's values, a recommendation
         // says that a rule is worth adding, not its values.
-        Masking.Sight sight = sight(urn, unmask);
+        Masking.Sight sight = sights.of(urn, unmask);
         return all.stream().map(r -> Masking.recommendation(r, sight)).toList();
     }
 
@@ -371,12 +374,16 @@ public class QualityResource {
     @Path("rules")
     public List<RuleView> rules(@QueryParam("urn") String urn, @QueryParam("source") String source,
                                 @QueryParam("unmask") boolean unmask) {
-        Map<String, Map<Long, QualityStore.Result>> latest = new LinkedHashMap<>();
-        Map<String, Masking.Sight> sights = new HashMap<>();
+        List<Rule> all = store.rules(blank(urn), blank(source), false);
+        Set<String> assets = new java.util.LinkedHashSet<>();
+        all.forEach(r -> assets.add(r.assetUrn()));
+        Map<String, Map<Long, QualityStore.Result>> latest = store.latestResults(assets); // one query, not one per asset
+        sights.load(assets);
+        Map<String, Masking.Sight> sightsByAsset = new HashMap<>();
         List<RuleView> out = new ArrayList<>();
-        for (Rule r : store.rules(blank(urn), blank(source), false)) {
-            QualityStore.Result res = latest.computeIfAbsent(r.assetUrn(), store::latestResults).get(r.id());
-            out.add(view(r, res, sights.computeIfAbsent(r.assetUrn(), u -> sight(u, unmask))));
+        for (Rule r : all) {
+            QualityStore.Result res = latest.getOrDefault(r.assetUrn(), Map.of()).get(r.id());
+            out.add(view(r, res, sightsByAsset.computeIfAbsent(r.assetUrn(), u -> sights.of(u, unmask))));
         }
         return out;
     }
@@ -391,6 +398,7 @@ public class QualityResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Response addRule(RuleDraft body) {
+        refuseMarkers(body);
         Rule r = check(body);
         Rule saved = store.insertRule(r);
         return Response.created(URI.create("/api/v1/quality/rules/" + saved.id())).entity(saved).build();
@@ -400,34 +408,70 @@ public class QualityResource {
     @Path("rules/{id}")
     public RuleView rule(@PathParam("id") long id, @QueryParam("unmask") boolean unmask) {
         Rule r = findRule(id);
-        return view(r, store.latestResults(r.assetUrn()).get(id), sight(r.assetUrn(), unmask));
+        return view(r, store.latestResults(r.assetUrn()).get(id), sights.of(r.assetUrn(), unmask));
     }
 
     @PUT
     @Path("rules/{id}")
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.STEWARD_ROLE)
-    public Rule updateRule(@PathParam("id") long id, RuleDraft body) {
+    public Rule updateRule(@PathParam("id") long id, RuleDraft body, @QueryParam("unmask") boolean unmask) {
         Rule old = findRule(id);
         adminForCustomSql(old.type());
         if (body != null && body.assetUrn() != null && !body.assetUrn().equals(old.assetUrn())) {
             throw new IllegalArgumentException("assetUrn: a rule cannot move to another asset; add a new rule there");
         }
-        // Parameters the caller was shown hidden ({"hidden": true}) are kept as they are, on the same column and
-        // type only, so a rule cannot be moved to a column whose values the caller may see to reveal them.
+        // What the caller was shown masked comes back as markers, as the rule form (and its on/off switch) sends
+        // the rule as shown: parameters {"hidden": true} keep the stored parameters, on the same column and type
+        // only (a rule moved to a column whose values the caller may see would reveal them); webhook "(set)" keeps
+        // the stored webhook.
         JsonNode params = body == null ? null : body.params();
-        if (params != null && params.size() == 1 && params.path("hidden").asBoolean(false)
-            && java.util.Objects.equals(body.field(), old.field())
-            && old.type().id().equalsIgnoreCase(String.valueOf(body.type()).trim())) {
+        if (hiddenParams(params)) {
+            if (!java.util.Objects.equals(body.field(), old.field())
+                || !old.type().id().equalsIgnoreCase(String.valueOf(body.type()).trim())) {
+                throw new IllegalArgumentException("params: they were shown hidden, so they can be kept only on the "
+                    + "same column and type. Changing the column or type needs the parameters written out again.");
+            }
             params = old.params();
         }
+        RuleDraft.ActionsDraft actions = body == null ? null : body.actions();
+        if (actions != null && WEBHOOK_SET.equals(actions.webhook())) {
+            if (old.actions().webhook() == null) {
+                throw new IllegalArgumentException("actions.webhook: \"" + WEBHOOK_SET + "\" keeps a webhook the rule "
+                    + "has, and this rule has none. Give the webhook's address.");
+            }
+            actions = new RuleDraft.ActionsDraft(old.actions().webhook(), actions.task());
+        }
         RuleDraft d = body == null ? null : new RuleDraft(old.assetUrn(), body.field(), body.name(), body.type(),
-            body.dimension(), params, body.thresholdUnit(), body.warnAbove(), body.failAbove(), body.actions(),
+            body.dimension(), params, body.thresholdUnit(), body.warnAbove(), body.failAbove(), actions,
             body.enabled());
         Rule r = check(d);
         Rule saved = store.updateRule(id, r).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No rule " + id));
         quality.rescore(old.assetUrn());
-        return Masking.rule(saved, sight(old.assetUrn(), false)); // kept hidden parameters stay hidden
+        return Masking.rule(saved, sights.of(old.assetUrn(), unmask)); // kept hidden parameters stay hidden
+    }
+
+    /** What a masked webhook is shown as, and sent back to keep it. */
+    static final String WEBHOOK_SET = "(set)";
+
+    private static boolean hiddenParams(JsonNode params) {
+        return params != null && params.isObject() && params.size() == 1 && params.path("hidden").isBoolean()
+            && params.get("hidden").asBoolean();
+    }
+
+    /** New rules and previews must say what they mean: the markers for masked values only keep stored ones. */
+    private static void refuseMarkers(RuleDraft body) {
+        if (body == null) {
+            return;
+        }
+        if (hiddenParams(body.params())) {
+            throw new IllegalArgumentException("params: {\"hidden\": true} keeps the parameters of a saved rule; "
+                + "a new rule or a preview needs them written out.");
+        }
+        if (body.actions() != null && WEBHOOK_SET.equals(body.actions().webhook())) {
+            throw new IllegalArgumentException("actions.webhook: \"" + WEBHOOK_SET + "\" keeps the webhook of a saved "
+                + "rule; give the webhook's address.");
+        }
     }
 
     @DELETE
@@ -447,13 +491,22 @@ public class QualityResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(DATA_ROLE)
     public ObjectNode preview(RuleDraft body, @QueryParam("unmask") boolean unmask) {
+        refuseMarkers(body);
         Rule r = check(body);
+        Masking.Sight sight = sights.of(r.assetUrn(), unmask);
+        if (!Masking.ruleValues(r, sight)) {
+            // The failing rows would show which rows hold which values: probing with bounds, lists or patterns
+            // would read a sensitive column through the other columns.
+            throw ApiError.of(Response.Status.FORBIDDEN, "This rule checks a column marked sensitive, so it cannot be "
+                + "previewed: the failing rows would show which rows hold which values. Save it and run it (its "
+                + "results give counts only), or ask an admin to preview it.");
+        }
         QualityService.Preview p = quality.preview(r).orElseThrow(() -> ApiError.of(Response.Status.CONFLICT,
             "No sample is kept for this asset, so the rule cannot be previewed. Save it and run it instead, or turn "
                 + "on keep_samples for its source and scan again."));
         ObjectNode out = json.valueToTree(p);
         if (p.failingRows() != null) {
-            out.set("failingRows", rows(p.failingRows().columns(), p.failingRows().rows(), r.assetUrn(), unmask, false));
+            out.set("failingRows", rows(p.failingRows().columns(), p.failingRows().rows(), r.assetUrn(), sight, false));
         }
         return out;
     }
@@ -474,7 +527,7 @@ public class QualityResource {
     public List<QualityStore.Result> results(@PathParam("id") long id, @QueryParam("limit") Integer limit,
                                              @QueryParam("unmask") boolean unmask) {
         Rule rule = findRule(id);
-        Masking.Sight sight = sight(rule.assetUrn(), unmask);
+        Masking.Sight sight = sights.of(rule.assetUrn(), unmask);
         return store.results(id, limit == null ? 20 : Math.max(1, Math.min(limit, 200))).stream()
             .map(r -> Masking.result(r, rule, sight)).toList();
     }
@@ -493,8 +546,11 @@ public class QualityResource {
         QualityStore.Result r = store.result(id).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND,
             "No result " + id));
         Rule rule = store.rule(r.ruleId()).orElse(null);
-        ObjectNode out = json.valueToTree(Masking.result(r, rule, sight(r.assetUrn(), unmask)));
-        if (identity.hasRole(DATA_ROLE) && r.failingRows() != null && quality.samplesAllowed(r.assetUrn())) {
+        Masking.Sight sight = sights.of(r.assetUrn(), unmask);
+        ObjectNode out = json.valueToTree(Masking.result(r, rule, sight));
+        // Rows failing a rule on a column the caller may not see would show which rows hold which values: counts only.
+        if (sight.data() && Masking.ruleValues(rule, sight) && r.failingRows() != null
+            && quality.samplesAllowed(r.assetUrn())) {
             List<String> columns = new ArrayList<>();
             r.failingRows().path("columns").forEach(c -> columns.add(c.asText()));
             List<List<String>> rows = new ArrayList<>();
@@ -504,7 +560,7 @@ public class QualityResource {
                 rows.add(cells);
             });
             boolean custom = rule != null && rule.type() == io.kilnmark.server.quality.RuleType.CUSTOM_SQL;
-            out.set("failingRows", rows(columns, rows, r.assetUrn(), unmask, custom));
+            out.set("failingRows", rows(columns, rows, r.assetUrn(), sight, custom));
         }
         return out;
     }
@@ -515,16 +571,14 @@ public class QualityResource {
      * SQL can hold anything under any name, so when the asset has a sensitive column they are
      * masked entirely unless an admin unmasks them.
      */
-    private ObjectNode rows(List<String> columns, List<List<String>> rows, String urn, boolean unmask, boolean custom) {
-        Set<String> sensitive = store.sensitive(urn);
-        boolean show = unmask && identity.hasRole(UNMASK_ROLE);
+    private ObjectNode rows(List<String> columns, List<List<String>> rows, String urn, Masking.Sight sight,
+                            boolean custom) {
         Set<Integer> hide = new HashSet<>();
-        if (!show && !sensitive.isEmpty()) {
+        if (sight.anyHidden()) {
             List<String> fields = graph.asset(urn).map(a -> a.fields().stream().map(Records.FieldDetail::name).toList())
                 .orElse(List.of());
             for (int i = 0; i < columns.size(); i++) {
-                if (custom || sensitive.contains(columns.get(i))
-                    || (i < fields.size() && sensitive.contains(fields.get(i)))) {
+                if (custom || !sight.values(columns.get(i)) || (i < fields.size() && !sight.values(fields.get(i)))) {
                     hide.add(i);
                 }
             }
@@ -545,15 +599,6 @@ public class QualityResource {
         }
         o.set("masked", json.valueToTree(hide.stream().sorted().map(columns::get).toList()));
         return o;
-    }
-
-    /** Who is looking at {@code urn}'s values: see {@link Masking.Sight}. */
-    private Masking.Sight sight(String urn, boolean unmask) {
-        return sight(store.sensitive(urn), unmask);
-    }
-
-    private Masking.Sight sight(Set<String> sensitive, boolean unmask) {
-        return new Masking.Sight(identity.hasRole(DATA_ROLE), sensitive, unmask && identity.hasRole(UNMASK_ROLE));
     }
 
     // ---- issues ----
@@ -620,9 +665,10 @@ public class QualityResource {
         Records.Source s = graph.source(a.source()).orElseThrow();
         Optional<QualityStore.Version> v = store.latestVersion(urn);
         ProfileFacts facts = v.flatMap(x -> store.facts(x.id())).orElse(null);
+        Masking.Sight sight = sights.of(urn, unmask);
         return new StandardFormats.Export(a, s, v.orElse(null), facts, store.rules(urn, null, false),
-            store.latestResults(urn), store.sensitive(urn), "urn:kilnmark:server:" + version,
-            identity.hasRole(DATA_ROLE), unmask && identity.hasRole(UNMASK_ROLE));
+            store.latestResults(urn), sight.sensitive(), "urn:kilnmark:server:" + version, sight.data(),
+            sight.unmasked());
     }
 
     // ---- helpers ----
