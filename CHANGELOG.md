@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Find local models** on the AI models page (`POST /api/v1/ai/discover`, admins only): looks for
+  Ollama and LM Studio on the machine running Kilnmark or its container
+  (`host.containers.internal`, `host.docker.internal`, `localhost`) and for the bundled Compose
+  model services, or checks one typed address, and lists each server's models with size and GPU
+  use as the server reports it (Ollama: on GPU, split with the share on GPU, CPU only, not loaded
+  yet). **Use this model** fills in the add-model form, and a Base URL that matches a found server
+  offers its models to choose from. Failures are explained in plain words with what to do, such as
+  setting `OLLAMA_HOST=0.0.0.0:11434` and keeping the port closed in the firewall. Only
+  model-server paths are called, after the address rules, with short timeouts, no redirects and no
+  response bodies returned. Kilnmark itself never looks for a GPU.
+- **`host.containers.internal` and `host.docker.internal` are on the default
+  `kilnmark.ai.local-hosts`** (ADR 0016 amendment): a model server on the machine running the
+  container counts as local under the operator lock without extra configuration. Names are still
+  matched as written, never resolved.
+
 - **Data quality** (docs/design/data-quality.md, build step 1). Profiling now keeps, over every
   row, each text column's value shapes (`SW1A 1AA` is `AA9A 9AA`; the top 20 with counts and the
   share outside them), detected formats (email, phone, UK postcode, NI number, IBAN, card numbers

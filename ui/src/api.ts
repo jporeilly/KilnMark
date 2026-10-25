@@ -493,6 +493,37 @@ export type AiProfileInput = {
 export type AiFeature = { id: string; label: string; help: string; purpose: AiPurpose; profile: string | null };
 export type AiSettings = { hostedModels: "allowed" | "forbidden"; lockedByServer: boolean; hostedAllowed: boolean };
 export type AiTestResult = { ok: boolean; message: string; latencyMs: number; dimensions: number | null };
+/** How a model uses the GPU, as its server reports it (Ollama does; others say nothing). */
+export type AiGpuState = "gpu" | "split" | "cpu" | "not-loaded" | "unknown";
+export type AiFoundModel = {
+  name: string;
+  sizeBytes: number | null;
+  family: string | null;
+  parameterSize: string | null;
+  quantisation: string | null;
+  embedding: boolean;
+  loaded: boolean | null;
+  gpu: AiGpuState;
+  gpuPercent: number | null;
+  vramBytes: number | null;
+  gpuText: string;
+  contextSize: number | null;
+};
+/** One address checked by discovery: found, not found (with the reason), refused, or not on the local list. */
+export type AiFoundServer = {
+  label: string;
+  server: string | null;
+  address: string;
+  baseUrl: string;
+  outcome: "found" | "not-found" | "refused" | "not-local";
+  problem: string | null;
+  guidance: string | null;
+  suggestLocal: boolean;
+  detail: string | null;
+  gpuReported: boolean;
+  models: AiFoundModel[];
+};
+export type AiDiscovery = { servers: AiFoundServer[]; inContainer: boolean; locked: boolean };
 export type AiStatus = {
   searchByMeaning: boolean;
   ask: boolean;
@@ -553,6 +584,9 @@ export const aiApi = {
     call<AiProfile>(`/api/v1/ai/profiles/${enc(name)}`, { method: "PUT", body: JSON.stringify(p) }),
   deleteProfile: (name: string) => call<null>(`/api/v1/ai/profiles/${enc(name)}`, { method: "DELETE" }),
   testProfile: (name: string) => call<AiTestResult>(`/api/v1/ai/profiles/${enc(name)}/test`, { method: "POST" }),
+  /** Looks for model servers: the usual places, or only `baseUrl` (with or without /v1). */
+  discover: (baseUrl?: string) =>
+    call<AiDiscovery>("/api/v1/ai/discover", { method: "POST", body: JSON.stringify(baseUrl ? { baseUrl } : {}) }),
   features: () => call<AiFeature[]>("/api/v1/ai/features"),
   route: (feature: string, profile: string | null) =>
     call<AiFeature>(`/api/v1/ai/features/${enc(feature)}`, { method: "PUT", body: JSON.stringify({ profile }) }),

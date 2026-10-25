@@ -18,7 +18,9 @@ import jakarta.enterprise.context.ApplicationScoped;
  * <ul>
  *   <li>While {@code kilnmark.ai.hosted-models=forbidden}, a profile counts as local only if its
  *       host is an IP address inside one of the networks in {@code kilnmark.ai.local-hosts}
- *       (default: loopback and private networks), or a host name listed there explicitly. Names
+ *       (default: loopback and private networks), or a host name listed there explicitly (default:
+ *       {@code localhost} and the container host names {@code host.containers.internal} and
+ *       {@code host.docker.internal}). Names
  *       are never resolved for this, so a name that resolves to a private address does not count
  *       unless the operator listed it. The administrator's "local" tick alone is not enough. A
  *       reverse proxy on a local address that forwards to a hosted service cannot be detected.</li>
@@ -30,8 +32,14 @@ import jakarta.enterprise.context.ApplicationScoped;
 @ApplicationScoped
 public class ModelHosts {
 
+    /**
+     * Loopback and private networks, {@code localhost}, and the names container engines give the
+     * machine a container runs on: {@code host.containers.internal} (Podman) and
+     * {@code host.docker.internal} (Docker, and Kilnmark's compose.yaml). Like every name here,
+     * they are matched as written, never resolved.
+     */
     static final List<String> DEFAULT_LOCAL = List.of("127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12",
-        "192.168.0.0/16", "fc00::/7", "localhost");
+        "192.168.0.0/16", "fc00::/7", "localhost", "host.containers.internal", "host.docker.internal");
     private static final List<Cidr> METADATA_NETWORKS = List.of(Cidr.parse("169.254.0.0/16"),
         Cidr.parse("fe80::/10"), Cidr.parse("100.100.100.200/32"), Cidr.parse("fd00:ec2::254/128"));
     private static final Set<String> METADATA_NAMES = Set.of("metadata", "metadata.google.internal", "metadata.goog",

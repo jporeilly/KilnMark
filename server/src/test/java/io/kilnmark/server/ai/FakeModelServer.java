@@ -57,6 +57,8 @@ public final class FakeModelServer {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/v1/chat/completions", this::chat);
         server.createContext("/v1/embeddings", this::embeddings);
+        server.createContext("/v1/models", x -> send(x, 200, "{\"object\": \"list\", \"data\": ["
+            + "{\"id\": \"fake-chat\", \"object\": \"model\"}, {\"id\": \"fake-embed-64\", \"object\": \"model\"}]}"));
         server.setExecutor(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor());
         server.start();
     }
