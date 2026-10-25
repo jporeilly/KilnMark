@@ -25,6 +25,7 @@ const DocsPage = lazy(() => import("./pages/DocsPage"));
 import { Icon } from "./components/icons";
 import { Card, EmptyState, PageHeader } from "./components/ui";
 import { NotificationBell } from "./notifications/NotificationBell";
+import { WHATS_NEW } from "./docs/links";
 import { Sidebar } from "./shell/Sidebar";
 import { AskButton, SearchForm, UserMenu } from "./shell/TopBar";
 
@@ -90,6 +91,34 @@ export function App() {
   return <Shell me={me} />;
 }
 
+const SEEN_KEY = "kilnmark.whatsNewSeen";
+
+/**
+ * Whether to badge What's new: the version has changed since this browser last opened that page.
+ * Kept in localStorage (a per-viewer convenience; storage may be blocked, so every access is
+ * guarded and the badge simply shows). Opening the page records the version.
+ */
+function useWhatsNewBadge(version: string | null, onPage: boolean): boolean {
+  const read = () => {
+    try {
+      return window.localStorage.getItem(SEEN_KEY);
+    } catch {
+      return null;
+    }
+  };
+  const [seen, setSeen] = useState<string | null>(read);
+  useEffect(() => {
+    if (!onPage || !version) return;
+    try {
+      window.localStorage.setItem(SEEN_KEY, version);
+    } catch {
+      // Storage blocked: the badge goes for this page load only.
+    }
+    setSeen(version);
+  }, [onPage, version]);
+  return version != null && seen !== version;
+}
+
 /** Whether a media query matches now, following changes. */
 function useMedia(query: string): boolean {
   const [matches, setMatches] = useState(() => window.matchMedia?.(query).matches ?? false);
@@ -116,6 +145,7 @@ function Shell({ me }: { me: Me }) {
   const first = useRef(true);
   const [version, setVersion] = useState<string | null>(null);
   const [openIssues, setOpenIssues] = useState<number | null>(null);
+  const whatsNew = useWhatsNewBadge(version, route.page === "docs" && route.doc === WHATS_NEW);
   // The Ask panel (src/assistant): its conversation lives here, so it stays across pages and goes on sign-out.
   const assistant = useAssistant();
   const [askOpen, setAskOpen] = useState(false);
@@ -248,6 +278,7 @@ function Shell({ me }: { me: Me }) {
           route={route}
           version={version}
           openIssues={openIssues}
+          whatsNew={whatsNew}
           drawerOpen={drawerOpen}
           onNavigate={() => drawerOpen && closeDrawer(false)}
           onCloseDrawer={() => closeDrawer()}

@@ -20,8 +20,9 @@ const files = import.meta.glob("../../../docs/guide/*.md", { query: "?raw", impo
   string
 >;
 
-/** Every bundled page: the guides in title order, then What's new. */
+/** Every bundled page: What's new first, then the guides in title order. */
 export const DOC_PAGES: DocPage[] = [
+  { id: WHATS_NEW, title: "What's new", markdown: changelog },
   ...Object.entries(files)
     .map(([path, markdown]) => {
       const id = path.replace(/^.*\//, "").replace(/\.md$/, "");
@@ -29,7 +30,6 @@ export const DOC_PAGES: DocPage[] = [
       return { id, title: first ? plainHeading(first) : id, markdown };
     })
     .sort((a, b) => a.title.localeCompare(b.title, "en-GB")),
-  { id: WHATS_NEW, title: "What's new", markdown: changelog },
 ];
 
 export const docPage = (id: string): DocPage | undefined => DOC_PAGES.find((p) => p.id === id);

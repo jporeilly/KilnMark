@@ -58,6 +58,7 @@ import {
   IconMailX,
   IconMarkdown,
   IconMenu2,
+  IconNews,
   IconMessages,
   IconMoon,
   IconPlayerPlay,
@@ -178,6 +179,7 @@ const ICONS: Record<string, TablerIcon> = {
   rules: IconShieldCheck,
   issues: IconAlertTriangle,
   docs: IconBook,
+  "whats-new": IconNews,
   settings: IconSettings,
 
   // The top bar, cards and lists.

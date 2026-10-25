@@ -122,6 +122,7 @@ for (const [name, base] of Object.entries(themes)) {
     need("--km-accent-on-dark", "--km-side-active", 3, "active item icon in the sidebar");
     need("--km-accent-on-dark", "--km-side-bg", 4.5, "What's new link in the sidebar");
     need("--km-accent-on-dark", "--km-hero-bg", 3, "hero accents");
+    need("--km-side-bg", "--km-accent-on-dark", 4.5, "New badge in the sidebar");
     if (accent !== accents[0]) continue;
     // Pairs that do not depend on the accent, once per theme.
     for (const bg of ["--km-surface", "--km-ground", "--km-surface-2"]) {

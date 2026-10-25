@@ -52,7 +52,7 @@ export default function DocsPage({ doc, section }: { doc: string | null; section
               <a className="km-card km-gallery-card km-link-card" href={docHref(p.id)}>
                 <span className="with-tile">
                   <IconTile tint={p.id === "whats-new" ? "orange" : "amber"}>
-                    <Icon name={p.id === "whats-new" ? "ask" : "docs"} size={18} />
+                    <Icon name={p.id === "whats-new" ? "whats-new" : "docs"} size={18} />
                   </IconTile>
                   <span className="km-row-title">{p.title}</span>
                 </span>

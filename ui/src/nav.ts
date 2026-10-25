@@ -1,4 +1,4 @@
-import { docHref } from "./docs/links";
+import { docHref, WHATS_NEW } from "./docs/links";
 import { href, type Route } from "./router";
 
 /**
@@ -19,10 +19,14 @@ export type NavItem = {
   tint: NavTint;
   /** "page" when this is the page, "true" when the page is inside it, else undefined. */
   current: (route: Route) => "page" | "true" | undefined;
-  badge?: "issues";
-  /** Entries after a divider: help and settings. */
-  group?: "secondary";
+  /** "issues": the open-issue count; "new": a New badge while What's new has not been seen. */
+  badge?: "issues" | "new";
+  /** Entries after the main ones: "docs" (under a Documentation heading) and "secondary" (settings). */
+  group?: "docs" | "secondary";
 };
+
+/** Headings shown above a group of entries (hidden on the icon rail, where a divider stands in). */
+export const NAV_GROUPS: Record<NonNullable<NavItem["group"]>, string | null> = { docs: "Documentation", secondary: null };
 
 const on = (...pages: string[]) => (route: Route) => (pages.includes(route.page) ? ("page" as const) : undefined);
 
@@ -52,7 +56,25 @@ export const NAV: NavItem[] = [
   },
   { id: "rules", label: "Quality rules", href: href.rules(), icon: "rules", tint: "green", current: on("rules") },
   { id: "issues", label: "Issues", href: href.issues(), icon: "issues", tint: "red", current: on("issues"), badge: "issues" },
-  { id: "docs", label: "Documentation", href: docHref(), icon: "docs", tint: "amber", current: on("docs"), group: "secondary" },
+  {
+    id: "whats-new",
+    label: "What's new",
+    href: docHref(WHATS_NEW),
+    icon: "whats-new",
+    tint: "amber",
+    current: (r) => (r.page === "docs" && r.doc === WHATS_NEW ? "page" : undefined),
+    badge: "new",
+    group: "docs",
+  },
+  {
+    id: "docs",
+    label: "All guides",
+    href: docHref(),
+    icon: "docs",
+    tint: "amber",
+    current: (r) => (r.page === "docs" ? (r.doc && r.doc !== WHATS_NEW ? "true" : r.doc ? undefined : "page") : undefined),
+    group: "docs",
+  },
   {
     id: "settings",
     label: "Settings",

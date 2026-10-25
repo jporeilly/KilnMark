@@ -1,25 +1,26 @@
 import { forwardRef } from "react";
 import { Brand } from "../components/Brand";
 import { Icon } from "../components/icons";
-import { docHref, WHATS_NEW } from "../docs/links";
-import { NAV } from "../nav";
+import { NAV, NAV_GROUPS } from "../nav";
 import { href, type Route } from "../router";
 
 /**
  * The dark sidebar: the logo tile, the main navigation with coloured icons (the current page on
- * an accent-tinted row, said by aria-current), the open-issue count, and the version with a link
- * to What's new. Under 1200 px it narrows to an icon rail (names stay readable to screen readers
+ * an accent-tinted row, said by aria-current), the open-issue count, Documentation with What's
+ * new first (badged New until this browser has opened it for this version), and the version. Under 1200 px it narrows to an icon rail (names stay readable to screen readers
  * and show as tooltips); under 768 px it is a drawer opened from the top bar.
  */
 export const Sidebar = forwardRef<HTMLDivElement, {
   route: Route;
   version: string | null;
   openIssues: number | null;
+  /** What's new has changed since this browser last opened it. */
+  whatsNew: boolean;
   drawerOpen: boolean;
   onNavigate: () => void;
   onCloseDrawer: () => void;
   inert?: boolean;
-}>(function Sidebar({ route, version, openIssues, drawerOpen, onNavigate, onCloseDrawer, inert }, ref) {
+}>(function Sidebar({ route, version, openIssues, whatsNew, drawerOpen, onNavigate, onCloseDrawer, inert }, ref) {
   const item = (n: (typeof NAV)[number]) => {
     const current = n.current(route);
     const count = n.badge === "issues" && openIssues ? openIssues : 0;
@@ -36,8 +37,15 @@ export const Sidebar = forwardRef<HTMLDivElement, {
           <span className="nav-label">{n.label}</span>
           {count > 0 && (
             <span className="nav-badge num">
+              <span className="visually-hidden">, </span>
               {count}
               <span className="visually-hidden"> open</span>
+            </span>
+          )}
+          {n.badge === "new" && whatsNew && (
+            <span className="nav-badge nav-badge--new">
+              <span className="visually-hidden">, </span>
+              New<span className="visually-hidden"> since you last looked</span>
             </span>
           )}
         </a>
@@ -68,15 +76,33 @@ export const Sidebar = forwardRef<HTMLDivElement, {
       </div>
       <nav aria-label="Main" className="sidenav">
         <ul className="nav-list">{NAV.filter((n) => !n.group).map(item)}</ul>
-        <div className="nav-divider" role="presentation" />
-        <ul className="nav-list">{NAV.filter((n) => n.group === "secondary").map(item)}</ul>
+        {(Object.keys(NAV_GROUPS) as (keyof typeof NAV_GROUPS)[]).map((g) => {
+          const heading = NAV_GROUPS[g];
+          const items = NAV.filter((n) => n.group === g);
+          if (!items.length) return null;
+          return (
+            <div key={g} className="nav-group">
+              {heading && <div className="nav-divider" role="presentation" />}
+              {heading && (
+                <p className="nav-group-title" id={`nav-${g}`}>
+                  {heading}
+                </p>
+              )}
+              <ul className="nav-list" aria-labelledby={heading ? `nav-${g}` : undefined}>
+                {items.map(item)}
+              </ul>
+            </div>
+          );
+        })}
       </nav>
-      <p className="sidebar-foot nav-version">
-        <span className="nav-version-text">{version && <>Kilnmark {version} · </>}</span>
-        <a href={docHref(WHATS_NEW)} onClick={onNavigate}>
-          What's new
-        </a>
-      </p>
+      {version && (
+        <p className="sidebar-foot nav-version">
+          <span className="nav-version-text">Kilnmark {version}</span>
+          <span className="nav-version-short" aria-hidden="true">
+            {version}
+          </span>
+        </p>
+      )}
     </div>
     </div>
   );
