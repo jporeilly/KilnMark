@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/check-slugs.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

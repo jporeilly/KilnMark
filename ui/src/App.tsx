@@ -18,6 +18,8 @@ import { RulesPage } from "./pages/RulesPage";
 import { IssuesPage } from "./pages/IssuesPage";
 import { docHref, WHATS_NEW } from "./docs/links";
 import "./docs/docs.css";
+import { AssistantPanel } from "./assistant/AssistantPanel";
+import { useAssistant } from "./assistant/useAssistant";
 
 // The documentation viewer carries the guides and a Markdown reader, so it loads when first opened.
 const DocsPage = lazy(() => import("./pages/DocsPage"));
@@ -91,6 +93,26 @@ function Shell({ me }: { me: Me }) {
   const [query, setQuery] = useState(route.page === "search" ? route.q : "");
   const first = useRef(true);
   const [version, setVersion] = useState<string | null>(null);
+  // The Ask panel (src/assistant): its conversation lives here, so it stays across pages and goes on sign-out.
+  const assistant = useAssistant();
+  const [askOpen, setAskOpen] = useState(false);
+  const [askFocus, setAskFocus] = useState(0);
+  const askReturn = useRef<HTMLElement | null>(null);
+  const askButton = useRef<HTMLButtonElement>(null);
+  const openAsk = () => {
+    if (!document.getElementById("assistant")?.contains(document.activeElement)) {
+      askReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+    setAskOpen(true);
+    setAskFocus((n) => n + 1);
+  };
+  const closeAsk = () => {
+    setAskOpen(false);
+    const back = askReturn.current;
+    // Back where focus was, or to the Ask button if that was nowhere in particular or has gone.
+    const target = back && back !== document.body && document.contains(back) ? back : askButton.current;
+    window.setTimeout(() => target?.focus(), 0);
+  };
 
   useEffect(() => {
     api
@@ -98,6 +120,9 @@ function Shell({ me }: { me: Me }) {
       .then((i) => setVersion(i.version))
       .catch(() => setVersion(null));
   }, []);
+
+  const openAskRef = useRef(openAsk);
+  openAskRef.current = openAsk;
 
   // Ctrl+K or / jumps to search from anywhere, as the design rules promise.
   useEffect(() => {
@@ -107,6 +132,12 @@ function Shell({ me }: { me: Me }) {
         e.preventDefault();
         searchBox.current?.focus();
         searchBox.current?.select();
+      }
+      // Alt+A opens the Ask panel, or moves focus into it. (On a Mac, Option+A in a text box types å.)
+      const mac = /Mac/.test(navigator.platform);
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === "KeyA" && !(mac && typing)) {
+        e.preventDefault();
+        openAskRef.current();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -145,7 +176,7 @@ function Shell({ me }: { me: Me }) {
       }}>
         Skip to main content
       </a>
-      <div className="shell">
+      <div className={askOpen ? "shell assistant-open" : "shell"}>
         <header className="topbar">
           <a className="brand" href={href.home()}>
             <span className="brand-mark" aria-hidden="true">K</span>
@@ -170,6 +201,18 @@ function Shell({ me }: { me: Me }) {
             </span>
             <button type="submit">Search</button>
           </form>
+          <button
+            type="button"
+            ref={askButton}
+            className="ask-button"
+            aria-expanded={askOpen}
+            aria-controls={askOpen ? "assistant" : undefined}
+            aria-keyshortcuts="Alt+A"
+            title="Ask a question about Kilnmark (Alt+A)"
+            onClick={() => (askOpen ? closeAsk() : openAsk())}
+          >
+            Ask
+          </button>
           <div className="who">
             <span>
               {me.signInRequired ? "Signed in as " : ""}
@@ -280,6 +323,7 @@ function Shell({ me }: { me: Me }) {
             ))}
         </main>
         </RoleContext.Provider>
+        {askOpen && <AssistantPanel route={route} state={assistant} onClose={closeAsk} focusSignal={askFocus} />}
       </div>
     </>
   );
