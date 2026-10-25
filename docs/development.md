@@ -254,8 +254,11 @@ superuser** and has no rights to server files, programs or other sessions:
   see**, not only the schemas the source lists. They refuse to run when the login is a superuser
   or a member of `pg_read_server_files`, `pg_write_server_files`, `pg_execute_server_program` or
   `pg_signal_backend`, when it may reach other databases (it may execute any of dblink's functions,
-  use a foreign server, or has a user mapping, or PUBLIC has one), and on SQL Server, which has no
-  read-only transactions. dblink and postgres_fdw functions are also refused in the SQL itself.
+  which are granted to everyone when the extension is created, or use a foreign server), on a
+  database with any user mapping or foreign table (a view owned by another role can reach one), and
+  on SQL Server, which has no read-only transactions. The refusal names the fix, such as
+  `REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA <schema> FROM PUBLIC`. dblink and postgres_fdw functions
+  are also refused in the SQL itself.
 - PostgreSQL's read-only transactions do not stop functions that act outside the database
   (reading files, advisory locks, signalling sessions), which is why such functions are refused
   in custom SQL and why the login must not hold those rights.

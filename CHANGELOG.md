@@ -95,9 +95,10 @@ details.
 - **Webhooks, after review:** a webhook path may not hold a semicolon, raw or encoded (`%3b`), so a
   segment such as `..;x`, which some servers read as `..` once they drop its parameters, cannot
   climb out of an allowed prefix. Checked when a rule is saved and again before each call.
-- **Custom SQL, after review:** refused under a login that may reach other databases: one that may
-  execute dblink's functions, use a foreign server, or has a user mapping (its own or PUBLIC's), since
-  a read-only transaction does not hold on the other side. dblink and postgres_fdw function names are
+- **Custom SQL, after review:** refused under a login that may reach other databases (one that may
+  execute dblink's functions or use a foreign server) and on any database with a user mapping or a
+  foreign table, which a view owned by another role can reach, since a read-only transaction does
+  not hold on the other side. The refusal names the fix. dblink and postgres_fdw function names are
   refused in the SQL as well.
 - **Allowed hosts, after review:** a saved source's hosts are checked against
   `kilnmark.sources.allowed-hosts` again just before a scan, quality run, preview, listing, test or
