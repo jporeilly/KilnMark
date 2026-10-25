@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
@@ -32,6 +31,8 @@ final class Compiler {
 
     /** The deepest an expression's operations may sit inside each other, counting chains like a + b + c. */
     static final int MAX_NODE_DEPTH = 1_000;
+    /** The most parts (columns, values, operations, calls) one compiled expression may have. */
+    static final int MAX_NODES = 10_000;
 
     /** The columns an expression can use. */
     static final class Scope {
@@ -71,6 +72,7 @@ final class Compiler {
     private final Scope scope;
     private final AggregateHook hook;
     private int depth;
+    private int nodes;
 
     Compiler(Scope scope, AggregateHook hook) {
         this.scope = scope;
@@ -78,6 +80,10 @@ final class Compiler {
     }
 
     Ev compile(Node n) throws ExprException {
+        if (++nodes > MAX_NODES) {
+            throw new ExprException("the expression has more than " + String.format(Locale.UK, "%,d", MAX_NODES)
+                + " parts", n.pos(), "split it over several columns");
+        }
         if (++depth > MAX_NODE_DEPTH) {
             throw new ExprException("the expression has more than " + String.format(Locale.UK, "%,d", MAX_NODE_DEPTH)
                 + " operations inside each other", n.pos(), "split it over several columns");
@@ -260,10 +266,16 @@ final class Compiler {
     }
 
     private Ev between(Node.Between b) throws ExprException {
-        Node.Binary low = new Node.Binary(">=", b.operand(), b.low(), b.pos());
-        Node.Binary high = new Node.Binary("<=", b.operand(), b.high(), b.pos());
-        Ev both = compile(new Node.Binary("and", low, high, b.pos()));
-        return b.negated() ? new Ev.Not(both, b.pos()) : both;
+        Ev x = compile(b.operand()); // once: compiling it twice per between would grow without bound
+        Ev low = compile(b.low());
+        Ev high = compile(b.high());
+        Type t = Type.common(x.type, low.type);
+        t = t == null ? null : Type.common(t, high.type);
+        if (t == null) {
+            throw new ExprException("cannot compare " + article(x.type) + " with " + article(low.type) + " and "
+                + article(high.type) + " in 'between'", b.pos());
+        }
+        return new Ev.Between(Ev.widen(x, t), Ev.widen(low, t), Ev.widen(high, t), b.negated(), b.pos());
     }
 
     private Ev like(Node.Like l) throws ExprException {
@@ -281,6 +293,8 @@ final class Compiler {
     private Ev caseOf(Node.Case c) throws ExprException {
         List<Ev> whens = new ArrayList<>();
         Ev operand = c.operand() == null ? null : compile(c.operand());
+        // the operand is worked out once per batch and read by every 'when' through a slot
+        Col[] slot = new Col[1];
         for (Node w : c.whens()) {
             if (operand != null) {
                 Ev v = compile(w);
@@ -289,7 +303,8 @@ final class Compiler {
                     throw new ExprException("cannot compare " + article(operand.type) + " with " + article(v.type)
                         + " in 'case'", w.pos());
                 }
-                whens.add(new Ev.Compare("=", Ev.widen(operand, t), Ev.widen(v, t), w.pos()));
+                Ev read = new Ev.Slot(slot, operand.type, operand.pos);
+                whens.add(new Ev.Compare("=", Ev.widen(read, t), Ev.widen(v, t), w.pos()));
             } else {
                 Ev cond = compile(w);
                 if (cond.type.kind() != Kind.BOOLEAN && !cond.type.isNull()) {
@@ -320,7 +335,7 @@ final class Compiler {
             thens.add(Ev.widen(compiled.get(i), t));
         }
         Ev otherwise = c.otherwise() == null ? null : Ev.widen(compiled.getLast(), t);
-        return new Ev.Case(whens, thens, otherwise, t, c.pos());
+        return new Ev.Case(operand, slot, whens, thens, otherwise, t, c.pos());
     }
 
     private Ev cast(Node.Cast c) throws ExprException {
@@ -405,7 +420,7 @@ final class Compiler {
             case "replace" -> {
                 arity(c, 3, 3);
                 yield new Ev.Call(List.of(text(c, args, 0), text(c, args, 1), text(c, args, 2)), Type.UTF8, true,
-                    a -> ((String) a[1]).isEmpty() ? a[0] : ((String) a[0]).replace((String) a[1], (String) a[2]), pos);
+                    a -> Casts.replace((String) a[0], (String) a[1], (String) a[2], pos), pos);
             }
             case "coalesce" -> {
                 arity(c, 1, Integer.MAX_VALUE);
@@ -472,6 +487,9 @@ final class Compiler {
                             }
                             holder[0].set(0, a[i]);
                             sb.append(Casts.text(holder[0], 0));
+                            if (sb.length() > Casts.MAX_TEXT) {
+                                throw Casts.tooLong(pos);
+                            }
                         }
                     }
                     return sb.toString();
@@ -481,23 +499,24 @@ final class Compiler {
                 arity(c, 2, 2);
                 Ev s = text(c, args, 0);
                 Ev p = text(c, args, 1);
-                Pattern fixed = literalText(c, 1) != null ? Regexes.compile(literalText(c, 1), pos) : null;
-                Regexes cache = new Regexes();
-                yield new Ev.Call(List.of(s, p), Type.BOOLEAN, true, a -> Regexes.find(
-                    fixed != null ? fixed : cache.pattern((String) a[1], pos), (String) a[0], pos), pos);
+                Regexes.Rx fixed = literalText(c, 1) != null ? Regexes.compile(literalText(c, 1), pos) : null;
+                Regexes rx = new Regexes();
+                yield new Ev.Call(List.of(s, p), Type.BOOLEAN, true, a -> rx.find(
+                    fixed != null ? fixed : rx.pattern((String) a[1], pos), (String) a[0], pos), pos, rx::newBatch);
             }
             case "regex_replace" -> {
                 arity(c, 3, 3);
                 Ev s = text(c, args, 0);
                 Ev p = text(c, args, 1);
                 Ev r = text(c, args, 2);
-                Pattern fixed = literalText(c, 1) != null ? Regexes.compile(literalText(c, 1), pos) : null;
+                Regexes.Rx fixed = literalText(c, 1) != null ? Regexes.compile(literalText(c, 1), pos) : null;
                 if (fixed != null && literalText(c, 2) != null) {
-                    Regexes.checkReplacement(fixed, literalText(c, 2), pos);
+                    Regexes.checkReplacement(fixed.pattern(), literalText(c, 2), pos);
                 }
-                Regexes cache = new Regexes();
-                yield new Ev.Call(List.of(s, p, r), Type.UTF8, true, a -> Regexes.replace(
-                    fixed != null ? fixed : cache.pattern((String) a[1], pos), (String) a[0], (String) a[2], pos), pos);
+                Regexes rx = new Regexes();
+                yield new Ev.Call(List.of(s, p, r), Type.UTF8, true, a -> rx.replace(
+                    fixed != null ? fixed : rx.pattern((String) a[1], pos), (String) a[0], (String) a[2], pos), pos,
+                    rx::newBatch);
             }
             case "now" -> {
                 arity(c, 0, 0);

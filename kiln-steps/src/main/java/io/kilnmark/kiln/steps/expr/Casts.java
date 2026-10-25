@@ -9,7 +9,31 @@ import io.kilnmark.kiln.steps.expr.Type.Kind;
 /** Conversions between types: the implicit widening and {@code cast(x as type)}. */
 final class Casts {
 
+    /** The longest text one value may become, in characters. */
+    static final int MAX_TEXT = 1_000_000;
+
     private Casts() {
+    }
+
+    static ExprException tooLong(int pos) {
+        return new ExprException("a text value would be longer than 1,000,000 characters", pos);
+    }
+
+    /** {@code s} with every {@code from} replaced by {@code to}, refusing results over {@link #MAX_TEXT}. */
+    static String replace(String s, String from, String to, int pos) throws ExprException {
+        if (from.isEmpty()) {
+            return s;
+        }
+        if (to.length() > from.length()) {
+            long count = 0;
+            for (int i = s.indexOf(from); i >= 0; i = s.indexOf(from, i + from.length())) {
+                count++;
+            }
+            if (s.length() + count * (to.length() - from.length()) > MAX_TEXT) {
+                throw tooLong(pos);
+            }
+        }
+        return s.replace(from, to);
     }
 
     /** Whether {@code cast} can turn {@code from} into {@code to}. */
@@ -83,7 +107,13 @@ final class Casts {
                     default -> col.longs[i];
                 };
                 case TIMESTAMP -> out.longs[i] = switch (from) {
-                    case DATE -> Math.multiplyExact(col.longs[i], Temporal.MICROS_PER_DAY);
+                    case DATE -> {
+                        try {
+                            yield Math.multiplyExact(col.longs[i], Temporal.MICROS_PER_DAY);
+                        } catch (ArithmeticException e) {
+                            throw new ExprException("a date is too far from today to be a timestamp", pos);
+                        }
+                    }
                     case UTF8 -> {
                         Long t = Temporal.parseTimestamp((String) col.objects[i]);
                         if (t == null) {
@@ -147,7 +177,7 @@ final class Casts {
 
     private static long textToLong(String s, int pos) throws ExprException {
         String t = s.trim();
-        if (t.length() <= 20) {
+        if (t.length() <= 20 && isAsciiWhole(t)) {
             try {
                 return Long.parseLong(t);
             } catch (NumberFormatException e) {
@@ -158,10 +188,27 @@ final class Casts {
             "guard it, for example case when regex_match(x, '^-?[0-9]+$') then cast(x as int64) end");
     }
 
+    private static boolean isAsciiWhole(String t) {
+        int start = !t.isEmpty() && (t.charAt(0) == '+' || t.charAt(0) == '-') ? 1 : 0;
+        if (start == t.length()) {
+            return false;
+        }
+        for (int i = start; i < t.length(); i++) {
+            if (t.charAt(i) < '0' || t.charAt(i) > '9') {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static double textToDouble(String s, int pos) throws ExprException {
         String t = s.trim();
         if (t.length() <= 400 && isDecimalText(t, true)) {
-            return Double.parseDouble(t);
+            double d = Double.parseDouble(t);
+            if (!Double.isInfinite(d)) {
+                return d;
+            }
+            throw new ExprException("cannot cast a text value to float64: it is too large", pos);
         }
         throw new ExprException("cannot cast a text value to float64: it is not a number", pos);
     }
@@ -185,13 +232,13 @@ final class Casts {
             i++;
         }
         int digits = 0;
-        while (i < n && Character.isDigit(t.charAt(i)) && t.charAt(i) < 128) {
+        while (i < n && t.charAt(i) >= '0' && t.charAt(i) <= '9') {
             i++;
             digits++;
         }
         if (i < n && t.charAt(i) == '.') {
             i++;
-            while (i < n && Character.isDigit(t.charAt(i)) && t.charAt(i) < 128) {
+            while (i < n && t.charAt(i) >= '0' && t.charAt(i) <= '9') {
                 i++;
                 digits++;
             }
@@ -205,7 +252,7 @@ final class Casts {
                 i++;
             }
             int e = 0;
-            while (i < n && Character.isDigit(t.charAt(i)) && t.charAt(i) < 128) {
+            while (i < n && t.charAt(i) >= '0' && t.charAt(i) <= '9') {
                 i++;
                 e++;
             }

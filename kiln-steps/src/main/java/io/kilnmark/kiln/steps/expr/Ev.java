@@ -113,6 +113,21 @@ abstract class Ev {
         }
     }
 
+    /** Reads a column worked out once by the node that owns the slot (a simple case's operand). */
+    static final class Slot extends Ev {
+        private final Col[] slot;
+
+        Slot(Col[] slot, Type type, int pos) {
+            super(type, pos);
+            this.slot = slot;
+        }
+
+        @Override
+        Col eval(Batch b, boolean[] mask) {
+            return slot[0];
+        }
+    }
+
     // ---- conversions ----
 
     static final class Convert extends Ev {
@@ -306,8 +321,8 @@ abstract class Ev {
                 } catch (ArithmeticException e) {
                     throw overflow(pos);
                 }
-                if (type.kind() == Kind.DATE && Math.abs(out.longs[i]) > 365_000_000L) {
-                    throw new ExprException("a date is out of range", pos);
+                if (type.kind() == Kind.DATE && !Temporal.inRange(out.longs[i])) {
+                    throw new ExprException("a date is out of range (years -9999 to 9999)", pos);
                 }
             }
             return out;
@@ -334,7 +349,12 @@ abstract class Ev {
                 if (l.nulls[i] || r.nulls[i]) {
                     out.nulls[i] = true;
                 } else {
-                    out.objects[i] = (String) l.objects[i] + r.objects[i];
+                    String a = (String) l.objects[i];
+                    String z = (String) r.objects[i];
+                    if ((long) a.length() + z.length() > Casts.MAX_TEXT) {
+                        throw Casts.tooLong(pos);
+                    }
+                    out.objects[i] = a + z;
                 }
             }
             return out;
@@ -391,9 +411,28 @@ abstract class Ev {
             case INT64, DATE, TIMESTAMP -> Long.compare(l.longs[i], r.longs[j]);
             case FLOAT64 -> l.doubles[i] == r.doubles[j] ? 0 : Double.compare(l.doubles[i], r.doubles[j]);
             case DECIMAL -> ((BigDecimal) l.objects[i]).compareTo((BigDecimal) r.objects[j]);
-            case UTF8 -> ((String) l.objects[i]).compareTo((String) r.objects[j]);
+            case UTF8 -> compareText((String) l.objects[i], (String) r.objects[j]);
             case NULL -> 0;
         };
+    }
+
+    /** Text in Unicode code point order (the order of UTF-8 bytes), not Java's UTF-16 order. */
+    static int compareText(String a, String b) {
+        int n = Math.min(a.length(), b.length());
+        for (int k = 0; k < n; k++) {
+            char x = a.charAt(k);
+            char y = b.charAt(k);
+            if (x != y) {
+                // surrogates (U+D800-DFFF, for code points above U+FFFF) sort after U+E000-FFFF in code point order
+                boolean sx = Character.isSurrogate(x);
+                boolean sy = Character.isSurrogate(y);
+                if (sx != sy && (x >= 0xE000 || y >= 0xE000)) {
+                    return sx ? 1 : -1;
+                }
+                return x - y;
+            }
+        }
+        return a.length() - b.length();
     }
 
     /** SQL's three-valued {@code and} / {@code or}; the right side is only worked out where it matters. */
@@ -431,6 +470,54 @@ abstract class Ev {
                     out.nulls[i] = true;
                 } else {
                     out.bools[i] = isAnd;
+                }
+            }
+            return out;
+        }
+    }
+
+    /** {@code x [not] between low and high}: {@code x >= low and x <= high}, with SQL's nulls. */
+    static final class Between extends Ev {
+        private final Ev operand;
+        private final Ev low;
+        private final Ev high;
+        private final boolean negated;
+
+        /** All three must already have the same type. */
+        Between(Ev operand, Ev low, Ev high, boolean negated, int pos) {
+            super(Type.BOOLEAN, pos);
+            this.operand = operand;
+            this.low = low;
+            this.high = high;
+            this.negated = negated;
+        }
+
+        @Override
+        Col eval(Batch b, boolean[] mask) throws ExprException {
+            Col x = operand.eval(b, mask);
+            Col lo = low.eval(b, mask);
+            Col hi = high.eval(b, mask);
+            Col out = Col.blank(type, x.rows);
+            for (int i = 0; i < x.rows; i++) {
+                if (x.nulls[i]) {
+                    out.nulls[i] = true;
+                    continue;
+                }
+                // each side: true, false or unknown (null)
+                Boolean above = lo.nulls[i] ? null : compare(x, lo, i) >= 0;
+                Boolean below = hi.nulls[i] ? null : compare(x, hi, i) <= 0;
+                Boolean both;
+                if (Boolean.FALSE.equals(above) || Boolean.FALSE.equals(below)) {
+                    both = false;
+                } else if (above == null || below == null) {
+                    both = null;
+                } else {
+                    both = true;
+                }
+                if (both == null) {
+                    out.nulls[i] = true;
+                } else {
+                    out.bools[i] = both != negated;
                 }
             }
             return out;
@@ -515,8 +602,15 @@ abstract class Ev {
             }
         }
 
+        /** Numeric equality: 1.0 and 1.00 are one decimal, -0.0 and 0.0 one float. */
         private static Object key(Object v) {
-            return v instanceof BigDecimal d ? d.stripTrailingZeros() : v;
+            if (v instanceof BigDecimal d) {
+                return d.signum() == 0 ? BigDecimal.ZERO : d.stripTrailingZeros();
+            }
+            if (v instanceof Double d && d == 0.0) {
+                return 0.0;
+            }
+            return v;
         }
 
         @Override
@@ -599,7 +693,7 @@ abstract class Ev {
                     }
                     like = last;
                 }
-                out.bools[i] = like.matches((String) x.objects[i]) != negated;
+                out.bools[i] = like.matches((String) x.objects[i], pos) != negated;
             }
             return out;
         }
@@ -609,12 +703,17 @@ abstract class Ev {
 
     /** {@code case when c1 then r1 ... else e end}; each result only worked out for its rows. */
     static final class Case extends Ev {
+        private final Ev operand;
+        private final Col[] slot;
         private final List<Ev> whens;
         private final List<Ev> thens;
         private final Ev otherwise;
 
-        Case(List<Ev> whens, List<Ev> thens, Ev otherwise, Type type, int pos) {
+        /** {@code operand} (or null) is worked out once into {@code slot}, which the 'when' comparisons read. */
+        Case(Ev operand, Col[] slot, List<Ev> whens, List<Ev> thens, Ev otherwise, Type type, int pos) {
             super(type, pos);
+            this.operand = operand;
+            this.slot = slot;
             this.whens = whens;
             this.thens = thens;
             this.otherwise = otherwise;
@@ -623,6 +722,9 @@ abstract class Ev {
         @Override
         Col eval(Batch b, boolean[] mask) throws ExprException {
             int n = b.rows();
+            if (operand != null) {
+                slot[0] = operand.eval(b, mask);
+            }
             Col out = Col.nulls(type, n);
             boolean[] left = new boolean[n];
             for (int i = 0; i < n; i++) {
@@ -697,19 +799,29 @@ abstract class Ev {
         private final List<Ev> args;
         private final RowFn fn;
         private final boolean strict;
+        private final Runnable beforeBatch;
 
         /**
          * @param strict whether a null argument makes the result null without calling {@code fn}
          */
         Call(List<Ev> args, Type type, boolean strict, RowFn fn, int pos) {
+            this(args, type, strict, fn, pos, null);
+        }
+
+        /** @param beforeBatch run before each batch, to reset per-batch budgets; may be null */
+        Call(List<Ev> args, Type type, boolean strict, RowFn fn, int pos, Runnable beforeBatch) {
             super(type, pos);
             this.args = args;
             this.fn = fn;
             this.strict = strict;
+            this.beforeBatch = beforeBatch;
         }
 
         @Override
         Col eval(Batch b, boolean[] mask) throws ExprException {
+            if (beforeBatch != null) {
+                beforeBatch.run();
+            }
             int n = b.rows();
             Col[] cols = new Col[args.size()];
             for (int a = 0; a < cols.length; a++) {

@@ -92,6 +92,19 @@ public final class Expression {
         return text;
     }
 
+    /**
+     * Works out a node, turning the arithmetic and calendar errors Java reports for values out of
+     * range (a date in year 300,000, say) into a plain error rather than letting them escape.
+     */
+    static Col safely(Ev ev, Batch batch, boolean[] mask) throws ExprException {
+        try {
+            return ev.eval(batch, mask);
+        } catch (ArithmeticException | java.time.DateTimeException e) {
+            throw new ExprException("a value is out of range", ev.pos,
+                "dates and timestamps must fall in years -9999 to 9999, and whole numbers within int64");
+        }
+    }
+
     /** An expression checked against a set of columns, ready to work out. Not safe for use by two threads at once. */
     public static final class Compiled {
 
@@ -113,12 +126,12 @@ public final class Expression {
 
         /** The value for every row. */
         public Col eval(Batch batch) throws ExprException {
-            return ev.eval(batch, null);
+            return eval(batch, null);
         }
 
         /** The value for the rows in {@code mask} (null for all); other rows are null and are not worked out. */
         public Col eval(Batch batch, boolean[] mask) throws ExprException {
-            return ev.eval(batch, mask);
+            return safely(ev, batch, mask);
         }
 
         /**
@@ -126,7 +139,7 @@ public final class Expression {
          * both count as not true, as in SQL's {@code where}.
          */
         public boolean[] test(Batch batch, boolean[] mask) throws ExprException {
-            Col c = ev.eval(batch, mask);
+            Col c = safely(ev, batch, mask);
             boolean[] out = new boolean[c.rows];
             if (c.type.kind() == Type.Kind.BOOLEAN) {
                 for (int i = 0; i < out.length; i++) {

@@ -175,11 +175,13 @@ final class Config {
         }
         long n;
         if (v instanceof Number num) {
-            if (num.doubleValue() != Math.floor(num.doubleValue())) {
+            // YAML numbers arrive as Integer, Long, BigInteger, Double or BigDecimal
+            try {
+                n = new java.math.BigDecimal(num.toString()).longValueExact();
+            } catch (ArithmeticException | NumberFormatException e) {
                 problem(key, "must be a whole number");
                 return fallback;
             }
-            n = num.longValue();
         } else {
             try {
                 n = Long.parseLong(String.valueOf(v).trim());

@@ -111,14 +111,31 @@ final class Parser {
         return comparison();
     }
 
+    /**
+     * Comparisons, {@code is null}, {@code in}, {@code between} and {@code like}. They do not chain:
+     * {@code a = b = c} or {@code x between 1 and 2 between ...} needs brackets, as in SQL.
+     */
     private Node comparison() throws ExprException {
         Node left = concat();
+        Token first = null;
         while (true) {
             Token t = peek();
-            if (t.kind() == Kind.OP && switch (t.text()) {
+            boolean isComparison = t.kind() == Kind.OP && switch (t.text()) {
                 case "=", "<>", "<", "<=", ">", ">=" -> true;
                 default -> false;
-            }) {
+            };
+            boolean isTest = t.is("is") || t.is("in") || t.is("between") || t.is("like")
+                || (t.is("not") && (tokens.get(at + 1).is("in") || tokens.get(at + 1).is("between")
+                    || tokens.get(at + 1).is("like")));
+            if (!isComparison && !isTest) {
+                return left;
+            }
+            if (first != null) {
+                throw new ExprException("comparisons cannot follow one another without brackets", t.pos(),
+                    "join them with and, or put brackets around the first, like (a = b) = c");
+            }
+            first = t;
+            if (isComparison) {
                 next();
                 left = new Node.Binary(t.text(), left, concat(), t.pos());
             } else if (t.is("is")) {
@@ -126,13 +143,9 @@ final class Parser {
                 boolean negated = accept("not");
                 expect("null", " after 'is" + (negated ? " not" : "") + "'");
                 left = new Node.IsNull(left, negated, t.pos());
-            } else if (t.is("not") || t.is("in") || t.is("between") || t.is("like")) {
+            } else {
                 boolean negated = false;
                 if (t.is("not")) {
-                    Token after = tokens.get(at + 1);
-                    if (!(after.is("in") || after.is("between") || after.is("like"))) {
-                        return left;
-                    }
                     next();
                     negated = true;
                 }
@@ -147,8 +160,6 @@ final class Parser {
                     }
                     default -> left = new Node.Like(left, concat(), negated, t.pos());
                 }
-            } else {
-                return left;
             }
         }
     }
@@ -265,26 +276,31 @@ final class Parser {
                 } catch (NumberFormatException e) {
                     BigDecimal v = new BigDecimal(t.text());
                     if (v.precision() > Type.MAX_PRECISION) {
-                        throw new ExprException("the number " + t.text() + " has more than 38 digits", t.pos());
+                        throw new ExprException("the number " + shorten(t.text()) + " has more than 38 digits", t.pos());
                     }
                     return new Node.Literal(Type.decimal(v.precision(), 0), v, t.pos());
                 }
             }
             case DECIMAL -> {
                 BigDecimal v = new BigDecimal(t.text());
-                if (v.precision() > Type.MAX_PRECISION) {
-                    throw new ExprException("the number " + t.text() + " has more than 38 digits", t.pos());
+                if (Math.max(v.precision(), v.scale()) > Type.MAX_PRECISION) {
+                    throw new ExprException("the number " + shorten(t.text()) + " has more than 38 digits", t.pos(),
+                        "decimals hold at most 38 digits in all; use a float such as 1e-40 for tiny numbers");
                 }
                 return new Node.Literal(Type.decimal(Math.max(v.precision(), v.scale()), v.scale()), v, t.pos());
             }
             default -> {
                 double v = Double.parseDouble(t.text());
                 if (Double.isInfinite(v)) {
-                    throw new ExprException("the number " + t.text() + " is too large", t.pos());
+                    throw new ExprException("the number " + shorten(t.text()) + " is too large", t.pos());
                 }
                 return new Node.Literal(Type.FLOAT64, v, t.pos());
             }
         }
+    }
+
+    private static String shorten(String number) {
+        return number.length() > 30 ? number.substring(0, 30) + "…" : number;
     }
 
     private static String hintFor(Token t) {

@@ -139,6 +139,9 @@ public final class ArrowIO {
             }
             v.setValueCount(n);
             return v;
+        } catch (ArithmeticException e) {
+            v.close();
+            throw new ExprException("a date or timestamp is too far from today for " + field.getType(), 0);
         } catch (ExprException | RuntimeException e) {
             v.close();
             throw e;

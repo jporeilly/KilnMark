@@ -33,7 +33,23 @@ final class Temporal {
         "day_of_year", "doy", "hour", "minute", "second");
     static final Set<String> TIME_UNITS = Set.of("hour", "minute", "second");
 
+    /** The first and last days expressions accept: years -9999 to 9999, so every date is also a timestamp. */
+    static final long MIN_DAY = LocalDate.of(-9999, 1, 1).toEpochDay();
+    static final long MAX_DAY = LocalDate.of(9999, 12, 31).toEpochDay();
+
     private Temporal() {
+    }
+
+    static boolean inRange(long days) {
+        return days >= MIN_DAY && days <= MAX_DAY;
+    }
+
+    static Long ranged(Long days) {
+        return days == null || !inRange(days) ? null : days;
+    }
+
+    static Long rangedMicros(Long micros) {
+        return micros == null || !inRange(Math.floorDiv(micros, MICROS_PER_DAY)) ? null : micros;
     }
 
     /** {@code yyyy-mm-dd} as days, or null. */
@@ -43,7 +59,7 @@ final class Temporal {
             return null;
         }
         try {
-            return LocalDate.parse(s, DateTimeFormatter.ISO_LOCAL_DATE).toEpochDay();
+            return ranged(LocalDate.parse(s, DateTimeFormatter.ISO_LOCAL_DATE).toEpochDay());
         } catch (DateTimeException e) {
             return null;
         }
@@ -61,7 +77,7 @@ final class Temporal {
         }
         if (s.length() == 10) {
             Long days = parseDateLiteral(s);
-            return days == null ? null : days * MICROS_PER_DAY;
+            return days == null ? null : days * MICROS_PER_DAY; // in range, so no overflow
         }
         if (s.charAt(10) == ' ') {
             s = s.substring(0, 10) + 'T' + s.substring(11);
@@ -69,9 +85,9 @@ final class Temporal {
         try {
             TemporalAccessor t = DateTimeFormatter.ISO_DATE_TIME.parse(s);
             if (t.isSupported(ChronoField.OFFSET_SECONDS)) {
-                return micros(ZonedDateTime.from(t).toInstant());
+                return rangedMicros(micros(ZonedDateTime.from(t).toInstant()));
             }
-            return micros(LocalDateTime.from(t).toInstant(ZoneOffset.UTC));
+            return rangedMicros(micros(LocalDateTime.from(t).toInstant(ZoneOffset.UTC)));
         } catch (DateTimeException | ArithmeticException e) {
             return null;
         }
@@ -184,7 +200,7 @@ final class Temporal {
             }
             sb.append(!quoted && c == 'y' ? 'u' : c);
         }
-        return DateTimeFormatter.ofPattern(sb.toString(), Locale.UK).withResolverStyle(ResolverStyle.STRICT);
+        return DateTimeFormatter.ofPattern(sb.toString(), Locale.ENGLISH).withResolverStyle(ResolverStyle.STRICT);
     }
 
     /** Text read with a pattern as days, or null when it does not match. */
@@ -196,7 +212,7 @@ final class Temporal {
             if (f == null) {
                 return parseDateLiteral(text);
             }
-            return LocalDate.from(f.parse(text.trim())).toEpochDay();
+            return ranged(LocalDate.from(f.parse(text.trim())).toEpochDay());
         } catch (DateTimeException e) {
             return null;
         }
@@ -213,12 +229,13 @@ final class Temporal {
         try {
             TemporalAccessor t = f.parse(text.trim());
             if (t.isSupported(ChronoField.OFFSET_SECONDS)) {
-                return micros(ZonedDateTime.from(t).toInstant());
+                return rangedMicros(micros(ZonedDateTime.from(t).toInstant()));
             }
             if (t.isSupported(ChronoField.HOUR_OF_DAY)) {
-                return micros(LocalDateTime.from(t));
+                return rangedMicros(micros(LocalDateTime.from(t)));
             }
-            return LocalDate.from(t).toEpochDay() * MICROS_PER_DAY;
+            Long days = ranged(LocalDate.from(t).toEpochDay());
+            return days == null ? null : days * MICROS_PER_DAY;
         } catch (DateTimeException | ArithmeticException e) {
             return null;
         }

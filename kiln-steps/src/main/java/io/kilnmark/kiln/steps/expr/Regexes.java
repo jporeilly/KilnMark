@@ -12,29 +12,47 @@ import java.util.regex.PatternSyntaxException;
 /**
  * Regular expressions for {@code regex_match} and {@code regex_replace}, made safe to run on any
  * data with any pattern. Java's matcher backtracks, so a pattern such as {@code (a+)+$} can take
- * longer than the age of the universe on a short string. Three guards stop that:
+ * longer than the age of the universe on a short string, and it recurses, so a repeated group can
+ * overflow the stack on a long one. These guards stop that:
  *
  * <ol>
- *   <li><b>Patterns are checked</b> before use: a quantified group that itself contains a
- *   quantifier ({@code (a+)+}, {@code (a*)*}, {@code (\w+\s?)*}) and back-references ({@code \1},
- *   {@code \k<name>}) are rejected, because they are what makes backtracking explode.</li>
- *   <li><b>Values are capped</b>: text longer than {@value #MAX_INPUT} characters is an error.</li>
+ *   <li><b>Patterns are checked</b> before use: a repeated group that itself contains a repeat
+ *   ({@code (a+)+}, {@code (\w+\s?)*}) is refused, unless each repetition starts with a character
+ *   nothing inside the group can match ({@code (\.[\w-]+)+}, which cannot backtrack badly).
+ *   Back-references ({@code \1}, {@code \k<name>}) and comment mode ({@code (?x)}) are refused.</li>
+ *   <li><b>Values are capped</b>: text longer than {@value #MAX_INPUT} characters is an error, and
+ *   {@value #MAX_INPUT_REPEATED_GROUP} for patterns that repeat a group. A stack overflow inside
+ *   the matcher is caught and reported as an error too.</li>
  *   <li><b>Work is budgeted</b>: the matcher reads the text through a wrapper that counts
- *   character reads, and stops with an error after {@value #BUDGET} for one value (about tens of
- *   milliseconds). This catches what the check cannot see, such as overlapping alternatives
- *   ({@code (a|a)*}).</li>
+ *   character reads: {@value #BUDGET} for one value (roughly a fifth of a second) and
+ *   {@value #BATCH_BUDGET} for one batch of rows per function call. This catches what the check
+ *   cannot see, such as {@code .*,.*,.*,.*,.*,.*,.*,.*,P}.</li>
+ *   <li><b>Results are capped</b> at {@value Casts#MAX_TEXT} characters per value.</li>
  * </ol>
  *
- * <p>Compiled patterns are cached ({@value #CACHE_SIZE} per expression), so a pattern taken from a
- * column is compiled once per distinct value.
+ * <p>Compiled patterns are cached ({@value #CACHE_SIZE} per function call), so a pattern taken from
+ * a column is compiled once per distinct value. One instance serves one function call in one
+ * expression; it is not safe for use by two threads at once.
  */
 final class Regexes {
 
     /** The longest text a regular expression is run on. */
     static final int MAX_INPUT = 100_000;
+    /** The longest text a pattern that repeats a group is run on, to stay clear of stack overflows. */
+    static final int MAX_INPUT_REPEATED_GROUP = 2_000;
     /** Character reads allowed for one value. */
     static final long BUDGET = 10_000_000L;
+    /** Character reads allowed for one batch of rows. */
+    static final long BATCH_BUDGET = 250_000_000L;
     static final int CACHE_SIZE = 128;
+
+    /** A checked, compiled pattern and the longest text it may be run on. */
+    record Rx(Pattern pattern, int maxInput) {
+    }
+
+    /** Why a pattern is refused (or null), and whether it repeats a group. */
+    record Scan(String problem, boolean repeatsGroup) {
+    }
 
     private final Map<String, Object> cache = new LinkedHashMap<>(16, 0.75f, true) {
         @java.io.Serial
@@ -45,9 +63,15 @@ final class Regexes {
             return size() > CACHE_SIZE;
         }
     };
+    private long batchLeft = BATCH_BUDGET;
+
+    /** Starts a new batch of rows: the batch budget is full again. */
+    void newBatch() {
+        batchLeft = BATCH_BUDGET;
+    }
 
     /** A compiled pattern from the cache, or the error it gave. */
-    Pattern pattern(String regex, int pos) throws ExprException {
+    Rx pattern(String regex, int pos) throws ExprException {
         Object cached = cache.get(regex);
         if (cached == null) {
             try {
@@ -60,45 +84,53 @@ final class Regexes {
         if (cached instanceof ExprException e) {
             throw new ExprException(e.problem(), pos, e.hint());
         }
-        return (Pattern) cached;
+        return (Rx) cached;
     }
 
     /** Checks and compiles a pattern. */
-    static Pattern compile(String regex, int pos) throws ExprException {
+    static Rx compile(String regex, int pos) throws ExprException {
         if (regex.length() > 1_000) {
             throw new ExprException("the regular expression is longer than 1,000 characters", pos);
         }
-        String problem = unsafe(regex);
-        if (problem != null) {
-            throw new ExprException("the regular expression " + problem, pos,
-                "simplify it, for example (a+)+ to a+");
+        Scan scan = scan(regex);
+        if (scan.problem() != null) {
+            throw new ExprException("the regular expression " + scan.problem(), pos,
+                "simplify it, for example (a+)+ to a+, or (a|b)* to [ab]*");
         }
         try {
-            return Pattern.compile(regex);
+            return new Rx(Pattern.compile(regex), scan.repeatsGroup() ? MAX_INPUT_REPEATED_GROUP : MAX_INPUT);
         } catch (PatternSyntaxException e) {
             throw new ExprException("the regular expression is not valid: " + e.getDescription()
                 + (e.getIndex() >= 0 ? " (character " + (e.getIndex() + 1) + " of the pattern)" : ""), pos);
         }
     }
 
-    /**
-     * Why a pattern could backtrack catastrophically, or null if it looks safe. A rough scan, not a
-     * full parser: it tracks groups and whether each holds a repeating quantifier.
-     */
+    /** Why a pattern could backtrack catastrophically, or null if it looks safe. */
     static String unsafe(String regex) {
-        Deque<boolean[]> groups = new ArrayDeque<>(); // per open group: {holds a repeat}
-        groups.push(new boolean[1]);
-        boolean lastWasGroupWithRepeat = false;
+        return scan(regex).problem();
+    }
+
+    /**
+     * A rough scan, not a full parser: it tracks groups, whether each holds a repeating quantifier,
+     * and what follows each group.
+     */
+    static Scan scan(String regex) {
+        Deque<int[]> groups = new ArrayDeque<>(); // per open group: {holds a repeat (0/1), index where its body starts}
+        groups.push(new int[] {0, 0});
+        boolean repeatsGroup = false;
+        int closedGroupRepeats = -1; // after ')': 1 if that group held a repeat, 0 if not; -1 otherwise
+        int closedBodyStart = 0;
+        int closedBodyEnd = 0;
         int n = regex.length();
         for (int i = 0; i < n; i++) {
             char c = regex.charAt(i);
-            boolean closedRepeatGroup = false;
+            int justClosed = -1;
             switch (c) {
                 case '\\' -> {
                     if (i + 1 < n) {
                         char e = regex.charAt(i + 1);
                         if (e >= '1' && e <= '9' || e == 'k') {
-                            return "uses a back-reference, which is not allowed";
+                            return new Scan("uses a back-reference, which is not allowed", false);
                         }
                         if (e == 'Q') {
                             int end = regex.indexOf("\\E", i + 2);
@@ -110,22 +142,46 @@ final class Regexes {
                 }
                 case '[' -> i = endOfClass(regex, i);
                 case '(' -> {
-                    groups.push(new boolean[1]);
+                    int body = i + 1;
                     if (i + 1 < n && regex.charAt(i + 1) == '?') {
-                        i++; // a group's modifiers, such as (?: (?i) (?<name>, are not quantifiers
-                        if (i + 1 < n && regex.charAt(i + 1) == '<' && i + 2 < n && regex.charAt(i + 2) != '='
-                            && regex.charAt(i + 2) != '!') {
-                            int close = regex.indexOf('>', i);
-                            i = close < 0 ? i : close;
+                        int j = i + 2;
+                        if (j < n && regex.charAt(j) == '<' && j + 1 < n && regex.charAt(j + 1) != '='
+                            && regex.charAt(j + 1) != '!') {
+                            int close = regex.indexOf('>', j);
+                            body = close < 0 ? n : close + 1;
+                        } else if (j < n && (regex.charAt(j) == ':' || regex.charAt(j) == '=' || regex.charAt(j) == '!'
+                            || regex.charAt(j) == '>')) {
+                            body = j + 1;
+                        } else if (j < n && regex.charAt(j) == '<') {
+                            body = j + 2; // lookbehind (?<= or (?<!
+                        } else {
+                            // inline flags: (?i) or (?i:...)
+                            int k = j;
+                            while (k < n && (Character.isLetter(regex.charAt(k)) || regex.charAt(k) == '-')) {
+                                if (regex.charAt(k) == 'x') {
+                                    return new Scan("uses comment mode (?x), which is not supported", false);
+                                }
+                                k++;
+                            }
+                            if (k < n && regex.charAt(k) == ')') {
+                                i = k; // flags alone, such as (?i): not a group
+                                closedGroupRepeats = -1;
+                                continue;
+                            }
+                            body = k + 1;
                         }
+                        i = body - 1;
                     }
+                    groups.push(new int[] {0, body});
                 }
                 case ')' -> {
                     if (groups.size() > 1) {
-                        boolean repeats = groups.pop()[0];
-                        closedRepeatGroup = repeats;
-                        if (repeats) {
-                            groups.peek()[0] = true;
+                        int[] g = groups.pop();
+                        justClosed = g[0];
+                        closedBodyStart = g[1];
+                        closedBodyEnd = i;
+                        if (g[0] == 1) {
+                            groups.peek()[0] = 1;
                         }
                     }
                 }
@@ -137,14 +193,19 @@ final class Regexes {
                         if (end < 0) {
                             break;
                         }
-                        String body = regex.substring(i + 1, end);
-                        repeat = repeatsMoreThanOnce(body);
+                        repeat = repeatsMoreThanOnce(regex.substring(i + 1, end));
                     }
-                    if (repeat && lastWasGroupWithRepeat) {
-                        return "repeats a group that itself repeats, which can take forever on some text";
+                    if (repeat && closedGroupRepeats >= 0) {
+                        repeatsGroup = true;
+                        if (closedGroupRepeats == 1
+                            && !startsWithItsOwnSeparator(regex.substring(Math.min(closedBodyStart, closedBodyEnd),
+                                closedBodyEnd))) {
+                            return new Scan("repeats a group that itself repeats, which can take forever on some text",
+                                true);
+                        }
                     }
                     if (repeat) {
-                        groups.peek()[0] = true;
+                        groups.peek()[0] = 1;
                     }
                     i = end;
                     // a following ? or + makes the quantifier lazy or possessive; it is not another quantifier
@@ -156,9 +217,69 @@ final class Regexes {
                     // an ordinary character
                 }
             }
-            lastWasGroupWithRepeat = closedRepeatGroup;
+            closedGroupRepeats = justClosed;
         }
-        return null;
+        return new Scan(null, repeatsGroup);
+    }
+
+    /**
+     * Whether a group's body starts with a plain punctuation character that nothing else in the
+     * body can match, and has no alternatives: then each repetition must begin at that character,
+     * so the matcher has only one way to split the text and cannot backtrack badly.
+     */
+    static boolean startsWithItsOwnSeparator(String body) {
+        if (body.isEmpty() || body.indexOf('|') >= 0) {
+            return false;
+        }
+        char sep;
+        int i;
+        if (body.charAt(0) == '\\') {
+            if (body.length() < 2 || Character.isLetterOrDigit(body.charAt(1))) {
+                return false;
+            }
+            sep = body.charAt(1);
+            i = 2;
+        } else {
+            sep = body.charAt(0);
+            if (Character.isLetterOrDigit(sep) || Character.isWhitespace(sep) || "[(.^$*+?{|)".indexOf(sep) >= 0) {
+                return false;
+            }
+            i = 1;
+        }
+        if (i < body.length() && "*+?{".indexOf(body.charAt(i)) >= 0) {
+            return false;
+        }
+        boolean inClass = false;
+        for (int k = i; k < body.length(); k++) {
+            char c = body.charAt(k);
+            if (c == sep) {
+                return false;
+            }
+            if (c == '\\' && k + 1 < body.length()) {
+                char e = body.charAt(k + 1);
+                if (e == sep || "WSDpPXRNQ".indexOf(e) >= 0) {
+                    return false; // could match the separator
+                }
+                k++;
+            } else if (!inClass && c == '[') {
+                inClass = true;
+                if (k + 1 < body.length() && body.charAt(k + 1) == '^') {
+                    return false;
+                }
+            } else if (inClass && c == ']') {
+                inClass = false;
+            } else if (inClass && c == '-' && k > 0 && k + 1 < body.length() && body.charAt(k + 1) != ']'
+                && body.charAt(k - 1) != '[') {
+                char lo = body.charAt(k - 1);
+                char hi = body.charAt(k + 1);
+                if (!Character.isLetterOrDigit(lo) || !Character.isLetterOrDigit(hi)) {
+                    return false; // a range of punctuation might hold the separator
+                }
+            } else if (!inClass && c == '.') {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean repeatsMoreThanOnce(String body) {
@@ -182,9 +303,6 @@ final class Regexes {
                 i++;
             } else if (c == '[') {
                 depth++;
-                if (i + 1 < n && regex.charAt(i + 1) == ']' && depth == 1 && i == start) {
-                    i++; // []...] : a leading ] is a character
-                }
             } else if (c == ']') {
                 if (--depth == 0) {
                     return i;
@@ -195,26 +313,46 @@ final class Regexes {
     }
 
     /** Whether the pattern is found anywhere in the text. */
-    static boolean find(Pattern p, String text, int pos) throws ExprException {
-        Matcher m = p.matcher(guard(text, pos));
+    boolean find(Rx rx, String text, int pos) throws ExprException {
+        Budgeted b = guard(rx, text, pos);
         try {
-            return m.find();
+            return rx.pattern().matcher(b).find();
         } catch (BudgetExceeded e) {
             throw tooSlow(pos);
+        } catch (StackOverflowError e) {
+            throw tooDeep(pos);
+        } finally {
+            spend(b);
         }
     }
 
     /** The text with every match replaced; {@code $1} in the replacement is the first group. */
-    static String replace(Pattern p, String text, String replacement, int pos) throws ExprException {
-        Matcher m = p.matcher(guard(text, pos));
+    String replace(Rx rx, String text, String replacement, int pos) throws ExprException {
+        Budgeted b = guard(rx, text, pos);
+        Matcher m = rx.pattern().matcher(b);
+        StringBuilder sb = new StringBuilder();
         try {
-            return m.replaceAll(replacement);
+            while (m.find()) {
+                m.appendReplacement(sb, replacement);
+                if (sb.length() > Casts.MAX_TEXT) {
+                    throw Casts.tooLong(pos);
+                }
+            }
+            m.appendTail(sb);
+            if (sb.length() > Casts.MAX_TEXT) {
+                throw Casts.tooLong(pos);
+            }
+            return sb.toString();
         } catch (BudgetExceeded e) {
             throw tooSlow(pos);
+        } catch (StackOverflowError e) {
+            throw tooDeep(pos);
         } catch (IllegalArgumentException | IndexOutOfBoundsException e) {
             throw new ExprException("regex_replace: the replacement text is not valid: "
                 + String.valueOf(e.getMessage()).toLowerCase(Locale.ROOT), pos,
                 "refer to groups as $1, $2 ...; write \\$ for a dollar sign");
+        } finally {
+            spend(b);
         }
     }
 
@@ -248,17 +386,33 @@ final class Regexes {
         }
     }
 
-    private static CharSequence guard(String text, int pos) throws ExprException {
-        if (text.length() > MAX_INPUT) {
-            throw new ExprException("a value is longer than " + String.format(Locale.UK, "%,d", MAX_INPUT)
-                + " characters, the most a regular expression is run on", pos);
+    private Budgeted guard(Rx rx, String text, int pos) throws ExprException {
+        if (text.length() > rx.maxInput()) {
+            throw new ExprException("a value is longer than " + String.format(Locale.UK, "%,d", rx.maxInput())
+                + " characters, the most this regular expression is run on", pos,
+                rx.maxInput() < MAX_INPUT ? "patterns that repeat a group are limited further; a character class, "
+                    + "like [ab]* for (a|b)*, avoids the limit" : null);
         }
-        return new Budgeted(text, new long[] {BUDGET});
+        if (batchLeft <= 0) {
+            throw new ExprException("regular expressions took too long on this batch of rows", pos,
+                "simplify the pattern, or anchor it with ^ and $");
+        }
+        long allowed = Math.min(BUDGET, batchLeft);
+        return new Budgeted(text, new long[] {allowed, allowed});
+    }
+
+    private void spend(Budgeted b) {
+        batchLeft -= b.left()[1] - Math.max(0, b.left()[0]);
     }
 
     private static ExprException tooSlow(int pos) {
         return new ExprException("the regular expression took too long on a value", pos,
             "simplify the pattern, or anchor it with ^ and $");
+    }
+
+    private static ExprException tooDeep(int pos) {
+        return new ExprException("the regular expression needs too much memory on a value", pos,
+            "use a character class, like [ab]* instead of (a|b)*");
     }
 
     /** Thrown inside the matcher when a value's budget is spent. */
@@ -271,7 +425,7 @@ final class Regexes {
         }
     }
 
-    /** Text that counts how often the matcher reads it. */
+    /** Text that counts how often the matcher reads it; {@code left} is {reads left, reads allowed}. */
     private record Budgeted(String text, long[] left) implements CharSequence {
 
         @Override

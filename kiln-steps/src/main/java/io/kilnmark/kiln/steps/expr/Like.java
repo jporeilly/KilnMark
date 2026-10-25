@@ -34,13 +34,26 @@ final class Like {
         pattern = java.util.Arrays.copyOf(out, n);
     }
 
-    boolean matches(String value) {
+    /** The longest text matched. */
+    static final int MAX_INPUT = 100_000;
+    /** Steps allowed for one value: the matcher's worst case is the text's length times the pattern's. */
+    static final long BUDGET = 50_000_000L;
+
+    boolean matches(String value, int pos) throws ExprException {
+        if (value.length() > MAX_INPUT) {
+            throw new ExprException("a value is longer than 100,000 characters, the most 'like' is run on", pos);
+        }
+        long steps = 0;
         int[] s = value.codePoints().toArray();
         int si = 0;
         int pi = 0;
         int starP = -1;
         int starS = 0;
         while (si < s.length) {
+            if (++steps > BUDGET) {
+                throw new ExprException("the 'like' pattern took too long on a value", pos,
+                    "use fewer % signs, or regex_match with an anchored pattern");
+            }
             if (pi < pattern.length && (pattern[pi] == ANY_ONE || pattern[pi] == s[si])) {
                 si++;
                 pi++;

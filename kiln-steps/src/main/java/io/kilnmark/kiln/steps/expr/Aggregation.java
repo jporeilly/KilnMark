@@ -187,7 +187,7 @@ public final class Aggregation {
             Col[] args = new Col[calls.size()];
             for (int a = 0; a < args.length; a++) {
                 AggCall call = calls.get(a);
-                args[a] = call.arg == null ? null : call.arg.eval(b, null);
+                args[a] = call.arg == null ? null : Expression.safely(call.arg, b, null);
             }
             for (int i = 0; i < n; i++) {
                 Acc[] row = group(keyCols, i);
@@ -260,7 +260,7 @@ public final class Aggregation {
                 for (Map.Entry<String, Ev> v : values.entrySet()) {
                     Field f = v.getValue().type.field(v.getKey());
                     fields.add(f);
-                    vectors.add(ArrowIO.write(v.getValue().eval(b, null), f, allocator));
+                    vectors.add(ArrowIO.write(Expression.safely(v.getValue(), b, null), f, allocator));
                 }
                 return new VectorSchemaRoot(fields, vectors, m);
             } catch (ExprException | RuntimeException e) {

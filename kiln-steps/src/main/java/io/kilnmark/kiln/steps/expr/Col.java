@@ -130,7 +130,17 @@ public final class Col {
                 };
                 yield d == 0.0 ? 0.0 : d;
             }
-            case TIMESTAMP -> type.kind() == Type.Kind.DATE ? longs[i] * Temporal.MICROS_PER_DAY : longs[i];
+            case TIMESTAMP -> {
+                if (type.kind() != Type.Kind.DATE) {
+                    yield longs[i];
+                }
+                try {
+                    yield Math.multiplyExact(longs[i], Temporal.MICROS_PER_DAY);
+                } catch (ArithmeticException e) {
+                    // too far away for a timestamp, so no timestamp can match it; keep it distinct and exact
+                    yield java.math.BigInteger.valueOf(longs[i]).multiply(java.math.BigInteger.valueOf(Temporal.MICROS_PER_DAY));
+                }
+            }
             default -> get(i);
         };
     }
