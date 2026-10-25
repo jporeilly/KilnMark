@@ -68,10 +68,12 @@ public final class PipelineViews {
 
     /**
      * One step's part in a run. {@code ports} is {"in": {port: rows}, "out": {port: rows}}, a null
-     * count meaning the engine did not report that port on its own.
+     * count meaning the engine did not report that port on its own. {@code outcome} is how the step
+     * ended: finished, ended_early (a limit had its rows, or nothing read on), stopped (by the
+     * engine, after another step failed or the run was stopped) or failed; null if not recorded.
      */
     public record StepRunView(String step, String type, int position, Long rowsIn, Long rowsOut, JsonNode ports,
-                              Long peakMemory, Long durationMs, String error) {
+                              Long peakMemory, Long durationMs, String error, String outcome) {
     }
 
     /** What a write step wrote, and whether it is now in the catalogue. */

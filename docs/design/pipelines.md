@@ -416,6 +416,37 @@ Writing:
 - Runs respect the same rules as scans: allowed hosts, source egress for AI, masking of sensitive
   columns in previews.
 
+### What a write reports
+
+The contract between the writers and the pipeline service. The writer owns the profile of what it
+writes; the service adds no profile step of its own. It catalogues the asset under
+`urn:kilnmark:<source>:<Connector.writtenAssetPath(source, write)>`, and passes that URN as
+`WriteOptions.assetUrn`. A writer emits metadata events for that URN only after the write has
+succeeded; a failed or cancelled write emits nothing (with `commit_every`, rows already committed
+remain, and the step's error says so).
+
+**Profiling settings.** `WriteOptions.profiling` is a map the service fills from the source's own
+profiling settings, exactly as it builds the profile step's settings for a scan of that source,
+under the same keys: `keep-values`, `examples`, `sample-size`, `sample-mode`, `sample-key`,
+`sample-seed`, `sample-max-bytes` and `sketch-fields` (the fields whose distinct-value sketch is
+kept). It never comes from the YAML. The step's own `keep_values: false` can keep fewer values than
+the source allows, never more; `profile_output: false` turns profiling off. An empty map means the
+profile step's defaults.
+
+| Write | Events | Meaning for the service |
+| --- | --- | --- |
+| Table `create`, `replace`; any file | `SCHEMA` (`columns`: JSON array of `{name, kind, type}`, `type` as written; `target`, `mode` or `format`, `location`), `ROW_COUNT` (`rows`, `complete=true`, `written=true`), `PROFILE` per column, `SAMPLE` when values are kept | The asset now holds exactly these rows: register or update it, replace its fields, row count and profile, apply the source's sample controls to `SAMPLE` |
+| Table `append`, `upsert` | `ROW_COUNT` only (`rows` written, `complete=false`, `written=true`, `appended=true`, `mode`) | Rows were added to or merged into an existing table: record the run's lineage and row count, but keep the table's fields, row count and profile from its last scan; a scan refreshes them |
+
+Columns, kinds and profile attributes are those a scan reports (`JdbcColumn.Kind` names,
+`ColumnStats` attributes), so the service stores them the same way.
+
+**Profiling never fails a write.** If profiling fails (settings it cannot read, or an error while
+profiling or computing the profile), the write completes, `ROW_COUNT` is still emitted and carries
+`profiled=false` and `profile_error` (the reason, in words a person can read), and no `PROFILE` or
+`SAMPLE` events follow. The service turns `profile_error` into a note on the run and keeps the
+asset's previous profile.
+
 ### How the server runs and records a pipeline (decisions)
 
 - **Storage (V12).** `pipeline` (fixed name, display name, description, latest version),
@@ -449,22 +480,32 @@ Writing:
   and that the role is steward or admin. Readers get their connector's own settings (which may
   hold the secret) through a wrapper, never through the YAML or the graph's config. Every message
   a run records has the secrets it resolved blanked out.
-- **Profiling writes.** A write in mode `create` or `replace` gets a hidden profile step beside it,
-  reading its own copy of the same rows, so what is written is profiled in the same pass. A
-  profile that fails is noted and does not fail the write. After a successful run each write's
-  target is registered as the scan registers what it finds (asset, fields from the connector, row
-  count, profiles, quality profile version and evaluation) under a finished run of kind
-  `pipeline` on the written source; source run lists show scans only. `append` and `upsert` only
-  add to a target, so its profile is left as it was, with a note to scan it; when the connector
-  cannot describe such a target afterwards, its catalogued columns are kept. Cataloguing takes the
-  written source's scan lock (waiting as above); if a scan holds it, the run notes that the source
-  should be scanned. A scan does not mark removed an asset a pipeline wrote after the scan began.
-  Lineage links each written asset to every read asset upstream of it (`GET /api/v1/lineage?urn=`).
+- **Writers own profiling.** A write profiles what it writes in the same pass and reports it as
+  "What a write reports" (above) says; the server passes the source's own profiling settings
+  (whether values are kept, sampling) to the writer in `WriteOptions.options` and never profiles a
+  write itself. After a successful run each write's target is registered from the writer's events,
+  as the scan registers what it finds (asset, fields from `SCHEMA`, row count, profiles, quality
+  profile version and evaluation), under a finished run of kind `pipeline` on the written source;
+  source run lists show scans only. For `append` and `upsert` the server records the run's row count
+  and lineage, and keeps the table's fields, row count and profile from its last scan (a table the
+  catalogue does not know yet is registered with its columns, and the run notes to scan it). A
+  writer that could not profile says so in an event, never by failing: the write counts, and the run
+  gets a note whose detail is held back as other engine messages are. The written asset's URN comes
+  from the connector (`writtenAssetPath`: for a prefixed S3 source, prefix + path), so it is what a
+  scan records. Cataloguing takes the written source's scan lock (waiting as above); if a scan
+  holds it, the run notes that the source should be scanned. A scan does not mark removed an asset
+  a pipeline wrote after the scan began. Lineage links each written asset to every read asset
+  upstream of it (`GET /api/v1/lineage?urn=`).
+- **Each step's outcome** is recorded as the engine reports it (finished, ended early, stopped by the
+  engine, failed), so a writer the engine stopped never looks like a clean finish.
 - **Write permission stays with admins.** Only admins change `allow_writing`, and while it is on
   only admins change where the source points (any setting but its description, display name,
-  sampling, AI rule and include and exclude patterns). A write's `options` may not name a setting
-  of the source or anything that says where or as whom to connect (url, host, bucket, path,
-  credentials and the like).
+  sampling, AI rule and include and exclude patterns). A write step takes its own settings (where
+  and how) and the writer settings its connector's writer declares (`Connector.writeOptions()`;
+  the writers' settings of docs/guide/writing-data.md for a writer that declares none), passed to
+  the writer in `WriteOptions.options`. Nothing else is accepted, and never a name that says where
+  or as whom to connect (url, host, bucket, credentials, `profile` and the like), even when a writer
+  declares one.
 - **Messages from the data.** A failed run's error, its steps' errors and the details of its notes
   (whatever the run's status) may quote values from the rows. Viewers see that a step failed, or a
   note's own words, not the detail; when the run read or wrote an asset with columns marked
@@ -493,9 +534,13 @@ Writing:
 
 ### Step catalogue and seams (decisions)
 
-- `GET /api/v1/steps` lists every `StepFactory`: those on the class path (`ServiceLoader`) and the
-  server's `read` and `write`. `write` takes `target`, or `table` and `path` as other names for
-  it, and `mode` defaults to `create`, which never overwrites.
+- `GET /api/v1/steps` lists every `StepFactory`: those on the class path (`ServiceLoader`:
+  kiln-steps' transforms) and the server's `read` and `write`. `write` takes `target`, or `table` and
+  `path` as other names for it, and `mode` defaults to `create`, which never overwrites.
+- The writers' contract parts kiln-core does not have yet (`Connector.writeOptions()`,
+  `Connector.writtenAssetPath(...)`, the profile settings and profile-failure attribute names) are
+  reached through one adapter, `WriterContract`, found by name until the connector writers are
+  merged.
 - The server reaches the compiler through `PipelineCompilerPort` (adapter `KilnPipelineCompiler`)
   and the runner as a `GraphRunner` bean, both produced in `PipelineCompilers`; tests replace
   the runner with an alternative bean.

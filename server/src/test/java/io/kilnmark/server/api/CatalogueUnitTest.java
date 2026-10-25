@@ -44,6 +44,9 @@ class CatalogueUnitTest {
     @Test
     void everyBuiltConnectorClaimsOnlyWhatItCanDoToday() {
         for (Connector c : Connectors.load().all()) {
+            if (c.kind().startsWith("test-")) {
+                continue; // test-only connectors (the pipeline tests' writer) are not shipped
+            }
             assertEquals(Set.of(Connector.Capability.DISCOVER, Connector.Capability.READ), c.capabilities(), c.kind());
             assertEquals(null, c.driver(), c.kind() + " needs nothing installed");
         }

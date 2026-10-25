@@ -16,6 +16,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Asking Kilnmark](guide/assistant.md): the Ask panel, what it answers from, sources and links, and privacy
 - [Setting data quality rules](guide/quality-rules.md): one-click rules from the profile, writing rules, thresholds, previews, alerts and recipes
 - [Branding and appearance](guide/branding.md): themes, accent colours and density; the branding folder for an organisation's name, logo and connector logos
+- [Building and running a pipeline](guide/pipelines.md): the Pipelines page, YAML basics, checking as you type, saving versions, running, and reading a run
 - [Pipeline steps and expressions](guide/pipeline-steps.md): filter, compute, select, lookup, aggregate, union, dedupe, route and limit, and the expression language for conditions and computed columns
 
 ## Spikes

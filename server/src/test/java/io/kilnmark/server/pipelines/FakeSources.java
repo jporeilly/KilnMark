@@ -67,4 +67,16 @@ final class FakeSources implements PipelineSources {
     public HostPolicy hosts() {
         return hosts;
     }
+
+    @Override
+    public List<Connector> connectors() {
+        return List.copyOf(connectors.values());
+    }
+
+    @Override
+    public Map<String, String> profileSettings(Records.Source source, Connector connector, String target,
+                                               List<String> key, String urn) {
+        return Map.of("keep-values", Boolean.toString(!"false".equals(source.settings().get("keep_samples"))),
+            "sample-size", "10");
+    }
 }

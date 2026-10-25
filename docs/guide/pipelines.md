@@ -88,8 +88,14 @@ The `write` step takes `source` and where to write: `table` for a database, `pat
 | `replace` | Writes the rows in place of what is there, swapping them in at the end. |
 | `upsert` | Updates rows with the same `key` and adds the rest. Needs `key`, such as `key: [customer_id]`. |
 
-The other step types, and the settings each takes, are listed by the step catalogue
-(`GET /api/v1/steps`).
+A write step also takes the settings of the source's writer, such as `commit_every` for large
+table writes, `overwrite` and `delimiter` for files, `compression` for Parquet, and
+`profile_output: false` to skip profiling what is written. The guide "Writing data from a
+pipeline" describes them; a setting the source's writer does not take is a problem, with its line.
+
+The steps between reading and writing (filter, compute, select, lookup, aggregate, union, dedupe,
+route and limit) are described in [Pipeline steps and expressions](pipeline-steps.md). The step
+catalogue (`GET /api/v1/steps`) lists every type this server has, with the settings each takes.
 
 ## Checking as you type
 
@@ -145,9 +151,11 @@ status changes.
 - **Summary:** the status, the version that ran, who asked, when it started and finished, how long
   it took and how many rows its writes received. A failed run says why, naming the step where the
   failure started.
-- **Steps:** for each step, the rows that came in and went out, with the count on each port when
-  a step has several (for example, a filter's `out` and `rejected`), the most memory it held, and
-  its error if it failed.
+- **Steps:** for each step, how it ended (Finished; Ended early, as a `limit` does once it has its
+  rows; Stopped by the engine, because another step failed or the run was stopped; or Failed), the
+  rows that came in and went out, with the count on each port when a step has several (for
+  example, a filter's `out` and `rejected`), the most memory it held, and its error if it failed.
+  A write that was stopped wrote nothing, unless it used `commit_every`.
 - **What it wrote:** each table or file a write step wrote, with its mode and rows. Choose one to
   open it in the catalogue.
 - **Lineage:** which assets each written asset came from.
@@ -155,10 +163,12 @@ status changes.
 ## What Kilnmark records about what you write
 
 When a run succeeds, each table or file it wrote is added to the catalogue, or updated there, as a
-scan would add it: its columns, and for `create` and `replace` its row count and the profile of
-each column, measured as the rows were written, so its quality scores update too. An `append` or
-`upsert` adds to what was there, so Kilnmark leaves its profile alone; scan the source to profile
-the whole table.
+scan would add it: its columns, and for `create`, `replace` and files its row count and the
+profile of each column, which the write measures as it writes the rows, so its quality scores
+update too. The source's own rules on keeping example values apply. An `append` or `upsert` adds
+to what was there, so Kilnmark records how many rows the run wrote and leaves the table's columns,
+row count and profile as its last scan found them; scan the source to refresh them. If a profile
+could not be made, the write still counts and the run says so.
 
 Kilnmark also records the lineage: the written asset came from the assets the pipeline read. It is
 kept even if the pipeline is later deleted, so the next pipeline that reads the written table

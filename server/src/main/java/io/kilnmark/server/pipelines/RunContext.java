@@ -23,6 +23,7 @@ public final class RunContext {
     private final AccessRole role;
     private final Set<String> secrets = Collections.synchronizedSet(new LinkedHashSet<>());
     private final Set<String> reads = Collections.synchronizedSet(new LinkedHashSet<>());
+    private final java.util.Map<String, String> writes = new java.util.concurrent.ConcurrentHashMap<>();
 
     public RunContext(String pipeline, long runId, String requestedBy, AccessRole role) {
         this.pipeline = pipeline;
@@ -76,6 +77,18 @@ public final class RunContext {
         synchronized (reads) {
             return Set.copyOf(reads);
         }
+    }
+
+    /** Notes the URN a write step's asset is recorded under, as its connector worked it out. */
+    void wrote(String source, String target, String urn) {
+        if (source != null && target != null && urn != null) {
+            writes.put(source + "\u0000" + target, urn);
+        }
+    }
+
+    /** The URN the write of {@code target} in {@code source} is recorded under, or {@code fallback}. */
+    public String writtenUrn(String source, String target, String fallback) {
+        return source == null || target == null ? fallback : writes.getOrDefault(source + "\u0000" + target, fallback);
     }
 
     /** {@code message} with every secret this run resolved blanked out. */

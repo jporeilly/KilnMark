@@ -215,6 +215,7 @@ class PipelineFlowTest {
         assertEquals(2500L, run.getLong("steps.find { it.step == 'people' }.rowsOut"));
         assertEquals(2500L, run.getLong("steps.find { it.step == 'out' }.rowsIn"));
         assertEquals(2500L, run.getLong("steps.find { it.step == 'out' }.ports.in.in"));
+        assertEquals(List.of("finished", "finished"), run.getList("steps.outcome"));
         assertEquals(2, run.getList("steps").size(), "the profile step in front of the write is not listed");
         assertEquals(WRITE_URN, run.getString("written[0].urn"));
         assertTrue(run.getBoolean("written[0].registered"), run.prettify());
@@ -344,9 +345,10 @@ class PipelineFlowTest {
             .body("fields.find { it.name == 'name' }.description", equalTo("Who"));
 
         // A write's options cannot say where to write.
-        as(viewer).body(Map.of("yaml", YAML.replace("mode: replace", "mode: replace\n    options: {rows: 9}")))
+        as(viewer).body(Map.of("yaml", YAML.replace("mode: replace", "mode: replace\n    host: elsewhere")))
             .post("/api/v1/pipelines/validate").then().statusCode(200)
-            .body("problems.message", hasItems(containsString("options: 'rows' says where or as whom to write")));
+            .body("problems.message", hasItems(containsString("host")))
+            .body("valid", equalTo(false));
         as(steward).body(Map.of("yaml", YAML, "message", "Back")).put("/api/v1/pipelines/people-copy").then()
             .statusCode(200);
     }
@@ -354,7 +356,7 @@ class PipelineFlowTest {
     @Test
     @Order(9)
     void failuresNameTheStepWithoutTheSecret() throws Exception {
-        String failing = YAML.replace("mode: replace", "mode: replace\n    options: {fail: true}");
+        String failing = YAML.replace("mode: replace", "mode: replace\n    fail: true");
         as(steward).body(Map.of("yaml", failing, "message", "Make the write fail"))
             .put("/api/v1/pipelines/people-copy").then().statusCode(200);
         long id = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
@@ -363,6 +365,7 @@ class PipelineFlowTest {
         String all = run.prettify();
         assertTrue(run.getString("run.error").contains("refused the rows"), all);
         assertTrue(run.getString("steps.find { it.step == 'out' }.error").contains("refused the rows"), all);
+        assertEquals("failed", run.getString("steps.find { it.step == 'out' }.outcome"), all);
         assertFalse(all.contains(OUT_SECRET), all);
         assertFalse(all.contains(IN_SECRET), all);
         assertFalse(run.getBoolean("written[0].registered"), "a failed run catalogues nothing");
@@ -406,17 +409,11 @@ class PipelineFlowTest {
                     equalTo("The run failed. " + PipelineService.FOR_ADMINS));
 
             // A run that succeeds with a note quoting the engine: the note's detail is held back alike.
-            as(steward).body(Map.of("yaml", YAML, "message", "Writes again")).put("/api/v1/pipelines/people-copy")
-                .then().statusCode(200);
-            HoldingGraphRunner.breakProfiles = true;
-            long noted;
-            try {
-                noted = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
-                    .jsonPath().getLong("id");
-                waitForRun(noted, "succeeded");
-            } finally {
-                HoldingGraphRunner.breakProfiles = false;
-            }
+            as(steward).body(Map.of("yaml", YAML.replace("mode: replace", "mode: replace\n    break_profile: true"),
+                "message", "Writes again")).put("/api/v1/pipelines/people-copy").then().statusCode(200);
+            long noted = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
+                .jsonPath().getLong("id");
+            waitForRun(noted, "succeeded");
             String path = "/api/v1/pipeline-runs/" + noted;
             String note = "out: what it wrote could not be profiled; scan mem-out to profile lab.people_copy";
             as(viewer).get(path).then().statusCode(200)

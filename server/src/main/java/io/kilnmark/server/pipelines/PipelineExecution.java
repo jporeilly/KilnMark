@@ -13,7 +13,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
-import java.util.function.Function;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -25,7 +24,6 @@ import io.kilnmark.kiln.graph.GraphRunner;
 import io.kilnmark.kiln.graph.GraphStep;
 import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.graph.PortRef;
-import io.kilnmark.kiln.plugins.profile.ProfileStep;
 
 /**
  * One run of a compiled pipeline, without the database: finds what it reads and writes, adds a
@@ -35,14 +33,17 @@ import io.kilnmark.kiln.plugins.profile.ProfileStep;
  */
 final class PipelineExecution {
 
-    /** Hidden steps' ids end with this; YAML step ids cannot contain it. */
-    static final String PROFILE_SUFFIX = "~profile";
     /** Metadata events kept per run for written assets; profiles of very wide tables beyond this are dropped. */
     static final int MAX_EVENTS = 20_000;
 
     /** A write step: where it writes, how, and the assets it reads from upstream (its lineage). */
     record WriteTarget(String step, String source, String target, String mode, String urn, List<String> key,
                        List<String> inputs) {
+
+        /** This write under another URN: the one its connector worked out when the step was made. */
+        WriteTarget withUrn(String other) {
+            return new WriteTarget(step, source, target, mode, other, key, inputs);
+        }
 
         /** Whether the step writes the whole target, so a profile of its rows describes it. */
         boolean wholeTarget() {
@@ -52,11 +53,11 @@ final class PipelineExecution {
 
     /**
      * How a run ended. {@code status} is succeeded, failed or cancelled; {@code rowsIn} holds the
-     * rows each write step received; {@code events} what was reported about the written assets;
-     * {@code profileFailures} why a write's profile could not be made, by write step.
+     * rows each write step received; {@code events} what the writers reported about the written
+     * assets (docs/design/pipelines.md, section 5, "What a write reports").
      */
     record Outcome(String status, String error, List<PipelineStore.StepRun> steps, Map<String, Long> rowsIn,
-                   List<MetadataEvent> events, Map<String, String> profileFailures) {
+                   List<MetadataEvent> events) {
     }
 
     /** Closes the steps of a graph that will not run. */
@@ -133,35 +134,6 @@ final class PipelineExecution {
     }
 
     /**
-     * The graph with a profile step beside every write that replaces its whole target: it reads its
-     * own copy of the rows the write receives and reports the columns' profiles for the written
-     * asset when they end, in the same pass. If profiling fails, the write goes on
-     * ({@link TolerantProfile}). {@code settings} gives each one's profile settings.
-     */
-    static PipelineGraph withProfiles(PipelineGraph g, List<WriteTarget> writes,
-                                      Function<WriteTarget, Map<String, String>> settings) {
-        List<GraphStep> steps = new ArrayList<>(g.steps());
-        List<Edge> edges = new ArrayList<>(g.edges());
-        for (WriteTarget w : writes) {
-            if (!w.wholeTarget()) {
-                continue;
-            }
-            List<Edge> into = edges.stream().filter(e -> e.to().step().equals(w.step())).toList();
-            if (into.size() != 1) {
-                continue;
-            }
-            Edge e = into.get(0);
-            String id = w.step() + PROFILE_SUFFIX;
-            Map<String, String> s = new LinkedHashMap<>(settings.apply(w));
-            s.put("asset-urn", w.urn());
-            steps.add(new GraphStep(id, new TolerantProfile(new WithSettings(new ProfileStep(), s)),
-                new LinkedHashMap<>(s)));
-            edges.add(new Edge(e.from(), new PortRef(id, "in")));
-        }
-        return new PipelineGraph(g.name(), steps, edges);
-    }
-
-    /**
      * Runs {@code graph}. {@code cancelled} is someone asking the run to stop; {@code shutdown} the
      * worker stopping. Either interrupts the run within about half a second.
      */
@@ -218,24 +190,17 @@ final class PipelineExecution {
         }
         if (interrupted || result == null) {
             boolean byPerson = cancelled.getAsBoolean();
-            List<PipelineStore.StepRun> none = graph.order() == null ? List.of() : visible(graph.order()).stream()
+            List<PipelineStore.StepRun> none = graph.order() == null ? List.of() : graph.order().stream()
                 .map(id -> new PipelineStore.StepRun(id, graph.step(id).step().type(), position(graph, id), null, null,
-                    "{}", null, null, null)).toList();
+                    "{}", null, null, null, "stopped")).toList();
             return new Outcome(byPerson ? "cancelled" : "failed", byPerson ? "Cancelled while it was running"
                 : "The worker running this pipeline was stopped before it finished. Run it again; check what its "
-                + "writes had written first.", none, Map.of(), List.of(), Map.of());
+                + "writes had written first.", none, Map.of(), List.of());
         }
         Map<String, Long> rowsIn = new HashMap<>();
         List<PipelineStore.StepRun> steps = steps(graph, result, context, rowsIn);
         String error = result.succeeded() ? null : context.scrub(result.error());
-        Map<String, String> profileFailures = new HashMap<>();
-        for (GraphStep s : graph.steps()) {
-            if (s.id().endsWith(PROFILE_SUFFIX) && s.step() instanceof TolerantProfile p && p.failure() != null) {
-                profileFailures.put(s.id().substring(0, s.id().length() - PROFILE_SUFFIX.length()), p.failure());
-            }
-        }
-        return new Outcome(result.succeeded() ? "succeeded" : "failed", error, steps, rowsIn, List.copyOf(events),
-            profileFailures);
+        return new Outcome(result.succeeded() ? "succeeded" : "failed", error, steps, rowsIn, List.copyOf(events));
     }
 
     private static void joinQuietly(Thread t) {
@@ -252,13 +217,10 @@ final class PipelineExecution {
         }
     }
 
-    private static List<String> visible(List<String> ids) {
-        return ids.stream().filter(id -> !id.endsWith(PROFILE_SUFFIX)).toList();
-    }
 
     private static int position(PipelineGraph g, String id) {
         List<String> order = g.order();
-        int i = order == null ? -1 : visible(order).indexOf(id);
+        int i = order == null ? -1 : order.indexOf(id);
         return Math.max(0, i);
     }
 
@@ -297,7 +259,7 @@ final class PipelineExecution {
         List<String> order = graph.order() == null ? graph.steps().stream().map(GraphStep::id).toList() : graph.order();
         List<PipelineStore.StepRun> out = new ArrayList<>();
         int position = 0;
-        for (String id : visible(order)) {
+        for (String id : order) {
             GraphStep step = graph.step(id);
             RunResult.StepResult r = byName.get(id);
             Map<String, Long> in = new LinkedHashMap<>();
@@ -319,11 +281,7 @@ final class PipelineExecution {
             // A step with nothing connected after it (a write) has no rows out: what it wrote is its target.
             Long rowsOut = r == null || graph.outOf(id).isEmpty() ? null : r.rowsOut();
             String error = r == null ? null : r.error();
-            RunResult.StepResult profile = byName.get(id + PROFILE_SUFFIX);
-            if (error == null && profile != null && profile.error() != null) {
-                error = "Profiling what this step writes failed: " + profile.error();
-            }
-            long peak = (r == null ? 0 : r.peakMemoryBytes()) + (profile == null ? 0 : profile.peakMemoryBytes());
+            long peak = r == null ? 0 : r.peakMemoryBytes();
             if (rowsInTotal != null) {
                 rowsIn.put(id, rowsInTotal);
             }
@@ -345,7 +303,8 @@ final class PipelineExecution {
                 }
             });
             out.add(new PipelineStore.StepRun(id, step.step().type(), position++, rowsInTotal, rowsOut,
-                ports.toString(), r == null ? null : peak, null, context.scrub(error)));
+                ports.toString(), r == null ? null : peak, null, context.scrub(error),
+                r == null ? null : r.outcome().name().toLowerCase(java.util.Locale.ROOT)));
         }
         return out;
     }

@@ -45,7 +45,8 @@ public class PipelineCompilers {
 
     @Produces
     @ApplicationScoped
-    PipelineSources sources(GraphStore store, SecretBox secrets, Connectors connectors, KilnmarkConfig config) {
+    PipelineSources sources(GraphStore store, SecretBox secrets, Connectors connectors, KilnmarkConfig config,
+                            io.kilnmark.server.quality.QualityService quality) {
         HostPolicy hosts = new HostPolicy(config.sources().allowedHosts().orElse(List.of()));
         return new PipelineSources() {
             @Override
@@ -71,6 +72,19 @@ public class PipelineCompilers {
             @Override
             public HostPolicy hosts() {
                 return hosts;
+            }
+
+            @Override
+            public List<Connector> connectors() {
+                return List.copyOf(connectors.all());
+            }
+
+            @Override
+            public java.util.Map<String, String> profileSettings(Records.Source source, Connector connector,
+                                                                 String target, List<String> key, String urn) {
+                io.kilnmark.kiln.connect.AssetInfo asset = new io.kilnmark.kiln.connect.AssetInfo(target, "table", null,
+                    target, null, List.of(), key, false, true, java.util.Map.of());
+                return quality.profileSettings(source, connector, asset, urn);
             }
         };
     }

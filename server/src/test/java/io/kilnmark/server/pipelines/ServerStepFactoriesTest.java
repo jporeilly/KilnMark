@@ -209,28 +209,47 @@ class ServerStepFactoriesTest {
     }
 
     @Test
-    void writeOptionsCannotSayWhereToWrite() {
-        assertEquals(List.of(), write.check(Map.of("source", "warehouse", "path", "out/x.csv", "options",
-            Map.of("delimiter", ";"))));
-        for (String key : List.of("rows", "host", "url", "Bucket", "access-key-id", "allow_writing", "jdbcUrl",
-            "accessKeyId", "SECRET_ACCESS_KEY")) {
-            List<String> p = write.check(Map.of("source", "warehouse", "path", "out/x.csv", "options",
-                Map.of(key, "x")));
-            assertEquals(1, p.size(), key + ": " + p);
-            assertTrue(p.get(0).startsWith("options: '" + key + "' says where or as whom to write"), p.get(0));
-        }
-        List<String> nested = write.check(Map.of("source", "warehouse", "path", "out/x.csv", "options",
-            Map.of("writer", Map.of("url", "jdbc:postgresql://elsewhere/db"))));
-        assertEquals(1, nested.size(), nested.toString());
-        assertTrue(nested.get(0).contains("holds a list or map"), nested.get(0));
+    void writerSettingsAreThoseTheWriterTakes() {
+        List<String> keys = write.settings().stream().map(io.kilnmark.kiln.SettingSpec::key).toList();
+        assertTrue(keys.containsAll(List.of("commit_every", "overwrite", "allow_unscanned", "delimiter", "compression",
+            "lock_timeout", "keep_values", "profile_output", "allow_dropping_row_security", "fail", "break_profile")),
+            keys.toString());
+        assertFalse(keys.contains("host"), "an address a writer declares is never a step setting");
+        assertFalse(keys.contains("profile"), "profile is an AWS credentials profile; profiling is profile_output");
+        assertEquals(List.of(), write.check(Map.of("source", "warehouse", "path", "out/x.csv", "delimiter", ";")),
+            "a writer's own options are allowed, even when they are also a source setting");
+        List<String> p = write.check(Map.of("source", "warehouse", "table", "a.b", "commit_every", 5L));
+        assertEquals(1, p.size(), p.toString());
+        assertTrue(p.get(0).startsWith("commit_every: Memory (test) sources' writer does not take"), p.get(0));
+        assertTrue(write.check(Map.of("source", "warehouse", "table", "a.b", "host", "x")).get(0).startsWith("host:"));
+        // Without a writer that declares its options, the writers' own settings are allowed.
+        assertEquals(List.of("commit_every", "batch_size"), WriteStepFactory.writerKeys(null).stream().limit(2).toList());
+    }
+
+    @Test
+    void writerSettingsAndTheSourcesProfilingReachTheWriter() throws Exception {
         RunContext ctx = run(AccessRole.ADMIN);
+        ctx.run(() -> {
+            try {
+                return write.create(Map.of("source", "warehouse", "path", "out/x.csv", "delimiter", ";", "fail", true));
+            } catch (StepException x) {
+                throw new IllegalStateException(x);
+            }
+        });
+        Map<String, Object> options = MemoryConnector.lastOptions;
+        assertEquals(";", options.get("delimiter"));
+        assertEquals(true, options.get("fail"));
+        assertFalse(options.containsKey("source") || options.containsKey("path"), options.toString());
+        assertEquals(Map.of("keep-values", "true", "sample-size", "10"), options.get(WriterContract.PROFILE_SETTINGS));
+        assertEquals("urn:kilnmark:warehouse:out/x.csv", ctx.writtenUrn("warehouse", "out/x.csv", null));
+
         IllegalStateException e = assertThrows(IllegalStateException.class, () -> ctx.run(() -> {
             try {
-                return write.create(Map.of("source", "warehouse", "table", "a.b", "options", Map.of("host", "x")));
+                return write.create(Map.of("source", "warehouse", "table", "a.b", "host", "x"));
             } catch (StepException x) {
                 throw new IllegalStateException(x.getMessage(), x);
             }
         }));
-        assertTrue(e.getMessage().contains("option 'host'"), e.getMessage());
+        assertTrue(e.getMessage().contains("does not take the setting 'host'"), e.getMessage());
     }
 }

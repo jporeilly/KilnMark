@@ -43,9 +43,12 @@ public class PipelineStore {
         }
     }
 
-    /** {@code portRows} is JSON: {"in": {port: rows}, "out": {port: rows}}. */
+    /**
+     * {@code portRows} is JSON: {"in": {port: rows}, "out": {port: rows}}. {@code outcome} is how the
+     * step ended (finished, ended_early, stopped, failed), or null when the engine did not say.
+     */
     public record StepRun(String stepId, String type, int position, Long rowsIn, Long rowsOut, String portRows,
-                          Long peakMemory, Long durationMs, String error) {
+                          Long peakMemory, Long durationMs, String error, String outcome) {
     }
 
     public record Lineage(String pipeline, Long runId, String stepId, String inputUrn, String outputUrn,
@@ -529,11 +532,11 @@ public class PipelineStore {
     public void saveStepRuns(long runId, List<StepRun> steps) {
         db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_step_run (run_id, step_id, "
-                + "type, position, rows_in, rows_out, port_rows, peak_memory, duration_ms, error) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?) ON CONFLICT (run_id, step_id) DO UPDATE SET "
+                + "type, position, rows_in, rows_out, port_rows, peak_memory, duration_ms, error, outcome) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?) ON CONFLICT (run_id, step_id) DO UPDATE SET "
                 + "type = EXCLUDED.type, position = EXCLUDED.position, rows_in = EXCLUDED.rows_in, "
                 + "rows_out = EXCLUDED.rows_out, port_rows = EXCLUDED.port_rows, peak_memory = EXCLUDED.peak_memory, "
-                + "duration_ms = EXCLUDED.duration_ms, error = EXCLUDED.error")) {
+                + "duration_ms = EXCLUDED.duration_ms, error = EXCLUDED.error, outcome = EXCLUDED.outcome")) {
                 for (StepRun s : steps) {
                     ps.setLong(1, runId);
                     ps.setString(2, s.stepId());
@@ -545,6 +548,7 @@ public class PipelineStore {
                     setLong(ps, 8, s.peakMemory());
                     setLong(ps, 9, s.durationMs());
                     ps.setString(10, s.error());
+                    ps.setString(11, s.outcome());
                     ps.addBatch();
                 }
                 ps.executeBatch();
@@ -557,13 +561,14 @@ public class PipelineStore {
         return db.tx(c -> {
             List<StepRun> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("SELECT step_id, type, position, rows_in, rows_out, "
-                + "port_rows, peak_memory, duration_ms, error FROM kilnmark.pipeline_step_run WHERE run_id = ? "
+                + "port_rows, peak_memory, duration_ms, error, outcome FROM kilnmark.pipeline_step_run WHERE run_id = ? "
                 + "ORDER BY position, step_id")) {
                 ps.setLong(1, runId);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         out.add(new StepRun(rs.getString(1), rs.getString(2), rs.getInt(3), getLong(rs, 4),
-                            getLong(rs, 5), rs.getString(6), getLong(rs, 7), getLong(rs, 8), rs.getString(9)));
+                            getLong(rs, 5), rs.getString(6), getLong(rs, 7), getLong(rs, 8), rs.getString(9),
+                            rs.getString(10)));
                     }
                 }
             }

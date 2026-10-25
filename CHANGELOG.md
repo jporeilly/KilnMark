@@ -65,14 +65,17 @@ details.
   `/api/v1/steps`, `/api/v1/lineage`): every version is kept with who saved it and why, saves use
   `If-Match` on the latest version number (409 when someone saved since), and YAML is checked as
   it is written, with problems by line and each step's columns. Runs are queued as jobs of kind
-  `pipeline`, run once by a worker, recorded step by step (rows in and out per port, peak memory,
-  error) and can be cancelled. Viewers read; stewards edit and run.
+  `pipeline`, run once by a worker, recorded step by step (how each step ended, rows in and out per
+  port, peak memory, error) and can be cancelled. The step catalogue includes kiln-steps'
+  transforms. Viewers read; stewards edit and run.
 - **Reading and writing sources in pipelines:** the `read` step reads a saved source's table or
   file; the `write` step writes to a source only when an admin has set its new **Allow writing**
   setting (`allow_writing`, off by default; stewards cannot change it). Allowed hosts and the
   role of whoever asked are checked again when a run starts, and no message carries a source's
-  secret. What a write wrote is registered in the catalogue with its profile and its lineage from
-  the assets read, under a run of kind `pipeline` that source run lists do not show (migration
+  secret. A write step takes the writer settings its source's writer declares, and nothing that says
+  where or as whom to connect. What a write wrote is registered in the catalogue from what the
+  writer reports (its columns, row count and profile, measured as it wrote; for append and upsert
+  only the rows written) with its lineage from the assets read, under a run of kind `pipeline` that source run lists do not show (migration
   V12; `kilnmark.pipelines.max-yaml-kb`, `memory-limit-mb`, `row-set-capacity` and
   `wait-for-target`). While a source allows writing, only admins change where it points, and a
   write's options cannot redirect it. A pipeline runs once at a time, and one run at a time writes

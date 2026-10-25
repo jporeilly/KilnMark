@@ -371,8 +371,8 @@ public class PipelineService {
         String withheld = withheld(r, sights);
         List<PipelineViews.StepRunView> stepViews = store.stepRuns(id).stream().map(s -> new PipelineViews.StepRunView(
             s.stepId(), s.type(), s.position(), s.rowsIn(), s.rowsOut(), tree(s.portRows()), s.peakMemory(),
-            s.durationMs(), s.error() == null || withheld == null ? s.error() : "This step failed. " + withheld))
-            .toList();
+            s.durationMs(), s.error() == null || withheld == null ? s.error() : "This step failed. " + withheld,
+            s.outcome())).toList();
         JsonNode result = tree(r.result());
         List<PipelineViews.WrittenAsset> written = new ArrayList<>();
         List<String> read = new ArrayList<>();
@@ -590,7 +590,10 @@ public class PipelineService {
             if (stopped(id, shutdown, c.graph())) {
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
-            List<PipelineExecution.WriteTarget> writes = PipelineExecution.writes(c);
+            // Each write's asset under the URN its connector worked out (for a prefixed S3 source, the prefix
+            // and the path), as a scan of the source records it.
+            List<PipelineExecution.WriteTarget> writes = PipelineExecution.writes(c).stream()
+                .map(w -> w.withUrn(context.writtenUrn(w.source(), w.target(), w.urn()))).toList();
             java.util.Set<String> assets = new java.util.TreeSet<>(context.reads());
             assets.addAll(PipelineExecution.reads(c).values());
             writes.forEach(w -> assets.add(w.urn()));
@@ -611,8 +614,7 @@ public class PipelineService {
                 held.add(urn);
             }
             ran = true;
-            PipelineGraph graphToRun = PipelineExecution.withProfiles(c.graph(), writes, this::profileSettings);
-            PipelineExecution.Outcome o = execution.run(runner, graphToRun, writes, context,
+            PipelineExecution.Outcome o = execution.run(runner, c.graph(), writes, context,
                 () -> store.cancelRequested(id), shutdown);
             store.saveStepRuns(id, o.steps());
             ObjectNode result = json.createObjectNode();
@@ -626,7 +628,10 @@ public class PipelineService {
                 total += rows == null ? 0 : rows;
                 boolean registered = false;
                 if (o.status().equals("succeeded")) {
-                    String profileFailure = o.profileFailures().get(w.step());
+                    // Writers profile what they write; one that could not says so in an event, never by failing.
+                    String profileFailure = o.events().stream().filter(e -> e.assetUrn().equals(w.urn()))
+                        .map(e -> e.attributes().get(WriterContract.PROFILE_ERROR)).filter(java.util.Objects::nonNull)
+                        .findFirst().orElse(null);
                     if (profileFailure != null) {
                         note(notes, w.step() + ": what it wrote could not be profiled; scan " + w.source() + " to profile "
                             + w.target(), context.scrub(profileFailure));
@@ -702,22 +707,6 @@ public class PipelineService {
         }
     }
 
-    /** Profile settings for what a write writes: the source's own rules on keeping values apply. */
-    private Map<String, String> profileSettings(PipelineExecution.WriteTarget w) {
-        try {
-            Records.Source s = graph.source(w.source()).orElse(null);
-            Connector c = s == null ? null : sources.connector(s.kind()).orElse(null);
-            if (s == null || c == null || quality == null) {
-                return Map.of("keep-values", "false");
-            }
-            AssetInfo a = new AssetInfo(w.target(), "table", null, w.target(), null, List.of(), w.key(), false, true,
-                Map.of());
-            return quality.profileSettings(s, c, a, w.urn());
-        } catch (RuntimeException e) {
-            return Map.of("keep-values", "false");
-        }
-    }
-
     /**
      * Registers what a write wrote as the scan registers what it finds: the asset and its fields,
      * and (when the write replaced the whole target) its row count and column profiles, under a
@@ -776,60 +765,92 @@ public class PipelineService {
         }
     }
 
+    /**
+     * Catalogues one write from what its writer reported (docs/design/pipelines.md, section 5, "What
+     * a write reports"). A write that leaves the asset holding exactly what was written (a table
+     * created or replaced, a file) reports {@code SCHEMA}, {@code ROW_COUNT} and the profile: the
+     * asset's fields, row count and profile are replaced, as a scan replaces them. An append or
+     * upsert reports only {@code ROW_COUNT} with {@code appended=true}: the asset keeps the fields,
+     * row count and profile of its last scan.
+     */
     private void catalogue(Records.Source s, PipelineExecution.WriteTarget w, Long rows, List<MetadataEvent> events,
                            boolean profiled, PipelineCompilerPort.Compilation c, RunContext context, ArrayNode notes) {
-        {
-            long recordRun = store.recordWrite(s.id(), rows == null ? 0 : rows, "Written by pipeline "
-                + context.pipeline() + " (run " + context.runId() + ", step " + w.step() + ")");
-            AssetInfo info = describe(w, context);
-            Records.AssetDetail known = graph.asset(w.urn()).orElse(null);
-            List<MetadataEvent> mine = events.stream().filter(e -> e.assetUrn().equals(w.urn()))
-                .filter(e -> profiled || e.kind() == MetadataEvent.Kind.ROW_COUNT).toList();
-            if (info == null && !w.wholeTarget() && known != null) {
-                // Rows were added to a table the catalogue knows; without the connector's own view of
-                // it, keep what is catalogued rather than replace it with the pipeline's columns.
-                graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), known.kind(), known.container(),
-                    known.name(), known.description(), known.primaryKey()), known.fields().stream()
-                    .map(f -> new Records.Field(f.name(), f.position(), f.sourceType(), f.kind(), f.nullable(),
-                        f.description())).toList());
-            } else {
-                List<Records.Field> fields = info != null && !info.fields().isEmpty() ? fields(info)
-                    : fieldsFromColumns(w, c, mine);
-                boolean files = sources.connector(s.kind()).map(k -> "files".equals(k.category())).orElse(false);
-                String kind = info != null ? info.kind() : files ? "file" : "table";
-                String container = info != null && info.container() != null ? info.container() : container(w.target());
-                String name = info != null && info.name() != null ? info.name() : lastPart(w.target());
-                String description = info != null && info.description() != null ? info.description()
-                    : known == null ? null : known.description();
-                graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), kind, container, name, description,
-                    info != null ? info.primaryKey() : w.key()), fields);
-            }
-            if (w.wholeTarget()) {
-                List<MetadataEvent> toStore = new ArrayList<>(mine);
-                if (mine.stream().noneMatch(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT) && rows != null) {
-                    toStore.add(0, new MetadataEvent(w.urn(), MetadataEvent.Kind.ROW_COUNT,
-                        Map.of("rows", Long.toString(rows), "complete", "true"), Instant.now()));
-                }
-                int failed = 0;
-                for (MetadataEvent e : toStore) {
-                    try {
-                        scans.recordEvent(e, recordRun);
-                    } catch (RuntimeException ex) {
-                        failed++;
-                        LOG.debugf("Could not store %s for %s: %s", e.kind(), w.urn(), context.scrub(ex.getMessage()));
-                    }
-                    quality.observe(e, recordRun, s);
-                }
-                if (failed > 0) {
-                    note(notes, w.step() + ": " + failed + " column profiles could not be stored; scan " + w.source()
-                        + " to profile " + w.target(), null);
-                }
-                quality.afterScan(s, recordRun);
-            } else {
-                note(notes, w.step() + ": the " + w.mode() + " added to " + w.target() + ", so its profile is left as "
-                    + "it was; scan " + w.source() + " to profile the whole of it", null);
-            }
+        long recordRun = store.recordWrite(s.id(), rows == null ? 0 : rows, "Written by pipeline "
+            + context.pipeline() + " (run " + context.runId() + ", step " + w.step() + ")");
+        Records.AssetDetail known = graph.asset(w.urn()).orElse(null);
+        List<MetadataEvent> mine = events.stream().filter(e -> e.assetUrn().equals(w.urn()))
+            .filter(e -> !e.attributes().containsKey(WriterContract.PROFILE_ERROR)).toList();
+        MetadataEvent schema = mine.stream().filter(e -> e.kind() == MetadataEvent.Kind.SCHEMA).findFirst().orElse(null);
+        boolean appended = mine.stream().anyMatch(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT
+            && "true".equals(e.attributes().get("appended"))) || schema == null && !w.wholeTarget();
+        if (appended && known != null) {
+            // Rows added to a table the catalogue knows: keep what its last scan found.
+            graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), known.kind(), known.container(), known.name(),
+                known.description(), known.primaryKey()), known.fields().stream().map(f -> new Records.Field(f.name(),
+                f.position(), f.sourceType(), f.kind(), f.nullable(), f.description())).toList());
+            note(notes, w.step() + ": the " + w.mode() + " added " + (rows == null ? "rows" : rows + " rows") + " to "
+                + w.target() + "; its columns, row count and profile stay as its last scan found them. Scan "
+                + w.source() + " to refresh them", null);
+            return;
         }
+        List<Records.Field> fields = schema == null ? List.of() : schemaFields(schema);
+        AssetInfo info = fields.isEmpty() ? describe(w, context) : null;
+        if (fields.isEmpty()) {
+            fields = info != null && !info.fields().isEmpty() ? fields(info) : fieldsFromColumns(w, c, mine);
+        }
+        boolean files = sources.connector(s.kind()).map(k -> "files".equals(k.category())).orElse(false);
+        String kind = info != null ? info.kind() : files ? "file" : "table";
+        String container = info != null && info.container() != null ? info.container() : container(w.target());
+        String name = info != null && info.name() != null ? info.name() : lastPart(w.target());
+        String description = info != null && info.description() != null ? info.description()
+            : known == null ? null : known.description();
+        graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), kind, container, name, description,
+            info != null ? info.primaryKey() : known != null ? known.primaryKey() : w.key()), fields);
+        if (appended) {
+            note(notes, w.step() + ": the " + w.mode() + " added rows to " + w.target() + ", which Kilnmark had not "
+                + "catalogued; scan " + w.source() + " for its row count and profile", null);
+            return;
+        }
+        List<MetadataEvent> toStore = new ArrayList<>(mine.stream().filter(e -> e.kind() != MetadataEvent.Kind.SCHEMA)
+            .filter(e -> profiled || e.kind() == MetadataEvent.Kind.ROW_COUNT).toList());
+        if (toStore.stream().noneMatch(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT) && rows != null) {
+            toStore.add(0, new MetadataEvent(w.urn(), MetadataEvent.Kind.ROW_COUNT,
+                Map.of("rows", Long.toString(rows), "complete", "true"), Instant.now()));
+        }
+        int failed = 0;
+        for (MetadataEvent e : toStore) {
+            try {
+                scans.recordEvent(e, recordRun);
+            } catch (RuntimeException ex) {
+                failed++;
+                LOG.debugf("Could not store %s for %s: %s", e.kind(), w.urn(), context.scrub(ex.getMessage()));
+            }
+            quality.observe(e, recordRun, s); // samples only when the source keeps them
+        }
+        if (failed > 0) {
+            note(notes, w.step() + ": " + failed + " column profiles could not be stored; scan " + w.source()
+                + " to profile " + w.target(), null);
+        }
+        quality.afterScan(s, recordRun);
+    }
+
+    /** The written columns a writer's {@code SCHEMA} event lists: {@code [{name, kind, type}]}. */
+    private List<Records.Field> schemaFields(MetadataEvent schema) {
+        List<Records.Field> out = new ArrayList<>();
+        JsonNode columns = tree(schema.attributes().get("columns"));
+        if (columns == null || !columns.isArray()) {
+            return out;
+        }
+        int i = 0;
+        for (JsonNode col : columns) {
+            String name = col.path("name").asText(null);
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            String kind = col.path("kind").asText("text").toLowerCase(Locale.ROOT);
+            out.add(new Records.Field(name, ++i, col.path("type").asText(kind), kind, true, null));
+        }
+        return out;
     }
 
     /** The written asset as its connector now describes it, or null when it cannot. */

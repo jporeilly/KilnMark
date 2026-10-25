@@ -33,7 +33,7 @@ import io.kilnmark.kiln.connect.SourceConfig;
  */
 public final class MemoryConnector implements Connector {
 
-    public static final String KIND = "memory-test";
+    public static final String KIND = "test-memory";
     static final Schema PEOPLE = new Schema(List.of(Field.nullable("id", new ArrowType.Int(64, true)),
         Field.nullable("name", ArrowType.Utf8.INSTANCE)));
     /** Rows written, by target asset URN. */
@@ -106,12 +106,34 @@ public final class MemoryConnector implements Connector {
             "token", token));
     }
 
+    /**
+     * The write options this writer takes (the writers' contract, found by name until it is in
+     * kiln-core): {@code fail} fails the write at the end, {@code break_profile} reports that the
+     * profile could not be made.
+     */
+    public List<io.kilnmark.kiln.SettingSpec> writeOptions() {
+        return List.of(
+            io.kilnmark.kiln.SettingSpec.optional("fail", "Fail", io.kilnmark.kiln.SettingSpec.Kind.BOOLEAN, false,
+                "Fail at the end (tests)"),
+            io.kilnmark.kiln.SettingSpec.optional("break_profile", "Break the profile",
+                io.kilnmark.kiln.SettingSpec.Kind.BOOLEAN, false, "Report a profile that could not be made (tests)"),
+            io.kilnmark.kiln.SettingSpec.optional("delimiter", "Delimiter", io.kilnmark.kiln.SettingSpec.Kind.TEXT, ",",
+                "Kept, as a files writer's is"),
+            io.kilnmark.kiln.SettingSpec.optional("host", "Host", io.kilnmark.kiln.SettingSpec.Kind.TEXT, null,
+                "An address name: never offered to pipelines"));
+    }
+
+    /** The options last given to a writer (tests read the profile settings the server passed). */
+    static volatile Map<String, Object> lastOptions = Map.of();
+
     @Override
     public Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
         if (write.target().contains("refuse")) {
             throw new ConnectorException("Cannot write there with password " + source.secret());
         }
-        return new Counter(write.assetUrn(), Boolean.TRUE.equals(write.options().get("fail")), source.secret());
+        lastOptions = write.options();
+        return new Counter(write.assetUrn(), Boolean.TRUE.equals(write.options().get("fail")), source.secret(),
+            write.mode(), Boolean.TRUE.equals(write.options().get("break_profile")));
     }
 
     /** Reads {@code rows} people in batches of 1,000. */
@@ -166,16 +188,28 @@ public final class MemoryConnector implements Connector {
         }
     }
 
-    /** Counts what it is given; fails at the end when asked, naming the secret (which must be scrubbed). */
+    /**
+     * Counts what it is given; fails at the end when asked, naming the secret (which must be
+     * scrubbed). On success it reports as the writers' contract says (docs/design/pipelines.md,
+     * section 5, "What a write reports").
+     */
     static final class Counter implements Step {
         private final String urn;
         private final boolean fail;
         private final String secret;
+        private final String mode;
+        private final boolean breakProfile;
 
         Counter(String urn, boolean fail, String secret) {
+            this(urn, fail, secret, "replace", false);
+        }
+
+        Counter(String urn, boolean fail, String secret, String mode, boolean breakProfile) {
             this.urn = urn;
             this.fail = fail;
             this.secret = secret;
+            this.mode = mode == null ? "create" : mode;
+            this.breakProfile = breakProfile;
         }
 
         @Override
@@ -201,11 +235,37 @@ public final class MemoryConnector implements Connector {
                 if (fail) {
                     throw new StepException("The target refused the rows; password " + secret);
                 }
+                report(context);
                 return false;
             }
             WRITTEN.get(urn).addAndGet(b.getRowCount());
             b.close();
             return true;
+        }
+
+        private void report(StepContext context) {
+            long rows = WRITTEN.get(urn).get();
+            Instant now = Instant.now();
+            if (mode.equals("append") || mode.equals("upsert")) {
+                context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.ROW_COUNT, Map.of("rows",
+                    Long.toString(rows), "complete", "false", "written", "true", "appended", "true", "mode", mode), now));
+                return;
+            }
+            context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.SCHEMA, Map.of("columns",
+                "[{\"name\":\"id\",\"kind\":\"int64\",\"type\":\"bigint\"},"
+                    + "{\"name\":\"name\",\"kind\":\"text\",\"type\":\"text\"}]", "mode", mode), now));
+            context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.ROW_COUNT, Map.of("rows",
+                Long.toString(rows), "complete", "true", "written", "true"), now));
+            if (breakProfile) {
+                context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.PROFILE, Map.of(
+                    WriterContract.PROFILE_ERROR, "cannot profile a column of maps (test)"), now));
+                return;
+            }
+            for (String field : List.of("id", "name")) {
+                context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.PROFILE, Map.of("field", field,
+                    "shape", field.equals("id") ? "integer" : "text", "rows", Long.toString(rows), "nulls", "0",
+                    "distinct", Long.toString(rows)), now));
+            }
         }
     }
 }

@@ -34,8 +34,10 @@ public final class WriteStepFactory implements StepFactory {
     public static final List<String> FORMATS = List.of("csv", "parquet");
     private static final List<String> TARGETS = List.of("target", "table", "path");
     /**
-     * Option names that would say where or as whom a write connects, whatever the connector: the
-     * pipeline names a saved source, and only the source (which an admin allowed) says that.
+     * Names that say where or as whom a write connects, whatever the connector: the pipeline names a
+     * saved source, and only the source (which an admin allowed) says that. A writer's declared
+     * options with these names are never offered as step settings. ({@code profile} is an AWS
+     * credentials profile: profiling is {@code profile_output}.)
      */
     static final java.util.Set<String> LOCATION_KEYS = java.util.Set.of("url", "jdbc_url", "endpoint", "bucket", "path",
         "root", "roots", "folder", "host", "hosts", "port", "database", "db", "schema", "schemas", "catalog", "prefix",
@@ -79,22 +81,82 @@ public final class WriteStepFactory implements StepFactory {
         return List.of();
     }
 
+    /** The step's own settings: where and how to write. */
+    static final List<SettingSpec> BASE = List.of(
+        SettingSpec.required("source", "Source", SettingSpec.Kind.SOURCE, "The saved source to write to"),
+        SettingSpec.optional("target", "Table or file", SettingSpec.Kind.ASSET, null,
+            "A table as schema.table, or a path inside the source for files"),
+        SettingSpec.optional("table", "Table", SettingSpec.Kind.TEXT, null, "Another name for target, for a table"),
+        SettingSpec.optional("path", "File path", SettingSpec.Kind.TEXT, null, "Another name for target, for a file"),
+        SettingSpec.choice("mode", "Mode", false, "create", "create fails if it exists; append adds rows; replace "
+            + "swaps in the new rows at the end; upsert updates rows with the same key and adds the rest", MODES),
+        SettingSpec.optional("key", "Key columns", SettingSpec.Kind.COLUMNS, null,
+            "The columns that identify a row, for upsert"),
+        SettingSpec.choice("format", "File format", false, null,
+            "For files: csv or parquet. Taken from the path's extension when left out", FORMATS));
+
+    /**
+     * The writers' settings (docs/guide/writing-data.md), passed to the connector's writer in
+     * {@code WriteOptions.options} as written. Used as the allow-list for a connector that does not
+     * declare its own ({@link WriterContract#writeOptions}); one that does is allowed exactly what it
+     * declares.
+     */
+    static final List<SettingSpec> WRITER_SETTINGS = List.of(
+        SettingSpec.optional("commit_every", "Commit every", SettingSpec.Kind.NUMBER, null,
+            "Tables: commit after this many rows; rows already committed stay if the run fails later"),
+        SettingSpec.optional("batch_size", "Batch size", SettingSpec.Kind.NUMBER, null,
+            "Tables: rows sent to the database at a time (1,000, or 5,000 for SQL Server inserts)"),
+        SettingSpec.optional("bulk_copy", "Bulk copy", SettingSpec.Kind.BOOLEAN, true,
+            "SQL Server: load tables the step creates with the driver's bulk copy"),
+        SettingSpec.optional("text_length", "Text length", SettingSpec.Kind.NUMBER, null,
+            "Tables the step creates: the length of text columns (at most 4000 on SQL Server); unlimited when left out"),
+        SettingSpec.optional("keep_grants", "Keep grants", SettingSpec.Kind.BOOLEAN, true,
+            "replace: give the new table the old table's grants"),
+        SettingSpec.optional("lock_timeout", "Lock timeout", SettingSpec.Kind.NUMBER, 30,
+            "replace: seconds to wait for people using the old table before the swap"),
+        SettingSpec.optional("allow_dropping_row_security", "Allow dropping row security", SettingSpec.Kind.BOOLEAN,
+            false, "replace: let the new table go without the old table's row-level security policies"),
+        SettingSpec.optional("overwrite", "Overwrite", SettingSpec.Kind.BOOLEAN, false,
+            "Files: replace a file that exists (mode replace does too)"),
+        SettingSpec.optional("allow_unscanned", "Allow unscanned", SettingSpec.Kind.BOOLEAN, false,
+            "Files: write where scans of the source would not look"),
+        SettingSpec.optional("delimiter", "Delimiter", SettingSpec.Kind.TEXT, ",", "CSV files: the delimiter"),
+        SettingSpec.choice("compression", "Compression", false, "snappy", "Parquet files: how pages are compressed",
+            List.of("snappy", "zstd", "gzip", "none")),
+        SettingSpec.optional("profile_output", "Profile what is written", SettingSpec.Kind.BOOLEAN, true,
+            "Profile the rows as they are written, so the catalogue has the written asset's profile"),
+        SettingSpec.optional("keep_values", "Keep example values", SettingSpec.Kind.BOOLEAN, true,
+            "Let the profile keep example values and sample rows (the source's own rules still apply)"));
+
+    private static final java.util.Set<String> BASE_KEYS = java.util.Set.of("source", "target", "table", "path",
+        "mode", "key", "format");
+
     @Override
     public List<SettingSpec> settings() {
-        return List.of(
-            SettingSpec.required("source", "Source", SettingSpec.Kind.SOURCE, "The saved source to write to"),
-            SettingSpec.optional("target", "Table or file", SettingSpec.Kind.ASSET, null,
-                "A table as schema.table, or a path inside the source for files"),
-            SettingSpec.optional("table", "Table", SettingSpec.Kind.TEXT, null, "Another name for target, for a table"),
-            SettingSpec.optional("path", "File path", SettingSpec.Kind.TEXT, null, "Another name for target, for a file"),
-            SettingSpec.choice("mode", "Mode", false, "create", "create fails if it exists; append adds rows; replace "
-                + "swaps in the new rows at the end; upsert updates rows with the same key and adds the rest", MODES),
-            SettingSpec.optional("key", "Key columns", SettingSpec.Kind.COLUMNS, null,
-                "The columns that identify a row, for upsert"),
-            SettingSpec.choice("format", "File format", false, null,
-                "For files: csv or parquet. Taken from the path's extension when left out", FORMATS),
-            SettingSpec.optional("options", "Other options", SettingSpec.Kind.TEXT, null,
-                "Further settings for the source's writer, as key: value pairs"));
+        // The step's own settings, the writers' settings, and any further option a connector's writer
+        // declares (never an address or credential name).
+        Map<String, SettingSpec> out = new LinkedHashMap<>();
+        BASE.forEach(spec -> out.put(spec.key(), spec));
+        WRITER_SETTINGS.forEach(spec -> out.putIfAbsent(spec.key(), spec));
+        for (Connector c : sources.connectors()) {
+            for (SettingSpec spec : WriterContract.writeOptions(c)) {
+                if (!LOCATION_KEYS.contains(spec.key()) && !c.addressKeys().contains(spec.key())) {
+                    out.putIfAbsent(spec.key(), spec);
+                }
+            }
+        }
+        return List.copyOf(out.values());
+    }
+
+    /** The writer settings a connector's writer takes: those it declares, else {@link #WRITER_SETTINGS}. */
+    static java.util.Set<String> writerKeys(Connector c) {
+        List<SettingSpec> declared = c == null ? List.of() : WriterContract.writeOptions(c);
+        java.util.Set<String> keys = new java.util.LinkedHashSet<>();
+        (declared.isEmpty() ? WRITER_SETTINGS : declared).forEach(spec -> keys.add(spec.key()));
+        if (c != null && !declared.isEmpty()) {
+            keys.removeIf(k -> LOCATION_KEYS.contains(k) || c.addressKeys().contains(k));
+        }
+        return keys;
     }
 
     @Override
@@ -143,54 +205,25 @@ public final class WriteStepFactory implements StepFactory {
         if (format != null && (!(format instanceof String f) || !FORMATS.contains(f.strip().toLowerCase(Locale.ROOT)))) {
             problems.add("format: csv or parquet");
         }
-        Object options = config.get("options");
-        if (options != null && !(options instanceof Map<?, ?>)) {
-            problems.add("options: key: value pairs, such as options: {delimiter: ';'}");
-        }
-        String taken = optionTakingSourceSetting(config, name == null ? null
-            : sources.source(name).flatMap(s -> sources.connector(s.kind())).orElse(null));
-        if (taken != null) {
-            problems.add("options: '" + taken + "' says where or as whom to write (or holds a list or map, which "
-                + "options may not), and only the saved source decides that. Remove it, or ask an admin to change the "
-                + "source");
+        Connector connector = name == null ? null
+            : sources.source(name).flatMap(s -> sources.connector(s.kind())).orElse(null);
+        String refused = notTaken(config, connector);
+        if (refused != null) {
+            problems.add(refused + ": " + (connector == null ? "this" : connector.displayName())
+                + " sources' writer does not take this setting");
         }
         return problems;
     }
 
-    /**
-     * The first option naming a setting of the source or its location (url, bucket, path, ...), or
-     * holding a list or map (which could carry such a setting inside it), or null. Names are compared
-     * whatever their case and separators: {@code jdbcUrl}, {@code jdbc-url} and {@code JDBC_URL} are
-     * {@code jdbc_url}.
-     *
-     * <p>TODO when the connector writers (round 3, stream c) are merged: replace this deny-list with
-     * each writer's own list of the options it takes, and let a writer declare options holding lists
-     * or maps.
-     */
-    static String optionTakingSourceSetting(Map<String, Object> config, Connector connector) {
-        if (!(config.get("options") instanceof Map<?, ?> options)) {
-            return null;
-        }
-        java.util.Set<String> taken = new java.util.HashSet<>();
-        LOCATION_KEYS.forEach(k -> taken.add(plainKey(k)));
-        io.kilnmark.server.sources.CommonSettings.keys().forEach(k -> taken.add(plainKey(k)));
-        if (connector != null) {
-            connector.settings().forEach(s -> taken.add(plainKey(s.key())));
-            connector.addressKeys().forEach(k -> taken.add(plainKey(k)));
-            connector.secretScope().forEach(k -> taken.add(plainKey(k)));
-        }
-        for (Map.Entry<?, ?> e : options.entrySet()) {
-            if (taken.contains(plainKey(String.valueOf(e.getKey()))) || e.getValue() instanceof Map<?, ?>
-                || e.getValue() instanceof List<?>) {
-                return String.valueOf(e.getKey());
+    /** The first writer setting given that the source's writer does not take (allow-list), or null. */
+    static String notTaken(Map<String, Object> config, Connector connector) {
+        java.util.Set<String> allowed = writerKeys(connector);
+        for (Map.Entry<String, Object> e : config.entrySet()) {
+            if (e.getValue() != null && !BASE_KEYS.contains(e.getKey()) && !allowed.contains(e.getKey())) {
+                return e.getKey();
             }
         }
         return null;
-    }
-
-    /** A setting's name with case and separators removed: jdbcUrl, jdbc-url, JDBC_URL and jdbc url are jdbcurl. */
-    static String plainKey(String key) {
-        return key.strip().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
     }
 
     /** Why a target is not acceptable, or null: it must stay inside the source. */
@@ -279,10 +312,10 @@ public final class WriteStepFactory implements StepFactory {
             throw new StepException("Step " + step + ": source " + source + " is read-only. An admin can turn on "
                 + "Allow writing for it");
         }
-        String taken = optionTakingSourceSetting(config, r.connector());
-        if (taken != null) {
-            throw new StepException("Step " + step + ": the option '" + taken + "' says where or as whom to write, which "
-                + "only the saved source decides");
+        String refused = notTaken(config, r.connector());
+        if (refused != null) {
+            throw new StepException("Step " + step + ": " + r.connector().displayName() + " sources' writer does not "
+                + "take the setting '" + refused + "'");
         }
         String mode = mode(config);
         List<String> key = key(config);
@@ -291,16 +324,28 @@ public final class WriteStepFactory implements StepFactory {
         }
         Object f = config.get("format");
         String format = f instanceof String s ? s.strip().toLowerCase(Locale.ROOT) : null;
+        // The writer's settings as written (the connector's options take no nulls), and the source's own
+        // profiling settings: writers profile what they write.
         Map<String, Object> options = new LinkedHashMap<>();
-        if (config.get("options") instanceof Map<?, ?> m) {
-            m.forEach((k, v) -> {
-                if (v != null) {
-                    options.put(String.valueOf(k), v); // the connector's options take no nulls
-                }
-            });
-        }
-        Connector.WriteOptions write = new Connector.WriteOptions(target, mode, key, format, options,
+        config.forEach((k, v) -> {
+            if (v != null && !BASE_KEYS.contains(k)) {
+                options.put(k, v);
+            }
+        });
+        Map<String, String> profile = sources.profileSettings(r.source(), r.connector(), target, key,
             PipelineSources.urn(source, target));
+        if (!profile.isEmpty()) {
+            options.put(WriterContract.PROFILE_SETTINGS, Map.copyOf(profile));
+            if ("false".equals(profile.get("keep-values"))) {
+                options.put("keep_values", false); // the source keeps no values: the pipeline cannot ask for them
+            }
+        }
+        Connector.WriteOptions draft = new Connector.WriteOptions(target, mode, key, format, options,
+            PipelineSources.urn(source, target));
+        String urn = PipelineSources.urn(source, WriterContract.writtenAssetPath(r.connector(), r.config(), draft));
+        Connector.WriteOptions write = new Connector.WriteOptions(target, mode, key, format, options,
+            urn == null ? draft.assetUrn() : urn);
+        run.wrote(source, target, write.assetUrn());
         try {
             return r.connector().writer(r.config(), write);
         } catch (ConnectorException e) {

@@ -66,6 +66,9 @@ CREATE TABLE pipeline_step_run (
     peak_memory  bigint,                      -- bytes
     duration_ms  bigint,
     error        text,
+    -- how the step ended: finished, ended_early (a limit, or no one read on), stopped (by the engine,
+    -- after another step failed or the run was stopped) or failed (where the run failed)
+    outcome      text CHECK (outcome IN ('finished', 'ended_early', 'stopped', 'failed')),
     PRIMARY KEY (run_id, step_id)
 );
 

@@ -29,6 +29,20 @@ public interface PipelineSources {
     /** The allowed hosts ({@code kilnmark.sources.allowed-hosts}). */
     HostPolicy hosts();
 
+    /** Every connector, for the write options their writers declare. */
+    default java.util.List<Connector> connectors() {
+        return java.util.List.of();
+    }
+
+    /**
+     * The source's own profiling settings for what a write writes (whether values are kept, sampling),
+     * as the profile step names them; empty when there are none to pass.
+     */
+    default Map<String, String> profileSettings(Records.Source source, Connector connector, String target,
+                                                java.util.List<String> key, String urn) {
+        return Map.of();
+    }
+
     /** A saved source ready to connect to: checked against the allowed hosts, its secret noted for scrubbing. */
     record Resolved(Records.Source source, Connector connector, SourceConfig config) {
     }
