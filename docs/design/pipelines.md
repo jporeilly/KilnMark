@@ -57,9 +57,25 @@ Added while building the engine (round 3, step 1):
   share a step upstream (a route followed by a union), because that step waits for room on the
   input not being read.
 - `RunResult.edges()`: `EdgeResult(fromStep, fromPort, toStep, toPort, rows)` per edge, in the
-  graph's order. `StepResult` gains `rowsIn`, `rowsInByPort` and `rowsOutByPort`; `rowsOut` is
-  the sum over connected output ports, each port counted once however many steps read it. The
-  old constructors remain. `RunResult.step(name)` finds one step.
+  graph's order: the rows that edge's reader was given. `StepResult` gains `rowsIn`,
+  `rowsInByPort` and `rowsOutByPort`; `rowsOut` is the sum over connected output ports, each port
+  counted once however many steps read it. Rows dropped because a reader stopped early, or because
+  a step failed, are not counted (`RowSet.rows()` counts rows when they are taken). The old
+  constructors remain. `RunResult.step(name)` finds one step.
+- `StepContext.inputSchema(port)` and `inputSchema(port, index)` (for a port taking many): the
+  columns arriving on an input, as worked out when the pipeline was checked, or `null` when they
+  were not known before the run. A step can then act on an input that sends no batch: an
+  aggregate of no rows writes SQL's one row, a union adds the columns of an empty input, a lookup
+  knows the columns of an empty lookup side. The compiler puts them on `GraphStep.inputSchemas`
+  (keyed `in`, `main`, `in[0]`, …; a new record component, the three-argument constructor
+  remains) and the runner hands them to the step.
+- In a graph run `hasInput()` and `hasOutput()` mean the `in` and `out` ports, as they did for a
+  step in a line; `inputPorts()` and `outputPorts()` list every connected port.
+- `RowSet.fail(cause)` never waits: it drops batches still queued (the run is failing) to make
+  room for the end, so a failure always reaches the next step. `finish()` still waits for room.
+  `RowSet.put` closes its batch if interrupted while waiting. Added for the engine: `discard`
+  (drop a batch without counting it), `isCancelled`, and `progress`, `readerWaiting` and
+  `writerWaiting` for the stall watchdog.
 
 ### Running a graph (`KilnGraphRunner`)
 
@@ -72,24 +88,33 @@ Added while building the engine (round 3, step 1):
   allocator, as any batch waiting on an edge is. One slow reader holds the others back by at most
   the row set capacity.
 - **A step that ends early** (it stops before its input ends, like a `limit`) releases its
-  inputs: a step writing only to it is stopped without failing; a step that also writes
-  elsewhere goes on, and what it still writes to the finished step is read and dropped. A tee
-  whose readers have all finished stops in the same way.
-- **Failures.** A failing step fails its outputs (the steps after it end, not blamed) and
-  cancels its inputs (the steps before it stop, not blamed), along every edge, so the whole
-  connected graph stops. Steps not joined to it at all are stopped too. The run's error is the
-  first failure in time; a step that did not free its memory is named when nothing failed first.
-  A tee that cannot copy (the memory limit) is reported against the writing step.
-- **Interruption** of the calling thread stops every step and waits for all of them before
-  `run` throws `InterruptedException`.
+  inputs. Each step counts its readers that have not finished, over all its ports and the readers
+  behind a tee; when the last finishes, the step is stopped without failing. Until then, what it
+  still writes to a finished reader is read and dropped (a tee simply stops copying to it).
+- **Failures.** A failing step first cancels its inputs (the steps before it stop, not blamed),
+  then fails its outputs without waiting (the steps after it end, not blamed), along every edge,
+  so the whole connected graph stops even if a step after it is stuck. The steps before it are
+  also interrupted, so one waiting on a database or a file stops too. Steps not joined to it at
+  all are stopped. The run's error is the first failure in time; a step that did not free its
+  memory is named when nothing failed first (a step stopped mid-batch is only logged). Running out
+  of memory names the run's limit ("ran out of memory: the run may hold 256 MB of Arrow memory in
+  all"). A tee that cannot copy is reported against the writing step.
+- **Stalls.** If no batch moves through any row set for the stall timeout (120 seconds unless
+  set on `KilnGraphRunner` or `Runner`) while every running step is waiting on a row set, the run
+  fails: "The run stalled: no rows moved for 120 seconds while every running step waited for
+  another. Waiting: seq (to read from p1.out->seq.a); p2 (to write to p2.out->seq.b) …". A step
+  busy outside the row sets (a slow query) is never taken for a stall.
+- **Interruption** of the calling thread stops every step and waits for every thread ever
+  started before `run` throws `InterruptedException`; no thread starts once a stop has begun.
 - The linear `Runner` builds a graph (`a.out -> b.in -> ...`, settings as configuration) and runs
   it with `KilnGraphRunner`. One difference from before: if one step fails and another leaks, the
   run reports the failure, not whichever step came first in the line. A step that ends before its
   input does no longer leaves the step before it waiting for ever.
 - **Known limit.** A step that reads one input to its end before another (a lookup reads its
   lookup side first) stalls when both inputs come from the same step and more rows are waiting
-  than the edges hold. The compiler adds a note to such pipelines; reading the source twice
-  avoids it.
+  than the edges hold. The compiler adds a note to such pipelines (also when the inputs of a port
+  taking many share a step, in case the step reads them one after another); reading the source
+  twice avoids it, and the stall watchdog ends such a run with a plain message instead of hanging.
 
 ## 2. The YAML format
 
@@ -158,17 +183,28 @@ steps:
 - YAML is read with **SnakeYAML Engine 3.2** (YAML 1.2, Apache-2.0; its licence is listed in the
   generated third-party notices). Kilnmark builds its own tree from the parser's events, so no
   object is ever constructed from a tag. Scalars follow the YAML 1.2 core schema: `yes` and `on`
-  are text, quoted values are always text, `${VAR}` is never substituted.
+  are text, quoted values are always text, `${VAR}` is never substituted. Decimals are read as
+  exact `BigDecimal`s. The text written is kept beside each value
+  (`StepDefinition.configText`), and mapping keys are always the text written (`007` stays
+  `007`).
+- Settings reach the step in the form their kind needs (`Compiled.configs()`): a setting that is
+  text (text, expression, column, source, asset, choice, and the values of columns, expressions,
+  conditions and column maps) holds exactly what was written, so `asset: 2024.10` is `"2024.10"`
+  and `007` is `"007"`; a number is a whole number (Integer or Long) or a BigDecimal, never
+  not-a-number, infinite, or beyond a long or a double. `settings()` at run time is the text of
+  those values.
 - Refused, each with its line and column: files over 1,000,000 characters, more than one
   document, anchors and aliases (a pipeline is written out in full, so the canvas can rewrite it),
-  tags, duplicate keys, keys that are lists or mappings, nesting deeper than 64 and more than
-  100,000 values.
+  tags, duplicate keys, keys that are lists or mappings, nesting deeper than 64, more than
+  100,000 values, and characters YAML forbids. Values echoed in messages are cut to 80 characters.
 - `PipelineDefinition.parse(yaml)` reads the format line, names, steps, ids, inputs and settings
   with their positions. `PipelineCompiler(stepFactories).compile(yaml)` checks it against the step
   types and returns `Compiled`: `problems()` (line, column, step id, message), `notes()`,
   `schemas()` (columns per step and output port) and `graph()`. Checking never creates a step or
   opens a connection; `graph()` creates new steps for one run, and closes those already made if one
   fails.
+- `compile(PipelineDefinition)`, for a pipeline built in code, also checks what reading does: the
+  name, step ids (pattern and uniqueness) and that each step has a type.
 - Checks: the format line; unknown top-level keys; step ids (`[a-z][a-z0-9_-]{0,63}`, unique);
   unknown step types, suggesting the closest; settings against the step type's `SettingSpec`s
   (unknown keys with a suggestion, required, kind, choices) and then the factory's `check`, whose

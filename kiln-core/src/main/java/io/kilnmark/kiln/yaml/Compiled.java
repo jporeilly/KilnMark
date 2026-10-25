@@ -28,9 +28,12 @@ public final class Compiled {
     private final Map<String, Map<String, Schema>> schemas;
     private final Map<String, StepFactory> factories;
     private final List<Edge> edges;
+    private final Map<String, Map<String, Object>> configs;
+    private final Map<String, Map<String, Schema>> inputSchemas;
 
     Compiled(PipelineDefinition definition, List<Problem> problems, List<Problem> notes,
-             Map<String, Map<String, Schema>> schemas, Map<String, StepFactory> factories, List<Edge> edges) {
+             Map<String, Map<String, Schema>> schemas, Map<String, StepFactory> factories, List<Edge> edges,
+             Map<String, Map<String, Object>> configs, Map<String, Map<String, Schema>> inputSchemas) {
         this.definition = definition;
         this.problems = problems.stream().sorted(Problem.BY_POSITION).toList();
         this.notes = notes.stream().sorted(Problem.BY_POSITION).toList();
@@ -39,6 +42,27 @@ public final class Compiled {
         this.schemas = Collections.unmodifiableMap(s);
         this.factories = Map.copyOf(factories);
         this.edges = List.copyOf(edges);
+        this.configs = Collections.unmodifiableMap(new LinkedHashMap<>(configs));
+        Map<String, Map<String, Schema>> in = new LinkedHashMap<>();
+        inputSchemas.forEach((step, ports) -> in.put(step, Collections.unmodifiableMap(new LinkedHashMap<>(ports))));
+        this.inputSchemas = Collections.unmodifiableMap(in);
+    }
+
+    /**
+     * Each step's settings as its step receives them: a setting that is text holds the text as
+     * written ({@code 007}, {@code 2024.10}), a number is a whole number or a BigDecimal.
+     */
+    public Map<String, Map<String, Object>> configs() {
+        return configs;
+    }
+
+    /**
+     * The columns arriving on each step's input ports where known, keyed as {@code outputSchema}
+     * receives them ({@code in}, {@code main}, {@code in[0]}); the runner passes them to the step as
+     * {@link io.kilnmark.kiln.StepContext#inputSchema(String)}.
+     */
+    public Map<String, Map<String, Schema>> inputSchemas() {
+        return inputSchemas;
     }
 
     /** The pipeline as written, or null when its YAML could not be read as a pipeline. */
@@ -89,9 +113,10 @@ public final class Compiled {
         List<GraphStep> steps = new ArrayList<>();
         try {
             for (PipelineDefinition.StepDefinition s : definition.steps()) {
+                Map<String, Object> config = configs.getOrDefault(s.id(), s.config());
                 Step step;
                 try {
-                    step = factories.get(s.id()).create(s.config());
+                    step = factories.get(s.id()).create(config);
                 } catch (StepException | RuntimeException e) {
                     throw new StepException("Step " + s.id() + " (" + s.type() + ") could not be created: "
                         + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()), e);
@@ -99,9 +124,9 @@ public final class Compiled {
                 if (step == null) {
                     throw new StepException("Step " + s.id() + " (" + s.type() + ") could not be created");
                 }
-                steps.add(new GraphStep(s.id(), step, s.config()));
+                steps.add(new GraphStep(s.id(), step, config, inputSchemas.get(s.id())));
             }
-        } catch (StepException e) {
+        } catch (Throwable t) { // StepException, or an Error from a factory: close what was made
             for (GraphStep g : steps) {
                 try {
                     g.step().close();
@@ -109,7 +134,7 @@ public final class Compiled {
                     // the creation failure is what is reported
                 }
             }
-            throw e;
+            throw t;
         }
         return new PipelineGraph(definition.name(), steps, edges);
     }
