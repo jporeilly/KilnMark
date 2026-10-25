@@ -1456,7 +1456,11 @@ table {
 /* On a phone a table keeps a readable width and scrolls inside its region, rather than squeezing
    every column into a sliver. */
 .table-scroll > table {
-  min-width: 520px;
+  min-width: 600px;
+}
+
+tbody th {
+  min-width: 14ch;
 }
 
 td .km-code,
