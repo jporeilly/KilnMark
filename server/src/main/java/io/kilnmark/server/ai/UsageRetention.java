@@ -14,7 +14,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
 
 /**
- * Deletes usage records older than {@code kilnmark.ai.usage-retention} (default 90 days), shortly
+ * Deletes usage records, and ratings of the assistant's answers ({@code assistant_feedback}), older
+ * than {@code kilnmark.ai.usage-retention} (default 90 days), shortly
  * after start and then every six hours, on processes with the scheduler role. Running it on two
  * processes at once is harmless.
  */
@@ -61,14 +62,21 @@ public class UsageRetention {
     public int purge() {
         try {
             int n = db.tx(c -> {
+                int deleted;
                 try (PreparedStatement ps = c.prepareStatement(
                     "DELETE FROM kilnmark.ai_usage WHERE at < now() - make_interval(secs => ?)")) {
                     ps.setLong(1, config.ai().usageRetention().toSeconds());
-                    return ps.executeUpdate();
+                    deleted = ps.executeUpdate();
                 }
+                try (PreparedStatement ps = c.prepareStatement(
+                    "DELETE FROM kilnmark.assistant_feedback WHERE at < now() - make_interval(secs => ?)")) {
+                    ps.setLong(1, config.ai().usageRetention().toSeconds());
+                    deleted += ps.executeUpdate();
+                }
+                return deleted;
             });
             if (n > 0) {
-                LOG.infof("Deleted %d AI usage records older than %s", n, config.ai().usageRetention());
+                LOG.infof("Deleted %d AI usage records and answer ratings older than %s", n, config.ai().usageRetention());
             }
             return n;
         } catch (RuntimeException e) {

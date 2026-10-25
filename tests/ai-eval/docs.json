@@ -1,0 +1,27 @@
+{
+  "about": "Evaluation set for the assistant's documentation domain (docs/design/assistant.md): questions over the bundled guides and released changelog entries (the Unreleased part is not answered from), each with the sections that answer it. Retrieval recall at 6 with words only must stay at 0.8 or more (AssistantTest, in CI); ./gradlew :server:aiEval also scores a running server's search, with whatever models it uses, and the citations of its answers. Section ids are <page>/<anchor>, as the in-app viewer addresses them; DocSectionsTest checks they exist.",
+  "items": [
+    {"question": "What does Fail above mean?", "page": "quality-rules", "relevant": ["quality-rules/thresholds"]},
+    {"question": "How do I check a postcode format?", "relevant": ["quality-rules/recipes"]},
+    {"question": "Can I try a rule on sample data before I save it?", "relevant": ["quality-rules/trying-a-rule-before-you-save-it"]},
+    {"question": "Which role do I need to add or change rules?", "relevant": ["quality-rules/before-you-start"]},
+    {"question": "How do I get a webhook call when a rule fails?", "relevant": ["quality-rules/alerts-and-tasks"]},
+    {"question": "How do I switch a rule off without deleting it?", "relevant": ["quality-rules/managing-rules"]},
+    {"question": "Can an admin write their own SQL query as a check?", "relevant": ["quality-rules/custom-sql-admins"]},
+    {"question": "What does the status Could not run mean?", "relevant": ["quality-rules/running-rules-and-reading-results", "quality-rules/when-something-goes-wrong"]},
+    {"question": "How do drift and rule results change an asset's quality score?", "relevant": ["quality-rules/how-rules-affect-scores"]},
+    {"question": "How do I export an asset's rules as an ODCS data contract?", "relevant": ["quality-rules/sharing-rules-with-other-tools"]},
+    {"question": "What is a value shape such as AA9A 9AA?", "relevant": ["quality-rules/1-accept-a-value-pattern"]},
+    {"question": "Why are backslashes doubled in the JSON parameters of a regular expression?", "relevant": ["quality-rules/advanced-the-parameters-as-json"]},
+    {"question": "Which check makes sure every order refers to a real customer?", "relevant": ["quality-rules/choosing-a-check", "quality-rules/recipes"]},
+    {"question": "What should I do about the error freshness needs a date or timestamp field?", "relevant": ["quality-rules/when-something-goes-wrong"]},
+    {"question": "Where does Kilnmark recommend rules from what the data already obeys?", "relevant": ["quality-rules/3-add-a-recommended-rule"]},
+    {"question": "How do I open the Ask panel with the keyboard?", "relevant": ["assistant/opening-the-ask-panel"]},
+    {"question": "Is my question sent to a hosted model?", "relevant": ["assistant/privacy"]},
+    {"question": "What happens in the Ask panel when no model is set?", "relevant": ["assistant/when-there-is-no-model"]},
+    {"question": "What did version 0.0.2 add?", "relevant": ["whats-new/002-24-october-2026"]},
+    {"question": "Can I register many PostgreSQL databases at once from a CSV file?", "relevant": ["whats-new/002-24-october-2026"]},
+    {"question": "When was version 0.0.1 released and what did it contain?", "relevant": ["whats-new/001-24-october-2026"]},
+    {"question": "What do the numbers in brackets in an answer link to?", "relevant": ["assistant/sources-and-links"]}
+  ]
+}

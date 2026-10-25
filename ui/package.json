@@ -4,8 +4,12 @@
   "license": "BUSL-1.1",
   "version": "0.0.2",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/check-slugs.mjs",
     "build": "tsc --noEmit && node scripts/check-contrast.mjs && vite build && node scripts/ui-notices.mjs",
     "check:contrast": "node scripts/check-contrast.mjs",
     "preview": "vite preview"
