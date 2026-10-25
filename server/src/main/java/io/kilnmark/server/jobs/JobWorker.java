@@ -62,6 +62,11 @@ public class JobWorker {
     /** Runs jobs of kind {@value io.kilnmark.server.quality.QualityService#JOB_KIND}. */
     @jakarta.inject.Inject
     io.kilnmark.server.quality.QualityService quality;
+    /** Notifications: a scan that fails for good here (its attempts used up) is told, as a finished scan is. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.notify.NotificationPublisher notifications;
+    @jakarta.inject.Inject
+    io.kilnmark.graph.store.GraphStore graph;
     /** Jobs whose lease was lost: another worker may now own them, so this one must not touch them. */
     private final Map<Long, Boolean> lost = new ConcurrentHashMap<>();
     private final Semaphore wake = new Semaphore(0);
@@ -203,13 +208,24 @@ public class JobWorker {
             }
         } catch (RuntimeException e) {
             LOG.errorf(e, "Job %d (run %d) failed", job.id(), job.runId());
-            if (lost.remove(job.id()) == null) {
-                queue.retryOrFail(job, String.valueOf(e.getMessage()));
+            if (lost.remove(job.id()) == null && !queue.retryOrFail(job, String.valueOf(e.getMessage())) && !qualityJob) {
+                scanFailedForGood(job);
             }
         } finally {
             running.remove(job.id());
             lease.get().close();
             lost.remove(job.id());
+        }
+    }
+
+    /** Tells of a scan whose last attempt failed with an error; never throws. */
+    private void scanFailedForGood(JobQueue.Job job) {
+        try {
+            if (notifications != null && graph != null) {
+                graph.run(job.runId()).ifPresent(r -> notifications.scanFinished(r.source(), r.id(), r.status(), r.detail()));
+            }
+        } catch (RuntimeException e) {
+            LOG.warnf("Could not tell of failed scan %d: %s", job.runId(), e.getMessage());
         }
     }
 

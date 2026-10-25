@@ -39,6 +39,10 @@ public class SourceResource {
     @jakarta.inject.Inject
     io.kilnmark.server.quality.QualityService quality;
 
+    /** Notifications: a failed connection test is told (docs/design/notifications.md). */
+    @jakarta.inject.Inject
+    io.kilnmark.server.notify.NotificationPublisher notifications;
+
 
     /**
      * Body of {@code POST /api/v1/sources}: a connector kind (default {@code postgresql}), its
@@ -153,7 +157,9 @@ public class SourceResource {
         Records.Source s = find(name);
         SourceConfig config = sources.config(s);
         sources.checkHosts(sources.connector(s.kind()), config);
-        return sources.test(sources.connector(s.kind()), config);
+        Views.TestResult r = sources.test(sources.connector(s.kind()), config);
+        notifications.connectionTested(s.name(), r.ok(), r.problem());
+        return r;
     }
 
     /**

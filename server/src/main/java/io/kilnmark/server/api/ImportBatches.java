@@ -43,6 +43,9 @@ public class ImportBatches {
     private final Db db;
     private final SourceChecks checks;
     private final JobQueue jobs;
+    /** Notifications: a failed connection test of a saved source is told. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.notify.NotificationPublisher notifications;
 
     public ImportBatches(Db db, SourceChecks checks, JobQueue jobs) {
         this.db = db;
@@ -134,6 +137,9 @@ public class ImportBatches {
             ok = r.ok();
             update(batch, item.line(), ok ? "test = 'ok'" : "test = 'failed', problem = ?", ok ? null : r.problem(),
                 null);
+            if (item.sourceId() != null && notifications != null) {
+                notifications.connectionTested(item.name(), ok, r.problem());
+            }
         }
         if (scan && item.sourceId() != null) {
             if (!ok) {
