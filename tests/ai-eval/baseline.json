@@ -1,9 +1,10 @@
 {
-  "about": "The scores the next run must not fall below (ADR 0012 rule 5), less the tolerance. ./gradlew :server:aiEval fails if a score drops further; -Pkilnmark.eval.update-baseline=true accepts the new scores. Taken on 24 October 2026 against the reference lab with bge-small-en-v1.5 (Q8_0) for embeddings and Qwen2.5-0.5B-Instruct (Q4_K_M) for chat, on two CPU cores. The shipped chat model is Qwen2.5-1.5B-Instruct: take a new baseline with it before the first release.",
+  "about": "The scores the next run must not fall below (ADR 0012 rule 5), less the tolerance. ./gradlew :server:aiEval fails if a score drops further; -Pkilnmark.eval.update-baseline=true accepts the new scores. Taken on 24 October 2026 against the reference lab with bge-small-en-v1.5 (Q8_0) for embeddings and Qwen2.5-0.5B-Instruct (Q4_K_M) for chat, on two CPU cores. The shipped chat model is Qwen2.5-1.5B-Instruct: take a new baseline with it before the first release. docs.recallAt6 (the assistant's section search over docs.json) was 1.0 with words alone on PostgreSQL full-text search on 25 October 2026; it is set at 0.9 until a run against the reference lab with its models replaces it.",
   "tolerance": 0.02,
   "scores": {
     "keyword.mrr": 0.333,
     "hybrid.mrr": 0.917,
-    "ask.planAccuracy": 0.514
+    "ask.planAccuracy": 0.514,
+    "docs.recallAt6": 0.9
   }
 }

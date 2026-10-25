@@ -5,28 +5,6 @@ details.
 
 ## Unreleased
 
-### What's new
-
-- **Sign-in and roles.** Every user signs in with an API token, as a viewer, steward or admin.
-  Admins manage tokens under **Settings**.
-- **Adding connections is guided.** Pick a connector from a gallery grouped by category, test the
-  connection, choose which schemas or folders to scan, and preview the data before scanning.
-  Sources can be edited and deleted.
-- **More kinds of source.** SQL Server, folders of files, and S3-compatible object storage. Excel
-  sheets are read as tables.
-- **Documents are read.** PDF, Word, Excel, PowerPoint and email files: their text is searchable
-  and readable page by page on the asset page.
-- **Browse and relationships.** A tree of sources, schemas, folders and tables, and schema
-  diagrams showing how tables relate, from declared foreign keys and from the data itself.
-- **Data quality.** Every scan scores each table in eight quality dimensions with no set-up. Value
-  patterns, rules with previews, drift between scans, sample rows with sensitive columns masked,
-  and an issue list for stewards. Contracts export in open formats (ODCS, OpenLineage).
-- **AI, local first.** Add local or hosted models; each source decides what may leave the
-  network. Search by meaning, ask questions in plain English, and connect outside AI assistants
-  through the MCP server. Every model call is recorded.
-- **For administrators.** A job queue, health checks, and interactive API documentation at
-  `/api/docs`.
-
 ### Details
 
 - **Writing from pipelines** (docs/guide/writing-data.md): PostgreSQL, SQL Server, folder and S3
@@ -56,6 +34,71 @@ details.
   column whose values are all NaN, or on 8-bit and unsigned integer, 256-bit decimal and large
   text columns, and reads dates, times and timestamps in any unit.
 
+## 0.0.3 (25 October 2026)
+
+### What's new
+
+- **Ask Kilnmark.** An **Ask** panel on every page (Alt+A) answers questions from the
+  documentation, in a few sentences, with links to the exact sections it used. It works with a
+  local model, and without one it lists the matching sections.
+- **Documentation inside the app.** The user guides and this changelog open in the app, under
+  **Documentation**, and the running version links to **What's new**.
+- **Quality rules without the jargon.** Pick the table and column from lists, fill in plain fields
+  instead of JSON, preview on the sample, and edit rules in place. Two people editing the same rule
+  can no longer overwrite each other.
+- **Find local models.** The AI models page finds Ollama, LM Studio and the bundled model servers
+  on this machine or its container, lists their models, and shows whether each runs on the GPU.
+  When something cannot be reached, it says why and what to change.
+- **Looks and branding.** Light, Dark, High contrast or System themes, accent colours and density,
+  chosen by each user. Consistent icons, letter tiles for each product, a compact connection
+  gallery, and a folder where you can drop your own logos.
+- **Sensitive data stays hidden.** Values of columns marked sensitive are hidden from everyone but
+  admins wherever they could appear: previews, rule results, drift, documents, search and the MCP
+  server. Search stays fast on large catalogues, however common the words.
+- **Sign-in and roles.** Every user signs in with an API token, as a viewer, steward or admin.
+  Admins manage tokens under **Settings**.
+- **Adding connections is guided.** Pick a connector from a gallery grouped by category, test the
+  connection, choose which schemas or folders to scan, and preview the data before scanning.
+  Sources can be edited and deleted.
+- **More kinds of source.** SQL Server, folders of files, and S3-compatible object storage. Excel
+  sheets are read as tables.
+- **Documents are read.** PDF, Word, Excel, PowerPoint and email files: their text is searchable
+  and readable page by page on the asset page.
+- **Browse and relationships.** A tree of sources, schemas, folders and tables, and schema
+  diagrams showing how tables relate, from declared foreign keys and from the data itself.
+- **Data quality.** Every scan scores each table in eight quality dimensions with no set-up. Value
+  patterns, rules with previews, drift between scans, sample rows with sensitive columns masked,
+  and an issue list for stewards. Contracts export in open formats (ODCS, OpenLineage).
+- **AI, local first.** Add local or hosted models; each source decides what may leave the
+  network. Search by meaning, ask questions in plain English, and connect outside AI assistants
+  through the MCP server. Every model call is recorded.
+- **For administrators.** A job queue, health checks, and interactive API documentation at
+  `/api/docs`.
+
+### Details
+
+- **The assistant, step 1** (docs/design/assistant.md): an **Ask** panel in the header (Alt+A) on
+  every page answers questions from the documentation that ships with the server, in a few
+  sentences, citing sections as [n] links that open the in-app viewer at that section; the
+  conversation stays while moving around and is cleared on sign-out. New AI feature `assistant`
+  (chat), routed under AI models; without it, or when the model fails or the server allows only
+  local models, the panel lists the best matching sections. `POST /api/v1/assistant/ask`, `GET
+  /api/v1/assistant/sections`, `POST /api/v1/assistant/feedback` (**Yes, it helped** or **No**;
+  kept for `kilnmark.ai.usage-retention`) and `GET /api/v1/assistant/feedback` (admins). At
+  start-up the guides and changelog, now bundled in the server jar too, are split at `##` and
+  `###` headings into sections with the viewer's anchors and stored in `knowledge_section`
+  (migration V11, with `assistant_feedback` and `ai_usage.domains`); only changed sections are
+  written again, and sections are embedded in the background when an embedding model is set. The
+  changelog's Unreleased part is shown in the viewer but not answered from. Retrieval is
+  PostgreSQL full-text search weighted by word rarity, plus nearest embeddings, with a boost for
+  the page you are on. The prompt is sized to the model profile's context (4,096 tokens when it
+  does not say), the conversation shortened newest first, with one smaller retry if the model
+  still refuses it for length; the assistant never marks a shared chat model as down. The model
+  gets the sections as data with no tools, and every citation is checked against the sections
+  sent. Questions are limited to 2,000 characters (after Unicode normalisation) and 20 a minute
+  per token. The MCP server gains `search_docs`. Guide: **Asking Kilnmark**. Evaluation set
+  `tests/ai-eval/docs.json` (22 questions) runs in `:server:aiEval`. The UI build needs Node.js
+  22.12 or later (or 20.19), as Vite does.
 - **Find local models** on the AI models page (`POST /api/v1/ai/discover`, admins only): looks for
   Ollama and LM Studio on the machine running Kilnmark or its container
   (`host.containers.internal`, `host.docker.internal`, `localhost`) and for the bundled Compose
@@ -172,6 +215,63 @@ details.
 - **Database:** migration V9 adds profile versions, samples, rules, accepted patterns, quality
   runs, results, measures, scores, drift events and issues, a `sensitive` flag on fields, and
   lets the job queue hold jobs of other kinds.
+- **Sensitive columns, after review:** every value drawn from a column marked sensitive is masked
+  for anyone who may not unmask it, stewards included, through one check per asset: measure
+  evidence (range, fences, usual values, latest timestamp), drift detail, the allowed values and
+  range bounds of its rules and recommendations, failing-rows queries and database error text, the
+  ODCS export's rule values, the profile's histogram bounds, live previews of the catalogued table
+  or file, and the MCP server's `get_asset`, which always masks. Shapes, counts and shares stay. Drift,
+  rules, results and recommendations take `unmask=true` from an admin. Embedded text and prompts were
+  checked: names, types and descriptions only, never values.
+  - A rule on a sensitive column cannot be previewed by anyone who may not unmask it, and its results
+    give counts only (no failing rows or query): failing rows would show which rows hold which values.
+    Custom SQL's text, like its failing query, is hidden while the asset has any sensitive column. A
+    freshness result on a sensitive timestamp says only whether the latest value is within the limit.
+  - Saving a rule as shown keeps what was masked: parameters `{"hidden": true}` keep the stored ones
+    (same column and type only, otherwise 400) and webhook `"(set)"` keeps the stored webhook; both
+    markers are refused on new rules and previews.
+  - Live previews find marks by the saved source and the connector's own path, and files and objects
+    are read only under the path the listing gives them (no `a//b`, `./` or `../` spellings). For a
+    source with marks, only admins may change how it is read (folders, patterns, header rows,
+    formats) or preview such changes; stewards still preview new connections and edit descriptions.
+  - A workbook's text holds its sheets' cells: when a sheet has a sensitive column, the workbook's
+    text, find, chunks and search snippets are for admins only, and others' searches do not match
+    its text at all; the same up the chain (a mail whose attached workbook's sheet is marked).
+  - Marks are kept apart from the column rows a scan replaces (migration V10, `sensitive_column`), so a
+    dropped or renamed column keeps its mark and the values stored under its name stay masked; a
+    detected rename carries the mark to the new name.
+  - One request-scoped `Sights` bean decides masking for every endpoint and MCP tool, and a test over
+    the source tree fails if one shows values without it.
+- **Freshness rules** count the values they could not read as a date or time, and say so.
+- **Webhooks, after review:** a webhook path may not hold a semicolon, raw or encoded (`%3b`), so a
+  segment such as `..;x`, which some servers read as `..` once they drop its parameters, cannot
+  climb out of an allowed prefix. Percent-escapes in the path are allowed only for letters, digits,
+  `-`, `_` and `~` (so no `%25`, `%00` or overlong UTF-8 such as `%c0%ae`), the URL must be printable
+  ASCII, and a written-out default port (`:443`, `:80`) matches an allow-list entry without one.
+  Checked when a rule is saved and again before each call; a call refused then is noted on the
+  rule's result.
+- **Custom SQL, after review:** refused under a login that may reach other databases (one that may
+  execute dblink's functions or use a foreign server) and on any database with a user mapping or a
+  foreign table, which a view owned by another role can reach, since a read-only transaction does
+  not hold on the other side. The refusal names the fix (for dblink, a revoke of its own functions by
+  name, never of a whole schema). dblink and postgres_fdw function names are refused in the SQL as
+  well.
+- **Allowed hosts, after review:** a saved source's hosts are checked against
+  `kilnmark.sources.allowed-hosts` again just before a scan, quality run, preview, listing, test or
+  on-demand read connects, not only when the source is saved, so a narrowed list applies at once;
+  the job fails saying which host is no longer allowed.
+- **Search, after review:** keyword search stays quick however common the words ("id", "the", a word
+  in most documents). It gathers a fixed number of candidates through indexes (exact names, the
+  nearest names in order of distance, matching words, alike field names, a sample of matching
+  document chunks) and ranks only those, instead of ranking every match before the limit; snippets
+  are chosen from a document's first matching chunks. Where more match alike than are taken, a
+  bounded pool (four times as many) is taken through the index, then the first of it by URN, so
+  matches that sit at the end of the table cannot make a branch walk it; matches are found through
+  the indexes only. A search kept to sources is kept to them in every branch, before any limit.
+  Exact names now always come first, then the closest whole names. Migration V10 adds GiST trigram
+  indexes on asset names and expression indexes for exact names, has the asset words index take
+  entries at once (no pending list), and adds `sensitive_column`. Developer databases that applied
+  an earlier draft of V10 (`V10__bounded_search`) need `flyway repair` or a fresh database.
 
 - **Sign-in with API tokens:** every API call needs a token (`Authorization: Bearer km_...`)
   with a role: viewer (read), steward (also start scans) or admin (also add sources and manage

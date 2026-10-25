@@ -148,6 +148,15 @@ public final class S3FileStore implements FileStore {
         if (settings.prefix() != null && !key.startsWith(settings.prefix()) || key.endsWith("/")) {
             throw new IOException("There is no object " + key + " in this source: it is outside its prefix");
         }
+        // Keys are read only in plain form: an empty, "." or ".." part is a second spelling of a path
+        // to the person reading it, and whatever is keyed by the path (the catalogue's marks) must not
+        // be reached under another.
+        for (String part : key.split("/", -1)) {
+            if (part.isEmpty() || part.equals(".") || part.equals("..")) {
+                throw new IOException("There is no object " + key + " to read here: keys with empty, '.' or '..' "
+                    + "parts are not read");
+            }
+        }
         try {
             var head = s3.headObject(software.amazon.awssdk.services.s3.model.HeadObjectRequest.builder()
                 .bucket(settings.bucket()).key(key).build());

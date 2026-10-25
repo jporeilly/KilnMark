@@ -89,7 +89,9 @@ public class SourceDraftResource {
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public jakarta.ws.rs.core.Response preview(SourceForm form, @jakarta.ws.rs.QueryParam("asset") String asset,
                                  @jakarta.ws.rs.QueryParam("rows") Integer rows) {
-        SourceService.Draft d = sources.draft(form, existing(form), false);
+        Records.Source saved = existing(form);
+        SourceService.Draft d = sources.draft(form, saved, false);
+        sources.previewDraftAllowed(saved, d.config());
         return SourceService.noStore(sources.preview(d.connector(), d.config(), asset, rows));
     }
 

@@ -71,6 +71,18 @@ class SafetyTest {
     }
 
     @Test
+    void functionsThatReachOtherDatabasesAreRefused() {
+        refused("SELECT * FROM dblink('dbname=other', 'SELECT secret FROM t') AS x(secret text)");
+        refused("SELECT * FROM public.\"dblink\"('host=elsewhere', 'SELECT 1') AS x(n int)");
+        refused("SELECT \"DBLINK_CONNECT\"('c', 'dbname=other') FROM ${table}");
+        refused("SELECT dblink_connect_u('c', 'dbname=other') FROM ${table}");
+        refused("SELECT * FROM postgres_fdw_get_connections()");
+        refused("SELECT postgres_fdw_disconnect_all() FROM ${table}");
+        refused("SELECT \"postgres_fdw_handler\"() FROM ${table}");
+        refused("SELECT * FROM ${table} WHERE pg_catalog.dblink_get_connections() IS NOT NULL");
+    }
+
+    @Test
     void ordinaryReadingSqlIsAccepted() {
         assertEquals("SELECT * FROM ${table} WHERE amount < 0",
             SqlTokens.checkCustomSql(" SELECT * FROM ${table} WHERE amount < 0; ", 10_000));
@@ -168,6 +180,43 @@ class SafetyTest {
         assertFalse(RuleDraft.allowed("https://hooks.example.com/kilnmark/a%5c..%5cb", allow));
         assertTrue(RuleDraft.allowed("https://hooks.example.com/kilnmark/?x=1", allow));
         assertTrue(RuleDraft.allowed("https://hooks.example.com/kilnmark/quality.v1", allow), "dots in a name are fine");
+    }
+
+    @Test
+    void webhookPathsCannotClimbOutThroughMatrixParameters() {
+        List<String> allow = List.of("https://hooks.example.com/kilnmark/", "http://127.0.0.1:47391/hooks/");
+        // Servers that strip ";..." from a segment (Tomcat, Jetty) then read it as a dot segment.
+        for (String url : List.of("https://hooks.example.com/kilnmark/..;x/admin",
+            "https://hooks.example.com/kilnmark/..;/admin", "https://hooks.example.com/kilnmark/.;x/a",
+            "https://hooks.example.com/kilnmark/a/..;jsessionid=1/../admin", "http://127.0.0.1:47391/hooks/..;/q/health",
+            // An encoded semicolon, decoded before the segment is read.
+            "https://hooks.example.com/kilnmark/..%3bx/admin", "https://hooks.example.com/kilnmark/..%3Bx/admin",
+            // Any semicolon at all: no webhook needs one (see RuleDraft.plainPath).
+            "https://hooks.example.com/kilnmark/quality;v=1")) {
+            assertFalse(RuleDraft.allowed(url, allow), url);
+            assertEquals("not on the allow-list", new Webhooks(allow, Duration.ofSeconds(1)).send(url, "{}"),
+                "and checked again, with the same function, at send time: " + url);
+        }
+        assertTrue(RuleDraft.allowed("https://hooks.example.com/kilnmark/hook?a=1;b=2", allow),
+            "semicolons in the query are not part of the path");
+    }
+
+    @Test
+    void webhookPathsTakeOnlyHarmlessEscapesAndAsciiAndTheDefaultPortIsNoPort() {
+        List<String> allow = List.of("https://hooks.example.com/kilnmark/", "http://127.0.0.1:47391/hooks/");
+        for (String url : List.of("https://hooks.example.com/kilnmark/%252e%252e/admin", // double-decoded dots
+            "https://hooks.example.com/kilnmark/a%00b", "https://hooks.example.com/kilnmark/%c0%ae%c0%ae/admin",
+            "https://hooks.example.com/kilnmark/%20x", "https://hooks.example.com/kilnmark/%zz",
+            "https://hooks.example.com/kilnmark/%4", "https://hooks.example.com/kilnmark/caf\u00e9",
+            "https://hooks.example.com/kilnmark/x?q=\u00e9")) {
+            assertFalse(RuleDraft.allowed(url, allow), url);
+        }
+        assertTrue(RuleDraft.allowed("https://hooks.example.com/kilnmark/%41b-c_d~", allow), "unreserved escapes");
+        assertTrue(RuleDraft.allowed("https://hooks.example.com:443/kilnmark/x", allow), "443 is https's own port");
+        assertTrue(RuleDraft.allowed("https://hooks.example.com/kilnmark/x", List.of("https://hooks.example.com:443/")));
+        assertFalse(RuleDraft.allowed("https://hooks.example.com:8443/kilnmark/x", allow));
+        assertTrue(RuleDraft.allowed("http://example.net:80/a", List.of("http://example.net/")));
+        assertFalse(RuleDraft.allowed("http://example.net:443/a", List.of("http://example.net/")));
     }
 
     @Test

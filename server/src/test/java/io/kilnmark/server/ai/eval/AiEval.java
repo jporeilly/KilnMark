@@ -30,7 +30,8 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 /**
  * Scores a running Kilnmark's AI search against the golden set in tests/ai-eval/golden.json, with
  * whatever models it is configured to use: search by words alone, hybrid search, and the plans
- * asking in plain English produces. Run with {@code ./gradlew :server:aiEval} (see
+ * asking in plain English produces, and the assistant's documentation retrieval and citations
+ * (tests/ai-eval/docs.json). Run with {@code ./gradlew :server:aiEval} (see
  * lab/README.md); not part of the normal build. Results go to {@code dist/build/server/ai-eval}.
  */
 @Tag("ai-eval")
@@ -46,6 +47,9 @@ class AiEval {
     private final Path baseline = Path.of(System.getProperty("kilnmark.eval.baseline",
         "../tests/ai-eval/baseline.json"));
     private final boolean updateBaseline = Boolean.getBoolean("kilnmark.eval.update-baseline");
+    private final Path docsGolden = Path.of(System.getProperty("kmtest.eval.docs", "../tests/ai-eval/docs.json"));
+    /** Sections the assistant retrieves for a question. */
+    private static final int DOCS_K = 6;
     private static final int K = 5;
 
     private JsonNode get(String path) throws IOException, InterruptedException {
@@ -154,7 +158,11 @@ class AiEval {
         report.put("ask", Map.of("interpretedBy", String.valueOf(interpretedBy), "planAccuracy",
             EvalMetrics.mean(planScores), "items", asks));
 
+        Map<String, Object> docs = scoreDocs(status.path("assistant").asBoolean(false));
+        report.put("docs", docs);
+
         Map<String, Double> scores = new LinkedHashMap<>();
+        scores.put("docs.recallAt6", (Double) docs.get("recallAt" + DOCS_K));
         scores.put("keyword.mrr", (Double) ((Map<?, ?>) search.get("keyword")).get("mrr"));
         scores.put("hybrid.mrr", (Double) ((Map<?, ?>) search.get("hybrid")).get("mrr"));
         scores.put("ask.planAccuracy", EvalMetrics.mean(planScores));
@@ -182,6 +190,82 @@ class AiEval {
         }
         assertTrue(worse.isEmpty(), "Not as good as the baseline (" + baseline + "): " + String.join("; ", worse)
             + ". Fix the regression, or accept the new scores with -Pkilnmark.eval.update-baseline=true.");
+    }
+
+    /**
+     * The assistant's documentation domain over tests/ai-eval/docs.json: retrieval (recall at 6 of
+     * the section search, by words and, if the server has an embedding model, meaning) and, when
+     * the assistant has a chat model, its answers' citations: valid (each cites a section the
+     * search can find) and relevant (at least one cites a section that answers). Questions are
+     * paced to stay under the assistant's 20 a minute.
+     */
+    private Map<String, Object> scoreDocs(boolean answers) throws IOException, InterruptedException {
+        JsonNode set = json.readTree(docsGolden.toFile());
+        List<Double> recall = new ArrayList<>();
+        List<Double> rr = new ArrayList<>();
+        List<Double> valid = new ArrayList<>();
+        List<Double> relevantCited = new ArrayList<>();
+        List<Double> fallbacks = new ArrayList<>();
+        List<Map<String, Object>> items = new ArrayList<>();
+        String mode = null;
+        for (JsonNode item : set.path("items")) {
+            String q = item.path("question").asText();
+            List<String> relevant = strings(item.path("relevant"));
+            String page = item.path("page").asText("");
+            JsonNode r = get("/api/v1/assistant/sections?limit=" + DOCS_K + "&q=" + URLEncoder.encode(q,
+                StandardCharsets.UTF_8) + (page.isEmpty() ? "" : "&page=" + URLEncoder.encode(page,
+                StandardCharsets.UTF_8)));
+            mode = r.path("mode").asText();
+            List<String> ranked = new ArrayList<>();
+            r.path("sections").forEach(h -> ranked.add(h.path("sectionId").asText()));
+            double rec = EvalMetrics.recallAt(ranked, relevant, DOCS_K);
+            recall.add(rec);
+            rr.add(EvalMetrics.reciprocalRank(ranked, relevant));
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("question", q);
+            m.put("recallAt" + DOCS_K, rec);
+            m.put("top", ranked);
+            if (answers) {
+                Thread.sleep(3_100);
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("question", q);
+                if (!page.isEmpty()) {
+                    body.put("page", page);
+                }
+                JsonNode a = post("/api/v1/assistant/ask", body);
+                List<String> cited = new ArrayList<>();
+                a.path("citations").forEach(c -> cited.add(c.path("sectionId").asText()));
+                boolean fallback = a.path("fallback").asBoolean();
+                fallbacks.add(fallback ? 1.0 : 0.0);
+                if (!fallback) {
+                    boolean allValid = a.path("citations").size() > 0;
+                    for (JsonNode c : a.path("citations")) {
+                        allValid &= c.path("href").asText().startsWith("#/docs/")
+                            && a.path("answer").asText().contains("[" + c.path("n").asInt() + "]");
+                    }
+                    valid.add(allValid ? 1.0 : 0.0);
+                    relevantCited.add(cited.stream().anyMatch(relevant::contains) ? 1.0 : 0.0);
+                }
+                m.put("fallback", fallback);
+                m.put("cited", cited);
+                m.put("answer", a.path("answer").asText());
+            }
+            items.add(m);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("modeUsed", String.valueOf(mode));
+        out.put("recallAt" + DOCS_K, EvalMetrics.mean(recall));
+        out.put("mrr", EvalMetrics.mean(rr));
+        if (answers) {
+            // Answers that fell back to a list of sections (model refused, failed or out of context) are
+            // not in the citation scores, so their share is reported beside them.
+            out.put("fallbackRate", EvalMetrics.mean(fallbacks));
+            out.put("answered", valid.size());
+            out.put("citationValidity", EvalMetrics.mean(valid));
+            out.put("citesRelevant", EvalMetrics.mean(relevantCited));
+        }
+        out.put("items", items);
+        return out;
     }
 
     /**
@@ -225,6 +309,15 @@ class AiEval {
         }
         b.append(String.format(Locale.ROOT, "%nPlan accuracy (asking in plain English, model %s): %.3f over %d "
             + "questions.%n", interpretedBy, EvalMetrics.mean(planScores), planScores.size()));
+        Map<String, Object> docs = (Map<String, Object>) report.get("docs");
+        b.append(String.format(Locale.ROOT, "%nAssistant, documentation (%s): recall@%d %.3f, MRR %.3f.",
+            docs.get("modeUsed"), DOCS_K, (Double) docs.get("recallAt" + DOCS_K), (Double) docs.get("mrr")));
+        if (docs.containsKey("citationValidity")) {
+            b.append(String.format(Locale.ROOT, " Fell back to sections: %.3f. Answers: %s, citations valid %.3f, "
+                + "citing a relevant section %.3f.", (Double) docs.get("fallbackRate"), docs.get("answered"),
+                (Double) docs.get("citationValidity"), (Double) docs.get("citesRelevant")));
+        }
+        b.append('\n');
         return b.toString();
     }
 }

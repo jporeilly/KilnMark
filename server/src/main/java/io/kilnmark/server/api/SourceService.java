@@ -236,7 +236,7 @@ public class SourceService {
         }
         int from = Math.max(0, offset);
         int size = Math.max(1, Math.min(limit, 500));
-        List<io.kilnmark.kiln.connect.AssetInfo> all = run(config, "list " + container,
+        List<io.kilnmark.kiln.connect.AssetInfo> all = run(connector, config, "list " + container,
             () -> connector.assets(config, container));
         List<Views.AssetItem> page = all.stream().skip(from).limit(size)
             .map(a -> new Views.AssetItem(a.path(), a.name() == null ? a.path() : a.name(), a.kind(), a.readable()))
@@ -252,9 +252,9 @@ public class SourceService {
      * <p>A preview reads the asset named, whatever the source's include and exclude patterns say:
      * they choose what a scan records, not what a steward may look at.
      *
-     * <p>TODO: when sensitive-column flags arrive (stream E), mask flagged columns here for people
-     * who may not unmask them, as every other view of the data must. Until then previews are not
-     * masked.
+     * <p>Columns a steward marked sensitive on the catalogued asset (matched by name) are masked
+     * for anyone but an admin, as in every other view of the data. A table never scanned has no
+     * marks yet.
      */
     Views.Preview preview(Connector connector, SourceConfig config, String asset, Integer rows) {
         if (asset == null || asset.isBlank()) {
@@ -264,14 +264,91 @@ public class SourceService {
         if (n < 1 || n > io.kilnmark.kiln.connect.Preview.MAX_ROWS) {
             throw new IllegalArgumentException("rows: from 1 to " + io.kilnmark.kiln.connect.Preview.MAX_ROWS);
         }
-        io.kilnmark.kiln.connect.Preview p = run(config, "preview " + asset, () -> {
+        java.util.concurrent.atomic.AtomicReference<String> path = new java.util.concurrent.atomic.AtomicReference<>();
+        io.kilnmark.kiln.connect.Preview p = run(connector, config, "preview " + asset, () -> {
             io.kilnmark.kiln.connect.AssetInfo info = connector.asset(config, asset);
+            path.set(info.path()); // the connector's own spelling, as the catalogue holds it
             return connector.preview(config, info, n);
         });
         return new Views.Preview(asset, p.columns().stream()
-            .map(c -> new Views.PreviewColumn(c.name(), c.kind(), c.sourceType())).toList(), p.rows(), p.rows().size(),
-            p.truncated(), p.details());
+            .map(c -> new Views.PreviewColumn(c.name(), c.kind(), c.sourceType())).toList(),
+            masked(config, path.get() == null ? asset : path.get(), p), p.rows().size(), p.truncated(), p.details());
     }
+
+    /** The preview's rows with the catalogued asset's sensitive columns masked, for all but admins. */
+    private List<List<String>> masked(SourceConfig config, String path, io.kilnmark.kiln.connect.Preview p) {
+        io.kilnmark.server.quality.Masking.Sight sight;
+        try {
+            sight = sights.catalogue(new io.kilnmark.graph.Urn(config.name(), path).toString());
+        } catch (IllegalArgumentException e) {
+            return p.rows(); // no asset can have that URN, so none has marks
+        }
+        List<Integer> hide = new ArrayList<>();
+        for (int i = 0; i < p.columns().size(); i++) {
+            if (!sight.values(p.columns().get(i).name())) {
+                hide.add(i);
+            }
+        }
+        if (hide.isEmpty()) {
+            return p.rows();
+        }
+        List<List<String>> out = new ArrayList<>();
+        for (List<String> row : p.rows()) {
+            List<String> r = new ArrayList<>(row);
+            hide.forEach(i -> {
+                if (i < r.size() && r.get(i) != null) {
+                    r.set(i, io.kilnmark.server.quality.Masking.MASK);
+                }
+            });
+            out.add(r);
+        }
+        return out;
+    }
+
+    /** Settings that do not change what is read or how its columns are named. */
+    private static final java.util.Set<String> NOT_READING = java.util.Set.of("description", "ai_egress", "display_name",
+        "keep_samples", "sample_rows", "table_sample_above_rows");
+
+    /**
+     * A draft preview for a non-admin. New connections have no marks, so there is nothing to mask
+     * and stewards preview them as they add them. But masking finds a table's sensitive columns by
+     * the saved source's name and the column names it read, so for a saved source with columns
+     * marked sensitive, changed reading settings (another folder, no header row, other patterns)
+     * could read the same data under other names: only an admin may preview those.
+     */
+    void previewDraftAllowed(Records.Source existing, SourceConfig draft) {
+        Records.Source saved = existing != null ? existing : store.source(draft.name()).orElse(null);
+        readingUnchangedOrAdmin(saved, draft.settings(), "preview settings that are not saved");
+    }
+
+    /**
+     * Refuses (403) a non-admin a change of reading settings, or a preview of them, for a source with
+     * columns marked sensitive: read under other names, its columns would no longer be masked.
+     * Description, display name and the like stay open to stewards.
+     */
+    void readingUnchangedOrAdmin(Records.Source saved, Map<String, String> settings, String doing) {
+        if (saved == null || sights.mayUnmask() || reading(saved.settings()).equals(reading(settings))
+            || !sights.sourceHasMarks(saved.name())) {
+            return;
+        }
+        throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can " + doing + " for " + saved.name() + ": it has "
+            + "columns marked sensitive, and other reading settings (folders, patterns, header rows, formats) could read "
+            + "them under other names, unmasked. You can still change its description and display name.");
+    }
+
+    private static Map<String, String> reading(Map<String, String> settings) {
+        Map<String, String> out = new java.util.TreeMap<>();
+        settings.forEach((k, v) -> {
+            if (!NOT_READING.contains(k) && v != null && !v.isBlank()) {
+                out.put(k, v.trim());
+            }
+        });
+        return out;
+    }
+
+    /** Who is looking: columns marked sensitive are masked in previews for all but admins. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.Sights sights;
 
     /** A preview as a response no browser or proxy keeps: the rows are the source's data. */
     static Response noStore(Views.Preview preview) {
@@ -281,9 +358,10 @@ public class SourceService {
         return Response.ok(preview).cacheControl(none).build();
     }
 
-    private <T> T run(SourceConfig config, String doing, java.util.concurrent.Callable<T> work) {
+    private <T> T run(Connector connector, SourceConfig config, String doing,
+                      java.util.concurrent.Callable<T> work) {
         try {
-            return checks.forPerson(config, doing, work);
+            return checks.forPerson(connector, config, doing, work);
         } catch (SourceChecks.CheckFailed e) {
             throw ApiError.of(e.busy() ? Response.Status.TOO_MANY_REQUESTS : Response.Status.BAD_GATEWAY,
                 e.getMessage());

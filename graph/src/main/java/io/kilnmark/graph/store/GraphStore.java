@@ -97,6 +97,15 @@ public interface GraphStore {
             : search(query, limit).stream().filter(h -> sources.contains(h.source())).toList();
     }
 
+    /**
+     * As {@link #search(String, int, List)}; with {@code everyText} false, the text of documents
+     * that are or hold anything with a column marked sensitive (a workbook whose sheet is marked, a
+     * mail whose attached workbook is) is not matched at all, so a search cannot tell what it says.
+     */
+    default List<SearchHit> search(String query, int limit, List<String> sources, boolean everyText) {
+        return search(query, limit, sources);
+    }
+
     Optional<AssetDetail> asset(String urn);
 
     /** Someone changed the source between reading it and saving a change to it. */

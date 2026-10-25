@@ -13,6 +13,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 
 ## User guides
 
+- [Asking Kilnmark](guide/assistant.md): the Ask panel, what it answers from, sources and links, and privacy
 - [Setting data quality rules](guide/quality-rules.md): one-click rules from the profile, writing rules, thresholds, previews, alerts and recipes
 - [Writing data from a pipeline](guide/writing-data.md): writing to tables (create, append, replace, upsert) and to CSV and Parquet files, the rights a write needs, and what replace keeps
 - [Branding and appearance](guide/branding.md): themes, accent colours and density; the branding folder for an organisation's name, logo and connector logos

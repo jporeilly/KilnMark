@@ -30,10 +30,26 @@ public class DocumentResource {
 
     private final DocumentTexts texts;
     private final DocumentStore documents;
+    /** Who is looking: a workbook's text holds its sheets' cells, so it follows their sensitive columns. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.Sights sights;
 
     public DocumentResource(DocumentTexts texts, DocumentStore documents) {
         this.texts = texts;
         this.documents = documents;
+    }
+
+    /**
+     * The document's identifier, after checking the caller may read its text: when it or any of its
+     * parts (a workbook's sheets) has a column marked sensitive, only an admin may.
+     */
+    private String readable(String urn) {
+        String u = urn(urn);
+        if (!sights.textWithheld(List.of(u)).isEmpty()) {
+            throw ApiError.of(jakarta.ws.rs.core.Response.Status.FORBIDDEN, "This document's text holds columns marked "
+                + "sensitive (in its sheets), so only an admin can read it.");
+        }
+        return u;
     }
 
     private static String urn(String urn) {
@@ -51,7 +67,7 @@ public class DocumentResource {
     @GET
     @Path("text")
     public Views.DocumentPage text(@QueryParam("urn") String urn, @QueryParam("page") Integer page) {
-        String u = urn(urn);
+        String u = readable(urn);
         DocumentTexts.Layout l = texts.layout(u);
         int n = page == null ? 1 : page;
         if (n < 1 || n > l.pages().size()) {
@@ -72,7 +88,7 @@ public class DocumentResource {
         if (q == null || q.strip().length() < 2 || q.length() > 200) {
             throw new IllegalArgumentException("q: from 2 to 200 characters to find");
         }
-        String u = urn(urn);
+        String u = readable(urn);
         // matched on the text itself, ignoring case the Unicode way, so offsets are always the text's
         // own (lower-casing can change a string's length: Turkish İ becomes two characters)
         Pattern needle = Pattern.compile(Pattern.quote(q.strip()), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
@@ -122,7 +138,7 @@ public class DocumentResource {
     @Path("chunks")
     public Views.Chunks chunks(@QueryParam("urn") String urn, @QueryParam("offset") Integer offset,
                                @QueryParam("limit") Integer limit) {
-        DocumentRecords.Document d = texts.readable(urn(urn));
+        DocumentRecords.Document d = texts.readable(readable(urn));
         int from = offset == null ? 0 : offset;
         if (from < 0) {
             throw new IllegalArgumentException("offset: 0 or more");

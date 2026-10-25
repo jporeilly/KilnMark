@@ -29,6 +29,7 @@ import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.jdbc.JdbcConnector;
 import io.kilnmark.server.KilnmarkConfig;
+import io.kilnmark.server.sources.HostPolicy;
 import io.kilnmark.server.SecretBox;
 import io.kilnmark.server.scan.ScanService;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -245,6 +246,8 @@ public class QualityService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new ScanService.Result(ScanService.Outcome.CANCELLED, null);
+        } catch (HostRefused e) {
+            store.finishRun(r.id(), "failed", e.getMessage());
         } catch (RuntimeException e) {
             LOG.errorf(e, "Quality run %d failed", r.id());
             // The exception may carry a database's own text: it goes to the log, not to every role.
@@ -260,20 +263,26 @@ public class QualityService {
         int rules = 0;
         int failing = 0;
         int drift = 0;
+        String refused = null;
         for (QualityStore.Version v : versions) {
             if (cancelled.getAsBoolean()) {
                 return null;
             }
             drift += analyse(v.id());
-            Outcome o = evaluate(v.assetUrn(), store.rules(v.assetUrn(), null, true), r.id());
-            rules += o.ran();
-            failing += o.failing();
+            try {
+                Outcome o = evaluate(v.assetUrn(), store.rules(v.assetUrn(), null, true), r.id());
+                rules += o.ran();
+                failing += o.failing();
+            } catch (HostRefused e) {
+                // Measures and drift need no connection: they go on for every asset; the rules wait for the host.
+                refused = e.getMessage();
+            }
             rescore(v.assetUrn());
             store.pruneVersions(v.assetUrn(), config.quality().keepVersions());
         }
         return versions.size() + (versions.size() == 1 ? " asset" : " assets") + " analysed, " + rules
             + (rules == 1 ? " rule" : " rules") + " run (" + failing + " failing or warning), " + drift
-            + " drift " + (drift == 1 ? "event" : "events");
+            + " drift " + (drift == 1 ? "event" : "events") + (refused == null ? "" : ". Rules not run: " + refused);
     }
 
     private String manualJob(QualityStore.Run r, BooleanSupplier cancelled) throws InterruptedException {
@@ -309,6 +318,9 @@ public class QualityService {
             events += found.size();
             for (int i = 0; i < found.size(); i++) {
                 Drift.Event e = found.get(i);
+                if (e.change().equals("column_renamed")) {
+                    store.carrySensitive(now.assetUrn(), e.evidence().path("from").asText(), e.field());
+                }
                 if (!e.severity().equals("low")) {
                     store.openDriftIssue(now.assetUrn(), e.field(), e.change(), ids.get(i), "Drift: " + e.message(),
                         "Found when comparing with the previous scan (" + previous.observedAt() + ").", e.severity());
@@ -339,6 +351,16 @@ public class QualityService {
     record Outcome(int ran, int failing) {
     }
 
+    /** The source names a host the administrator no longer allows; the message is for every role. */
+    static final class HostRefused extends RuntimeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        HostRefused(String message) {
+            super(message, null, false, false);
+        }
+    }
+
     /** Runs rules on an asset, stores their results and carries out their actions. */
     Outcome evaluate(String urn, List<Rule> rules, Long qualityRunId) throws InterruptedException {
         if (rules.isEmpty()) {
@@ -350,6 +372,10 @@ public class QualityService {
             "This server has no connector for sources of kind " + source.kind()));
         String secret = graph.sourceSecret(source.name()).map(secrets::open).orElse(null);
         SourceConfig cfg = new SourceConfig(source.name(), source.kind(), source.settings(), secret);
+        String refused = HostPolicy.of(config).refusal(connector, cfg);
+        if (refused != null) {
+            throw new HostRefused(refused);
+        }
         boolean keep = keepSamples(source.settings());
         Map<String, String> kinds = new LinkedHashMap<>();
         asset.fields().forEach(f -> kinds.put(f.name(), f.kind()));
@@ -397,9 +423,12 @@ public class QualityService {
                 store.resolveRuleIssue(rule.id());
             } else {
                 String severity = status == Rule.Status.FAIL ? "high" : status == Rule.Status.WARN ? "medium" : "low";
+                // Issues are read by every role: a freshness message states the age of a value, not said of a
+                // column marked sensitive.
+                boolean quiet = rule.type() == RuleType.FRESHNESS && store.sensitive(rule.assetUrn()).contains(rule.field());
                 String detail = status == Rule.Status.ERROR ? "The rule could not run: " + e.error()
                     : Measures.count(e.failing()) + " of " + Measures.count(e.total()) + " rows fail"
-                        + (e.message() == null ? "" : " (" + e.message() + ")");
+                        + (e.message() == null || quiet ? "" : " (" + e.message() + ")");
                 store.openRuleIssue(rule, "Rule '" + rule.name() + "' " + status.id() + "s", detail, severity);
             }
         }
@@ -423,7 +452,10 @@ public class QualityService {
                 body.put("error", e.error());
             }
             body.put("observedAt", Instant.now().toString());
-            hooks.send(rule.actions().webhook(), body.toString());
+            if (Webhooks.NOT_ALLOWED.equals(hooks.send(rule.actions().webhook(), body.toString()))) {
+                store.noteResult(resultId, "The webhook was not called: its address is no longer on this server's "
+                    + "webhook allow-list (kilnmark.quality.webhook-allow-list).");
+            }
         }
     }
 

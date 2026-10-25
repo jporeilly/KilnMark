@@ -39,6 +39,12 @@ public class AskResource {
             throw new IllegalArgumentException("question: 500 characters at most");
         }
         int n = body.limit() == null ? 20 : Math.max(1, Math.min(body.limit(), 100));
-        return AiViews.AskResult.of(ask.ask(body.question(), n, Callers.of(identity)));
+        io.kilnmark.server.ai.AskSearch.Answer a = ask.ask(body.question(), n, Callers.of(identity));
+        return AiViews.AskResult.of(new io.kilnmark.server.ai.AskSearch.Answer(a.question(), a.plan(),
+            a.interpretedBy(), a.note(), CatalogResource.withheldSnippets(a.result(), sights)));
     }
+
+    /** Documents' snippets the caller may not read are left out (see {@link CatalogResource#withheldSnippets}). */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.Sights sights;
 }

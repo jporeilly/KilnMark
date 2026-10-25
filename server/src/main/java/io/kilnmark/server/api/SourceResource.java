@@ -114,6 +114,7 @@ public class SourceResource {
             throw new IllegalArgumentException("Send the source as JSON with all its settings");
         }
         SourceService.Draft d = sources.draft(body, existing, true);
+        sources.readingUnchangedOrAdmin(existing, d.config().settings(), "change how this source is read");
         byte[] secret = d.replaceSecret() && d.newSecret() != null ? secrets.seal(d.newSecret()) : null;
         Records.Source s = conflicts(() -> store.updateSource(existing.id(), new Records.SourceChange(d.displayName(),
             d.config().settings(), d.replaceSecret(), secret, d.keepSecretIf()))).orElseThrow(() -> ApiError.of(

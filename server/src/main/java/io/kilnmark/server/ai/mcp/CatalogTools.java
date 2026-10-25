@@ -50,6 +50,10 @@ public class CatalogTools {
     @Inject
     SecurityIdentity identity;
 
+    /** Columns marked sensitive: an assistant is a model, so their values are always masked for it. */
+    @Inject
+    io.kilnmark.server.quality.Sights sights;
+
     public CatalogTools(HybridSearch search, GraphStore store, Db db, ObjectMapper json) {
         this.search = search;
         this.store = store;
@@ -73,6 +77,7 @@ public class CatalogTools {
             return ToolResponse.ofError("query: 500 characters at most");
         }
         Set<String> hidden = hiddenSources();
+        sights.speakingToModel(); // a model never matches withheld documents' text
         int n = Math.max(1, Math.min(limit, 50));
         HybridSearch.Result r = search.search(query.strip(), HybridSearch.Filters.NONE, n + hidden.size() * 5 + 10,
             "mcp: " + caller(), true);
@@ -131,6 +136,7 @@ public class CatalogTools {
             out.put("removedAt", a.removedAt().toString());
         }
         List<Map<String, Object>> fields = new ArrayList<>();
+        io.kilnmark.server.quality.Masking.Sight sight = sights.model(a.urn());
         for (Records.FieldDetail f : a.fields()) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", f.name());
@@ -138,7 +144,7 @@ public class CatalogTools {
             m.put("kind", f.kind());
             m.put("nullable", f.nullable());
             m.put("description", f.description());
-            m.put("profile", profile(f.profileJson()));
+            m.put("profile", profile(f.profileJson(), f.name(), sight));
             fields.add(m);
         }
         out.put("fields", fields);
@@ -222,13 +228,17 @@ public class CatalogTools {
         });
     }
 
-    /** A field's profile: counts, and value statistics, for sources the caller may see. */
-    private Map<String, Object> profile(String stats) {
+    /**
+     * A field's profile: counts, and value statistics, for sources the caller may see. A column
+     * marked sensitive keeps its counts and has its values masked: they never go to an assistant,
+     * whoever's token it uses (an assistant cannot ask to unmask).
+     */
+    private Map<String, Object> profile(String stats, String field, io.kilnmark.server.quality.Masking.Sight sight) {
         if (stats == null) {
             return null;
         }
         try {
-            JsonNode n = json.readTree(stats);
+            JsonNode n = io.kilnmark.server.quality.Masking.profile(json.readTree(stats), field, sight);
             Map<String, Object> m = new LinkedHashMap<>();
             for (String k : List.of("rows", "nulls", "distinct", "min_length", "max_length")) {
                 if (n.has(k)) {
