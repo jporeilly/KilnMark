@@ -52,5 +52,5 @@ jobs:
           java-version: "25"
           cache: gradle
 
-      - name: SQL Server and other heavy integration tests
+      - name: SQL Server, MySQL and MariaDB integration tests
         run: ./gradlew :kiln-plugins:heavyTest -PskipUi --no-daemon

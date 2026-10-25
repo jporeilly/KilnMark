@@ -88,16 +88,17 @@ tasks.withType<Test>().configureEach {
     jvmArgs("--add-opens=java.base/java.nio=ALL-UNNAMED", "--enable-native-access=ALL-UNNAMED")
 }
 
-// Tests against heavy databases (SQL Server's image is 2.3 GB and needs 2 GB of memory) are tagged
-// and run apart: ./gradlew :kiln-plugins:heavyTest. The ordinary build stays quick.
-val heavy = listOf("sqlserver")
+// Tests against heavy databases (SQL Server's image is 2.3 GB and needs 2 GB of memory; MySQL 8.4 and
+// MariaDB 11.4 add two more servers) are tagged and run apart: ./gradlew :kiln-plugins:heavyTest.
+// The ordinary build stays quick.
+val heavy = listOf("sqlserver", "mysql", "mariadb")
 
 tasks.named<Test>("test") {
     useJUnitPlatform { excludeTags(*heavy.toTypedArray()) }
 }
 
 tasks.register<Test>("heavyTest") {
-    description = "Runs the integration tests against heavy databases (SQL Server)."
+    description = "Runs the integration tests against heavy databases (SQL Server, MySQL, MariaDB)."
     group = "verification"
     val main = project.extensions.getByType<SourceSetContainer>()["test"]
     testClassesDirs = main.output.classesDirs
