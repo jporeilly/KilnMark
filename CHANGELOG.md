@@ -167,6 +167,63 @@ details.
 - **Database:** migration V9 adds profile versions, samples, rules, accepted patterns, quality
   runs, results, measures, scores, drift events and issues, a `sensitive` flag on fields, and
   lets the job queue hold jobs of other kinds.
+- **Sensitive columns, after review:** every value drawn from a column marked sensitive is masked
+  for anyone who may not unmask it, stewards included, through one check per asset: measure
+  evidence (range, fences, usual values, latest timestamp), drift detail, the allowed values and
+  range bounds of its rules and recommendations, failing-rows queries and database error text, the
+  ODCS export's rule values, the profile's histogram bounds, live previews of the catalogued table
+  or file, and the MCP server's `get_asset`, which always masks. Shapes, counts and shares stay. Drift,
+  rules, results and recommendations take `unmask=true` from an admin. Embedded text and prompts were
+  checked: names, types and descriptions only, never values.
+  - A rule on a sensitive column cannot be previewed by anyone who may not unmask it, and its results
+    give counts only (no failing rows or query): failing rows would show which rows hold which values.
+    Custom SQL's text, like its failing query, is hidden while the asset has any sensitive column. A
+    freshness result on a sensitive timestamp says only whether the latest value is within the limit.
+  - Saving a rule as shown keeps what was masked: parameters `{"hidden": true}` keep the stored ones
+    (same column and type only, otherwise 400) and webhook `"(set)"` keeps the stored webhook; both
+    markers are refused on new rules and previews.
+  - Live previews find marks by the saved source and the connector's own path, and files and objects
+    are read only under the path the listing gives them (no `a//b`, `./` or `../` spellings). For a
+    source with marks, only admins may change how it is read (folders, patterns, header rows,
+    formats) or preview such changes; stewards still preview new connections and edit descriptions.
+  - A workbook's text holds its sheets' cells: when a sheet has a sensitive column, the workbook's
+    text, find, chunks and search snippets are for admins only, and others' searches do not match
+    its text at all; the same up the chain (a mail whose attached workbook's sheet is marked).
+  - Marks are kept apart from the column rows a scan replaces (migration V10, `sensitive_column`), so a
+    dropped or renamed column keeps its mark and the values stored under its name stay masked; a
+    detected rename carries the mark to the new name.
+  - One request-scoped `Sights` bean decides masking for every endpoint and MCP tool, and a test over
+    the source tree fails if one shows values without it.
+- **Freshness rules** count the values they could not read as a date or time, and say so.
+- **Webhooks, after review:** a webhook path may not hold a semicolon, raw or encoded (`%3b`), so a
+  segment such as `..;x`, which some servers read as `..` once they drop its parameters, cannot
+  climb out of an allowed prefix. Percent-escapes in the path are allowed only for letters, digits,
+  `-`, `_` and `~` (so no `%25`, `%00` or overlong UTF-8 such as `%c0%ae`), the URL must be printable
+  ASCII, and a written-out default port (`:443`, `:80`) matches an allow-list entry without one.
+  Checked when a rule is saved and again before each call; a call refused then is noted on the
+  rule's result.
+- **Custom SQL, after review:** refused under a login that may reach other databases (one that may
+  execute dblink's functions or use a foreign server) and on any database with a user mapping or a
+  foreign table, which a view owned by another role can reach, since a read-only transaction does
+  not hold on the other side. The refusal names the fix (for dblink, a revoke of its own functions by
+  name, never of a whole schema). dblink and postgres_fdw function names are refused in the SQL as
+  well.
+- **Allowed hosts, after review:** a saved source's hosts are checked against
+  `kilnmark.sources.allowed-hosts` again just before a scan, quality run, preview, listing, test or
+  on-demand read connects, not only when the source is saved, so a narrowed list applies at once;
+  the job fails saying which host is no longer allowed.
+- **Search, after review:** keyword search stays quick however common the words ("id", "the", a word
+  in most documents). It gathers a fixed number of candidates through indexes (exact names, the
+  nearest names in order of distance, matching words, alike field names, a sample of matching
+  document chunks) and ranks only those, instead of ranking every match before the limit; snippets
+  are chosen from a document's first matching chunks. Where more match alike than are taken, a
+  bounded pool (four times as many) is taken through the index, then the first of it by URN, so
+  matches that sit at the end of the table cannot make a branch walk it; matches are found through
+  the indexes only. A search kept to sources is kept to them in every branch, before any limit.
+  Exact names now always come first, then the closest whole names. Migration V10 adds GiST trigram
+  indexes on asset names and expression indexes for exact names, has the asset words index take
+  entries at once (no pending list), and adds `sensitive_column`. Developer databases that applied
+  an earlier draft of V10 (`V10__bounded_search`) need `flyway repair` or a fresh database.
 
 - **Sign-in with API tokens:** every API call needs a token (`Authorization: Bearer km_...`)
   with a role: viewer (read), steward (also start scans) or admin (also add sources and manage

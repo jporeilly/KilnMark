@@ -27,9 +27,9 @@ public class CatalogResource {
     private final GraphStore store;
     private final ObjectMapper json;
     private final io.kilnmark.kiln.connect.Connectors connectors;
-    /** Data quality: columns marked sensitive have their profile values masked (stream E). */
+    /** Who is looking: columns marked sensitive have their profile values masked, and their documents' snippets. */
     @jakarta.inject.Inject
-    io.kilnmark.server.quality.QualityStore quality;
+    io.kilnmark.server.quality.Sights sights;
     @jakarta.inject.Inject
     io.quarkus.security.identity.SecurityIdentity identity;
 
@@ -72,8 +72,25 @@ public class CatalogResource {
         io.kilnmark.server.ai.HybridSearch.Filters filters = source == null || source.isBlank()
             ? io.kilnmark.server.ai.HybridSearch.Filters.NONE
             : new io.kilnmark.server.ai.HybridSearch.Filters(List.of(), List.of(source.trim()), List.of());
-        return io.kilnmark.server.ai.AiViews.SearchResult.of(q.trim(), hybrid.search(q.trim(), filters, n,
-            io.kilnmark.server.ai.Callers.of(identity), !"keyword".equals(mode)));
+        return io.kilnmark.server.ai.AiViews.SearchResult.of(q.trim(), withheldSnippets(hybrid.search(q.trim(), filters,
+            n, io.kilnmark.server.ai.Callers.of(identity), !"keyword".equals(mode)), sights));
+    }
+
+    /**
+     * The result without snippets of documents whose text the caller may not read: a workbook's text
+     * holds its sheets' cells, so a sheet with a column marked sensitive withholds it from all but admins.
+     */
+    static io.kilnmark.server.ai.HybridSearch.Result withheldSnippets(io.kilnmark.server.ai.HybridSearch.Result r,
+                                                                      io.kilnmark.server.quality.Sights sights) {
+        java.util.Set<String> withheld = sights.textWithheld(r.hits().stream().filter(h -> h.snippet() != null)
+            .map(io.kilnmark.server.ai.HybridSearch.Hit::urn).toList());
+        if (withheld.isEmpty()) {
+            return r;
+        }
+        return new io.kilnmark.server.ai.HybridSearch.Result(r.mode(), r.note(), r.hits().stream()
+            .map(h -> !withheld.contains(h.urn()) ? h : new io.kilnmark.server.ai.HybridSearch.Hit(h.urn(), h.source(),
+                h.kind(), h.container(), h.name(), h.description(), h.rowCount(), h.matchedFields(), h.score(),
+                h.matchedBy(), null)).toList());
     }
 
     // Search by words and meaning (ADR 0016); field injection keeps the constructor as it is.
@@ -86,13 +103,12 @@ public class CatalogResource {
     public Views.Asset asset(@PathParam("urn") String urn) {
         Records.AssetDetail a = store.asset(urn)
             .orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No asset " + urn));
-        java.util.Set<String> sensitive = quality.sensitive(urn);
-        boolean unmasked = identity.hasRole(AccessRole.ADMIN_ROLE);
+        io.kilnmark.server.quality.Masking.Sight sight = sights.catalogue(urn);
         return new Views.Asset(a.urn(), a.source(), a.kind(), a.container(), a.name(), a.description(), a.primaryKey(),
             a.rowCount(), a.rowCountComplete(), a.firstSeenAt(), a.lastScannedAt(), a.removedAt(),
             a.fields().stream().map(f -> new Views.Field(f.name(), f.position(), f.sourceType(), f.kind(), f.nullable(),
-                f.description(), io.kilnmark.server.quality.Masking.profile(f.name(), parse(f.profileJson()), sensitive,
-                unmasked), f.profiledAt())).toList(),
+                f.description(), io.kilnmark.server.quality.Masking.profile(parse(f.profileJson()), f.name(), sight),
+                f.profiledAt())).toList(),
             Views.DocumentProfile.of(documents.document(a.urn()).orElse(null), store.source(a.source())
                 .map(s -> DocumentTexts.onDemand(s.settings())).orElse(false)),
             Views.AssetLink.of(documents.parent(a.urn()).orElse(null)),

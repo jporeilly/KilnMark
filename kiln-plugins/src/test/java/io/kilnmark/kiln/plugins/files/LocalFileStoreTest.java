@@ -85,6 +85,27 @@ class LocalFileStoreTest {
     }
 
     @Test
+    void aFileIsReadOnlyUnderTheNameTheListingGivesIt() throws IOException {
+        try (LocalFileStore s = new LocalFileStore(share, null, true)) {
+            assertEquals("exports/2025/orders.csv", s.entry("exports/2025/orders.csv").path());
+            // Another spelling of the same file would reach it under another catalogue reference.
+            for (String other : List.of("exports//2025/orders.csv", "exports/2025//orders.csv", "exports/./2025/orders.csv",
+                "exports/2025/orders.csv/")) {
+                assertThrows(IOException.class, () -> s.entry(other), other);
+            }
+        }
+        // S3 keys too, refused before any request is made (nothing listens on this endpoint).
+        try (S3FileStore s3 = new S3FileStore(new S3FileStore.Settings("http://127.0.0.1:9", null, "b", null, "key",
+            "secret", true), false)) {
+            for (String other : List.of("crm//customers.csv", "crm/./customers.csv", "crm/../customers.csv",
+                "/crm/customers.csv")) {
+                IOException e = assertThrows(IOException.class, () -> s3.entry(other), other);
+                assertTrue(e.getMessage().contains("not read"), e.getMessage());
+            }
+        }
+    }
+
+    @Test
     void aMissingOrRelativeFolderIsExplained() {
         IOException e = assertThrows(IOException.class, () -> new LocalFileStore(tmp.resolve("nope"), null, true));
         assertTrue(e.getMessage().contains("does not exist"), e.getMessage());

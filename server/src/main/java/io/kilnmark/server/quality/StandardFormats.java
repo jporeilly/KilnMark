@@ -50,7 +50,8 @@ public final class StandardFormats {
      * Everything an export needs about one asset, and who asks: {@code data} for roles that may see
      * data (otherwise allowed values, range bounds and custom SQL are left out), {@code unmasked}
      * for an admin who asked to unmask (otherwise statistics that are values, such as min, max and
-     * quantiles, are left out for columns marked sensitive).
+     * quantiles, are left out for columns marked sensitive, and so are the allowed values and
+     * range bounds of their rules).
      */
     public record Export(Records.AssetDetail asset, Records.Source source, QualityStore.Version version,
                          ProfileFacts facts, List<Rule> rules, Map<Long, QualityStore.Result> results,
@@ -59,6 +60,11 @@ public final class StandardFormats {
                       ProfileFacts facts, List<Rule> rules, Map<Long, QualityStore.Result> results,
                       Set<String> sensitive, String producer) {
             this(asset, source, version, facts, rules, results, sensitive, producer, true, true);
+        }
+
+        /** Who asks, as {@link Masking} sees them. */
+        public Masking.Sight sight() {
+            return new Masking.Sight(data, sensitive, unmasked);
         }
     }
 
@@ -236,7 +242,7 @@ public final class StandardFormats {
             ArrayNode quality = J.arrayNode();
             for (Rule r : x.rules()) {
                 if (f.name().equals(r.field())) {
-                    quality.add(quality(r, x.results().get(r.id()), x.data()));
+                    quality.add(quality(r, x.results().get(r.id()), x.sight()));
                 }
             }
             if (!quality.isEmpty()) {
@@ -246,7 +252,7 @@ public final class StandardFormats {
         ArrayNode tableQuality = J.arrayNode();
         for (Rule r : x.rules()) {
             if (r.field() == null || x.asset().fields().stream().noneMatch(f -> f.name().equals(r.field()))) {
-                tableQuality.add(quality(r, x.results().get(r.id()), x.data()));
+                tableQuality.add(quality(r, x.results().get(r.id()), x.sight()));
             }
         }
         if (!tableQuality.isEmpty()) {
@@ -291,6 +297,15 @@ public final class StandardFormats {
      * {@code {object}} and {@code {property}}.
      */
     static ObjectNode quality(Rule r, QualityStore.Result last, boolean data) {
+        return quality(r, last, new Masking.Sight(data, Set.of(), true));
+    }
+
+    /**
+     * One rule in ODCS's quality section as {@code sight} may see it: allowed values and range
+     * bounds only where the rule's column's values may be shown, custom SQL only where every
+     * column's may be (as {@link Masking#params}).
+     */
+    static ObjectNode quality(Rule r, QualityStore.Result last, Masking.Sight sight) {
         ObjectNode q = J.objectNode();
         q.put("id", "rule-" + r.id());
         q.put("name", r.name());
@@ -314,7 +329,7 @@ public final class StandardFormats {
             }
             case ALLOWED_VALUES -> {
                 ObjectNode args = null;
-                if (data) {
+                if (sight.values(r.field())) {
                     args = J.objectNode();
                     args.set("validValues", p.get("values").deepCopy());
                 }
@@ -339,10 +354,10 @@ public final class StandardFormats {
                 }
             }
             case CUSTOM_SQL -> {
-                if (!data) {
-                    q.put("type", "text"); // the SQL itself may quote values
+                if (sight.anyHidden()) {
+                    q.put("type", "text"); // the SQL itself may quote values, of any column
                 } else if (share) {
-                    kilnmark(q, r, true);
+                    kilnmark(q, r, sight);
                 } else {
                     q.put("type", "sql");
                     q.put("query", "SELECT COUNT(*) FROM (" + odcsPlaceholders(p.path("sql").asText()) + ") failing");
@@ -350,7 +365,7 @@ public final class StandardFormats {
                     q.put("mustBeLessOrEqualTo", limit);
                 }
             }
-            default -> kilnmark(q, r, data);
+            default -> kilnmark(q, r, sight);
         }
         ArrayNode custom = q.putArray("customProperties");
         custom.addObject().put("property", "kilnmarkRuleType").put("value", r.type().id());
@@ -392,14 +407,15 @@ public final class StandardFormats {
         return SqlRules.placeholders(sql, "{object}", "{property}");
     }
 
-    private static void kilnmark(ObjectNode q, Rule r, boolean data) {
+    private static void kilnmark(ObjectNode q, Rule r, Masking.Sight sight) {
+        boolean data = sight.data();
         q.put("type", "custom");
         q.put("engine", "kilnmark");
         ObjectNode impl = J.objectNode().put("type", r.type().id());
         if (r.field() != null) {
             impl.put("field", r.field());
         }
-        JsonNode params = Masking.params(r, data).deepCopy();
+        JsonNode params = Masking.params(r, sight).deepCopy();
         if (data && r.type() == RuleType.CUSTOM_SQL && params instanceof ObjectNode o && o.has("sql")) {
             o.put("sql", odcsPlaceholders(o.get("sql").asText()));
         }
