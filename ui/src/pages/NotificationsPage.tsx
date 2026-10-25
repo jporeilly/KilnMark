@@ -5,10 +5,10 @@ import {
   notifyApi,
   type EmailStatus,
   type MyNotifications,
-  type NotificationItem,
+  type NotificationFeed,
   type NotificationKindId,
 } from "../api";
-import { href } from "../router";
+import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { EmailChoiceFields, KindBoxes, Switch, type EmailChoices } from "../components/NotificationChoices";
 
@@ -21,12 +21,27 @@ export const emailBadge: Record<EmailStatus, string> = {
   skipped: "badge badge-none",
 };
 
+/** An unread count as the bell shows it: "99+" when the server says there are more. */
+export const unreadText = (n: { unread: number; more?: boolean }) => (n.more ? `${n.unread}+` : String(n.unread));
+
+/**
+ * A message that takes focus each time it changes (an error from the server, a test result), so
+ * keyboard and screen-reader users land on it even when the button they pressed was disabled.
+ */
+export function useFocusOn<T>(value: T | null) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (value) ref.current?.focus();
+  }, [value]);
+  return ref;
+}
+
 /**
  * Settings › Notifications, for every signed-in person: what they see in Kilnmark and what they
- * get by email (their own address, kinds, least severity, at once or a daily digest, sources), and
- * their latest notifications.
+ * get by email (their own address, confirmed first; kinds, least severity, at once or a daily
+ * digest, sources), and their latest notifications.
  */
-export function NotificationsPage() {
+export function NotificationsPage({ confirm }: { confirm: string | null }) {
   useTitle("Notifications");
   const [mine, setMine] = useState<MyNotifications | null>(null);
   const [sources, setSources] = useState<{ name: string; displayName: string }[]>([]);
@@ -34,10 +49,10 @@ export function NotificationsPage() {
   const [enabled, setEnabled] = useState(false);
   const [choices, setChoices] = useState<EmailChoices | null>(null);
   const [inApp, setInApp] = useState<NotificationKindId[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ text: string } | null>(null);
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
-  const errorRef = useRef<HTMLParagraphElement>(null);
+  const errorRef = useFocusOn(error);
 
   const apply = (m: MyNotifications) => {
     setMine(m);
@@ -46,26 +61,31 @@ export function NotificationsPage() {
     setChoices({ kinds: m.kinds, minSeverity: m.minSeverity, mode: m.mode, digestHour: m.digestHour, sources: m.sources });
     setInApp(m.inAppKinds);
   };
+  const fail = (text: string) => setError({ text });
 
   useEffect(() => {
-    notifyApi
-      .mine()
+    const load = confirm
+      ? notifyApi.confirm(confirm).then((m) => {
+          setNotice("Your email address is confirmed.");
+          go(href.notifications()); // the code leaves the address bar
+          return m;
+        })
+      : notifyApi.mine();
+    load
       .then(apply)
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => {
+        fail(e.message);
+        if (confirm) notifyApi.mine().then(apply).catch(() => undefined);
+      });
     api
       .sources()
       .then((s) => setSources(s.map((x) => ({ name: x.name, displayName: x.displayName }))))
       .catch(() => setSources([]));
-  }, []);
-
-  const fail = (message: string) => {
-    setError(message);
-    window.setTimeout(() => errorRef.current?.focus(), 0);
-  };
+  }, [confirm]);
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    if (!choices) return;
+    if (!choices || saving) return;
     setNotice("");
     if (enabled && !email.trim()) return fail("Email address: enter where to send, or turn email off.");
     if (enabled && choices.kinds.length === 0) return fail("Kinds of event by email: tick at least one, or turn email off.");
@@ -73,8 +93,19 @@ export function NotificationsPage() {
     setSaving(true);
     setError(null);
     try {
-      apply(await notifyApi.saveMine({ email: email.trim(), enabled, ...choices, inAppKinds: inApp }));
-      setNotice("Your notification settings are saved.");
+      const m = await notifyApi.saveMine({
+        email: email.trim(),
+        enabled,
+        ...choices,
+        allSources: choices.sources === null,
+        inAppKinds: inApp,
+      });
+      apply(m);
+      setNotice(
+        m.confirmationRequired && m.email && !m.confirmed
+          ? "Saved. Check your inbox: emails start once you confirm your address."
+          : "Your notification settings are saved.",
+      );
     } catch (err) {
       fail((err as Error).message);
     } finally {
@@ -102,7 +133,7 @@ export function NotificationsPage() {
       </p>
       {error && (
         <p role="alert" className="error" tabIndex={-1} ref={errorRef}>
-          {error}
+          {error.text}
         </p>
       )}
       {mine && !mine.available && <p className="warning">{mine.unavailable}</p>}
@@ -146,9 +177,13 @@ export function NotificationsPage() {
                 aria-describedby="email-address-hint"
               />
               <p id="email-address-hint" className="hint">
-                For you alone. Emails never hold values from the data: counts, shares and a link back.
+                For you alone.
+                {mine.allowedDomains.length > 0 && <> This server sends only to {mine.allowedDomains.join(", ")}.</>}
+                {mine.confirmationRequired && " A new address gets a confirmation email first, and nothing else until you confirm it."}
+                {" "}Emails never hold values from the data: counts, shares and a link back.
               </p>
             </div>
+            {mine.saved && mine.email && <Confirmation mine={mine} onChange={apply} onError={fail} onNotice={setNotice} />}
             <EmailChoiceFields
               idPrefix="mine"
               value={choices}
@@ -159,7 +194,7 @@ export function NotificationsPage() {
               disabled={!enabled}
             />
           </section>
-          <button type="submit" className="primary" disabled={saving}>
+          <button type="submit" className="primary" aria-disabled={saving || undefined}>
             {saving ? "Saving…" : "Save notification settings"}
           </button>
         </form>
@@ -169,9 +204,76 @@ export function NotificationsPage() {
   );
 }
 
+/** Whether the address is confirmed, and if not: a box for the code from the email, and sending another. */
+function Confirmation({
+  mine,
+  onChange,
+  onError,
+  onNotice,
+}: {
+  mine: MyNotifications;
+  onChange: (m: MyNotifications) => void;
+  onError: (text: string) => void;
+  onNotice: (text: string) => void;
+}) {
+  const [code, setCode] = useState("");
+  if (mine.paused) {
+    return (
+      <p className="warning">
+        Your address is outside the domains this server sends to, so it gets nothing for now. Use an address in{" "}
+        {mine.allowedDomains.join(", ")}.
+      </p>
+    );
+  }
+  if (!mine.confirmationRequired || mine.confirmed) {
+    return <p className="hint">{mine.confirmed ? "Your address is confirmed." : ""}</p>;
+  }
+  const submit = async () => {
+    try {
+      onChange(await notifyApi.confirm(code.trim()));
+      setCode("");
+      onNotice("Your email address is confirmed.");
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  };
+  const resend = async () => {
+    try {
+      onChange(await notifyApi.resendConfirmation());
+      onNotice("A new confirmation email is on its way.");
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  };
+  return (
+    <section className="panel" aria-labelledby="confirm-h">
+      <h3 id="confirm-h">Confirm your address</h3>
+      <p>
+        Not confirmed yet: you get no email until you are.
+        {mine.confirmationSentAt
+          ? ` A confirmation email went to ${mine.email} at ${formatTime(mine.confirmationSentAt)}. Open its link, or type its code here.`
+          : " No confirmation email has gone yet, because email is not set up; ask for one once it is."}
+      </p>
+      <div className="field">
+        <label htmlFor="confirm-code">Code from the email</label>
+        <input id="confirm-code" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code"
+          spellCheck={false} />
+      </div>
+      <div className="buttons">
+        <button type="button" onClick={submit} disabled={!code.trim()}>
+          Confirm
+        </button>
+        <button type="button" onClick={resend}>
+          Send another confirmation email
+        </button>
+      </div>
+    </section>
+  );
+}
+
 /** The latest in-app notifications, with how each reached you, and marking them read. */
 function Recent() {
-  const [feed, setFeed] = useState<{ items: NotificationItem[]; unread: number } | null>(null);
+  const [feed, setFeed] = useState<NotificationFeed | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
     notifyApi
@@ -194,7 +296,7 @@ function Recent() {
         <h2 id="recent-h">Your latest notifications</h2>
         {feed && feed.unread > 0 && (
           <button type="button" onClick={() => read("all")}>
-            Mark all {feed.unread} read
+            Mark all read ({unreadText(feed)} unread)
           </button>
         )}
       </div>
@@ -216,7 +318,7 @@ function Recent() {
                   {n.link ? <a href={n.link}>{n.title}</a> : n.title}
                   {!n.read && <span className="muted small"> · unread</span>}
                 </p>
-                {n.detail && <p className="small">{n.detail}</p>}
+                {n.detail && <p className="small notification-detail">{n.detail}</p>}
                 <p className="small muted">
                   {formatTime(n.createdAt)}
                   {mail && mail.type === "email" && (

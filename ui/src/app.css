@@ -1553,3 +1553,28 @@ h1.with-tile {
 .notification-list p {
   margin: 4px 0;
 }
+
+/* Multi-line notification details keep their lines. */
+.notification-detail {
+  white-space: pre-line;
+}
+
+/* Team addresses: the actions sit under the name, so nothing is cut off on a phone. */
+.row-actions {
+  margin-top: 6px;
+}
+
+.domain-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.domain-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}

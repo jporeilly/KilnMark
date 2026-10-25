@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
-import { allows, api, ApiError, session, SIGNED_OUT, type Me } from "./api";
+import { allows, api, ApiError, notifyApi, session, SIGNED_OUT, type Me } from "./api";
 import { go, href, useRoute } from "./router";
 import { HomePage } from "./pages/HomePage";
 import { SearchPage } from "./pages/SearchPage";
@@ -17,8 +17,6 @@ import { RoleContext } from "./components/role";
 import { RulesPage } from "./pages/RulesPage";
 import { IssuesPage } from "./pages/IssuesPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
-import { EmailSettingsPage } from "./pages/EmailSettingsPage";
-import { SentEmailsPage } from "./pages/SentEmailsPage";
 import { docHref, WHATS_NEW } from "./docs/links";
 import "./docs/docs.css";
 import { AssistantPanel } from "./assistant/AssistantPanel";
@@ -26,6 +24,9 @@ import { useAssistant } from "./assistant/useAssistant";
 
 // The documentation viewer carries the guides and a Markdown reader, so it loads when first opened.
 const DocsPage = lazy(() => import("./pages/DocsPage"));
+// Admins' email pages are opened rarely, so they load when first opened.
+const EmailSettingsPage = lazy(() => import("./pages/EmailSettingsPage").then((m) => ({ default: m.EmailSettingsPage })));
+const SentEmailsPage = lazy(() => import("./pages/SentEmailsPage").then((m) => ({ default: m.SentEmailsPage })));
 import { Brand } from "./components/Brand";
 import { ThemeQuickSwitch } from "./components/ThemeQuickSwitch";
 
@@ -129,6 +130,11 @@ function Shell({ me }: { me: Me }) {
     const target = back && back !== document.body && document.contains(back) ? back : askButton.current;
     window.setTimeout(() => target?.focus(), 0);
   };
+
+  // Asking for the unread count marks this token as a person in the app, so notifications are kept for them.
+  useEffect(() => {
+    notifyApi.unreadCount().catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     api
@@ -300,10 +306,12 @@ function Shell({ me }: { me: Me }) {
         <main id="main" tabIndex={-1} inert={covered}>
           {route.page === "home" && <HomePage />}
           {route.page === "settings" && <SettingsPage role={me.role} />}
-          {route.page === "notifications" && <NotificationsPage />}
+          {route.page === "notifications" && <NotificationsPage confirm={route.confirm} />}
           {(route.page === "email" || route.page === "email-log") &&
             (allows(me.role, "admin") ? (
-              route.page === "email" ? <EmailSettingsPage /> : <SentEmailsPage />
+              <Suspense fallback={<p role="status">Loading…</p>}>
+                {route.page === "email" ? <EmailSettingsPage /> : <SentEmailsPage />}
+              </Suspense>
             ) : (
               <>
                 <h1 tabIndex={-1}>Email</h1>

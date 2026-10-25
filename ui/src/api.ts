@@ -1033,7 +1033,9 @@ export type NotificationItem = {
   channels: NotificationChannel[];
   teamEmails?: { name: string; status: EmailStatus }[];
 };
-export type NotificationFeed = { items: NotificationItem[]; unread: number };
+/** more is true when there are more unread than `unread` says: show "99+". */
+export type NotificationFeed = { items: NotificationItem[]; unread: number; more?: boolean };
+export type UnreadCount = { unread: number; more?: boolean };
 export type KindChoice = { id: NotificationKindId; label: string; description: string };
 /** What a person hears about; sources null means every source. */
 export type MyNotifications = {
@@ -1052,6 +1054,11 @@ export type MyNotifications = {
   mailReady: boolean;
   mailNote: string | null;
   kindChoices: KindChoice[];
+  confirmationRequired: boolean;
+  confirmed: boolean;
+  confirmationSentAt: string | null;
+  paused: string | null;
+  allowedDomains: string[];
 };
 export type SubscriptionInput = {
   email: string;
@@ -1060,7 +1067,9 @@ export type SubscriptionInput = {
   minSeverity: NotificationSeverity;
   mode: "immediate" | "digest";
   digestHour: number;
+  /** Ignored when allSources is true. */
   sources: string[] | null;
+  allSources: boolean;
 };
 export type MailSecurity = "none" | "starttls" | "tls";
 export type MailSettingsView = {
@@ -1074,12 +1083,30 @@ export type MailSettingsView = {
   fromAddress: string | null;
   fromName: string | null;
   baseUrl: string | null;
+  allowPlainAuth: boolean;
+  allowedDomains: string[];
+  requireConfirmation: boolean;
+  maxAttempts: number;
+  rateLimitPerHour: number;
+  undeliveredHours: number;
+  undeliveredAction: "digest" | "drop";
+  /** Settings that come from the server's configuration, by name (host, allowed-domains, ...). */
+  locked: string[];
   saved: boolean;
   updatedBy: string | null;
   updatedAt: string | null;
   ready: boolean;
   notReady: string | null;
   timeZone: string;
+  pausedAddresses: { kind: "person" | "team"; name: string | null; email: string }[];
+  limits: {
+    minAttempts: number;
+    maxAttempts: number;
+    minRatePerHour: number;
+    maxRatePerHour: number;
+    minUndeliveredHours: number;
+    maxUndeliveredHours: number;
+  };
 };
 /** password: leave it out to keep the stored one, "" to remove it. */
 export type MailSettingsInput = {
@@ -1092,10 +1119,18 @@ export type MailSettingsInput = {
   fromAddress: string;
   fromName: string;
   baseUrl: string;
+  allowPlainAuth: boolean;
+  allowedDomains: string[];
+  requireConfirmation: boolean;
+  maxAttempts: number;
+  rateLimitPerHour: number;
+  undeliveredHours: number;
+  undeliveredAction: "digest" | "drop";
 };
-export type TeamAddress = SubscriptionInput & {
+export type TeamAddress = Omit<SubscriptionInput, "allSources"> & {
   id: number;
   name: string;
+  paused: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -1116,13 +1151,16 @@ export type MailLogEntry = {
 export const notifyApi = {
   feed: (limit = 20, unread = false) =>
     call<NotificationFeed>(`/api/v1/notifications?limit=${limit}&unread=${unread}`),
-  unreadCount: () => call<{ unread: number }>("/api/v1/notifications/unread-count"),
+  unreadCount: () => call<UnreadCount>("/api/v1/notifications/unread-count"),
   markRead: (ids: string[]) =>
     call<null>("/api/v1/notifications/read", { method: "POST", body: JSON.stringify({ ids }) }),
   markAllRead: () => call<null>("/api/v1/notifications/read", { method: "POST", body: JSON.stringify({ all: true }) }),
   mine: () => call<MyNotifications>("/api/v1/me/notifications"),
   saveMine: (s: SubscriptionInput & { inAppKinds: NotificationKindId[] }) =>
     call<MyNotifications>("/api/v1/me/notifications", { method: "PUT", body: JSON.stringify(s) }),
+  confirm: (code: string) =>
+    call<MyNotifications>("/api/v1/me/notifications/confirm", { method: "POST", body: JSON.stringify({ code }) }),
+  resendConfirmation: () => call<MyNotifications>("/api/v1/me/notifications/confirm/resend", { method: "POST" }),
   settings: () => call<MailSettingsView>("/api/v1/mail/settings"),
   saveSettings: (s: MailSettingsInput) =>
     call<MailSettingsView>("/api/v1/mail/settings", { method: "PUT", body: JSON.stringify(s) }),

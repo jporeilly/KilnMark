@@ -9,7 +9,7 @@ export type Route =
   | { page: "tokens" }
   | { page: "settings" }
   // Notifications: each person's own choices; email settings and the send log for admins
-  | { page: "notifications" }
+  | { page: "notifications"; confirm: string | null }
   | { page: "email" }
   | { page: "email-log" }
   | { page: "rules"; urn: string }
@@ -42,7 +42,7 @@ export function parse(hash: string): Route {
   if (path.startsWith("/source/")) return { page: "source", name: decode(path.slice("/source/".length)) };
   if (path === "/tokens") return { page: "tokens" };
   if (path === "/settings") return { page: "settings" };
-  if (path === "/settings/notifications") return { page: "notifications" };
+  if (path === "/settings/notifications") return { page: "notifications", confirm: params.get("confirm") };
   if (path === "/settings/email") return { page: "email" };
   if (path === "/settings/email/sent") return { page: "email-log" };
   if (path === "/quality/rules") return { page: "rules", urn: params.get("urn") ?? "" };
