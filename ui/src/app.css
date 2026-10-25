@@ -4137,6 +4137,10 @@ h1.with-tile {
     flex: none;
   }
 
+  .km-side-sheet {
+    border-radius: 0;
+  }
+
   /* Popovers span the screen under the top bar. */
   .km-popover {
     position: fixed;
