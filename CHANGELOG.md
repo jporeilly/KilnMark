@@ -5,6 +5,33 @@ details.
 
 ## Unreleased
 
+### Details
+
+- **Notifications and email alerts** (docs/guide/notifications.md, docs/design/notifications.md):
+  rules that start to warn, fail or not run and that recover, new issues, failed scans, drift
+  against the previous scan and failed connection tests become notifications. One internal event
+  type (`NotificationEvent`, fired through `NotificationPublisher`), told once per failing streak
+  and once on recovery (`notify_state`). **In the app** for every role by default, per kind, with
+  `GET /api/v1/notifications` (each item's channels: in-app, and the caller's email with its status;
+  team emails by name for admins), `GET /api/v1/notifications/unread-count` and
+  `POST /api/v1/notifications/read`; kept 90 days. **By email** for those who opt in (admins get
+  high-severity events at once once they give an address): kinds, least severity, at once or a
+  daily digest at an hour in the server's time zone, every source or some
+  (`GET|PUT /api/v1/me/notifications`, **Settings › Notifications**). Admins set the mail server
+  under **Settings › Email** (`/api/v1/mail/settings`; STARTTLS, TLS or none; the password sealed
+  with the server's key, write-only and never logged; `kilnmark.mail.*` as defaults), send a test
+  email that reports the server's answer in plain words, and add team addresses, which get what a
+  viewer sees. Emails are plain text and simple HTML, without images or tracking, never with values
+  from the data: restricted detail (such as a connection error) only for roles that may see it,
+  never for a sensitive column. Workers send them with Jakarta Mail (Eclipse Angus), retrying after
+  1, 3, 9 and 27 minutes then hourly (`kilnmark.notifications.max-attempts`, 5), at most 20 an hour
+  per address (`rate-limit-per-hour`; the rest wait for the digest), and log every attempt
+  (**Settings › Sent emails**, `GET /api/v1/mail/log`, kept 30 days). Pipeline runs (failed, or
+  below their quality threshold) have their kinds and a one-line hook,
+  `NotificationPublisher.pipelineRunFinished`, for the pipelines change to call. Migration V13;
+  `quarkus.flyway.out-of-order=true` so a later V12 still applies. The reference lab gains Mailpit
+  (SMTP on 1025, its web page on 8025).
+
 ## 0.0.3 (25 October 2026)
 
 ### What's new

@@ -65,6 +65,8 @@ Useful endpoints in dev mode (all but the first and the `/q` ones need an API to
 - `GET /q/health/ready`, `GET /q/health/live`: readiness and liveness (see [Health](#health))
 - `POST /api/v1/search/ask`: ask in plain English; `/api/v1/ai/...`: AI models (see [AI models](#ai-models))
 - `/mcp`: the read-only MCP server for outside AI assistants
+- `GET /api/v1/notifications`, `GET /api/v1/notifications/unread-count`, `POST /api/v1/notifications/read`,
+  `GET|PUT /api/v1/me/notifications`; `/api/v1/mail/...` for admins (see [Notifications](#notifications))
 - `GET /q/openapi`: the API specification
 
 ## Run the stack
@@ -660,6 +662,26 @@ well, stewards can still read a document's text on its asset page: it is read fr
 they open it, on a reader of its own, at most six documents a minute each, and never stored.
 Copies of S3 objects are made in a folder under `java.io.tmpdir` that only the server's user can
 read, and deleted after (a workbook's copy is kept until the scan ends, so a scan fetches it once).
+
+## Notifications
+
+Events (failing and recovering rules, new issues, failed scans and connection tests, drift, and
+pipeline runs) become in-app notifications for everyone and, for those who ask, emails
+([design](design/notifications.md), [guide](guide/notifications.md)). Admins set the mail server
+under **Settings**, **Email** (`/api/v1/mail/settings`; the password is write-only), send a test
+email (`POST /api/v1/mail/test`), add team addresses (`/api/v1/mail/teams`) and read the send log
+(`GET /api/v1/mail/log`). Workers send the emails, with retries; with no worker running, emails
+wait. The reference lab's Mailpit catches them (see `lab/README.md`).
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `kilnmark.mail.host`, `.port`, `.security`, `.username`, `.password`, `.from`, `.from-name`, `.base-url` | none; `starttls`; `Kilnmark` | The mail server until an admin saves one; a password set here (`KILNMARK_MAIL_PASSWORD`) is used while none is saved |
+| `kilnmark.notifications.rate-limit-per-hour` | `20` | Emails of their own one address may get in an hour; the rest wait for its daily digest |
+| `kilnmark.notifications.max-attempts` | `5` | Tries before an email is given up (after 1, 3, 9, 27 minutes, then hourly) |
+| `kilnmark.notifications.poll-interval` | `10s` | How often workers look for emails to send |
+| `kilnmark.notifications.send-timeout` | `20s` | How long one SMTP connection, sign-in or write may take |
+| `kilnmark.notifications.log-retention` | `30d` | The send log, and events with nothing left to send or show |
+| `kilnmark.notifications.in-app-retention` | `90d` | In-app notifications, read or not |
 
 ## Branding and appearance
 
