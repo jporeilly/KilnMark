@@ -33,6 +33,14 @@ public final class WriteStepFactory implements StepFactory {
     public static final List<String> MODES = List.of("create", "append", "replace", "upsert");
     public static final List<String> FORMATS = List.of("csv", "parquet");
     private static final List<String> TARGETS = List.of("target", "table", "path");
+    /**
+     * Option names that would say where or as whom a write connects, whatever the connector: the
+     * pipeline names a saved source, and only the source (which an admin allowed) says that.
+     */
+    static final java.util.Set<String> LOCATION_KEYS = java.util.Set.of("url", "jdbc_url", "endpoint", "bucket", "path",
+        "root", "roots", "folder", "host", "hosts", "port", "database", "db", "schema", "schemas", "catalog", "prefix",
+        "region", "user", "username", "password", "secret", "token", "access_key_id", "secret_access_key",
+        "session_token", "credentials", "profile", "account");
 
     private final PipelineSources sources;
 
@@ -139,7 +147,34 @@ public final class WriteStepFactory implements StepFactory {
         if (options != null && !(options instanceof Map<?, ?>)) {
             problems.add("options: key: value pairs, such as options: {delimiter: ';'}");
         }
+        String taken = optionTakingSourceSetting(config, name == null ? null
+            : sources.source(name).flatMap(s -> sources.connector(s.kind())).orElse(null));
+        if (taken != null) {
+            problems.add("options: '" + taken + "' says where or as whom to write, which only the saved source decides. "
+                + "Remove it, or ask an admin to change the source");
+        }
         return problems;
+    }
+
+    /** The first option naming a setting of the source or its location (url, bucket, path, ...), or null. */
+    static String optionTakingSourceSetting(Map<String, Object> config, Connector connector) {
+        if (!(config.get("options") instanceof Map<?, ?> options)) {
+            return null;
+        }
+        java.util.Set<String> taken = new java.util.HashSet<>(LOCATION_KEYS);
+        taken.addAll(io.kilnmark.server.sources.CommonSettings.keys());
+        if (connector != null) {
+            connector.settings().forEach(s -> taken.add(s.key().toLowerCase(Locale.ROOT)));
+            connector.addressKeys().forEach(k -> taken.add(k.toLowerCase(Locale.ROOT)));
+            connector.secretScope().forEach(k -> taken.add(k.toLowerCase(Locale.ROOT)));
+        }
+        for (Object k : options.keySet()) {
+            String key = String.valueOf(k).strip().toLowerCase(Locale.ROOT).replace('-', '_');
+            if (taken.contains(key)) {
+                return String.valueOf(k);
+            }
+        }
+        return null;
     }
 
     /** Why a target is not acceptable, or null: it must stay inside the source. */
@@ -227,6 +262,11 @@ public final class WriteStepFactory implements StepFactory {
         if (!CommonSettings.allowsWriting(r.source().settings())) {
             throw new StepException("Step " + step + ": source " + source + " is read-only. An admin can turn on "
                 + "Allow writing for it");
+        }
+        String taken = optionTakingSourceSetting(config, r.connector());
+        if (taken != null) {
+            throw new StepException("Step " + step + ": the option '" + taken + "' says where or as whom to write, which "
+                + "only the saved source decides");
         }
         String mode = mode(config);
         List<String> key = key(config);

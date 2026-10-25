@@ -255,25 +255,43 @@ Writing:
   as rule edits are.
 - **Queueing.** `POST .../runs` checks the version again (a source may have stopped allowing
   writes since it was saved) and queues a job of kind `pipeline` with the run, in one
-  transaction. A pipeline job is tried once, never repeated on its own: its writes may have begun.
+  transaction. A pipeline has at most one run queued or running: asking again while one is gets a
+  409. A pipeline job is tried once, never repeated on its own: its writes may have begun.
   It holds an advisory lock of its own (keyed by the job), not a source lock, so runs may overlap
   scans of the sources they read; recovery leaves a job alone while its lock is held, and marks
   the run failed when the job is given up.
+- **One writer per target.** Before its steps run, a run takes an advisory lock for each asset it
+  writes (by URN), whatever the mode, and holds them until what it wrote is catalogued. A run
+  finding a target locked waits up to `kilnmark.pipelines.wait-for-target` (30 seconds) and then
+  fails plainly, naming the target, before writing anything.
 - **On the worker.** The worker compiles that exact version inside a run context naming who asked
   and their role. The server's `read` and `write` step factories resolve saved sources, decrypt
   their secrets and re-check the allowed hosts only then; `write` also re-checks `allow_writing`
   and that the role is steward or admin. Readers get their connector's own settings (which may
   hold the secret) through a wrapper, never through the YAML or the graph's config. Every message
   a run records has the secrets it resolved blanked out.
-- **Profiling writes.** A write in mode `create` or `replace` gets a hidden profile step in front
-  of it, so what is written is profiled in the same pass. After a successful run each write's
+- **Profiling writes.** A write in mode `create` or `replace` gets a hidden profile step beside it,
+  reading its own copy of the same rows, so what is written is profiled in the same pass. A
+  profile that fails is noted and does not fail the write. After a successful run each write's
   target is registered as the scan registers what it finds (asset, fields from the connector, row
   count, profiles, quality profile version and evaluation) under a finished run of kind
   `pipeline` on the written source; source run lists show scans only. `append` and `upsert` only
-  add to a target, so its profile is left as it was, with a note to scan it. Lineage links each
-  written asset to every read asset upstream of it (`GET /api/v1/lineage?urn=`).
+  add to a target, so its profile is left as it was, with a note to scan it; when the connector
+  cannot describe such a target afterwards, its catalogued columns are kept. Cataloguing takes the
+  written source's scan lock (waiting as above); if a scan holds it, the run notes that the source
+  should be scanned. A scan does not mark removed an asset a pipeline wrote after the scan began.
+  Lineage links each written asset to every read asset upstream of it (`GET /api/v1/lineage?urn=`).
+- **Write permission stays with admins.** Only admins change `allow_writing`, and while it is on
+  only admins change where the source points (any setting but its description, display name,
+  sampling, AI rule and include and exclude patterns). A write's `options` may not name a setting
+  of the source or anything that says where or as whom to connect (url, host, bucket, path,
+  credentials and the like).
+- **Messages from the data.** A failed run's messages may quote values from the rows. Viewers see
+  that a step failed, not why; when the run read or wrote an asset with columns marked sensitive,
+  only admins see why (decided through the request's `Sights`, as other views of data values).
 - **Cancelling.** A queued run is cancelled at once and its job taken off the queue; a running one
-  is interrupted within about half a second. A worker shutting down marks its runs failed rather
+  is interrupted within about half a second, and one asked to stop while its steps are being set
+  up stops before they run. A cancel asked for too late to stop a run is cleared when it ends. A worker shutting down marks its runs failed rather
   than queueing them again.
 
 ## 6. API and UI in step 1

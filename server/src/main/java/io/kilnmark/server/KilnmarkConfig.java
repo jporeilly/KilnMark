@@ -242,6 +242,13 @@ public interface KilnmarkConfig {
         /** Batches each edge holds before the step feeding it waits. */
         @WithDefault("4")
         int rowSetCapacity();
+
+        /**
+         * How long a run waits for another run writing the same table or file to finish, and for a
+         * scan of a written source to let go of it before what was written is catalogued.
+         */
+        @WithDefault("30s")
+        Duration waitForTarget();
     }
 
     interface Scan {

@@ -207,4 +207,25 @@ class ServerStepFactoriesTest {
         assertTrue(e.getMessage().startsWith("Cannot write billing.refuse to warehouse"), e.getMessage());
         assertFalse(e.getMessage().contains(SECRET), e.getMessage());
     }
+
+    @Test
+    void writeOptionsCannotSayWhereToWrite() {
+        assertEquals(List.of(), write.check(Map.of("source", "warehouse", "path", "out/x.csv", "options",
+            Map.of("delimiter", ";"))));
+        for (String key : List.of("rows", "host", "url", "Bucket", "access-key-id", "allow_writing")) {
+            List<String> p = write.check(Map.of("source", "warehouse", "path", "out/x.csv", "options",
+                Map.of(key, "x")));
+            assertEquals(1, p.size(), key + ": " + p);
+            assertTrue(p.get(0).startsWith("options: '" + key + "' says where or as whom to write"), p.get(0));
+        }
+        RunContext ctx = run(AccessRole.ADMIN);
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> ctx.run(() -> {
+            try {
+                return write.create(Map.of("source", "warehouse", "table", "a.b", "options", Map.of("host", "x")));
+            } catch (StepException x) {
+                throw new IllegalStateException(x.getMessage(), x);
+            }
+        }));
+        assertTrue(e.getMessage().contains("option 'host'"), e.getMessage());
+    }
 }

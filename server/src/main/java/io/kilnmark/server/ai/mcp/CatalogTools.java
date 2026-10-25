@@ -166,7 +166,7 @@ public class CatalogTools {
                        r.status, r.finished_at
                 FROM kilnmark.data_source s
                 LEFT JOIN LATERAL (SELECT status, finished_at FROM kilnmark.run WHERE source_id = s.id
-                                   ORDER BY id DESC LIMIT 1) r ON true
+                                   AND kind = 'scan' ORDER BY id DESC LIMIT 1) r ON true
                 ORDER BY s.name""");
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {

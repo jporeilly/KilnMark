@@ -58,6 +58,15 @@ class PipelineFlowTest {
             mode: replace
         """;
 
+    @jakarta.inject.Inject
+    io.agroal.api.AgroalDataSource db;
+
+    @jakarta.inject.Inject
+    io.kilnmark.server.jobs.JobQueue jobs;
+
+    @jakarta.inject.Inject
+    io.kilnmark.graph.store.GraphStore graph;
+
     static String steward;
     static String viewer;
     static long firstRun;
@@ -106,6 +115,10 @@ class PipelineFlowTest {
         // A steward's edit that leaves the setting out keeps it.
         as(steward).body(Map.of("settings", Map.of("description", "Copies land here")))
             .put("/api/v1/sources/mem-out").then().statusCode(200).body("settings.allow_writing", equalTo("true"));
+        // But only an admin may change where a source that allows writing points.
+        as(steward).body(Map.of("settings", Map.of("description", "Copies land here", "rows", "5")))
+            .put("/api/v1/sources/mem-out").then().statusCode(403)
+            .body("error", containsString("only an admin can change where it points (rows)"));
 
         // Scan the source read from, so validation knows its columns.
         long scan = as(steward).post("/api/v1/sources/mem-src/scans").then().statusCode(202).extract().jsonPath()
@@ -249,11 +262,100 @@ class PipelineFlowTest {
         as(viewer).get("/api/v1/pipeline-runs/999999").then().statusCode(404);
     }
 
+    private long sql(String query) throws Exception {
+        try (java.sql.Connection c = db.getConnection(); java.sql.Statement st = c.createStatement()) {
+            if (st.execute(query)) {
+                try (java.sql.ResultSet rs = st.getResultSet()) {
+                    return rs.next() ? rs.getLong(1) : -1;
+                }
+            }
+            return st.getUpdateCount();
+        }
+    }
+
     @Test
     @Order(7)
+    void oneRunOfAPipelineAndOneWriterOfATargetAtATime() throws Exception {
+        as(steward).body(Map.of("name", "people-copy-2", "yaml", YAML.replace("name: people-copy",
+            "name: people-copy-2"))).post("/api/v1/pipelines").then().statusCode(201);
+        HoldingGraphRunner.hold = true;
+        long first;
+        try {
+            first = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
+                .jsonPath().getLong("id");
+            waitForRun(first, "running");
+            as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(409)
+                .body("error", containsString("already queued or running"));
+            // Another pipeline writing the same table waits for it, then gives up plainly.
+            long second = as(steward).post("/api/v1/pipelines/people-copy-2/runs").then().statusCode(202).extract()
+                .jsonPath().getLong("id");
+            JsonPath failed = waitForRun(second, "failed");
+            assertTrue(failed.getString("run.error").startsWith("Another pipeline run is writing " + WRITE_URN),
+                failed.prettify());
+            as(steward).post("/api/v1/pipeline-runs/" + first + "/cancel").then().statusCode(200);
+            waitForRun(first, "cancelled");
+        } finally {
+            HoldingGraphRunner.hold = false;
+        }
+        as(steward).delete("/api/v1/pipelines/people-copy-2").then().statusCode(204);
+    }
+
+    @Test
+    @Order(8)
+    void writtenAssetsKeepWhatTheCatalogueKnowsAndSurviveScans() throws Exception {
+        long sourceId = graph.source("mem-out").orElseThrow().id();
+        // A scan that began before the pipeline wrote must not mark the written table removed.
+        long scan = sql("INSERT INTO kilnmark.run (source_id, kind, status, started_at) VALUES (" + sourceId
+            + ", 'scan', 'running', now() - interval '1 hour') RETURNING id");
+        sql("UPDATE kilnmark.asset SET description = 'Copied people' WHERE urn = '" + WRITE_URN + "'");
+        long run = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
+            .getLong("id");
+        waitForRun(run, "succeeded");
+        graph.markUnseenRemoved(sourceId, scan);
+        sql("UPDATE kilnmark.run SET status = 'failed', finished_at = now() WHERE id = " + scan);
+        as(viewer).get("/api/v1/assets/" + WRITE_URN).then().statusCode(200)
+            .body("removedAt", org.hamcrest.Matchers.nullValue())
+            .body("description", equalTo("Copied people"));
+
+        // While a scan holds the source, the write is not catalogued, and the run says to scan.
+        try (io.kilnmark.server.jobs.JobQueue.ScanLease lease = jobs.lockSource(sourceId).orElseThrow()) {
+            assertTrue(lease != null);
+            long held = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
+                .jsonPath().getLong("id");
+            JsonPath r = waitForRun(held, "succeeded");
+            assertFalse(r.getBoolean("written[0].registered"), r.prettify());
+            assertTrue(r.getList("notes").toString().contains("Scan the source to catalogue"), r.prettify());
+        }
+
+        // Rows appended to a table the connector cannot describe keep the catalogued columns.
+        String missing = "urn:kilnmark:mem-out:lab.missing_copy";
+        String toMissing = YAML.replace("table: lab.people_copy", "table: lab.missing_copy");
+        as(steward).body(Map.of("yaml", toMissing, "message", "Elsewhere")).put("/api/v1/pipelines/people-copy")
+            .then().statusCode(200);
+        waitForRun(as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
+            .getLong("id"), "succeeded");
+        sql("UPDATE kilnmark.field SET description = 'Who' WHERE asset_urn = '" + missing + "' AND name = 'name'");
+        as(steward).body(Map.of("yaml", toMissing.replace("mode: replace", "mode: append"), "message", "Append"))
+            .put("/api/v1/pipelines/people-copy").then().statusCode(200);
+        JsonPath appended = waitForRun(as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202)
+            .extract().jsonPath().getLong("id"), "succeeded");
+        assertTrue(appended.getBoolean("written[0].registered"), appended.prettify());
+        as(viewer).get("/api/v1/assets/" + missing).then().statusCode(200)
+            .body("fields.find { it.name == 'name' }.description", equalTo("Who"));
+
+        // A write's options cannot say where to write.
+        as(viewer).body(Map.of("yaml", YAML.replace("mode: replace", "mode: replace\n    options: {rows: 9}")))
+            .post("/api/v1/pipelines/validate").then().statusCode(200)
+            .body("problems.message", hasItems(containsString("options: 'rows' says where or as whom to write")));
+        as(steward).body(Map.of("yaml", YAML, "message", "Back")).put("/api/v1/pipelines/people-copy").then()
+            .statusCode(200);
+    }
+
+    @Test
+    @Order(9)
     void failuresNameTheStepWithoutTheSecret() throws Exception {
         String failing = YAML.replace("mode: replace", "mode: replace\n    options: {fail: true}");
-        as(steward).header("If-Match", "\"4\"").body(Map.of("yaml", failing, "message", "Make the write fail"))
+        as(steward).body(Map.of("yaml", failing, "message", "Make the write fail"))
             .put("/api/v1/pipelines/people-copy").then().statusCode(200);
         long id = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
             .getLong("id");
@@ -267,7 +369,7 @@ class PipelineFlowTest {
     }
 
     @Test
-    @Order(8)
+    @Order(10)
     void deletingAPipelineKeepsItsLineage() {
         as(viewer).delete("/api/v1/pipelines/people-copy").then().statusCode(403);
         as(steward).delete("/api/v1/pipelines/people-copy").then().statusCode(204);

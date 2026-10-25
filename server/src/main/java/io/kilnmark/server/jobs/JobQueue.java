@@ -38,6 +38,8 @@ public class JobQueue {
     static final int SOURCE_LOCK_CLASS = 0x4B53;
     /** Advisory lock class for a running pipeline job (objid is the job id): held by the worker running it. */
     static final int PIPELINE_JOB_LOCK_CLASS = 0x4B50;
+    /** Advisory lock class for what a pipeline writes (objid is a hash of the written asset's URN). */
+    static final int PIPELINE_TARGET_LOCK_CLASS = 0x4B57;
     private static final long OID_RANGE = 1L << 32;
 
     /** A claimed job. {@code attempts} counts this one. */
@@ -156,6 +158,31 @@ public class JobQueue {
      */
     public Optional<ScanLease> lockPipelineJob(long jobId) {
         return lock(PIPELINE_JOB_LOCK_CLASS, jobId, "Cannot lock pipeline job " + jobId + ": ");
+    }
+
+    /**
+     * Takes the lock of one written asset (by its URN) so two pipeline runs never write it at once.
+     * Empty if another run holds it.
+     */
+    public Optional<ScanLease> lockTarget(String urn) {
+        return lock(PIPELINE_TARGET_LOCK_CLASS, urn.hashCode(), "Cannot lock " + urn + " for writing: ");
+    }
+
+    /**
+     * Tries {@code take} until it gives a lease or {@code wait} has passed; empty then.
+     *
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public static Optional<ScanLease> waitFor(java.util.function.Supplier<Optional<ScanLease>> take, Duration wait)
+        throws InterruptedException {
+        long deadline = System.nanoTime() + wait.toNanos();
+        while (true) {
+            Optional<ScanLease> lease = take.get();
+            if (lease.isPresent() || System.nanoTime() >= deadline) {
+                return lease;
+            }
+            Thread.sleep(Math.min(250, Math.max(1, (deadline - System.nanoTime()) / 1_000_000)));
+        }
     }
 
     private Optional<ScanLease> lock(int lockClass, long key, String failure) {

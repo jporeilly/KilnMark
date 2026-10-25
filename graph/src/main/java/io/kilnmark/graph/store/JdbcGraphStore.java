@@ -496,10 +496,15 @@ public final class JdbcGraphStore implements GraphStore {
     public int markUnseenRemoved(long sourceId, long runId) {
         return tx(c -> {
             int n;
-            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.asset SET removed_at = now() "
-                + "WHERE source_id = ? AND removed_at IS NULL AND last_seen_run IS DISTINCT FROM ?")) {
+            // Assets a pipeline wrote after this scan began were not there for it to see: keep them.
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.asset a SET removed_at = now() "
+                + "WHERE a.source_id = ? AND a.removed_at IS NULL AND a.last_seen_run IS DISTINCT FROM ? "
+                + "AND NOT EXISTS (SELECT 1 FROM kilnmark.run w, kilnmark.run scan WHERE w.id = a.last_seen_run "
+                + "AND w.kind = 'pipeline' AND scan.id = ? "
+                + "AND w.started_at >= coalesce(scan.started_at, scan.requested_at))")) {
                 ps.setLong(1, sourceId);
                 ps.setLong(2, runId);
+                ps.setLong(3, runId);
                 n = ps.executeUpdate();
             }
             // the text of a document no longer in its source is not kept (V7)

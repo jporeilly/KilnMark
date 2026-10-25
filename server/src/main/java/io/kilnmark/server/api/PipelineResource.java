@@ -38,6 +38,10 @@ public class PipelineResource {
     private final PipelineService pipelines;
     private final SecurityIdentity identity;
 
+    /** Who is looking: a failed run's messages may quote values from the data (see PipelineService). */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.Sights sights;
+
     public PipelineResource(PipelineService pipelines, SecurityIdentity identity) {
         this.pipelines = pipelines;
         this.identity = identity;
@@ -50,7 +54,7 @@ public class PipelineResource {
         @APIResponse(responseCode = "200", description = "The pipelines"),
         @APIResponse(responseCode = "401", description = "Not signed in")})
     public List<PipelineViews.PipelineSummary> list() {
-        return pipelines.list();
+        return pipelines.list(sights);
     }
 
     @POST
@@ -99,7 +103,7 @@ public class PipelineResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "404", description = "No such pipeline")})
     public Response get(@PathParam("name") String name) {
-        PipelineViews.PipelineDetail d = pipelines.get(name);
+        PipelineViews.PipelineDetail d = pipelines.get(name, sights);
         return Response.ok(d).tag(etag(d)).build();
     }
 
@@ -120,7 +124,8 @@ public class PipelineResource {
         @APIResponse(responseCode = "409", description = "Someone else saved a version after the one in If-Match")})
     public Response save(@PathParam("name") String name, @HeaderParam("If-Match") String ifMatch,
                          PipelineViews.PipelineChange body) {
-        PipelineViews.PipelineDetail d = pipelines.save(name, PipelineService.readVersion(ifMatch), body, who());
+        PipelineViews.PipelineDetail d = pipelines.save(name, PipelineService.readVersion(ifMatch), body, who(),
+            sights);
         return Response.ok(d).tag(etag(d)).build();
     }
 
@@ -176,7 +181,7 @@ public class PipelineResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "404", description = "No such pipeline")})
     public PipelineViews.Validation validate(@PathParam("name") String name, PipelineViews.ValidateRequest body) {
-        pipelines.get(name);
+        pipelines.get(name, sights);
         if (body == null) {
             throw new IllegalArgumentException("Send {\"yaml\": \"...\"}");
         }
@@ -211,7 +216,7 @@ public class PipelineResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "404", description = "No such pipeline")})
     public List<PipelineViews.RunSummary> runs(@PathParam("name") String name, @QueryParam("limit") Integer limit) {
-        return pipelines.runs(name, limit == null ? 20 : limit);
+        return pipelines.runs(name, limit == null ? 20 : limit, sights);
     }
 
     private static jakarta.ws.rs.core.EntityTag etag(PipelineViews.PipelineDetail d) {

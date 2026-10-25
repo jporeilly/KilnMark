@@ -25,6 +25,10 @@ public class PipelineRunResource {
     private final PipelineService pipelines;
     private final SecurityIdentity identity;
 
+    /** Who is looking: a failed run's messages may quote values from the data (see PipelineService). */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.Sights sights;
+
     public PipelineRunResource(PipelineService pipelines, SecurityIdentity identity) {
         this.pipelines = pipelines;
         this.identity = identity;
@@ -40,7 +44,7 @@ public class PipelineRunResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "404", description = "No such run")})
     public PipelineViews.RunDetail get(@PathParam("id") long id) {
-        return pipelines.run(id);
+        return pipelines.run(id, sights);
     }
 
     @POST

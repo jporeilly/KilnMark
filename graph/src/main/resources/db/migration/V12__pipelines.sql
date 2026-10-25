@@ -1,6 +1,7 @@
 -- Pipelines (docs/design/pipelines.md, ADR 0022): pipelines saved as YAML with every version, their
 -- runs and each step's part in a run, and the asset lineage their writes record.
--- Written to apply whether or not V10 and V11 have run: it refers only to tables from V2 and V4.
+-- Applies after V10 and V11 (0.0.3) or without them: it refers only to tables from V1 (install_info),
+-- V2 and V4.
 
 SET search_path = kilnmark, public;
 

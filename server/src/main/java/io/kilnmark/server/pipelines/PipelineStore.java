@@ -300,9 +300,26 @@ public class PipelineStore {
     /**
      * Queues a run of one version: the run and a job of kind {@value #JOB_KIND} for a worker, in one
      * transaction. A pipeline job is tried once: its writes are not repeated on their own.
+     *
+     * @throws Busy while a run of the pipeline is queued or running
      */
     public Run queueRun(String name, int version, String by, String role) {
         return db.tx(c -> {
+            // One run of a pipeline at a time: the pipeline's row is locked while checking.
+            try (PreparedStatement ps = c.prepareStatement(
+                "SELECT 1 FROM kilnmark.pipeline WHERE name = ? FOR UPDATE")) {
+                ps.setString(1, name);
+                ps.executeQuery().close();
+            }
+            try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.pipeline_run WHERE pipeline = ? "
+                + "AND status IN ('queued', 'running') LIMIT 1")) {
+                ps.setString(1, name);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        throw new Busy();
+                    }
+                }
+            }
             long id;
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_run (pipeline, version, "
                 + "requested_by, requested_role) VALUES (?, ?, ?, ?) RETURNING id")) {
@@ -390,12 +407,15 @@ public class PipelineStore {
     /** Gives an unfinished run its final status. */
     public void finishRun(long id, String status, String error, String result) {
         db.tx(c -> {
+            // A cancel asked for too late to stop the run is cleared, so the run does not read as stopping.
             try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.pipeline_run SET status = ?, "
-                + "finished_at = now(), error = ?, result = ?::jsonb WHERE id = ? AND status IN ('queued', 'running')")) {
+                + "finished_at = now(), error = ?, result = ?::jsonb, cancel_requested = (? = 'cancelled') "
+                + "WHERE id = ? AND status IN ('queued', 'running')")) {
                 ps.setString(1, status);
                 ps.setString(2, error);
                 ps.setString(3, result);
-                ps.setLong(4, id);
+                ps.setString(4, status);
+                ps.setLong(5, id);
                 ps.executeUpdate();
             }
             return null;
@@ -574,7 +594,7 @@ public class PipelineStore {
         return db.tx(c -> {
             List<Lineage> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("SELECT pipeline, run_id, step_id, input_urn, output_urn, "
-                + "recorded_at FROM kilnmark.pipeline_lineage WHERE " + where + " ORDER BY id DESC LIMIT 500")) {
+                + "recorded_at FROM kilnmark.pipeline_lineage WHERE " + where + " ORDER BY recorded_at DESC, id DESC LIMIT 500")) {
                 if (runId != null) {
                     ps.setLong(1, runId);
                 } else {

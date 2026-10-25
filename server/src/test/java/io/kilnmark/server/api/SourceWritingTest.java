@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
 import java.util.Map;
@@ -49,5 +50,23 @@ class SourceWritingTest {
         assertEquals(403, e.getResponse().getStatus());
         assertThrows(WebApplicationException.class, () -> SourceService.writingAsAllowed(
             form(Map.of("allow_writing", "false")), source(Map.of("allow_writing", "true")), false));
+    }
+
+    @Test
+    void onlyAdminsMoveASourceThatAllowsWriting() {
+        Records.Source writable = new Records.Source(1, "share", "s3", Map.of("bucket", "exports", "endpoint",
+            "http://minio:9000", "allow_writing", "true", "description", "Old"), true, Instant.now(), "Share");
+        // Description and patterns stay open to stewards.
+        SourceService.whereUnchangedOrAdmin(writable, Map.of("bucket", "exports", "endpoint", "http://minio:9000",
+            "allow_writing", "true", "description", "New", "include", "*.csv"), false);
+        WebApplicationException e = assertThrows(WebApplicationException.class, () ->
+            SourceService.whereUnchangedOrAdmin(writable, Map.of("bucket", "elsewhere", "endpoint", "http://minio:9000",
+                "allow_writing", "true"), false));
+        assertEquals(403, e.getResponse().getStatus());
+        assertTrue(String.valueOf(((ApiError) e.getResponse().getEntity()).error()).contains("(bucket)"));
+        SourceService.whereUnchangedOrAdmin(writable, Map.of("bucket", "elsewhere"), true);
+        // A read-only source can be moved by stewards as before.
+        SourceService.whereUnchangedOrAdmin(source(Map.of("url", "jdbc:postgresql://a/db")),
+            Map.of("url", "jdbc:postgresql://b/db"), false);
     }
 }

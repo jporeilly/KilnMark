@@ -233,6 +233,36 @@ public class SourceService {
         return form;
     }
 
+    /** Settings that never decide where a source's data is: changing them never moves a pipeline's writes. */
+    private static final java.util.Set<String> NOT_WHERE = java.util.Set.of(AssetFilter.INCLUDE, AssetFilter.EXCLUDE,
+        CommonSettings.ALLOW_WRITING);
+
+    /**
+     * Refuses (403) someone other than an admin a change to where a source that allows writing
+     * points (its address, bucket, folder, database, schemas, account): pipelines would write
+     * somewhere no admin allowed. Description, display name and the like stay open to stewards.
+     */
+    static void whereUnchangedOrAdmin(Records.Source existing, Map<String, String> settings, boolean admin) {
+        if (admin || !CommonSettings.allowsWriting(existing.settings())) {
+            return;
+        }
+        Map<String, String> before = new java.util.TreeMap<>(reading(existing.settings()));
+        Map<String, String> after = new java.util.TreeMap<>(reading(settings));
+        NOT_WHERE.forEach(k -> {
+            before.remove(k);
+            after.remove(k);
+        });
+        if (before.equals(after)) {
+            return;
+        }
+        java.util.Set<String> changed = new java.util.TreeSet<>(before.keySet());
+        changed.addAll(after.keySet());
+        changed.removeIf(k -> Objects.equals(before.get(k), after.get(k)));
+        throw ApiError.of(Response.Status.FORBIDDEN, "Pipelines may write to " + existing.name() + ", so only an admin "
+            + "can change where it points (" + String.join(", ", changed) + "). Ask an admin; they can also turn Allow "
+            + "writing off first. You can still change its description and display name.");
+    }
+
     private static boolean same(String a, String b) {
         String x = a == null || a.isBlank() ? null : a.trim();
         String y = b == null || b.isBlank() ? null : b.trim();

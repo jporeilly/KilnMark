@@ -251,7 +251,8 @@ public class JobWorker {
                 queue.complete(job, result.note());
             }
         } catch (RuntimeException e) {
-            LOG.errorf(e, "Pipeline job %d failed", job.id());
+            // Not the exception's text or trace: a source's secret could be in it.
+            LOG.errorf("Pipeline job %d failed with %s", job.id(), e.getClass().getName());
             if (lost.remove(job.id()) == null) {
                 queue.retryOrFail(job, String.valueOf(e.getMessage()));
             }

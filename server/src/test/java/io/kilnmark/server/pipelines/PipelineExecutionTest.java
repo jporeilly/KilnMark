@@ -82,7 +82,10 @@ class PipelineExecutionTest {
         assertEquals(List.of(), g.check());
         assertEquals(5, g.steps().size(), "one profile step, for the replacing write only");
         assertEquals(List.of("emails"), g.into("out~profile").stream().map(e -> e.from().step()).toList());
-        assertEquals(List.of("out~profile"), g.into("out").stream().map(e -> e.from().step()).toList());
+        assertEquals(List.of("emails"), g.into("out").stream().map(e -> e.from().step()).toList(),
+            "the profile reads its own copy beside the write");
+        assertEquals(java.util.Set.of("out", "out~profile"), g.outOf("emails").stream()
+            .filter(e -> e.from().port().equals("out")).map(e -> e.to().step()).collect(java.util.stream.Collectors.toSet()));
         assertEquals(List.of("emails"), g.into("odd").stream().map(e -> e.from().step()).toList());
         assertEquals(WRITE_URN, g.step("out~profile").config().get("asset-urn"));
     }
@@ -120,7 +123,7 @@ class PipelineExecutionTest {
         runner.answer = new RunResult("customer-copy", RunResult.Status.FAILED, Instant.now(), Instant.now(), List.of(
             step("customers", 0, 10, Map.of(), Map.of("out", 10L), null),
             step("emails", 10, 10, Map.of("in", 10L), Map.of("out", 8L, "rejected", 2L), null),
-            step("out~profile", 8, 8, Map.of("in", 8L), Map.of("out", 8L), null),
+            step("out~profile", 8, 0, Map.of("in", 8L), Map.of(), null),
             step("out", 8, 0, Map.of("in", 8L), Map.of(), "Step out (write) failed: login hunter22 refused"),
             step("odd", 2, 0, Map.of("in", 2L), Map.of(), null)), List.of(), "Step out failed: login hunter22 refused");
         RunContext ctx = new RunContext("customer-copy", 3, "jo", AccessRole.STEWARD);
@@ -180,5 +183,54 @@ class PipelineExecutionTest {
             new RunContext("customer-copy", 5, "jo", AccessRole.STEWARD), () -> false, () -> true);
         assertEquals("failed", o.status());
         assertTrue(o.error().contains("worker running this pipeline was stopped"), o.error());
+    }
+
+    /** A profile that breaks on its second batch. */
+    static final class Breaks implements io.kilnmark.kiln.Step {
+        int seen;
+
+        @Override
+        public String type() {
+            return "profile";
+        }
+
+        @Override
+        public void init(io.kilnmark.kiln.StepContext context) {
+        }
+
+        @Override
+        public boolean process(io.kilnmark.kiln.StepContext context) throws io.kilnmark.kiln.StepException {
+            try {
+                org.apache.arrow.vector.VectorSchemaRoot b = context.input().take(context.allocator());
+                if (b == null) {
+                    return false;
+                }
+                b.close();
+            } catch (InterruptedException e) {
+                throw new io.kilnmark.kiln.StepException("interrupted", e);
+            }
+            if (++seen == 2) {
+                throw new io.kilnmark.kiln.StepException("cannot profile a column of maps");
+            }
+            return true;
+        }
+    }
+
+    @Test
+    void aFailingProfileLeavesTheWriteAlone() throws Exception {
+        TolerantProfile profile = new TolerantProfile(new Breaks());
+        io.kilnmark.kiln.graph.KilnGraphRunner runner = new io.kilnmark.kiln.graph.KilnGraphRunner(64L << 20, 2);
+        MemoryConnector.People people = new MemoryConnector.People(5000, "t");
+        MemoryConnector.Counter counter = new MemoryConnector.Counter("urn:kilnmark:x:y.z", false, null);
+        PipelineGraph g = new PipelineGraph("p", List.of(
+            new GraphStep("people", new WithSettings(people, Map.of("token", "t", "asset-urn", "urn:kilnmark:x:a.b")),
+                Map.of()),
+            new GraphStep("out", counter, Map.of()), new GraphStep("out~profile", profile, Map.of())),
+            List.of(new Edge(new PortRef("people", "out"), new PortRef("out", "in")),
+                new Edge(new PortRef("people", "out"), new PortRef("out~profile", "in"))));
+        RunResult r = runner.run(g, e -> { });
+        assertTrue(r.succeeded(), String.valueOf(r.error()));
+        assertEquals(5000L, MemoryConnector.WRITTEN.get("urn:kilnmark:x:y.z").get(), "every row was written");
+        assertEquals("cannot profile a column of maps", profile.failure());
     }
 }
