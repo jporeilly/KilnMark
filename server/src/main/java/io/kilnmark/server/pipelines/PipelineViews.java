@@ -32,12 +32,13 @@ public final class PipelineViews {
     // ---- responses ----
 
     /**
-     * What validating found: problems with their lines, each step with its ports and the columns
-     * leaving each port (null when they cannot be known before a run), and the edges.
+     * What validating found: problems with their lines, notes (which do not stop a run), each step
+     * with its ports and the columns leaving each port (null when they cannot be known before a
+     * run), and the edges.
      */
     public record Validation(boolean valid, String name, String description,
-                             List<PipelineCompilerPort.Problem> problems, List<PipelineCompilerPort.StepOutline> steps,
-                             List<PipelineCompilerPort.EdgeOutline> edges) {
+                             List<PipelineCompilerPort.Problem> problems, List<PipelineCompilerPort.Problem> notes,
+                             List<PipelineCompilerPort.StepOutline> steps, List<PipelineCompilerPort.EdgeOutline> edges) {
     }
 
     /** A run, without its steps. {@code rowsWritten} is the rows its writes received, once it has finished. */

@@ -151,8 +151,8 @@ public class PipelineService {
             problems.add(0, new PipelineCompilerPort.Problem(lineOf(yaml, "name"), 1, null, "name: this pipeline is "
                 + "called " + expectedName + "; a pipeline's name cannot change. Write name: " + expectedName));
         }
-        return new PipelineViews.Validation(problems.isEmpty(), c.name(), c.description(), problems, c.steps(),
-            c.edges());
+        return new PipelineViews.Validation(problems.isEmpty(), c.name(), c.description(), problems, c.notes(),
+            c.steps(), c.edges());
     }
 
     /** The line of a top-level key, or 0. */

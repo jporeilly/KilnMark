@@ -19,12 +19,9 @@ import jakarta.enterprise.inject.Produces;
  * Where the pipeline engine meets the server: the step catalogue, the compiler and the graph
  * runner, each produced here and nowhere else.
  *
- * <p>SEAMS for the merge of round 3:
  * <ul>
- *   <li>{@link #compiler()}: returns {@link InterimPipelineCompiler}; return an adapter over kiln-core's
- *       {@code PipelineCompiler} instead (see {@link PipelineCompilerPort}).</li>
- *   <li>{@link #runner}: returns {@link InterimGraphRunner}, which runs only pipelines that are a
- *       single line of steps; return kiln-core's {@code KilnGraphRunner} instead.</li>
+ *   <li>{@link #compiler()}: kiln-core's {@code PipelineCompiler}, through {@link KilnPipelineCompiler}.</li>
+ *   <li>{@link #runner}: kiln-core's {@code KilnGraphRunner}, inside {@code kilnmark.pipelines.memory-limit-mb}.</li>
  *   <li>{@link #steps}: every {@code StepFactory} on the class path (kiln-steps' transforms arrive
  *       through {@code ServiceLoader}) plus the server's {@code read} and {@code write}.</li>
  * </ul>
@@ -35,14 +32,15 @@ public class PipelineCompilers {
     @Produces
     @ApplicationScoped
     PipelineCompilerPort compiler() {
-        return new InterimPipelineCompiler();
+        return new KilnPipelineCompiler();
     }
 
     @Produces
     @ApplicationScoped
     GraphRunner runner(KilnmarkConfig config) {
         KilnmarkConfig.Pipelines p = config.pipelines();
-        return new InterimGraphRunner(Math.max(16, p.memoryLimitMb()) << 20, Math.max(1, p.rowSetCapacity()));
+        return new io.kilnmark.kiln.graph.KilnGraphRunner(Math.max(16, p.memoryLimitMb()) << 20,
+            Math.max(1, p.rowSetCapacity()));
     }
 
     @Produces

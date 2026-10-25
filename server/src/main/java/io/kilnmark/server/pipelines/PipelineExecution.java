@@ -243,15 +243,24 @@ final class PipelineExecution {
     }
 
     /**
-     * Rows on each edge. SEAM: the round 3 contract's {@link RunResult} reports rows out per step;
-     * when the graph runner reports rows per edge or per port, read them here. Until then, an edge
-     * carries its step's rows out when the step has one output port connected, and is unknown (null)
-     * otherwise.
+     * Rows on each edge, as the graph runner counted them ({@link RunResult#edges()}). A runner that
+     * reports none leaves each edge carrying its step's rows out when the step has one output port
+     * connected, and unknown (null) otherwise.
      */
     static Map<Edge, Long> rowsByEdge(PipelineGraph graph, RunResult result) {
+        Map<Edge, Long> out = new LinkedHashMap<>();
+        if (!result.edges().isEmpty()) {
+            Map<String, Long> counted = new HashMap<>();
+            for (RunResult.EdgeResult e : result.edges()) {
+                counted.put(e.fromStep() + "." + e.fromPort() + ">" + e.toStep() + "." + e.toPort(), e.rows());
+            }
+            for (Edge e : graph.edges()) {
+                out.put(e, counted.get(e.from() + ">" + e.to()));
+            }
+            return out;
+        }
         Map<String, RunResult.StepResult> byName = new HashMap<>();
         result.steps().forEach(s -> byName.put(s.name(), s));
-        Map<Edge, Long> out = new LinkedHashMap<>();
         for (Edge e : graph.edges()) {
             RunResult.StepResult from = byName.get(e.from().step());
             long ports = graph.outOf(e.from().step()).stream().map(x -> x.from().port()).distinct().count();
@@ -273,13 +282,18 @@ final class PipelineExecution {
             RunResult.StepResult r = byName.get(id);
             // A write's rows arrive through its hidden profile step: count them as the write's input.
             Map<String, Long> in = new LinkedHashMap<>();
-            for (Edge e : graph.into(id)) {
-                Long n = edgeRows.get(e);
-                in.merge(e.to().port(), n == null ? -1 : n, (a, b) -> a < 0 || b < 0 ? -1 : a + b);
-            }
             Map<String, Long> outs = new LinkedHashMap<>();
-            for (Edge e : graph.outOf(id)) {
-                outs.putIfAbsent(e.from().port(), edgeRows.get(e) == null ? -1 : edgeRows.get(e));
+            if (r != null && (!r.rowsInByPort().isEmpty() || !r.rowsOutByPort().isEmpty())) {
+                in.putAll(r.rowsInByPort());
+                outs.putAll(r.rowsOutByPort());
+            } else {
+                for (Edge e : graph.into(id)) {
+                    Long n = edgeRows.get(e);
+                    in.merge(e.to().port(), n == null ? -1 : n, (a, b) -> a < 0 || b < 0 ? -1 : a + b);
+                }
+                for (Edge e : graph.outOf(id)) {
+                    outs.putIfAbsent(e.from().port(), edgeRows.get(e) == null ? -1 : edgeRows.get(e));
+                }
             }
             Long rowsInTotal = in.isEmpty() ? null : in.values().stream().anyMatch(v -> v < 0) ? null
                 : in.values().stream().mapToLong(Long::longValue).sum();

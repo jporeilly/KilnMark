@@ -7,14 +7,11 @@ import io.kilnmark.kiln.StepFactories;
 import io.kilnmark.kiln.graph.PipelineGraph;
 
 /**
- * SEAM: turns pipeline YAML ({@code kilnmark: pipeline/v1}, docs/design/pipelines.md section 2) into
+ * Turns pipeline YAML ({@code kilnmark: pipeline/v1}, docs/design/pipelines.md section 2) into
  * a checked graph. The server talks to the compiler only through this interface.
  *
- * <p>Until kiln-core's {@code PipelineCompiler(StepFactories)} is merged, {@link InterimPipelineCompiler}
- * implements it. To swap in the real one, write an adapter implementing this interface over
- * {@code new PipelineCompiler(factories)} (mapping its problems to {@link Problem} and its steps to
- * {@link StepOutline}), and change {@link PipelineCompilers#produce} to return it. Nothing else in
- * the server names the interim compiler.
+ * <p>{@link KilnPipelineCompiler} implements it over kiln-core's {@code PipelineCompiler}; tests may
+ * give the service another. {@link PipelineCompilers#compiler()} chooses the implementation.
  */
 public interface PipelineCompilerPort {
 
@@ -57,15 +54,18 @@ public interface PipelineCompilerPort {
     }
 
     /**
-     * What compiling found. {@code graph} is null from {@link #check} and whenever there are problems.
+     * What compiling found. {@code notes} do not stop a run (columns not known until it runs, say).
+     * {@code graph} is null from {@link #check} and whenever there are problems.
      * {@code configs} holds each step's settings as written (for the server's own bookkeeping,
      * such as which assets a run reads and writes).
      */
-    record Compilation(String name, String description, List<Problem> problems, List<StepOutline> steps,
-                       List<EdgeOutline> edges, Map<String, Map<String, Object>> configs, PipelineGraph graph) {
+    record Compilation(String name, String description, List<Problem> problems, List<Problem> notes,
+                       List<StepOutline> steps, List<EdgeOutline> edges, Map<String, Map<String, Object>> configs,
+                       PipelineGraph graph) {
 
         public Compilation {
             problems = List.copyOf(problems);
+            notes = notes == null ? List.of() : List.copyOf(notes);
             steps = List.copyOf(steps);
             edges = List.copyOf(edges);
             configs = configs == null ? Map.of() : java.util.Collections.unmodifiableMap(
