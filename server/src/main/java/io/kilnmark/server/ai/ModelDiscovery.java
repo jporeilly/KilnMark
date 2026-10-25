@@ -2,6 +2,7 @@ package io.kilnmark.server.ai;
 
 import java.io.ByteArrayOutputStream;
 import java.net.ConnectException;
+import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.UnknownHostException;
@@ -12,16 +13,16 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.channels.UnresolvedAddressException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -37,29 +38,31 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.kilnmark.server.ai.AiViews.FoundModel;
 import io.kilnmark.server.ai.AiViews.FoundServer;
+import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 /**
  * Finds model servers Kilnmark can reach and what they serve, for the AI models page. With no
- * address it tries a fixed list: Ollama and LM Studio on the machine running the container
- * ({@code host.containers.internal}, {@code host.docker.internal}) and on {@code localhost}, and
- * the bundled Compose services. With an address an admin typed, only that one.
+ * address it tries a fixed list: Ollama and LM Studio on {@code localhost} and, in a container,
+ * on the machine running it ({@code host.containers.internal}, {@code host.docker.internal}),
+ * and the bundled Compose services. With an address an admin typed, only that one.
  *
  * <p>Kilnmark does not look for a GPU itself: it may run in a container that cannot see one, and
  * the model server is what uses it. Ollama says how much of each loaded model is in GPU memory
  * ({@code /api/ps}), whatever the GPU's make; other servers are reported as not saying.
  *
- * <p>This is not a general HTTP fetcher. Every address passes {@link ModelHosts} first (no
- * metadata or link-local addresses; under the operator lock, only local hosts, and others are
- * reported without being called). Only GET requests to the model servers' own paths are made
- * ({@code /api/version}, {@code /api/tags}, {@code /api/ps}, {@code /v1/models}, {@code /health},
- * {@code /props}, {@code /api/v0/models}), with no key, short timeouts, no redirects followed and
- * at most {@value #MAX_BYTES} bytes read. Results are summarised: response bodies are never
- * returned.
+ * <p>This is not a general HTTP fetcher. Every address passes {@link ModelHosts} first: under the
+ * operator lock a host not on the local list is reported without being looked up or called; the
+ * name is looked up within a time limit; metadata and link-local addresses are refused. Only the
+ * model servers' own paths are requested ({@code GET /api/version}, {@code /api/tags},
+ * {@code /api/ps}, {@code /v1/models}, {@code /health}, {@code /props}, {@code /api/v0/models},
+ * and {@code POST /api/show} for Ollama's embedding models), with no key, short timeouts, no
+ * redirects followed, no proxy and at most {@value #MAX_BYTES} bytes read. Results are
+ * summarised: response bodies are never returned.
  */
 @ApplicationScoped
-public class ModelDiscovery {
+public class ModelDiscovery implements AutoCloseable {
 
     /** What a candidate is expected to be; {@link #UNKNOWN} for an address an admin typed. */
     enum Kind {
@@ -75,9 +78,15 @@ public class ModelDiscovery {
         REFUSED, TIMEOUT, UNKNOWN_HOST, OTHER
     }
 
+    /** A probe's result, and where it really went (first address and port), to spot one server under two names. */
+    record Probe(FoundServer server, String key) {
+    }
+
     static final int MAX_BYTES = 512 * 1024;
     private static final int MAX_MODELS = 200;
+    private static final int MAX_SHOW = 8;
     private static final int MAX_TEXT = 200;
+    private static final Set<String> BUNDLED_NAMES = Set.of("ai", "ai-cuda", "ai-embed");
     private static final String OLLAMA_HOST_ADVICE = "Ollama may be listening only on its own machine. Set "
         + "OLLAMA_HOST=0.0.0.0:11434 and restart Ollama, and keep port 11434 closed to other networks in the firewall.";
     private static final String LM_STUDIO_ADVICE = "LM Studio's server may be off, or serving only on its own "
@@ -86,6 +95,7 @@ public class ModelDiscovery {
     private static final String NOT_REPORTED = "GPU use not reported by this server";
     private static final Pattern EMBEDDING_NAME = Pattern.compile(
         "embed|(^|[/:_.-])(bge|gte|e5)([/:_.-]|$)|minilm|mxbai-embed|snowflake-arctic-embed");
+    private static final Pattern PATH = Pattern.compile("[A-Za-z0-9._~/-]*");
 
     static final List<Candidate> CANDIDATES = List.of(
         new Candidate("Ollama on the machine running Kilnmark's container (Podman)", Kind.OLLAMA,
@@ -108,62 +118,96 @@ public class ModelDiscovery {
     private final boolean inContainer;
     private final Duration connectTimeout;
     private final Duration readTimeout;
+    private final Duration overall;
+    private final ExecutorService httpThreads = Executors.newVirtualThreadPerTaskExecutor();
     private final HttpClient client;
     private final ObjectMapper json = new ObjectMapper();
 
     @Inject
     public ModelDiscovery(ModelHosts hosts) {
-        this(hosts, runningInContainer(), Duration.ofSeconds(1), Duration.ofSeconds(3));
+        this(hosts, Duration.ofSeconds(1), Duration.ofSeconds(3), Duration.ofSeconds(12));
     }
 
-    ModelDiscovery(ModelHosts hosts, boolean inContainer, Duration connectTimeout, Duration readTimeout) {
+    ModelDiscovery(ModelHosts hosts, Duration connectTimeout, Duration readTimeout, Duration overall) {
         this.hosts = hosts;
-        this.inContainer = inContainer;
+        this.inContainer = hosts.inContainer();
         this.connectTimeout = connectTimeout;
         this.readTimeout = readTimeout;
+        this.overall = overall;
         // Never through a proxy: these are servers on this machine or network.
         this.client = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY)
             .followRedirects(HttpClient.Redirect.NEVER).connectTimeout(connectTimeout)
-            .version(HttpClient.Version.HTTP_1_1).executor(Executors.newVirtualThreadPerTaskExecutor()).build();
+            .version(HttpClient.Version.HTTP_1_1).executor(httpThreads).build();
     }
 
-    /** Podman writes /run/.containerenv, Docker /.dockerenv, and both set {@code container} in some images. */
-    static boolean runningInContainer() {
-        return Files.exists(Path.of("/run/.containerenv")) || Files.exists(Path.of("/.dockerenv"))
-            || System.getenv("container") != null;
+    @Override
+    @PreDestroy
+    public void close() {
+        client.shutdownNow();
+        httpThreads.shutdownNow();
     }
 
-    /** Tries the fixed list, or only {@code baseUrl} when given. */
+    /** Tries the usual places, or only {@code baseUrl} when given. */
     public AiViews.Discovery discover(String baseUrl) {
-        List<Candidate> candidates = baseUrl == null || baseUrl.isBlank() ? CANDIDATES
+        List<Candidate> candidates = baseUrl == null || baseUrl.isBlank() ? usual()
             : List.of(new Candidate("The address you entered", Kind.UNKNOWN, root(baseUrl), false));
         return discover(candidates);
     }
 
+    /** Outside a container only localhost: the container and Compose names mean nothing there, and are not looked up. */
+    List<Candidate> usual() {
+        return inContainer ? CANDIDATES
+            : CANDIDATES.stream().filter(c -> ModelHosts.host(c.root() + "/v1").equals("localhost")).toList();
+    }
+
     AiViews.Discovery discover(List<Candidate> candidates) {
-        List<FoundServer> out = new ArrayList<>();
-        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<Future<FoundServer>> futures = candidates.stream().map(c -> pool.submit(() -> probe(c))).toList();
-            // Each request is bounded; this bounds a server that answers slowly to every request.
-            long deadline = System.nanoTime() + (connectTimeout.plus(readTimeout)).multipliedBy(4).toNanos();
+        ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor();
+        List<Probe> probes = new ArrayList<>();
+        try {
+            List<Future<Probe>> futures = candidates.stream().map(c -> pool.submit(() -> probe(c))).toList();
+            long deadline = System.nanoTime() + overall.toNanos();
             for (int i = 0; i < candidates.size(); i++) {
                 Candidate c = candidates.get(i);
                 try {
-                    out.add(futures.get(i).get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS));
+                    probes.add(futures.get(i).get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS));
                 } catch (TimeoutException e) {
                     futures.get(i).cancel(true);
-                    out.add(missing(c, "not-found", "It answered too slowly to finish in time.", null));
+                    probes.add(new Probe(missing(c, "not-found", "It answered too slowly to finish in time.", null), null));
                 } catch (ExecutionException e) {
-                    out.add(missing(c, "not-found", "It could not be checked: " + e.getCause().getClass().getSimpleName()
-                        + ".", null));
+                    probes.add(new Probe(missing(c, "not-found", "It could not be checked: "
+                        + e.getCause().getClass().getSimpleName() + ".", null), null));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    out.add(missing(c, "not-found", "Checking was interrupted.", null));
+                    probes.add(new Probe(missing(c, "not-found", "Checking was interrupted.", null), null));
                 }
             }
-            pool.shutdownNow();
+        } finally {
+            pool.shutdownNow(); // never waits: a stuck lookup or read is abandoned, not awaited
         }
-        return new AiViews.Discovery(out, inContainer, hosts.locked());
+        return new AiViews.Discovery(merge(probes), inContainer, hosts.locked());
+    }
+
+    /** One server found under two names (both container host names, usually) is listed once. */
+    private static List<FoundServer> merge(List<Probe> probes) {
+        Map<String, Integer> firstAt = new HashMap<>();
+        List<FoundServer> out = new ArrayList<>();
+        for (Probe p : probes) {
+            FoundServer s = p.server();
+            Integer at = s.outcome().equals("found") && p.key() != null ? firstAt.get(p.key()) : null;
+            if (at == null) {
+                if (s.outcome().equals("found") && p.key() != null) {
+                    firstAt.put(p.key(), out.size());
+                }
+                out.add(s);
+                continue;
+            }
+            FoundServer f = out.get(at);
+            String also = "Also reachable at " + s.baseUrl() + ".";
+            out.set(at, new FoundServer(f.label(), f.server(), f.address(), f.baseUrl(), f.outcome(), f.problem(),
+                f.guidance(), f.suggestLocal(), f.detail() == null ? also : f.detail() + " " + also, f.gpuReported(),
+                f.models()));
+        }
+        return out;
     }
 
     /**
@@ -190,7 +234,19 @@ public class ModelDiscovery {
             throw new IllegalArgumentException("baseUrl: give only the scheme, host, port and path, for example "
                 + "http://host.containers.internal:11434/v1");
         }
+        if (u.getPort() != -1 && (u.getPort() < 1 || u.getPort() > 65535)) {
+            throw new IllegalArgumentException("baseUrl: the port must be between 1 and 65535");
+        }
         String path = u.getRawPath() == null ? "" : u.getRawPath();
+        boolean dotSegment = Arrays.stream(path.split("/")).anyMatch(seg -> seg.equals(".") || seg.equals(".."));
+        if (!PATH.matcher(path).matches() || dotSegment) {
+            throw new IllegalArgumentException("baseUrl: the path may hold only letters, digits and . _ ~ - /, with no "
+                + ". or .. parts, for example http://host.containers.internal:11434/v1");
+        }
+        String problem = ModelHosts.addressProblem(s).orElse(null);
+        if (problem != null) {
+            throw new IllegalArgumentException(problem);
+        }
         path = path.replaceAll("/+$", "");
         if (path.toLowerCase(Locale.ROOT).endsWith("/v1")) {
             path = path.substring(0, path.length() - 3).replaceAll("/+$", "");
@@ -200,38 +256,89 @@ public class ModelDiscovery {
     }
 
     /** One candidate, start to finish. Never throws for a server's failure: it is described instead. */
-    FoundServer probe(Candidate c) {
+    Probe probe(Candidate c) {
         String base = c.root() + "/v1";
         String host = ModelHosts.host(base);
-        Optional<String> refused = hosts.forbidden(base);
-        if (refused.isPresent()) {
-            return missing(c, "refused", "Not checked. " + refused.get(), null);
-        }
-        if (!hosts.mayBeLocal(base)) {
-            return missing(c, "not-local", "Not checked: this server allows only local models "
+        // Under the lock, a host that is not on the list is neither looked up nor called.
+        if (hosts.locked() && !hosts.listedLocal(host)) {
+            return new Probe(missing(c, "not-local", "Not checked: this server allows only local models "
                 + "(kilnmark.ai.hosted-models=forbidden), and " + host + " is not in its list of local hosts.",
-                "To use a model server at " + host + ", whoever runs Kilnmark adds " + host
-                    + " to kilnmark.ai.local-hosts (KILNMARK_AI_LOCAL_HOSTS), keeping the entries already there.");
+                addToLocalHosts(host)), null);
         }
+        Optional<String> named = hosts.forbidden(host, new InetAddress[0]);
+        if (named.isPresent()) {
+            return new Probe(missing(c, "refused", "Not checked. " + named.get(), null), null);
+        }
+        InetAddress[] addresses;
         try {
-            Fetched version = null;
+            addresses = lookup(host);
+        } catch (Unreachable e) {
+            return new Probe(missing(c, "not-found", e.reason, guidance(c, e.why)), null);
+        }
+        Optional<String> refused = hosts.forbidden(host, addresses);
+        if (refused.isPresent()) {
+            return new Probe(missing(c, "refused", "Not checked. " + refused.get(), null), null);
+        }
+        if (!hosts.mayBeLocal(host, addresses)) {
+            return new Probe(missing(c, "not-local", "Not checked: " + host + " leads to " + addresses[0].getHostAddress()
+                + ", which is neither this machine nor a private network, so this server does not count it as local.",
+                null), null);
+        }
+        boolean local = suggestLocal(c, host, addresses);
+        String key = addresses.length == 0 ? null
+            : addresses[0].getHostAddress() + ":" + URI.create(c.root()).getPort() + URI.create(c.root()).getRawPath();
+        try {
             if (c.kind() == Kind.OLLAMA || c.kind() == Kind.UNKNOWN) {
-                version = get(c.root() + "/api/version");
+                Fetched version = get(c.root() + "/api/version");
                 JsonNode v = version.ok() ? version.json() : null;
                 if (v != null && v.path("version").isTextual()) {
-                    return ollama(c, text(v.path("version").asText()));
+                    return new Probe(ollama(c, text(v.path("version").asText()), local), key);
                 }
                 if (c.kind() == Kind.OLLAMA) {
-                    return missing(c, "not-found", notAModelServer(version, "/api/version", "Ollama"), null);
+                    return new Probe(missing(c, "not-found", notAModelServer(version, "/api/version", "Ollama"),
+                        null), null);
                 }
+                // A typed address that is not Ollama: perhaps an OpenAI-compatible server.
             }
-            return openAiCompatible(c);
+            return new Probe(openAiCompatible(c, local), key);
         } catch (Unreachable e) {
-            return missing(c, "not-found", e.reason, guidance(c, e.why));
+            return new Probe(missing(c, "not-found", e.reason, guidance(c, e.why)), null);
         }
     }
 
-    private FoundServer ollama(Candidate c, String version) throws Unreachable {
+    private static String addToLocalHosts(String host) {
+        return "If a model server at " + host + " runs on your own network, whoever runs Kilnmark can add " + host
+            + " to kilnmark.ai.local-hosts (KILNMARK_AI_LOCAL_HOSTS), keeping the entries already there. Only do this "
+            + "if it runs on your own network.";
+    }
+
+    /** The host's addresses, looked up within the connect timeout (doubled), so a stalled name service cannot hold us. */
+    private InetAddress[] lookup(String host) throws Unreachable {
+        CompletableFuture<InetAddress[]> f = new CompletableFuture<>();
+        Thread t = Thread.ofVirtual().name("kilnmark-discover-lookup").start(() -> {
+            try {
+                f.complete(hosts.resolve(host));
+            } catch (Throwable e) {
+                f.completeExceptionally(e);
+            }
+        });
+        Duration limit = connectTimeout.multipliedBy(2);
+        try {
+            return f.get(limit.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            t.interrupt();
+            throw new Unreachable(Why.OTHER, "Looking up this host name took longer than " + seconds(limit)
+                + ". Check the name service of the machine running Kilnmark.");
+        } catch (InterruptedException e) {
+            t.interrupt();
+            Thread.currentThread().interrupt();
+            throw new Unreachable(Why.OTHER, "Checking was interrupted.");
+        } catch (ExecutionException e) {
+            throw new Unreachable(Why.UNKNOWN_HOST, "This host name is not known here.");
+        }
+    }
+
+    private FoundServer ollama(Candidate c, String version, boolean local) throws Unreachable {
         Fetched tags = get(c.root() + "/api/tags");
         if (!tags.ok() || tags.json() == null || !tags.json().path("models").isArray()) {
             return missing(c, "not-found", notAModelServer(tags, "/api/tags", "Ollama"), null);
@@ -247,6 +354,9 @@ public class ModelDiscovery {
             }
         }
         Map<String, FoundModel> models = new LinkedHashMap<>();
+        int shown = 0;
+        // /api/show for embedding models gets one read timeout in all; past that the rest go without.
+        long showUntil = System.nanoTime() + readTimeout.toNanos();
         for (JsonNode m : tags.json().path("models")) {
             if (models.size() >= MAX_MODELS) {
                 break;
@@ -264,20 +374,72 @@ public class ModelDiscovery {
             JsonNode run = loaded.get(name);
             Gpu g = run != null ? gpu(run.path("size").asLong(size), run.path("size_vram").asLong(0))
                 : psKnown ? Gpu.NOT_LOADED : Gpu.UNKNOWN;
-            Integer context = run != null && run.path("context_length").canConvertToInt()
-                && run.path("context_length").asInt() > 0 ? run.path("context_length").asInt() : null;
+            Integer context = positive(run == null ? null : run.path("context_length"));
+            Integer dimensions = null;
+            long left = showUntil - System.nanoTime();
+            if (embedding && shown < MAX_SHOW && left > 0) {
+                // What the form needs for an embedding model: its size of vector, and the context it runs with.
+                shown++;
+                JsonNode shownModel = show(c.root(), name, Duration.ofNanos(left));
+                if (shownModel != null) {
+                    for (Map.Entry<String, JsonNode> e : shownModel.path("model_info").properties()) {
+                        if (e.getKey().endsWith(".embedding_length")) {
+                            dimensions = positive(e.getValue());
+                        }
+                    }
+                    // Only a context the model is set to run with (num_ctx), not the most it was trained for.
+                    if (context == null) {
+                        context = numCtx(shownModel.path("parameters").asText(""));
+                    }
+                }
+            }
             models.put(name, new FoundModel(name, size > 0 ? size : null, family, textOrNull(d.path("parameter_size")),
                 textOrNull(d.path("quantization_level")), embedding, run != null ? Boolean.TRUE : psKnown ? false : null,
-                g.state(), g.percent(), run != null ? run.path("size_vram").asLong(0) : null, g.text(), context));
+                g.state(), g.percent(), run != null ? run.path("size_vram").asLong(0) : null, g.text(), context,
+                dimensions));
         }
         String guidance = models.isEmpty() ? "Ollama has no models yet. Pull one on that machine, for example "
             + "ollama pull qwen2.5:1.5b (chat) and ollama pull nomic-embed-text (embeddings)." : null;
         return new FoundServer(c.label(), "Ollama " + version, c.root(), c.root() + "/v1", "found", null, guidance,
-            suggestLocal(c), psKnown ? null : "Ollama did not say which models are loaded (/api/ps).", psKnown,
+            local, psKnown ? null : "Ollama did not say which models are loaded (/api/ps).", psKnown,
             List.copyOf(models.values()));
     }
 
-    private FoundServer openAiCompatible(Candidate c) throws Unreachable {
+    /** {@code num_ctx} from Ollama's parameters text ("num_ctx 8192" on a line), or null. */
+    static Integer numCtx(String parameters) {
+        for (String line : parameters.split("\\R")) {
+            String[] w = line.strip().split("\\s+");
+            if (w.length == 2 && w[0].equals("num_ctx")) {
+                try {
+                    int n = Integer.parseInt(w[1]);
+                    return n > 0 ? n : null;
+                } catch (NumberFormatException e) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** What Ollama says about one model ({@code POST /api/show}), within {@code limit}, or null. */
+    private JsonNode show(String root, String model, Duration limit) {
+        Duration timeout = limit.compareTo(readTimeout) < 0 ? limit : readTimeout;
+        if (timeout.toMillis() < 1) {
+            return null;
+        }
+        try {
+            Fetched f = send(HttpRequest.newBuilder(URI.create(root + "/api/show")).timeout(timeout)
+                .header("Content-Type", "application/json").header("Accept", "application/json")
+                .header("User-Agent", "Kilnmark")
+                .POST(HttpRequest.BodyPublishers.ofString(json.createObjectNode().put("model", model).toString()))
+                .build());
+            return f.ok() && f.json() != null && f.json().isObject() ? f.json() : null;
+        } catch (Unreachable e) {
+            return null;
+        }
+    }
+
+    private FoundServer openAiCompatible(Candidate c, boolean local) throws Unreachable {
         Fetched f = get(c.root() + "/v1/models");
         if (!f.ok() || f.json() == null || !f.json().path("data").isArray()) {
             String guidance = f.status() == 401 || f.status() == 403 ? "Kilnmark sends no API key when looking. "
@@ -295,6 +457,7 @@ public class ModelDiscovery {
         String software;
         List<String> details = new ArrayList<>();
         Map<String, JsonNode> lmStudio = Map.of();
+        Integer serverContext = null;
         if (llama) {
             software = "llama-server";
             Fetched health = tryGet(c.root() + "/health");
@@ -304,12 +467,12 @@ public class ModelDiscovery {
             Fetched props = tryGet(c.root() + "/props");
             if (props != null && props.ok() && props.json() != null) {
                 JsonNode p = props.json();
-                JsonNode ctx = p.path("default_generation_settings").path("n_ctx");
-                if (!ctx.canConvertToInt() || ctx.asInt() <= 0) {
-                    ctx = p.path("n_ctx");
+                serverContext = positive(p.path("default_generation_settings").path("n_ctx"));
+                if (serverContext == null) {
+                    serverContext = positive(p.path("n_ctx"));
                 }
-                if (ctx.canConvertToInt() && ctx.asInt() > 0) {
-                    details.add("Context size " + ctx.asInt() + " tokens.");
+                if (serverContext != null) {
+                    details.add("Context size " + serverContext + " tokens.");
                 }
                 String file = p.path("model_path").asText("");
                 if (!file.isBlank()) {
@@ -347,20 +510,41 @@ public class ModelDiscovery {
             String type = lm.path("type").asText("");
             boolean embedding = type.equals("embeddings") || type.isEmpty() && looksLikeEmbedding(id, null, List.of());
             String state = lm.path("state").asText("");
-            Integer context = lm.path("max_context_length").canConvertToInt() && lm.path("max_context_length").asInt() > 0
-                ? lm.path("max_context_length").asInt() : null;
+            Integer context = positive(lm.path("max_context_length"));
+            if (context == null) {
+                context = positive(m.path("max_model_len")); // vLLM
+            }
+            if (context == null) {
+                context = serverContext;
+            }
+            Integer dimensions = embedding ? positive(meta.path("n_embd")) : null;
             models.add(new FoundModel(id, size > 0 ? size : null, textOrNull(lm.path("arch")),
                 params > 0 ? parameters(params) : null, textOrNull(lm.path("quantization")), embedding,
                 state.equals("loaded") ? Boolean.TRUE : state.equals("not-loaded") ? Boolean.FALSE : null,
-                Gpu.UNKNOWN.state(), null, null, Gpu.UNKNOWN.text(), context));
+                Gpu.UNKNOWN.state(), null, null, Gpu.UNKNOWN.text(), context, dimensions));
         }
-        return new FoundServer(c.label(), software, c.root(), c.root() + "/v1", "found", null, null, suggestLocal(c),
+        return new FoundServer(c.label(), software, c.root(), c.root() + "/v1", "found", null, null, local,
             details.isEmpty() ? null : String.join(" ", details), false, models);
     }
 
-    /** Fixed candidates are on this machine or in this Compose project; a typed address only if on the local list. */
-    private boolean suggestLocal(Candidate c) {
-        return c.fixed() || hosts.isLocalHost(ModelHosts.host(c.root() + "/v1"));
+    private static Integer positive(JsonNode n) {
+        return n != null && n.canConvertToInt() && n.asInt() > 0 ? n.asInt() : null;
+    }
+
+    /**
+     * Whether the "local" box should start ticked: for a server on loopback, or, in a container,
+     * for the container host names and Compose services when they lead to this machine or a
+     * private network. Never for other names or public addresses: that is the admin's call.
+     */
+    private boolean suggestLocal(Candidate c, String host, InetAddress[] addresses) {
+        if (!ModelHosts.hostSide(addresses, inContainer)) {
+            return false;
+        }
+        if (Arrays.stream(addresses).allMatch(InetAddress::isLoopbackAddress)) {
+            return true;
+        }
+        return inContainer && (ModelHosts.CONTAINER_HOST_NAMES.contains(host) || BUNDLED_NAMES.contains(host)
+            || c.kind() == Kind.BUNDLED);
     }
 
     private FoundServer missing(Candidate c, String outcome, String problem, String guidance) {
@@ -396,7 +580,7 @@ public class ModelDiscovery {
         Kind kind = c.kind() != Kind.UNKNOWN ? c.kind()
             : port == 11434 ? Kind.OLLAMA : port == 1234 ? Kind.LM_STUDIO : Kind.UNKNOWN;
         boolean loopback = host.equals("localhost") || host.startsWith("127.") || host.equals("::1");
-        boolean hostName = host.equals("host.containers.internal") || host.equals("host.docker.internal");
+        boolean hostName = ModelHosts.CONTAINER_HOST_NAMES.contains(host);
         if (loopback && inContainer && why != Why.UNKNOWN_HOST) {
             return "Kilnmark runs in a container, where localhost is the container itself, not the computer it runs "
                 + "on. Use host.containers.internal (Podman) or host.docker.internal (Docker) instead.";
@@ -447,15 +631,15 @@ public class ModelDiscovery {
         static final Gpu UNKNOWN = new Gpu("unknown", null, NOT_REPORTED);
     }
 
-    /** On GPU (nearly all in GPU memory), split, or CPU only, from Ollama's size and size_vram. */
+    /** On GPU (all of it in GPU memory), split (any part on the CPU, at most 99%), or CPU only. */
     static Gpu gpu(long size, long vram) {
         if (vram <= 0) {
             return new Gpu("cpu", 0, "CPU only");
         }
-        if (size <= 0 || vram >= size * 0.95) {
+        if (size <= 0 || vram >= size) {
             return new Gpu("gpu", 100, "On GPU · " + bytes(vram) + " in GPU memory");
         }
-        int pct = (int) Math.max(1, Math.min(99, Math.round(vram * 100.0 / size)));
+        int pct = (int) Math.max(1, Math.min(99, Math.floor(vram * 100.0 / size)));
         return new Gpu("split", pct, "Split · " + pct + "% on GPU");
     }
 
@@ -525,8 +709,11 @@ public class ModelDiscovery {
     }
 
     Fetched get(String url) throws Unreachable {
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url)).timeout(readTimeout).GET()
-            .header("Accept", "application/json").header("User-Agent", "Kilnmark").build();
+        return send(HttpRequest.newBuilder(URI.create(url)).timeout(readTimeout).GET()
+            .header("Accept", "application/json").header("User-Agent", "Kilnmark").build());
+    }
+
+    private Fetched send(HttpRequest request) throws Unreachable {
         CompletableFuture<HttpResponse<byte[]>> call = client.sendAsync(request, info -> new Capped());
         HttpResponse<byte[]> r;
         try {

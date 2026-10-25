@@ -78,6 +78,9 @@ public class AiResource {
     /** The operator's address rules (ADR 0016), checked on every save and again on every call. */
     private ModelProfile.Valid checkAddress(ModelProfile.Valid v) {
         String url = v.effectiveBaseUrl();
+        ModelHosts.addressProblem(url).ifPresent(problem -> {
+            throw new IllegalArgumentException(problem);
+        });
         hosts.forbidden(url).ifPresent(reason -> {
             throw new IllegalArgumentException("baseUrl: " + reason);
         });

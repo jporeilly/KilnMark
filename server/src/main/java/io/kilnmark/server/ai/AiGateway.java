@@ -297,16 +297,19 @@ public class AiGateway {
 
     /**
      * The address and egress checks: a metadata or link-local address, or a model the source's rule
-     * or the server's rule does not allow. The name lookup for the metadata check runs within the
-     * call's time (at most the profile's timeout); one that does not finish is a failure to reach
-     * the server, not a refusal.
+     * or the server's rule does not allow. The name lookups (the metadata check, and whether a
+     * container host name leads to a private address) run within the call's time (at most the
+     * profile's timeout); one that does not finish is a failure to reach the server, not a refusal.
      */
     private Optional<String> refusal(ModelProfile p, Records.Source source, long deadline) {
         long limit = Math.min(p.timeoutSeconds() * 1000L, deadline - System.currentTimeMillis());
         CompletableFuture<Optional<String>> lookup = new CompletableFuture<>();
         Thread t = Thread.ofVirtual().name("kilnmark-ai-lookup").start(() -> {
             try {
-                lookup.complete(hosts.forbidden(p.effectiveBaseUrl()));
+                Optional<String> refused = hosts.forbidden(p.effectiveBaseUrl());
+                // Looks up a container host name now, within this time limit; the egress check below reuses it.
+                hosts.mayBeLocal(p.effectiveBaseUrl());
+                lookup.complete(refused);
             } catch (Throwable e) {
                 lookup.completeExceptionally(e);
             }
