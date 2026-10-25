@@ -99,9 +99,4 @@ tasks.register<Test>("heavyTest") {
     testClassesDirs = main.output.classesDirs
     classpath = main.runtimeClasspath
     useJUnitPlatform { includeTags(*heavy.toTypedArray()) }
-    // CI keeps no test reports, so print the whole failure message where the log shows it.
-    testLogging {
-        events("failed")
-        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-    }
 }
