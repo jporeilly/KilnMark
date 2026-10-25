@@ -1,7 +1,53 @@
 # Changelog
 
+Each release starts with **What's new**, a short summary in plain words, followed by the
+details.
+
 ## Unreleased
 
+### What's new
+
+- **Sign-in and roles.** Every user signs in with an API token, as a viewer, steward or admin.
+  Admins manage tokens under **Settings**.
+- **Adding connections is guided.** Pick a connector from a gallery grouped by category, test the
+  connection, choose which schemas or folders to scan, and preview the data before scanning.
+  Sources can be edited and deleted.
+- **More kinds of source.** SQL Server, folders of files, and S3-compatible object storage. Excel
+  sheets are read as tables.
+- **Documents are read.** PDF, Word, Excel, PowerPoint and email files: their text is searchable
+  and readable page by page on the asset page.
+- **Browse and relationships.** A tree of sources, schemas, folders and tables, and schema
+  diagrams showing how tables relate, from declared foreign keys and from the data itself.
+- **Data quality.** Every scan scores each table in eight quality dimensions with no set-up. Value
+  patterns, rules with previews, drift between scans, sample rows with sensitive columns masked,
+  and an issue list for stewards. Contracts export in open formats (ODCS, OpenLineage).
+- **AI, local first.** Add local or hosted models; each source decides what may leave the
+  network. Search by meaning, ask questions in plain English, and connect outside AI assistants
+  through the MCP server. Every model call is recorded.
+- **For administrators.** A job queue, health checks, and interactive API documentation at
+  `/api/docs`.
+
+### Details
+
+- **Find local models** on the AI models page (`POST /api/v1/ai/discover`, admins only): looks for
+  Ollama and LM Studio on the machine running Kilnmark or its container
+  (`host.containers.internal`, `host.docker.internal`, `localhost`) and for the bundled Compose
+  model services, or checks one typed address, and lists each server's models with size and GPU
+  use as the server reports it (Ollama: on GPU, split with the share on GPU, CPU only, not loaded
+  yet). **Use this model** fills in the add-model form, and a Base URL that matches a found server
+  offers its models to choose from. Failures are explained in plain words with what to do, such as
+  setting `OLLAMA_HOST=0.0.0.0:11434` and keeping the port closed in the firewall. Only
+  model-server paths are called, after the address rules, with short timeouts, no redirects and no
+  response bodies returned. Kilnmark itself never looks for a GPU.
+- **`host.containers.internal` and `host.docker.internal` are on the default
+  `kilnmark.ai.local-hosts` when Kilnmark runs in a container** (ADR 0016 amendment), counting as
+  local only while they resolve to loopback, private addresses or 169.254.1.2. The image sets
+  `KILNMARK_IN_CONTAINER=true`.
+- **Rootless Podman 5.3+ (pasta):** in a container, 169.254.1.2 is accepted as a model address
+  only when reached through those two names; every other link-local and metadata address stays
+  refused, including IPv4-mapped IPv6. Model addresses with an IPv4 address in an unusual form
+  (leading zeros, hexadecimal, a single number, fewer than four parts) or a host name ending in a
+  dot are refused with a 400.
 - **Themes and appearance:** every signed-in user chooses, for themselves under **Settings**,
   **Appearance** (now open to every role), a theme (System, Light, Dark, High contrast), an
   accent colour (six presets, each with a shade per theme) and a density (Comfortable or Compact);
