@@ -240,6 +240,42 @@ Writing:
 - Runs respect the same rules as scans: allowed hosts, source egress for AI, masking of sensitive
   columns in previews.
 
+### How the server runs and records a pipeline (decisions)
+
+- **Storage (V12).** `pipeline` (fixed name, display name, description, latest version),
+  `pipeline_version` (never changed once saved: YAML, message, author, whether it was valid and its
+  problems), `pipeline_run` (one version, status `queued`, `running`, `succeeded`, `failed` or
+  `cancelled`, who asked and with which role, error, a JSON result), `pipeline_step_run` (rows in
+  and out, rows per port, peak memory, error) and `pipeline_lineage` (written asset from read
+  asset, kept when the pipeline is deleted). Deleting a pipeline deletes its versions and runs;
+  refused while a run is queued or running.
+- **Saving.** Names are `[a-z][a-z0-9-]{0,62}` and never change; the YAML's `name` must match.
+  YAML over `kilnmark.pipelines.max-yaml-kb` (256 KB) is refused. `PUT` saves the next version;
+  its ETag is the latest version's number and `If-Match` with an older number is refused with 409,
+  as rule edits are.
+- **Queueing.** `POST .../runs` checks the version again (a source may have stopped allowing
+  writes since it was saved) and queues a job of kind `pipeline` with the run, in one
+  transaction. A pipeline job is tried once, never repeated on its own: its writes may have begun.
+  It holds an advisory lock of its own (keyed by the job), not a source lock, so runs may overlap
+  scans of the sources they read; recovery leaves a job alone while its lock is held, and marks
+  the run failed when the job is given up.
+- **On the worker.** The worker compiles that exact version inside a run context naming who asked
+  and their role. The server's `read` and `write` step factories resolve saved sources, decrypt
+  their secrets and re-check the allowed hosts only then; `write` also re-checks `allow_writing`
+  and that the role is steward or admin. Readers get their connector's own settings (which may
+  hold the secret) through a wrapper, never through the YAML or the graph's config. Every message
+  a run records has the secrets it resolved blanked out.
+- **Profiling writes.** A write in mode `create` or `replace` gets a hidden profile step in front
+  of it, so what is written is profiled in the same pass. After a successful run each write's
+  target is registered as the scan registers what it finds (asset, fields from the connector, row
+  count, profiles, quality profile version and evaluation) under a finished run of kind
+  `pipeline` on the written source; source run lists show scans only. `append` and `upsert` only
+  add to a target, so its profile is left as it was, with a note to scan it. Lineage links each
+  written asset to every read asset upstream of it (`GET /api/v1/lineage?urn=`).
+- **Cancelling.** A queued run is cancelled at once and its job taken off the queue; a running one
+  is interrupted within about half a second. A worker shutting down marks its runs failed rather
+  than queueing them again.
+
 ## 6. API and UI in step 1
 
 - `GET/POST /api/v1/pipelines`, `GET/PUT/DELETE /api/v1/pipelines/{name}` (PUT saves a new
@@ -252,6 +288,16 @@ Writing:
 - UI: a **Pipelines** page (list, last run, run now), a pipeline page with a YAML editor that
   validates as you type and shows problems by line, a read-only graph of the steps (the existing
   diagram library), versions, and runs with a per-step breakdown.
+
+### Step catalogue and seams (decisions)
+
+- `GET /api/v1/steps` lists every `StepFactory`: those on the class path (`ServiceLoader`) and the
+  server's `read` and `write`. `write` takes `target`, or `table` and `path` as other names for
+  it, and `mode` defaults to `create`, which never overwrites.
+- The server reaches the compiler through `PipelineCompilerPort` (adapter `KilnPipelineCompiler`)
+  and the runner as a `GraphRunner` bean, both produced in `PipelineCompilers`; tests replace
+  the runner with an alternative bean.
+- The YAML editor is a plain textarea with line numbers for now; the canvas replaces it in step 2.
 
 ## 7. Next
 

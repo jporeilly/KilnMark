@@ -41,6 +41,23 @@ details.
   loops), and each step's columns worked out before anything runs, without opening a connection.
   Read with SnakeYAML Engine 3.2 (Apache-2.0); anchors, aliases, tags, duplicate keys and files
   over 1,000,000 characters are refused.
+- **Pipelines can be saved, checked and run** (`/api/v1/pipelines`, `/api/v1/pipeline-runs`,
+  `/api/v1/steps`, `/api/v1/lineage`): every version is kept with who saved it and why, saves use
+  `If-Match` on the latest version number (409 when someone saved since), and YAML is checked as
+  it is written, with problems by line and each step's columns. Runs are queued as jobs of kind
+  `pipeline`, run once by a worker, recorded step by step (rows in and out per port, peak memory,
+  error) and can be cancelled. Viewers read; stewards edit and run.
+- **Reading and writing sources in pipelines:** the `read` step reads a saved source's table or
+  file; the `write` step writes to a source only when an admin has set its new **Allow writing**
+  setting (`allow_writing`, off by default; stewards cannot change it). Allowed hosts and the
+  role of whoever asked are checked again when a run starts, and no message carries a source's
+  secret. What a write wrote is registered in the catalogue with its profile and its lineage from
+  the assets read, under a run of kind `pipeline` that source run lists do not show (migration
+  V12; `kilnmark.pipelines.max-yaml-kb`, `memory-limit-mb` and `row-set-capacity`).
+- **Pipelines page:** a list with Run now, and for each pipeline a YAML editor that checks as you
+  type (choosing a problem moves to its line), Save with a message, a graph of the steps with the
+  columns leaving each, versions and runs with a per-step breakdown. The guide "Building and
+  running a pipeline" (docs/guide/pipelines.md) walks through it.
 - **Find local models** on the AI models page (`POST /api/v1/ai/discover`, admins only): looks for
   Ollama and LM Studio on the machine running Kilnmark or its container
   (`host.containers.internal`, `host.docker.internal`, `localhost`) and for the bundled Compose
