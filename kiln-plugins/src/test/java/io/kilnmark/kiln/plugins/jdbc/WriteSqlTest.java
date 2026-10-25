@@ -226,18 +226,49 @@ class WriteSqlTest {
             col("region", "text", Kind.TEXT, 0, 0, 0));
         WritePlan.Plan plan = WritePlan.plan(in, table, Set.of("region", "id"), List.of());
         assertEquals(List.of(
-            "the input's column amount is decimal(12,4) but the table's column amount is numeric(10,2), which cannot "
-                + "hold every value",
             "the table has no column extra",
             "the input's column flag is boolean but the table's column flag is integer",
             "the table's column region needs a value (it is NOT NULL with no default), but the input has no such column"),
             plan.problems());
-        assertEquals(List.of("id", "name", "seen"), plan.bindings().stream().map(WritePlan.Binding::target).toList(),
-            "Name matches name, ignoring case, as the only such column");
-        assertEquals(50, plan.bindings().get(1).maxLength());
+        assertEquals(List.of("id", "amount", "name", "seen"), plan.bindings().stream().map(WritePlan.Binding::target)
+            .toList(), "Name matches name, ignoring case, as the only such column; amount is checked per value");
+        assertEquals(50, plan.bindings().get(2).maxLength());
+        assertEquals(List.of(10, 2), List.of(plan.bindings().get(1).precision(), plan.bindings().get(1).scale()));
         String message = WritePlan.message("append", T, plan.problems());
         assertTrue(message.startsWith("Cannot append to billing.customer_spend: its columns do not match the input: "),
             message);
+    }
+
+    @Test
+    void narrowerDecimalsAreCheckedValueByValueAndNeverRounded() {
+        assertEquals(new BigDecimal("1.50"), WritePlan.fitDecimal(new BigDecimal("1.5000"), 10, 2), "trailing zeros go");
+        assertEquals(new BigDecimal("12345678.00"), WritePlan.fitDecimal(new BigDecimal("12345678"), 10, 2));
+        assertEquals(new BigDecimal("-0.01"), WritePlan.fitDecimal(new BigDecimal("-0.01"), 10, 2));
+        assertEquals(new BigDecimal("0.00"), WritePlan.fitDecimal(BigDecimal.ZERO, 2, 2));
+        assertNull(WritePlan.fitDecimal(new BigDecimal("1.234"), 10, 2), "would be rounded");
+        assertNull(WritePlan.fitDecimal(new BigDecimal("123456789.5"), 10, 2), "nine digits before the point");
+        assertTrue(WritePlan.decimalProblem(new BigDecimal("1.234"), 10, 2).contains("decimal places"));
+        assertTrue(WritePlan.decimalProblem(new BigDecimal("123456789"), 10, 2).contains("digits before the point"));
+    }
+
+    @Test
+    void sqlServerBulkCopyGetsFullIsoDatesAndTimes() {
+        assertEquals("2024-01-01T00:00:00.000000", WriteSql.SqlServer.isoText(Kind.TIMESTAMP,
+            LocalDateTime.of(2024, 1, 1, 0, 0)));
+        assertEquals("2024-06-01T00:00:00.000001+00:00", WriteSql.SqlServer.isoText(Kind.TIMESTAMP_TZ,
+            Instant.parse("2024-06-01T00:00:00.000001Z")));
+        assertEquals("00:00:00.000000", WriteSql.SqlServer.isoText(Kind.TIME, LocalTime.MIDNIGHT));
+        assertEquals("0950-03-01", WriteSql.SqlServer.isoText(Kind.DATE, LocalDate.of(950, 3, 1)));
+        assertNull(WriteSql.SqlServer.isoText(Kind.TEXT, "x"));
+    }
+
+    @Test
+    void sqlServerCatalogueUnionsUseTheDatabaseCollation() {
+        String q = WriteSql.SQL_SERVER.blockers(T).text();
+        for (String branch : q.split("UNION")) {
+            assertTrue(branch.contains("COLLATE DATABASE_DEFAULT"), branch);
+        }
+        assertTrue(WriteSql.SQL_SERVER.owner(T).text().contains("COLLATE DATABASE_DEFAULT"));
     }
 
     @Test
@@ -245,7 +276,10 @@ class WriteSqlTest {
         WriteColumn d = WriteColumn.of(field("x", Rows.decimal(12, 2)));
         assertNull(WritePlan.misfit(d, col("x", "numeric", Kind.DECIMAL, 0, 0, 0)), "unconstrained numeric");
         assertNull(WritePlan.misfit(d, col("x", "numeric", Kind.DECIMAL, 14, 4, 0)));
-        assertTrue(WritePlan.misfit(d, col("x", "numeric", Kind.DECIMAL, 12, 1, 0)) != null, "a lost digit");
+        assertNull(WritePlan.misfit(d, col("x", "numeric", Kind.DECIMAL, 10, 1, 0)), "narrower: checked per value");
+        assertNull(WritePlan.misfit(WriteColumn.of(field("x", Rows.INT64)), col("x", "numeric", Kind.DECIMAL, 5, 0, 0)));
+        assertTrue(WritePlan.misfit(WriteColumn.of(field("x", Rows.FLOAT64)), col("x", "numeric", Kind.DECIMAL, 10, 2,
+            0)) != null, "floats are not turned into decimals");
         assertNull(WritePlan.misfit(d, col("x", "text", Kind.TEXT, 0, 0, 0)));
         assertNull(WritePlan.misfit(WriteColumn.of(field("x", Rows.INT64)), col("x", "numeric", Kind.DECIMAL, 19, 0, 0)));
         assertTrue(WritePlan.misfit(WriteColumn.of(field("x", Rows.INT64)), col("x", "integer", Kind.INT32, 10, 0, 0))

@@ -22,10 +22,11 @@ import io.kilnmark.kiln.plugins.write.WriteColumn;
  *
  * <p>An input column goes to the table column of the same name (exactly, or ignoring case when
  * only one matches). It fits when the table column can hold every value of its kind: the same
- * kind; a wider integer, a decimal with room for its digits, or a float; float32 to float64; a
- * decimal with at least as many digits before and after the point (any decimal into an
- * unconstrained one); a date into a timestamp; a timestamp with or without a zone into either
- * (times without a zone are taken as UTC); and anything except bytes into text. Table columns the
+ * kind; a wider integer, a decimal or a float; float32 to float64; a date into a timestamp; a
+ * timestamp with or without a zone into either (times without a zone are taken as UTC); and
+ * anything except bytes into text. Integers and decimals go into any decimal column: where its
+ * precision or scale is narrower, each value is checked as it is written ({@link #fitDecimal}) and
+ * one that would need rounding or more digits stops the write, naming the row. Table columns the
  * input lacks must allow nulls or have a default.
  */
 final class WritePlan {
@@ -65,8 +66,15 @@ final class WritePlan {
      * @param kind      the kind the value is converted to and bound as
      * @param maxLength the most characters the table column holds; 0 when unlimited
      * @param key       whether it is an upsert key column
+     * @param precision for a decimal column with declared digits, its precision; 0 otherwise
+     * @param scale     for such a column, its scale
      */
-    record Binding(int index, WriteColumn input, String target, Kind kind, int maxLength, boolean key) {
+    record Binding(int index, WriteColumn input, String target, Kind kind, int maxLength, boolean key, int precision,
+                   int scale) {
+
+        Binding(int index, WriteColumn input, String target, Kind kind, int maxLength, boolean key) {
+            this(index, input, target, kind, maxLength, key, 0, 0);
+        }
     }
 
     /** The bindings, or the problems that stop the write. */
@@ -114,7 +122,9 @@ final class WritePlan {
                 problems.add(why);
                 continue;
             }
-            bindings.add(new Binding(i, c, t.name(), t.kind(), t.maxLength(), containsName(key, c.name())));
+            boolean declared = t.kind() == Kind.DECIMAL && !t.unconstrainedDecimal();
+            bindings.add(new Binding(i, c, t.name(), t.kind(), t.maxLength(), containsName(key, c.name()),
+                declared ? t.precision() : 0, declared ? t.scale() : 0));
         }
         for (TargetColumn t : table) {
             if (required.contains(t.name()) && !matched.contains(t.name())) {
@@ -181,14 +191,14 @@ final class WritePlan {
                     case INT64 -> true;
                     case FLOAT32 -> from == Kind.INT16;
                     case FLOAT64 -> from != Kind.INT64;
-                    case DECIMAL -> t.unconstrainedDecimal() || t.precision() - t.scale() >= digits;
+                    case DECIMAL -> true; // values too large are refused one by one (decimalProblem)
                     default -> false;
                 };
             }
             case FLOAT32 -> to == Kind.FLOAT32 || to == Kind.FLOAT64;
             case FLOAT64 -> to == Kind.FLOAT64;
-            case DECIMAL -> to == Kind.DECIMAL && (t.unconstrainedDecimal()
-                || c.scale() <= t.scale() && c.precision() - c.scale() <= t.precision() - t.scale());
+            // a narrower decimal is checked value by value, never rounded (decimalProblem)
+            case DECIMAL -> to == Kind.DECIMAL;
             case TEXT -> false;
             case BINARY -> to == Kind.BINARY;
             case DATE -> to == Kind.DATE || to == Kind.TIMESTAMP || to == Kind.TIMESTAMP_TZ;
@@ -198,11 +208,32 @@ final class WritePlan {
         if (fits) {
             return null;
         }
-        if (to == Kind.DECIMAL && (from == Kind.DECIMAL || from == Kind.INT16 || from == Kind.INT32
-            || from == Kind.INT64)) {
-            return problem + ", which cannot hold every value";
-        }
         return problem;
+    }
+
+    /**
+     * {@code value} as a decimal column of {@code precision} and {@code scale} stores it, or null when
+     * it does not fit: more decimal places than the scale (other than zeros), or more digits before
+     * the point than {@code precision - scale}. Nothing is rounded.
+     */
+    static java.math.BigDecimal fitDecimal(java.math.BigDecimal value, int precision, int scale) {
+        java.math.BigDecimal exact;
+        try {
+            exact = value.setScale(scale, java.math.RoundingMode.UNNECESSARY);
+        } catch (ArithmeticException e) {
+            return null;
+        }
+        return exact.precision() - exact.scale() > precision - scale && exact.signum() != 0 ? null : exact;
+    }
+
+    /** Why {@code value} does not fit a decimal column, for the "Row N" message. */
+    static String decimalProblem(java.math.BigDecimal value, int precision, int scale) {
+        try {
+            value.setScale(scale, java.math.RoundingMode.UNNECESSARY);
+        } catch (ArithmeticException e) {
+            return "has more decimal places than the column's " + scale;
+        }
+        return "has more digits before the point than the column's " + (precision - scale);
     }
 
     /** {@code value}, of kind {@code from}, as kind {@code to} (a binding the plan accepted). */

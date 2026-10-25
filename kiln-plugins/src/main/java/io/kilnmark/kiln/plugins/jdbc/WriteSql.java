@@ -183,6 +183,14 @@ abstract class WriteSql {
     /** How many characters of a column's length a value takes. */
     abstract int length(String s);
 
+    /**
+     * Binds a value of {@code kind} (null allowed) as parameter {@code i}; {@code bulk} when the
+     * batch goes through the driver's bulk copy into a table this step created.
+     */
+    void bind(PreparedStatement ps, int i, Kind kind, Object v, boolean bulk) throws SQLException {
+        bind(ps, i, kind, v);
+    }
+
     /** Binds a value of {@code kind} (null allowed) as parameter {@code i}. */
     void bind(PreparedStatement ps, int i, Kind kind, Object v) throws SQLException {
         if (v == null) {
@@ -646,20 +654,27 @@ abstract class WriteSql {
         @Override
         Sql blockers(TableName t) {
             String r = regName(t);
-            return new Sql("SELECT N'it is a view, not a table' WHERE OBJECT_ID(?, 'U') IS NULL AND OBJECT_ID(?, 'V') "
-                + "IS NOT NULL "
-                + "UNION SELECT N'the schema-bound ' + CASE o.type WHEN 'V' THEN N'view ' WHEN 'FN' THEN N'function ' "
-                + "WHEN 'IF' THEN N'function ' WHEN 'TF' THEN N'function ' ELSE LOWER(o.type_desc) + N' ' END "
-                + "+ OBJECT_SCHEMA_NAME(d.referencing_id) + N'.' + OBJECT_NAME(d.referencing_id) + N' depends on it' "
+            // Catalogue names (sysname) carry the server's collation and type_desc another one; every
+            // branch is cast to the database's collation, or the UNION cannot compare them.
+            return new Sql("SELECT N'it is a view, not a table' COLLATE DATABASE_DEFAULT WHERE OBJECT_ID(?, 'U') "
+                + "IS NULL AND OBJECT_ID(?, 'V') IS NOT NULL "
+                + "UNION SELECT (N'the schema-bound ' + CASE o.type WHEN 'V' THEN N'view ' WHEN 'FN' THEN N'function ' "
+                + "WHEN 'IF' THEN N'function ' WHEN 'TF' THEN N'function ' "
+                + "ELSE LOWER(o.type_desc) COLLATE DATABASE_DEFAULT + N' ' END "
+                + "+ OBJECT_SCHEMA_NAME(d.referencing_id) COLLATE DATABASE_DEFAULT + N'.' "
+                + "+ OBJECT_NAME(d.referencing_id) COLLATE DATABASE_DEFAULT + N' depends on it') COLLATE DATABASE_DEFAULT "
                 + "FROM sys.sql_expression_dependencies d JOIN sys.objects o ON o.object_id = d.referencing_id "
                 + "WHERE d.referenced_id = OBJECT_ID(?) AND d.is_schema_bound_reference = 1 "
-                + "UNION SELECT N'the foreign key ' + f.name + N' on ' + OBJECT_SCHEMA_NAME(f.parent_object_id) "
-                + "+ N'.' + OBJECT_NAME(f.parent_object_id) + N' depends on it' FROM sys.foreign_keys f "
+                + "UNION SELECT (N'the foreign key ' + f.name COLLATE DATABASE_DEFAULT + N' on ' "
+                + "+ OBJECT_SCHEMA_NAME(f.parent_object_id) COLLATE DATABASE_DEFAULT + N'.' "
+                + "+ OBJECT_NAME(f.parent_object_id) COLLATE DATABASE_DEFAULT + N' depends on it') COLLATE DATABASE_DEFAULT "
+                + "FROM sys.foreign_keys f "
                 + "WHERE f.referenced_object_id = OBJECT_ID(?) AND f.parent_object_id <> f.referenced_object_id "
-                + "UNION SELECT N'it is published for replication' FROM sys.tables x WHERE x.object_id = OBJECT_ID(?) "
+                + "UNION SELECT N'it is published for replication' COLLATE DATABASE_DEFAULT FROM sys.tables x "
+                + "WHERE x.object_id = OBJECT_ID(?) "
                 + "AND (x.is_published = 1 OR x.is_merge_published = 1 OR x.is_schema_published = 1) "
-                + "UNION SELECT N'change data capture tracks it' FROM sys.tables x WHERE x.object_id = OBJECT_ID(?) "
-                + "AND x.is_tracked_by_cdc = 1",
+                + "UNION SELECT N'change data capture tracks it' COLLATE DATABASE_DEFAULT FROM sys.tables x "
+                + "WHERE x.object_id = OBJECT_ID(?) AND x.is_tracked_by_cdc = 1",
                 List.of(r, r, r, r, r, r));
         }
 
@@ -678,7 +693,7 @@ abstract class WriteSql {
         Sql owner(TableName t) {
             return new Sql("SELECT p.name, 0 FROM sys.objects o JOIN sys.database_principals p "
                 + "ON p.principal_id = o.principal_id WHERE o.object_id = OBJECT_ID(?) AND o.principal_id IS NOT NULL "
-                + "AND p.name <> USER_NAME()", List.of(regName(t)));
+                + "AND p.name COLLATE DATABASE_DEFAULT <> USER_NAME() COLLATE DATABASE_DEFAULT", List.of(regName(t)));
         }
 
         @Override
@@ -815,5 +830,41 @@ abstract class WriteSql {
         void bindText(PreparedStatement ps, int i, String s) throws SQLException {
             ps.setString(i, s);
         }
+
+        /**
+         * The driver's bulk copy for batches turns date and time parameters into text with
+         * {@code toString()}, which drops zero seconds ({@code 2024-01-01T00:00}) and which SQL
+         * Server then refuses. For bulk copy into the step's own columns (date, time(6),
+         * datetime2(6), datetimeoffset(6)) they are sent as full ISO 8601 text instead, which those
+         * types read whatever the session's language or date format.
+         */
+        @Override
+        void bind(PreparedStatement ps, int i, Kind kind, Object v, boolean bulk) throws SQLException {
+            String text = bulk && v != null ? isoText(kind, v) : null;
+            if (text != null) {
+                ps.setString(i, text);
+            } else {
+                bind(ps, i, kind, v);
+            }
+        }
+
+        /** Full ISO 8601 for a date, time or timestamp ({@code 2024-01-01T00:00:00.000000}); null for other kinds. */
+        static String isoText(Kind kind, Object v) {
+            return switch (kind) {
+                case DATE -> ISO_DATE.format((LocalDate) v);
+                case TIME -> ISO_TIME.format((LocalTime) v);
+                case TIMESTAMP -> ISO_DATE.format((LocalDateTime) v) + "T" + ISO_TIME.format((LocalDateTime) v);
+                case TIMESTAMP_TZ -> {
+                    LocalDateTime t = LocalDateTime.ofInstant((Instant) v, ZoneOffset.UTC);
+                    yield ISO_DATE.format(t) + "T" + ISO_TIME.format(t) + "+00:00";
+                }
+                default -> null;
+            };
+        }
+
+        private static final java.time.format.DateTimeFormatter ISO_DATE =
+            java.time.format.DateTimeFormatter.ofPattern("uuuu-MM-dd", java.util.Locale.ROOT);
+        private static final java.time.format.DateTimeFormatter ISO_TIME =
+            java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS", java.util.Locale.ROOT);
     }
 }

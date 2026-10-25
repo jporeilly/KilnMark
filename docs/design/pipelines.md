@@ -411,8 +411,9 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
     date, time, timestamp timestamp/datetime2(6), timestamp_tz timestamptz/datetimeoffset(6).
     Anything else (lists, structs) is written as text.
   - `append` needs the table. Before any row is sent, every input column is matched by name and
-    must fit its column (wider integers, decimals with room, dates into timestamps, anything but
-    bytes into text); required columns the input lacks, and two input names (differing in case)
+    must fit its column (wider integers, dates into timestamps, anything but bytes into text;
+    integers and decimals into any decimal column, a narrower one checked value by value and a
+    value that would be rounded or overflow refused with its row, never rounded); required columns the input lacks, and two input names (differing in case)
     meeting one column, are named too, all in one message. On PostgreSQL a table whose row-level
     security applies to the login is loaded with `INSERT` instead of `COPY` (which RLS refuses).
   - `replace` always creates and fills `kiln_new_<random>`, then in the same transaction renames

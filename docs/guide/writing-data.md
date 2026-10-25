@@ -56,10 +56,14 @@ indexes yourself afterwards if you need them. To give text columns a length, set
 `text_length: 200` (at most 4000 on SQL Server).
 
 **append** checks the table before sending any row and lists every problem at once, for
-example "the input's column amount is decimal(12,4) but the table's column amount is
-numeric(10,2), which cannot hold every value". A column fits when the table can hold every value
-it might have: a wider whole number, a decimal with enough digits before and after the point, a
-date into a timestamp, or anything except bytes into text. Text is never turned into numbers or
+example "the input's column flag is boolean but the table's column flag is integer". A column fits
+when the table can hold every value it might have: a wider whole number, a date into a timestamp,
+or anything except bytes into text. Whole numbers and decimals go into any decimal column, even a
+narrower one (`decimal(12,4)` into `numeric(10,2)`): each value is then checked as it is written,
+and a value that would have to be rounded, or has too many digits before the point, stops the
+write with its row named ("Row 2: the value 1.2345 in column amount has more decimal places than
+the column's 2"). Nothing is rounded, and nothing is written, since the write is one
+transaction. PostgreSQL and SQL Server behave the same. Text is never turned into numbers or
 dates: add a `select` step to cast columns first. Columns the input lacks are left to their
 defaults, so a column that is `NOT NULL` without a default must be in the input. Two input
 columns whose names differ only in capitals cannot both go to one column. Text longer than a

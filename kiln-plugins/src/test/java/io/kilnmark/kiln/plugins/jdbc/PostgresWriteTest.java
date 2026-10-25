@@ -165,10 +165,24 @@ class PostgresWriteTest {
         assertFalse(bad.succeeded());
         assertTrue(bad.error().contains("Cannot append to billing.ledger: its columns do not match the input: the "
             + "input's column id is text but the table's column id is int8"), bad.error());
-        assertTrue(bad.error().contains("amount is decimal(12,4) but the table's column amount is numeric(10,2)"),
-            bad.error());
         assertTrue(bad.error().contains("the table has no column colour"), bad.error());
         assertEquals(List.of(List.of(2L)), query("SELECT count(*) FROM billing.ledger"), "nothing was written");
+
+        // a narrower decimal is checked value by value: values that fit go in, others stop the write unrounded
+        Schema wide = new Schema(List.of(field("id", Rows.INT64), field("amount", Rows.decimal(14, 4))));
+        RunResult fits = write(source, options("billing.ledger", "append", List.of(), Map.of()), wide,
+            Rows.list(new Object[] {3L, new BigDecimal("12345678.5000")}), 10, -1, Rows.events());
+        assertTrue(fits.succeeded(), fits.error());
+        RunResult rounds = write(source, options("billing.ledger", "append", List.of(), Map.of()), wide,
+            Rows.list(new Object[] {4L, new BigDecimal("1.0000")}, new Object[] {5L, new BigDecimal("1.2345")}), 10,
+            -1, Rows.events());
+        assertTrue(rounds.error().contains("Row 2: the value 1.2345 in column amount has more decimal places than the "
+            + "column's 2"), rounds.error());
+        RunResult large = write(source, options("billing.ledger", "append", List.of(), Map.of()), wide,
+            Rows.list(new Object[] {6L, new BigDecimal("123456789.0000")}), 10, -1, Rows.events());
+        assertTrue(large.error().contains("Row 1: the value 123456789.0000 in column amount has more digits before the "
+            + "point than the column's 8"), large.error());
+        assertEquals(List.of(List.of(3L)), query("SELECT count(*) FROM billing.ledger"), "only the row that fits");
 
         RunResult missing = write(source, options("billing.no_such", "append", List.of(), Map.of()), schema,
             Rows.list(new Object[] {1, null, null, null}), 10, -1, Rows.events());
@@ -420,7 +434,9 @@ class PostgresWriteTest {
         RunResult r = write(source, options("billing.chunked", "create", List.of(), Map.of("commit_every", 1000)),
             SPEND, spend(0, 10_000, "c"), 500, 6, Rows.events());
         assertFalse(r.succeeded());
-        assertEquals(List.of(List.of(3000L)), query("SELECT count(*) FROM billing.chunked"));
+        // what was committed stays, in whole commits; batches still queued when the source failed are dropped
+        long kept = (Long) query("SELECT count(*) FROM billing.chunked").get(0).get(0);
+        assertTrue(kept >= 1000 && kept <= 3000 && kept % 1000 == 0, "kept " + kept);
 
         RunResult own = write(source, options("billing.chunked2", "create", List.of(), Map.of("commit_every", 2)),
             SPEND, Rows.list(new Object[] {1L, BigDecimal.ONE, "a"}, new Object[] {2L, BigDecimal.ONE, "b"},

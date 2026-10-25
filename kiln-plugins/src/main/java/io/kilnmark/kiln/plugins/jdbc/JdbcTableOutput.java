@@ -558,6 +558,16 @@ final class JdbcTableOutput implements Step {
             }
             return null;
         }
+        if (v instanceof java.math.BigDecimal d && binding.precision() > 0) {
+            java.math.BigDecimal exact = WritePlan.fitDecimal(d, binding.precision(), binding.scale());
+            if (exact == null) {
+                throw new StepException("Row " + rowNumber + ": the value " + d.toPlainString() + " in column "
+                    + binding.target() + " " + WritePlan.decimalProblem(d, binding.precision(), binding.scale())
+                    + " (decimal(" + binding.precision() + "," + binding.scale() + ")), and is never rounded. Round "
+                    + "or filter it with a compute step, or ask for the column to be widened");
+            }
+            return exact;
+        }
         if (v instanceof String s) {
             String problem = sql.textProblem(s);
             if (problem != null) {
@@ -663,7 +673,7 @@ final class JdbcTableOutput implements Step {
             for (int row = 0; row < n; row++) {
                 for (int c = 0; c < bindings.size(); c++) {
                     Binding binding = bindings.get(c);
-                    sql.bind(ps, c + 1, binding.kind(), value(binding, batch, row, before + row + 1));
+                    sql.bind(ps, c + 1, binding.kind(), value(binding, batch, row, before + row + 1), bulk);
                 }
                 ps.addBatch();
                 if (++pending >= batchSize) {

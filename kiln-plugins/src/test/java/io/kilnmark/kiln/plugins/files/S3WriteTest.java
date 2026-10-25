@@ -49,13 +49,16 @@ class S3WriteTest {
             .withEnv("ROOT_SECRET_KEY", S3IngestTest.SECRET)
             .withCommand("posix", "/data")
             .withExposedPorts(7070)
+            // the gateway serves the folders under /data as buckets and needs /data to exist: as in
+            // S3IngestTest, a file copied in before start makes the folder and the bucket
+            .withCopyToContainer(org.testcontainers.images.builder.Transferable.of("kept for the bucket"),
+                "/data/" + BUCKET + "/keep.txt")
             .waitingFor(Wait.forListeningPort());
         gateway.start();
         String endpoint = "http://" + gateway.getHost() + ":" + gateway.getMappedPort(7070);
         client = S3Client.builder().region(Region.US_EAST_1).forcePathStyle(true).endpointOverride(URI.create(endpoint))
             .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(S3IngestTest.KEY_ID,
                 S3IngestTest.SECRET))).build();
-        client.createBucket(b -> b.bucket(BUCKET));
         source = source(Map.of("prefix", "pipelines/"));
     }
 

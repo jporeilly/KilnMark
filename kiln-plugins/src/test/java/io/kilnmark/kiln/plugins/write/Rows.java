@@ -198,7 +198,9 @@ public final class Rows {
             case BigIntVector x -> x.setSafe(row, ((Number) value).longValue());
             case Float4Vector x -> x.setSafe(row, ((Number) value).floatValue());
             case Float8Vector x -> x.setSafe(row, ((Number) value).doubleValue());
-            case DecimalVector x -> x.setSafe(row, (BigDecimal) value);
+            // the vector's scale, as a reader would give it (1 becomes 1.00); never rounded
+            case DecimalVector x -> x.setSafe(row, ((BigDecimal) value).setScale(x.getScale(),
+                java.math.RoundingMode.UNNECESSARY));
             case VarCharVector x -> x.setSafe(row, ((String) value).getBytes(StandardCharsets.UTF_8));
             case VarBinaryVector x -> x.setSafe(row, (byte[]) value);
             case DateDayVector x -> x.setSafe(row, (int) ((LocalDate) value).toEpochDay());
