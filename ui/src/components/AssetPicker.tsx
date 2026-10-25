@@ -90,7 +90,11 @@ export function AssetPicker({
           setHits(source ? r.hits.filter((h) => h.source === source) : r.hits);
           setSearchError(null);
         })
-        .catch((e: Error) => live && setSearchError(e.message))
+        .catch((e: Error) => {
+          if (!live) return;
+          setSearchError(e.message);
+          setHits(null);
+        })
         .finally(() => live && setSearching(false));
     }, 300);
     return () => {

@@ -551,6 +551,12 @@ public final class JdbcGraphStore implements GraphStore {
      */
     @Override
     public List<SearchHit> search(String query, int limit) {
+        return search(query, limit, List.of());
+    }
+
+    /** The source filter is applied before the limit, so a small source is not crowded out by others. */
+    @Override
+    public List<SearchHit> search(String query, int limit, List<String> sources) {
         String q = query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
         if (q.isEmpty()) {
             return List.of();
@@ -592,6 +598,7 @@ public final class JdbcGraphStore implements GraphStore {
                 JOIN kilnmark.data_source s ON s.id = a.source_id
                 LEFT JOIN fields f ON f.asset_urn = a.urn
                 LEFT JOIN texts t ON t.asset_urn = a.urn
+                WHERE cardinality(?::text[]) = 0 OR s.name = ANY (?::text[])
                 GROUP BY a.urn, s.name, h.asset_score, t.asset_urn, t.score
                 HAVING greatest(h.asset_score, coalesce(max(f.score) * 0.9, 0), coalesce(t.score, 0)) >= 0.4
                 ORDER BY score DESC, h.asset_score DESC, a.container, a.name
@@ -599,7 +606,10 @@ public final class JdbcGraphStore implements GraphStore {
                 ps.setString(1, q);
                 ps.setString(2, q);
                 ps.setString(3, "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%");
-                ps.setInt(4, limit);
+                java.sql.Array names = c.createArrayOf("text", sources.toArray());
+                ps.setArray(4, names);
+                ps.setArray(5, names);
+                ps.setInt(6, limit);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         long rows = rs.getLong(7);

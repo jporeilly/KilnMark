@@ -169,17 +169,18 @@ function num(text: string): number | string | null {
 
 /**
  * A range limit: a number for numeric columns when it reads back the same, else the text. A date
- * and time from the input is sent in UTC (with Z), so it means the same instant in every source.
+ * and time from the input is sent in UTC with seconds (browsers leave out :00), so it means the
+ * same instant in every source: 2024-01-31T09:30 is sent as 2024-01-31T09:30:00Z.
  */
 function bound(text: string, kind: string | null): number | string | null {
   const t = text.trim();
   if (!t) return null;
   if (kind && NUMERIC.has(kind) && String(Number(t)) === t) return Number(t);
-  if ((kind == null || TIMES.has(kind)) && LOCAL_TIME.test(t)) return `${t}Z`;
+  if ((kind == null || TIMES.has(kind)) && LOCAL_TIME.test(t)) return t.length === 16 ? `${t}:00Z` : `${t}Z`;
   return t;
 }
 
-/** A saved limit as the date-and-time input shows it: the Z that bound adds is taken off. */
+/** A saved limit as the date-and-time input shows it: the Z that bound adds is taken off (seconds stay). */
 const unbound = (v: unknown) => {
   const t = text(v);
   return /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)Z$/.exec(t)?.[1] ?? t;

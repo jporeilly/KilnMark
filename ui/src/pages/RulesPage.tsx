@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   allows,
+  ApiError,
   formatNumber,
   formatShare,
   formatTime,
@@ -25,18 +26,19 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
   const [editing, setEditing] = useState<QualityRule | null>(null);
   const admin = allows(role, "admin");
 
-  const load = useCallback(() => {
+  // keepError: refresh the list but leave the message about what just went wrong showing.
+  const load = useCallback((keepError?: boolean) => {
     qualityApi
       .rules(filter.trim() ? { urn: filter.trim() } : {})
       .then((r) => {
         setRules(r);
-        setError(null);
+        if (keepError !== true) setError(null);
       })
       .catch((e: Error) => setError(e.message));
   }, [filter]);
 
   useEffect(() => setFilter(urn), [urn]);
-  useEffect(load, [load]);
+  useEffect(() => load(), [load]);
 
   // Editing moves focus to the form once it shows the rule; leaving it returns focus to the rule's Edit button.
   const focusForm = useRef(false);
@@ -64,6 +66,8 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
       load();
     } catch (e) {
       setError((e as Error).message);
+      // Someone else changed the rule: show it as it is now.
+      if (e instanceof ApiError && e.status === 409) load(true);
     }
   };
 

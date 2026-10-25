@@ -397,11 +397,18 @@ public class QualityResource {
         return Response.created(URI.create("/api/v1/quality/rules/" + saved.id())).entity(saved).build();
     }
 
+    /** A rule with its latest result; the ETag is its updatedAt, to send back in If-Match when changing it. */
     @GET
     @Path("rules/{id}")
-    public RuleView rule(@PathParam("id") long id) {
+    public org.jboss.resteasy.reactive.RestResponse<RuleView> rule(@PathParam("id") long id) {
         Rule r = findRule(id);
-        return view(r, store.latestResults(r.assetUrn()).get(id));
+        RuleView v = view(r, store.latestResults(r.assetUrn()).get(id));
+        org.jboss.resteasy.reactive.RestResponse.ResponseBuilder<RuleView> out =
+            org.jboss.resteasy.reactive.RestResponse.ResponseBuilder.ok(v);
+        if (r.updatedAt() != null) {
+            out.header("ETag", "\"" + r.updatedAt() + "\"");
+        }
+        return out.build();
     }
 
     /**
@@ -454,8 +461,8 @@ public class QualityResource {
     }
 
     private static jakarta.ws.rs.WebApplicationException changedSince() {
-        return ApiError.of(Response.Status.CONFLICT, "Someone else changed this rule after you opened it. Reload "
-            + "the page to see their change, then make yours again.");
+        return ApiError.of(Response.Status.CONFLICT, "Someone else changed this rule after you opened it. Load it "
+            + "as it is now, then make your change again.");
     }
 
     @DELETE
