@@ -141,14 +141,28 @@ export type Connector = {
   capabilities: Capability[];
   formats: string[];
   icon: string;
+  /** Letters for a product's tile (never a vendor logo); null for generic kinds, whose tile shows the icon. */
+  monogram: string | null;
   docsAnchor: string;
   /** Whether host, port and database fields can build its address. */
   addressFields: boolean;
   driverBundled: boolean;
 };
-export type PlannedConnector = { name: string; category: string; family: string; capabilities: Capability[]; wave: string };
+/** id is the kind it is expected to have, so a branding manifest can name it. */
+export type PlannedConnector = {
+  id: string;
+  name: string;
+  category: string;
+  family: string;
+  capabilities: Capability[];
+  wave: string;
+  monogram: string | null;
+};
 export type ConnectorCategory = { id: string; label: string; connectors: Connector[]; planned: PlannedConnector[] };
 export type ConnectorCatalogue = { showPlanned: boolean; categories: ConnectorCategory[] };
+/** The operator's branding folder (docs/guide/branding.md); images are links shown with <img>. */
+export type ConnectorLook = { image: string | null; color: string | null; label: string | null };
+export type Branding = { productName: string | null; logo: string | null; connectors: Record<string, ConnectorLook> };
 export type AssetItem = { path: string; name: string; kind: string; readable: boolean };
 export type AssetList = { container: string; total: number; offset: number; items: AssetItem[] };
 export type PreviewColumn = { name: string; kind: string | null; sourceType: string | null };
@@ -385,6 +399,15 @@ export const api = {
   info: () => call<{ product: string; version: string; roles: string[] }>("/api/v1/info"),
   sources: () => call<Source[]>("/api/v1/sources"),
   connectors: () => call<Connector[]>("/api/v1/connectors"),
+  /**
+   * Public: the sign-in page shows the organisation's name and logo. Sent without the token, so a
+   * stale one in this tab can never sign anyone out from here.
+   */
+  branding: async (): Promise<Branding> => {
+    const r = await fetch("/api/v1/branding", { headers: { Accept: "application/json" } });
+    if (!r.ok) throw new ApiError(`The server answered ${r.status}`, r.status);
+    return (await r.json()) as Branding;
+  },
   addSource: (s: NewSource) => call<Source>("/api/v1/sources", { method: "POST", body: JSON.stringify(s) }),
   importSources: (text: string, format: "csv" | "json", o: ImportOptions) =>
     call<ImportReport>(
@@ -503,6 +526,39 @@ export type AiProfileInput = {
 export type AiFeature = { id: string; label: string; help: string; purpose: AiPurpose; profile: string | null };
 export type AiSettings = { hostedModels: "allowed" | "forbidden"; lockedByServer: boolean; hostedAllowed: boolean };
 export type AiTestResult = { ok: boolean; message: string; latencyMs: number; dimensions: number | null };
+/** How a model uses the GPU, as its server reports it (Ollama does; others say nothing). */
+export type AiGpuState = "gpu" | "split" | "cpu" | "not-loaded" | "unknown";
+export type AiFoundModel = {
+  name: string;
+  sizeBytes: number | null;
+  family: string | null;
+  parameterSize: string | null;
+  quantisation: string | null;
+  embedding: boolean;
+  loaded: boolean | null;
+  gpu: AiGpuState;
+  gpuPercent: number | null;
+  vramBytes: number | null;
+  gpuText: string;
+  contextSize: number | null;
+  /** Embedding models: numbers per text, when the server says. */
+  dimensions: number | null;
+};
+/** One address checked by discovery: found, not found (with the reason), refused, or not on the local list. */
+export type AiFoundServer = {
+  label: string;
+  server: string | null;
+  address: string;
+  baseUrl: string;
+  outcome: "found" | "not-found" | "refused" | "not-local";
+  problem: string | null;
+  guidance: string | null;
+  suggestLocal: boolean;
+  detail: string | null;
+  gpuReported: boolean;
+  models: AiFoundModel[];
+};
+export type AiDiscovery = { servers: AiFoundServer[]; inContainer: boolean; locked: boolean };
 export type AiStatus = {
   searchByMeaning: boolean;
   ask: boolean;
@@ -563,6 +619,9 @@ export const aiApi = {
     call<AiProfile>(`/api/v1/ai/profiles/${enc(name)}`, { method: "PUT", body: JSON.stringify(p) }),
   deleteProfile: (name: string) => call<null>(`/api/v1/ai/profiles/${enc(name)}`, { method: "DELETE" }),
   testProfile: (name: string) => call<AiTestResult>(`/api/v1/ai/profiles/${enc(name)}/test`, { method: "POST" }),
+  /** Looks for model servers: the usual places, or only `baseUrl` (with or without /v1). */
+  discover: (baseUrl?: string) =>
+    call<AiDiscovery>("/api/v1/ai/discover", { method: "POST", body: JSON.stringify(baseUrl ? { baseUrl } : {}) }),
   features: () => call<AiFeature[]>("/api/v1/ai/features"),
   route: (feature: string, profile: string | null) =>
     call<AiFeature>(`/api/v1/ai/features/${enc(feature)}`, { method: "PUT", body: JSON.stringify({ profile }) }),

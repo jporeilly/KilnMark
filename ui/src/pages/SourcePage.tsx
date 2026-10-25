@@ -14,6 +14,7 @@ import {
 import { Status } from "../components/Status";
 import { ScanAction } from "../components/ScanAction";
 import { ConnectionPanel } from "../components/ConnectionPanel";
+import { SourceTile } from "../components/ConnectorTile";
 import { splitList } from "../components/ContainerPicker";
 import { useTitle } from "../components/useTitle";
 import { go, href } from "../router";
@@ -113,7 +114,10 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
           <li aria-current="page">{source.displayName}</li>
         </ol>
       </nav>
-      <h1 tabIndex={-1}>{source.displayName}</h1>
+      <h1 tabIndex={-1} className="with-tile">
+        <SourceTile kind={source.kind} size="lg" />
+        <span>{source.displayName}</span>
+      </h1>
       <p className="lead">
         {connector?.displayName ?? source.kind} · Source ID <span className="mono">{source.name}</span>
       </p>

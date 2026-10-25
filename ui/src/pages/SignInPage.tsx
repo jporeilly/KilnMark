@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type Me } from "../api";
 import { useTitle } from "../components/useTitle";
+import { Brand, useProductName } from "../components/Brand";
 
 /** Why the sign-in page is showing: after signing out (info) or after the token stopped working (error). */
 export type SignInNotice = { kind: "info" | "error"; text: string };
@@ -8,6 +9,7 @@ export type SignInNotice = { kind: "info" | "error"; text: string };
 /** Asks for an API token, checks it with the server, and keeps it for this browser tab. */
 export function SignInPage({ notice, onSignedIn }: { notice: SignInNotice | null; onSignedIn: (me: Me) => void }) {
   useTitle("Sign in");
+  const product = useProductName();
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -43,8 +45,11 @@ export function SignInPage({ notice, onSignedIn }: { notice: SignInNotice | null
 
   return (
     <div className="signin">
+      <p className="brand signin-brand" aria-hidden="true">
+        <Brand />
+      </p>
       <h1 tabIndex={-1} ref={heading}>
-        Sign in to Kilnmark
+        Sign in to {product}
       </h1>
       {notice && (
         <p role={notice.kind === "error" ? "alert" : "status"} className={notice.kind === "error" ? "error" : "notice"}>

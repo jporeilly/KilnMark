@@ -20,6 +20,11 @@ public final class PostgresConnector extends JdbcConnector {
     }
 
     @Override
+    public String monogram() {
+        return "Pg";
+    }
+
+    @Override
     protected String urlPrefix() {
         return "jdbc:postgresql://";
     }

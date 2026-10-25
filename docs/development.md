@@ -468,6 +468,81 @@ A server outside Compose (`./gradlew :server:quarkusDev`) reaches them at
 embedding model for **Search by meaning** (every source is embedded in the background, and again
 after each scan) and the chat model for **Ask in plain English**.
 
+**Find local models.** **AI models > Find local models** looks for Ollama and LM Studio on
+`localhost` and, when Kilnmark runs in a container, on the machine running it and for the bundled
+Compose services, and lists their models with size and GPU use; **Use this model** fills in the
+add-model form (with context size and embedding size where the server says). **Check this address**, next to **Base URL**, asks one address (with or without `/v1`) and
+then offers its models to choose from. When something is not found, it says why in plain words
+(connection refused, timed out, unknown host name, an HTTP status, not a model server) and what to
+do. Behind it is `POST /api/v1/ai/discover` (admins only, optional body `{"baseUrl": "..."}`): it
+asks only the model servers' own paths (`/api/version`, `/api/tags`, `/api/ps`, `/v1/models`,
+`/health`, `/props`, `/api/v0/models`, and `POST /api/show` for Ollama's embedding models) with a
+1-second connect and 3-second read timeout and a 12-second limit overall, follows no redirects,
+uses no proxy and returns a summary, never the servers' answers. Addresses pass the same rules as
+model profiles first: while hosted models are forbidden, hosts not in `kilnmark.ai.local-hosts`
+are listed as not checked, without being looked up or called; names are looked up within 2
+seconds; metadata and link-local addresses are refused. One server reached under two names is
+listed once.
+
+**Ollama or LM Studio on the same PC.** Inside a container, `localhost` is the container itself,
+not your PC, so `http://localhost:11434/v1` does not reach an Ollama running on the PC. Use the
+name the container engine gives the PC:
+
+| Kilnmark runs in | Ollama | LM Studio |
+| --- | --- | --- |
+| Podman (including Podman Desktop on Windows) | `http://host.containers.internal:11434/v1` | `http://host.containers.internal:1234/v1` |
+| Docker, or Kilnmark's `compose.yaml` with either engine | `http://host.docker.internal:11434/v1` | `http://host.docker.internal:1234/v1` |
+| No container (`quarkusDev`, `java -jar`) | `http://localhost:11434/v1` | `http://localhost:1234/v1` |
+
+Ollama and LM Studio listen only on their own machine by default, which a container counts as
+another machine. On Windows, set `OLLAMA_HOST=0.0.0.0:11434` as a user environment variable and
+restart Ollama (quit it from the tray first). On Linux, run `sudo systemctl edit ollama`, add
+
+```
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:11434"
+```
+
+then `sudo systemctl daemon-reload && sudo systemctl restart ollama`. In LM Studio, start the
+server and turn on **Serve on Local Network**.
+
+Either way the model server now accepts connections from other computers too, so close the port
+to everything else. Ollama has no API key: anyone who can reach port 11434 can use your GPU, and
+also pull new models onto your disk and delete the ones you have. On Windows, the WSL virtual
+adapter (`vEthernet (WSL)`, which Podman machine uses) is usually on the **Public** profile, so a
+rule for "private networks only" does not cover it and a rule for public networks opens the port
+everywhere. Instead add an inbound rule for TCP 11434 (or 1234) limited by remote address to the
+WSL subnet, for example in an administrator PowerShell
+`New-NetFirewallRule -DisplayName "Ollama from WSL" -Direction Inbound -Protocol TCP -LocalPort 11434 -RemoteAddress 172.16.0.0/12 -Action Allow`
+(check the subnet with `ipconfig`; WSL usually uses part of 172.16.0.0/12), and make sure no
+broader rule allows the port.
+
+**Rootless Podman 5.3 and later** (pasta networking) gives `host.containers.internal` the address
+`169.254.1.2`. That is a link-local address, which model profiles may not use, so Kilnmark makes
+one exception: while Kilnmark runs in a container, `169.254.1.2` is accepted when it is reached
+through `host.containers.internal` or `host.docker.internal`, and refused typed as an address or
+behind any other name. Other link-local and metadata addresses (169.254.169.254 and the like)
+stay refused whatever the name. IPv4 addresses written in unusual forms (leading zeros,
+hexadecimal, a single number, fewer than four parts) and host names ending in a dot are refused
+with a plain error when a profile is saved or an address is checked, rather than read one way by
+Kilnmark and another by the name service.
+
+When Kilnmark runs in a container (the image sets `KILNMARK_IN_CONTAINER=true`; otherwise
+`/.dockerenv` or `/run/.containerenv`), both names are on the default `kilnmark.ai.local-hosts`,
+so models there count as local under the operator lock too, but only while the name leads to this
+machine or a private network (loopback, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7, or
+169.254.1.2), checked before every call (the answer is kept for 5 seconds): the name service
+decides where these names go. Outside a container they are not on the default list.
+`KILNMARK_IN_CONTAINER` takes `1`, `yes`, `true` or `on` (and `0`, `no`, `false`, `off`).
+
+**GPU use comes from the model server.** Kilnmark does not run `nvidia-smi` or look for a GPU: in
+a container it usually cannot see one, and it does not need to, because the model server is what
+uses it. Ollama reports, for each loaded model, how much is in GPU memory, which the page shows as
+"On GPU", "Split · 60% on GPU" or "CPU only" (a model that has not run yet shows "Not loaded
+yet"). This works the same for NVIDIA, AMD and Apple GPUs and for a GPU server elsewhere on your
+network. llama-server, vLLM and LM Studio do not report GPU use, so the page says so; their
+models are still listed.
+
 **Other models.** Ollama: `http://HOST:11434/v1`. vLLM: `http://HOST:8000/v1`. Hosted providers
 need an API key: OpenAI (no base URL needed), Azure OpenAI
 (`https://RESOURCE.openai.azure.com/openai/v1`, model = the deployment name), Anthropic and Google
@@ -487,14 +562,14 @@ runs the server can go further with `KILNMARK_AI_HOSTED_MODELS=forbidden`: admin
 and a model then counts as local only if its address is an IP address on one of the networks in
 `KILNMARK_AI_LOCAL_HOSTS`, or a host name listed there (names are not resolved for this), checked
 when it is saved and before every call; ticking **local** is not enough. With the Compose AI
-services, list their names: `KILNMARK_AI_LOCAL_HOSTS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,ai,ai-cuda,ai-embed`.
+services, list their names: `KILNMARK_AI_LOCAL_HOSTS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,localhost,host.containers.internal,host.docker.internal,ai,ai-cuda,ai-embed`.
 Kilnmark cannot tell when a local server forwards requests to a hosted one. A refused call never
 reaches the model; usage shows it.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `kilnmark.ai.hosted-models` | `allowed` | `forbidden` locks out every model that is not local; admins cannot undo it. Other values stop the server |
-| `kilnmark.ai.local-hosts` | loopback and private networks, and `localhost` | While hosted models are forbidden, where a local model must be: networks (CIDR), IP addresses and host names, comma-separated. Empty means the default. An entry that does not parse stops the server |
+| `kilnmark.ai.local-hosts` | loopback and private networks and `localhost`; in a container also `host.containers.internal` and `host.docker.internal` | While hosted models are forbidden, where a local model must be: networks (CIDR), IP addresses and host names, comma-separated. Names are matched as written, not resolved, except that the two container host names count only while they resolve to loopback, private addresses or 169.254.1.2. Setting it replaces the whole default; empty means the default. An entry that does not parse stops the server |
 | `kilnmark.ai.allow-metadata-addresses` | `false` | Allow link-local and cloud metadata addresses as model addresses |
 | `kilnmark.ai.usage-retention` | `90d` | Usage records older than this are deleted; at least `1d` |
 | `kilnmark.ai.max-retries` | `2` | Retries after timeouts, rate limits and server errors, with backoff (scans; a search waits about 10 seconds at most) |
@@ -546,14 +621,39 @@ they open it, on a reader of its own, at most six documents a minute each, and n
 Copies of S3 objects are made in a folder under `java.io.tmpdir` that only the server's user can
 read, and deleted after (a workbook's copy is kept until the scan ends, so a scan fetches it once).
 
+## Branding and appearance
+
+Each signed-in user chooses their own theme (System, Light, Dark, High contrast), accent colour and
+density under **Settings**, **Appearance**; it is kept in their browser. The operator can set the
+product name and logo, and logos or colours for connectors, with a branding folder. The manifest
+format, the image rules and an example are in the [branding guide](guide/branding.md).
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `kilnmark.branding.dir` | `/etc/kilnmark/branding` | Folder with `manifest.json` and the images it names; missing means Kilnmark's own look. Mount it read-only (see the commented line in `compose.yaml`) |
+| `kilnmark.branding.max-file-kb` | `256` | Larger images are ignored |
+
+`GET /api/v1/branding` and `GET /api/v1/branding/files/{name}` need no token: the sign-in page
+shows the logo, and `<img>` cannot send one. Only files the manifest lists are served (SVG, PNG,
+WebP, content checked against the extension, no symbolic links or sub-folders), with `nosniff` and
+a Content-Security-Policy that stops SVGs running scripts; the UI shows them only with `<img>`.
+Refusing SVGs with scripts or event attributes is defence in depth on top of that. Problems are logged as warnings
+starting `Branding folder`.
+
 ## Web UI
 
 ```
 cd ui
 npm install
-npm run dev        # http://localhost:5173, calls the server on :8780
-npm run build      # writes dist/ui
+npm run dev              # http://localhost:5173, calls the server on :8780
+npm run build            # type check, contrast check, then writes dist/ui
+npm run check:contrast   # the colour tokens against WCAG AA, for every theme and accent
 ```
+
+Every colour is a token in `ui/src/tokens.css`, defined once per theme; style sheets use only the
+tokens. Icons are Tabler Icons, named in one place (`ui/src/components/icons.tsx`); products get
+letter tiles (`ConnectorTile.tsx`), never vendor logos. The build also writes the UI packages'
+licences to `dist/ui/third-party-notices.txt` ([third-party UI software](legal/third-party-ui.md)).
 
 ## Rules
 

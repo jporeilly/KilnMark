@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, typ
 import { formatNumber } from "../api";
 import { go, href } from "../router";
 import { browseApi, type BrowseAsset, type BrowseContainer, type BrowseSource } from "./browseApi";
-import { containerIcon, formatLabel, Icon, sourceIcon, sourceWords } from "./icons";
+import { containerIcon, formatLabel, Icon, sourceWords } from "./icons";
+import { SourceTile } from "../components/ConnectorTile";
 
 const PAGE = 100;
 
@@ -389,7 +390,7 @@ export function BrowseTree({
                     go(href.browse(s.name));
                   }}
                 >
-                  <Icon name={sourceIcon(s.kind)} />
+                  <SourceTile kind={s.kind} size="sm" />
                   <span className="tree-label" id={`${domId(sid)}-label`}>
                     {s.label}
                   </span>
@@ -449,7 +450,7 @@ export function BrowseTree({
                                         go(href.asset(a.urn));
                                       }}
                                     >
-                                      <Icon name={a.format} />
+                                      <Icon name={a.format} file={a.name} />
                                       <span className="tree-label mono" id={`${domId(aid)}-label`}>
                                         {a.name}
                                       </span>

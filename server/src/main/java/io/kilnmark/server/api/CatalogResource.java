@@ -120,7 +120,7 @@ public class CatalogResource {
             .values()).filter(c.capabilities()::contains).map(x -> x.name().toLowerCase(java.util.Locale.ROOT)).toList();
         return new Views.Connector(c.kind(), c.displayName(), java.util.List.copyOf(settings), kind.setting(),
             kind.label(), kind.counted(), c.category(), c.family(), capabilities, c.formats(), c.icon(),
-            c.docsAnchor(), !c.addressSettings("db.example.com", null, "db").isEmpty(), c.driver() == null);
+            c.monogram(), c.docsAnchor(), !c.addressSettings("db.example.com", null, "db").isEmpty(), c.driver() == null);
     }
 
     /**

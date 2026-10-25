@@ -57,6 +57,23 @@ public interface KilnmarkConfig {
     /** Limits for reading documents (PDF, Office, mail, ...); see docs/adr/0017-documents.md. */
     Documents documents();
 
+    /** The operator's branding folder: the organisation's name and logo, and connector logos. */
+    Branding branding();
+
+    /** See docs/guide/branding.md. */
+    interface Branding {
+        /**
+         * Folder holding {@code manifest.json} and the images it names, read-only for the server.
+         * Missing or empty: Kilnmark's own look, with monogram tiles for connectors.
+         */
+        @WithDefault("/etc/kilnmark/branding")
+        String dir();
+
+        /** The largest image served, in KB; larger ones are ignored. */
+        @WithDefault("256")
+        int maxFileKb();
+    }
+
     /** Documents are untrusted input: how much of each one is read, and for how long. */
     interface Documents {
         /** Documents larger than this are recorded but not read, in MB. */
@@ -270,7 +287,10 @@ public interface KilnmarkConfig {
         /**
          * While hosted models are forbidden, the hosts and networks (CIDR) a model marked local
          * must be on. Unset: loopback and private networks (10.0.0.0/8, 172.16.0.0/12,
-         * 192.168.0.0/16, fc00::/7). Set it to narrow them, for example {@code 10.20.0.0/16,ai}.
+         * 192.168.0.0/16, fc00::/7) and {@code localhost}; in a container also
+         * {@code host.containers.internal} and {@code host.docker.internal}, which count only while
+         * they resolve to loopback, private addresses or Podman's 169.254.1.2. Set it to narrow
+         * them, for example {@code 10.20.0.0/16,ai}.
          */
         Optional<List<String>> localHosts();
 
