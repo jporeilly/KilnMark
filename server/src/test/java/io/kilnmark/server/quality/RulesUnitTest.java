@@ -185,6 +185,19 @@ class RulesUnitTest {
     }
 
     @Test
+    void freshnessSaysHowManyValuesItCouldNotRead() {
+        List<String> cols = List.of("id", "email", "amount", "placed_at");
+        List<List<String>> rows = List.of(List.of("1", "a", "1", "2026-10-09T23:00:00Z"), List.of("2", "b", "1", "soon"),
+            List.of("3", "c", "1", "31/02/2026"), java.util.Arrays.asList("4", "d", "1", null));
+        RowChecks.Evaluation fresh = check(rule("freshness", "placed_at", "{'maxAgeHours':2}", null, null, null), cols,
+            rows);
+        assertEquals(0, fresh.failing());
+        assertTrue(fresh.message().contains("2 values could not be read as a date or time"), fresh.message());
+        assertFalse(check(rule("freshness", "placed_at", "{'maxAgeHours':2}", null, null, null), cols,
+            List.of(rows.get(0))).message().contains("could not be read"));
+    }
+
+    @Test
     void suggestedRegexesMergeShapesThatDifferOnlyInLength() {
         List<ProfileFacts.Counted> postcodes = List.of(new ProfileFacts.Counted("AA9 9AA", 400),
             new ProfileFacts.Counted("A9 9AA", 300), new ProfileFacts.Counted("AA99 9AA", 200),
