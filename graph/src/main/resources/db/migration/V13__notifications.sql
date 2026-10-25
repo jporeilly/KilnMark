@@ -35,7 +35,7 @@ CREATE TABLE notify_subscriber (
     id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     token_id      bigint UNIQUE REFERENCES api_token (id) ON DELETE CASCADE,
     team_name     text CHECK (team_name IS NULL OR length(team_name) BETWEEN 1 AND 100),
-    email         text NOT NULL CHECK (length(email) BETWEEN 3 AND 254),
+    email         text CHECK (email IS NULL OR length(email) BETWEEN 3 AND 254),   -- a person may give none
     enabled       boolean NOT NULL DEFAULT true,
     kinds         text[] NOT NULL DEFAULT '{}',
     min_severity  text NOT NULL DEFAULT 'high' CHECK (min_severity IN ('info', 'low', 'medium', 'high')),
@@ -46,7 +46,8 @@ CREATE TABLE notify_subscriber (
     created_by    text NOT NULL,
     created_at    timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now(),
-    CHECK ((token_id IS NULL) = (team_name IS NOT NULL))
+    CHECK ((token_id IS NULL) = (team_name IS NOT NULL)),
+    CHECK (token_id IS NOT NULL OR email IS NOT NULL)
 );
 
 -- Something that happened, written once and shared by every email about it. detail holds words,

@@ -234,7 +234,7 @@ public class NotificationStore {
 
     /** Binds email, enabled, kinds, min_severity, mode, digest_hour, sources and in_app_kinds from {@code at}. */
     private static void bind(Connection c, PreparedStatement ps, int at, Subscription s) throws SQLException {
-        ps.setString(at, s.email() == null ? "" : s.email());
+        ps.setString(at, s.email());
         ps.setBoolean(at + 1, s.enabled());
         ps.setArray(at + 2, c.createArrayOf("text", s.kinds().stream().map(NotificationKind::id).sorted().toArray()));
         ps.setString(at + 3, s.minSeverity().id());
