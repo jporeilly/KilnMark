@@ -267,4 +267,14 @@ class ServerStepFactoriesTest {
         }));
         assertTrue(e.getMessage().contains("does not take the setting 'host'"), e.getMessage());
     }
+
+    @Test
+    void writerSettingsAreCheckedAgainstTheirKind() {
+        List<String> p = write.check(Map.of("source", "warehouse", "table", "a.b", "fail", "lots"));
+        assertEquals(1, p.size(), p.toString());
+        assertTrue(p.get(0).startsWith("fail: true or false, not 'lots'"), p.get(0));
+        List<String> m = write.check(Map.of("source", "warehouse", "path", "a.csv", "delimiter", Map.of("x", 1)));
+        assertTrue(m.get(0).startsWith("delimiter: a single value"), m.toString());
+        assertEquals(List.of(), write.check(Map.of("source", "warehouse", "table", "a.b", "fail", true)));
+    }
 }

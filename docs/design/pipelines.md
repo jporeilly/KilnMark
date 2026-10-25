@@ -501,7 +501,8 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
 - **Run** queues a job; a worker compiles the YAML of that exact version into a graph, resolves
   sources (credentials, allowed hosts, write permission) and runs it.
 - Each run records its pipeline version, status, timings, and per step: how it ended, rows in and
-  out per port, peak memory, duration and the error if it failed. A run can be cancelled.
+  out per port, peak memory and the error if it failed (a duration per step once the engine times
+  steps; the run's own timings until then). A run can be cancelled.
 - **Quality on the way:** every `write` profiles what it writes in the same pass and registers or
   updates the target as an asset, with lineage from the assets that were read (OpenLineage
   events), so the next pipeline downstream starts from metadata. Rows per port show where rows
@@ -578,10 +579,15 @@ asset's previous profile.
 - **Writers own profiling.** A write profiles what it writes in the same pass and reports it as
   "What a write reports" (above) says; the server passes the source's own profiling settings
   (whether values are kept, sampling: `QualityService.profileSettings`, as for a scan of the written
-  asset) to the writer in `WriteOptions.profiling` and never profiles a write itself. After a successful run each write's target is registered from the writer's events,
+  asset, with `sketch-fields` for the key-like columns arriving at the write) to the writer in
+  `WriteOptions.profiling` and never profiles a write itself. After a successful run each write's
+  target is registered from the writer's events (`ROW_COUNT` only with `written=true`, so a
+  pipeline reading what it writes never stores its reader's count),
   as the scan registers what it finds (asset, fields from `SCHEMA`, row count, profiles, quality
   profile version and evaluation), under a finished run of kind `pipeline` on the written source;
-  source run lists show scans only. For `append` and `upsert` the server records the run's row count
+  source run lists show scans only. The asset's kind, container, name and key are the connector's
+  own view of what was written (`Connector.asset`), as a scan's are, and a later scan updates them.
+  For `append` and `upsert` the server records the run's row count
   and lineage, and keeps the table's fields, row count and profile from its last scan (a table the
   catalogue does not know yet is registered with its columns, and the run notes to scan it). A
   writer that could not profile says so on its `ROW_COUNT` (`profiled=false`, `profile_error`), never
@@ -592,7 +598,9 @@ asset's previous profile.
   scan records. Cataloguing takes the written source's scan lock (waiting as above); if a scan
   holds it, the run notes that the source should be scanned. A scan does not mark removed an asset
   a pipeline wrote after the scan began. Lineage links each written asset to every read asset
-  upstream of it (`GET /api/v1/lineage?urn=`).
+  upstream of it (`GET /api/v1/lineage?urn=`), each under the URN its read step resolved and the
+  catalogue records (a file's `#` and `%` escaped, as its asset path), which is also what the run's
+  read list and its assets for Sights hold.
 - **Each step's outcome** is recorded as the engine reports it (finished, ended early, stopped by the
   engine, failed), so a writer the engine stopped never looks like a clean finish.
 - **Write permission stays with admins.** Only admins change `allow_writing`, and while it is on

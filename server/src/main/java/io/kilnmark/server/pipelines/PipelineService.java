@@ -591,10 +591,9 @@ public class PipelineService {
             }
             // Each write's asset under the URN its connector worked out (for a prefixed S3 source, the prefix
             // and the path), as a scan of the source records it.
-            List<PipelineExecution.WriteTarget> writes = PipelineExecution.writes(c).stream()
-                .map(w -> w.withUrn(context.writtenUrn(w.source(), w.target(), w.urn()))).toList();
+            List<PipelineExecution.WriteTarget> writes = PipelineExecution.writes(c, context);
             java.util.Set<String> assets = new java.util.TreeSet<>(context.reads());
-            assets.addAll(PipelineExecution.reads(c).values());
+            assets.addAll(PipelineExecution.reads(c, context).values());
             writes.forEach(w -> assets.add(w.urn()));
             store.setAssets(id, json.writeValueAsString(assets));
             // One run writes a table or file at a time: wait a while for another run writing it. The
@@ -618,7 +617,7 @@ public class PipelineService {
             store.saveStepRuns(id, o.steps());
             ObjectNode result = json.createObjectNode();
             ArrayNode read = result.putArray("read");
-            PipelineExecution.reads(c).values().stream().distinct().forEach(read::add);
+            PipelineExecution.reads(c, context).values().stream().distinct().forEach(read::add);
             ArrayNode notes = json.createArrayNode();
             ArrayNode written = result.putArray("written");
             long total = 0;
@@ -844,19 +843,25 @@ public class PipelineService {
                 + w.source() + " to refresh them", null);
             return;
         }
+        // The connector's own view of what was written gives its kind, container (for a file in an S3
+        // source: bucket, prefix and folder), name and key, as a scan records them.
+        AssetInfo info = describe(w, context);
         List<Records.Field> fields = schema == null ? List.of() : schemaFields(schema);
-        AssetInfo info = fields.isEmpty() ? describe(w, context) : null;
         if (fields.isEmpty()) {
             fields = info != null && !info.fields().isEmpty() ? fields(info) : fieldsFromColumns(w, c, mine);
         }
+        String path = assetPath(w);
         boolean files = sources.connector(s.kind()).map(k -> "files".equals(k.category())).orElse(false);
         String kind = info != null ? info.kind() : files ? "file" : "table";
-        String container = info != null && info.container() != null ? info.container() : container(w.target());
-        String name = info != null && info.name() != null ? info.name() : lastPart(w.target());
+        String container = info != null && info.container() != null ? info.container() : container(path);
+        String name = info != null && info.name() != null ? info.name() : lastPart(path);
         String description = info != null && info.description() != null ? info.description()
             : known == null ? null : known.description();
-        graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), kind, container, name, description,
-            info != null ? info.primaryKey() : known != null ? known.primaryKey() : w.key()), fields);
+        // A table created or replaced, or a file, has no key but the one its connector now reports; an
+        // upsert into a table not catalogued yet has its key.
+        List<String> key = info != null ? info.primaryKey() : appended ? w.key() : List.of();
+        graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), kind, container, name, description, key),
+            fields);
         if (appended) {
             note(notes, w.step() + ": the " + w.mode() + " added rows to " + w.target() + ", which Kilnmark had not "
                 + "catalogued; scan " + w.source() + " for its row count and profile", null);
@@ -908,10 +913,19 @@ public class PipelineService {
     private AssetInfo describe(PipelineExecution.WriteTarget w, RunContext context) {
         try {
             PipelineSources.Resolved r = sources.resolve(w.step(), w.source(), context);
-            return r.connector().asset(r.config(), w.target());
+            return r.connector().asset(r.config(), assetPath(w));
         } catch (StepException | io.kilnmark.kiln.connect.ConnectorException | RuntimeException e) {
             LOG.debugf("Could not describe %s after writing it: %s", w.urn(), context.scrub(e.getMessage()));
             return null;
+        }
+    }
+
+    /** The written asset's path as the catalogue records it: its URN's path (prefix and escapes included). */
+    private static String assetPath(PipelineExecution.WriteTarget w) {
+        try {
+            return io.kilnmark.graph.Urn.parse(w.urn()).path();
+        } catch (IllegalArgumentException e) {
+            return w.target();
         }
     }
 

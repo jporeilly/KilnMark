@@ -73,6 +73,7 @@ final class KilnPipelineCompiler implements PipelineCompilerPort {
         if (!create || !c.ok()) {
             return new Compilation(name, description, problems, notes, steps, edges, configs, null);
         }
+        RunContext.current().ifPresent(run -> noteWriteColumns(c, run));
         try {
             PipelineGraph graph = c.graph();
             return new Compilation(name, description, problems, notes, steps, edges, configs, graph);
@@ -89,5 +90,27 @@ final class KilnPipelineCompiler implements PipelineCompilerPort {
 
     private static List<String> ports(List<String> declared) {
         return declared.stream().map(d -> d.endsWith("*") ? d.substring(0, d.length() - 1) : d).toList();
+    }
+
+    /**
+     * Tells the run which columns arrive at each write (as the check worked them out), for the
+     * written asset's profile settings (which columns keep a distinct-value sketch).
+     */
+    private static void noteWriteColumns(Compiled c, RunContext run) {
+        for (PipelineDefinition.StepDefinition s : c.definition().steps()) {
+            if (!WriteStepFactory.TYPE.equals(s.type())) {
+                continue;
+            }
+            for (Edge e : c.edges()) {
+                if (!e.to().step().equals(s.id())) {
+                    continue;
+                }
+                Schema schema = c.schemas().getOrDefault(e.from().step(), Map.of()).get(e.from().port());
+                if (schema != null) {
+                    run.writeColumns(PipelineSources.text(s.config(), "source"), WriteStepFactory.target(s.config()),
+                        schema.getFields().stream().map(org.apache.arrow.vector.types.pojo.Field::getName).toList());
+                }
+            }
+        }
     }
 }

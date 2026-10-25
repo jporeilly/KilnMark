@@ -130,12 +130,48 @@ public final class ReadStepFactory implements StepFactory {
 
     @Override
     public Schema outputSchema(String port, Map<String, Schema> inputs, Map<String, Object> config) {
-        String urn = urn(config);
-        if (urn == null) {
+        String source = PipelineSources.text(config, "source");
+        String asset = PipelineSources.text(config, "asset");
+        if (source == null || asset == null) {
             return null;
         }
-        return sources.asset(urn).filter(a -> !a.fields().isEmpty()).map(a -> ArrowKinds.schema(a.fields()))
-            .orElse(null);
+        // The asset as written, or as the catalogue writes a file's path (# and % escaped), so a path
+        // picked from the catalogue and one typed as on disk both find its columns.
+        for (String path : List.of(asset, escapedFilePath(asset))) {
+            String urn = PipelineSources.urn(source, path);
+            Optional<Schema> s = urn == null ? Optional.empty() : sources.asset(urn).filter(a -> !a.fields().isEmpty())
+                .map(a -> ArrowKinds.schema(a.fields()));
+            if (s.isPresent()) {
+                return s.get();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The asset at {@code path}: as written, or, when that finds nothing and the path is a file's as
+     * the catalogue records it ({@code %23} for {@code #}, {@code %25} for {@code %}), the file it names,
+     * so a path picked from the catalogue reads the same file as one typed as on disk.
+     */
+    private static AssetInfo describe(PipelineSources.Resolved r, String path) throws ConnectorException {
+        try {
+            return r.connector().asset(r.config(), path);
+        } catch (ConnectorException e) {
+            String onDisk = io.kilnmark.kiln.plugins.files.FileSourceConnector.unescape(path);
+            if (onDisk.equals(path)) {
+                throw e;
+            }
+            try {
+                return r.connector().asset(r.config(), onDisk);
+            } catch (ConnectorException again) {
+                throw e;
+            }
+        }
+    }
+
+    /** A file path as the catalogue records it: {@code %} and {@code #} escaped, as file sources do. */
+    static String escapedFilePath(String path) {
+        return io.kilnmark.kiln.plugins.files.FileSourceConnector.urnPath(path);
     }
 
     @Override
@@ -151,7 +187,7 @@ public final class ReadStepFactory implements StepFactory {
         PipelineSources.Resolved r = sources.resolve(step, source, run);
         AssetInfo asset;
         try {
-            asset = r.connector().asset(r.config(), path);
+            asset = describe(r, path);
         } catch (ConnectorException e) {
             throw new StepException("Cannot read " + path + " from " + source + ": " + run.scrub(e.getMessage()));
         } catch (RuntimeException e) {
@@ -162,7 +198,7 @@ public final class ReadStepFactory implements StepFactory {
             throw new StepException(path + " in " + source + " cannot be read as rows");
         }
         String urn = PipelineSources.urn(source, asset.path());
-        run.read(urn);
+        run.read(source, path, urn);
         StepSpec spec;
         try {
             spec = r.connector().reader(r.config(), asset, new Connector.ReadOptions(urn, Math.max(0, rowLimit(config)),

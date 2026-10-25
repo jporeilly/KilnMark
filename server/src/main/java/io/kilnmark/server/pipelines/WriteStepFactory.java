@@ -185,6 +185,37 @@ public final class WriteStepFactory implements StepFactory {
         if (refused != null) {
             problems.add(refused + ": " + (connector == null ? "this" : connector.displayName())
                 + " sources' writer does not take this setting");
+        } else if (connector != null) {
+            problems.addAll(kindProblems(config, connector));
+        }
+        return problems;
+    }
+
+    /**
+     * Writer settings whose value is not of the kind the source's writer declares (a number, true or
+     * false, one of its choices, a single value), so {@code commit_every: lots} is caught when the
+     * pipeline is checked rather than when it runs.
+     */
+    static List<String> kindProblems(Map<String, Object> config, Connector connector) {
+        List<String> problems = new ArrayList<>();
+        for (SettingSpec spec : connector.writeOptions()) {
+            Object v = config.get(spec.key());
+            if (v == null || BASE_KEYS.contains(spec.key())) {
+                continue;
+            }
+            String wrong = switch (spec.kind()) {
+                case NUMBER -> v instanceof Number ? null : "a number";
+                case BOOLEAN -> v instanceof Boolean ? null : "true or false";
+                case CHOICE -> v instanceof String c && spec.choices().contains(c.strip()) ? null
+                    : "one of " + String.join(", ", spec.choices());
+                case TEXT, EXPRESSION, COLUMN, SOURCE, ASSET -> v instanceof String || v instanceof Number
+                    || v instanceof Boolean ? null : "a single value, not a list or mapping";
+                default -> null;
+            };
+            if (wrong != null) {
+                problems.add(spec.key() + ": " + wrong + ", not " + (v instanceof String ? "'" + v + "'"
+                    : v instanceof Map<?, ?> ? "a mapping" : v instanceof List<?> ? "a list" : String.valueOf(v)));
+            }
         }
         return problems;
     }
@@ -319,7 +350,8 @@ public final class WriteStepFactory implements StepFactory {
         if (urn == null) {
             urn = PipelineSources.urn(source, target);
         }
-        Map<String, String> profiling = sources.profileSettings(r.source(), r.connector(), target, key, urn);
+        Map<String, String> profiling = sources.profileSettings(r.source(), r.connector(), target, key, urn,
+            run.writeColumns(source, target));
         Connector.WriteOptions write = new Connector.WriteOptions(target, mode, key, format, options, urn, profiling);
         run.wrote(source, target, write.assetUrn());
         try {

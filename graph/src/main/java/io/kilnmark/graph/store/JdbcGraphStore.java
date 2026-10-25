@@ -452,8 +452,9 @@ public final class JdbcGraphStore implements GraphStore {
                 INSERT INTO kilnmark.asset (urn, source_id, kind, container, name, description, primary_key,
                                             last_seen_run, removed_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
-                ON CONFLICT (urn) DO UPDATE SET kind = EXCLUDED.kind, description = EXCLUDED.description,
-                    primary_key = EXCLUDED.primary_key, last_seen_run = EXCLUDED.last_seen_run, removed_at = NULL""")) {
+                ON CONFLICT (urn) DO UPDATE SET kind = EXCLUDED.kind, container = EXCLUDED.container,
+                    name = EXCLUDED.name, description = EXCLUDED.description, primary_key = EXCLUDED.primary_key,
+                    last_seen_run = EXCLUDED.last_seen_run, removed_at = NULL""")) {
                 ps.setString(1, a.urn());
                 ps.setLong(2, sourceId);
                 ps.setString(3, a.kind());

@@ -24,6 +24,9 @@ public final class RunContext {
     private final Set<String> secrets = Collections.synchronizedSet(new LinkedHashSet<>());
     private final Set<String> reads = Collections.synchronizedSet(new LinkedHashSet<>());
     private final java.util.Map<String, String> writes = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, String> readUrns = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, java.util.List<String>> writeColumns =
+        new java.util.concurrent.ConcurrentHashMap<>();
 
     public RunContext(String pipeline, long runId, String requestedBy, AccessRole role) {
         this.pipeline = pipeline;
@@ -66,10 +69,35 @@ public final class RunContext {
     }
 
     /** Notes an asset a read step reads, under the URN the catalogue records it by. */
-    void read(String urn) {
+    void read(String source, String asset, String urn) {
         if (urn != null) {
             reads.add(urn);
+            if (source != null && asset != null) {
+                readUrns.put(source + "\u0000" + asset, urn);
+            }
         }
+    }
+
+    /**
+     * The URN the read of {@code asset} (as the YAML names it) in {@code source} is catalogued
+     * under, as its connector resolved it (a file's {@code #} and {@code %} escaped, say), or
+     * {@code fallback}.
+     */
+    public String readUrn(String source, String asset, String fallback) {
+        return source == null || asset == null ? fallback : readUrns.getOrDefault(source + "\u0000" + asset, fallback);
+    }
+
+    /** Notes the columns arriving at the write of {@code target} in {@code source}, as the pipeline check worked them out. */
+    void writeColumns(String source, String target, java.util.List<String> columns) {
+        if (source != null && target != null && columns != null) {
+            writeColumns.put(source + "\u0000" + target, java.util.List.copyOf(columns));
+        }
+    }
+
+    /** The columns arriving at a write, or empty when they were not known before the run. */
+    public java.util.List<String> writeColumns(String source, String target) {
+        return source == null || target == null ? java.util.List.of()
+            : writeColumns.getOrDefault(source + "\u0000" + target, java.util.List.of());
     }
 
     /** The assets the run's read steps read, as catalogued. */

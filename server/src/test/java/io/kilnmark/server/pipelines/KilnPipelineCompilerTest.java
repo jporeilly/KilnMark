@@ -151,11 +151,13 @@ class KilnPipelineCompilerTest {
 
     @Test
     void compilingInsideARunBuildsTheGraph() {
-        PipelineCompilerPort.Compilation c = new RunContext("customer-copy", 1, "jo", AccessRole.STEWARD)
-            .run(() -> compiler.compile(GOOD, factories));
+        RunContext run = new RunContext("customer-copy", 1, "jo", AccessRole.STEWARD);
+        PipelineCompilerPort.Compilation c = run.run(() -> compiler.compile(GOOD, factories));
         assertEquals(List.of(), c.problems());
         assertNotNull(c.graph());
         assertEquals(List.of("customers", "emails", "out"), c.graph().order());
+        assertEquals(List.of("customer_id", "email"), run.writeColumns("warehouse", "crm.customer_emails"),
+            "the run knows the columns arriving at each write, for the profile's key-like sketches");
     }
 
     @Test

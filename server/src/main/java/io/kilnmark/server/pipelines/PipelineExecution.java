@@ -26,10 +26,10 @@ import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.graph.PortRef;
 
 /**
- * One run of a compiled pipeline, without the database: finds what it reads and writes, adds a
- * profile step in front of each write that replaces its target (so what is written is profiled in
- * the same pass), runs the graph with the {@link GraphRunner}, stops it when asked, and turns the
- * engine's result into each step's record. {@link PipelineService} stores what it returns.
+ * One run of a compiled pipeline, without the database: finds what it reads and writes, runs the
+ * graph with the {@link GraphRunner} (writers profile what they write themselves), stops it when
+ * asked, keeps what the writers report about the assets they wrote, and turns the engine's result
+ * into each step's record. {@link PipelineService} stores what it returns.
  */
 final class PipelineExecution {
 
@@ -77,12 +77,25 @@ final class PipelineExecution {
         this.json = json;
     }
 
-    /** The assets the pipeline reads, by step id, from each read step's settings. */
+    /** The assets the pipeline reads, by step id, as the settings name them (before a run resolves them). */
     static Map<String, String> reads(PipelineCompilerPort.Compilation c) {
+        return reads(c, null);
+    }
+
+    /**
+     * The assets the pipeline reads, by step id: under the URN each read step resolved and the
+     * catalogue records (a file's {@code #} and {@code %} escaped, say) when {@code run} made the
+     * steps, else as the settings name them.
+     */
+    static Map<String, String> reads(PipelineCompilerPort.Compilation c, RunContext run) {
         Map<String, String> out = new LinkedHashMap<>();
         for (PipelineCompilerPort.StepOutline s : c.steps()) {
             if (ReadStepFactory.TYPE.equals(s.type())) {
-                String urn = ReadStepFactory.urn(c.configs().getOrDefault(s.id(), Map.of()));
+                Map<String, Object> config = c.configs().getOrDefault(s.id(), Map.of());
+                String urn = ReadStepFactory.urn(config);
+                if (run != null) {
+                    urn = run.readUrn(PipelineSources.text(config, "source"), PipelineSources.text(config, "asset"), urn);
+                }
                 if (urn != null) {
                     out.put(s.id(), urn);
                 }
@@ -91,9 +104,17 @@ final class PipelineExecution {
         return out;
     }
 
-    /** Every write step, with the read assets upstream of it. */
+    /** Every write step, with the read assets upstream of it (as the settings name them). */
     static List<WriteTarget> writes(PipelineCompilerPort.Compilation c) {
-        Map<String, String> reads = reads(c);
+        return writes(c, null);
+    }
+
+    /**
+     * Every write step, with the read assets upstream of it; with {@code run}, each under the URN
+     * its connector resolved, read and written alike.
+     */
+    static List<WriteTarget> writes(PipelineCompilerPort.Compilation c, RunContext run) {
+        Map<String, String> reads = reads(c, run);
         List<WriteTarget> out = new ArrayList<>();
         for (PipelineCompilerPort.StepOutline s : c.steps()) {
             if (!WriteStepFactory.TYPE.equals(s.type())) {
@@ -115,7 +136,17 @@ final class PipelineExecution {
             out.add(new WriteTarget(s.id(), PipelineSources.text(config, "source"), WriteStepFactory.target(config),
                 mode, urn, key == null ? List.of() : key, List.copyOf(inputs)));
         }
-        return out;
+        return run == null ? out
+            : out.stream().map(w -> w.withUrn(run.writtenUrn(w.source(), w.target(), w.urn()))).toList();
+    }
+
+    /**
+     * Whether an event comes from a writer: a writer's row count says {@code written=true}; a
+     * reader's row count for the same asset does not. Writers alone report schemas and profiles in
+     * a pipeline.
+     */
+    static boolean writerEvent(MetadataEvent e) {
+        return e.kind() != MetadataEvent.Kind.ROW_COUNT || "true".equals(e.attributes().get("written"));
     }
 
     /** Every step whose rows reach {@code step}. */
@@ -166,8 +197,10 @@ final class PipelineExecution {
         RunResult result = null;
         boolean interrupted = false;
         try {
+            // Only what the writers report (written=true): a pipeline reading the asset it writes also
+            // hears its reader's row count, which is not the written asset's.
             result = runner.run(graph, e -> {
-                if (written.contains(e.assetUrn()) && events.size() < MAX_EVENTS) {
+                if (written.contains(e.assetUrn()) && writerEvent(e) && events.size() < MAX_EVENTS) {
                     events.add(e);
                 }
             });

@@ -1162,5 +1162,6 @@ export const pipelinesApi = {
   runs: (name: string) => call<PipelineRun[]>(`${pipe(name)}/runs?limit=50`),
   runDetail: (id: number) => call<PipelineRunDetail>(`/api/v1/pipeline-runs/${id}`),
   cancel: (id: number) => call<PipelineRun>(`/api/v1/pipeline-runs/${id}/cancel`, { method: "POST" }),
+  /** The step catalogue with settings schemas: not used yet; the canvas (step 2) builds its palette from it. */
   steps: () => call<StepType[]>("/api/v1/steps"),
 };

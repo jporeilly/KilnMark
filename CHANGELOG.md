@@ -83,15 +83,13 @@ details.
   or replaced table, or a file, is profiled in the same pass and reported for the written asset
   (`SCHEMA`, `ROW_COUNT`, `PROFILE`, `SAMPLE`) once the write has succeeded; an append or upsert
   reports only the rows it wrote (`ROW_COUNT`, `complete=false`, `appended=true`), so the table's
-  own profile is kept.
-- **The write contract for the pipeline service:** `Connector.writeOptions()` declares each
-  writer's settings (`SettingSpec`s; the profiling switch is now `profile_output`),
-  `Connector.writtenAssetPath()` gives the catalogue path of what is written (below an S3 source's
-  prefix), and `WriteOptions.profiling` carries the source's own profiling settings, which the
-  writer's profile follows. A profiling failure never fails a write: `ROW_COUNT` then says
-  `profiled=false` with `profile_error`. Replace also refuses tables a publication names (and, on
-  SQL Server, replicated or change-tracked tables) and tables whose row-type array or owned
-  sequences others use; append no longer needs `SELECT`.
+  own profile is kept. Each writer declares its settings (`Connector.writeOptions()`, as
+  `SettingSpec`s; `profile_output: false` skips the profile), `Connector.writtenAssetPath()` gives
+  the catalogue path of what is written (below an S3 source's prefix), and `WriteOptions.profiling`
+  carries the source's own profiling settings, which the writer's profile follows. A profiling
+  failure never fails a write: `ROW_COUNT` then says `profiled=false` with `profile_error`. Replace
+  also refuses tables a publication names (and, on SQL Server, replicated or change-tracked tables)
+  and tables whose row-type array or owned sequences others use.
 - **Parquet is written by Kilnmark's own encoder** (`ParquetEncoder`, from the Apache Parquet
   specification): Hardwood only reads, and parquet-java needs Hadoop (ADR 0015, amended). No new
   dependency: snappy-java and zstd-jni, already shipped for reading, are now compiled against,
@@ -110,14 +108,13 @@ details.
   file; the `write` step writes to a source only when an admin has set its new **Allow writing**
   setting (`allow_writing`, off by default; stewards cannot change it). Allowed hosts and the
   role of whoever asked are checked again when a run starts, and no message carries a source's
-  secret. A write step takes exactly the settings its source's writer declares
-  (`Connector.writeOptions()`), written beside its other settings, and nothing that says where or
-  as whom to connect. The source's profiling settings reach the writer in `WriteOptions.profiling`,
-  so what is written is sampled as a scan would sample it, and a writer that could not profile
-  leaves a note on the run. What a write wrote is registered in the catalogue from what the writer
-  reports (its columns, row count and profile, measured as it wrote; for append and upsert only the
-  rows written), under the URN a scan would give it (`Connector.writtenAssetPath`), with its
-  lineage from the assets read, under a run of kind `pipeline` that source run lists do not show
+  secret. A write step takes exactly the settings its source's writer declares, written beside its
+  other settings and checked when the pipeline is, and nothing that says where or as whom to
+  connect; the source's profiling settings (with key-like columns' sketches for relationship
+  discovery) go with it, and a writer that could not profile leaves a note on the run. What a write
+  wrote is registered in the catalogue from what the writer reports, with the container, name and
+  key its connector gives, under the URN a scan would give it, with its lineage from the assets read
+  (under the URNs the catalogue records them by), under a run of kind `pipeline` that source run lists do not show
   (migration V12; `kilnmark.pipelines.max-yaml-kb`, `memory-limit-mb`, `row-set-capacity` and
   `wait-for-target`). While a source allows writing, only admins change where it points, and a
   write's settings cannot redirect it. A pipeline runs once at a time, and one run at a time writes

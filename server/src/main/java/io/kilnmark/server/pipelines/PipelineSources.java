@@ -43,6 +43,16 @@ public interface PipelineSources {
         return Map.of();
     }
 
+    /**
+     * As {@link #profileSettings(Records.Source, Connector, String, java.util.List, String)}, knowing
+     * the columns arriving at the write, so key-like columns keep the distinct-value sketches that
+     * relationship discovery reads, as a scan's profile does.
+     */
+    default Map<String, String> profileSettings(Records.Source source, Connector connector, String target,
+                                                java.util.List<String> key, String urn, java.util.List<String> columns) {
+        return profileSettings(source, connector, target, key, urn);
+    }
+
     /** A saved source ready to connect to: checked against the allowed hosts, its secret noted for scrubbing. */
     record Resolved(Records.Source source, Connector connector, SourceConfig config) {
     }

@@ -1,7 +1,8 @@
 -- Pipelines (docs/design/pipelines.md, ADR 0022): pipelines saved as YAML with every version, their
 -- runs and each step's part in a run, and the asset lineage their writes record.
 -- Applies after V10 and V11 (0.0.3) or without them: it refers only to tables from V1 (install_info),
--- V2 and V4.
+-- V2 and V4, and relies on V9's job_kind_check that takes any job kind (pipeline runs are jobs of
+-- kind 'pipeline').
 
 SET search_path = kilnmark, public;
 
@@ -47,7 +48,9 @@ CREATE TABLE pipeline_run (
     finished_at       timestamptz,
     cancel_requested  boolean NOT NULL DEFAULT false,
     error             text,
-    result            jsonb,                    -- {rowsWritten, written: [{step, urn, rows}], read: [urn], notes}
+    -- {rowsWritten, written: [{step, urn, source, target, mode, rows, registered}], read: [urn],
+    --  notes: [{text, detail}]} (a note's detail is an engine's message, held back like errors)
+    result            jsonb,
     assets            jsonb NOT NULL DEFAULT '[]', -- every asset URN the run reads or writes, as catalogued
     FOREIGN KEY (pipeline, version) REFERENCES pipeline_version (pipeline, n) ON DELETE CASCADE
 );
@@ -64,7 +67,7 @@ CREATE TABLE pipeline_step_run (
     rows_out     bigint,
     port_rows    jsonb NOT NULL DEFAULT '{}', -- {"in": {"main": 10}, "out": {"out": 8, "rejected": 2}}
     peak_memory  bigint,                      -- bytes
-    duration_ms  bigint,
+    duration_ms  bigint,                      -- null until the engine times each step
     error        text,
     -- how the step ended: finished, ended_early (a limit, or no one read on), stopped (by the engine,
     -- after another step failed or the run was stopped) or failed (where the run failed)

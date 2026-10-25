@@ -82,9 +82,26 @@ public class PipelineCompilers {
             @Override
             public java.util.Map<String, String> profileSettings(Records.Source source, Connector connector,
                                                                  String target, List<String> key, String urn) {
+                return profileSettings(source, connector, target, key, urn, List.of());
+            }
+
+            @Override
+            public java.util.Map<String, String> profileSettings(Records.Source source, Connector connector,
+                                                                 String target, List<String> key, String urn,
+                                                                 List<String> columns) {
+                List<io.kilnmark.kiln.connect.AssetInfo.FieldInfo> fields = new java.util.ArrayList<>();
+                for (int i = 0; i < columns.size(); i++) {
+                    fields.add(new io.kilnmark.kiln.connect.AssetInfo.FieldInfo(columns.get(i), i + 1, null, null, true,
+                        null));
+                }
                 io.kilnmark.kiln.connect.AssetInfo asset = new io.kilnmark.kiln.connect.AssetInfo(target, "table", null,
-                    target, null, List.of(), key, false, true, java.util.Map.of());
-                return quality.profileSettings(source, connector, asset, urn);
+                    target, null, fields, key, false, true, java.util.Map.of());
+                java.util.Map<String, String> s = new java.util.LinkedHashMap<>(quality.profileSettings(source,
+                    connector, asset, urn));
+                // Key-like columns keep their distinct-value sketch, by the scan's own rule.
+                s.put(io.kilnmark.kiln.plugins.profile.ProfileStep.SKETCH_FIELDS,
+                    io.kilnmark.server.relations.RelationshipService.sketchFields(asset));
+                return s;
             }
         };
     }

@@ -172,4 +172,14 @@ class PipelineExecutionTest {
         assertEquals("failed", o.status());
         assertTrue(o.error().contains("worker running this pipeline was stopped"), o.error());
     }
+
+    @Test
+    void onlyWhatTheWriterReportsIsKept() {
+        assertTrue(PipelineExecution.writerEvent(new MetadataEvent(WRITE_URN, MetadataEvent.Kind.ROW_COUNT,
+            Map.of("rows", "8", "complete", "true", "written", "true"), Instant.now())));
+        assertFalse(PipelineExecution.writerEvent(new MetadataEvent(WRITE_URN, MetadataEvent.Kind.ROW_COUNT,
+            Map.of("rows", "9", "complete", "true"), Instant.now())), "a reader's count of the same asset");
+        assertTrue(PipelineExecution.writerEvent(new MetadataEvent(WRITE_URN, MetadataEvent.Kind.SCHEMA,
+            Map.of("columns", "[]"), Instant.now())));
+    }
 }
