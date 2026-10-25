@@ -59,6 +59,40 @@ public final class AiViews {
     public record Usage(int days, List<UsageLog.Total> totals, List<UsageLog.Recent> recent) {
     }
 
+    /** Body of {@code POST /api/v1/ai/discover}: an address to check, or none for the usual places. */
+    public record DiscoverRequest(String baseUrl) {
+    }
+
+    /**
+     * What {@code POST /api/v1/ai/discover} found. {@code inContainer}: Kilnmark runs in a
+     * container, so localhost is the container. {@code locked}: only local hosts were called.
+     */
+    public record Discovery(List<FoundServer> servers, boolean inContainer, boolean locked) {
+    }
+
+    /**
+     * One address that was checked. {@code outcome}: {@code found}, {@code not-found} (with
+     * {@code problem} in plain words), {@code refused} (a metadata or link-local address, not
+     * called) or {@code not-local} (the operator lock, not called). {@code baseUrl} is what to
+     * put in a model profile; {@code suggestLocal} whether the "local" box should start ticked;
+     * {@code gpuReported} whether the server says how models use the GPU (Ollama does).
+     */
+    public record FoundServer(String label, String server, String address, String baseUrl, String outcome,
+                              String problem, String guidance, boolean suggestLocal, String detail,
+                              boolean gpuReported, List<FoundModel> models) {
+    }
+
+    /**
+     * A model a server offers. Sizes are bytes; {@code loaded} null when the server does not say.
+     * {@code gpu}: {@code gpu}, {@code split} (with {@code gpuPercent}), {@code cpu},
+     * {@code not-loaded} or {@code unknown}; {@code gpuText} says the same in words.
+     * {@code contextSize} and (embedding models) {@code dimensions} when the server says.
+     */
+    public record FoundModel(String name, Long sizeBytes, String family, String parameterSize, String quantisation,
+                             boolean embedding, Boolean loaded, String gpu, Integer gpuPercent, Long vramBytes,
+                             String gpuText, Integer contextSize, Integer dimensions) {
+    }
+
     /** What viewers may know: which AI search features are on. */
     public record Status(boolean searchByMeaning, boolean ask, Embeddings.Status embeddings) {
     }
