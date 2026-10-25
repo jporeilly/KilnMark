@@ -14,9 +14,9 @@ import io.kilnmark.kiln.StepFactory;
 import io.kilnmark.kiln.StepKind;
 
 /**
- * {@code limit}: passes on the first N rows, for trying a pipeline out. The rest of the input is
- * still read and discarded, so steps upstream finish normally (and a step feeding other steps
- * too is never cut short).
+ * {@code limit}: passes on the first N rows, for trying a pipeline out, then stops reading. The
+ * graph runner ends the steps before it early when nothing else reads them, and keeps feeding
+ * those that also feed other steps, so a large source is not read to its end for nothing.
  */
 public final class LimitFactory implements StepFactory {
 
@@ -102,20 +102,19 @@ public final class LimitFactory implements StepFactory {
 
         @Override
         public boolean process(StepContext ctx) throws StepException {
+            if (sent >= limit) {
+                return false;
+            }
             VectorSchemaRoot batch = take(ctx, "in");
             if (batch == null) {
                 return false;
             }
             long left = limit - sent;
             int n = batch.getRowCount();
-            if (left <= 0) {
-                batch.close(); // past the limit: read on, so the steps before finish
-                return true;
-            }
             if (n <= left) {
                 sent += n;
                 put(ctx, "out", batch);
-                return true;
+                return sent < limit;
             }
             VectorSchemaRoot first;
             try {
@@ -125,7 +124,7 @@ public final class LimitFactory implements StepFactory {
             }
             sent += left;
             put(ctx, "out", first);
-            return true;
+            return false;
         }
     }
 }

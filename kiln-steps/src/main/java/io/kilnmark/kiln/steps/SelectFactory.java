@@ -144,7 +144,7 @@ public final class SelectFactory implements StepFactory {
         Config c = new Config(config);
         Settings s = read(c);
         c.orThrow(TYPE);
-        return plan(in, s, null).schema();
+        return plan(in, s).schema();
     }
 
     /** One output column: where it comes from, and the type to cast it to (or null). */
@@ -157,9 +157,9 @@ public final class SelectFactory implements StepFactory {
         }
     }
 
-    /** Works out the output columns; {@code step} names the step in errors, or is null before a run. */
-    static Plan plan(Schema in, Settings s, String step) throws StepException {
-        String prefix = step == null ? "" : "Step " + step + ", ";
+    /** Works out the output columns. */
+    static Plan plan(Schema in, Settings s) throws StepException {
+        String prefix = "";
         List<String> names = BaseStep.names(in);
         List<String> chosen = new ArrayList<>();
         if (s.keep() != null) {
@@ -262,7 +262,7 @@ public final class SelectFactory implements StepFactory {
             VectorSchemaRoot out;
             try {
                 if (!batch.getSchema().equals(boundTo)) {
-                    plan = plan(batch.getSchema(), settings, name);
+                    plan = plan(batch.getSchema(), settings);
                     boundTo = batch.getSchema();
                 }
                 out = select(batch, ctx);

@@ -28,7 +28,7 @@ import io.kilnmark.kiln.steps.expr.Type;
  * that holds both (int32 and int64 to int64, whole numbers and decimals to decimal, and so on), or
  * is an error. With {@code strict}, every input must have the same columns.
  *
- * <p>Inputs are read as batches arrive, whichever input they come from (see {@link InputPump}).
+ * <p>Inputs are read as batches arrive, whichever input they come from ({@link RowSet#takeAny}).
  * Until every input has sent its first batch (or ended), the output's columns are not known, so
  * batches wait in memory, up to {@code memory_limit_mb}. An input that ends without sending any
  * batch adds no columns.
@@ -96,7 +96,7 @@ public final class UnionFactory implements StepFactory {
 
     /**
      * Every input's columns: union has one port taking many edges, so every schema in
-     * {@code inputs} is one of its inputs, in the map's order, whatever its key.
+     * {@code inputs} is one of its inputs, keyed {@code in[0]}, {@code in[1]} ... in listed order.
      */
     @Override
     public Schema outputSchema(String port, Map<String, Schema> inputs, Map<String, Object> config)
@@ -110,7 +110,22 @@ public final class UnionFactory implements StepFactory {
         Config c = new Config(config);
         boolean strict = c.bool("strict", false);
         c.orThrow(TYPE);
-        return combine(new ArrayList<>(inputs.values()), strict, "");
+        List<Map.Entry<String, Schema>> entries = new ArrayList<>(inputs.entrySet());
+        entries.sort(java.util.Comparator.comparingInt(e -> index(e.getKey())));
+        return combine(entries.stream().map(Map.Entry::getValue).toList(), strict, "");
+    }
+
+    /** k for a key {@code in[k]}; keys of other forms keep their place. */
+    private static int index(String key) {
+        int open = key.indexOf('[');
+        if (open >= 0 && key.endsWith("]")) {
+            try {
+                return Integer.parseInt(key.substring(open + 1, key.length() - 1));
+            } catch (NumberFormatException e) {
+                return Integer.MAX_VALUE;
+            }
+        }
+        return Integer.MAX_VALUE;
     }
 
     /** The output columns for these inputs' columns. */
@@ -187,11 +202,8 @@ public final class UnionFactory implements StepFactory {
     static final class UnionStep extends BaseStep {
         private final boolean strict;
         private final long limitMb;
-        private InputPump pump;
-        private int inputs;
-        private int open;
+        private List<RowSet> sources;
         private Schema[] schemas;
-        private boolean[] ended;
         private final List<VectorSchemaRoot> waiting = new ArrayList<>();
         private Schema out;
 
@@ -204,62 +216,50 @@ public final class UnionFactory implements StepFactory {
         @Override
         public void init(StepContext ctx) throws StepException {
             super.init(ctx);
-            List<RowSet> sources = Inputs.many(ctx, "in");
-            inputs = sources.size();
-            open = inputs;
-            schemas = new Schema[inputs];
-            ended = new boolean[inputs];
-            pump = new InputPump(sources, ctx.allocator(), inputs + 1, name);
-            pump.start();
+            sources = ctx.inputs("in");
+            schemas = new Schema[sources.size()];
         }
 
         @Override
         public boolean process(StepContext ctx) throws StepException {
-            if (open == 0) {
-                return finish(ctx);
-            }
-            InputPump.Item item;
+            RowSet.Taken taken;
             try {
-                item = pump.next();
+                // whichever input has a batch: reading them in turn stalls inputs that share a step upstream
+                taken = RowSet.takeAny(sources, ctx.allocator());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new StepException("Interrupted", e);
             }
-            if (item.batch() == null) {
-                open--;
-                ended[item.source()] = true;
-            } else if (out != null) {
-                put(ctx, "out", conform(item.batch(), ctx));
-                return true;
-            } else {
-                if (schemas[item.source()] == null) {
-                    schemas[item.source()] = item.batch().getSchema();
+            if (taken == null) {
+                if (out == null) {
+                    decide();
                 }
-                waiting.add(item.batch());
-                if (ctx.allocator().getAllocatedMemory() > megabytes(limitMb)) {
-                    throw fail("batches waiting for every input's first batch take more than " + limitMb
-                        + " MB; raise memory_limit_mb");
-                }
+                flush(ctx);
+                return false;
             }
-            if (out == null && known()) {
+            if (out != null) {
+                put(ctx, "out", conform(taken.batch(), ctx));
+                return true;
+            }
+            if (schemas[taken.index()] == null) {
+                schemas[taken.index()] = taken.batch().getSchema();
+            }
+            waiting.add(taken.batch());
+            if (ctx.allocator().getAllocatedMemory() > megabytes(limitMb)) {
+                throw fail("batches waiting for every input's first batch take more than " + limitMb
+                    + " MB; raise memory_limit_mb");
+            }
+            if (known()) {
                 decide();
                 flush(ctx);
             }
-            return open > 0 || !waiting.isEmpty() || finish(ctx);
-        }
-
-        private boolean finish(StepContext ctx) throws StepException {
-            if (out == null && known()) {
-                decide();
-            }
-            flush(ctx);
-            return false;
+            return true;
         }
 
         /** Whether every input has sent a batch or ended. */
         private boolean known() {
-            for (int i = 0; i < inputs; i++) {
-                if (schemas[i] == null && !ended[i]) {
+            for (int i = 0; i < schemas.length; i++) {
+                if (schemas[i] == null && !sources.get(i).atEnd()) {
                     return false;
                 }
             }
@@ -274,7 +274,7 @@ public final class UnionFactory implements StepFactory {
                 }
             }
             if (!seen.isEmpty()) {
-                out = combine(seen, strict, "Step " + name + ", ");
+                out = combine(seen, strict, "");
             }
         }
 
@@ -316,9 +316,6 @@ public final class UnionFactory implements StepFactory {
 
         @Override
         public void close() {
-            if (pump != null) {
-                pump.close();
-            }
             waiting.forEach(VectorSchemaRoot::close);
             waiting.clear();
         }

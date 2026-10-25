@@ -5,12 +5,14 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 
+import io.kilnmark.kiln.RowSet;
 import io.kilnmark.kiln.SettingSpec;
 import io.kilnmark.kiln.Step;
 import io.kilnmark.kiln.StepContext;
@@ -232,7 +234,9 @@ public final class LookupFactory implements StepFactory {
     static final class LookupStep extends BaseStep {
         private static final int NO_MATCH = -1;
         private final Settings settings;
-        private InputPump mainPump;
+        private RowSet main;
+        private RowSet lookup;
+        private final List<VectorSchemaRoot> waiting = new ArrayList<>();
         private boolean loaded;
         private Schema lookupSchema;
         private Plan plan;
@@ -251,41 +255,67 @@ public final class LookupFactory implements StepFactory {
         @Override
         public void init(StepContext ctx) throws StepException {
             super.init(ctx);
-            mainPump = new InputPump(List.of(ctx.input("main")), ctx.allocator(), Integer.MAX_VALUE, name + "-main");
-            mainPump.start();
+            main = ctx.input("main");
+            lookup = ctx.input("lookup");
         }
 
         @Override
         public boolean process(StepContext ctx) throws StepException {
-            if (!loaded) {
-                load(ctx);
-                return true;
-            }
-            InputPump.Item item;
             try {
-                item = mainPump.next();
+                if (!loaded) {
+                    load(ctx);
+                    return true;
+                }
+                VectorSchemaRoot batch = !waiting.isEmpty() ? waiting.removeFirst()
+                    : main.atEnd() ? null : main.take(ctx.allocator());
+                if (batch == null) {
+                    return false;
+                }
+                match(batch, ctx);
+                return true;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new StepException("Interrupted", e);
             }
-            if (item.batch() == null) {
-                return false;
-            }
-            match(item.batch(), ctx);
-            return true;
         }
 
-        /** Reads one batch of the lookup side into the table. */
-        private void load(StepContext ctx) throws StepException {
-            VectorSchemaRoot batch = take(ctx, "lookup");
+        /**
+         * Reads the next batch of the lookup side into the table. While none is waiting, takes any
+         * main batch that is, and holds it: when both inputs come from one step upstream, that step
+         * would otherwise wait for room on main and never finish the lookup side.
+         */
+        private void load(StepContext ctx) throws StepException, InterruptedException {
+            VectorSchemaRoot batch = lookup.poll(ctx.allocator(), 0, TimeUnit.MILLISECONDS);
+            if (batch == null && !lookup.atEnd()) {
+                VectorSchemaRoot early = main.poll(ctx.allocator(), 0, TimeUnit.MILLISECONDS);
+                if (early != null) {
+                    waiting.add(early);
+                    checkMemory(ctx);
+                    return;
+                }
+                batch = lookup.poll(ctx.allocator(), 5, TimeUnit.MILLISECONDS);
+            }
             if (batch == null) {
-                loaded = true;
-                mainPump.capacity(2); // from now on main is read as it is used
+                loaded = lookup.atEnd();
                 return;
             }
+            index(batch, ctx);
+        }
+
+        private void checkMemory(StepContext ctx) throws StepException {
+            long held = ctx.allocator().getAllocatedMemory() + indexBytes;
+            if (held > megabytes(settings.limitMb())) {
+                throw fail("the lookup side holds more than " + settings.limitMb() + " MB (" + count(lookupRows)
+                    + " rows read so far, and " + count(waiting.size()) + " main batches waiting); raise "
+                    + "memory_limit_mb, or keep fewer columns from the lookup side");
+            }
+        }
+
+        /** Adds one batch of the lookup side to the table; the batch is given up. */
+        private void index(VectorSchemaRoot batch, StepContext ctx) throws StepException {
             try {
                 if (lookupSchema == null) {
-                    plan = plan(batch.getSchema(), settings, "Step " + name + ", ");
+                    plan = plan(batch.getSchema(), settings, "");
                     lookupSchema = batch.getSchema();
                 } else if (!batch.getSchema().equals(lookupSchema)) {
                     throw fail("the lookup input's columns changed part-way through");
@@ -322,11 +352,7 @@ public final class LookupFactory implements StepFactory {
             } finally {
                 batch.close();
             }
-            long held = ctx.allocator().getAllocatedMemory() + indexBytes;
-            if (held > megabytes(settings.limitMb())) {
-                throw fail("the lookup side holds more than " + settings.limitMb() + " MB (" + count(lookupRows)
-                    + " rows read so far); raise memory_limit_mb, or keep fewer columns from the lookup side");
-            }
+            checkMemory(ctx);
         }
 
         private String describe(Object key) {
@@ -353,7 +379,7 @@ public final class LookupFactory implements StepFactory {
                         plan = new Plan(settings, new ArrayList<>(settings.on().values()),
                             settings.on().keySet().stream().map(k -> keyType(main, k)).toList(), List.of());
                     }
-                    plan.checkMain(main, "Step " + name + ", ");
+                    plan.checkMain(main, "");
                     outSchema = plan.outSchema(main);
                     mainChecked = main;
                 }
@@ -443,9 +469,8 @@ public final class LookupFactory implements StepFactory {
 
         @Override
         public void close() {
-            if (mainPump != null) {
-                mainPump.close();
-            }
+            waiting.forEach(VectorSchemaRoot::close);
+            waiting.clear();
             stored.forEach(VectorSchemaRoot::close);
             stored.clear();
             index.clear();

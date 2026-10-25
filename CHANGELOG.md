@@ -41,6 +41,20 @@ details.
   loops), and each step's columns worked out before anything runs, without opening a connection.
   Read with SnakeYAML Engine 3.2 (Apache-2.0); anchors, aliases, tags, duplicate keys and files
   over 1,000,000 characters are refused.
+- **Pipeline steps and expressions** (new module `kiln-steps`): `filter`, `compute`, `select`,
+  `lookup`, `aggregate`, `union`, `dedupe`, `route` and `limit`, each with its settings schema,
+  checks and output columns for validation, and one expression language for conditions and
+  computed columns: SQL-like operators, `case`, `cast`, SQL null rules, 22 functions and the
+  aggregates `count`, `count_distinct`, `sum`, `min`, `max` and `avg`. Expressions are parsed by
+  hand and type-checked against the input columns (`boolean`, `int64`, `float64`, `decimal`,
+  `utf8`, `date`, `timestamp` in UTC; numbers widen, anything else needs `cast`), with errors
+  giving the position and a suggestion; they are worked out a batch at a time into Arrow vectors.
+  Limits: 10,000 characters, nesting 64 deep. Regular expressions refuse patterns that repeat a
+  repeating group or use back-references, cap values at 100,000 characters and budget the work
+  per value. `lookup`, `aggregate`, `dedupe` and `union` stop at `memory_limit_mb` (256 by
+  default) with a message saying what to change; `lookup` reads main rows while its lookup side
+  loads, `union` reads whichever input has rows, and `limit` stops reading once it has its rows.
+  Guide: **Pipeline steps and expressions**.
 - **Find local models** on the AI models page (`POST /api/v1/ai/discover`, admins only): looks for
   Ollama and LM Studio on the machine running Kilnmark or its container
   (`host.containers.internal`, `host.docker.internal`, `localhost`) and for the bundled Compose

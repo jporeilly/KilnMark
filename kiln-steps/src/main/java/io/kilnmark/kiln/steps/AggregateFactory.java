@@ -165,7 +165,7 @@ public final class AggregateFactory implements StepFactory {
                         throw fail("the input's columns changed part-way through; an aggregate needs the same "
                             + "columns in every batch");
                     }
-                    plan = plan(batch.getSchema(), settings, "Step " + name + ", ");
+                    plan = plan(batch.getSchema(), settings, "");
                     state = plan.newState(now);
                     boundTo = batch.getSchema();
                 }

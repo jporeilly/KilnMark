@@ -138,7 +138,7 @@ public final class DedupeFactory implements StepFactory {
             int[] target;
             try {
                 if (!batch.getSchema().equals(checked)) {
-                    checkKey(batch.getSchema(), key, "Step " + name + ", ");
+                    checkKey(batch.getSchema(), key, "");
                     checked = batch.getSchema();
                 }
                 List<String> columns = key != null ? key : names(batch.getSchema());

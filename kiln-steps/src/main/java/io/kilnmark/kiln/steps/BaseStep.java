@@ -19,7 +19,7 @@ import io.kilnmark.kiln.steps.expr.ExprException;
 
 /**
  * What the steps here share: taking and putting batches on named ports, splitting a batch's rows
- * between ports, and wording errors as "Step tidy, column full_name: ...".
+ * between ports, and wording errors as "column full_name: ..." (the runner adds the step's name).
  *
  * <p>Memory: a step closes every batch it takes, unless it hands the batch on with {@link #put},
  * which gives it up.
@@ -47,13 +47,16 @@ abstract class BaseStep implements Step {
         now = t.getEpochSecond() * 1_000_000L + t.getNano() / 1_000L;
     }
 
-    /** "Step tidy, column full_name: unknown column ..." */
+    /**
+     * "column full_name: unknown column ...". The runner puts the step's name in front ("Step tidy
+     * (compute) failed: ..."), as the pipeline compiler does for problems found before a run.
+     */
     protected StepException fail(String where, ExprException e) {
-        return new StepException("Step " + name + ", " + where + ": " + e.getMessage(), e);
+        return new StepException(where + ": " + e.getMessage(), e);
     }
 
     protected StepException fail(String message) {
-        return new StepException("Step " + name + ": " + message);
+        return new StepException(message);
     }
 
     /** The next batch on an input port, or null at its end. */
@@ -88,7 +91,7 @@ abstract class BaseStep implements Step {
             return;
         }
         try {
-            rs.put(batch);
+            ctx.emit(port, batch);
         } catch (InterruptedException e) {
             batch.close(); // interrupted while waiting for room: the batch was not handed over
             Thread.currentThread().interrupt();
