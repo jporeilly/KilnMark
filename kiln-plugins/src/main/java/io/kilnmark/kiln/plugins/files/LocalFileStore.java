@@ -252,6 +252,7 @@ public final class LocalFileStore implements FileStore {
             }
             Path next = folder.resolve(part);
             if (Files.exists(next)) {
+                checkSpelling(next, part, path);
                 Path real = next.toRealPath();
                 if (!real.startsWith(root)) {
                     throw new IOException("Refusing to write '" + path + "': " + next + " is a link to " + real
@@ -285,6 +286,9 @@ public final class LocalFileStore implements FileStore {
         if (!target.normalize().startsWith(root)) {
             throw new IOException("Refusing to write '" + path + "': it is outside the folder " + root);
         }
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            checkSpelling(target, name, path);
+        }
         if (Files.isDirectory(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("Cannot write '" + path + "': " + target + " is a folder");
         }
@@ -301,6 +305,19 @@ public final class LocalFileStore implements FileStore {
             + ".tmp");
         FileChannel channel = FileChannel.open(temp, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
         return new LocalUpload(temp, target, overwrite, channel);
+    }
+
+    /**
+     * On a case-insensitive or normalising file system an existing folder or file may answer to
+     * another spelling; the file is recorded under the path as written, so that path must be its
+     * spelling on disk, as reads require ({@link #entry}).
+     */
+    private static void checkSpelling(Path existing, String asWritten, String path) throws IOException {
+        Path onDisk = existing.toRealPath(LinkOption.NOFOLLOW_LINKS).getFileName();
+        if (onDisk != null && !onDisk.toString().equals(asWritten)) {
+            throw new IOException("Refusing to write '" + path + "': '" + asWritten + "' is spelt '" + onDisk
+                + "' on disk; write the path as it is spelt there");
+        }
     }
 
     /** A file being written next to its target. */
