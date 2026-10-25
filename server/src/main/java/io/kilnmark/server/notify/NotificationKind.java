@@ -5,7 +5,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * The kinds of event that can send an email. Each kind says how repeats are handled
+ * The kinds of event that notify people, in the app and by email. Each kind says how repeats are handled
  * ({@link Repeat}): a problem that persists (a failing rule, a source that cannot be reached) is
  * mailed once until it clears, while one-off events (an issue opened, drift found) are mailed each
  * time. The ids ({@code rule_failed}, {@code drift}, ...) are part of the API (the in-app feed and

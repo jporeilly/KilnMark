@@ -127,7 +127,11 @@ export function NotificationsPage() {
               label="Send me emails"
               checked={enabled}
               onChange={setEnabled}
-              hint={mine.saved ? undefined : "Admins get high-severity events by email unless they turn this off."}
+              hint={
+                mine.saved
+                  ? undefined
+                  : "Until you save, this shows the default for your role: on for admins (high-severity events at once), off for everyone else."
+              }
             />
             <div className="field">
               <label htmlFor="email-address">Email address</label>
