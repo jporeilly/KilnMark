@@ -272,11 +272,11 @@ class WriteSqlTest {
 
     @Test
     void sqlServerBulkCopyGetsFullIsoDatesAndTimes() {
-        assertEquals("2024-01-01T00:00:00.0000000", WriteSql.SqlServer.isoText(Kind.TIMESTAMP,
+        assertEquals("2024-01-01T00:00:00.000000", WriteSql.SqlServer.isoText(Kind.TIMESTAMP,
             LocalDateTime.of(2024, 1, 1, 0, 0)));
-        assertEquals("2024-06-01T00:00:00.0000010+00:00", WriteSql.SqlServer.isoText(Kind.TIMESTAMP_TZ,
+        assertEquals("2024-06-01T00:00:00.000001+00:00", WriteSql.SqlServer.isoText(Kind.TIMESTAMP_TZ,
             Instant.parse("2024-06-01T00:00:00.000001Z")));
-        assertEquals("00:00:00.0000000", WriteSql.SqlServer.isoText(Kind.TIME, LocalTime.MIDNIGHT));
+        assertEquals("00:00:00.000000", WriteSql.SqlServer.isoText(Kind.TIME, LocalTime.MIDNIGHT));
         assertEquals("0950-03-01", WriteSql.SqlServer.isoText(Kind.DATE, LocalDate.of(950, 3, 1)));
         assertNull(WriteSql.SqlServer.isoText(Kind.TEXT, "x"));
     }

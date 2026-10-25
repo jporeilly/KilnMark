@@ -864,7 +864,7 @@ abstract class WriteSql {
             }
         }
 
-        /** Full ISO 8601 for a date, time or timestamp ({@code 2024-01-01T00:00:00.0000000}); null for other kinds. */
+        /** Full ISO 8601 for a date, time or timestamp ({@code 2024-01-01T00:00:00.000000}); null for other kinds. */
         static String isoText(Kind kind, Object v) {
             return switch (kind) {
                 case DATE -> ISO_DATE.format((LocalDate) v);
@@ -881,8 +881,10 @@ abstract class WriteSql {
         private static final java.time.format.DateTimeFormatter ISO_DATE =
             java.time.format.DateTimeFormatter.ofPattern("uuuu-MM-dd", java.util.Locale.ROOT);
         private static final java.time.format.DateTimeFormatter ISO_TIME =
-            // seven digits, as SQL Server sends time and datetime2 itself, so the column rounds a value
-            // the same way whether it arrives by bulk copy or as a typed parameter
-            java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSSS", java.util.Locale.ROOT);
+            // six digits, the scale of the step's own time(6), datetime2(6) and datetimeoffset(6)
+            // columns (bulk copy refuses text with more: "invalid column length"). Values reach the
+            // writer in microseconds (WriteColumn), so nothing is cut, and the typed path stores the
+            // same value.
+            java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS", java.util.Locale.ROOT);
     }
 }
