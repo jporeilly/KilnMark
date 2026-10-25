@@ -399,7 +399,10 @@ forgery). To limit it:
   hosts sources may reach: names, addresses or `*.example.com`, comma-separated. Every host a
   source names is checked (each host of a PostgreSQL host list, SQL Server's `serverName` and
   `failoverPartner`, S3 endpoints, and AWS's S3 host when there is none) whenever a source is added,
-  edited, imported, tested or listed. Hosts are read with the database driver's own parser, and URL
+  edited, imported, tested or listed, and again just before every scan, quality run, preview, test
+  or on-demand read connects: narrow the list (and restart) and saved sources naming other hosts stop
+  at once, their jobs failing with a message that names the host. Names are compared as written;
+  what a name resolves to is not checked. Hosts are read with the database driver's own parser, and URL
   properties that would name another host, port or database (PostgreSQL `PGHOST`, `PGPORT`,
   `PGDBNAME`; SQL Server `server`, `address`, `addr`, `network address`) are refused, so the
   address is always the URL's. Empty, the default, allows any host.

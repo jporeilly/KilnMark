@@ -90,6 +90,10 @@ details.
   execute dblink's functions, use a foreign server, or has a user mapping (its own or PUBLIC's), since
   a read-only transaction does not hold on the other side. dblink and postgres_fdw function names are
   refused in the SQL as well.
+- **Allowed hosts, after review:** a saved source's hosts are checked against
+  `kilnmark.sources.allowed-hosts` again just before a scan, quality run, preview, listing, test or
+  on-demand read connects, not only when the source is saved, so a narrowed list applies at once;
+  the job fails saying which host is no longer allowed.
 
 - **Sign-in with API tokens:** every API call needs a token (`Authorization: Bearer km_...`)
   with a role: viewer (read), steward (also start scans) or admin (also add sources and manage

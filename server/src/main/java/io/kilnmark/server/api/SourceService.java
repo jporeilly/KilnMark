@@ -236,7 +236,7 @@ public class SourceService {
         }
         int from = Math.max(0, offset);
         int size = Math.max(1, Math.min(limit, 500));
-        List<io.kilnmark.kiln.connect.AssetInfo> all = run(config, "list " + container,
+        List<io.kilnmark.kiln.connect.AssetInfo> all = run(connector, config, "list " + container,
             () -> connector.assets(config, container));
         List<Views.AssetItem> page = all.stream().skip(from).limit(size)
             .map(a -> new Views.AssetItem(a.path(), a.name() == null ? a.path() : a.name(), a.kind(), a.readable()))
@@ -264,7 +264,7 @@ public class SourceService {
         if (n < 1 || n > io.kilnmark.kiln.connect.Preview.MAX_ROWS) {
             throw new IllegalArgumentException("rows: from 1 to " + io.kilnmark.kiln.connect.Preview.MAX_ROWS);
         }
-        io.kilnmark.kiln.connect.Preview p = run(config, "preview " + asset, () -> {
+        io.kilnmark.kiln.connect.Preview p = run(connector, config, "preview " + asset, () -> {
             io.kilnmark.kiln.connect.AssetInfo info = connector.asset(config, asset);
             return connector.preview(config, info, n);
         });
@@ -281,9 +281,10 @@ public class SourceService {
         return Response.ok(preview).cacheControl(none).build();
     }
 
-    private <T> T run(SourceConfig config, String doing, java.util.concurrent.Callable<T> work) {
+    private <T> T run(Connector connector, SourceConfig config, String doing,
+                      java.util.concurrent.Callable<T> work) {
         try {
-            return checks.forPerson(config, doing, work);
+            return checks.forPerson(connector, config, doing, work);
         } catch (SourceChecks.CheckFailed e) {
             throw ApiError.of(e.busy() ? Response.Status.TOO_MANY_REQUESTS : Response.Status.BAD_GATEWAY,
                 e.getMessage());

@@ -248,6 +248,10 @@ public class DocumentTexts {
         settings.put(io.kilnmark.kiln.plugins.files.FileSourceConnector.ON_DEMAND, "true");
         String secret = store.sourceSecret(source.name()).map(secrets::open).orElse(null);
         SourceConfig config = new SourceConfig(source.name(), source.kind(), settings, secret);
+        String refused = io.kilnmark.server.sources.HostPolicy.of(this.config).refusal(connector, config);
+        if (refused != null) {
+            throw ApiError.of(Response.Status.CONFLICT, refused);
+        }
         String name = path.substring(path.lastIndexOf('/') + 1);
         AssetInfo asset = new AssetInfo(path, "document", "", name, null, List.of(), List.of(), false, true, Map.of());
         Map<String, List<DocumentRecords.Chunk>> chunks = new HashMap<>();

@@ -29,6 +29,7 @@ import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.jdbc.JdbcConnector;
 import io.kilnmark.server.KilnmarkConfig;
+import io.kilnmark.server.sources.HostPolicy;
 import io.kilnmark.server.SecretBox;
 import io.kilnmark.server.scan.ScanService;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -245,6 +246,8 @@ public class QualityService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new ScanService.Result(ScanService.Outcome.CANCELLED, null);
+        } catch (HostRefused e) {
+            store.finishRun(r.id(), "failed", e.getMessage());
         } catch (RuntimeException e) {
             LOG.errorf(e, "Quality run %d failed", r.id());
             // The exception may carry a database's own text: it goes to the log, not to every role.
@@ -339,6 +342,16 @@ public class QualityService {
     record Outcome(int ran, int failing) {
     }
 
+    /** The source names a host the administrator no longer allows; the message is for every role. */
+    static final class HostRefused extends RuntimeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        HostRefused(String message) {
+            super(message, null, false, false);
+        }
+    }
+
     /** Runs rules on an asset, stores their results and carries out their actions. */
     Outcome evaluate(String urn, List<Rule> rules, Long qualityRunId) throws InterruptedException {
         if (rules.isEmpty()) {
@@ -350,6 +363,10 @@ public class QualityService {
             "This server has no connector for sources of kind " + source.kind()));
         String secret = graph.sourceSecret(source.name()).map(secrets::open).orElse(null);
         SourceConfig cfg = new SourceConfig(source.name(), source.kind(), source.settings(), secret);
+        String refused = HostPolicy.of(config).refusal(connector, cfg);
+        if (refused != null) {
+            throw new HostRefused(refused);
+        }
         boolean keep = keepSamples(source.settings());
         Map<String, String> kinds = new LinkedHashMap<>();
         asset.fields().forEach(f -> kinds.put(f.name(), f.kind()));

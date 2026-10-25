@@ -69,11 +69,17 @@ public class SourceChecks {
     private final Duration timeout;
     private final Semaphore people;
     private final int maxPlaces;
+    private final HostPolicy hosts;
 
     public SourceChecks(KilnmarkConfig config) {
-        this.timeout = config.sources().checkTimeout();
-        this.maxPlaces = Math.max(1, config.sources().checkConcurrency());
+        this(config.sources().checkTimeout(), config.sources().checkConcurrency(), HostPolicy.of(config));
+    }
+
+    SourceChecks(Duration timeout, int concurrency, HostPolicy hosts) {
+        this.timeout = timeout;
+        this.maxPlaces = Math.max(1, concurrency);
         this.people = new Semaphore(maxPlaces);
+        this.hosts = hosts;
     }
 
     /** How long a check may take. */
@@ -89,7 +95,7 @@ public class SourceChecks {
     public TestResult test(Connector connector, SourceConfig source) {
         long start = System.nanoTime();
         try {
-            limited(source, "connect to it", true, () -> {
+            limited(connector, source, "connect to it", true, () -> {
                 connector.test(source, timeout);
                 return null;
             });
@@ -106,7 +112,7 @@ public class SourceChecks {
     public TestResult testInBackground(Connector connector, SourceConfig source) {
         long start = System.nanoTime();
         try {
-            limited(source, "connect to it", false, () -> {
+            limited(connector, source, "connect to it", false, () -> {
                 connector.test(source, timeout);
                 return null;
             });
@@ -118,7 +124,7 @@ public class SourceChecks {
 
     /** Lists a source's containers with their counts, for a person waiting on the answer. */
     public List<Connector.ContainerInfo> containers(Connector connector, SourceConfig source) throws CheckFailed {
-        return limited(source, "list what it holds", true, () -> connector.containers(source, timeout));
+        return limited(connector, source, "list what it holds", true, () -> connector.containers(source, timeout));
     }
 
     private static long elapsed(long start) {
@@ -129,8 +135,9 @@ public class SourceChecks {
      * Runs other work for a person waiting on it (listing a container's assets, a preview) under
      * the same time limit and places as checks.
      */
-    public <T> T forPerson(SourceConfig source, String doing, Callable<T> work) throws CheckFailed {
-        return limited(source, doing, true, work);
+    public <T> T forPerson(Connector connector, SourceConfig source, String doing, Callable<T> work)
+        throws CheckFailed {
+        return limited(connector, source, doing, true, work);
     }
 
     /** Places in use now, for tests. */
@@ -138,7 +145,13 @@ public class SourceChecks {
         return maxPlaces - people.availablePermits();
     }
 
-    private <T> T limited(SourceConfig source, String doing, boolean person, Callable<T> work) throws CheckFailed {
+    private <T> T limited(Connector connector, SourceConfig source, String doing, boolean person, Callable<T> work)
+        throws CheckFailed {
+        // The allow-list as it is now, just before connecting: it may have been narrowed since the source was saved.
+        String refused = hosts.refusal(connector, source);
+        if (refused != null) {
+            throw new CheckFailed(refused, false);
+        }
         if (person && !people.tryAcquire()) {
             throw new CheckFailed("Kilnmark is already running as many connection checks as it allows. Try again in a "
                 + "few seconds.", true);
