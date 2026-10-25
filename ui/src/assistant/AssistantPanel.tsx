@@ -141,6 +141,12 @@ export function AssistantPanel({
     input.current?.focus();
   }, [focusSignal]);
 
+  // When the window narrows so the panel covers the page, the page goes inert: bring focus in here.
+  const panel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (covering && !panel.current?.contains(document.activeElement)) input.current?.focus();
+  }, [covering]);
+
   // Announce each answer once, politely, and keep the newest exchange in view.
   const announced = useRef(new Set<number>());
   useEffect(() => {
@@ -173,6 +179,7 @@ export function AssistantPanel({
 
   return (
     <section
+      ref={panel}
       id="assistant"
       className="assistant"
       role="dialog"

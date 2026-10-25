@@ -44,6 +44,32 @@ class AssistantPromptTest {
     }
 
     @Test
+    void anglesTheModelQuotesAreShownAsWritten() {
+        String quoted = Assistant.data("SELECT * FROM ${table} WHERE amount < 0 AND a > b");
+        assertEquals("SELECT * FROM ${table} WHERE amount ‹ 0 AND a › b", quoted);
+        assertEquals("Use WHERE amount < 0 [1].", Assistant.shown("Use WHERE amount ‹ 0 [1]."));
+    }
+
+    @Test
+    void limitsMeasureTheNormalisedText() {
+        String wide = "\uFDFA".repeat(2000); // 2,000 characters as sent, 36,000 after NFKC
+        assertEquals(2000, wide.length());
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> Assistant.validate(wide, null, null));
+        assertTrue(e.getMessage().contains("2,000"), e.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> Assistant.validate("q", null,
+            List.of(new Assistant.Turn("user", "\uFDFA".repeat(300)))));
+        Assistant.validate("\uFF21".repeat(2000), null, null); // fullwidth A: one character either way
+    }
+
+    @Test
+    void smallContextsGetShorterAnswers() {
+        assertEquals(500, Assistant.answerTokens(4096));
+        assertEquals(256, Assistant.answerTokens(1024));
+        assertEquals(256, Assistant.fit(1024, "q", List.of(hit("a/1", "x")), List.of()).answerTokens());
+    }
+
+    @Test
     void thePromptFitsTheModelsContext() {
         List<KnowledgeSearch.Hit> hits = List.of(hit("a/1", "x".repeat(4000)), hit("a/2", "y".repeat(4000)),
             hit("a/3", "z".repeat(4000)), hit("a/4", "w".repeat(4000)));

@@ -145,9 +145,11 @@ function Shell({ me }: { me: Me }) {
         searchBox.current?.select();
       }
       // Alt+A opens the Ask panel, or moves focus into it. By the letter typed, so it is A on AZERTY
-      // keyboards too; on a Mac, Option changes the letter (å), so by the key, and not while typing.
+      // keyboards too; by the key where the layout types no Latin letter (Cyrillic, Greek), and on a
+      // Mac, where Option changes the letter (å), and not while typing there.
       const mac = /Mac/.test(navigator.platform);
-      const isA = mac ? e.code === "KeyA" && !typing : e.key === "a" || e.key === "A";
+      const latin = /^[a-z]$/i.test(e.key);
+      const isA = mac ? e.code === "KeyA" && !typing : latin ? e.key.toLowerCase() === "a" : e.code === "KeyA";
       if (e.altKey && !e.ctrlKey && !e.metaKey && isA) {
         e.preventDefault();
         openAskRef.current();

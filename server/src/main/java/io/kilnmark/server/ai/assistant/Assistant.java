@@ -42,6 +42,7 @@ public class Assistant {
     /** Most characters of section text sent to the model in all, and per section, whatever its context. */
     static final int BUDGET_CHARS = 12_000;
     static final int SECTION_CHARS = 4_000;
+    /** Most tokens an answer may take; less for a small context ({@link #answerTokens}). */
     static final int MAX_ANSWER_TOKENS = 500;
     /**
      * Characters per token when sizing the prompt to the model's context. There is no tokenizer for
@@ -99,12 +100,20 @@ public class Assistant {
                          boolean fallback, List<SectionLink> sections) {
     }
 
-    /** Checks a question and its history as the API takes them; the message names the field. */
+    /**
+     * Text as it will be used: NFKC-normalised, so limits measure what reaches the model (one
+     * character such as U+FDFA becomes eighteen).
+     */
+    static String normal(String text) {
+        return text == null ? null : Normalizer.normalize(text, Normalizer.Form.NFKC);
+    }
+
+    /** Checks a question and its history as the API takes them, after normalising; the message names the field. */
     public static void validate(String question, String page, List<Turn> history) {
         if (question == null || question.isBlank()) {
             throw new IllegalArgumentException("question: what you want to know, in your own words");
         }
-        if (question.length() > MAX_QUESTION) {
+        if (normal(question).length() > MAX_QUESTION) {
             throw new IllegalArgumentException("question: " + String.format(Locale.UK, "%,d", MAX_QUESTION)
                 + " characters at most");
         }
@@ -117,7 +126,7 @@ public class Assistant {
                 if (t == null || !("user".equals(t.role()) || "assistant".equals(t.role()))) {
                     throw new IllegalArgumentException("history: each turn's role is user or assistant");
                 }
-                if (t.text() == null || t.text().length() > MAX_TURN) {
+                if (t.text() == null || normal(t.text()).length() > MAX_TURN) {
                     throw new IllegalArgumentException("history: each turn's text, " + String.format(Locale.UK, "%,d",
                         MAX_TURN) + " characters at most");
                 }
@@ -138,8 +147,9 @@ public class Assistant {
 
     public Answer ask(String question, String page, List<Turn> history, String caller) {
         validate(question, page, history);
-        String q = question.strip();
-        List<Turn> turns = history == null ? List.of() : history;
+        String q = normal(question).strip();
+        List<Turn> turns = history == null ? List.of()
+            : history.stream().map(t -> new Turn(t.role(), normal(t.text()))).toList();
         String hint = validPage(page);
         KnowledgeSearch.Result found = search.search(KnowledgeIndex.DOCS, retrievalText(q, turns), hint, TOP, caller,
             true);
@@ -186,22 +196,37 @@ public class Assistant {
                 + "documentation that match best.");
         }
         Citations.Checked checked = Citations.check(text, sent.size());
+        String shown = shown(checked.text());
         List<Citation> citations = new ArrayList<>();
         for (int n : checked.cited()) {
             KnowledgeSearch.Hit h = sent.get(n - 1);
             citations.add(new Citation(n, h.sectionId(), h.page(), h.titlePath(), h.href()));
         }
-        return new Answer(answerId(q, checked.text()), checked.text(), citations, DOMAINS, model, false, null);
+        return new Answer(answerId(q, shown), shown, citations, DOMAINS, model, false, null);
     }
 
     private AiGateway.Result<ModelClient.ChatAnswer> chat(ModelProfile p, String q, Plan plan, String caller) {
         ModelClient.ChatCall call = new ModelClient.ChatCall(SYSTEM, user(q, plan.sections(), plan.history()), null,
-            MAX_ANSWER_TOKENS);
+            plan.answerTokens());
         return gateway.chatWith(p, AiFeature.ASSISTANT.id(), null, call, caller, () -> false, BUDGET, DOMAINS);
     }
 
-    /** What goes into the prompt: the sections (cut to fit) and the earlier turns kept. */
-    record Plan(List<KnowledgeSearch.Hit> sections, List<Turn> history) {
+    /** What goes into the prompt: the sections (cut to fit) and the earlier turns kept; and how long the answer may be. */
+    record Plan(List<KnowledgeSearch.Hit> sections, List<Turn> history, int answerTokens) {
+    }
+
+    /** Tokens for the answer: {@value #MAX_ANSWER_TOKENS}, or a quarter of a small context. */
+    static int answerTokens(int context) {
+        return Math.max(64, Math.min(MAX_ANSWER_TOKENS, context / 4));
+    }
+
+    /**
+     * The answer as shown: angle brackets the prompt turned into ‹ › (see {@link #data}) are put
+     * back, so a quoted sample such as {@code WHERE amount < 0} reads as written. Safe, because
+     * answers are shown as text, never as HTML.
+     */
+    static String shown(String answer) {
+        return answer.replace('‹', '<').replace('›', '>');
     }
 
     /**
@@ -213,7 +238,8 @@ public class Assistant {
      */
     static Plan fit(Integer contextSize, String question, List<KnowledgeSearch.Hit> hits, List<Turn> history) {
         int context = contextSize == null ? DEFAULT_CONTEXT : contextSize;
-        int room = (context - MAX_ANSWER_TOKENS - MARGIN_TOKENS) * CHARS_PER_TOKEN - SYSTEM.length()
+        int answer = answerTokens(context);
+        int room = (context - answer - MARGIN_TOKENS) * CHARS_PER_TOKEN - SYSTEM.length()
             - question.length();
         List<Turn> kept = shorten(history, Math.min(HISTORY_CHARS, Math.max(0, room / 3)));
         int forSections = Math.min(BUDGET_CHARS, room - chars(kept));
@@ -221,14 +247,15 @@ public class Assistant {
             kept = List.of();
             forSections = Math.min(BUDGET_CHARS, room);
         }
-        return new Plan(withinBudget(hits, Math.max(600, forSections), SECTION_CHARS, question), kept);
+        return new Plan(withinBudget(hits, Math.max(600, forSections), SECTION_CHARS, question), kept, answer);
     }
 
     /** Half the section text, the first three sections at most, and no conversation. */
     static Plan smaller(Plan plan, String question) {
         List<KnowledgeSearch.Hit> first = plan.sections().subList(0, Math.min(3, plan.sections().size()));
         int total = first.stream().mapToInt(h -> h.body().length()).sum();
-        return new Plan(withinBudget(first, Math.max(600, total / 2), SECTION_CHARS, question), List.of());
+        return new Plan(withinBudget(first, Math.max(600, total / 2), SECTION_CHARS, question), List.of(),
+            plan.answerTokens());
     }
 
     /** The newest turns that fit in {@code limit} characters, each cut short, in their original order. */

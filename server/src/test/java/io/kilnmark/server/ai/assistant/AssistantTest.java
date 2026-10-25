@@ -263,8 +263,10 @@ class AssistantTest {
             admin().contentType(ContentType.JSON).body(Map.of("hostedModels", "allowed")).put("/api/v1/ai/settings");
         }
         // Allowed again: the same hosted model answers.
-        fake.chatReplies(u -> "It is the fail limit [1].");
-        assertFalse(ask(Map.of("question", "What does Fail above mean?")).getBoolean("fallback"));
+        fake.chatReplies(u -> "It is the fail limit [1]. A custom check reads WHERE amount ‹ 0.");
+        JsonPath allowed = ask(Map.of("question", "What does Fail above mean?"));
+        assertFalse(allowed.getBoolean("fallback"));
+        assertTrue(allowed.getString("answer").endsWith("WHERE amount < 0."), allowed.getString("answer"));
         fake.clear();
     }
 
