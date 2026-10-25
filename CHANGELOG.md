@@ -5,8 +5,27 @@ details.
 
 ## Unreleased
 
+## 0.0.3 (25 October 2026)
+
 ### What's new
 
+- **Ask Kilnmark.** An **Ask** panel on every page (Alt+A) answers questions from the
+  documentation, in a few sentences, with links to the exact sections it used. It works with a
+  local model, and without one it lists the matching sections.
+- **Documentation inside the app.** The user guides and this changelog open in the app, under
+  **Documentation**, and the running version links to **What's new**.
+- **Quality rules without the jargon.** Pick the table and column from lists, fill in plain fields
+  instead of JSON, preview on the sample, and edit rules in place. Two people editing the same rule
+  can no longer overwrite each other.
+- **Find local models.** The AI models page finds Ollama, LM Studio and the bundled model servers
+  on this machine or its container, lists their models, and shows whether each runs on the GPU.
+  When something cannot be reached, it says why and what to change.
+- **Looks and branding.** Light, Dark, High contrast or System themes, accent colours and density,
+  chosen by each user. Consistent icons, letter tiles for each product, a compact connection
+  gallery, and a folder where you can drop your own logos.
+- **Sensitive data stays hidden.** Values of columns marked sensitive are hidden from everyone but
+  admins wherever they could appear: previews, rule results, drift, documents, search and the MCP
+  server. Search stays fast on large catalogues, however common the words.
 - **Sign-in and roles.** Every user signs in with an API token, as a viewer, steward or admin.
   Admins manage tokens under **Settings**.
 - **Adding connections is guided.** Pick a connector from a gallery grouped by category, test the

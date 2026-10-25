@@ -99,8 +99,11 @@ class DocSectionsTest {
             }
         }
         Set<String> answered = BundledDocs.sections().stream().map(DocSections.Section::id).collect(Collectors.toSet());
-        assertFalse(answered.contains("whats-new/unreleased") || answered.contains("whats-new/details"),
-            "the changelog's Unreleased part is not answered from");
+        // Whatever sits under Unreleased is left out; released versions are answered from. (Which
+        // "Details" slug is the unreleased one changes with every release, so test by title path.)
+        assertFalse(answered.contains("whats-new/unreleased"), "the changelog's Unreleased part is not answered from");
+        assertTrue(BundledDocs.sections().stream().noneMatch(s -> s.titlePath().contains("Unreleased")),
+            "nothing under Unreleased is answered from");
         assertTrue(answered.contains("whats-new/002-24-october-2026"), answered.toString());
         Map<String, DocSections.Section> byId = BundledDocs.sections().stream()
             .collect(Collectors.toMap(DocSections.Section::id, Function.identity()));
