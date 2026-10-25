@@ -87,7 +87,9 @@ details.
   percentage, and the referred-to asset found by name in the same source. The JSON parameters stay
   under "Advanced: edit as JSON", which can take over from the fields. Rules are edited in place
   (**Edit**, saved with `PUT /api/v1/quality/rules/{id}`), keeping their results and any dimension
-  set through the API.
+  set through the API. A `PUT` with `If-Match` set to the rule's `updatedAt` is refused (409) when
+  someone else changed the rule since, and the form sends it, so an edit never undoes another
+  unseen. `GET /api/v1/search` takes `source` to keep to one source's assets.
 - **Documentation in the app:** the guides in `docs/guide` and this changelog (as What's new) are
   bundled into the web UI at build time and shown under **Documentation**, so they work offline.
   Each section has its own address, `#/docs/<page>/<section>`, from its heading as GitHub makes
