@@ -7,9 +7,10 @@ There are two parts:
 
 - **Appearance**, chosen by each person for themselves: theme, accent colour and density. Open
   **Settings**, then **Appearance**. Every signed-in user can do this; the choice is kept in that
-  browser only. The theme can also be switched from the top bar.
+  browser only. The theme can also be switched from the menu under your name, at the right of the
+  top bar.
 - **Organisation branding**, set by the operator for everyone: the product name and logo shown in
-  the top bar and on the sign-in page, and logos or colours for connectors. These come from the
+  the sidebar and on the sign-in page, and logos or colours for connectors. These come from the
   **branding folder** on the server, described below.
 
 ## Appearance
@@ -17,11 +18,18 @@ There are two parts:
 | Setting | Choices |
 | --- | --- |
 | Theme | **System** (light or dark, following the device), **Light**, **Dark**, **High contrast** (black on white, or white on black when the device is dark) |
-| Accent colour | Orange (the default), Blue, Green, Purple, Pink, Teal. Each has its own shade in every theme, checked for contrast |
+| Accent colour | Orange (the default), Blue, Green, Purple, Pink, Teal. Used for the current page in the sidebar, selections, links, progress and main buttons. Each has its own shades in every theme, checked for contrast |
 | Density | **Comfortable** (the default) or **Compact**, which fits more rows on screen and keeps every control at least 24 pixels high |
 
 Kilnmark also follows the device's **reduced motion** setting, and Windows **contrast themes**
 (forced colours), where the system's colours replace Kilnmark's.
+
+In every theme the sidebar is dark. In Dark, cards are dark blue-grey on a darker page; in High
+contrast there are no tints or shadows, only black and white with edges. Kilnmark's own fonts
+(Inter and Manrope) are part of the app, so it looks the same without internet access.
+
+The branding folder does not change the accent colour: each person chooses it under
+**Appearance**.
 
 ## Connector tiles
 
@@ -84,8 +92,8 @@ Every field is optional.
 
 | Field | Meaning |
 | --- | --- |
-| `product.name` | Replaces "Kilnmark" in the top bar and on the sign-in page. At most 60 characters |
-| `product.logo` | An image shown before the name, at 28 pixels high |
+| `product.name` | Replaces "Kilnmark" in the sidebar and on the sign-in page. At most 60 characters |
+| `product.logo` | An image shown before the name in place of the letter tile, at 28 pixels high |
 | `connectors` | Keyed by connector id: `postgresql`, `sqlserver`, `files`, `s3`, or a planned connector's id (below) |
 | `connectors.<id>.file` | An image that replaces the tile |
 | `connectors.<id>.color` | A brand colour as `#rrggbb`. With a file, the background behind the image; without one, the tile's colour, with black or white letters, whichever contrasts more. Not used in the High contrast theme, nor for a planned connector without a file (its tile stays neutral until it is available) |

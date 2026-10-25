@@ -5,6 +5,63 @@ details.
 
 ## Unreleased
 
+### What's new
+
+- **A new look.** A dark sidebar with coloured icons, a light page with white cards, new fonts and
+  clearer status chips, in Light, Dark and High contrast. Orange is still the default accent, and
+  you can choose another under **Settings**, **Appearance**.
+- **A home page that shows what matters.** A greeting with what needs attention, your sources at a
+  glance with their health and quality score, the issues that need a look, and a checklist that
+  shows how far set-up has got.
+- **Add recommended rules together.** On an asset's new **Quality** tab, tick the suggested rules
+  you want (the ones that fit every row are ticked already) and add them in one go. Each rule
+  shows a bar for each of its last ten results.
+- **Asset pages have tabs.** Overview, Columns and Quality, so a long page is easier to move
+  around.
+- **Sources as cards, and real switches.** Sources show as cards with their health. On and off
+  settings, such as including sub-folders or keeping document text, are switches instead of
+  typing true or false.
+- **Ask Kilnmark, notifications and your account in the top bar.** The theme switch has moved into
+  the menu under your name. **What's new** is now the first entry under Documentation in the
+  sidebar, marked **New** after an upgrade.
+- **Better on small screens.** The sidebar becomes a row of icons, then a menu, and pages no
+  longer scroll sideways on a phone.
+
+### Details
+
+- Design tokens reworked (`ui/src/tokens.css`): page, card and sidebar colours, tints for chips and
+  tiles, chart and bar fills, radii, shadows and type sizes, for light, dark (cards `#1b2030` on
+  `#11141c`, the sidebar kept dark) and high contrast. Each accent preset has an indicator, button
+  fill, link, tint and on-dark shade; the orange buttons use `#c2410c` so white text keeps 4.5:1.
+  The contrast check resolves `var()` and now covers 692 pairs (sidebar, hero, chips, tiles, fills
+  against their track, the New badge, every accent).
+- Inter (400, 500, 600) and Manrope (700, 800) are bundled from `@fontsource/inter` and
+  `@fontsource/manrope` 5.2.8, Latin subset only, and listed in the UI's third-party notices.
+- Shared components in `ui/src/components/ui`: Card, PageHeader, StatTile, IconTile, StatusChip,
+  SeverityChip, DataTable, Switch, EmptyState, Tabs, Button, ButtonLink, Meter, ScoreRing,
+  FilterChips. Every page uses them; plain elements and older class names are styled to match.
+- The shell: the sidebar's entries live in `ui/src/nav.ts`; an icon rail under 1200 px and a modal
+  drawer under 768 px. The search's submit button sits inside the field, which removes the 15 px
+  sideways scroll at 375 px. The user menu holds the theme switch, Settings and Sign out.
+- Home is built from existing endpoints (sources, source quality scores, open issues, rules, AI
+  status). The 14-day quality trend shows an empty state, because the server keeps only the latest
+  scores. The **Recent pipeline runs** tile (`GET /api/v1/pipeline-runs?limit=5`), the
+  **Notifications** card and the bell (`GET /api/v1/notifications`, `…/unread-count`,
+  `POST …/read`) stay hidden while those endpoints answer 404, and appear once they exist.
+  Notifications show severity in words, unread marks, email delivery (Emailed, Email queued,
+  Email failed, and for admins the team addresses), Mark all read, and links to notification
+  settings and, for admins, sent emails.
+- Asset tabs are kept in the address (`#/asset/<urn>?tab=quality`). Recommended rules are added
+  with the existing create-rule call, one per rule, with one summary of successes and failures that
+  takes focus. A rule's history comes from `GET /api/v1/quality/rules/{id}/results`.
+- Connector settings get a control by kind (switch, list, number, secret), from
+  `ui/src/components/settingKinds.ts`; values are still sent as `true` and `false`. Rules have an
+  **On** switch instead of Switch on and Switch off buttons; other on/off options (blank text
+  counts as missing, open a task, local model server, remove the stored key, local AI assistant,
+  import options) are switches too.
+- The rule form links to the quality rules guide (**How rules work**). The documentation's page list
+  puts What's new first. `#/sources?add=1` opens Add a connection.
+
 ## 0.0.3 (25 October 2026)
 
 ### What's new
