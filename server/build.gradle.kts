@@ -56,6 +56,11 @@ dependencies {
 tasks.withType<Test>().configureEach {
     jvmArgs("--add-opens=java.base/java.nio=ALL-UNNAMED", "--enable-native-access=ALL-UNNAMED")
     systemProperty("java.util.logging.manager", "org.jboss.logmanager.LogManager")
+    // The assistant's shared fixtures: section anchors (also checked by the UI build) and the docs evaluation set.
+    systemProperty("kilnmark.docs.cases", rootProject.file("tests/docs").absolutePath)
+    systemProperty("kilnmark.eval.docs", rootProject.file("tests/ai-eval/docs.json").absolutePath)
+    inputs.dir(rootProject.file("tests/docs"))
+    inputs.file(rootProject.file("tests/ai-eval/docs.json"))
 }
 
 // AI evaluation (ADR 0016): scores a running server's search and question answering against
@@ -110,6 +115,30 @@ val buildUi by tasks.registering(Exec::class) {
         uiDir.file("package-lock.json"))
     outputs.dir(uiOut)
 }
+
+// The user guides and the changelog, for the assistant (docs/design/assistant.md): the same files
+// the web UI bundles, one source of truth. Copied into the server's resources under kilnmark/docs,
+// with a list of the guides (a jar cannot be listed reliably at run time).
+val guideDir = rootProject.layout.projectDirectory.dir("docs/guide")
+val docsResources = layout.buildDirectory.dir("generated/docs-resources")
+val bundleDocs by tasks.registering(Sync::class) {
+    description = "Copies docs/guide/*.md and CHANGELOG.md into the server's resources."
+    from(guideDir) {
+        include("*.md")
+        into("kilnmark/docs/guide")
+    }
+    from(rootProject.layout.projectDirectory.file("CHANGELOG.md")) {
+        into("kilnmark/docs")
+    }
+    into(docsResources)
+    val listFile = docsResources.map { it.file("kilnmark/docs/guide.list").asFile }
+    val guideNames = guideDir.asFileTree.matching { include("*.md") }.elements
+        .map { files -> files.map { it.asFile.name }.sorted() }
+    doLast {
+        listFile.get().writeText(guideNames.get().joinToString("\n", postfix = "\n"))
+    }
+}
+sourceSets["main"].resources.srcDir(bundleDocs)
 
 tasks.named<ProcessResources>("processResources") {
     dependsOn(buildUi)

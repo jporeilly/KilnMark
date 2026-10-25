@@ -13,6 +13,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 
 ## User guides
 
+- [Asking Kilnmark](guide/assistant.md): the Ask panel, what it answers from, sources and links, and privacy
 - [Setting data quality rules](guide/quality-rules.md): one-click rules from the profile, writing rules, thresholds, previews, alerts and recipes
 
 ## Spikes

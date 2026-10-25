@@ -123,12 +123,22 @@ public class AiGateway {
     public Result<ModelClient.ChatAnswer> chatWith(ModelProfile p, String feature, Records.Source source,
                                                    ModelClient.ChatCall call, String caller, BooleanSupplier cancelled,
                                                    Budget budget) {
+        return chatWith(p, feature, source, call, caller, cancelled, budget, null);
+    }
+
+    /**
+     * Chat with a given profile, under the same rules, recording the knowledge domains the prompt
+     * drew on (the assistant) in the usage record.
+     */
+    public Result<ModelClient.ChatAnswer> chatWith(ModelProfile p, String feature, Records.Source source,
+                                                   ModelClient.ChatCall call, String caller, BooleanSupplier cancelled,
+                                                   Budget budget, List<String> domains) {
         if (p.purpose() != Purpose.CHAT) {
             throw new AiException(Kind.FAILED, "Profile " + p.name() + " is an embedding model; this needs a chat model.");
         }
         String prompt = call.system() + "\n\n" + call.user();
         return run(p, feature, source, caller, cancelled, budget, prompt, c -> c.chat(call),
-            a -> new long[] {nz(a.tokensIn()), nz(a.tokensOut())}, ModelClient.ChatAnswer::text, a -> null);
+            a -> new long[] {nz(a.tokensIn()), nz(a.tokensOut())}, ModelClient.ChatAnswer::text, a -> null, domains);
     }
 
     /**
@@ -143,7 +153,7 @@ public class AiGateway {
         }
         return run(p, feature, source, caller, cancelled, budget, String.join("\n---\n", texts),
             c -> c.embed(texts), a -> new long[] {nz(a.tokensIn()), -1}, a -> null,
-            a -> wrongShape(p, texts.size(), a));
+            a -> wrongShape(p, texts.size(), a), null);
     }
 
     /** Why an embedding answer does not fit the profile, or null. */
@@ -166,7 +176,8 @@ public class AiGateway {
 
     private <T> Result<T> run(ModelProfile p, String feature, Records.Source source, String caller,
                               BooleanSupplier cancelled, Budget budget, String prompt, Function<ModelClient, T> call,
-                              Function<T, long[]> tokens, Function<T, String> answerText, Function<T, String> check) {
+                              Function<T, long[]> tokens, Function<T, String> answerText, Function<T, String> check,
+                              List<String> domains) {
         long start = System.nanoTime();
         long deadline = budget.totalMs() > 0 ? System.currentTimeMillis() + budget.totalMs() : Long.MAX_VALUE;
         Optional<String> refusal;
@@ -174,18 +185,19 @@ public class AiGateway {
             refusal = refusal(p, source, deadline);
         } catch (AiException e) {
             usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, e.outcome(), e.getMessage(), caller, null,
-                null));
+                null, domains));
             throw e;
         }
         if (refusal.isPresent()) {
             usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, "refused", refusal.get(), caller, null,
-                null));
+                null, domains));
             throw new AiException(Kind.REFUSED, refusal.get());
         }
         if (budget.skipIfDown() && downUntil.getOrDefault(p.id(), 0L) > System.currentTimeMillis()) {
             String msg = "Model " + p.name() + " failed or did not answer in the last " + DOWN_FOR_MS / 1000
                 + " seconds, so it was not tried again yet.";
-            usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, "failed", msg, caller, null, null));
+            usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, "failed", msg, caller, null, null,
+                domains));
             throw new AiException(Kind.FAILED, msg);
         }
         Built built;
@@ -193,7 +205,8 @@ public class AiGateway {
             built = client(p);
         } catch (RuntimeException e) {
             String msg = "Cannot set up model " + p.name() + ": " + scrub(e.getMessage(), p);
-            usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, "failed", msg, caller, null, null));
+            usage.record(new UsageLog.Entry(feature, p, source, null, null, 0, "failed", msg, caller, null, null,
+                domains));
             throw new AiException(Kind.FAILED, msg);
         }
         boolean acquired = false;
@@ -214,7 +227,7 @@ public class AiGateway {
             long[] t = tokens.apply(answer);
             downUntil.remove(p.id());
             usage.record(new UsageLog.Entry(feature, p, source, t[0] < 0 ? null : (int) t[0],
-                t[1] < 0 ? null : (int) t[1], ms, "ok", null, caller, prompt, answerText.apply(answer)));
+                t[1] < 0 ? null : (int) t[1], ms, "ok", null, caller, prompt, answerText.apply(answer), domains));
             return new Result<>(answer, p, ms);
         } catch (AiException e) {
             // Only interactive failures make searches skip the model: a slow background batch does not.
@@ -222,7 +235,7 @@ public class AiGateway {
                 downUntil.put(p.id(), System.currentTimeMillis() + DOWN_FOR_MS);
             }
             usage.record(new UsageLog.Entry(feature, p, source, null, null, (System.nanoTime() - start) / 1_000_000,
-                e.outcome(), e.getMessage(), caller, prompt, null));
+                e.outcome(), e.getMessage(), caller, prompt, null, domains));
             throw e;
         } finally {
             if (acquired) {

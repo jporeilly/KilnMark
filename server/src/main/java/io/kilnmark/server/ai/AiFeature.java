@@ -9,7 +9,10 @@ public enum AiFeature {
     SEARCH_NL("search_nl", Purpose.CHAT, "Ask in plain English",
         "Turns a question into a search. Without it, questions are searched as typed."),
     EMBED("embed", Purpose.EMBEDDING, "Search by meaning",
-        "Embeds assets at each scan and every search. Without it, search matches words only.");
+        "Embeds assets at each scan and every search. Without it, search matches words only."),
+    ASSISTANT("assistant", Purpose.CHAT, "Assistant",
+        "Answers questions in the Ask panel from the documentation, with links to the sections it used. Without "
+            + "it, the panel lists the matching sections.");
 
     private final String id;
     private final Purpose purpose;
@@ -49,7 +52,7 @@ public enum AiFeature {
                 }
             }
         }
-        throw new IllegalArgumentException("feature: use describe, classify, search_nl or embed");
+        throw new IllegalArgumentException("feature: use describe, classify, search_nl, embed or assistant");
     }
 
     /** What a model profile is for. */

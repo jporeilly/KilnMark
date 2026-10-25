@@ -68,7 +68,7 @@ public final class AssetText {
      * per token (measured with bge-small's tokenizer), so this leaves room; llama-server answers an
      * input longer than its context with an error, not a cut.
      */
-    static int maxChars(ModelProfile p) {
+    public static int maxChars(ModelProfile p) {
         return p.contextSize() == null ? DEFAULT_MAX_CHARS : (int) Math.min(30_000L, p.contextSize() * 3L / 2);
     }
 

@@ -32,10 +32,19 @@ public class UsageLog {
         this.config = config;
     }
 
-    /** One call. {@code profile} and {@code source} may be null; {@code outcome} as in the table's check. */
+    /**
+     * One call. {@code profile} and {@code source} may be null; {@code outcome} as in the table's
+     * check. {@code domains}: the assistant's knowledge domains the prompt drew on, or null.
+     */
     public record Entry(String feature, ModelProfile profile, Records.Source source, Integer tokensIn,
                         Integer tokensOut, long latencyMs, String outcome, String detail, String caller, String prompt,
-                        String answer) {
+                        String answer, List<String> domains) {
+
+        public Entry(String feature, ModelProfile profile, Records.Source source, Integer tokensIn, Integer tokensOut,
+                     long latencyMs, String outcome, String detail, String caller, String prompt, String answer) {
+            this(feature, profile, source, tokensIn, tokensOut, latencyMs, outcome, detail, caller, prompt, answer,
+                null);
+        }
     }
 
     public void record(Entry e) {
@@ -44,8 +53,9 @@ public class UsageLog {
             db.tx(c -> {
                 try (PreparedStatement ps = c.prepareStatement("""
                     INSERT INTO kilnmark.ai_usage (feature, profile_id, profile_name, provider, model, local, source_id,
-                        source_name, tokens_in, tokens_out, latency_ms, outcome, detail, caller, prompt_text, answer_text)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")) {
+                        source_name, tokens_in, tokens_out, latency_ms, outcome, detail, caller, prompt_text, answer_text,
+                        domains)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")) {
                     ps.setString(1, e.feature());
                     ModelProfile p = e.profile();
                     if (p == null) {
@@ -76,6 +86,11 @@ public class UsageLog {
                     ps.setString(14, truncate(e.caller(), 200));
                     ps.setString(15, keep && e.prompt() != null ? truncate(e.prompt(), 100_000) : null);
                     ps.setString(16, keep && e.answer() != null ? truncate(e.answer(), 100_000) : null);
+                    if (e.domains() == null) {
+                        ps.setNull(17, Types.ARRAY);
+                    } else {
+                        ps.setArray(17, c.createArrayOf("text", e.domains().toArray()));
+                    }
                     ps.executeUpdate();
                 }
                 return null;
@@ -102,10 +117,10 @@ public class UsageLog {
                         long tokensOut, long averageLatencyMs) {
     }
 
-    /** A recent call, without prompt or answer text. */
+    /** A recent call, without prompt or answer text. {@code domains} as in {@link Entry}, or null. */
     public record Recent(long id, Instant at, String feature, String profile, String model, String source,
                          Integer tokensIn, Integer tokensOut, int latencyMs, String outcome, String detail,
-                         String caller) {
+                         String caller, List<String> domains) {
     }
 
     /** Totals by day and profile for the last {@code days} days, newest day first. */
@@ -138,7 +153,7 @@ public class UsageLog {
             List<Recent> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("""
                 SELECT id, at, feature, profile_name, model, source_name, tokens_in, tokens_out, latency_ms, outcome,
-                       detail, caller
+                       detail, caller, domains
                 FROM kilnmark.ai_usage ORDER BY id DESC LIMIT ?""")) {
                 ps.setInt(1, limit);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -147,9 +162,11 @@ public class UsageLog {
                         Integer tokensIn = rs.wasNull() ? null : in;
                         int outTokens = rs.getInt(8);
                         Integer tokensOut = rs.wasNull() ? null : outTokens;
+                        java.sql.Array domains = rs.getArray(13);
                         out.add(new Recent(rs.getLong(1), Db.instant(rs.getTimestamp(2)), rs.getString(3),
                             rs.getString(4), rs.getString(5), rs.getString(6), tokensIn, tokensOut, rs.getInt(9),
-                            rs.getString(10), rs.getString(11), rs.getString(12)));
+                            rs.getString(10), rs.getString(11), rs.getString(12),
+                            domains == null ? null : List.of((String[]) domains.getArray())));
                     }
                 }
             }

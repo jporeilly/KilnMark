@@ -25,6 +25,7 @@ import io.kilnmark.server.ai.ModelProfile;
 import io.kilnmark.server.ai.ModelProfiles;
 import io.kilnmark.server.ai.Provider;
 import io.kilnmark.server.ai.UsageLog;
+import io.kilnmark.server.ai.assistant.KnowledgeIndex;
 import io.kilnmark.server.auth.AccessRole;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.RolesAllowed;
@@ -58,9 +59,12 @@ public class AiResource {
     private final ModelHosts hosts;
     private final ModelDiscovery discovery;
     private final SecurityIdentity identity;
+    private final KnowledgeIndex knowledge;
 
     public AiResource(ModelProfiles profiles, AiGateway gateway, EgressPolicy egress, Embeddings embeddings,
-                      UsageLog usage, ModelHosts hosts, ModelDiscovery discovery, SecurityIdentity identity) {
+                      UsageLog usage, ModelHosts hosts, ModelDiscovery discovery, SecurityIdentity identity,
+                      KnowledgeIndex knowledge) {
+        this.knowledge = knowledge;
         this.discovery = discovery;
         this.profiles = profiles;
         this.gateway = gateway;
@@ -92,7 +96,7 @@ public class AiResource {
     public AiViews.Status status() {
         Map<AiFeature, ModelProfile> routes = profiles.routes();
         return new AiViews.Status(routes.containsKey(AiFeature.EMBED), routes.containsKey(AiFeature.SEARCH_NL),
-            embeddings.status().orElse(null));
+            embeddings.status().orElse(null), routes.containsKey(AiFeature.ASSISTANT));
     }
 
     @GET
@@ -142,6 +146,7 @@ public class AiResource {
             embeddings.forgetProfile(u.profile().id());
             if (profiles.route(AiFeature.EMBED).map(p -> p.id() == u.profile().id()).orElse(false)) {
                 embeddings.reembedAllInBackground("profile " + u.profile().name() + " changed");
+                knowledge.embedInBackground(); // the assistant's documentation sections too
             }
         }
         return view(u.profile(), profiles.routes(), egress);
@@ -240,6 +245,7 @@ public class AiResource {
         profiles.setRoute(f, p, Callers.of(identity));
         if (f == AiFeature.EMBED && p != null && !Objects.equals(before, p.id())) {
             embeddings.reembedAllInBackground("embedding model set to " + p.name());
+            knowledge.embedInBackground(); // the assistant's documentation sections too
         }
         return new AiViews.Feature(f.id(), f.label(), f.help(), f.purpose().id(), name);
     }
@@ -280,6 +286,7 @@ public class AiResource {
                 + "meaning first.");
         }
         boolean started = embeddings.reembedAllInBackground("refresh by " + Callers.of(identity));
+        knowledge.embedInBackground();
         return Response.accepted(Map.of("started", started, "message", started
             ? "Embedding every source in the background. Unchanged assets are skipped."
             : "Embedding is already running; it will go round once more when it ends.")).build();

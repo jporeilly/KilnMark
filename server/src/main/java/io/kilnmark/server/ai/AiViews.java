@@ -92,8 +92,8 @@ public final class AiViews {
                              String gpuText, Integer contextSize) {
     }
 
-    /** What viewers may know: which AI search features are on. */
-    public record Status(boolean searchByMeaning, boolean ask, Embeddings.Status embeddings) {
+    /** What viewers may know: which AI search features are on, and whether the assistant has a model. */
+    public record Status(boolean searchByMeaning, boolean ask, Embeddings.Status embeddings, boolean assistant) {
     }
 
     /** A search result: {@code mode} is hybrid or keyword, {@code note} why meaning was not used (or null). */
