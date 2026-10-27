@@ -662,7 +662,29 @@ asset's previous profile.
 - The server reaches the compiler through `PipelineCompilerPort` (adapter `KilnPipelineCompiler`)
   and the runner as a `GraphRunner` bean, both produced in `PipelineCompilers`; tests replace
   the runner with an alternative bean.
-- The YAML editor is a plain textarea with line numbers for now; the canvas replaces it in step 2.
+- The YAML editor is a plain textarea with line numbers; the canvas (step 2) sits beside it as a
+  second view of the same text.
+
+### The canvas (round 3, step 2, decisions)
+
+- **One document.** The YAML text is the only state. The canvas reads the graph from it with the
+  `yaml` library (2.9.1, ISC) and makes each change on the parsed document (`ui/src/pipelines/canvas/model.ts`),
+  so comments, the order of keys, numbers as written (`007`, `2024.10`) and settings the canvas
+  does not know survive; the text is reformatted where it is touched (spacing before a trailing
+  comment, flow lists written `[a, b]`). Unreadable YAML leaves the last good graph on the canvas,
+  read-only, under a banner.
+- **Positions** go in the top-level `layout` block (section 2), written only when a step is added,
+  moved or connected; steps without a position are placed by a layered layout (dagre).
+- **React Flow** (`@xyflow/react` 12.12.0, MIT) draws the canvas; the canvas, React Flow and
+  `yaml` load lazily with the pipeline page, outside the main bundle. React Flow's own keyboard
+  moves are off: the canvas's keys move between connected steps, Shift+arrows move a step, C opens
+  Connect to…, and changes are announced in a live region.
+- **Settings panels** come from `GET /api/v1/steps`: one control per `SettingSpec` kind; column
+  pickers use the columns validation worked out for the step's inputs; a write shows the writer
+  settings its source's kind takes (`writerSettings`).
+- **Connections** are refused before they reach the YAML when the compiler would refuse them: a
+  step reading from itself, loops, a single-input port fed twice, a port fed twice by one step.
+- Later: data previews at a step, and the gate step's predicted scores on the canvas (step 3).
 
 ## 7. Next
 

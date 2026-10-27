@@ -7,6 +7,11 @@ details.
 
 ### What's new
 
+- **Build pipelines on a canvas.** A pipeline's page has a **Canvas** tab beside the YAML: drag
+  steps from a list, connect their ports, and change each step's settings in a panel that offers
+  your sources, tables and columns, with problems shown on the step and setting they are about.
+  The canvas and the YAML are the same pipeline, so a change in one shows in the other. After a
+  run, each step shows its rows and how it ended. Everything works from the keyboard too.
 - **Email alerts and notifications.** A bell in the top bar and a Notifications card on the home
   page tell you when a quality rule starts failing or recovers, an issue is opened, a scan or
   connection test fails, or drift is found. Turn on email under **Settings**, **Notifications**:
@@ -35,6 +40,17 @@ details.
 
 ### Details
 
+- **The pipeline canvas** (docs/guide/pipelines.md, "Building on the canvas"): a palette of step
+  types by kind with search, steps with named ports and problem badges, connections refused with a
+  reason, move, duplicate, delete, undo and redo, zoom, fit and a left-to-right auto-layout, and a
+  settings panel generated from each step type's settings schema. Where steps are drawn is kept in
+  a new top-level `layout` block that the compiler accepts and ignores. `GET /api/v1/steps` gives
+  the write step `writerSettings`, the writer settings each kind of source takes. New pipelines
+  can start from the template or an empty canvas; **Run now** asks first when there are unsaved
+  changes. Keyboard: arrow keys between connected steps, Shift+arrows to move, `C` for Connect to…,
+  `?` for every shortcut. The UI adds `yaml` 2.9.1 (ISC), pins `@xyflow/react` to 12.12.0, and
+  runs its unit tests (vitest) in `npm run build`; the canvas loads lazily, outside the main
+  bundle.
 - **The release holds the product only** (ADR 0024): the reference lab is for development, tests
   and demos, and never ships. The release has its own `compose.yaml`, made from
   `containers/compose.release.yaml`: no lab defaults, a commented-out example for the folder to
