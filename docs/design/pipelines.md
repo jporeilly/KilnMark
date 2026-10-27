@@ -200,7 +200,17 @@ steps:
   list (`input: [a, b, c]`, or a list under `inputs`) connects several steps to a port that takes
   many.
 - Steps are listed in any order; the edges decide the order of work.
-- Unknown keys are errors, with the line number, so typing mistakes are caught.
+- Unknown keys are errors, with the line number, so typing mistakes are caught. One top-level key
+  is the exception to "checked": `layout` (round 3, step 2) holds where the canvas draws each step,
+  step id → `{ x, y }`, and reading accepts and ignores whatever it holds, so a pipeline runs the
+  same however it is drawn. The canvas writes it last, under a comment saying so:
+
+  ```yaml
+  # Where the canvas draws each step. Kilnmark ignores this when it runs the pipeline.
+  layout:
+    customers: {x: 40, y: 120}
+    tidy: {x: 320, y: 120}
+  ```
 - Secrets never appear: steps name saved sources, and the source holds the credentials.
 
 ### Reading and checking (`io.kilnmark.kiln.yaml`)
@@ -641,7 +651,10 @@ asset's previous profile.
 
 - `GET /api/v1/steps` lists every `StepFactory`: those on the class path (`ServiceLoader`:
   kiln-steps' transforms) and the server's `read` and `write`. `write` takes `target`, or `table` and
-  `path` as other names for it, and `mode` defaults to `create`, which never overwrites.
+  `path` as other names for it, and `mode` defaults to `create`, which never overwrites. Its entry
+  also has `writerSettings`: for each kind of source that can be written to, the keys of the writer
+  settings a step writing to such a source takes, so the canvas offers only those of the chosen
+  source (round 3, step 2).
 - The write step calls the writers' contract directly: `Connector.writeOptions()` for its
   allow-list, `Connector.writtenAssetPath(...)` for the written asset's URN, `WriteOptions.profiling`
   for the source's profiling settings, and `WriteReport.PROFILED` and `PROFILE_ERROR` for a profile

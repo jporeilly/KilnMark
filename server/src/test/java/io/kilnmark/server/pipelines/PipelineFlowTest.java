@@ -145,6 +145,11 @@ class PipelineFlowTest {
         assertEquals(List.of("source", "asset", "row_limit"), steps.getList("find { it.type == 'read' }.settings.key"));
         assertEquals(List.of("create", "append", "replace", "upsert"),
             steps.getList("find { it.type == 'write' }.settings.find { it.key == 'mode' }.choices"));
+        // The writer settings each kind of source takes, for the canvas; other steps have none.
+        assertEquals(List.of("fail", "break_profile", "delimiter"),
+            steps.getList("find { it.type == 'write' }.writerSettings.'" + MemoryConnector.KIND + "'"));
+        Object readWriterSettings = steps.get("find { it.type == 'read' }.writerSettings");
+        assertEquals(null, readWriterSettings);
     }
 
     @Test
