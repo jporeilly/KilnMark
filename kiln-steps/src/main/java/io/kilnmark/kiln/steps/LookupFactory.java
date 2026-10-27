@@ -53,6 +53,11 @@ public final class LookupFactory implements StepFactory {
     }
 
     @Override
+    public String category() {
+        return io.kilnmark.kiln.StepCategories.COMBINE;
+    }
+
+    @Override
     public String label() {
         return "Look up";
     }

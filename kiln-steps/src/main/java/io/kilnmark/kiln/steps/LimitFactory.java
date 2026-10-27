@@ -34,6 +34,11 @@ public final class LimitFactory implements StepFactory {
     }
 
     @Override
+    public String category() {
+        return io.kilnmark.kiln.StepCategories.FILTER_AND_ROUTE;
+    }
+
+    @Override
     public String label() {
         return "Limit rows";
     }

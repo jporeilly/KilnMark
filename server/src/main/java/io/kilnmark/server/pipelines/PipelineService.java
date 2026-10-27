@@ -530,7 +530,7 @@ public class PipelineService {
             }
             out.add(new PipelineViews.StepType(f.type(), f.kind().name().toLowerCase(Locale.ROOT), f.label(), f.help(),
                 inputs, many, f.outputPorts(), settings,
-                f instanceof WriteStepFactory w ? w.writerSettingsByKind() : null));
+                f instanceof WriteStepFactory w ? w.writerSettingsByKind() : null, f.category()));
         }
         return out;
     }

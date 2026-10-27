@@ -98,15 +98,17 @@ public final class PipelineViews {
      * A step type in the catalogue. Input ports in {@code manyInputs} take any number of edges;
      * {@code outputs} are the fixed output ports (route adds its own). {@code writerSettings}, for
      * {@code write} only (else null): for each kind of source that can be written to, the keys of the
-     * writer settings (among {@code settings}) a step writing to such a source takes.
+     * writer settings (among {@code settings}) a step writing to such a source takes. {@code category}
+     * is the palette folder it is listed in (Read, Write, Filter and route, Transform, Combine,
+     * Aggregate, Quality, AI or Other).
      */
     public record StepType(String type, String kind, String label, String help, List<String> inputs,
                            List<String> manyInputs, List<String> outputs, List<SettingView> settings,
-                           java.util.Map<String, List<String>> writerSettings) {
+                           java.util.Map<String, List<String>> writerSettings, String category) {
 
         public StepType(String type, String kind, String label, String help, List<String> inputs,
                         List<String> manyInputs, List<String> outputs, List<SettingView> settings) {
-            this(type, kind, label, help, inputs, manyInputs, outputs, settings, null);
+            this(type, kind, label, help, inputs, manyInputs, outputs, settings, null, null);
         }
     }
 
