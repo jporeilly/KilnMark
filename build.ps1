@@ -43,14 +43,21 @@ if ($LASTEXITCODE -ne 0) { throw 'Building the server image failed.' }
 if ($NoRestart) { Write-Host "`nBuilt. Start with: $engine compose up -d"; exit 0 }
 
 Step 'Restarting Kilnmark'
-# A shared network still used by another container makes 'down' print an error; it is harmless.
+# podman prints "Executing external compose provider" and the harmless shared-network message on
+# the error stream; under $ErrorActionPreference = 'Stop' PowerShell would treat those as failures,
+# so compose runs with errors allowed and only the exit code decides.
+$ErrorActionPreference = 'Continue'
 & $engine compose down 2>&1 | Out-Host
-& $engine compose up -d
-if ($LASTEXITCODE -ne 0) { throw 'Starting the stack failed: see the messages above.' }
+& $engine compose up -d 2>&1 | Out-Host
+$started = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+if ($started -ne 0) { throw 'Starting the stack failed: see the messages above.' }
 
 if ($Lab) {
     Step 'Starting the reference lab'
-    & $engine compose -f lab/compose.yaml up -d
+    $ErrorActionPreference = 'Continue'
+    & $engine compose -f lab/compose.yaml --profile all up -d 2>&1 | Out-Host
+    $ErrorActionPreference = 'Stop'
 }
 
 Step 'Waiting for Kilnmark to answer'
