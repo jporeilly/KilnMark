@@ -16,11 +16,10 @@ import {
   setSetting,
   parseRef,
   portsOf,
-  withoutLayout,
   type Change,
   type Graph,
 } from "./model";
-import { emptyYaml as emptyPipeline } from "../template";
+import { emptyYaml as emptyPipeline, withoutLayout } from "../template";
 
 const t = (type: string, kind: string, inputs: string[], outputs: string[], many: string[] = []): StepType => ({
   type,

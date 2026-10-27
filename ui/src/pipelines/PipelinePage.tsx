@@ -20,7 +20,7 @@ import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { RunStatus, runTime } from "./RunStatus";
 import { columnsText } from "./outline";
-import { emptyYaml, findStarterPicks, renamed, starterYaml } from "./template";
+import { emptyYaml, findStarterPicks, renamed, starterYaml, withoutLayout } from "./template";
 import { YamlEditor, type YamlEditorHandle } from "./YamlEditor";
 import type { CanvasRun } from "./canvas/CanvasView";
 import type { Graph } from "./canvas/model";
@@ -46,6 +46,7 @@ function savedView(): View {
   }
 }
 type Undo = { text: string; label: string; key?: string; at: number };
+const MOVED = "Moved steps";
 
 /**
  * One pipeline, built on the canvas or written as YAML: two views of one document. The canvas
@@ -101,7 +102,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   const undos = useRef<Undo[]>([]);
   const redos = useRef<Undo[]>([]);
   const [, setHistoryTick] = useState(0);
-  const canvasEdit = useCallback((next: string, label: string, key?: string) => {
+  const edit = useCallback((next: string, label: string, key?: string) => {
     const now = Date.now();
     const last = undos.current.at(-1);
     if (key && last?.key === key && now - last.at < COALESCE_MS) {
@@ -249,6 +250,12 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   const problemLines = useMemo(() => new Set(problems.filter((p) => p.line > 0).map((p) => p.line)), [problems]);
   const problemSteps = useMemo(() => new Set(problems.map((p) => p.step).filter((s): s is string => !!s)), [problems]);
   const dirty = !viewing && (isNew || (savedYaml != null && yaml !== savedYaml));
+  // Moving steps changes only the layout block: that is no reason to warn before a run.
+  const contentDirty = dirty && !isNew && savedYaml != null && withoutLayout(yaml) !== withoutLayout(savedYaml);
+  const layoutOnly = dirty && !isNew && !contentDirty;
+  useEffect(() => {
+    setMessage((m) => (layoutOnly && m.trim() === "" ? MOVED : !layoutOnly && m === MOVED ? "" : m));
+  }, [layoutOnly]);
   const nameProblem = isNew && !NAME.test(newName)
     ? "Start with a small letter, then use small letters, digits and dashes (at most 63)."
     : null;
@@ -300,17 +307,32 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
     }
   };
 
+  /** Loads the latest saved version in place of the text here, which stays one undo away. */
   const reloadLatest = async () => {
-    setConflict(false);
-    setError(null);
-    await load();
-    loadLists();
-    setNotice("Loaded the latest version. Make your change again, then save.");
+    if (!name) return;
+    try {
+      const d = await pipelinesApi.get(name);
+      setDetail(d);
+      if (d.latest) {
+        edit(d.latest.yaml, "Loaded the latest version");
+        setSavedYaml(d.latest.yaml);
+      }
+      setConflict(false);
+      setError(null);
+      loadLists();
+      setNotice(
+        `Loaded version ${d.latestVersion}. Your version is one undo away: press Undo on the canvas to get it back, then save again.`,
+      );
+    } catch (err) {
+      fail(err);
+    }
   };
 
   const runNow = async () => {
     if (!name) return;
-    if (dirty && !confirmRun) {
+    // From the text as it is now: a setting typed a moment ago may not have been drawn yet.
+    const unsaved = savedYaml != null && withoutLayout(yamlNow.current) !== withoutLayout(savedYaml);
+    if (unsaved && !confirmRun) {
       setConfirmRun(true);
       return;
     }
@@ -354,13 +376,13 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   };
 
   const startEmpty = () => {
-    canvasEdit(emptyYaml(NAME.test(newName) ? newName : "my-pipeline"), "Started with an empty canvas.");
+    edit(emptyYaml(NAME.test(newName) ? newName : "my-pipeline"), "Started with an empty canvas.");
     setSelected(null);
     setView("canvas");
   };
   const startTemplate = () => {
     const n = NAME.test(newName) ? newName : "my-pipeline";
-    canvasEdit(starterYaml(n), "Started from the template.");
+    edit(starterYaml(n), "Started from the template.");
     findStarterPicks()
       .then((picks) => setYaml((y) => (y === starterYaml(n) ? starterYaml(n, picks) : y)))
       .catch(() => {});
@@ -414,21 +436,22 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
               className="primary"
               onClick={runNow}
               disabled={!detail?.latest?.valid}
-              aria-describedby={dirty ? "pl-run-hint" : undefined}
+              aria-describedby={contentDirty ? "pl-run-hint" : undefined}
             >
               Run now
             </button>
-            {dirty && (
-              <span id="pl-run-hint" className="small muted">
-                Runs the saved version {detail?.latestVersion}, not your unsaved changes.
-              </span>
-            )}
             <button type="button" onClick={remove}>
               Delete
             </button>
           </div>
         )}
       </div>
+      {/* Below the buttons, so they do not move as it comes and goes. */}
+      {contentDirty && !isNew && !viewing && steward && (
+        <p id="pl-run-hint" className="small muted pl-run-hint">
+          Run now runs the saved version {detail?.latestVersion}, not your unsaved changes.
+        </p>
+      )}
       {confirmRun && (
         <div className="warning pl-confirm" role="alert">
           <p>
@@ -494,12 +517,23 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
         </p>
       )}
       {conflict && (
-        <p>
-          <button type="button" onClick={reloadLatest}>
-            Load the latest version
-          </button>{" "}
-          <span className="small muted">Your text here is replaced; copy it first if you want to keep it.</span>
-        </p>
+        <div className="pl-conflict">
+          <p className="small">Your changes are still here, not saved.</p>
+          <div className="buttons">
+            <button
+              type="button"
+              onClick={() => {
+                setView("yaml");
+                window.setTimeout(() => editor.current?.goToLine(1), 0);
+              }}
+            >
+              Show my version in the YAML tab
+            </button>
+            <button type="button" onClick={reloadLatest}>
+              Load the latest and keep mine as an undo step
+            </button>
+          </div>
+        </div>
       )}
 
       {isNew && (
@@ -531,7 +565,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
         </div>
       )}
 
-      <section aria-labelledby="pl-build-h" className="panel pl-build">
+      <section aria-labelledby="pl-build-h" className={`panel pl-build${view === "canvas" ? " pl-wide" : ""}`}>
         <h2 id="pl-build-h" className="visually-hidden">
           {editable ? "Build the pipeline" : "The pipeline"}
         </h2>
@@ -552,7 +586,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
             <Suspense fallback={<p role="status">Loading the canvas…</p>}>
               <CanvasView
                 yaml={text}
-                onEdit={canvasEdit}
+                onEdit={edit}
                 onUndo={undo}
                 onRedo={redo}
                 canUndo={undos.current.length > 0}
@@ -582,7 +616,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                   id="pl-yaml"
                   label={`YAML of ${title}`}
                   value={text}
-                  onChange={setYaml}
+                  onChange={(v) => edit(v, "Typed in the YAML", "yaml")}
                   readOnly={!editable}
                   problemLines={problemLines}
                   describedBy="yaml-hint pl-check-summary"
@@ -663,7 +697,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                 {saving ? "Saving…" : isNew ? "Save pipeline" : "Save new version"}
               </button>
               {!isNew && dirty && savedYaml != null && (
-                <button type="button" onClick={() => setYaml(savedYaml)}>
+                <button type="button" onClick={() => edit(savedYaml, "Undid my changes")}>
                   Undo my changes
                 </button>
               )}

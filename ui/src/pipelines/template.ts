@@ -95,3 +95,19 @@ name: ${name}
 steps: []
 `;
 }
+
+/**
+ * The YAML without its top-level layout block (where the canvas draws steps) and the comment the
+ * canvas writes above it: what decides whether a change is more than moving steps.
+ */
+export function withoutLayout(yaml: string): string {
+  const lines = yaml.split("\n");
+  const at = lines.findIndex((l) => /^layout\s*:/.test(l));
+  if (at < 0) return yaml;
+  let end = at + 1;
+  while (end < lines.length && !/^[^\s#]/.test(lines[end])) end++;
+  let start = at;
+  while (start > 0 && /^#.*Kilnmark ignores this/.test(lines[start - 1])) start--;
+  while (start > 0 && lines[start - 1].trim() === "") start--;
+  return [...lines.slice(0, start), ...lines.slice(end)].join("\n").replace(/\n*$/, "\n");
+}

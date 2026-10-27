@@ -629,14 +629,3 @@ export function setPositions(text: string, positions: Record<string, Point>): Ch
     writeLayout(ctx, keep, isBlockMap(layout) ? stale : []);
   });
 }
-
-/** The YAML without its layout block: what Run and Save compare to see whether anything but positions changed. */
-export function withoutLayout(text: string): string {
-  const { doc } = parse(text);
-  if (doc.errors.length || !isMap(doc.contents)) return text;
-  const pair = topPair(doc, LAYOUT);
-  if (!pair) return text;
-  const p = new Patch(text);
-  p.replace(p.lineStart((pair.key as unknown as { range: [number, number, number] }).range[0]), p.pairEnd(pair), "");
-  return p.result().replace(/\s*#[^\n]*Kilnmark ignores this[^\n]*\n?\s*$/, "\n");
-}
