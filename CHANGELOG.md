@@ -45,9 +45,10 @@ details.
   sideways scroll at 375 px. The user menu holds the theme switch, Settings and Sign out.
 - Home is built from existing endpoints (sources, source quality scores, open issues, rules, AI
   status). The 14-day quality trend shows an empty state, because the server keeps only the latest
-  scores. The **Recent pipeline runs** tile (`GET /api/v1/pipeline-runs?limit=5`), the
-  **Notifications** card and the bell (`GET /api/v1/notifications`, `…/unread-count`,
-  `POST …/read`) stay hidden while those endpoints answer 404, and appear once they exist.
+  scores. **Recent pipeline runs** lists the latest run of each pipeline, newest first, from
+  `GET /api/v1/pipelines`. The **Notifications** card and the bell (`GET /api/v1/notifications`,
+  `…/unread-count`, `POST …/read`) stay hidden while those endpoints answer 404, and appear once
+  they exist; other failures keep the bell, which tries again at the next poll.
   Notifications show severity in words, unread marks, email delivery (Emailed, Email queued,
   Email failed, and for admins the team addresses), Mark all read, and links to notification
   settings and, for admins, sent emails.
@@ -59,6 +60,11 @@ details.
   **On** switch instead of Switch on and Switch off buttons; other on/off options (blank text
   counts as missing, open a task, local model server, remove the stored key, local AI assistant,
   import options) are switches too.
+- Each home card keeps loading, data and errors apart: a failed call says **Could not load** with
+  **Try again**, never a green "nothing open". Open issues are counted up to 500 and shown as
+  **500+** beyond that. Scores are fetched for the six source cards shown only, and the score tile
+  says it is their average. Sources shows 24 at a time with **Show more**, and a find box past
+  eight. Heavy pages (pipelines, rules, AI, tokens, relationships, documentation) load on demand.
 - Layout: home pairs runs and sources with the issue and notification lists (which scroll inside
   fixed heights) so the columns end level; Getting set up runs across the page and shrinks to a
   dismissible **All set up** line once done; the connection panel is a modal side sheet (scrim,

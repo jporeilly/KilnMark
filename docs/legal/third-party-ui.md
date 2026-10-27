@@ -24,8 +24,9 @@ Direct dependencies:
 
 - Inter and Manrope are bundled with the UI from the @fontsource packages above, so Kilnmark
   looks the same without internet access. Nothing is loaded from Google Fonts or any other site.
-- Only the Latin subset of the weights in use is imported (`ui/src/fonts.ts`); Vite copies those
-  woff2 files (and woff fallbacks) into `dist/ui/assets`. The full licence text of both fonts is
+- Only the Latin subset of the weights in use is imported, as woff2 only (`ui/src/fonts.css`,
+  one `@font-face` per weight naming the package's file); Vite copies those five files into
+  `dist/ui/assets`. The full licence text of both fonts is
   in `third-party-notices.txt` with the other packages.
 - Code and identifiers use the system's monospace font.
 
