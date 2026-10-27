@@ -74,4 +74,25 @@ class CatalogueUnitTest {
             assertFalse(ids.contains(c.kind()), "a built connector is not also planned: " + c.kind());
         }
     }
+
+    @Test
+    void theConnectorViewCarriesEachSettingsKindChoicesAndDefault() {
+        Views.Connector sql = CatalogResource.view(Connectors.load().get("sqlserver").orElseThrow());
+        Views.Setting trust = sql.settings().stream().filter(s -> s.key().equals("trust_server_certificate"))
+            .findFirst().orElseThrow();
+        assertEquals("boolean", trust.kind());
+        assertEquals("false", trust.defaultValue());
+        assertEquals(List.of(), trust.choices());
+        Views.Setting isolation = sql.settings().stream().filter(s -> s.key().equals("isolation")).findFirst()
+            .orElseThrow();
+        assertEquals("choice", isolation.kind());
+        assertEquals(List.of("read-uncommitted", "snapshot", "read-committed"), isolation.choices());
+        assertEquals("read-uncommitted", isolation.defaultValue());
+        assertEquals("url", sql.settings().get(0).kind());
+        Views.Connector files = CatalogResource.view(Connectors.load().get("files").orElseThrow());
+        Views.Setting containers = files.settings().stream().filter(s -> s.key().equals("containers")).findFirst()
+            .orElseThrow();
+        assertEquals("text", containers.kind(), "the added container setting is a list of text");
+        assertTrue(containers.multiple());
+    }
 }

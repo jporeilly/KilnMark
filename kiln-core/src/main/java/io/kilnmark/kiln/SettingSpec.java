@@ -28,6 +28,8 @@ public record SettingSpec(String key, String label, Kind kind, boolean required,
         BOOLEAN,
         /** One of {@code choices}. */
         CHOICE,
+        /** An address, such as a JDBC URL or an endpoint; for connector settings ({@code Connector.Setting}). */
+        URL,
         /** One expression (docs/design/pipelines.md, section 3), for example a filter condition. */
         EXPRESSION,
         /** Output column name → expression, for compute and aggregate. */

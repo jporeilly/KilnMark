@@ -222,7 +222,7 @@ public final class WriteStepFactory implements StepFactory {
                 case BOOLEAN -> v instanceof Boolean ? null : "true or false";
                 case CHOICE -> v instanceof String c && spec.choices().contains(c.strip()) ? null
                     : "one of " + String.join(", ", spec.choices());
-                case TEXT, EXPRESSION, COLUMN, SOURCE, ASSET -> v instanceof String || v instanceof Number
+                case TEXT, URL, EXPRESSION, COLUMN, SOURCE, ASSET -> v instanceof String || v instanceof Number
                     || v instanceof Boolean ? null : "a single value, not a list or mapping";
                 default -> null;
             };

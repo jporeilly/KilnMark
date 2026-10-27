@@ -46,7 +46,7 @@ public class SourceDraftResource {
     @Path("common-settings")
     public List<Views.CommonSetting> commonSettings() {
         return CommonSettings.definitions().stream().map(d -> new Views.CommonSetting(d.key(), d.label(), d.hint(),
-            d.multiple(), d.choices(), d.defaultValue())).toList();
+            d.multiple(), d.choices(), d.defaultValue(), d.kind().name().toLowerCase(java.util.Locale.ROOT))).toList();
     }
 
     /** Tests the connection of a source as a form describes it, within the check time limit. */
