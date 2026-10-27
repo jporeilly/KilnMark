@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { PageHeader, Switch } from "../components/ui";
 import {
   aiApi,
   formatNumber,
@@ -101,19 +102,16 @@ export function AiPage() {
 
   return (
     <>
-      <nav aria-label="Breadcrumb" className="crumbs">
-        <ol>
-          <li>
-            <a href={href.settings()}>Settings</a>
-          </li>
-          <li aria-current="page">AI models</li>
-        </ol>
-      </nav>
-      <h1 tabIndex={-1}>AI models</h1>
-      <p className="lead">
-        Choose the models Kilnmark uses: local ones on your own servers, or hosted ones with an API key. AI only proposes;
+      <PageHeader
+        crumbs={[{ label: "Settings", href: href.settings() }, { label: "AI models" }]}
+        title="AI models"
+        lead={
+          <>
+            Choose the models Kilnmark uses: local ones on your own servers, or hosted ones with an API key. AI only proposes;
         people approve. A source&rsquo;s AI rule decides which models may see it. <a href={href.aiUsage()}>See usage</a>.
-      </p>
+          </>
+        }
+      />
       <p role="status" className="notice">
         {notice}
       </p>
@@ -738,7 +736,7 @@ function ProfileForm({
   };
 
   return (
-    <section aria-labelledby="profile-form-h" className="panel">
+    <section aria-labelledby="profile-form-h" className="panel km-form-card">
       <h2 id="profile-form-h" tabIndex={-1} ref={heading}>
         {profile ? `Edit ${profile.name}` : "Add a model"}
       </h2>
@@ -864,18 +862,19 @@ function ProfileForm({
           </div>
         </div>
         {compatible && (
-          <div className="field">
-            <label className="choice">
-              <input type="checkbox" checked={f.local} onChange={(e) => set("local", e.target.checked)}
-                aria-describedby="ai-local-hint" />
-              This server runs on our own network (local)
-            </label>
-            <p id="ai-local-hint" className="hint">
-              Sources with the default AI rule let only local models see their metadata. Tick this only if no data
-              sent to this server leaves your network. Changing the address clears it.
-              {locked && " This server accepts a model as local only if its address is on one of its own networks."}
-            </p>
-          </div>
+          <Switch
+            id="ai-local"
+            label="This server runs on our own network (local)"
+            checked={f.local}
+            onChange={(on) => set("local", on)}
+            help={
+              <>
+                Sources with the default AI rule let only local models see their metadata. Turn this on only if no
+                data sent to this server leaves your network. Changing the address turns it off.
+                {locked && " This server accepts a model as local only if its address is on one of its own networks."}
+              </>
+            }
+          />
         )}
         <div className="field">
           <label htmlFor="ai-key">API key{provider?.needsKey ? "" : " (if the server needs one)"}</label>
@@ -891,10 +890,13 @@ function ProfileForm({
                 : "Stored encrypted. Kilnmark never shows it again."}
           </p>
           {profile?.hasApiKey && !provider?.needsKey && (
-            <label className="choice">
-              <input type="checkbox" checked={f.removeKey} onChange={(e) => set("removeKey", e.target.checked)} />
-              Remove the stored key
-            </label>
+            <Switch
+              id="ai-remove-key"
+              label="Remove the stored key"
+              help="On save, the stored key is deleted."
+              checked={f.removeKey}
+              onChange={(on) => set("removeKey", on)}
+            />
           )}
         </div>
         <div className="field-row">

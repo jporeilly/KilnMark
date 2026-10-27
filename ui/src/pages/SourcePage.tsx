@@ -17,6 +17,9 @@ import { ConnectionPanel } from "../components/ConnectionPanel";
 import { SourceTile } from "../components/ConnectorTile";
 import { splitList } from "../components/ContainerPicker";
 import { useTitle } from "../components/useTitle";
+import { settingText } from "../components/settingKinds";
+import { Icon } from "../components/icons";
+import { Button, Card, DataTable, EmptyState, PageHeader } from "../components/ui";
 import { go, href } from "../router";
 
 const COMMON = new Set(["description", "ai_egress", "include", "exclude", "allow_writing"]);
@@ -82,19 +85,21 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
   if (missing) {
     return (
       <>
-        <h1 tabIndex={-1}>Source not found</h1>
-        <p>
-          There is no source with the ID <span className="mono">{name}</span>. It may have been deleted.{" "}
-          <a href={href.sources()}>Back to sources</a>.
-        </p>
+        <PageHeader title="Source not found" crumbs={[{ label: "Sources", href: href.sources() }]} />
+        <Card>
+          <EmptyState icon={<Icon name="sources" size={22} />} title="No such source">
+            There is no source with the ID <span className="mono">{name}</span>. It may have been deleted.{" "}
+            <a href={href.sources()}>Back to sources</a>.
+          </EmptyState>
+        </Card>
       </>
     );
   }
   if (!source) {
     return (
       <>
-        <h1 tabIndex={-1}>{name}</h1>
-        {error ? <p role="alert" className="error">{error}</p> : <p role="status">Loading…</p>}
+        <PageHeader title={name} crumbs={[{ label: "Sources", href: href.sources() }]} />
+        {error ? <p role="alert" className="error">{error}</p> : <p role="status" className="muted">Loading…</p>}
       </>
     );
   }
@@ -102,26 +107,24 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
   const containerKey = connector?.containerSetting ?? "schemas";
   const chosen = splitList(source.settings[containerKey]);
   const own = Object.entries(source.settings).filter(([k]) => !COMMON.has(k) && k !== containerKey);
-  const label = (key: string) => connector?.settings.find((s) => s.key === key)?.label ?? key;
+  const spec = (key: string) => connector?.settings.find((s) => s.key === key);
+  const label = (key: string) => spec(key)?.label ?? key;
 
   return (
     <>
-      <nav aria-label="Breadcrumb" className="crumbs">
-        <ol>
-          <li>
-            <a href={href.sources()}>Sources</a>
-          </li>
-          <li aria-current="page">{source.displayName}</li>
-        </ol>
-      </nav>
-      <h1 tabIndex={-1} className="with-tile">
-        <SourceTile kind={source.kind} size="lg" />
-        <span>{source.displayName}</span>
-      </h1>
-      <p className="lead">
-        {connector?.displayName ?? source.kind} · Source ID <span className="mono">{source.name}</span>
-      </p>
-      {source.settings.description && <p>{source.settings.description}</p>}
+      <PageHeader
+        crumbs={[{ label: "Sources", href: href.sources() }, { label: source.displayName }]}
+        tile={<SourceTile kind={source.kind} size="lg" />}
+        title={source.displayName}
+        meta={
+          <>
+            {connector?.displayName ?? source.kind} · Source ID <span className="mono">{source.name}</span> ·{" "}
+            {formatNumber(source.assets)} {source.assets === 1 ? "asset" : "assets"}
+          </>
+        }
+        chips={<Status run={source.lastRun} />}
+      />
+      {source.settings.description && <p className="lead">{source.settings.description}</p>}
       <p role="status" className="notice">
         {notice}
       </p>
@@ -133,12 +136,12 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
 
       {canChange && !editing && (
         <div className="buttons actions">
-          <button type="button" ref={editButton} onClick={() => setEditing(true)} disabled={!connector}>
+          <button type="button" className="primary" ref={editButton} onClick={() => setEditing(true)} disabled={!connector}>
             Edit
           </button>
-          <button type="button" onClick={runTest} disabled={testing}>
+          <Button onClick={runTest} disabled={testing}>
             {testing ? "Testing…" : "Test connection"}
-          </button>
+          </Button>
           <ScanAction
             source={source}
             onQueued={(m) => {
@@ -153,15 +156,17 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
       <div role="status" aria-live="polite">
         {test &&
           (test.ok ? (
-            <p className="notice">Connected in {(test.millis / 1000).toFixed(1)} s.</p>
+            <p className="km-status-line good">
+              <Icon name="circle-check" size={18} /> Connected · {test.millis} ms
+            </p>
           ) : (
-            <p className="warning">
+            <p className="km-callout km-callout--bad">
               <strong>Could not connect.</strong> {test.problem}
             </p>
           ))}
       </div>
 
-      {editing && connector ? (
+      {editing && connector && (
         <ConnectionPanel
           connector={connector}
           existing={source}
@@ -177,14 +182,14 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
             window.setTimeout(() => editButton.current?.focus(), 0);
           }}
         />
-      ) : (
+      )}
         <section aria-labelledby="settings-h" className="panel">
           <h2 id="settings-h">Settings</h2>
           <dl className="facts">
             {own.map(([k, v]) => (
               <div key={k}>
                 <dt>{label(k)}</dt>
-                <dd className="mono">{v}</dd>
+                <dd className={settingText(spec(k), v) === v ? "mono" : undefined}>{settingText(spec(k), v)}</dd>
               </div>
             ))}
             <div>
@@ -221,21 +226,23 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
             </div>
           </dl>
         </section>
-      )}
+
 
       <section aria-labelledby="runs-h" className="panel">
         <h2 id="runs-h">Scans</h2>
         <p>
           Last scan: <Status run={source.lastRun} />
           {source.lastRun?.detail && source.lastRun.status !== "succeeded" && (
-            <span className="small"> {source.lastRun.detail}</span>
+            <span className="small km-clamp-2" title={source.lastRun.detail}>
+              {" "}
+              {source.lastRun.detail}
+            </span>
           )}
         </p>
         {history.length === 0 ? (
           <p>No scans yet.</p>
         ) : (
-          <div className="table-scroll" role="region" aria-label="Scan history (scrolls sideways on small screens)" tabIndex={0}>
-            <table>
+          <DataTable label="Scan history (scrolls sideways on small screens)">
               <thead>
                 <tr>
                   <th scope="col">Status</th>
@@ -261,14 +268,21 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
                     <td>{formatNumber(h.run.rowsRead)}</td>
                     <td>{h.attempts ?? "–"}</td>
                     <td className="small">
-                      {h.run.detail}
-                      {h.jobError && h.jobError !== h.run.detail && <div className="muted">{h.jobError}</div>}
+                      {h.run.detail && (
+                        <div className="km-clamp-2" title={h.run.detail}>
+                          {h.run.detail}
+                        </div>
+                      )}
+                      {h.jobError && h.jobError !== h.run.detail && (
+                        <div className="muted km-clamp-2" title={h.jobError}>
+                          {h.jobError}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+          </DataTable>
         )}
       </section>
       {!canChange && (

@@ -19,6 +19,7 @@
   background: var(--km-surface);
   color: var(--km-ink);
   border-left: 1px solid var(--km-border);
+  box-shadow: var(--km-shadow-raised);
 }
 
 /* On wide screens the page moves aside instead of hiding under the panel. */
@@ -35,8 +36,11 @@
 }
 
 .assistant-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0 auto 0 0;
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .assistant-body {
@@ -61,8 +65,9 @@
 .assistant-question {
   margin: 0 0 8px;
   padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--km-ground);
+  border-radius: 12px;
+  background: var(--km-tint-violet-bg);
+  color: var(--km-tint-violet-fg);
   font-weight: 600;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -135,7 +140,7 @@
   color: var(--km-ink);
   background: var(--km-surface);
   border: 1px solid var(--km-border-control);
-  border-radius: 8px;
+  border-radius: var(--km-radius-control);
   padding: 9px 12px;
   resize: vertical;
   min-height: 3lh;

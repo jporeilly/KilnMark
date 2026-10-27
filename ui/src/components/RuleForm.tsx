@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Switch } from "./ui";
+import { docHref } from "../docs/links";
 import {
   ApiError,
   formatShare,
@@ -726,10 +728,15 @@ export function RuleForm({
   const rangeInput = kind === "date" ? "date" : kind && TIMES.has(kind) ? "datetime-local" : "text";
 
   return (
-    <section aria-labelledby="rule-form-h" className="panel">
-      <h2 id="rule-form-h" tabIndex={-1}>
-        {editing ? "Edit rule" : "Add a rule"}
-      </h2>
+    <section aria-labelledby="rule-form-h" className="panel km-form-card">
+      <div className="km-card-head">
+        <h2 id="rule-form-h" tabIndex={-1} className="km-card-title">
+          {editing ? "Edit rule" : "Add a rule"}
+        </h2>
+        <div className="km-card-actions">
+          <a href={docHref("quality-rules")}>How rules work</a>
+        </div>
+      </div>
       {rule && <p className="hint">Changing “{rule.name}”. Its results so far are kept.</p>}
       {error && (
         <p id="rule-error" role="alert" className="error" tabIndex={-1} ref={errorRef}>
@@ -840,10 +847,13 @@ export function RuleForm({
           ) : (
           <>
           {type === "not_null" && (
-            <label className="check">
-              <input type="checkbox" checked={f.blankIsMissing} onChange={(e) => set("blankIsMissing", e.target.checked)} />{" "}
-              Also count blank text as missing, such as "" or "   "
-            </label>
+            <Switch
+              id="rule-blank"
+              label="Also count blank text as missing"
+              help={<>Text that is empty or only spaces, such as "" or "   ", fails the rule too.</>}
+              checked={f.blankIsMissing}
+              onChange={(on) => set("blankIsMissing", on)}
+            />
           )}
 
           {type === "unique" && (
@@ -1205,10 +1215,13 @@ export function RuleForm({
         )}
         <fieldset className="form">
           <legend>When it warns or fails</legend>
-          <label className="check">
-            <input type="checkbox" checked={task} onChange={(e) => setTask(e.target.checked)} /> Open a task in the
-            stewards' issue list
-          </label>
+          <Switch
+            id="rule-task"
+            label="Open a task in the stewards' issue list"
+            help="The task closes itself when the rule passes again."
+            checked={task}
+            onChange={setTask}
+          />
           <div className="field">
             <label htmlFor="rule-hook">Webhook URL (optional)</label>
             <input

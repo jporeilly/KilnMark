@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PageHeader } from "../components/ui";
 import { api, formatNumber, type Asset } from "../api";
 import { useTitle } from "../components/useTitle";
 import { href } from "../router";
@@ -45,14 +46,17 @@ export function BrowsePage({
 
   return (
     <>
-      <nav aria-label="Breadcrumb" className="crumbs">
-        <ol>
-          <li>{source || container != null || asset ? <a href={href.browse()}>Browse</a> : "Browse"}</li>
-          {source && <li>{container != null ? <a href={href.browse(source)}>{chosen?.label ?? source}</a> : chosen?.label ?? source}</li>}
-          {source && container != null && <li aria-current="page">{container || "(top level)"}</li>}
-        </ol>
-      </nav>
-      <h1 tabIndex={-1}>{title}</h1>
+      <PageHeader
+        title={title}
+        crumbs={[
+          ...(source || container != null || asset ? [{ label: "Browse", href: href.browse() }] : []),
+          ...(source
+            ? [container != null ? { label: chosen?.label ?? source, href: href.browse(source) } : { label: chosen?.label ?? source }]
+            : []),
+          ...(source && container != null ? [{ label: container || "(top level)" }] : []),
+        ]}
+        meta={!source && !asset ? "Every source, schema, folder, table and file Kilnmark has scanned" : undefined}
+      />
       {error && (
         <p role="alert" className="error">
           {error}

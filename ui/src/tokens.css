@@ -1,6 +1,8 @@
 /*
- * Design tokens. Every colour the UI uses is defined here, once per theme, and nowhere else
- * (app.css and the other style sheets use only these variables).
+ * Design tokens. Every colour, radius, shadow and type size the UI uses is defined here, once per
+ * theme, and nowhere else: app.css, the shared components (src/components/ui) and every other style
+ * sheet use only these variables. New pages inherit the look by using the shared components and
+ * these tokens; they need no colours of their own.
  *
  * Themes are chosen per viewer on <html> (see src/theme/appearance.ts):
  *   data-theme   system (follows the OS) | light | dark | contrast (high contrast; light or dark
@@ -8,260 +10,656 @@
  *   data-accent  orange (default) | blue | green | purple | pink | teal
  *   data-density comfortable (default) | compact
  *
- * Contrast is checked to WCAG 2.2 AA by `npm run check:contrast` (scripts/check-contrast.mjs):
- * text 4.5:1 (7:1 in high contrast), borders, focus rings and indicators 3:1, for every theme and
- * accent. The dark set appears twice (chosen Dark, and System when the OS is dark); the script
- * checks the two copies agree, so edit them together.
+ * The look: a dark sidebar, a light page ground (#f3f4f7), content on white cards with a 16 px
+ * radius and a soft two-layer shadow and no border. In dark, cards are #1b2030 on #11141c and the
+ * sidebar stays dark. Headings in Manrope, text in Inter, both bundled (src/fonts.ts).
+ *
+ * Contrast is checked to WCAG 2.2 AA by `npm run check:contrast` (scripts/check-contrast.mjs) for
+ * every theme and accent: text 4.5:1 (7:1 for the main text in high contrast), and 3:1 for borders
+ * of controls, focus rings, indicators and bar fills against their track. Tokens may refer to other
+ * tokens of the same theme with var(); the script resolves them. The dark set appears twice (chosen
+ * Dark, and System when the OS is dark); the script checks the two copies agree, so edit them
+ * together.
  */
 
 /* ---- Light (the default, and System when the OS is light) ---- */
 :root {
   color-scheme: light;
-  --km-ink: #15171c;
-  --km-muted: #5a6170;
-  --km-border: #e2e5ea;
-  --km-border-control: #767d89;
-  --km-ground: #f5f6f8;
+  /* Page and surfaces */
+  --km-ground: #f3f4f7;
   --km-surface: #ffffff;
-  --km-link: #1d4ed8;
+  --km-surface-2: #f7f8fa;
+  --km-surface-3: #eef0f4;
+  --km-track: #eef0f4;
+  --km-ink: #1b1f2a;
+  --km-ink-strong: #141821;
+  --km-ink-soft: #3b4252;
+  --km-muted: #5b6475;
+  --km-border: #e4e7ee;
+  --km-divider: #eef0f4;
+  --km-border-control: #7e8696;
   --km-focus: #1d4ed8;
-  --km-good: #0f766e;
+  --km-backdrop: rgb(20 24 33 / 50%);
+  --km-shadow-card: 0 1px 2px rgb(20 24 33 / 6%), 0 4px 16px rgb(20 24 33 / 4%);
+  --km-shadow-raised: 0 8px 24px rgb(20 24 33 / 12%), 0 2px 6px rgb(20 24 33 / 8%);
+  --km-shadow-thumb: 0 1px 3px rgb(20 24 33 / 25%);
+  --km-on-accent: #ffffff;
+  /* Status text and icons on a surface */
+  --km-good: #15803d;
   --km-warn: #b45309;
   --km-bad: #b91c1c;
-  --km-on-accent: #ffffff;
-  --km-backdrop: rgb(0 0 0 / 50%);
-  --km-accent-orange: #c2410c;
-  --km-accent-blue: #1d4ed8;
-  --km-accent-green: #15803d;
-  --km-accent-purple: #7e22ce;
-  --km-accent-pink: #be185d;
-  --km-accent-teal: #0f766e;
-  /* Connector tiles: letters on a tint, chosen per connector (src/components/ConnectorTile.tsx). */
-  --km-tile-border: rgb(0 0 0 / 8%);
-  --km-tile-1-bg: #dbeafe;
-  --km-tile-1-fg: #1e3a8a;
-  --km-tile-2-bg: #dcfce7;
-  --km-tile-2-fg: #14532d;
-  --km-tile-3-bg: #ffedd5;
-  --km-tile-3-fg: #7c2d12;
-  --km-tile-4-bg: #f3e8ff;
-  --km-tile-4-fg: #581c87;
-  --km-tile-5-bg: #fce7f3;
-  --km-tile-5-fg: #831843;
-  --km-tile-6-bg: #ccfbf1;
-  --km-tile-6-fg: #134e4a;
-  --km-tile-7-bg: #fef3c7;
-  --km-tile-7-fg: #78350f;
-  --km-tile-8-bg: #e2e8f0;
-  --km-tile-8-fg: #1e293b;
+  --km-info: #1d4ed8;
+  /* Fills of bars, rings and chart lines: each 3:1 against --km-track and the surface */
+  --km-fill-sky: #0284c7;
+  --km-fill-violet: #8b5cf6;
+  --km-fill-green: #169443;
+  --km-fill-amber: #c2620a;
+  --km-fill-red: #dc2626;
+  /* Tints: dark letters on a light tint, for chips, icon squares and connector tiles */
+  --km-tint-sky-bg: #e0f2fe;
+  --km-tint-sky-fg: #075985;
+  --km-tint-blue-bg: #e8f1fe;
+  --km-tint-blue-fg: #1e40af;
+  --km-tint-violet-bg: #ede9fe;
+  --km-tint-violet-fg: #5b21b6;
+  --km-tint-green-bg: #e3f6ea;
+  --km-tint-green-fg: #166534;
+  --km-tint-amber-bg: #fef3c7;
+  --km-tint-amber-fg: #92400e;
+  --km-tint-orange-bg: #ffedd5;
+  --km-tint-orange-fg: #9a3412;
+  --km-tint-red-bg: #fdecec;
+  --km-tint-red-fg: #991b1b;
+  --km-tint-pink-bg: #fce7f3;
+  --km-tint-pink-fg: #9d174d;
+  --km-tint-teal-bg: #ccfbf1;
+  --km-tint-teal-fg: #115e59;
+  --km-tint-slate-bg: #eef0f4;
+  --km-tint-slate-fg: #3b4252;
+  --km-tile-border: transparent;
+  /* The dark sidebar and the dark hero banner (dark in every theme but high contrast light) */
+  --km-side-bg: #141821;
+  --km-side-edge: #141821;
+  --km-side-ink: #c9ced8;
+  --km-side-ink-strong: #ffffff;
+  --km-side-muted: #8a92a3;
+  --km-side-active: #232937;
+  --km-side-hover: #1c212d;
+  --km-side-divider: #262c3a;
+  --km-side-focus: #93c5fd;
+  --km-side-badge-bg: #7f1d1d;
+  --km-side-badge-fg: #fecaca;
+  --km-nav-sky: #7dd3fc;
+  --km-nav-mint: #a7f3d0;
+  --km-nav-violet: #c4b5fd;
+  --km-nav-pink: #f9a8d4;
+  --km-nav-green: #86efac;
+  --km-nav-red: #fca5a5;
+  --km-nav-amber: #fde68a;
+  --km-nav-slate: #cbd5e1;
+  --km-hero-bg: #141821;
+  --km-hero-ink: #ffffff;
+  --km-hero-muted: #c9ced8;
+  --km-hero-button: #262c3a;
+  --km-hero-glow-2: #0ea5e9;
+  /* Accent presets: indicator (bars, rings, the active nav icon), fill (main buttons, with
+     --km-on-accent text), ink (links and accent text), tint (selected rows), on-dark (sidebar). */
+  --km-accent-orange: #ea580c;
+  --km-accent-orange-fill: #c2410c;
+  --km-accent-orange-ink: #c2410c;
+  --km-accent-orange-tint: #fff4ec;
+  --km-accent-orange-on-dark: #fdba74;
+  --km-accent-blue: #2563eb;
+  --km-accent-blue-fill: #1d4ed8;
+  --km-accent-blue-ink: #1d4ed8;
+  --km-accent-blue-tint: #eef3fe;
+  --km-accent-blue-on-dark: #93c5fd;
+  --km-accent-green: #169443;
+  --km-accent-green-fill: #15803d;
+  --km-accent-green-ink: #15803d;
+  --km-accent-green-tint: #ecf8f0;
+  --km-accent-green-on-dark: #86efac;
+  --km-accent-purple: #9333ea;
+  --km-accent-purple-fill: #7e22ce;
+  --km-accent-purple-ink: #7e22ce;
+  --km-accent-purple-tint: #f5edfe;
+  --km-accent-purple-on-dark: #d8b4fe;
+  --km-accent-pink: #db2777;
+  --km-accent-pink-fill: #be185d;
+  --km-accent-pink-ink: #be185d;
+  --km-accent-pink-tint: #fdeef5;
+  --km-accent-pink-on-dark: #f9a8d4;
+  --km-accent-teal: #0d9488;
+  --km-accent-teal-fill: #0f766e;
+  --km-accent-teal-ink: #0f766e;
+  --km-accent-teal-tint: #e8f7f5;
+  --km-accent-teal-on-dark: #5eead4;
 }
 
 /* ---- Dark: chosen, or System when the OS is dark. Two copies; keep them the same. ---- */
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --km-ground: #11141c;
+  --km-surface: #1b2030;
+  --km-surface-2: #161a26;
+  --km-surface-3: #262c3d;
+  --km-track: #2b3244;
   --km-ink: #e8eaee;
-  --km-muted: #a3a9b3;
-  --km-border: #2a2d35;
-  --km-border-control: #8c929d;
-  --km-ground: #0f1115;
-  --km-surface: #15171c;
-  --km-link: #9db8ff;
-  --km-focus: #9db8ff;
-  --km-good: #34d399;
+  --km-ink-strong: #ffffff;
+  --km-ink-soft: #cdd2db;
+  --km-muted: #a3aab8;
+  --km-border: #2b3244;
+  --km-divider: #262c3d;
+  --km-border-control: #8b93a3;
+  --km-focus: #93c5fd;
+  --km-backdrop: rgb(0 0 0 / 65%);
+  --km-shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 4px 16px rgb(0 0 0 / 22%);
+  --km-shadow-raised: 0 8px 28px rgb(0 0 0 / 55%), 0 2px 6px rgb(0 0 0 / 40%);
+  --km-shadow-thumb: 0 1px 3px rgb(0 0 0 / 45%);
+  --km-on-accent: #11141c;
+  --km-good: #4ade80;
   --km-warn: #fbbf24;
   --km-bad: #f87171;
-  --km-on-accent: #0f1115;
-  --km-backdrop: rgb(0 0 0 / 70%);
+  --km-info: #93c5fd;
+  --km-fill-sky: #38bdf8;
+  --km-fill-violet: #a78bfa;
+  --km-fill-green: #4ade80;
+  --km-fill-amber: #fbbf24;
+  --km-fill-red: #f87171;
+  --km-tint-sky-bg: #0c3550;
+  --km-tint-sky-fg: #bae6fd;
+  --km-tint-blue-bg: #172a54;
+  --km-tint-blue-fg: #bfdbfe;
+  --km-tint-violet-bg: #2e1f5c;
+  --km-tint-violet-fg: #ddd6fe;
+  --km-tint-green-bg: #0f3d25;
+  --km-tint-green-fg: #bbf7d0;
+  --km-tint-amber-bg: #45300a;
+  --km-tint-amber-fg: #fde68a;
+  --km-tint-orange-bg: #4a2410;
+  --km-tint-orange-fg: #fed7aa;
+  --km-tint-red-bg: #4c1717;
+  --km-tint-red-fg: #fecaca;
+  --km-tint-pink-bg: #4c1530;
+  --km-tint-pink-fg: #fbcfe8;
+  --km-tint-teal-bg: #0f3d3a;
+  --km-tint-teal-fg: #99f6e4;
+  --km-tint-slate-bg: #2b3244;
+  --km-tint-slate-fg: #dde1e8;
+  --km-tile-border: transparent;
+  --km-side-bg: #0c0f16;
+  --km-side-edge: #232937;
+  --km-side-ink: #c9ced8;
+  --km-side-ink-strong: #ffffff;
+  --km-side-muted: #8a92a3;
+  --km-side-active: #1f2533;
+  --km-side-hover: #171b26;
+  --km-side-divider: #232937;
+  --km-side-focus: #93c5fd;
+  --km-side-badge-bg: #7f1d1d;
+  --km-side-badge-fg: #fecaca;
+  --km-nav-sky: #7dd3fc;
+  --km-nav-mint: #a7f3d0;
+  --km-nav-violet: #c4b5fd;
+  --km-nav-pink: #f9a8d4;
+  --km-nav-green: #86efac;
+  --km-nav-red: #fca5a5;
+  --km-nav-amber: #fde68a;
+  --km-nav-slate: #cbd5e1;
+  --km-hero-bg: #0a0d14;
+  --km-hero-ink: #ffffff;
+  --km-hero-muted: #c9ced8;
+  --km-hero-button: #232937;
+  --km-hero-glow-2: #0ea5e9;
   --km-accent-orange: #fb923c;
-  --km-accent-blue: #93c5fd;
+  --km-accent-orange-fill: #fb923c;
+  --km-accent-orange-ink: #fdba74;
+  --km-accent-orange-tint: #2f2119;
+  --km-accent-orange-on-dark: #fdba74;
+  --km-accent-blue: #60a5fa;
+  --km-accent-blue-fill: #60a5fa;
+  --km-accent-blue-ink: #93c5fd;
+  --km-accent-blue-tint: #1a2740;
+  --km-accent-blue-on-dark: #93c5fd;
   --km-accent-green: #4ade80;
+  --km-accent-green-fill: #4ade80;
+  --km-accent-green-ink: #86efac;
+  --km-accent-green-tint: #152b22;
+  --km-accent-green-on-dark: #86efac;
   --km-accent-purple: #c084fc;
+  --km-accent-purple-fill: #c084fc;
+  --km-accent-purple-ink: #d8b4fe;
+  --km-accent-purple-tint: #2a2040;
+  --km-accent-purple-on-dark: #d8b4fe;
   --km-accent-pink: #f472b6;
+  --km-accent-pink-fill: #f472b6;
+  --km-accent-pink-ink: #f9a8d4;
+  --km-accent-pink-tint: #351d2c;
+  --km-accent-pink-on-dark: #f9a8d4;
   --km-accent-teal: #2dd4bf;
-  --km-tile-border: rgb(255 255 255 / 10%);
-  --km-tile-1-bg: #1e3a5f;
-  --km-tile-1-fg: #bfdbfe;
-  --km-tile-2-bg: #14432a;
-  --km-tile-2-fg: #bbf7d0;
-  --km-tile-3-bg: #4a2410;
-  --km-tile-3-fg: #fed7aa;
-  --km-tile-4-bg: #3b1d5e;
-  --km-tile-4-fg: #e9d5ff;
-  --km-tile-5-bg: #4c1530;
-  --km-tile-5-fg: #fbcfe8;
-  --km-tile-6-bg: #0f3d3a;
-  --km-tile-6-fg: #99f6e4;
-  --km-tile-7-bg: #45300a;
-  --km-tile-7-fg: #fde68a;
-  --km-tile-8-bg: #2a3241;
-  --km-tile-8-fg: #e2e8f0;
+  --km-accent-teal-fill: #2dd4bf;
+  --km-accent-teal-ink: #5eead4;
+  --km-accent-teal-tint: #12302e;
+  --km-accent-teal-on-dark: #5eead4;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]),
   :root[data-theme="system"] {
     color-scheme: dark;
+    --km-ground: #11141c;
+    --km-surface: #1b2030;
+    --km-surface-2: #161a26;
+    --km-surface-3: #262c3d;
+    --km-track: #2b3244;
     --km-ink: #e8eaee;
-    --km-muted: #a3a9b3;
-    --km-border: #2a2d35;
-    --km-border-control: #8c929d;
-    --km-ground: #0f1115;
-    --km-surface: #15171c;
-    --km-link: #9db8ff;
-    --km-focus: #9db8ff;
-    --km-good: #34d399;
+    --km-ink-strong: #ffffff;
+    --km-ink-soft: #cdd2db;
+    --km-muted: #a3aab8;
+    --km-border: #2b3244;
+    --km-divider: #262c3d;
+    --km-border-control: #8b93a3;
+    --km-focus: #93c5fd;
+    --km-backdrop: rgb(0 0 0 / 65%);
+    --km-shadow-card: 0 1px 2px rgb(0 0 0 / 40%), 0 4px 16px rgb(0 0 0 / 22%);
+    --km-shadow-raised: 0 8px 28px rgb(0 0 0 / 55%), 0 2px 6px rgb(0 0 0 / 40%);
+    --km-shadow-thumb: 0 1px 3px rgb(0 0 0 / 45%);
+    --km-on-accent: #11141c;
+    --km-good: #4ade80;
     --km-warn: #fbbf24;
     --km-bad: #f87171;
-    --km-on-accent: #0f1115;
-    --km-backdrop: rgb(0 0 0 / 70%);
+    --km-info: #93c5fd;
+    --km-fill-sky: #38bdf8;
+    --km-fill-violet: #a78bfa;
+    --km-fill-green: #4ade80;
+    --km-fill-amber: #fbbf24;
+    --km-fill-red: #f87171;
+    --km-tint-sky-bg: #0c3550;
+    --km-tint-sky-fg: #bae6fd;
+    --km-tint-blue-bg: #172a54;
+    --km-tint-blue-fg: #bfdbfe;
+    --km-tint-violet-bg: #2e1f5c;
+    --km-tint-violet-fg: #ddd6fe;
+    --km-tint-green-bg: #0f3d25;
+    --km-tint-green-fg: #bbf7d0;
+    --km-tint-amber-bg: #45300a;
+    --km-tint-amber-fg: #fde68a;
+    --km-tint-orange-bg: #4a2410;
+    --km-tint-orange-fg: #fed7aa;
+    --km-tint-red-bg: #4c1717;
+    --km-tint-red-fg: #fecaca;
+    --km-tint-pink-bg: #4c1530;
+    --km-tint-pink-fg: #fbcfe8;
+    --km-tint-teal-bg: #0f3d3a;
+    --km-tint-teal-fg: #99f6e4;
+    --km-tint-slate-bg: #2b3244;
+    --km-tint-slate-fg: #dde1e8;
+    --km-tile-border: transparent;
+    --km-side-bg: #0c0f16;
+    --km-side-edge: #232937;
+    --km-side-ink: #c9ced8;
+    --km-side-ink-strong: #ffffff;
+    --km-side-muted: #8a92a3;
+    --km-side-active: #1f2533;
+    --km-side-hover: #171b26;
+    --km-side-divider: #232937;
+    --km-side-focus: #93c5fd;
+    --km-side-badge-bg: #7f1d1d;
+    --km-side-badge-fg: #fecaca;
+    --km-nav-sky: #7dd3fc;
+    --km-nav-mint: #a7f3d0;
+    --km-nav-violet: #c4b5fd;
+    --km-nav-pink: #f9a8d4;
+    --km-nav-green: #86efac;
+    --km-nav-red: #fca5a5;
+    --km-nav-amber: #fde68a;
+    --km-nav-slate: #cbd5e1;
+    --km-hero-bg: #0a0d14;
+    --km-hero-ink: #ffffff;
+    --km-hero-muted: #c9ced8;
+    --km-hero-button: #232937;
+    --km-hero-glow-2: #0ea5e9;
     --km-accent-orange: #fb923c;
-    --km-accent-blue: #93c5fd;
+    --km-accent-orange-fill: #fb923c;
+    --km-accent-orange-ink: #fdba74;
+    --km-accent-orange-tint: #2f2119;
+    --km-accent-orange-on-dark: #fdba74;
+    --km-accent-blue: #60a5fa;
+    --km-accent-blue-fill: #60a5fa;
+    --km-accent-blue-ink: #93c5fd;
+    --km-accent-blue-tint: #1a2740;
+    --km-accent-blue-on-dark: #93c5fd;
     --km-accent-green: #4ade80;
+    --km-accent-green-fill: #4ade80;
+    --km-accent-green-ink: #86efac;
+    --km-accent-green-tint: #152b22;
+    --km-accent-green-on-dark: #86efac;
     --km-accent-purple: #c084fc;
+    --km-accent-purple-fill: #c084fc;
+    --km-accent-purple-ink: #d8b4fe;
+    --km-accent-purple-tint: #2a2040;
+    --km-accent-purple-on-dark: #d8b4fe;
     --km-accent-pink: #f472b6;
+    --km-accent-pink-fill: #f472b6;
+    --km-accent-pink-ink: #f9a8d4;
+    --km-accent-pink-tint: #351d2c;
+    --km-accent-pink-on-dark: #f9a8d4;
     --km-accent-teal: #2dd4bf;
-    --km-tile-border: rgb(255 255 255 / 10%);
-    --km-tile-1-bg: #1e3a5f;
-    --km-tile-1-fg: #bfdbfe;
-    --km-tile-2-bg: #14432a;
-    --km-tile-2-fg: #bbf7d0;
-    --km-tile-3-bg: #4a2410;
-    --km-tile-3-fg: #fed7aa;
-    --km-tile-4-bg: #3b1d5e;
-    --km-tile-4-fg: #e9d5ff;
-    --km-tile-5-bg: #4c1530;
-    --km-tile-5-fg: #fbcfe8;
-    --km-tile-6-bg: #0f3d3a;
-    --km-tile-6-fg: #99f6e4;
-    --km-tile-7-bg: #45300a;
-    --km-tile-7-fg: #fde68a;
-    --km-tile-8-bg: #2a3241;
-    --km-tile-8-fg: #e2e8f0;
+    --km-accent-teal-fill: #2dd4bf;
+    --km-accent-teal-ink: #5eead4;
+    --km-accent-teal-tint: #12302e;
+    --km-accent-teal-on-dark: #5eead4;
   }
 }
 
-/* ---- High contrast, light (when the OS is light). Tiles drop their tints: letters and a border. ---- */
+/* ---- High contrast, light (when the OS is light). No tints and no shadows: black on white,
+   with edges. The sidebar is black with white text. ---- */
 :root[data-theme="contrast"] {
   color-scheme: light;
-  --km-ink: #000000;
-  --km-muted: #2b2f36;
-  --km-border: #4b5058;
-  --km-border-control: #000000;
   --km-ground: #ffffff;
   --km-surface: #ffffff;
-  --km-link: #0033a8;
+  --km-surface-2: #ffffff;
+  --km-surface-3: #ffffff;
+  --km-track: #ffffff;
+  --km-ink: #000000;
+  --km-ink-strong: #000000;
+  --km-ink-soft: #000000;
+  --km-muted: #2b2f36;
+  --km-border: #4b5058;
+  --km-divider: #4b5058;
+  --km-border-control: #000000;
   --km-focus: #0033a8;
+  --km-backdrop: rgb(0 0 0 / 80%);
+  --km-shadow-card: none;
+  --km-shadow-raised: none;
+  --km-shadow-thumb: none;
+  --km-on-accent: #ffffff;
   --km-good: #00563b;
   --km-warn: #703200;
   --km-bad: #9a0000;
-  --km-on-accent: #ffffff;
-  --km-backdrop: rgb(0 0 0 / 80%);
-  --km-accent-orange: #8a2c0a;
-  --km-accent-blue: #1e3a8a;
-  --km-accent-green: #14532d;
-  --km-accent-purple: #581c87;
-  --km-accent-pink: #831843;
-  --km-accent-teal: #134e4a;
+  --km-info: #0033a8;
+  --km-fill-sky: #00405e;
+  --km-fill-violet: #3b0f8c;
+  --km-fill-green: #00563b;
+  --km-fill-amber: #703200;
+  --km-fill-red: #9a0000;
+  --km-tint-sky-bg: #ffffff;
+  --km-tint-sky-fg: #000000;
+  --km-tint-blue-bg: #ffffff;
+  --km-tint-blue-fg: #000000;
+  --km-tint-violet-bg: #ffffff;
+  --km-tint-violet-fg: #000000;
+  --km-tint-green-bg: #ffffff;
+  --km-tint-green-fg: #000000;
+  --km-tint-amber-bg: #ffffff;
+  --km-tint-amber-fg: #000000;
+  --km-tint-orange-bg: #ffffff;
+  --km-tint-orange-fg: #000000;
+  --km-tint-red-bg: #ffffff;
+  --km-tint-red-fg: #000000;
+  --km-tint-pink-bg: #ffffff;
+  --km-tint-pink-fg: #000000;
+  --km-tint-teal-bg: #ffffff;
+  --km-tint-teal-fg: #000000;
+  --km-tint-slate-bg: #ffffff;
+  --km-tint-slate-fg: #000000;
   --km-tile-border: #000000;
-  --km-tile-1-bg: #ffffff;
-  --km-tile-1-fg: #000000;
-  --km-tile-2-bg: #ffffff;
-  --km-tile-2-fg: #000000;
-  --km-tile-3-bg: #ffffff;
-  --km-tile-3-fg: #000000;
-  --km-tile-4-bg: #ffffff;
-  --km-tile-4-fg: #000000;
-  --km-tile-5-bg: #ffffff;
-  --km-tile-5-fg: #000000;
-  --km-tile-6-bg: #ffffff;
-  --km-tile-6-fg: #000000;
-  --km-tile-7-bg: #ffffff;
-  --km-tile-7-fg: #000000;
-  --km-tile-8-bg: #ffffff;
-  --km-tile-8-fg: #000000;
+  --km-side-bg: #000000;
+  --km-side-edge: #000000;
+  --km-side-ink: #ffffff;
+  --km-side-ink-strong: #ffffff;
+  --km-side-muted: #e3e3e3;
+  --km-side-active: #000000;
+  --km-side-hover: #000000;
+  --km-side-divider: #ffffff;
+  --km-side-focus: #ffe14d;
+  --km-side-badge-bg: #000000;
+  --km-side-badge-fg: #ffffff;
+  --km-nav-sky: #ffffff;
+  --km-nav-mint: #ffffff;
+  --km-nav-violet: #ffffff;
+  --km-nav-pink: #ffffff;
+  --km-nav-green: #ffffff;
+  --km-nav-red: #ffffff;
+  --km-nav-amber: #ffffff;
+  --km-nav-slate: #ffffff;
+  --km-hero-bg: #000000;
+  --km-hero-ink: #ffffff;
+  --km-hero-muted: #ffffff;
+  --km-hero-button: #000000;
+  --km-hero-glow-2: #000000;
+  --km-accent-orange: #8a2c0a;
+  --km-accent-orange-fill: #8a2c0a;
+  --km-accent-orange-ink: #8a2c0a;
+  --km-accent-orange-tint: #ffffff;
+  --km-accent-orange-on-dark: #fdba74;
+  --km-accent-blue: #1e3a8a;
+  --km-accent-blue-fill: #1e3a8a;
+  --km-accent-blue-ink: #1e3a8a;
+  --km-accent-blue-tint: #ffffff;
+  --km-accent-blue-on-dark: #bfdbfe;
+  --km-accent-green: #14532d;
+  --km-accent-green-fill: #14532d;
+  --km-accent-green-ink: #14532d;
+  --km-accent-green-tint: #ffffff;
+  --km-accent-green-on-dark: #86efac;
+  --km-accent-purple: #581c87;
+  --km-accent-purple-fill: #581c87;
+  --km-accent-purple-ink: #581c87;
+  --km-accent-purple-tint: #ffffff;
+  --km-accent-purple-on-dark: #e9d5ff;
+  --km-accent-pink: #831843;
+  --km-accent-pink-fill: #831843;
+  --km-accent-pink-ink: #831843;
+  --km-accent-pink-tint: #ffffff;
+  --km-accent-pink-on-dark: #fbcfe8;
+  --km-accent-teal: #134e4a;
+  --km-accent-teal-fill: #134e4a;
+  --km-accent-teal-ink: #134e4a;
+  --km-accent-teal-tint: #ffffff;
+  --km-accent-teal-on-dark: #99f6e4;
 }
 
 /* ---- High contrast, dark (when the OS is dark). ---- */
 @media (prefers-color-scheme: dark) {
   :root[data-theme="contrast"] {
     color-scheme: dark;
-    --km-ink: #ffffff;
-    --km-muted: #e3e3e3;
-    --km-border: #b8b8b8;
-    --km-border-control: #ffffff;
     --km-ground: #000000;
     --km-surface: #000000;
-    --km-link: #8fc7ff;
+    --km-surface-2: #000000;
+    --km-surface-3: #000000;
+    --km-track: #000000;
+    --km-ink: #ffffff;
+    --km-ink-strong: #ffffff;
+    --km-ink-soft: #ffffff;
+    --km-muted: #e3e3e3;
+    --km-border: #b8b8b8;
+    --km-divider: #b8b8b8;
+    --km-border-control: #ffffff;
     --km-focus: #ffe14d;
+    --km-backdrop: rgb(0 0 0 / 85%);
+    --km-shadow-card: none;
+    --km-shadow-raised: none;
+    --km-shadow-thumb: none;
+    --km-on-accent: #000000;
     --km-good: #5eead4;
     --km-warn: #ffd84d;
     --km-bad: #ffa3a3;
-    --km-on-accent: #000000;
-    --km-backdrop: rgb(0 0 0 / 85%);
-    --km-accent-orange: #fdba74;
-    --km-accent-blue: #bfdbfe;
-    --km-accent-green: #86efac;
-    --km-accent-purple: #e9d5ff;
-    --km-accent-pink: #fbcfe8;
-    --km-accent-teal: #99f6e4;
+    --km-info: #8fc7ff;
+    --km-fill-sky: #8fc7ff;
+    --km-fill-violet: #d8c8ff;
+    --km-fill-green: #5eead4;
+    --km-fill-amber: #ffd84d;
+    --km-fill-red: #ffa3a3;
+    --km-tint-sky-bg: #000000;
+    --km-tint-sky-fg: #ffffff;
+    --km-tint-blue-bg: #000000;
+    --km-tint-blue-fg: #ffffff;
+    --km-tint-violet-bg: #000000;
+    --km-tint-violet-fg: #ffffff;
+    --km-tint-green-bg: #000000;
+    --km-tint-green-fg: #ffffff;
+    --km-tint-amber-bg: #000000;
+    --km-tint-amber-fg: #ffffff;
+    --km-tint-orange-bg: #000000;
+    --km-tint-orange-fg: #ffffff;
+    --km-tint-red-bg: #000000;
+    --km-tint-red-fg: #ffffff;
+    --km-tint-pink-bg: #000000;
+    --km-tint-pink-fg: #ffffff;
+    --km-tint-teal-bg: #000000;
+    --km-tint-teal-fg: #ffffff;
+    --km-tint-slate-bg: #000000;
+    --km-tint-slate-fg: #ffffff;
     --km-tile-border: #ffffff;
-    --km-tile-1-bg: #000000;
-    --km-tile-1-fg: #ffffff;
-    --km-tile-2-bg: #000000;
-    --km-tile-2-fg: #ffffff;
-    --km-tile-3-bg: #000000;
-    --km-tile-3-fg: #ffffff;
-    --km-tile-4-bg: #000000;
-    --km-tile-4-fg: #ffffff;
-    --km-tile-5-bg: #000000;
-    --km-tile-5-fg: #ffffff;
-    --km-tile-6-bg: #000000;
-    --km-tile-6-fg: #ffffff;
-    --km-tile-7-bg: #000000;
-    --km-tile-7-fg: #ffffff;
-    --km-tile-8-bg: #000000;
-    --km-tile-8-fg: #ffffff;
+    --km-side-bg: #000000;
+    --km-side-edge: #ffffff;
+    --km-side-ink: #ffffff;
+    --km-side-ink-strong: #ffffff;
+    --km-side-muted: #e3e3e3;
+    --km-side-active: #000000;
+    --km-side-hover: #000000;
+    --km-side-divider: #ffffff;
+    --km-side-focus: #ffe14d;
+    --km-side-badge-bg: #000000;
+    --km-side-badge-fg: #ffffff;
+    --km-nav-sky: #ffffff;
+    --km-nav-mint: #ffffff;
+    --km-nav-violet: #ffffff;
+    --km-nav-pink: #ffffff;
+    --km-nav-green: #ffffff;
+    --km-nav-red: #ffffff;
+    --km-nav-amber: #ffffff;
+    --km-nav-slate: #ffffff;
+    --km-hero-bg: #000000;
+    --km-hero-ink: #ffffff;
+    --km-hero-muted: #ffffff;
+    --km-hero-button: #000000;
+    --km-hero-glow-2: #000000;
+    --km-accent-orange: #fdba74;
+    --km-accent-orange-fill: #fdba74;
+    --km-accent-orange-ink: #fdba74;
+    --km-accent-orange-tint: #000000;
+    --km-accent-orange-on-dark: #fdba74;
+    --km-accent-blue: #bfdbfe;
+    --km-accent-blue-fill: #bfdbfe;
+    --km-accent-blue-ink: #bfdbfe;
+    --km-accent-blue-tint: #000000;
+    --km-accent-blue-on-dark: #bfdbfe;
+    --km-accent-green: #86efac;
+    --km-accent-green-fill: #86efac;
+    --km-accent-green-ink: #86efac;
+    --km-accent-green-tint: #000000;
+    --km-accent-green-on-dark: #86efac;
+    --km-accent-purple: #e9d5ff;
+    --km-accent-purple-fill: #e9d5ff;
+    --km-accent-purple-ink: #e9d5ff;
+    --km-accent-purple-tint: #000000;
+    --km-accent-purple-on-dark: #e9d5ff;
+    --km-accent-pink: #fbcfe8;
+    --km-accent-pink-fill: #fbcfe8;
+    --km-accent-pink-ink: #fbcfe8;
+    --km-accent-pink-tint: #000000;
+    --km-accent-pink-on-dark: #fbcfe8;
+    --km-accent-teal: #99f6e4;
+    --km-accent-teal-fill: #99f6e4;
+    --km-accent-teal-ink: #99f6e4;
+    --km-accent-teal-tint: #000000;
+    --km-accent-teal-on-dark: #99f6e4;
   }
 }
 
-/* ---- Accent: one of the theme's presets ---- */
+/* ---- Accent: one of the theme's presets. Links follow the accent. ---- */
 :root {
   --km-accent: var(--km-accent-orange);
+  --km-accent-fill: var(--km-accent-orange-fill);
+  --km-accent-ink: var(--km-accent-orange-ink);
+  --km-accent-tint: var(--km-accent-orange-tint);
+  --km-accent-on-dark: var(--km-accent-orange-on-dark);
+  --km-link: var(--km-accent-orange-ink);
 }
 
 :root[data-accent="blue"] {
   --km-accent: var(--km-accent-blue);
+  --km-accent-fill: var(--km-accent-blue-fill);
+  --km-accent-ink: var(--km-accent-blue-ink);
+  --km-accent-tint: var(--km-accent-blue-tint);
+  --km-accent-on-dark: var(--km-accent-blue-on-dark);
+  --km-link: var(--km-accent-blue-ink);
 }
 
 :root[data-accent="green"] {
   --km-accent: var(--km-accent-green);
+  --km-accent-fill: var(--km-accent-green-fill);
+  --km-accent-ink: var(--km-accent-green-ink);
+  --km-accent-tint: var(--km-accent-green-tint);
+  --km-accent-on-dark: var(--km-accent-green-on-dark);
+  --km-link: var(--km-accent-green-ink);
 }
 
 :root[data-accent="purple"] {
   --km-accent: var(--km-accent-purple);
+  --km-accent-fill: var(--km-accent-purple-fill);
+  --km-accent-ink: var(--km-accent-purple-ink);
+  --km-accent-tint: var(--km-accent-purple-tint);
+  --km-accent-on-dark: var(--km-accent-purple-on-dark);
+  --km-link: var(--km-accent-purple-ink);
 }
 
 :root[data-accent="pink"] {
   --km-accent: var(--km-accent-pink);
+  --km-accent-fill: var(--km-accent-pink-fill);
+  --km-accent-ink: var(--km-accent-pink-ink);
+  --km-accent-tint: var(--km-accent-pink-tint);
+  --km-accent-on-dark: var(--km-accent-pink-on-dark);
+  --km-link: var(--km-accent-pink-ink);
 }
 
 :root[data-accent="teal"] {
   --km-accent: var(--km-accent-teal);
+  --km-accent-fill: var(--km-accent-teal-fill);
+  --km-accent-ink: var(--km-accent-teal-ink);
+  --km-accent-tint: var(--km-accent-teal-tint);
+  --km-accent-on-dark: var(--km-accent-teal-on-dark);
+  --km-link: var(--km-accent-teal-ink);
 }
 
-/* ---- Type and density ---- */
+/* ---- Type, shape and density ---- */
 :root {
-  --km-font: Inter, system-ui, sans-serif;
-  --km-mono: "JetBrains Mono", ui-monospace, monospace;
+  --km-font: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --km-font-display: Manrope, Inter, system-ui, sans-serif;
+  --km-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --km-text-xs: 12px;
+  --km-text-sm: 13px;
+  --km-text-md: 14px;
+  --km-text-lg: 15px;
+  --km-h1: 26px;
+  --km-h1-hero: 30px;
+  --km-h2: 17px;
+  --km-h3: 15px;
+  --km-stat: 30px;
+  --km-radius-xs: 6px;
+  --km-radius-sm: 8px;
+  --km-radius-control: 10px;
+  --km-radius-tile: 11px;
+  --km-radius-inner: 14px;
+  --km-radius-card: 16px;
+  --km-radius-hero: 20px;
+  --km-radius-pill: 999px;
   --km-control-h: 40px;
-  --km-control-pad: 9px 16px;
+  --km-control-pad: 8px 16px;
   --km-input-pad: 9px 12px;
-  --km-cell-pad: 10px 12px;
+  --km-cell-pad: 12px 8px;
   --km-row-h: 32px;
   --km-nav-pad: 10px 12px;
+  --km-card-pad: 20px 22px;
   --km-panel-pad: 20px;
   --km-main-pad: 28px 32px 48px;
   --km-gap: 16px;
+  --km-sidebar-w: 240px;
+  --km-rail-w: 72px;
+  --km-topbar-h: 72px;
+  --km-ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* Compact keeps every target at least 24 px (WCAG 2.2, 2.5.8). */
@@ -269,19 +667,24 @@
   --km-control-h: 32px;
   --km-control-pad: 5px 12px;
   --km-input-pad: 5px 10px;
-  --km-cell-pad: 6px 10px;
+  --km-cell-pad: 7px 8px;
   --km-row-h: 26px;
-  --km-nav-pad: 6px 10px;
+  --km-nav-pad: 7px 10px;
+  --km-card-pad: 14px 16px;
   --km-panel-pad: 14px;
   --km-main-pad: 20px 24px 36px;
   --km-gap: 10px;
+  --km-topbar-h: 60px;
 }
 
 body {
   margin: 0;
   font-family: var(--km-font);
+  font-size: var(--km-text-md);
+  line-height: 1.5;
   color: var(--km-ink);
   background: var(--km-ground);
+  -webkit-font-smoothing: antialiased;
 }
 
 a {
@@ -295,13 +698,15 @@ a {
 
 .skip {
   position: absolute;
+  z-index: 100;
   left: 8px;
   top: -60px;
   padding: 10px 14px;
   background: var(--km-surface);
   color: var(--km-ink);
-  border-radius: 8px;
+  border-radius: var(--km-radius-sm);
   font-weight: 600;
+  box-shadow: var(--km-shadow-raised);
 }
 
 .skip:focus {

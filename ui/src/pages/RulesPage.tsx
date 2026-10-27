@@ -14,6 +14,14 @@ import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { QualityStatusBadge } from "../components/QualityPanel";
 import { CHECKS, RuleForm } from "../components/RuleForm";
+import { Icon } from "../components/icons";
+import { Button, Card, DataTable, EmptyState, PageHeader, StatusChip, Switch } from "../components/ui";
+
+/** "lab-db · crm.customers" from an asset URN, for people to read. */
+const assetName = (urn: string) => {
+  const m = /^urn:kilnmark:([^:]+):(.*)$/.exec(urn);
+  return m ? { source: m[1], path: m[2] } : { source: "", path: urn };
+};
 
 /** Rules: every rule with its latest result; stewards add, preview, edit, run, switch off and delete them. */
 export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
@@ -74,11 +82,26 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
 
   return (
     <>
-      <h1 tabIndex={-1}>Quality rules</h1>
-      <p className="lead">
-        Checks on assets, each tagged with a dimension. They run after every scan and on demand: as SQL in databases,
-        and while streaming files.
-      </p>
+      <PageHeader
+        title="Quality rules"
+        meta={rules ? `${rules.length} ${rules.length === 1 ? "rule" : "rules"}${filter.trim() ? " on this asset" : ""}` : undefined}
+        lead="Checks on assets, each tagged with a dimension. They run after every scan and on demand: as SQL in databases, and while streaming files."
+        actions={
+          steward && !editing ? (
+            <Button
+              variant="primary"
+              icon={<Icon name="plus" size={16} />}
+              onClick={() => {
+                const h = document.getElementById("rule-form-h");
+                h?.scrollIntoView({ block: "start" });
+                h?.focus();
+              }}
+            >
+              Add a rule
+            </Button>
+          ) : undefined
+        }
+      />
       <p role="status" className="notice">
         {notice}
       </p>
@@ -88,19 +111,21 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
         </p>
       )}
 
-      <section aria-labelledby="rules-h" className="panel">
-        <h2 id="rules-h">Rules</h2>
+      <Card title="Rules" titleId="rules-h" className="panel">
         <div className="field inline-field">
           <label htmlFor="rules-filter">Asset URN</label>
           <input id="rules-filter" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="All assets"
             aria-describedby="rules-filter-hint" autoComplete="off" />
           <p id="rules-filter-hint" className="hint">Leave empty to list the rules of every asset.</p>
         </div>
-        {rules === null && !error && <p>Loading…</p>}
-        {rules?.length === 0 && <p>No rules yet.</p>}
+        {rules === null && !error && <p role="status" className="muted">Loading…</p>}
+        {rules?.length === 0 && (
+          <EmptyState compact icon={<Icon name="rules" size={22} />} title="No rules yet">
+            {steward ? "Add one below, or tick recommended rules on an asset's Quality tab." : "Stewards add rules."}
+          </EmptyState>
+        )}
         {rules && rules.length > 0 && (
-          <div className="table-scroll" role="region" aria-label="Rules table (scrolls sideways on small screens)" tabIndex={0}>
-            <table>
+          <DataTable label="Rules table (scrolls sideways on small screens)">
               <thead>
                 <tr>
                   <th scope="col">Rule</th>
@@ -108,6 +133,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                   <th scope="col">Check</th>
                   <th scope="col">Status</th>
                   <th scope="col">Failing rows</th>
+                  {steward && <th scope="col">On</th>}
                   {steward && (
                     <th scope="col">
                       <span className="visually-hidden">Actions</span>
@@ -120,12 +146,15 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                   <tr key={rule.id}>
                     <th scope="row">
                       {rule.name}
-                      {!rule.enabled && <span className="tag">off</span>}
+                      {!rule.enabled && <span className="tag tag-key">off</span>}
                       <div className="small muted">{rule.dimension}</div>
                     </th>
                     <td className="small">
-                      <a href={href.asset(rule.assetUrn)} className="mono">{rule.assetUrn}</a>
-                      {rule.field && <div className="mono">{rule.field}</div>}
+                      <a href={href.asset(rule.assetUrn, "quality")} className="km-strong-link" title={rule.assetUrn}>
+                        {assetName(rule.assetUrn).path}
+                      </a>
+                      <div className="muted">{assetName(rule.assetUrn).source}</div>
+                      {rule.field && <span className="km-code">{rule.field}</span>}
                     </td>
                     <td className="small">
                       {CHECKS.find((t) => t.type === rule.type)?.label ?? rule.type}
@@ -136,7 +165,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                       </div>
                     </td>
                     <td>
-                      {latest ? <QualityStatusBadge status={latest.status} /> : <span className="badge badge-none">Not run</span>}
+                      {latest ? <QualityStatusBadge status={latest.status} /> : <StatusChip>Not run</StatusChip>}
                       {latest && <div className="small muted">{formatTime(latest.observedAt)}</div>}
                       {latest?.estimate && <span className="tag">estimate</span>}
                       {latest?.errorDetail && <div className="small muted">{latest.errorDetail}</div>}
@@ -154,7 +183,29 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                     </td>
                     {steward && (
                       <td>
-                        <div className="buttons">
+                        {/* Switching waits while the rule is open in the form, so a save cannot undo it. */}
+                        <Switch
+                          compact
+                          label={`Rule ${rule.name} is on`}
+                          checked={rule.enabled}
+                          disabled={editing?.id === rule.id}
+                          onChange={(on) =>
+                            act(
+                              () =>
+                                qualityApi.updateRule(
+                                  rule.id,
+                                  { ...rule, enabled: on, actions: { webhook: rule.actions.webhook, task: rule.actions.task } },
+                                  rule.updatedAt,
+                                ),
+                              `Rule "${rule.name}" switched ${on ? "on" : "off"}.`,
+                            )
+                          }
+                        />
+                      </td>
+                    )}
+                    {steward && (
+                      <td>
+                        <div className="buttons tight">
                           {(admin || rule.type !== "custom_sql") && (
                             <button type="button" id={`edit-rule-${rule.id}`} onClick={() => startEdit(rule)}
                               aria-label={`Edit rule ${rule.name}`}>
@@ -165,15 +216,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                             `Rule "${rule.name}" queued to run.`)} aria-label={`Run rule ${rule.name} now`}>
                             Run now
                           </button>
-                          {/* Switching and deleting wait while the rule is open in the form, so a save cannot undo them. */}
-                          <button type="button" onClick={() => act(() => qualityApi.updateRule(rule.id, {
-                            ...rule, enabled: !rule.enabled, actions: { webhook: rule.actions.webhook, task: rule.actions.task },
-                          }, rule.updatedAt), `Rule "${rule.name}" switched ${rule.enabled ? "off" : "on"}.`)}
-                            disabled={editing?.id === rule.id}
-                            aria-label={`${rule.enabled ? "Switch off" : "Switch on"} rule ${rule.name}`}>
-                            {rule.enabled ? "Switch off" : "Switch on"}
-                          </button>
-                          <button type="button" onClick={() => {
+                          <button type="button" className="danger" onClick={() => {
                             if (window.confirm(`Delete the rule "${rule.name}" and its results?`)) {
                               act(() => qualityApi.deleteRule(rule.id), `Rule "${rule.name}" deleted.`);
                             }
@@ -187,10 +230,9 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                   </tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+          </DataTable>
         )}
-      </section>
+      </Card>
 
       {steward ? (
         editing ? (

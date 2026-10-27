@@ -991,7 +991,11 @@ export const qualityApi = {
   runRule: (id: number) => call<QualityRun>(`/api/v1/quality/rules/${id}/run`, { method: "POST" }),
   result: (id: number, unmask = false) =>
     call<RuleResult>(`/api/v1/quality/results/${id}${unmask ? "?unmask=true" : ""}`),
-  issues: (status: string) => call<Issue[]>(`/api/v1/quality/issues?status=${encodeURIComponent(status)}`),
+  /** A rule's recent results, newest first. */
+  results: (ruleId: number, limit = 10) => call<RuleResult[]>(`/api/v1/quality/rules/${ruleId}/results?limit=${limit}`),
+  /** Issues by status; the server returns at most `limit` (100 when left out, 500 at most). */
+  issues: (status: string, limit?: number) =>
+    call<Issue[]>(`/api/v1/quality/issues?status=${encodeURIComponent(status)}${limit ? `&limit=${limit}` : ""}`),
   setIssue: (id: number, status: Issue["status"]) =>
     call<Issue>(`/api/v1/quality/issues/${id}`, { method: "PUT", body: JSON.stringify({ status }) }),
 };

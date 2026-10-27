@@ -56,7 +56,7 @@ export function SignInPage({ notice, onSignedIn }: { notice: SignInNotice | null
           {notice.text}
         </p>
       )}
-      <form className="panel form" onSubmit={submit} noValidate>
+      <form className="km-card form" onSubmit={submit} noValidate>
         <div className="field">
           <label htmlFor="token">API token</label>
           <input

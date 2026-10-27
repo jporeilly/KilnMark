@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
+import { IconTile, PageHeader } from "../components/ui";
+import { Icon } from "../components/icons";
 import { useTitle } from "../components/useTitle";
 import { DOC_PAGES, docHeadings, docHref, docPage } from "../docs";
 import { renderDoc } from "../docs/render";
@@ -38,16 +40,23 @@ export default function DocsPage({ doc, section }: { doc: string | null; section
   if (!page) {
     return (
       <>
-        <h1 tabIndex={-1}>Documentation</h1>
+        <PageHeader title="Documentation" meta="Guides bundled with this version of Kilnmark, readable offline" />
         {doc && (
           <p role="alert" className="error">
             There is no guide called “{doc}”. Choose one below.
           </p>
         )}
-        <ul>
+        <ul className="km-gallery" aria-label="Guides">
           {DOC_PAGES.map((p) => (
             <li key={p.id}>
-              <a href={docHref(p.id)}>{p.title}</a>
+              <a className="km-card km-gallery-card km-link-card" href={docHref(p.id)}>
+                <span className="with-tile">
+                  <IconTile tint={p.id === "whats-new" ? "orange" : "amber"}>
+                    <Icon name={p.id === "whats-new" ? "whats-new" : "docs"} size={18} />
+                  </IconTile>
+                  <span className="km-row-title">{p.title}</span>
+                </span>
+              </a>
             </li>
           ))}
         </ul>
@@ -57,14 +66,11 @@ export default function DocsPage({ doc, section }: { doc: string | null; section
 
   return (
     <>
-      <p className="small">
-        <a href={docHref()}>Documentation</a>
-      </p>
-      <h1 tabIndex={-1}>{page.title}</h1>
-      <div ref={article} data-keeps-focus>
+      <PageHeader crumbs={[{ label: "Documentation", href: docHref() }, { label: page.title }]} title={page.title} />
+      <div ref={article} data-keeps-focus className={contents.length > 2 ? "km-article km-article--toc" : "km-article"}>
         {contents.length > 2 && (
-          <nav aria-labelledby="docs-on-this-page" className="panel">
-            <p id="docs-on-this-page" className="small muted">On this page</p>
+          <nav aria-labelledby="docs-on-this-page" className="km-card km-toc">
+            <p id="docs-on-this-page" className="km-toc-title">On this page</p>
             <ul>
               {contents.map((h) => (
                 <li key={h.slug}>
@@ -75,7 +81,7 @@ export default function DocsPage({ doc, section }: { doc: string | null; section
           </nav>
         )}
         {/* Rendered from a guide bundled at build time; raw HTML in it is escaped (see renderDoc). */}
-        <div className="doc-body" dangerouslySetInnerHTML={{ __html: html }} />
+        <div className="km-card doc-body" dangerouslySetInnerHTML={{ __html: html }} />
       </div>
     </>
   );

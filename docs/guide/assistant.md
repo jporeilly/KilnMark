@@ -5,9 +5,9 @@ exact sections it used. Open it from any page and keep it open while you work.
 
 ## Opening the Ask panel
 
-Choose **Ask** at the top of any page, or press **Alt+A**. The panel opens at the side, so the page
-you are on stays in view. Press **Escape** or choose **Close** to close it; focus goes back to
-where you were.
+Choose **Ask Kilnmark** in the top bar of any page, or press **Alt+A**. The panel opens at the side,
+so the page you are on stays in view. Press **Escape** or choose the close button (**×**) to close
+it; focus goes back to where you were.
 
 The panel suggests a few questions for the page you are on, such as *What does Fail above mean?*
 on the Quality rules page. Choose one, or type your own and press **Enter**. **Shift+Enter** starts
