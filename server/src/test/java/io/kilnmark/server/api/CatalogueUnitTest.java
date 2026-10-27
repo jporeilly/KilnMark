@@ -43,8 +43,15 @@ class CatalogueUnitTest {
 
     @Test
     void everyBuiltConnectorClaimsOnlyWhatItCanDoToday() {
+        Set<String> writable = Set.of("postgresql", "sqlserver", "files", "s3");
         for (Connector c : Connectors.load().all()) {
-            assertEquals(Set.of(Connector.Capability.DISCOVER, Connector.Capability.READ), c.capabilities(), c.kind());
+            if (c.kind().startsWith("test-")) {
+                continue; // test-only connectors (the pipeline tests' writer) are not shipped
+            }
+            Set<Connector.Capability> today = writable.contains(c.kind())
+                ? Set.of(Connector.Capability.DISCOVER, Connector.Capability.READ, Connector.Capability.WRITE)
+                : Set.of(Connector.Capability.DISCOVER, Connector.Capability.READ);
+            assertEquals(today, c.capabilities(), c.kind());
             assertEquals(null, c.driver(), c.kind() + " needs nothing installed");
         }
         Connector files = Connectors.load().get("files").orElseThrow();

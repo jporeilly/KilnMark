@@ -66,6 +66,128 @@ details.
 - The rule form links to the quality rules guide (**How rules work**). The documentation's page list
   puts What's new first. `#/sources?add=1` opens Add a connection.
 
+## 0.0.4 (25 October 2026)
+
+### What's new
+
+- **Pipelines you can run.** Build a pipeline that reads from your sources, changes the rows and
+  writes the result to a table or file. Kilnmark checks it before it runs (every mistake with its
+  line, and a suggestion when a name is misspelt), runs its steps side by side within one memory
+  limit, and records what each step did and how it ended. A run that fails names the step where it
+  went wrong, and a run can be cancelled.
+- **Steps for changing rows.** Filter rows, compute new columns, pick and rename columns, look up
+  values in another input, total and count by group, combine inputs, remove duplicates, send rows
+  down different paths and keep the first rows. Conditions and new columns are written in one
+  expression language, checked against the columns before the pipeline runs, with the position of
+  any mistake and a suggestion.
+- **Writing to databases and files.** A pipeline can write to PostgreSQL or SQL Server tables
+  (create, add to, replace or update by key) and to CSV or Parquet files in folders and S3
+  storage. Sources stay read-only until an admin turns on **Allow writing** for one. What a
+  pipeline writes is profiled as it is written and joins the catalogue with its columns and where
+  it came from, so the next pipeline starts from what is known.
+- **The Pipelines page.** Under **Pipelines**, a YAML editor that checks as you type, a graph of
+  the steps with the columns leaving each, every saved version with who saved it and why, and each
+  run with what every step did and what was written.
+
+### Details
+
+- **Pipelines run as graphs (engine, ADR 0022):** `KilnGraphRunner` runs a pipeline graph with
+  every step on its own virtual thread and a bounded row set per edge, inside one memory limit.
+  An output read by several steps gives each its own copy; a port such as union's `in*` takes many
+  inputs (`StepContext.inputs`, `RowSet.takeAny`); rows on an unconnected output are dropped
+  (`StepContext.emit`). A failure stops the whole run and names the step where it started; a run
+  in which every step waits on another fails after 120 seconds with a message naming them; run
+  results count the rows each step was given, per edge and per port, and say how each step ended
+  (finished, ended early, stopped by the engine, or failed). Steps can read the columns of an
+  input that sends no rows (`StepContext.inputSchema`). Scanning's linear runner now runs as
+  a graph too, and a step that stops before its input ends no longer leaves the step before it
+  waiting.
+- **Pipeline YAML is read and checked** (`kilnmark: pipeline/v1`): every problem with its line and
+  column (unknown keys, step types and settings with suggestions, missing or doubled inputs,
+  loops), and each step's columns worked out before anything runs, without opening a connection.
+  Settings that are text keep exactly what was written (`asset: 2024.10` stays `2024.10`);
+  numbers with more than 1,000 digits, or a decimal point more than 1,000 places away, are refused.
+  Read with SnakeYAML Engine 3.2 (Apache-2.0); anchors, aliases, tags, duplicate keys and files
+  over 1,000,000 characters are refused.
+- **Pipeline steps and expressions** (new module `kiln-steps`): `filter`, `compute`, `select`,
+  `lookup`, `aggregate`, `union`, `dedupe`, `route` and `limit`, each with its settings schema,
+  checks and output columns for validation, and one expression language for conditions and
+  computed columns: SQL-like operators, `case`, `cast`, SQL null rules, 22 functions and the
+  aggregates `count`, `count_distinct`, `sum`, `min`, `max` and `avg`. Expressions are parsed by
+  hand and type-checked against the input columns (`boolean`, `int64`, `float64`, `decimal`,
+  `utf8`, `date`, `timestamp` in UTC; numbers widen, anything else needs `cast`), with errors
+  giving the position and a suggestion; they are worked out a batch at a time into Arrow vectors.
+  Limits: 10,000 characters, nesting 64 deep, comparisons that do not chain, text values up to
+  1,000,000 characters, dates in years -9999 to 9999. Regular expressions refuse patterns that
+  repeat a repeating group (unless each repetition starts with its own separator), back-references
+  and comment mode, cap values at 100,000 characters (2,000 for patterns that repeat a group),
+  catch stack overflows and budget the work per value and per batch; `like` is capped too.
+  `lookup`, `aggregate`, `dedupe` and `union` stop at `memory_limit_mb` (256 by default) with a
+  message saying what to change. `lookup` takes waiting main rows only when its lookup side is
+  quiet, `union` reads whichever input has rows, and `limit` stops reading once it has its rows.
+  Inputs that send no rows use the columns the pipeline check worked out, so an aggregate without
+  `group_by` writes one row and union and lookup keep their declared columns.
+  Guide: **Pipeline steps and expressions**.
+- **Writing from pipelines** (docs/guide/writing-data.md): PostgreSQL, SQL Server, folder and S3
+  sources can now be written to by a pipeline's `write` step (`Connector.writer`, capability
+  `WRITE`). Tables: modes `create`, `append` (every input column checked against the table
+  first, all mismatches named), `replace` (filled under a temporary name and swapped in one
+  transaction, waiting at most `lock_timeout`; grants and the owner kept, indexes, constraints and
+  triggers not; refused for views, partitions, inheritance, anything else depending on the table,
+  and row-level security unless `allow_dropping_row_security` is set) and `upsert` by `key`
+  (PostgreSQL `ON CONFLICT`, which needs a unique index on the key, INCLUDE columns allowed; SQL
+  Server `MERGE … WITH (HOLDLOCK)`). PostgreSQL loads with `COPY`;
+  SQL Server with batched inserts, bulk-copied into tables the step creates. One transaction per
+  run, or `commit_every` rows (a failure then keeps the committed rows, and says so). The login's
+  rights are checked first and a refusal names the grant to ask for. Files: CSV (RFC 4180, UTF-8,
+  `delimiter`) and Parquet (Snappy, ZSTD, GZIP or none) to a path inside the source, written to a
+  temporary name and renamed (folders) or uploaded and completed at the end (S3); existing files
+  need `overwrite: true`, and paths scans would not find need `allow_unscanned: true`. A created
+  or replaced table, or a file, is profiled in the same pass and reported for the written asset
+  (`SCHEMA`, `ROW_COUNT`, `PROFILE`, `SAMPLE`) once the write has succeeded; an append or upsert
+  reports only the rows it wrote (`ROW_COUNT`, `complete=false`, `appended=true`), so the table's
+  own profile is kept. Each writer declares its settings (`Connector.writeOptions()`, as
+  `SettingSpec`s; `profile_output: false` skips the profile), `Connector.writtenAssetPath()` gives
+  the catalogue path of what is written (below an S3 source's prefix), and `WriteOptions.profiling`
+  carries the source's own profiling settings, which the writer's profile follows. A profiling
+  failure never fails a write: `ROW_COUNT` then says `profiled=false` with `profile_error`. Replace
+  also refuses tables a publication names (and, on SQL Server, replicated or change-tracked tables)
+  and tables whose row-type array or owned sequences others use.
+- **Parquet is written by Kilnmark's own encoder** (`ParquetEncoder`, from the Apache Parquet
+  specification): Hardwood only reads, and parquet-java needs Hadoop (ADR 0015, amended). No new
+  dependency: snappy-java and zstd-jni, already shipped for reading, are now compiled against,
+  and the PostgreSQL driver the server ships is compiled against for `COPY`.
+- **Profiling no longer fails on an empty piece of text** (a quoted `""` in a CSV file), on a
+  column whose values are all NaN, or on 8-bit and unsigned integer, 256-bit decimal and large
+  text columns, and reads dates, times and timestamps in any unit.
+- **Pipelines can be saved, checked and run** (`/api/v1/pipelines`, `/api/v1/pipeline-runs`,
+  `/api/v1/steps`, `/api/v1/lineage`): every version is kept with who saved it and why, saves use
+  `If-Match` on the latest version number (409 when someone saved since), and YAML is checked as
+  it is written, with problems by line and each step's columns. Runs are queued as jobs of kind
+  `pipeline`, run once by a worker, recorded step by step (how each step ended, rows in and out per
+  port, peak memory, error) and can be cancelled. The step catalogue includes kiln-steps'
+  transforms. Viewers read; stewards edit and run.
+- **Reading and writing sources in pipelines:** the `read` step reads a saved source's table or
+  file; the `write` step writes to a source only when an admin has set its new **Allow writing**
+  setting (`allow_writing`, off by default; stewards cannot change it). Allowed hosts and the
+  role of whoever asked are checked again when a run starts, and no message carries a source's
+  secret. A write step takes exactly the settings its source's writer declares, written beside its
+  other settings and checked when the pipeline is, and nothing that says where or as whom to
+  connect; the source's profiling settings (with key-like columns' sketches for relationship
+  discovery) go with it, and a writer that could not profile leaves a note on the run. What a write
+  wrote is registered in the catalogue from what the writer reports, with the container, name and
+  key its connector gives, under the URN a scan would give it, with its lineage from the assets read
+  (under the URNs the catalogue records them by), under a run of kind `pipeline` that source run lists do not show
+  (migration V12; `kilnmark.pipelines.max-yaml-kb`, `memory-limit-mb`, `row-set-capacity` and
+  `wait-for-target`). While a source allows writing, only admins change where it points, and a
+  write's settings cannot redirect it. A pipeline runs once at a time, and one run at a time writes
+  each table or file. Viewers see that a step failed but not its message, which may quote the data;
+  for runs touching columns marked sensitive, only admins see it.
+- **Pipelines page:** a list with Run now, and for each pipeline a YAML editor that checks as you
+  type (choosing a problem moves to its line), Save with a message, a graph of the steps with the
+  columns leaving each, versions and runs with a per-step breakdown. The guide "Building and
+  running a pipeline" (docs/guide/pipelines.md) walks through it.
+
 ## 0.0.3 (25 October 2026)
 
 ### What's new

@@ -71,7 +71,8 @@ final class PatternProfile {
         }
         if (keepValues && exampleCount > 0) {
             String example = value.length() > EXAMPLE_LENGTH ? value.substring(0, EXAMPLE_LENGTH) + "…" : value;
-            long hash = MurmurHash3.hash(example.getBytes(StandardCharsets.UTF_8), SEED)[0];
+            // MurmurHash3 refuses an empty array: an empty string gets a fixed hash of its own
+            long hash = example.isEmpty() ? 0x656D707479L : MurmurHash3.hash(example.getBytes(StandardCharsets.UTF_8), SEED)[0];
             offer(examples, shape, example, hash);
             offer(collapsedExamples, c, example, hash);
         }

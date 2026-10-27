@@ -112,6 +112,46 @@ public interface FileStore extends Closeable {
         return copyKey("");
     }
 
+    /**
+     * A file being written: bytes go to {@link #stream()}, and nobody sees the file until
+     * {@link #commit()} puts it in place in one step. {@link #abort()} (and {@link #close()} before a
+     * commit) discards what was written.
+     */
+    interface Upload extends Closeable {
+
+        /** Where the file's bytes go. */
+        java.io.OutputStream stream();
+
+        /**
+         * Puts the file in place: all of it or none of it.
+         *
+         * @throws IOException if it cannot be, for example because a file of that name appeared and
+         *                     overwriting was not asked for
+         */
+        void commit() throws IOException;
+
+        /** Discards what was written; does nothing after a commit. Never fails. */
+        void abort();
+
+        /** Aborts unless committed. */
+        @Override
+        default void close() {
+            abort();
+        }
+    }
+
+    /**
+     * Starts writing a file at {@code path} (checked as {@link #open} checks paths, and not allowed
+     * to lead outside the store). Stores that cannot be written refuse.
+     *
+     * @param overwrite whether an existing file may be replaced; when false and the file exists this
+     *                  fails at once, before anything is written
+     * @throws IOException with a message a person can act on
+     */
+    default Upload create(String path, boolean overwrite) throws IOException {
+        throw new IOException("Files cannot be written to " + describe(path));
+    }
+
     /** Where a path is, for people: an absolute path or an {@code s3://} URL. */
     String describe(String path);
 

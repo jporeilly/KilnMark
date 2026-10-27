@@ -173,6 +173,9 @@ final class ColumnStats {
             Math.round(distinct.getLowerBound(1)) == Math.round(distinct.getUpperBound(1))));
         switch (shape) {
             case NUMBER, INTEGER -> {
+                if (quantiles.isEmpty()) {
+                    break; // every value was NaN: no quantiles to report
+                }
                 a.put("min", number(quantiles.getMinItem()));
                 a.put("p25", number(quantiles.getQuantile(0.25)));
                 a.put("median", number(quantiles.getQuantile(0.5)));
@@ -185,6 +188,9 @@ final class ColumnStats {
                 }
             }
             case DATE, TIME, TIMESTAMP -> {
+                if (quantiles.isEmpty()) {
+                    break;
+                }
                 a.put("min", temporal(quantiles.getMinItem()));
                 a.put("median", temporal(quantiles.getQuantile(0.5)));
                 a.put("max", temporal(quantiles.getMaxItem()));
@@ -286,7 +292,9 @@ final class ColumnStats {
      * With values not kept, most common values are left out.
      */
     private void quality(Map<String, String> a) {
-        switch (shape) {
+        // with every value NaN the quantile sketch is empty: no quantiles, fences or dates to report
+        Shape measured = quantiles.isEmpty() && shape != Shape.TEXT ? Shape.BINARY : shape;
+        switch (measured) {
             case NUMBER, INTEGER -> {
                 a.put("sum", number(sum));
                 a.put("negatives", Long.toString(negatives));

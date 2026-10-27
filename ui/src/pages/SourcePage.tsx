@@ -22,7 +22,7 @@ import { Icon } from "../components/icons";
 import { Button, Card, DataTable, EmptyState, PageHeader } from "../components/ui";
 import { go, href } from "../router";
 
-const COMMON = new Set(["description", "ai_egress", "include", "exclude"]);
+const COMMON = new Set(["description", "ai_egress", "include", "exclude", "allow_writing"]);
 const AI = { local_only: "Local models only", allowed: "Any configured model", none: "No AI models" } as Record<
   string,
   string
@@ -211,6 +211,10 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
             <div>
               <dt>AI models</dt>
               <dd>{AI[source.settings.ai_egress ?? "local_only"] ?? source.settings.ai_egress}</dd>
+            </div>
+            <div>
+              <dt>Pipelines may write</dt>
+              <dd>{source.settings.allow_writing === "true" ? "Yes" : "No (read-only)"}</dd>
             </div>
             <div>
               <dt>Assets recorded</dt>

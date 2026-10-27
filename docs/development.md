@@ -252,7 +252,10 @@ control for that is where sources may point: limit folder sources to the folders
 lists (`KILNMARK_FILES_ROOTS`) and give database and object storage sources their own credentials,
 which a steward drafting a new connection would also need. Objects in a bucket whose keys start with
 `/` or contain empty, `.` or `..` parts are still scanned from the listing, but cannot be previewed
-or read on demand.
+or read on demand. Pipelines that write to a folder check its sub-folders by path and then use
+them, so anyone who can write inside an allowed folder on the server itself could swap a checked
+folder for a link in that moment: keep the folders in `KILNMARK_FILES_ROOTS` writable only by
+Kilnmark's user and people trusted with what it may write.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
