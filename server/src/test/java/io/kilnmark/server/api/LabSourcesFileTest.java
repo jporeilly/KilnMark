@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 
+import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.server.sources.CommonSettings;
 
 /** lab/sources.csv: only the warehouse bucket lets pipelines write; the synthetic sources stay read-only. */
@@ -21,17 +22,17 @@ class LabSourcesFileTest {
 
     private static Map<String, SourceImporter.Row> rows() throws Exception {
         String csv = Files.readString(Path.of(System.getProperty("user.dir")).getParent().resolve("lab/sources.csv"));
-        List<SourceImporter.Row> rows = new SourceImporter(null, null, null, null, null, null, null).fromCsv(csv);
+        List<SourceImporter.Row> rows = SourceImporter.fromCsv(csv, SourceImporter.listKeys(Connectors.load().all()));
         return rows.stream().collect(Collectors.toMap(SourceImporter.Row::name, Function.identity()));
     }
 
     @Test
     void onlyTheWarehouseAllowsWriting() throws Exception {
         Map<String, SourceImporter.Row> rows = rows();
-        assertEquals(List.of("lab-bucket", "lab-db", "lab-share", "lab-warehouse"), rows.keySet().stream().sorted().toList());
+        assertEquals(List.of("lab-bucket", "lab-db", "lab-share", "lab-sqlserver", "lab-warehouse"), rows.keySet().stream().sorted().toList());
         assertTrue(CommonSettings.allowsWriting(rows.get("lab-warehouse").settings()));
         assertTrue(CommonSettings.problems(rows.get("lab-warehouse").settings()).isEmpty());
-        for (String read : List.of("lab-db", "lab-bucket", "lab-share")) {
+        for (String read : List.of("lab-db", "lab-bucket", "lab-share", "lab-sqlserver")) {
             assertFalse(CommonSettings.allowsWriting(rows.get(read).settings()), read);
         }
     }
