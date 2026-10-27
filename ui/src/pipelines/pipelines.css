@@ -315,3 +315,16 @@ button.pl-problem:hover {
     color: Mark;
   }
 }
+
+/* Above the canvas and YAML: starting a new pipeline, and the warning before running unsaved work. */
+.pl-start p {
+  margin: 0 0 10px;
+}
+
+.pl-confirm p {
+  margin: 0 0 8px;
+}
+
+.pl-build .pl-problems {
+  margin-top: 16px;
+}

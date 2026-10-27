@@ -1,0 +1,739 @@
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import type { PipelineColumn, Source, StepTypeSetting } from "../../api";
+import { Switch } from "../../components/ui";
+import { defaultText } from "./insight";
+import type { Value } from "./model";
+
+/** What a control needs besides its setting: the columns it can offer, sources, and assets. */
+export type ControlContext = {
+  /** Columns arriving at the step (for a lookup: main and lookup sides); null when not known. */
+  columns: { main: PipelineColumn[] | null; lookup: PipelineColumn[] | null };
+  /** Which side a column setting names; the right-hand side of a column map may name the other. */
+  side: "main" | "lookup" | null;
+  sources: Source[] | null;
+  /** For write steps: the source must allow writing. */
+  writing: boolean;
+  /** Tables and files of the step's source, for the asset picker. */
+  assets: string[] | null;
+  stepType: string | null;
+};
+
+export type ControlProps = {
+  spec: StepTypeSetting;
+  /** A stable id for the control, unique on the page. */
+  id: string;
+  value: Value | undefined;
+  /** The scalar as written in the YAML, for text that looks like a number (`007`). */
+  text?: string;
+  onChange: (v: Value | undefined) => void;
+  readOnly: boolean;
+  /** Validation problems about this setting, in words. */
+  problems: string[];
+  context: ControlContext;
+};
+
+const asText = (v: Value | undefined, text?: string) => (text != null ? text : v == null ? "" : typeof v === "object" ? "" : String(v));
+const asList = (v: Value | undefined): string[] =>
+  Array.isArray(v) ? v.map((x) => String(x)) : v == null || typeof v === "object" ? [] : [String(v)];
+const asPairs = (v: Value | undefined): [string, string][] =>
+  v && typeof v === "object" && !Array.isArray(v) ? Object.entries(v).map(([k, x]) => [k, x == null ? "" : String(x)]) : [];
+
+/** The label, help, default and problems around a control; `describedBy` ties them to it. */
+function Field({
+  spec,
+  id,
+  problems,
+  children,
+  group,
+}: {
+  spec: StepTypeSetting;
+  id: string;
+  problems: string[];
+  children: (describedBy: string, invalid: boolean) => ReactNode;
+  group?: boolean;
+}) {
+  const def = defaultText(spec);
+  const described = [`${id}-help`, problems.length ? `${id}-problems` : null].filter(Boolean).join(" ");
+  const label = (
+    <>
+      {spec.label}
+      {spec.required ? <span className="cv-required"> (required)</span> : null}
+    </>
+  );
+  const body = (
+    <>
+      <p id={`${id}-help`} className="hint">
+        {spec.help}
+        {spec.help && !/[.!?]$/.test(spec.help) ? "." : ""}
+        {def != null && <span className="cv-default"> Default: {def}.</span>}
+      </p>
+      {children(described, problems.length > 0)}
+      {problems.length > 0 && (
+        <ul id={`${id}-problems`} className="cv-field-problems">
+          {problems.map((p, i) => (
+            <li key={i}>{p}</li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+  return group ? (
+    <fieldset className="cv-field" data-setting={spec.key}>
+      <legend className="cv-label">{label}</legend>
+      {body}
+    </fieldset>
+  ) : (
+    <div className="cv-field" data-setting={spec.key}>
+      <label className="cv-label" htmlFor={id}>
+        {label}
+      </label>
+      {body}
+    </div>
+  );
+}
+
+/** A text box that keeps what is typed while it has the focus, and follows the YAML otherwise. */
+function useDraft(outside: string) {
+  const [draft, setDraft] = useState(outside);
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) setDraft(outside);
+  }, [outside]);
+  return {
+    draft,
+    setDraft,
+    focusProps: {
+      onFocus: () => {
+        focused.current = true;
+      },
+      onBlur: () => {
+        focused.current = false;
+        setDraft(outside);
+      },
+    },
+  };
+}
+
+function TextControl(p: ControlProps & { listId?: string; mono?: boolean }) {
+  const outside = asText(p.value, p.text);
+  const { draft, setDraft, focusProps } = useDraft(outside);
+  const def = defaultText(p.spec);
+  return (
+    <Field spec={p.spec} id={p.id} problems={p.problems}>
+      {(describedBy, invalid) => (
+        <input
+          id={p.id}
+          className={p.mono ? "mono" : undefined}
+          value={draft}
+          readOnly={p.readOnly}
+          list={p.listId}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder={def ?? undefined}
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
+          {...focusProps}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            p.onChange(e.target.value === "" ? undefined : e.target.value);
+          }}
+        />
+      )}
+    </Field>
+  );
+}
+
+function NumberControl(p: ControlProps) {
+  const outside = asText(p.value, p.text);
+  const { draft, setDraft, focusProps } = useDraft(outside);
+  const def = defaultText(p.spec);
+  const bad = draft.trim() !== "" && !Number.isFinite(Number(draft));
+  const problems = bad ? ["A number, such as 1000.", ...p.problems] : p.problems;
+  return (
+    <Field spec={p.spec} id={p.id} problems={problems}>
+      {(describedBy, invalid) => (
+        <input
+          id={p.id}
+          inputMode="decimal"
+          className="num cv-number"
+          value={draft}
+          readOnly={p.readOnly}
+          placeholder={def ?? undefined}
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
+          {...focusProps}
+          onChange={(e) => {
+            const v = e.target.value;
+            setDraft(v);
+            if (v.trim() === "") p.onChange(undefined);
+            else if (Number.isFinite(Number(v))) p.onChange(Number(v));
+          }}
+        />
+      )}
+    </Field>
+  );
+}
+
+function BooleanControl(p: ControlProps) {
+  const def = p.spec.defaultValue === true;
+  const on = typeof p.value === "boolean" ? p.value : p.value === "true" ? true : p.value === "false" ? false : def;
+  return (
+    <div className="cv-field" data-setting={p.spec.key}>
+      <Switch
+        id={p.id}
+        label={p.spec.label}
+        help={p.spec.help}
+        checked={on}
+        disabled={p.readOnly}
+        defaultNote={`Default: ${def ? "on" : "off"}`}
+        describedBy={p.problems.length ? `${p.id}-problems` : undefined}
+        // Back to the default: the key is left out, so the YAML says only what differs.
+        onChange={(next) => p.onChange(next === def ? undefined : next)}
+      />
+      {p.problems.length > 0 && (
+        <ul id={`${p.id}-problems`} className="cv-field-problems">
+          {p.problems.map((x, i) => (
+            <li key={i}>{x}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ChoiceControl(p: ControlProps) {
+  const value = asText(p.value, p.text);
+  const def = defaultText(p.spec);
+  const choices = p.spec.choices.includes(value) || value === "" ? p.spec.choices : [...p.spec.choices, value];
+  return (
+    <Field spec={p.spec} id={p.id} problems={p.problems}>
+      {(describedBy, invalid) => (
+        <select
+          id={p.id}
+          value={value}
+          disabled={p.readOnly}
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
+          onChange={(e) => p.onChange(e.target.value === "" ? undefined : e.target.value)}
+        >
+          <option value="">{def != null ? `Default (${def})` : "Not set"}</option>
+          {choices.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      )}
+    </Field>
+  );
+}
+
+function SourceControl(p: ControlProps) {
+  const value = asText(p.value, p.text);
+  const sources = p.context.sources;
+  const known = sources?.some((s) => s.name === value);
+  const writable = (s: Source) => s.settings.allow_writing === "true";
+  return (
+    <Field spec={p.spec} id={p.id} problems={p.problems}>
+      {(describedBy, invalid) =>
+        sources == null ? (
+          <input
+            id={p.id}
+            value={value}
+            readOnly={p.readOnly}
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
+            onChange={(e) => p.onChange(e.target.value || undefined)}
+          />
+        ) : (
+          <select
+            id={p.id}
+            value={value}
+            disabled={p.readOnly}
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
+            onChange={(e) => p.onChange(e.target.value || undefined)}
+          >
+            <option value="">Choose a source</option>
+            {!known && value !== "" && <option value={value}>{value} (not a saved source)</option>}
+            {sources.map((s) => (
+              <option key={s.name} value={s.name}>
+                {s.displayName && s.displayName !== s.name ? `${s.displayName} (${s.name})` : s.name}
+                {p.context.writing && !writable(s) ? ", read-only" : ""}
+              </option>
+            ))}
+          </select>
+        )
+      }
+    </Field>
+  );
+}
+
+function AssetControl(p: ControlProps) {
+  const listId = `${p.id}-assets`;
+  return (
+    <>
+      <TextControl {...p} listId={listId} mono />
+      {p.context.assets && p.context.assets.length > 0 && (
+        <datalist id={listId}>
+          {p.context.assets.map((a) => (
+            <option key={a} value={a} />
+          ))}
+        </datalist>
+      )}
+    </>
+  );
+}
+
+/** Buttons that put a column's name into an expression at the caret: a keyboard-friendly palette. */
+function ColumnButtons({ columns, onPick, label }: { columns: PipelineColumn[] | null; onPick: (name: string) => void; label: string }) {
+  if (!columns || columns.length === 0) return null;
+  return (
+    <div className="cv-column-buttons" role="group" aria-label={label}>
+      {columns.slice(0, 40).map((c) => (
+        <button key={c.name} type="button" className="cv-chip mono" onClick={() => onPick(c.name)} title={c.type}>
+          {c.name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const quoteColumn = (name: string) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`);
+
+function insertAt(el: HTMLTextAreaElement | HTMLInputElement | null, current: string, word: string): { text: string; caret: number } {
+  const start = el?.selectionStart ?? current.length;
+  const end = el?.selectionEnd ?? current.length;
+  const before = current.slice(0, start);
+  const pad = before && !/\s$/.test(before) && !/[(,]$/.test(before) ? " " : "";
+  const text = before + pad + word + current.slice(end);
+  return { text, caret: (before + pad + word).length };
+}
+
+function ExpressionControl(p: ControlProps) {
+  const outside = asText(p.value, p.text);
+  const { draft, setDraft, focusProps } = useDraft(outside);
+  const area = useRef<HTMLTextAreaElement>(null);
+  const cols = p.context.columns.main;
+  return (
+    <Field spec={p.spec} id={p.id} problems={p.problems}>
+      {(describedBy, invalid) => (
+        <>
+          <textarea
+            id={p.id}
+            ref={area}
+            className="mono cv-expression"
+            rows={2}
+            value={draft}
+            readOnly={p.readOnly}
+            spellCheck={false}
+            aria-describedby={describedBy}
+            aria-invalid={invalid || undefined}
+            {...focusProps}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              p.onChange(e.target.value.trim() === "" ? undefined : e.target.value);
+            }}
+          />
+          {!p.readOnly && (
+            <ColumnButtons
+              columns={cols}
+              label={`Insert a column into ${p.spec.label}`}
+              onPick={(name) => {
+                const { text, caret } = insertAt(area.current, draft, quoteColumn(name));
+                setDraft(text);
+                p.onChange(text);
+                requestAnimationFrame(() => {
+                  area.current?.focus();
+                  area.current?.setSelectionRange(caret, caret);
+                });
+              }}
+            />
+          )}
+        </>
+      )}
+    </Field>
+  );
+}
+
+/** Columns from a list when they are known, else typed with suggestions. */
+function ColumnInput({
+  id,
+  value,
+  columns,
+  onChange,
+  readOnly,
+  label,
+  describedBy,
+  invalid,
+  free,
+}: {
+  id: string;
+  value: string;
+  columns: PipelineColumn[] | null;
+  onChange: (v: string) => void;
+  readOnly: boolean;
+  label?: string;
+  describedBy?: string;
+  invalid?: boolean;
+  /** Any name may be typed (a new name for a rename): suggestions only. */
+  free?: boolean;
+}) {
+  const listId = `${id}-cols`;
+  if (columns && columns.length > 0 && !free) {
+    const known = columns.some((c) => c.name === value);
+    return (
+      <select
+        id={id}
+        value={value}
+        disabled={readOnly}
+        aria-label={label}
+        aria-describedby={describedBy}
+        aria-invalid={invalid || undefined}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">Choose a column</option>
+        {!known && value !== "" && <option value={value}>{value} (not arriving here)</option>}
+        {columns.map((c) => (
+          <option key={c.name} value={c.name}>
+            {c.name} ({c.type})
+          </option>
+        ))}
+      </select>
+    );
+  }
+  return (
+    <>
+      <input
+        id={id}
+        className="mono"
+        value={value}
+        readOnly={readOnly}
+        list={columns?.length ? listId : undefined}
+        aria-label={label}
+        aria-describedby={describedBy}
+        aria-invalid={invalid || undefined}
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {columns && columns.length > 0 && (
+        <datalist id={listId}>
+          {columns.map((c) => (
+            <option key={c.name} value={c.name} />
+          ))}
+        </datalist>
+      )}
+    </>
+  );
+}
+
+function ColumnControl(p: ControlProps) {
+  const cols = p.context.side === "lookup" ? p.context.columns.lookup : p.context.columns.main;
+  return (
+    <Field spec={p.spec} id={p.id} problems={p.problems}>
+      {(describedBy, invalid) => (
+        <ColumnInput
+          id={p.id}
+          value={asText(p.value, p.text)}
+          columns={cols}
+          readOnly={p.readOnly}
+          describedBy={describedBy}
+          invalid={invalid}
+          onChange={(v) => p.onChange(v === "" ? undefined : v)}
+        />
+      )}
+    </Field>
+  );
+}
+
+/** An ordered list of columns: each can be removed; new ones are added from the arriving columns. */
+function ColumnsControl(p: ControlProps) {
+  const chosen = asList(p.value);
+  const cols = p.context.side === "lookup" ? p.context.columns.lookup : p.context.columns.main;
+  const [adding, setAdding] = useState("");
+  const addId = `${p.id}-add`;
+  const rest = cols?.filter((c) => !chosen.includes(c.name)) ?? null;
+  const add = (name: string) => {
+    const n = name.trim();
+    if (!n || chosen.includes(n)) return;
+    p.onChange([...chosen, n]);
+    setAdding("");
+  };
+  return (
+    <Field spec={p.spec} id={p.id} problems={p.problems} group>
+      {(describedBy, invalid) => (
+        <>
+          {chosen.length > 0 ? (
+            <ul className="cv-chosen" id={p.id} aria-describedby={describedBy}>
+              {chosen.map((c, i) => (
+                <li key={`${c}-${i}`} className="cv-chip-row">
+                  <span className="mono">{c}</span>
+                  {!p.readOnly && (
+                    <button
+                      type="button"
+                      className="cv-mini"
+                      aria-label={`Remove ${c} from ${p.spec.label}`}
+                      onClick={() => p.onChange(chosen.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="small muted" id={p.id}>
+              None chosen.
+            </p>
+          )}
+          {!p.readOnly && (
+            <div className="cv-add-row">
+              {rest && rest.length > 0 ? (
+                <select
+                  id={addId}
+                  value=""
+                  aria-label={`Add a column to ${p.spec.label}`}
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid || undefined}
+                  onChange={(e) => add(e.target.value)}
+                >
+                  <option value="">Add a column…</option>
+                  {rest.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name} ({c.type})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    id={addId}
+                    className="mono"
+                    value={adding}
+                    aria-label={`Column to add to ${p.spec.label}`}
+                    aria-describedby={describedBy}
+                    spellCheck={false}
+                    onChange={(e) => setAdding(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        add(adding);
+                      }
+                    }}
+                  />
+                  <button type="button" onClick={() => add(adding)} disabled={!adding.trim()}>
+                    Add
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </Field>
+  );
+}
+
+type PairKind = "column-map" | "expressions" | "conditions";
+
+function pairLabels(kind: PairKind, stepType: string | null, key: string): [string, string, string] {
+  if (kind === "conditions") return ["Port", "Condition", "Add a route"];
+  if (kind === "expressions") {
+    if (key === "cast") return ["Column", "Type", "Add a column"];
+    return ["Column", stepType === "aggregate" ? "Summary" : "Expression", "Add a column"];
+  }
+  if (stepType === "lookup") return ["Main column", "Lookup column", "Add a key"];
+  if (key === "rename") return ["Column", "New name", "Add a rename"];
+  return ["From", "To", "Add a pair"];
+}
+
+/**
+ * Name → value pairs, in order: a column map (rename, lookup keys), expressions (compute,
+ * aggregate, cast) or conditions (route). Rows are kept as typed; the setting is written from the
+ * rows with a name, so a half-typed row never loses the others.
+ */
+function PairsControl(p: ControlProps & { kind: PairKind }) {
+  const outside = asPairs(p.value);
+  const key = JSON.stringify(outside);
+  const [rows, setRows] = useState<[string, string][]>(outside);
+  const mine = useRef(key);
+  useEffect(() => {
+    if (key !== mine.current) {
+      setRows(JSON.parse(key) as [string, string][]);
+      mine.current = key;
+    }
+  }, [key]);
+  const [left, right, addLabel] = pairLabels(p.kind, p.context.stepType, p.spec.key);
+  const valueIsColumn = p.kind === "column-map" && p.context.stepType === "lookup";
+  const leftIsColumn = p.kind === "column-map" || (p.kind === "expressions" && p.spec.key === "cast");
+  const dupes = new Set(rows.map((r) => r[0]).filter((n, i, all) => n !== "" && all.indexOf(n) !== i));
+  const commit = (next: [string, string][]) => {
+    setRows(next);
+    const obj: Record<string, string> = {};
+    for (const [k, v] of next) if (k.trim() !== "") obj[k.trim()] = v;
+    const written = JSON.stringify(Object.entries(obj));
+    mine.current = written;
+    p.onChange(Object.keys(obj).length ? obj : undefined);
+  };
+  const problems = dupes.size ? [`Each ${left.toLowerCase()} appears once: ${[...dupes].join(", ")} is repeated.`, ...p.problems] : p.problems;
+  const exprRefs = useRef<(HTMLTextAreaElement | null)[]>([]);
+  const lastFocused = useRef<number>(-1);
+  return (
+    <Field spec={p.spec} id={p.id} problems={problems} group>
+      {(describedBy, invalid) => (
+        <>
+          {rows.length === 0 && (
+            <p className="small muted" id={p.id}>
+              None yet.
+            </p>
+          )}
+          <ol className="cv-pairs" id={rows.length ? p.id : undefined}>
+            {rows.map(([k, v], i) => {
+              const rowId = `${p.id}-${i}`;
+              return (
+                <li key={i} className="cv-pair">
+                  <div className="cv-pair-left">
+                    <label className="cv-sub" htmlFor={`${rowId}-k`}>
+                      {left} {i + 1}
+                    </label>
+                    {leftIsColumn ? (
+                      <ColumnInput
+                        id={`${rowId}-k`}
+                        value={k}
+                        columns={p.context.columns.main}
+                        readOnly={p.readOnly}
+                        describedBy={describedBy}
+                        invalid={invalid}
+                        onChange={(x) => commit(rows.map((r, j) => (j === i ? [x, r[1]] : r)))}
+                      />
+                    ) : (
+                      <input
+                        id={`${rowId}-k`}
+                        className="mono"
+                        value={k}
+                        readOnly={p.readOnly}
+                        spellCheck={false}
+                        autoComplete="off"
+                        aria-describedby={describedBy}
+                        aria-invalid={invalid || undefined}
+                        onChange={(e) => commit(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))}
+                      />
+                    )}
+                  </div>
+                  <div className="cv-pair-right">
+                    <label className="cv-sub" htmlFor={`${rowId}-v`}>
+                      {right} {i + 1}
+                    </label>
+                    {p.kind === "column-map" ? (
+                      <ColumnInput
+                        id={`${rowId}-v`}
+                        value={v}
+                        columns={valueIsColumn ? p.context.columns.lookup : p.context.columns.main}
+                        free={!valueIsColumn}
+                        readOnly={p.readOnly}
+                        describedBy={describedBy}
+                        invalid={invalid}
+                        onChange={(x) => commit(rows.map((r, j) => (j === i ? [r[0], x] : r)))}
+                      />
+                    ) : (
+                      <textarea
+                        id={`${rowId}-v`}
+                        ref={(el) => {
+                          exprRefs.current[i] = el;
+                        }}
+                        className="mono cv-expression"
+                        rows={1}
+                        value={v}
+                        readOnly={p.readOnly}
+                        spellCheck={false}
+                        aria-describedby={describedBy}
+                        aria-invalid={invalid || undefined}
+                        onFocus={() => {
+                          lastFocused.current = i;
+                        }}
+                        onChange={(e) => commit(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))}
+                      />
+                    )}
+                  </div>
+                  {!p.readOnly && (
+                    <button
+                      type="button"
+                      className="cv-mini cv-pair-remove"
+                      aria-label={`Remove ${left.toLowerCase()} ${k || i + 1}`}
+                      onClick={() => commit(rows.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+          {!p.readOnly && (
+            <div className="cv-add-row">
+              <button
+                type="button"
+                onClick={() => {
+                  setRows([...rows, ["", ""]]);
+                  requestAnimationFrame(() => document.getElementById(`${p.id}-${rows.length}-k`)?.focus());
+                }}
+              >
+                {addLabel}
+              </button>
+            </div>
+          )}
+          {!p.readOnly && p.kind !== "column-map" && p.spec.key !== "cast" && rows.length > 0 && (
+            <ColumnButtons
+              columns={p.context.columns.main}
+              label={`Insert a column into the last ${right.toLowerCase()} you were in`}
+              onPick={(name) => {
+                const i = lastFocused.current >= 0 && lastFocused.current < rows.length ? lastFocused.current : rows.length - 1;
+                const el = exprRefs.current[i];
+                const { text, caret } = insertAt(el, rows[i][1], quoteColumn(name));
+                commit(rows.map((r, j) => (j === i ? [r[0], text] : r)));
+                requestAnimationFrame(() => {
+                  el?.focus();
+                  el?.setSelectionRange(caret, caret);
+                });
+              }}
+            />
+          )}
+        </>
+      )}
+    </Field>
+  );
+}
+
+/** The control for one setting, chosen by its kind (SettingSpec.Kind). */
+export function SettingControl(p: ControlProps) {
+  switch (p.spec.kind) {
+    case "boolean":
+      return <BooleanControl {...p} />;
+    case "number":
+      return <NumberControl {...p} />;
+    case "choice":
+      return <ChoiceControl {...p} />;
+    case "source":
+      return <SourceControl {...p} />;
+    case "asset":
+      return <AssetControl {...p} />;
+    case "expression":
+      return <ExpressionControl {...p} />;
+    case "expressions":
+      return <PairsControl {...p} kind="expressions" />;
+    case "conditions":
+      return <PairsControl {...p} kind="conditions" />;
+    case "column_map":
+      return <PairsControl {...p} kind="column-map" />;
+    case "column":
+      return <ColumnControl {...p} />;
+    case "columns":
+      return <ColumnsControl {...p} />;
+    default:
+      return <TextControl {...p} />;
+  }
+}
+
+/** A stable id base for a step's controls. */
+export const useControlIds = () => useId().replace(/:/g, "");
