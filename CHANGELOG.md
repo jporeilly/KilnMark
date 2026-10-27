@@ -8,7 +8,8 @@ details.
 ### What's new
 
 - **Build pipelines on a canvas.** A pipeline's page has a **Canvas** tab beside the YAML: drag
-  steps from a list, connect their ports, and change each step's settings in a panel that offers
+  steps from a list of folders (Read, Write, Filter and route, Transform, Combine and more, with
+  your recently used steps first), connect their ports, and change each step's settings in a panel that offers
   your sources, tables and columns, with problems shown on the step and setting they are about.
   The canvas and the YAML are the same pipeline, so a change in one shows in the other. After a
   run, each step shows its rows and how it ended. Everything works from the keyboard too.
@@ -29,7 +30,12 @@ details.
   changes. Keyboard: arrow keys between connected steps, Shift+arrows to move, `C` for Connect to…,
   `?` for every shortcut. The UI adds `yaml` 2.9.1 (ISC), pins `@xyflow/react` to 12.12.0, and
   runs its unit tests (vitest) in `npm run build`; the canvas loads lazily, outside the main
-  bundle.
+  bundle. A canvas change rewrites only the YAML it changes: other lines stay byte for byte. The
+  canvas takes the page's full width with an icon rail of step folders (`StepFactory.category()`,
+  returned as `category` by `GET /api/v1/steps`), a settings drawer, an overview map, **Fit** and
+  **Readable size**. Undo also covers typing in the YAML tab and loading the latest version after a
+  save conflict, which now keeps your version one undo away; moving steps alone no longer makes
+  **Run now** ask about unsaved changes.
 - **Setting kinds.** `Connector.Setting` has a kind (`TEXT`, `NUMBER`, `BOOLEAN`, `CHOICE` or
   the new `URL`, from `SettingSpec.Kind`), its choices and its default; the old constructor gives
   `TEXT`. Every built-in connector declares them, and the settings every source has carry a kind

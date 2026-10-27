@@ -677,12 +677,22 @@ asset's previous profile.
   read back as YAML is refused, and so is one to a step with both `input` and `inputs`, which the
   compiler refuses too. Unreadable YAML leaves the last good graph on the canvas, read-only, under a
   banner.
-- **Positions** go in the top-level `layout` block (section 2), written only when a step is added,
-  moved or connected; steps without a position are placed by a layered layout (dagre).
+- **Positions** go in the top-level `layout` block (section 2). Moving a step writes its position;
+  a change that adds, removes, renames, duplicates, connects or disconnects steps also writes the
+  position of every step drawn without one, so nothing jumps when the layout is worked out again.
+  Steps without a position are placed by a layered layout (dagre). Run's unsaved-changes question
+  ignores the layout block.
+- **Room to work.** The canvas takes the page's full width and the window's height. The step list
+  is an icon rail of folders (`StepFactory.category()`, from `GET /api/v1/steps`), expanding to a
+  searchable tree; the settings are a drawer over the canvas, open while a step is selected; a
+  minimap shows large pipelines. **Fit** fits the whole pipeline into the part of the canvas not
+  under the list or the drawer; **Readable size** never goes below a readable zoom.
 - **React Flow** (`@xyflow/react` 12.12.0, MIT) draws the canvas; the canvas, React Flow and
   `yaml` load lazily with the pipeline page, outside the main bundle. React Flow's own keyboard
   moves are off: the canvas's keys move between connected steps, Shift+arrows move a step, C opens
-  Connect to…, and changes are announced in a live region.
+  Connect to…, and changes are announced in a live region. Connections are not focusable; they
+  are removed with Disconnect in the settings. Single-letter keys act only on the canvas and its
+  toolbar.
 - **Settings panels** come from `GET /api/v1/steps`: one control per `SettingSpec` kind; column
   pickers use the columns validation worked out for the step's inputs; a write shows the writer
   settings its source's kind takes (`writerSettings`).
