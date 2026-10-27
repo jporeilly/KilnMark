@@ -5,6 +5,8 @@ details.
 
 ## Unreleased
 
+## 0.0.5 (27 October 2026)
+
 ### What's new
 
 - **Email alerts and notifications.** A bell in the top bar and a Notifications card on the home
