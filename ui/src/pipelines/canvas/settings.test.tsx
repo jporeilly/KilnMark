@@ -4,6 +4,7 @@ import type { PipelineProblem, PipelineValidation, Source, StepType, StepTypeSet
 import { arrivingColumns, defaultText, problemSetting, shownSettings, stepSummary } from "./insight";
 import type { GraphStep } from "./model";
 import { SettingControl, type ControlContext } from "./SettingControls";
+import { categoryOf, Palette } from "./Palette";
 
 const spec = (key: string, kind: string, extra: Partial<StepTypeSetting> = {}): StepTypeSetting => ({
   key,
@@ -188,5 +189,40 @@ describe("what the canvas says about steps", () => {
     expect(defaultText(spec("x", "boolean", { defaultValue: true }))).toBe("on");
     expect(defaultText(spec("x", "number", { defaultValue: 0 }))).toBe("0");
     expect(defaultText(spec("x", "text"))).toBeNull();
+  });
+});
+
+describe("the step list", () => {
+  const t = (type: string, kind: string, category?: string) =>
+    ({ type, kind, label: type, help: "", inputs: [], manyInputs: [], outputs: [], settings: [], category }) as unknown as StepType;
+  const types = [t("read", "source", "Read"), t("filter", "transform", "Filter and route"), t("route", "transform", "Filter and route"), t("compute", "transform", "Transform"), t("mystery", "transform")];
+
+  test("folders by category, in order, with counts; open folders show their steps", () => {
+    const out = renderToStaticMarkup(
+      <Palette types={types} usedTypes={[]} readOnly={false} expanded onExpand={() => {}} onAdd={() => {}} searchRef={{ current: null }} hint="" />,
+    );
+    const folders = [...out.matchAll(/data-folder="([^"]+)"[^>]*>.*?<span>([^<]+) <span class="cv-count">\((\d+)\)/g)].map((m) => `${m[2]} ${m[3]}`);
+    expect(folders).toEqual(["Read 1", "Filter and route 2", "Transform 1", "Other 1"]);
+    expect(out).toContain('aria-expanded="false"');
+    expect(out).toMatch(/<ul id="cv-folder-read" class="cv-type-list" hidden="">/);
+    // The rail: a button per folder, named with its count.
+    expect(out).toContain('aria-label="Filter and route (2)"');
+  });
+
+  test("a type the server gives no category goes by its kind", () => {
+    expect(categoryOf(t("x", "source"))).toBe("Read");
+    expect(categoryOf(t("x", "sink"))).toBe("Write");
+    expect(categoryOf(t("x", "gate"))).toBe("Quality");
+    expect(categoryOf(t("x", "transform"))).toBe("Other");
+    expect(categoryOf(t("x", "transform", "AI"))).toBe("AI");
+  });
+});
+
+describe("number fields", () => {
+  test("keep the text typed", () => {
+    const out = renderToStaticMarkup(
+      <SettingControl spec={spec("rows", "number")} id="t" value={9007199254740993 as never} text="9007199254740993" onChange={() => {}} readOnly={false} problems={[]} context={ctx()} />,
+    );
+    expect(out).toContain('value="9007199254740993"');
   });
 });

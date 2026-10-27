@@ -328,3 +328,25 @@ button.pl-problem:hover {
 .pl-build .pl-problems {
   margin-top: 16px;
 }
+
+/* The canvas takes the page's full width. */
+main:has(.pl-wide) {
+  max-width: none;
+}
+
+.pl-build.pl-wide {
+  padding: 12px;
+}
+
+.pl-conflict {
+  margin-bottom: 12px;
+}
+
+.pl-conflict p {
+  margin: 0 0 6px;
+}
+
+.pl-run-hint {
+  margin: 4px 0 0;
+  text-align: right;
+}

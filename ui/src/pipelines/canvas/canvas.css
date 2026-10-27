@@ -10,17 +10,13 @@
   margin: 0;
 }
 
-.cv-grid {
+/* The stage: the icon rail, the canvas, and the drawers over it. */
+.cv-stage {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
-}
-
-@media (min-width: 1100px) {
-  .cv-grid {
-    grid-template-columns: 180px minmax(0, 1fr) 300px;
-    align-items: start;
-  }
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 8px;
+  height: max(480px, calc(100vh - var(--km-topbar-h) - 150px));
 }
 
 .cv-side-title {
@@ -28,16 +24,118 @@
   font-size: var(--km-text-md);
 }
 
-/* ---- the palette ---- */
+/* ---- the step list: icon rail, fly-out and expanded tree ---- */
 
 .cv-palette {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-  align-content: start;
+  position: relative;
   min-width: 0;
 }
 
+.cv-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  height: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--km-border);
+  border-radius: var(--km-radius-card);
+  background: var(--km-surface);
+  overflow-y: auto;
+}
+
+.cv-rail-button {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  flex: none;
+}
+
+.cv-rail-button.is-open,
+.cv-rail-button[aria-expanded="true"] {
+  background: var(--km-accent-tint);
+  border-color: var(--km-accent);
+}
+
+.cv-rail-sep {
+  width: 24px;
+  height: 1px;
+  background: var(--km-divider);
+}
+
+.cv-flyout,
+.cv-palette-panel {
+  position: absolute;
+  top: 0;
+  left: 56px;
+  z-index: 20;
+  box-sizing: border-box;
+  background: var(--km-surface);
+  border: 1px solid var(--km-border-control);
+  border-radius: var(--km-radius-card);
+  box-shadow: var(--km-shadow-raised);
+  padding: 12px;
+}
+
+.cv-flyout {
+  width: 240px;
+  max-height: 100%;
+  overflow: auto;
+}
+
+.cv-palette-panel {
+  width: 272px;
+  height: 100%;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.cv-folders {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.cv-folder {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 6px;
+  border-color: transparent;
+  background: transparent;
+  font-weight: 600;
+}
+
+.cv-folder:hover {
+  background: var(--km-surface-3);
+}
+
+.cv-count {
+  color: var(--km-muted);
+  font-weight: 400;
+}
+
+.cv-type-list[hidden] {
+  display: none;
+}
+
+.cv-folders .cv-type-list {
+  margin: 2px 0 6px 22px;
+}
+
+@media (max-width: 700px) {
+  .cv-palette-panel,
+  .cv-flyout {
+    width: min(272px, calc(100vw - 110px));
+  }
+}
 
 .cv-search {
   display: flex;
@@ -83,16 +181,7 @@
   gap: 6px;
 }
 
-@media (max-width: 1099px) {
-  .cv-type-list {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  }
 
-  .cv-type {
-    padding: 4px 6px;
-    font-size: var(--km-text-sm);
-  }
-}
 
 .cv-type {
   display: flex;
@@ -196,16 +285,37 @@
 
 .cv-flow {
   position: relative;
-  height: 600px;
+  height: 100%;
   border: 1px solid var(--km-border);
   border-radius: var(--km-radius-card);
   background: var(--km-ground);
   overflow: hidden;
 }
 
+.cv-toolbar .cv-run-legend {
+  margin-left: auto;
+}
+
+.cv-flow .react-flow__minimap {
+  --xy-minimap-background-color: var(--km-surface);
+  --xy-minimap-mask-background-color: rgb(127 127 127 / 25%);
+  --xy-minimap-node-background-color: var(--km-surface-3);
+  --xy-minimap-node-stroke-color: var(--km-ink-soft);
+  border: 1px solid var(--km-border-control);
+  border-radius: 6px;
+}
+
+.cv-flow .react-flow__minimap .cv-mini-source {
+  stroke: var(--km-tint-blue-fg);
+}
+
+.cv-flow .react-flow__minimap .cv-mini-sink {
+  stroke: var(--km-tint-amber-fg);
+}
+
 @media (max-width: 700px) {
-  .cv-flow {
-    height: 440px;
+  .cv-flow .react-flow__minimap {
+    display: none;
   }
 }
 
@@ -463,18 +573,49 @@
 
 /* ---- the settings panel ---- */
 
-.cv-panel {
-  min-width: 0;
-  border: 1px solid var(--km-border);
+/* The selected step's settings: a drawer over the right of the canvas. */
+.cv-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 15;
+  width: min(340px, 38%);
+  box-sizing: border-box;
+  overflow: auto;
+  border: 1px solid var(--km-border-control);
   border-radius: var(--km-radius-card);
   background: var(--km-surface);
+  box-shadow: var(--km-shadow-raised);
   padding: 14px 16px;
 }
 
-@media (min-width: 1100px) {
-  .cv-panel {
-    max-height: 760px;
-    overflow: auto;
+.cv-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cv-drawer-head .cv-side-title {
+  margin: 0;
+}
+
+/* On a phone the drawer is below the canvas, so the canvas stays usable. */
+@media (max-width: 700px) {
+  .cv-stage {
+    height: auto;
+    grid-template-rows: 440px auto;
+  }
+
+  .cv-rail {
+    height: 440px;
+  }
+
+  .cv-drawer {
+    position: static;
+    grid-column: 1 / -1;
+    width: auto;
+    box-shadow: none;
   }
 }
 
@@ -750,7 +891,10 @@ button.cv-danger {
   .cv-node,
   .cv-type,
   .cv-flow,
-  .cv-panel {
+  .cv-drawer,
+  .cv-rail,
+  .cv-palette-panel,
+  .cv-flyout {
     border-color: CanvasText;
   }
 

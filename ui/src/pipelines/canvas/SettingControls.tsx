@@ -165,8 +165,9 @@ function NumberControl(p: ControlProps) {
           onChange={(e) => {
             const v = e.target.value;
             setDraft(v);
+            // The text as typed, so a long whole number keeps every digit.
             if (v.trim() === "") p.onChange(undefined);
-            else if (Number.isFinite(Number(v))) p.onChange(Number(v));
+            else if (Number.isFinite(Number(v))) p.onChange(v.trim());
           }}
         />
       )}

@@ -1148,6 +1148,8 @@ export type StepType = {
   settings: StepTypeSetting[];
   /** write only: for each kind of source that can be written to, the keys of the writer settings it takes. */
   writerSettings?: Record<string, string[]> | null;
+  /** The palette folder: Read, Write, Filter and route, Transform, Combine, Aggregate, Quality, AI or Other. */
+  category?: string;
 };
 
 const pipe = (name: string) => `/api/v1/pipelines/${encodeURIComponent(name)}`;

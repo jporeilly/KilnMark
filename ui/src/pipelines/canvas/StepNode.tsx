@@ -141,7 +141,7 @@ function StepBox({ data, selected }: NodeProps<StepNodeType>) {
           )}
         </div>
       )}
-      <div className="cv-node-columns small" aria-hidden="true">
+      <div className="cv-node-columns small" id={`cv-cols-${step.id}`} aria-hidden="true">
         {columns}
       </div>
     </div>
