@@ -39,8 +39,60 @@ import io.kilnmark.kiln.StepException;
  * above that many rows is read through the sample query instead, at the percentage that gives
  * about that many rows. The {@code ROW_COUNT} event then says {@code complete=false},
  * {@code sampled=true}, {@code sample_percent} and {@code estimated_rows}.
+ *
+ * <p>A database that connects or maps columns differently gives its own {@link Reading}; values it
+ * reads as null because Arrow has no such value (MySQL's zero dates) are counted, and the
+ * {@code ROW_COUNT} event then says {@code zero_dates}.
  */
 public final class JdbcTableInput implements Step {
+
+    /** How a database is connected to and its columns mapped, where it differs from plain JDBC. */
+    public interface Reading {
+
+        /**
+         * A connection for the step's settings: {@code url}, {@code user}, {@code password} and
+         * driver properties ({@code driver.}...).
+         */
+        default Connection open(Map<String, String> settings) throws SQLException {
+            return DriverManager.getConnection(settings.get("url"), connectionProperties(settings));
+        }
+
+        /** How column {@code i} (1-based) of the result is read. */
+        default ColumnReader column(ResultSetMetaData md, int i, Map<String, String> settings) throws SQLException {
+            return JdbcColumn.of(md, i);
+        }
+    }
+
+    /** How one column of a result becomes one Arrow column. */
+    public interface ColumnReader {
+
+        /** The Arrow field. */
+        Field field();
+
+        /** Copies column {@code col} (1-based) of the current row into {@code vector} at {@code row}. */
+        void copy(ResultSet rs, int col, FieldVector vector, int row) throws SQLException;
+
+        /** Dates with a zero year, month or day read as null so far: they have no Arrow value. */
+        default long zeroDates() {
+            return 0;
+        }
+    }
+
+    /** Plain JDBC. */
+    private static final Reading PLAIN = new Reading() {
+    };
+
+    private final Reading reading;
+
+    /** A reader for databases that need nothing of their own. */
+    public JdbcTableInput() {
+        this(PLAIN);
+    }
+
+    /** A reader connecting and mapping columns as {@code reading} says. */
+    public JdbcTableInput(Reading reading) {
+        this.reading = reading;
+    }
 
     public static final String TYPE = "jdbc-table-input";
 
@@ -63,7 +115,7 @@ public final class JdbcTableInput implements Step {
     private Connection connection;
     private Statement statement;
     private ResultSet rows;
-    private List<JdbcColumn> columns;
+    private List<ColumnReader> columns;
     private Schema schema;
     private int batchSize;
     private long rowLimit;
@@ -92,7 +144,7 @@ public final class JdbcTableInput implements Step {
                 + (rowLimit > 0 ? " LIMIT " + rowLimit : "");
         }
         try {
-            connection = DriverManager.getConnection(context.setting("url"), connectionProperties(context.settings()));
+            connection = reading.open(context.settings());
             connection.setReadOnly(true);
             connection.setAutoCommit(false); // PostgreSQL streams with a cursor only inside a transaction
             if (context.settings().containsKey(ISOLATION)) {
@@ -108,7 +160,7 @@ public final class JdbcTableInput implements Step {
             columns = new ArrayList<>(md.getColumnCount());
             List<Field> fields = new ArrayList<>(md.getColumnCount());
             for (int i = 1; i <= md.getColumnCount(); i++) {
-                JdbcColumn c = JdbcColumn.of(md, i);
+                ColumnReader c = reading.column(md, i, context.settings());
                 columns.add(c);
                 fields.add(c.field());
             }
@@ -175,6 +227,10 @@ public final class JdbcTableInput implements Step {
                 attributes.put("sampled", "true");
                 attributes.put("sample_percent", samplePercent);
                 attributes.put("estimated_rows", Long.toString(estimatedRows));
+            }
+            long zeroDates = columns.stream().mapToLong(ColumnReader::zeroDates).sum();
+            if (zeroDates > 0) {
+                attributes.put("zero_dates", Long.toString(zeroDates));
             }
             context.metadata().emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.ROW_COUNT, attributes, Instant.now()));
         }

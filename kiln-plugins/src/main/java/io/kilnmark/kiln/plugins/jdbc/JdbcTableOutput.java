@@ -100,6 +100,8 @@ final class JdbcTableOutput implements Step {
     private long sinceCommit;
     private long committedRows;
     private boolean committed;
+    /** Whether this step created {@link #loadInto}. */
+    private boolean created;
 
     JdbcTableOutput(JdbcConnector connector, WriteSql sql, SourceConfig source, TableName target, String mode,
                     List<String> key, WriteSettings settings, String assetUrn, Map<String, String> profiling)
@@ -114,15 +116,16 @@ final class JdbcTableOutput implements Step {
         this.settings = settings;
         this.assetUrn = assetUrn;
         this.commitEvery = settings.number("commit_every", 0, 0, Long.MAX_VALUE);
-        this.batchSize = (int) settings.number("batch_size", sql == WriteSql.SQL_SERVER && !mode.equals("upsert")
-            ? 5000 : 1000, 1, 100_000);
-        this.textLength = (int) settings.number("text_length", 0, 0, sql == WriteSql.SQL_SERVER ? 4000 : 10_485_760);
+        this.batchSize = (int) settings.number("batch_size", sql.defaultBatchSize(mode), 1, 100_000);
+        this.textLength = (int) settings.number("text_length", 0, 0, sql.maxTextLength());
         this.keepGrants = settings.bool("keep_grants", true);
-        this.bulk = sql == WriteSql.SQL_SERVER && (mode.equals("create") || mode.equals("replace"))
-            && settings.bool("bulk_copy", true);
+        this.bulk = sql.bulk(mode, settings);
         this.allowDroppingRowSecurity = settings.bool("allow_dropping_row_security", false);
         this.lockTimeoutMillis = settings.number("lock_timeout", 30, 1, 3600) * 1000;
-        this.newName = mode.equals("replace") ? "kiln_new_" + WriteSql.hexName() : null;
+        // where DDL commits by itself, a created table is also filled under a temporary name, so the
+        // target never appears half-filled
+        this.newName = mode.equals("replace") || mode.equals("create") && !sql.transactionalDdl()
+            ? "kiln_new_" + WriteSql.hexName() : null;
     }
 
     /** Whether the write leaves the table holding exactly what was written (create, replace). */
@@ -144,6 +147,7 @@ final class JdbcTableOutput implements Step {
         }
         try {
             connection = connector.connectForWrite(source, bulk);
+            sql.prepareSession(connection);
             connection.setAutoCommit(false);
             exists = queryBoolean(sql.exists(target));
             if (mode.equals("create") && exists) {
@@ -156,7 +160,10 @@ final class JdbcTableOutput implements Step {
             }
             checkPrivileges();
             if (mode.equals("append") || mode.equals("upsert")) {
-                targetColumns = readTargetColumns();
+                targetColumns = connector.targetColumns(connection, source, target);
+                if (targetColumns == null) {
+                    targetColumns = readTargetColumns();
+                }
                 required = readNames(sql.requiredColumns(target));
                 if (mode.equals("upsert")) {
                     checkKey();
@@ -242,17 +249,15 @@ final class JdbcTableOutput implements Step {
         if (unique == null) {
             return;
         }
-        Map<Long, Set<String>> indexes = new HashMap<>();
+        Map<String, Set<String>> indexes = new HashMap<>();
         try (PreparedStatement ps = prepare(unique); ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                indexes.computeIfAbsent(rs.getLong(1), i -> new HashSet<>()).add(rs.getString(2));
+                indexes.computeIfAbsent(rs.getString(1), i -> new HashSet<>()).add(rs.getString(2));
             }
         }
         if (!indexes.containsValue(new HashSet<>(keyColumns))) {
             throw new StepException("Cannot upsert into " + target + " by (" + String.join(", ", keyColumns)
-                + "): PostgreSQL finds the existing row through a unique index or primary key on exactly those "
-                + "columns, and the table has none. Ask a database administrator to add one, for example CREATE "
-                + "UNIQUE INDEX ON " + sql.table(target) + " (" + sql.columnList(keyColumns) + ")");
+                + "): " + sql.keyIndexAdvice(target, keyColumns));
         }
     }
 
@@ -357,8 +362,9 @@ final class JdbcTableOutput implements Step {
             case "create", "replace" -> {
                 checkNames();
                 // replace always fills a new table and renames it at the end, so the target is never half-filled
-                loadInto = mode.equals("replace") ? new TableName(target.schema(), newName) : target;
+                loadInto = newName != null ? new TableName(target.schema(), newName) : target;
                 execute(new WriteSql.Sql(sql.createTable(loadInto, input, textLength)));
+                created = true;
                 for (String g : grants) {
                     execute(new WriteSql.Sql(g));
                 }
@@ -383,6 +389,8 @@ final class JdbcTableOutput implements Step {
             loader = new BatchLoader(sql.upsert(loadInto, names, keyNames));
         } else if (sql instanceof WriteSql.Postgres pg && !copyRefused) {
             loader = new CopyLoader(pg.copy(loadInto, names));
+        } else if (bulk && sql instanceof MySqlWriteSql my && queryBoolean(my.localInfileAllowed())) {
+            loader = new LoadDataLoader(my, names);
         } else {
             loader = new BatchLoader(sql.insert(loadInto, names));
         }
@@ -465,8 +473,17 @@ final class JdbcTableOutput implements Step {
         }
         List<WriteSql.Sql> steps = exists ? sql.swap(target, newName, "kiln_old_" + WriteSql.hexName())
             : List.of(sql.rename(loadInto, target.table()));
-        for (WriteSql.Sql s : steps) {
-            execute(s);
+        for (int i = 0; i < steps.size(); i++) {
+            if (exists && !sql.transactionalDdl() && i == steps.size() - 1) {
+                // The new table is in place and committed; dropping the old one is only tidying up.
+                try {
+                    execute(steps.get(i));
+                } catch (SQLException e) {
+                    // left for an administrator; its name starts kiln_old_
+                }
+            } else {
+                execute(steps.get(i));
+            }
         }
     }
 
@@ -484,8 +501,8 @@ final class JdbcTableOutput implements Step {
             } catch (SQLException | RuntimeException e) {
                 // the connection is closed below; the server rolls back an unfinished transaction
             }
-            if (committedRows > 0 && newName != null && loadInto != null) {
-                // replace with commit_every: the half-filled new table was committed in parts
+            if (newName != null && created && (committedRows > 0 || !sql.transactionalDdl())) {
+                // replace with commit_every, or DDL that committed by itself: the new table outlived the rollback
                 try (Statement s = connection.createStatement()) {
                     s.execute(sql.drop(loadInto));
                     connection.commit();
@@ -567,6 +584,10 @@ final class JdbcTableOutput implements Step {
             }
             return null;
         }
+        String problem = sql.valueProblem(binding.kind(), v);
+        if (problem != null) {
+            throw new StepException("Row " + rowNumber + ", column " + binding.target() + ": " + problem);
+        }
         if (v instanceof java.math.BigDecimal d && binding.precision() > 0) {
             java.math.BigDecimal exact = WritePlan.fitDecimal(d, binding.precision(), binding.scale());
             if (exact == null) {
@@ -578,10 +599,6 @@ final class JdbcTableOutput implements Step {
             return exact;
         }
         if (v instanceof String s) {
-            String problem = sql.textProblem(s);
-            if (problem != null) {
-                throw new StepException("Row " + rowNumber + ", column " + binding.target() + ": " + problem);
-            }
             if (binding.maxLength() > 0 && sql.length(s) > binding.maxLength()) {
                 throw new StepException("Row " + rowNumber + ": the value in column " + binding.target() + " is "
                     + sql.length(s) + " characters long, but the column holds at most " + binding.maxLength()
@@ -659,6 +676,72 @@ final class JdbcTableOutput implements Step {
                 }
             }
             copy = null;
+        }
+    }
+
+    /**
+     * MySQL's {@code LOAD DATA LOCAL INFILE}, for tables this step created: the rows are sent from
+     * memory as the statement's data ({@code setLocalInfileInputStream}), never from a file, in
+     * loads of {@code batch_size} rows. With LOCAL the server turns bad values into warnings rather
+     * than errors, so a load that warns, or loads another number of rows than were sent, fails.
+     */
+    private final class LoadDataLoader implements Loader {
+
+        private final MySqlWriteSql my;
+        private final String statement;
+        private StringBuilder rows = new StringBuilder();
+        private int pending;
+
+        LoadDataLoader(MySqlWriteSql my, List<String> names) {
+            this.my = my;
+            this.statement = my.loadData(loadInto, names, bindings.stream().map(Binding::kind).toList());
+        }
+
+        @Override
+        public void write(VectorSchemaRoot batch, long before) throws SQLException, StepException {
+            int n = batch.getRowCount();
+            for (int row = 0; row < n; row++) {
+                for (int c = 0; c < bindings.size(); c++) {
+                    if (c > 0) {
+                        rows.append(',');
+                    }
+                    Binding binding = bindings.get(c);
+                    my.loadField(rows, binding.kind(), value(binding, batch, row, before + row + 1));
+                }
+                rows.append('\n');
+                if (++pending >= batchSize || rows.length() >= MySqlWriteSql.LOAD_CHARS) {
+                    send();
+                }
+            }
+        }
+
+        private void send() throws SQLException {
+            if (pending == 0) {
+                return;
+            }
+            byte[] data = rows.toString().getBytes(StandardCharsets.UTF_8);
+            int sent = pending;
+            rows = new StringBuilder();
+            pending = 0;
+            try (Statement s = connection.createStatement()) {
+                s.unwrap(org.mariadb.jdbc.Statement.class).setLocalInfileInputStream(new java.io.ByteArrayInputStream(data));
+                long loaded = s.executeLargeUpdate(statement);
+                java.sql.SQLWarning w = s.getWarnings();
+                if (w != null || loaded != sent) {
+                    throw new SQLException("The database loaded " + loaded + " of " + sent + " rows"
+                        + (w == null ? "" : " and warned: " + w.getMessage()));
+                }
+            }
+        }
+
+        @Override
+        public void flush() throws SQLException {
+            send();
+        }
+
+        @Override
+        public void release() {
+            rows = new StringBuilder();
         }
     }
 

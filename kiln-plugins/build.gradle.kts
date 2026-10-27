@@ -11,6 +11,10 @@ dependencies {
     "implementation"(libs.datasketches)
     // SQL Server's JDBC driver (MIT); loaded through DriverManager, so only needed at run time.
     "runtimeOnly"(libs.mssql.jdbc)
+    // MySQL and MariaDB: MariaDB Connector/J (LGPL-2.1-or-later), shipped unmodified as its own jar
+    // (ADR 0007). Compiled against for LOAD DATA LOCAL INFILE from a stream. Its optional
+    // dependencies (Waffle, AWS IAM, Bouncy Castle, SLF4J) are not wanted and not shipped.
+    "implementation"(libs.mariadb.java.client)
     // PostgreSQL's JDBC driver (BSD-2-Clause): writers stream rows with its COPY API. The server
     // ships it already (quarkus-jdbc-postgresql), so it is compiled against, not bundled again.
     "compileOnly"(libs.postgresql)
@@ -84,16 +88,17 @@ tasks.withType<Test>().configureEach {
     jvmArgs("--add-opens=java.base/java.nio=ALL-UNNAMED", "--enable-native-access=ALL-UNNAMED")
 }
 
-// Tests against heavy databases (SQL Server's image is 2.3 GB and needs 2 GB of memory) are tagged
-// and run apart: ./gradlew :kiln-plugins:heavyTest. The ordinary build stays quick.
-val heavy = listOf("sqlserver")
+// Tests against heavy databases (SQL Server's image is 2.3 GB and needs 2 GB of memory; MySQL 8.4 and
+// MariaDB 11.4 add two more servers) are tagged and run apart: ./gradlew :kiln-plugins:heavyTest.
+// The ordinary build stays quick.
+val heavy = listOf("sqlserver", "mysql", "mariadb")
 
 tasks.named<Test>("test") {
     useJUnitPlatform { excludeTags(*heavy.toTypedArray()) }
 }
 
 tasks.register<Test>("heavyTest") {
-    description = "Runs the integration tests against heavy databases (SQL Server)."
+    description = "Runs the integration tests against heavy databases (SQL Server, MySQL, MariaDB)."
     group = "verification"
     val main = project.extensions.getByType<SourceSetContainer>()["test"]
     testClassesDirs = main.output.classesDirs

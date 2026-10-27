@@ -150,11 +150,88 @@ public interface SqlDialect {
         }
     };
 
+    /** MySQL 8.0.19 and later. */
+    SqlDialect MYSQL = new MySql(false);
+
+    /** MariaDB 10.6 and later: MySQL's dialect, with its own statement time limit. */
+    SqlDialect MARIADB = new MySql(true);
+
     /** The dialect for a source kind, or the standard one. */
     static SqlDialect forKind(String kind) {
         return switch (kind == null ? "" : kind.toLowerCase(Locale.ROOT)) {
             case "sqlserver" -> SQL_SERVER;
+            case "mysql" -> MYSQL;
+            case "mariadb" -> MARIADB;
             default -> POSTGRESQL;
         };
+    }
+
+    /**
+     * MySQL and MariaDB. Names are quoted {@code `like this`}, a backtick doubled. String literals
+     * are written as UTF-8 bytes in hex with a character set introducer ({@code _utf8mb4 X'616263'}),
+     * which means the same whatever the session's {@code sql_mode} (with or without
+     * {@code NO_BACKSLASH_ESCAPES} or {@code ANSI_QUOTES}), so no value can end a literal early.
+     * Regular expressions are left to Kiln: the two databases' regex libraries differ (ICU and
+     * PCRE), and rules are written in PostgreSQL's syntax.
+     */
+    final class MySql implements SqlDialect {
+
+        private static final java.util.HexFormat HEX = java.util.HexFormat.of().withUpperCase();
+
+        private final boolean mariadb;
+
+        private MySql(boolean mariadb) {
+            this.mariadb = mariadb;
+        }
+
+        @Override
+        public String quote(String identifier) {
+            return "`" + identifier.replace("`", "``") + "`";
+        }
+
+        @Override
+        public String literal(String value) {
+            return "_utf8mb4 X'" + HEX.formatHex(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)) + "'";
+        }
+
+        @Override
+        public String text(String expression) {
+            return "CAST(" + expression + " AS CHAR)";
+        }
+
+        @Override
+        public String limit(String select, int n) {
+            return "SELECT * FROM (" + select + ") limited LIMIT " + n;
+        }
+
+        @Override
+        public String regex(String expression, String pattern) {
+            return null; // evaluated by Kiln instead, while streaming the table
+        }
+
+        @Override
+        public String now() {
+            return "UTC_TIMESTAMP(6)";
+        }
+
+        /** Applies to the next transaction, which the check's first query starts. */
+        @Override
+        public List<String> readOnly() {
+            return List.of("SET TRANSACTION READ ONLY");
+        }
+
+        @Override
+        public boolean enforcesReadOnly() {
+            return true;
+        }
+
+        /** MySQL's {@code max_execution_time} (milliseconds, SELECT only); MariaDB's {@code max_statement_time} (seconds). */
+        @Override
+        public List<String> timeout(long millis) {
+            long ms = Math.max(1, millis);
+            return List.of(mariadb
+                ? "SET SESSION max_statement_time = " + java.math.BigDecimal.valueOf(ms, 3).toPlainString()
+                : "SET SESSION max_execution_time = " + ms);
+        }
     }
 }
