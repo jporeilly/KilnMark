@@ -55,7 +55,7 @@ nothing: before the profiles it started the whole lab, so add `--profile all` to
 | Source | Where | Credentials |
 | --- | --- | --- |
 | PostgreSQL 18 | `localhost:5433`, database `lab` | `lab` / `lab` |
-| S3-compatible (VersityGW) | `localhost:9000`, bucket `lab-raw`, path-style addressing | `labadmin` / `labadmin123` |
+| S3-compatible (VersityGW) | `localhost:9000`, buckets `lab-raw` and `lab-warehouse`, path-style addressing | `labadmin` / `labadmin123` |
 | File share | `lab/files/share` on disk | none |
 | Mail server (Mailpit), demo source `mail` | SMTP `localhost:1025`, web page http://localhost:8025 | none (any user name and password are accepted) |
 | SQL Server 2022 Developer | `localhost,14330`, database `labdb` | `kiln_reader` / `Lab-Reader-2026` (read-only) |
@@ -103,7 +103,7 @@ the lab is stopped with `down -v`.
 ## Register the lab in one go
 
 `lab/sources.csv` lists the lab sources as you see them from this machine (`localhost:5433`,
-`localhost:9000`, `localhost:14330`); `./lab/lab.sh sources` prints its path. Sources you have
+`localhost:9000`, `localhost:14330`; `lab-warehouse` is a bucket on the same server as `lab-bucket`); `./lab/lab.sh sources` prints its path. Sources you have
 not started are still added, but their connection test fails until you start them. In Kilnmark,
 open **Sources > Import sources from a file**, choose the file, tick **Rewrite host names for this
 server** and, if you like, **Test each connection** and **Queue a scan**, then press **Import**. The compose stack's host map (`KILNMARK_SOURCES_HOST_MAP`, by default
@@ -120,6 +120,37 @@ Run it again whenever you like: sources already there are left unchanged, or upd
 The lab's SQL Server has a self-signed certificate, which Microsoft's driver refuses by default,
 so its row sets `trust_server_certificate` to `true` (**Trust the server certificate** on the
 source's page). Nothing needs editing after the import. Only turn that setting on for test servers.
+
+## Somewhere for pipelines to write
+
+The lab's data is what discovery is tested against, so `lab-db`, `lab-bucket`, `lab-share` and `lab-sqlserver` stay
+read-only to pipelines: the file registers them without **Allow writing**. Pipelines write to
+`lab-warehouse` instead, a second bucket on the same VersityGW server, with the same endpoint and
+credentials as `lab-bucket`.
+
+- **It starts empty.** It is a volume of the S3 container, not a folder in the repository, so
+  nothing a pipeline writes lands in `lab/files`. It holds no synthetic data and is not part of the
+  answer key below.
+- **Writing is already allowed.** `lab/sources.csv` sets `allow_writing` to `true` for
+  `lab-warehouse` only, and import is for admins, who are the only ones allowed to set it. Importing
+  the file again sets it again, and turns it off on the read-only sources if someone turned
+  it on.
+- **Files go to the bucket.** There is no writable folder: the file share is mounted read-only, and
+  a folder the server (a non-root user in its container) could write would need its owner changed
+  on this machine. Write CSV and Parquet files to `lab-warehouse` with a `path`, such as
+  `exports/customer-sample.csv`.
+
+To reset it, empty the bucket, then scan `lab-warehouse` so the catalogue drops the files that are
+gone:
+
+```
+podman compose -f lab/compose.yaml exec lab-s3 sh -c 'rm -rf /data/lab-warehouse/*'
+# or with any S3 client, for example the AWS CLI:
+AWS_ACCESS_KEY_ID=labadmin AWS_SECRET_ACCESS_KEY=labadmin123 AWS_DEFAULT_REGION=us-east-1 \
+  aws --endpoint-url http://localhost:9000 s3 rm s3://lab-warehouse --recursive
+```
+
+Stopping the lab with `down -v` and starting it again also gives an empty bucket.
 
 ## What is in it
 

@@ -8,7 +8,7 @@
 #   From Kilnmark:      jdbc:postgresql://lab-postgres:5432/lab     S3 endpoint http://lab-s3:7070
 #   From this machine:  localhost:5433                              S3 endpoint http://localhost:9000
 #   PostgreSQL  db=lab  user=lab  password=lab   (schemas crm, billing)
-#   S3          access key=labadmin  secret=labadmin123  bucket=lab-raw  (path-style)
+#   S3          access key=labadmin  secret=labadmin123  buckets lab-raw, lab-warehouse  (path-style)
 #   File share  lab/files/share (read directly from disk)
 #   Mailpit     (profile mail) SMTP lab-mailpit:1025 from Kilnmark (localhost:1025 here), no sign-in,
 #               security none; the emails it catches at http://localhost:8025
@@ -30,7 +30,9 @@ services:
       retries: 30
 
   # S3-compatible object storage: VersityGW (Apache 2.0) serves a folder as a bucket.
-  # Each folder under /data is a bucket, so lab/files/bucket appears as bucket lab-raw.
+  # Each folder under /data is a bucket, so lab/files/bucket appears as bucket lab-raw (the
+  # synthetic source data, which pipelines never write). An anonymous volume appears as bucket
+  # lab-warehouse, empty at first, for pipeline output; down and up again gives a new, empty one.
   lab-s3:
     profiles: ["s3", "all"]
     image: ghcr.io/versity/versitygw:v1.10.0
@@ -40,6 +42,7 @@ services:
       ROOT_SECRET_KEY: labadmin123
     volumes:
       - ./files/bucket:/data/lab-raw:Z
+      - /data/lab-warehouse
     ports:
       - "9000:7070"
 

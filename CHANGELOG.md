@@ -35,6 +35,29 @@ details.
 
 ### Details
 
+- **The release holds the product only** (ADR 0024): the reference lab is for development, tests
+  and demos, and never ships. The release has its own `compose.yaml`, made from
+  `containers/compose.release.yaml`: no lab defaults, a commented-out example for the folder to
+  scan, images tagged with the version, and the server image built from the release folder (the
+  server Containerfile's new `APP_DIR` argument). It has no default password or token: it requires
+  `KILNMARK_DB_PASSWORD` and `KILNMARK_ADMIN_TOKEN` and stops, naming the missing one, without
+  them; `.env.example` beside it lists every setting; the database is published on the machine
+  itself only. The root `compose.yaml` is the developer setup, with its defaults.
+  **New pipeline** starts from the first source with scanned tables or files and the first that
+  allows writing, or from placeholders such as `<your source>`, instead of lab sources. Guide and
+  message examples use neutral names (`sales-db`, `warehouse`, `file-share`, `landing-bucket`).
+  `release` now runs `checkProductOnly`, which fails on any lab folder, source name, path, lab-only
+  port or mention in the release, in Kilnmark's own jars (the UI bundle included) and in the
+  bundled guides, and on a default or literal value for any password, secret or token in the
+  shipped `compose.yaml` or `.env.example`; justified exceptions go in
+  `config/product-only-allow.txt`.
+- **Reference lab: `lab-warehouse`** (lab/README.md): a second bucket on the lab's VersityGW server,
+  an anonymous volume that starts empty (no new service). `lab/sources.csv` registers it with
+  `allow_writing=true`; the column's empty cells keep `lab-db`, `lab-bucket` and `lab-share`
+  read-only, also on a later import. Reset it by emptying the bucket.
+- **A lab bucket for pipeline output (development).** The reference lab has an empty bucket, `lab-warehouse`,
+  that pipelines may write to, so the lab's synthetic source data stays read-only.
+
 - **A sample SQL Server database in the reference lab (development).** `.\lab\lab.ps1 start sqlserver` (or
   `./lab/lab.sh start sqlserver`) starts SQL Server 2022 Developer with `labdb`, a synthetic
   field-service and sales database with problems planted for profiling and rules to find. Start,
@@ -259,22 +282,6 @@ details.
   type (choosing a problem moves to its line), Save with a message, a graph of the steps with the
   columns leaving each, versions and runs with a per-step breakdown. The guide "Building and
   running a pipeline" (docs/guide/pipelines.md) walks through it.
-- **The release holds the product only** (ADR 0024): the reference lab is for development, tests
-  and demos, and never ships. The release has its own `compose.yaml`, made from
-  `containers/compose.release.yaml`: no lab defaults, a commented-out example for the folder to
-  scan, images tagged with the version, and the server image built from the release folder (the
-  server Containerfile's new `APP_DIR` argument). It has no default password or token: it requires
-  `KILNMARK_DB_PASSWORD` and `KILNMARK_ADMIN_TOKEN` and stops, naming the missing one, without
-  them; `.env.example` beside it lists every setting; the database is published on the machine
-  itself only. The root `compose.yaml` is the developer setup, with its defaults.
-  **New pipeline** starts from the first source with scanned tables or files and the first that
-  allows writing, or from placeholders such as `<your source>`, instead of lab sources. Guide and
-  message examples use neutral names (`sales-db`, `warehouse`, `file-share`, `landing-bucket`).
-  `release` now runs `checkProductOnly`, which fails on any lab folder, source name, path, lab-only
-  port or mention in the release, in Kilnmark's own jars (the UI bundle included) and in the
-  bundled guides, and on a default or literal value for any password, secret or token in the
-  shipped `compose.yaml` or `.env.example`; justified exceptions go in
-  `config/product-only-allow.txt`.
 
 ## 0.0.3 (25 October 2026)
 
