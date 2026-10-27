@@ -87,3 +87,11 @@ export async function findStarterPicks(): Promise<StarterPicks> {
     write: writable ? { source: writable.name, files: writable.category === "files" } : null,
   };
 }
+
+/** A pipeline with no steps yet, for starting on an empty canvas. The check reports that it needs a step. */
+export function emptyYaml(name: string): string {
+  return `kilnmark: pipeline/v1
+name: ${name}
+steps: []
+`;
+}
