@@ -36,7 +36,7 @@ import io.kilnmark.kiln.connect.SourceConfig;
  * <p>The driver encrypts connections and checks the server's certificate by default. The
  * {@code trust_server_certificate} setting ({@code true} or {@code false}, off by default) passes
  * {@code trustServerCertificate=true} to the driver as a connection property, without touching
- * the URL, for test servers with a self-signed certificate such as the reference lab's.
+ * the URL, for test servers with a self-signed certificate.
  */
 public final class SqlServerConnector extends JdbcConnector {
 

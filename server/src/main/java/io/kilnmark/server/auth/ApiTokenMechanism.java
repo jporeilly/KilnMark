@@ -16,7 +16,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 
 /**
  * Reads {@code Authorization: Bearer km_...} and hands the token to {@link ApiTokenIdentityProvider}.
- * With {@code kilnmark.auth.mode=off} every caller is an admin (a lab on one machine; see {@link AuthMode}).
+ * With {@code kilnmark.auth.mode=off} every caller is an admin (a trial on one machine; see {@link AuthMode}).
  */
 @ApplicationScoped
 public class ApiTokenMechanism implements HttpAuthenticationMechanism {

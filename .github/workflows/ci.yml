@@ -31,7 +31,7 @@ jobs:
           java-version: "25"
           cache: gradle
 
-      - name: Build, test and check licences
+      - name: Build, test, check licences and that the release holds the product only (ADR 0024)
         run: ./gradlew build release --no-daemon
 
       # Only builds of main keep their release folder, and only for a week: each one is about

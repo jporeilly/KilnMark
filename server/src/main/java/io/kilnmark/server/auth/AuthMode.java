@@ -11,7 +11,7 @@ public enum AuthMode {
     /** API tokens: the default. */
     TOKENS,
     /**
-     * No sign-in: every caller is an admin. Only for a lab on one machine, so the server refuses
+     * No sign-in: every caller is an admin. Only for a trial on one machine, so the server refuses
      * to start unless it listens on a loopback address only.
      */
     OFF;

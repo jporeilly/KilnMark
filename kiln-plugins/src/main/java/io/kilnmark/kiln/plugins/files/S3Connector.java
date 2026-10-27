@@ -65,7 +65,7 @@ public final class S3Connector extends FileSourceConnector {
         return switch (settingKey) {
             case "endpoint" -> "http://storage.example.com:9000";
             case "region" -> "eu-west-2";
-            case "bucket" -> "lab-raw";
+            case "bucket" -> "landing-bucket";
             case "prefix" -> "raw/";
             case "access_key_id" -> "AK1234EXAMPLE";
             case "path_style" -> "true";
@@ -96,7 +96,7 @@ public final class S3Connector extends FileSourceConnector {
                 "Leave empty for AWS. For S3-compatible storage, its URL, for example http://storage.example.com:9000",
                 false),
             new Setting("region", "Region", false, "For example eu-west-2; default us-east-1", false),
-            new Setting("bucket", "Bucket", true, "The bucket to scan, for example lab-raw", false),
+            new Setting("bucket", "Bucket", true, "The bucket to scan, for example landing-bucket", false),
             new Setting("prefix", "Prefix", false, "Only objects whose keys start with this, for example raw/", false),
             new Setting("access_key_id", "Access key ID", !allowDefaultCredentials,
                 "The secret access key goes in the source's secret"
@@ -114,7 +114,7 @@ public final class S3Connector extends FileSourceConnector {
         if (bucket == null) {
             problems.add("bucket: the name of the bucket to scan");
         } else if (bucket.contains("/") || bucket.contains(" ")) {
-            problems.add("bucket: a bucket name only, such as lab-raw; put any folder in prefix");
+            problems.add("bucket: a bucket name only, such as landing-bucket; put any folder in prefix");
         }
         String endpoint = source.setting("endpoint");
         if (endpoint != null) {

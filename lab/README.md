@@ -4,6 +4,12 @@ A small, fully synthetic data estate for Kilnmark to discover. It is what the re
 and every demo run against. Never put real or customer data here, or anything from a former
 employer's labs.
 
+The lab is for development, testing and demos only. It is never shipped, and nothing that ships
+(server and engine code, the web UI, production defaults, the release's `compose.yaml` or the user
+guides) names it or depends on it: `./gradlew release` checks this
+([ADR 0024](../docs/adr/0024-the-lab-is-not-the-product.md)). Lab walkthroughs belong here or in
+[docs/development.md](../docs/development.md), never in `docs/guide`.
+
 ## Start just what you need
 
 Start Kilnmark first (`podman compose up -d` in the repository root: the lab joins its network),
@@ -60,8 +66,8 @@ real sources, register a read-only login that is not a superuser (see
 "Security" in docs/development.md): data quality rules run as that login, and custom SQL rules
 can read anything it can see.
 
-Kilnmark reads folders only inside the ones its administrator allows. The main `compose.yaml`
-mounts `lab/files/share` read-only at `/srv/files` and allows it, so in the compose stack add a
+Kilnmark reads folders only inside the ones its administrator allows. The developer
+`compose.yaml` at the root of the repository mounts `lab/files/share` read-only at `/srv/files` and allows it, so in the compose stack add a
 source of kind **files** with path `/srv/files`. Running the server outside a container, set
 `KILNMARK_FILES_ROOTS` to the full path of `lab/files/share` and use that path.
 

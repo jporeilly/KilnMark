@@ -18,7 +18,7 @@ import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { RunStatus, runTime } from "./RunStatus";
 import { columnsText } from "./outline";
-import { renamed, starterYaml } from "./template";
+import { findStarterPicks, renamed, starterYaml } from "./template";
 import { YamlEditor, type YamlEditorHandle } from "./YamlEditor";
 import "./pipelines.css";
 
@@ -94,6 +94,25 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
     void load();
     loadLists();
   }, [load, loadLists]);
+
+  // A new pipeline's template names the person's own sources once they are known, unless the
+  // YAML has been changed by then. Without sources it keeps its placeholders.
+  useEffect(() => {
+    if (!isNew) return;
+    let live = true;
+    findStarterPicks()
+      .then((picks) => {
+        if (!live) return;
+        setYaml((y) => {
+          const n = /^name:\s*(.*)$/m.exec(y)?.[1] ?? "my-pipeline";
+          return y === starterYaml(n) ? starterYaml(n, picks) : y;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [isNew]);
 
   // Keep the runs table current while a run is queued or running.
   const active = runs?.some((r) => r.status === "queued" || r.status === "running");
@@ -284,8 +303,8 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
       {detail?.description && <p className="lead">{detail.description}</p>}
       {isNew && (
         <p className="lead">
-          Start from the template, which reads from the lab database and writes to the lab file share. The YAML is
-          checked as you type. <a href={docHref("pipelines")}>How pipelines are written</a>.
+          Start from the template, which reads from one of your sources and writes to one that allows writing;
+          replace anything in angle brackets. The YAML is checked as you type. <a href={docHref("pipelines")}>How pipelines are written</a>.
         </p>
       )}
       {!isNew && !viewing && detail?.latest && (

@@ -1,3 +1,7 @@
+# The DEVELOPER setup: Kilnmark from this repository, with conveniences for the reference lab
+# (lab/, development and testing only). It is never shipped. A release has its own compose.yaml,
+# made from containers/compose.release.yaml, with none of the lab's defaults (ADR 0024).
+#
 # Kilnmark, small topology: two containers on one Linux VM.
 # Works with Podman (podman compose up --build) and Docker (docker compose up --build).
 # Build the server first: ./gradlew release

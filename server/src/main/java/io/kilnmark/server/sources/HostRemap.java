@@ -11,7 +11,7 @@ import io.kilnmark.kiln.connect.UrlHosts;
 /**
  * Rewrites host names in source settings, from an administrator's map such as
  * {@code localhost=host.docker.internal}. Sources written down from a desktop's point of view
- * ({@code jdbc:postgresql://localhost:5433/lab}) then work from inside the container Kilnmark
+ * ({@code jdbc:postgresql://localhost:5432/sales}) then work from inside the container Kilnmark
  * runs in. Only whole host names are replaced, and only the host part of a URL (after
  * {@code ://}); bulk import applies it to address settings when asked to, never on its own.
  */

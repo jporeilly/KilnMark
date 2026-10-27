@@ -334,6 +334,9 @@ pick it up from `settings()`.
   reader, a permission error, and a failure that must leave nothing behind (`PostgresWriteTest`,
   `SqlServerWriteTest`, `S3WriteTest`).
 - Keep test containers small; CI runs on a 2-CPU runner.
+- A lab dataset for the connector lives only in `lab/` (its compose service, seed data and row in
+  `lab/sources.csv`) and in test resources: never in main code, defaults, examples or the user
+  guides. `./gradlew release` checks this ([ADR 0024](../adr/0024-the-lab-is-not-the-product.md)).
 
 ## Definition of done
 
