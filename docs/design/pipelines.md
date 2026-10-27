@@ -668,11 +668,15 @@ asset's previous profile.
 ### The canvas (round 3, step 2, decisions)
 
 - **One document.** The YAML text is the only state. The canvas reads the graph from it with the
-  `yaml` library (2.9.1, ISC) and makes each change on the parsed document (`ui/src/pipelines/canvas/model.ts`),
-  so comments, the order of keys, numbers as written (`007`, `2024.10`) and settings the canvas
-  does not know survive; the text is reformatted where it is touched (spacing before a trailing
-  comment, flow lists written `[a, b]`). Unreadable YAML leaves the last good graph on the canvas,
-  read-only, under a banner.
+  `yaml` library (2.9.1, ISC). A change is made as text edits (`ui/src/pipelines/canvas/patch.ts`):
+  the canvas finds the pairs and items that change by their offsets in the parsed document, writes
+  just those, and splices them into the original text, so every other byte stays as it was
+  (comments and their alignment, indentation, flow maps' spacing, folded and literal blocks,
+  quoting, line endings). A setting that changes is written afresh: a scalar keeps the comment after
+  it, an expression is double-quoted, a list is written `[a, b]`. A change whose result would not
+  read back as YAML is refused, and so is one to a step with both `input` and `inputs`, which the
+  compiler refuses too. Unreadable YAML leaves the last good graph on the canvas, read-only, under a
+  banner.
 - **Positions** go in the top-level `layout` block (section 2), written only when a step is added,
   moved or connected; steps without a position are placed by a layered layout (dagre).
 - **React Flow** (`@xyflow/react` 12.12.0, MIT) draws the canvas; the canvas, React Flow and
@@ -683,7 +687,9 @@ asset's previous profile.
   pickers use the columns validation worked out for the step's inputs; a write shows the writer
   settings its source's kind takes (`writerSettings`).
 - **Connections** are refused before they reach the YAML when the compiler would refuse them: a
-  step reading from itself, loops, a single-input port fed twice, a port fed twice by one step.
+  step reading from itself, loops, a single-input port fed twice, and the same edge twice (two
+  ports of one step may both feed a port that takes many). References split at the last dot, as
+  `PortRef.parse` does.
 - Later: data previews at a step, and the gate step's predicted scores on the canvas (step 3).
 
 ## 7. Next

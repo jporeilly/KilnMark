@@ -14,6 +14,9 @@ import {
   renameStep,
   setPositions,
   setSetting,
+  parseRef,
+  portsOf,
+  withoutLayout,
   type Change,
   type Graph,
 } from "./model";
@@ -218,7 +221,7 @@ describe("round trips keep every setting and comment", () => {
     expect(text).toContain('full_name: "first_name || last_name"');
     expect(graph(text).steps.find((s) => s.id === "tidy")!.settings.columns).toEqual({ full_name: "first_name || last_name", n: "1" });
     text = ok(setSetting(text, "out", "mode", "append", "choice"));
-    expect(text).toContain("mode: append # create | append | replace | upsert (with key)");
+    expect(text).toMatch(/mode: append {14}# create \| append \| replace \| upsert \(with key\)/);
     text = ok(setSetting(text, "out", "key", ["customer_id", "month"], "columns"));
     expect(text).toContain("key: [customer_id, month]");
     text = ok(setSetting(text, "out", "commit_every", 5000, "number"));
@@ -333,5 +336,135 @@ describe("new pipelines", () => {
     expect(freshId("filter", [])).toBe("filter");
     expect(freshId("filter", ["filter", "filter-2"])).toBe("filter-3");
     expect(freshId("9 Odd Name!", [])).toBe("odd-name-");
+  });
+});
+
+const TRICKY = `# Header comment
+kilnmark: pipeline/v1   # format
+name: tricky
+description: >
+  Folded description
+  over two lines.
+steps:
+- id: src            # unindented sequence
+  type: read
+  source: 'sales-db'
+  asset: 2024.10
+  row_limit: 007
+  flag: yes
+- id: f
+  type: filter
+  input: src
+  condition: "name = 'a#b' and note != \\"x: y\\""   # quotes, hash, colon
+  sql: |
+    select *
+      from t   -- keep indent
+- { id: c, type: compute, input: f.rejected, columns: { a: "x || ':' || y" } }
+- id: w
+  type: write
+  input: c
+  mode: replace              # create | append
+# trailing comment
+layout:
+  src: { x: 10, y: 20 }
+  w: {x: 300, y: 20}
+`;
+
+/** The lines of `b` that are not in `a`, and those of `a` not in `b`. */
+function changed(a: string, b: string) {
+  const al = a.split("\n");
+  const bl = b.split("\n");
+  return { added: bl.filter((l) => !al.includes(l)), removed: al.filter((l) => !bl.includes(l)) };
+}
+
+describe("only what changes is rewritten", () => {
+  test("moving a step rewrites its position and nothing else", () => {
+    const out = ok(setPositions(TRICKY, { src: { x: 5, y: 6 } }));
+    expect(changed(TRICKY, out)).toEqual({ added: ["  src: { x: 5, y: 6 }"], removed: ["  src: { x: 10, y: 20 }"] });
+  });
+
+  test("a setting is changed in place, keeping its comment's alignment", () => {
+    const out = ok(setSetting(TRICKY, "w", "mode", "append", "choice"));
+    expect(changed(TRICKY, out)).toEqual({
+      added: ["  mode: append              # create | append"],
+      removed: ["  mode: replace              # create | append"],
+    });
+    const cond = ok(setSetting(TRICKY, "f", "condition", 'a # b: "c"', "expression"));
+    expect(changed(TRICKY, cond).added).toEqual(['  condition: "a # b: \\"c\\""   # quotes, hash, colon']);
+  });
+
+  test("renaming changes the id, the inputs naming it and its position", () => {
+    const out = ok(renameStep(TRICKY, "f", "g"));
+    expect(changed(TRICKY, out)).toEqual({
+      added: ["- id: g", '- { id: c, type: compute, input: g.rejected, columns: { a: "x || \':\' || y" } }'],
+      removed: ["- id: f", '- { id: c, type: compute, input: f.rejected, columns: { a: "x || \':\' || y" } }'],
+    });
+  });
+
+  test("adding, removing and duplicating leave the other steps alone", () => {
+    const added = ok(addStep(TRICKY, "compute", CAT, { step: "f" }, { x: 1, y: 1 }));
+    expect(changed(TRICKY, added)).toEqual({ added: ["- id: compute", "  type: compute", "  input: f", "  compute: {x: 1, y: 1}"], removed: [] });
+    const removed = ok(removeStep(TRICKY, "w", CAT));
+    expect(changed(TRICKY, removed).added).toEqual([]);
+    expect(changed(TRICKY, removed).removed).toEqual(["- id: w", "  type: write", "  input: c", "  mode: replace              # create | append", "  w: {x: 300, y: 20}"]);
+    const dup = ok(duplicateStep(TRICKY, "w"));
+    expect(changed(TRICKY, dup).removed).toEqual([]);
+    expect(graph(dup).steps.find((x) => x.id === "w-copy")!.settings).toEqual({ mode: "replace" });
+  });
+
+  test("line endings and a byte order mark are kept", () => {
+    const crlf = "kilnmark: pipeline/v1\r\nname: x\r\nsteps:\r\n  - id: a\r\n    type: read   # c\r\n";
+    const out = ok(setPositions(crlf, { a: { x: 1, y: 1 } }));
+    expect(out.startsWith(crlf)).toBe(true);
+    expect(out.slice(crlf.length).replace(/\r\n/g, "")).not.toContain("\n");
+    const bom = "\ufeffkilnmark: pipeline/v1\nname: x\nsteps:\n  - id: a\n    type: read\n";
+    expect(ok(setPositions(bom, { a: { x: 1, y: 1 } })).startsWith(bom)).toBe(true);
+  });
+
+  test("a number setting is written as typed, without losing digits", () => {
+    const out = ok(setSetting(TRICKY, "src", "row_limit", "9007199254740993", "number"));
+    expect(out).toContain("  row_limit: 9007199254740993\n");
+    const added = ok(setSetting(TRICKY, "w", "commit_every", "12345678901234567890", "number"));
+    expect(added).toContain("  commit_every: 12345678901234567890\n");
+  });
+
+  test("the layout is what Run and Save may ignore", () => {
+    expect(withoutLayout(ok(setPositions(BILLING, { tidy: { x: 1, y: 2 } })))).toBe(BILLING);
+    expect(withoutLayout(TRICKY)).toBe(TRICKY.slice(0, TRICKY.indexOf("layout:")));
+  });
+});
+
+describe("the canvas follows the compiler's rules", () => {
+  test("a stale position never becomes a second key", () => {
+    const stale = "kilnmark: pipeline/v1\nname: s\nsteps:\n  - { id: a, type: read }\nlayout:\n  a: {x: 1, y: 1}\n  c: {x: 3, y: 3}\n";
+    const out = ok(renameStep(stale, "a", "c"));
+    expect(out.match(/^ {2}c: /gm)?.length).toBe(1);
+    expect(graph(out).positions).toEqual({ c: { x: 1, y: 1 } });
+    const fresh = ok(addStep(stale.replace("c: {x: 3", "read: {x: 3"), "read", CAT));
+    expect(fresh).not.toMatch(/read: \{x: 3/);
+  });
+
+  test("a step with both input and inputs is refused, not rewritten", () => {
+    const both = "kilnmark: pipeline/v1\nname: b\nsteps:\n  - { id: a, type: read }\n  - { id: e, type: write, input: a, inputs: { in: a } }\n";
+    const c = disconnect(both, { from: "a", fromPort: "out", to: "e", toPort: "in" }, CAT);
+    expect("error" in c && c.error).toMatch(/both input and inputs/);
+    const r = removeStep(both, "a", CAT);
+    expect("error" in r && r.error).toMatch(/both input and inputs/);
+  });
+
+  test("two ports of one step may both feed a union; the same edge twice may not", () => {
+    let text = ok(addStep(BILLING, "union", CAT));
+    text = ok(connect(text, { from: "joined", fromPort: "out", to: "union", toPort: "in" }, CAT));
+    text = ok(connect(text, { from: "joined", fromPort: "rejected", to: "union", toPort: "in" }, CAT));
+    expect(text).toContain("input: [joined, joined.rejected]");
+    const again = connect(text, { from: "joined", fromPort: "rejected", to: "union", toPort: "in" }, CAT);
+    expect("error" in again && again.error).toMatch(/already feeds/);
+  });
+
+  test("references split at the last dot; routes list their ports first", () => {
+    expect(parseRef("a.b.c")).toEqual({ from: "a.b", fromPort: "c" });
+    expect(parseRef("tidy")).toEqual({ from: "tidy", fromPort: "out" });
+    const route = { type: "route", settings: { routes: { large: "a > 1", small: "a < 1" } }, inputs: [] };
+    expect(portsOf(route, CAT).outputs).toEqual(["large", "small", "out"]);
   });
 });
