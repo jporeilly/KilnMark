@@ -74,8 +74,6 @@ class NotificationFlowTest {
 
     @AfterAll
     static void stopMailServer() {
-        // Leave email paused, so later tests queue nothing for a server that has gone.
-        admin().contentType(ContentType.JSON).body(Map.of("enabled", false)).put("/api/v1/mail/settings");
         smtp.stop();
     }
 
@@ -347,6 +345,14 @@ class NotificationFlowTest {
         admin().contentType(ContentType.JSON).body(Map.of("allowedDomains", List.of())).put("/api/v1/mail/settings")
             .then().statusCode(200).body("pausedAddresses.size()", equalTo(0));
         as(steward).get("/api/v1/me/notifications").then().body("paused", equalTo(null));
+    }
+
+    @Test
+    @Order(8)
+    void emailIsPausedForTheTestsThatFollow() {
+        // Later test classes share the application: nothing should queue for a mail server that has gone.
+        admin().contentType(ContentType.JSON).body(Map.of("enabled", false)).put("/api/v1/mail/settings").then()
+            .statusCode(200).body("enabled", equalTo(false)).body("ready", equalTo(false));
     }
 
     @Test

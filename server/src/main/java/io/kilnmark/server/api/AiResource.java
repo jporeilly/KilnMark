@@ -98,8 +98,11 @@ public class AiResource {
     @RolesAllowed(AccessRole.VIEWER_ROLE)
     public AiViews.Status status() {
         Map<AiFeature, ModelProfile> routes = profiles.routes();
-        return new AiViews.Status(routes.containsKey(AiFeature.EMBED), routes.containsKey(AiFeature.SEARCH_NL),
-            embeddings.status().orElse(null), routes.containsKey(AiFeature.ASSISTANT));
+        // "Running" covers the documentation sections being embedded too: both finish before the status is quiet.
+        Embeddings.Status e = embeddings.status().map(s -> s.running() || !knowledge.embedding() ? s
+            : new Embeddings.Status(s.profile(), s.embedded(), s.assets(), true)).orElse(null);
+        return new AiViews.Status(routes.containsKey(AiFeature.EMBED), routes.containsKey(AiFeature.SEARCH_NL), e,
+            routes.containsKey(AiFeature.ASSISTANT));
     }
 
     @GET
