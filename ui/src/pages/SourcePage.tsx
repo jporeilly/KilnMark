@@ -233,7 +233,10 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
         <p>
           Last scan: <Status run={source.lastRun} />
           {source.lastRun?.detail && source.lastRun.status !== "succeeded" && (
-            <span className="small"> {source.lastRun.detail}</span>
+            <span className="small km-clamp-2" title={source.lastRun.detail}>
+              {" "}
+              {source.lastRun.detail}
+            </span>
           )}
         </p>
         {history.length === 0 ? (
@@ -265,8 +268,16 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
                     <td>{formatNumber(h.run.rowsRead)}</td>
                     <td>{h.attempts ?? "–"}</td>
                     <td className="small">
-                      {h.run.detail}
-                      {h.jobError && h.jobError !== h.run.detail && <div className="muted">{h.jobError}</div>}
+                      {h.run.detail && (
+                        <div className="km-clamp-2" title={h.run.detail}>
+                          {h.run.detail}
+                        </div>
+                      )}
+                      {h.jobError && h.jobError !== h.run.detail && (
+                        <div className="muted km-clamp-2" title={h.jobError}>
+                          {h.jobError}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

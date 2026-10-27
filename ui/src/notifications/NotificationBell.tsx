@@ -1,4 +1,4 @@
-import { useCallback, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { allows, type AccessRole } from "../api";
 import { Icon } from "../components/icons";
 import { EmptyState, useDismiss } from "../components/ui";
@@ -7,6 +7,8 @@ import { markNotificationsRead, refreshNotifications, useNotifications } from ".
 
 export const NOTIFICATION_SETTINGS = "#/settings/notifications";
 export const SENT_EMAILS = "#/settings/email/sent";
+/** Fired on window to open the bell's list (the home card's View all). */
+export const OPEN_NOTIFICATIONS = "kilnmark:open-notifications";
 
 /**
  * The bell in the top bar: the unread count in its name ("Notifications, 3 unread") and on a
@@ -25,6 +27,15 @@ export function NotificationBell({ role }: { role: AccessRole }) {
     if (returnFocus) bell.current?.focus();
   }, []);
   useDismiss(open, panel, bell, close);
+  useEffect(() => {
+    const onOpen = () => {
+      void refreshNotifications();
+      setOpen(true);
+      window.setTimeout(() => panel.current?.querySelector<HTMLElement>("a, button")?.focus(), 0);
+    };
+    window.addEventListener(OPEN_NOTIFICATIONS, onOpen);
+    return () => window.removeEventListener(OPEN_NOTIFICATIONS, onOpen);
+  }, []);
   if (n.available !== true) return null;
 
   const label = n.unread > 0 ? `Notifications, ${n.unread} unread` : "Notifications, none unread";

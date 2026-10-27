@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   aiApi,
   allows,
@@ -6,9 +6,12 @@ import {
   ApiError,
   call,
   formatNumber,
+  pipelinesApi,
   qualityApi,
   type Issue,
   type Me,
+  type PipelineRun,
+  type PipelineSummary,
   type Source,
 } from "../api";
 import { href } from "../router";
@@ -18,6 +21,7 @@ import { Icon } from "../components/icons";
 import { SourceTile } from "../components/ConnectorTile";
 import { useConnectorInfo } from "../theme/looks";
 import {
+  Button,
   ButtonLink,
   Card,
   DataTable,
@@ -30,115 +34,142 @@ import {
 } from "../components/ui";
 import { NotificationList } from "../notifications/NotificationList";
 import { markNotificationsRead, useNotifications } from "../notifications/store";
-import { NOTIFICATION_SETTINGS, SENT_EMAILS } from "../notifications/NotificationBell";
-
-/** A pipeline run as the pipelines branch reports it (GET /api/v1/pipeline-runs). */
-type PipelineRun = {
-  id: number;
-  pipeline: string;
-  version: number;
-  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
-  requestedBy: string;
-  requestedAt: string;
-  startedAt: string | null;
-  finishedAt: string | null;
-  error: string | null;
-  rowsWritten: number | null;
-};
+import { NOTIFICATION_SETTINGS, OPEN_NOTIFICATIONS, SENT_EMAILS } from "../notifications/NotificationBell";
 
 type SourceScore = { source: string; scores: Record<string, number>; assets: { urn: string; score: number }[] };
 
-/** null: not on this server (404); undefined: still loading. */
-async function optional<T>(path: string): Promise<T | null> {
+/** What a card is showing: still loading, the data, or why it could not be loaded. */
+type Load<T> = { state: "loading" } | { state: "ok"; data: T } | { state: "error"; message: string };
+
+/** Loads once (and again on retry), keeping loading, data and error apart so no card says "all good" on a failure. */
+function useLoad<T>(load: () => Promise<T>): [Load<T>, () => void] {
+  const [value, setValue] = useState<Load<T>>({ state: "loading" });
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setValue({ state: "loading" });
+    load()
+      .then((data) => live && setValue({ state: "ok", data }))
+      .catch((e: Error) => live && setValue({ state: "error", message: e.message }));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [round]);
+  return [value, useCallback(() => setRound((n) => n + 1), [])];
+}
+
+const ok = <T,>(l: Load<T>): T | undefined => (l.state === "ok" ? l.data : undefined);
+
+/** null when the server does not have the endpoint (404), so its tile stays hidden. */
+async function optional<T>(load: () => Promise<T>): Promise<T | null> {
   try {
-    return await call<T>(path);
+    return await load();
   } catch (e) {
     if (e instanceof ApiError && (e.status === 404 || e.status === 405)) return null;
     throw e;
   }
 }
 
+/** The most the issues list returns; a full list is shown as "500+". */
+const ISSUE_LIMIT = 500;
+/** Source cards on the home page; only these have their scores fetched. */
+const SOURCE_CARDS = 6;
+
 const busy = (s: Source) => s.lastRun?.status === "queued" || s.lastRun?.status === "running";
 const pct = (score: number) => `${Math.round(score * 100)}%`;
+const runTime = (r: PipelineRun) => Date.parse(r.finishedAt ?? r.startedAt ?? r.requestedAt);
+
+/** A card's load failure: what went wrong and Try again. */
+function LoadError({ what, message, onRetry }: { what: string; message: string; onRetry: () => void }) {
+  return (
+    <div className="km-load-error" role="alert">
+      <p>
+        <strong>Could not load {what}.</strong> <span className="muted">{message}</span>
+      </p>
+      <Button size="sm" onClick={onRetry}>
+        Try again
+      </Button>
+    </div>
+  );
+}
 
 /**
  * Home: a greeting with what needs attention, four KPI tiles, the sources with their health and
  * score, what needs a look (open issues, including drift), notifications (when the server has
- * them), recent pipeline runs (when it has pipelines), the quality trend, and a setup checklist
- * driven by what has actually been done. Every number comes from the API; a tile whose data the
- * server does not have is left out or says so.
+ * them), the latest pipeline runs (when it has pipelines), and a setup checklist driven by what has
+ * actually been done. Every number comes from the API; each card says when it is loading or could
+ * not be loaded, and a tile whose data the server does not have is left out.
  */
 export function HomePage({ me }: { me: Me }) {
   useTitle("");
   const steward = allows(me.role, "steward");
   const admin = allows(me.role, "admin");
-  const [sources, setSources] = useState<Source[] | null>(null);
-  const [scores, setScores] = useState<Record<string, SourceScore>>({});
-  const [issues, setIssues] = useState<Issue[] | null>(null);
-  const [rules, setRules] = useState<number | null>(null);
-  const [model, setModel] = useState<boolean | null>(null);
-  const [pipelines, setPipelines] = useState<number | null | undefined>(undefined);
-  const [runs, setRuns] = useState<PipelineRun[] | null | undefined>(undefined);
-  const [error, setError] = useState<string | null>(null);
   const notesOn = useNotifications().available === true;
 
+  const [sources, reloadSources] = useLoad(() => api.sources());
+  const [issues, reloadIssues] = useLoad(() => qualityApi.issues("open", ISSUE_LIMIT));
+  const [rules] = useLoad(() => qualityApi.rules().then((r) => r.length));
+  // Only an admin can see model profiles, and only a local one ticks "Connect a local model".
+  const [localModel] = useLoad(() =>
+    admin ? aiApi.profiles().then((p) => p.some((x) => x.local)) : Promise.resolve<boolean | null>(null),
+  );
+  const [pipelines, reloadPipelines] = useLoad(() => optional(() => pipelinesApi.list()));
+
+  // Scores for the source cards shown only: one request per card, never one per source.
+  const shown = useMemo(() => ok(sources)?.slice(0, SOURCE_CARDS) ?? [], [sources]);
+  // A source's scores, or null when they could not be loaded (so the tile stops saying Loading).
+  const [scores, setScores] = useState<Record<string, SourceScore | null>>({});
   useEffect(() => {
     let live = true;
-    api
-      .sources()
-      .then((list) => {
-        if (!live) return;
-        setSources(list);
-        list.forEach((s) =>
-          call<SourceScore>(`/api/v1/quality/sources/${encodeURIComponent(s.name)}`)
-            .then((q) => live && setScores((m) => ({ ...m, [s.name]: q })))
-            .catch(() => undefined),
-        );
-      })
-      .catch((e: Error) => live && setError(e.message));
-    qualityApi
-      .issues("open")
-      .then((i) => live && setIssues(i))
-      .catch(() => live && setIssues([]));
-    qualityApi
-      .rules()
-      .then((r) => live && setRules(r.length))
-      .catch(() => live && setRules(null));
-    aiApi
-      .status()
-      .then((s) => live && setModel(s.searchByMeaning || s.ask))
-      .catch(() => live && setModel(null));
-    optional<unknown[]>("/api/v1/pipelines")
-      .then((p) => live && setPipelines(p ? p.length : null))
-      .catch(() => live && setPipelines(null));
-    optional<PipelineRun[] | { items: PipelineRun[] }>("/api/v1/pipeline-runs?limit=5")
-      .then((r) => live && setRuns(r == null ? null : Array.isArray(r) ? r : r.items))
-      .catch(() => live && setRuns(null));
+    shown.forEach((s) =>
+      call<SourceScore>(`/api/v1/quality/sources/${encodeURIComponent(s.name)}`)
+        .then((q) => live && setScores((m) => ({ ...m, [s.name]: q })))
+        .catch(() => live && setScores((m) => ({ ...m, [s.name]: null }))),
+    );
     return () => {
       live = false;
     };
-  }, []);
+  }, [shown]);
 
-  const assetScores = useMemo(() => Object.values(scores).flatMap((s) => s.assets.map((a) => a.score)), [scores]);
-  const overall = assetScores.length ? assetScores.reduce((a, b) => a + b, 0) / assetScores.length : null;
-  const failing = (sources ?? []).filter((s) => s.lastRun?.status === "failed" || s.lastRun?.status === "partial");
-  const assets = (sources ?? []).reduce((n, s) => n + s.assets, 0);
-  const open = issues ?? [];
-  const high = open.filter((i) => i.severity === "high").length;
-  const medium = open.filter((i) => i.severity === "medium").length;
+  const sourceList = ok(sources);
+  const shownScores = shown.map((s) => scores[s.name]?.scores?.overall).filter((x): x is number => x != null);
+  const scoresPending = shown.some((s) => !(s.name in scores));
+  const meanScore = shownScores.length ? shownScores.reduce((a, b) => a + b, 0) / shownScores.length : null;
+  const failing = (sourceList ?? []).filter((s) => s.lastRun?.status === "failed" || s.lastRun?.status === "partial");
+  const assets = (sourceList ?? []).reduce((n, s) => n + s.assets, 0);
+  const openList = ok(issues);
+  const full = (openList?.length ?? 0) >= ISSUE_LIMIT;
+  const openCount = openList ? `${formatNumber(openList.length)}${full ? "+" : ""}` : "–";
+  const high = (openList ?? []).filter((i) => i.severity === "high").length;
+  const medium = (openList ?? []).filter((i) => i.severity === "medium").length;
+  const pipelineList = ok(pipelines);
+  const runs =
+    pipelineList == null
+      ? null
+      : pipelineList
+          .map((p) => p.lastRun)
+          .filter((r): r is PipelineRun => r != null)
+          .sort((a, b) => runTime(b) - runTime(a))
+          .slice(0, 5);
   const lastRun = runs?.find((r) => r.status !== "queued" && r.status !== "running");
 
   const summary = [
-    sources === null
+    sourceList == null
       ? null
-      : sources.length === 0
+      : sourceList.length === 0
         ? "No sources yet"
         : failing.length
-          ? `${failing.length} of ${sources.length} ${sources.length === 1 ? "source needs" : "sources need"} attention`
-          : `${sources.length} ${sources.length === 1 ? "source" : "sources"} healthy`,
+          ? `${failing.length} of ${sourceList.length} ${sourceList.length === 1 ? "source needs" : "sources need"} attention`
+          : `${sourceList.length} ${sourceList.length === 1 ? "source" : "sources"} healthy`,
     lastRun ? `last pipeline run ${RUN_WORD[lastRun.status]} ${formatAgo(lastRun.finishedAt ?? lastRun.requestedAt)}` : null,
-    issues === null ? null : open.length === 0 ? "nothing needs a look" : `${open.length} ${open.length === 1 ? "issue needs" : "issues need"} a look`,
+    openList == null
+      ? null
+      : openList.length === 0
+        ? "nothing needs a look"
+        : `${openCount} ${openList.length === 1 ? "issue needs" : "issues need"} a look`,
   ].filter(Boolean);
+  const canPipeline = pipelineList != null && steward;
 
   return (
     <div className="km-stack">
@@ -150,16 +181,16 @@ export function HomePage({ me }: { me: Me }) {
           <p>{summary.length ? summary.join(" · ") : "Loading what changed…"}</p>
         </div>
         <div className="km-hero-actions">
-          {pipelines != null && steward && (
-            <ButtonLink variant="primary" href="#/pipelines/new" icon={<Icon name="plus" size={16} />}>
+          {canPipeline && (
+            <ButtonLink variant="primary" href={href.newPipeline()} icon={<Icon name="plus" size={16} />}>
               New pipeline
             </ButtonLink>
           )}
           {admin ? (
             <ButtonLink
-              variant={pipelines != null && steward ? "secondary" : "primary"}
+              variant={canPipeline ? "secondary" : "primary"}
               href={href.addConnection()}
-              icon={pipelines != null && steward ? undefined : <Icon name="plus" size={16} />}
+              icon={canPipeline ? undefined : <Icon name="plus" size={16} />}
             >
               Add a connection
             </ButtonLink>
@@ -169,100 +200,115 @@ export function HomePage({ me }: { me: Me }) {
         </div>
       </section>
 
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-
       <section aria-label="At a glance" className="km-grid-4">
         <StatTile
           label="Sources"
           icon={<Icon name="sources" size={18} />}
           tint="sky"
-          value={sources ? formatNumber(sources.length) : "–"}
+          value={sourceList ? formatNumber(sourceList.length) : "–"}
           note={
-            sources === null
+            sources.state === "loading"
               ? "Loading…"
-              : sources.length === 0
-                ? "None connected yet"
-                : failing.length
-                  ? `${failing.length} with a failed scan`
-                  : sources.some(busy)
-                    ? "All healthy, one scanning"
-                    : "All healthy"
+              : sources.state === "error"
+                ? "Could not load"
+                : sourceList!.length === 0
+                  ? "None connected yet"
+                  : failing.length
+                    ? `${failing.length} with a failed scan`
+                    : sourceList!.some(busy)
+                      ? "All healthy, one scanning"
+                      : "All healthy"
           }
-          noteTone={failing.length ? "bad" : sources?.length ? "good" : "neutral"}
+          noteTone={sources.state !== "ok" ? "neutral" : failing.length ? "bad" : sourceList!.length ? "good" : "neutral"}
           href={href.sources()}
         />
         <StatTile
           label="Assets catalogued"
           icon={<Icon name="table" size={18} />}
           tint="violet"
-          value={sources ? formatNumber(assets) : "–"}
-          note={sources ? `Across ${sources.length} ${sources.length === 1 ? "source" : "sources"}` : "Loading…"}
+          value={sourceList ? formatNumber(assets) : "–"}
+          note={
+            sources.state === "loading"
+              ? "Loading…"
+              : sources.state === "error"
+                ? "Could not load"
+                : `Across ${sourceList!.length} ${sourceList!.length === 1 ? "source" : "sources"}`
+          }
           href={href.browse()}
         />
         <StatTile
           label="Quality score"
           icon={<Icon name="rules" size={18} />}
           tint="green"
-          value={overall == null ? "–" : pct(overall)}
+          value={meanScore == null ? "–" : pct(meanScore)}
           note={
-            overall == null
-              ? "Not scored yet: scan a source"
-              : `Mean of ${formatNumber(assetScores.length)} scored ${assetScores.length === 1 ? "asset" : "assets"}`
+            sources.state === "loading" || scoresPending
+              ? "Loading…"
+              : sources.state === "error"
+                ? "Could not load"
+                : meanScore == null
+                  ? "Not scored yet: scan a source"
+                  : `Average of ${shownScores.length} source ${shownScores.length === 1 ? "score" : "scores"}${
+                      (sourceList?.length ?? 0) > shown.length ? ", the first shown" : ""
+                    }`
           }
-          noteTone={overall == null ? "neutral" : overall >= 0.95 ? "good" : overall >= 0.8 ? "neutral" : "warn"}
+          noteTone="neutral"
           href={href.rules()}
         />
         <StatTile
           label="Open issues"
           icon={<Icon name="issues" size={18} />}
           tint="orange"
-          value={issues ? formatNumber(open.length) : "–"}
+          value={openCount}
           note={
-            issues === null
+            issues.state === "loading"
               ? "Loading…"
-              : open.length === 0
-                ? "Nothing open"
-                : [high && `${high} high`, medium && `${medium} medium`, open.length - high - medium && `${open.length - high - medium} low`]
-                    .filter(Boolean)
-                    .join(", ")
+              : issues.state === "error"
+                ? "Could not load"
+                : openList!.length === 0
+                  ? "Nothing open"
+                  : full
+                    ? `At least ${formatNumber(ISSUE_LIMIT)}`
+                    : [high && `${high} high`, medium && `${medium} medium`, openList!.length - high - medium && `${openList!.length - high - medium} low`]
+                        .filter(Boolean)
+                        .join(", ")
           }
-          noteTone={high ? "bad" : open.length ? "warn" : "good"}
+          noteTone={issues.state !== "ok" ? "neutral" : high ? "bad" : openList!.length ? "warn" : "good"}
           href={href.issues()}
         />
       </section>
 
       <SetupCard
-        sources={sources}
-        rules={rules}
-        model={model}
-        pipelines={pipelines}
+        sources={sourceList ?? null}
+        rules={ok(rules) ?? null}
+        localModel={ok(localModel) ?? null}
+        pipelines={pipelines.state === "ok" ? pipelines.data : undefined}
         admin={admin}
         steward={steward}
       />
 
       {runs ? (
         // Two columns that end level: runs and sources on the left; what needs a look and what
-        // happened on the right, their lists scrolling inside fixed heights.
+        // happened on the right.
         <div className="km-columns km-columns--level">
           <div className="km-column">
             <RecentRuns runs={runs} />
-            <SourcesCard sources={sources} scores={scores} admin={admin} />
+            <SourcesCard sources={sources} shown={shown} scores={scores} admin={admin} onRetry={reloadSources} />
           </div>
           <div className="km-column">
-            <NeedsALook issues={issues} />
+            <NeedsALook issues={issues} full={full} onRetry={reloadIssues} />
             {notesOn && <NotificationsCard admin={admin} />}
           </div>
         </div>
       ) : (
         // Without pipelines: sources across the page, then the two lists side by side.
         <>
-          <SourcesCard sources={sources} scores={scores} admin={admin} />
+          {pipelines.state === "error" && (
+            <LoadError what="pipelines" message={pipelines.message} onRetry={reloadPipelines} />
+          )}
+          <SourcesCard sources={sources} shown={shown} scores={scores} admin={admin} onRetry={reloadSources} />
           <div className={notesOn ? "km-halves" : undefined}>
-            <NeedsALook issues={issues} />
+            <NeedsALook issues={issues} full={full} onRetry={reloadIssues} />
             {notesOn && <NotificationsCard admin={admin} />}
           </div>
         </>
@@ -288,16 +334,22 @@ const RUN_CHIP: Record<PipelineRun["status"], { tone: Tone; label: string }> = {
   cancelled: { tone: "neutral", label: "Cancelled" },
 };
 
-/** The last five pipeline runs. Shown only when the server has pipelines. */
+/** The latest run of each pipeline, newest first, at most five (from GET /api/v1/pipelines). */
 function RecentRuns({ runs }: { runs: PipelineRun[] }) {
   return (
-    <Card title="Recent pipeline runs" titleId="runs-h" className="km-card--fill" actions={<a href="#/pipelines">All pipelines</a>}>
+    <Card
+      title="Recent pipeline runs"
+      titleId="runs-h"
+      subtitle="The latest run of each pipeline"
+      className="km-card--fill"
+      actions={<a href={href.pipelines()}>All pipelines</a>}
+    >
       {runs.length === 0 ? (
         <EmptyState compact icon={<Icon name="pipelines" size={22} />} title="No runs yet">
           Runs appear here once a pipeline has run.
         </EmptyState>
       ) : (
-        <DataTable label="Recent pipeline runs (scrolls sideways on small screens)" caption="The last five pipeline runs">
+        <DataTable label="Recent pipeline runs (scrolls sideways on small screens)" caption="The latest run of each pipeline">
           <thead>
             <tr>
               <th scope="col">Pipeline</th>
@@ -310,7 +362,7 @@ function RecentRuns({ runs }: { runs: PipelineRun[] }) {
             {runs.map((r) => (
               <tr key={r.id}>
                 <th scope="row">
-                  <a href={`#/pipeline-runs/${r.id}`} className="km-strong-link">
+                  <a href={href.pipelineRun(r.id)} className="km-strong-link">
                     {r.pipeline}
                   </a>
                   <div className="small muted">
@@ -321,7 +373,11 @@ function RecentRuns({ runs }: { runs: PipelineRun[] }) {
                   <StatusChip tone={RUN_CHIP[r.status]?.tone ?? "neutral"} dot>
                     {RUN_CHIP[r.status]?.label ?? r.status}
                   </StatusChip>
-                  {r.error && <div className="small muted km-clip">{r.error}</div>}
+                  {r.error && (
+                    <div className="small muted km-clip" title={r.error}>
+                      {r.error}
+                    </div>
+                  )}
                 </td>
                 <td className="num">{formatNumber(r.rowsWritten)}</td>
                 <td className="small muted">
@@ -346,13 +402,32 @@ const STATE: Record<string, { tone: Tone; word: string }> = {
 
 const short = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
-/** Up to six sources as cards: tile, name, kind and what it scans, assets, score and health. */
-function SourcesCard({ sources, scores, admin }: { sources: Source[] | null; scores: Record<string, SourceScore>; admin: boolean }) {
+/** The first six sources as cards: tile, name, kind and what it scans, assets, score and health. */
+function SourcesCard({
+  sources,
+  shown,
+  scores,
+  admin,
+  onRetry,
+}: {
+  sources: Load<Source[]>;
+  shown: Source[];
+  scores: Record<string, SourceScore | null>;
+  admin: boolean;
+  onRetry: () => void;
+}) {
   const connectors = useConnectorInfo();
+  const total = ok(sources)?.length ?? 0;
   return (
-    <Card title="Sources" titleId="src-h" className="km-card--fill" actions={<a href={href.sources()}>Manage sources</a>}>
-      {sources === null && <p role="status" className="muted">Loading sources…</p>}
-      {sources?.length === 0 && (
+    <Card
+      title="Sources"
+      titleId="src-h"
+      className="km-card--fill"
+      actions={<a href={href.sources()}>{total > shown.length ? `All ${formatNumber(total)} sources` : "Manage sources"}</a>}
+    >
+      {sources.state === "loading" && <p className="muted">Loading sources…</p>}
+      {sources.state === "error" && <LoadError what="sources" message={sources.message} onRetry={onRetry} />}
+      {sources.state === "ok" && total === 0 && (
         <EmptyState
           icon={<Icon name="sources" size={22} />}
           title="No sources yet"
@@ -361,13 +436,14 @@ function SourcesCard({ sources, scores, admin }: { sources: Source[] | null; sco
           {admin ? "Add a database, folder or bucket and scan it to fill the catalogue." : "Ask an admin to add a source."}
         </EmptyState>
       )}
-      {sources && sources.length > 0 && (
+      {shown.length > 0 && (
         <ul className="km-source-cards">
-          {sources.slice(0, 6).map((s) => {
+          {shown.map((s) => {
             const state = s.lastRun ? STATE[s.lastRun.status] : { tone: "neutral" as Tone, word: "Never scanned" };
             const when = s.lastRun?.finishedAt ?? null;
             const score = scores[s.name]?.scores?.overall ?? null;
             const where = s.settings.schemas || s.settings.containers || s.settings.bucket || s.settings.path || "";
+            const kind = `${connectors[s.kind]?.displayName ?? s.kind}${where ? ` · ${where.split(",").join(", ")}` : ""}`;
             return (
               <li key={s.name}>
                 <a className="km-inner" href={href.source(s.name)}>
@@ -377,12 +453,8 @@ function SourcesCard({ sources, scores, admin }: { sources: Source[] | null; sco
                       <span className="km-row-title km-one-line" title={s.displayName}>
                         {s.displayName}
                       </span>
-                      <span
-                        className="km-row-detail km-one-line"
-                        title={`${connectors[s.kind]?.displayName ?? s.kind}${where ? ` · ${where.split(",").join(", ")}` : ""}`}
-                      >
-                        {connectors[s.kind]?.displayName ?? s.kind}
-                        {where && ` · ${where.split(",").join(", ")}`}
+                      <span className="km-row-detail km-one-line" title={kind}>
+                        {kind}
                       </span>
                     </span>
                   </span>
@@ -410,25 +482,26 @@ function SourcesCard({ sources, scores, admin }: { sources: Source[] | null; sco
 }
 
 /** Open issues, most severe and newest first: failing rules and drift between scans. */
-function NeedsALook({ issues }: { issues: Issue[] | null }) {
+function NeedsALook({ issues, full, onRetry }: { issues: Load<Issue[]>; full: boolean; onRetry: () => void }) {
   const rank = { high: 0, medium: 1, low: 2 } as const;
-  const top = [...(issues ?? [])]
+  const list = ok(issues) ?? [];
+  const top = [...list]
     .sort((a, b) => rank[a.severity] - rank[b.severity] || Date.parse(b.createdAt) - Date.parse(a.createdAt))
-    .slice(0, 5);
-  const more = (issues?.length ?? 0) - top.length;
+    .slice(0, 4);
   return (
     <Card title="Needs a look" titleId="iss-h" subtitle="Things to fix" className="km-card--fill">
-      {issues === null && <p role="status" className="muted">Loading issues…</p>}
-      {issues?.length === 0 && (
+      {issues.state === "loading" && <p className="muted">Loading issues…</p>}
+      {issues.state === "error" && <LoadError what="issues" message={issues.message} onRetry={onRetry} />}
+      {issues.state === "ok" && list.length === 0 && (
         <EmptyState compact icon={<Icon name="circle-check" size={22} />} title="Nothing needs a look">
           Failing rules and drift between scans show here.
         </EmptyState>
       )}
       {top.length > 0 && (
-        <div className="km-scroll-list" role="region" aria-label="Open issues, most severe first" tabIndex={0}>
         <ul className="km-rows">
           {top.map((i) => {
             const asset = i.assetUrn.replace(/^urn:kilnmark:[^:]+:/, "");
+            const detail = `${i.driftEventId != null ? "Drift · " : ""}${asset}${i.detail ? ` · ${i.detail}` : ""}`;
             return (
               <li key={i.id} className="km-row">
                 <SeverityChip severity={i.severity} />
@@ -436,36 +509,30 @@ function NeedsALook({ issues }: { issues: Issue[] | null }) {
                   <h3 className="km-row-title">
                     <a href={href.asset(i.assetUrn, "quality")}>{i.title}</a>
                   </h3>
-                  <p
-                    className="km-row-detail km-one-line"
-                    title={`${i.driftEventId != null ? "Drift · " : ""}${asset}${i.detail ? ` · ${i.detail}` : ""}`}
-                  >
-                    {i.driftEventId != null ? "Drift · " : ""}
-                    {asset}
-                    {i.detail ? ` · ${i.detail}` : ""}
+                  <p className="km-row-detail km-one-line" title={detail}>
+                    {detail}
                   </p>
                 </div>
               </li>
             );
           })}
         </ul>
-        </div>
       )}
       <div className="km-card-foot">
         <a href={href.issues()}>
-          {issues && issues.length > 0 ? `View all ${issues.length} open issues` : "View issues"}
+          {list.length > top.length ? `View all ${formatNumber(list.length)}${full ? "+" : ""} open issues` : "View issues"}
         </a>
-        {more > 0 && <span className="muted">{more} more not shown</span>}
       </div>
     </Card>
   );
 }
 
-/** What happened: the latest six notifications. Hidden when the server has no notifications. */
+/** What happened: the latest three notifications, whole. Hidden when the server has no notifications. */
 function NotificationsCard({ admin }: { admin: boolean }) {
   const n = useNotifications();
   const [message, setMessage] = useState("");
   if (n.available !== true) return null;
+  const items = n.items ?? [];
   return (
     <Card
       title="Notifications"
@@ -498,18 +565,24 @@ function NotificationsCard({ admin }: { admin: boolean }) {
           New notifications will show here.
         </EmptyState>
       )}
-      {n.items && n.items.length > 0 && (
-        // At most about five rows show; the rest scroll inside the card (a focusable region).
-        <div className="km-scroll-list" role="region" aria-label="Latest notifications" tabIndex={0}>
-          <NotificationList
-            items={n.items}
-            onOpen={(x) => {
-              if (!x.read) void markNotificationsRead([x.id]).catch(() => undefined);
-            }}
-          />
-        </div>
+      {items.length > 0 && (
+        <NotificationList
+          items={items.slice(0, 3)}
+          onOpen={(x) => {
+            if (!x.read) void markNotificationsRead([x.id]).catch(() => undefined);
+          }}
+        />
       )}
       <div className="km-card-foot">
+        {items.length > 3 && (
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => window.dispatchEvent(new CustomEvent(OPEN_NOTIFICATIONS))}
+          >
+            View all
+          </button>
+        )}
         <a href={NOTIFICATION_SETTINGS}>Notification settings</a>
         {admin && <a href={SENT_EMAILS}>Sent emails</a>}
       </div>
@@ -541,51 +614,61 @@ type Step = { id: string; label: string; done: boolean; link: string | null; cta
 
 const SETUP_DISMISSED = "kilnmark.setupDismissed";
 
+/** The steps a dismissal was for: a new step (pipelines arriving, say) brings the checklist back. */
 const readDismissed = () => {
   try {
-    return window.localStorage.getItem(SETUP_DISMISSED) === "1";
+    return window.localStorage.getItem(SETUP_DISMISSED);
   } catch {
-    return false;
+    return null;
   }
 };
 
 /**
  * Getting set up: each step is ticked from what the server says has been done, across the page
  * in one row. Once every step is done it shrinks to one line, which can be dismissed (remembered
- * in this browser).
+ * in this browser for this set of steps).
  */
 function SetupCard({
   sources,
   rules,
-  model,
+  localModel,
   pipelines,
   admin,
   steward,
 }: {
   sources: Source[] | null;
   rules: number | null;
-  model: boolean | null;
-  pipelines: number | null | undefined;
+  /** Whether a local model is set up; null when this role cannot tell (only admins see models). */
+  localModel: boolean | null;
+  /** The pipelines, null when the server has none (404), undefined while loading. */
+  pipelines: PipelineSummary[] | null | undefined;
   admin: boolean;
   steward: boolean;
 }) {
   const [dismissed, setDismissed] = useState(readDismissed);
-  if (sources === null || rules === null && model === null) return null;
+  if (sources === null || rules === null || pipelines === undefined) return null;
   const scanned = sources.some((s) => s.lastRun?.status === "succeeded" || s.lastRun?.status === "partial" || s.assets > 0);
   const steps: Step[] = [
     { id: "source", label: "Connect a source", done: sources.length > 0, link: admin ? href.addConnection() : null, cta: "Add a connection" },
     { id: "scan", label: "Scan and profile it", done: scanned, link: steward ? href.sources() : null, cta: "Scan a source" },
-    { id: "rule", label: "Add a quality rule", done: (rules ?? 0) > 0, link: steward ? href.rules() : null, cta: "Add a rule" },
-    { id: "model", label: "Connect a local model", done: model === true, link: admin ? href.ai() : null, cta: "Connect a local model" },
+    { id: "rule", label: "Add a quality rule", done: rules > 0, link: steward ? href.rules() : null, cta: "Add a rule" },
   ];
-  // Only on servers with pipelines (the pipelines endpoint answers).
-  if (pipelines != null)
-    steps.push({ id: "pipeline", label: "Build your first pipeline", done: pipelines > 0, link: steward ? "#/pipelines/new" : null, cta: "Build a pipeline" });
+  if (localModel !== null)
+    steps.push({ id: "model", label: "Connect a local model", done: localModel, link: admin ? href.ai() : null, cta: "Connect a local model" });
+  if (pipelines !== null)
+    steps.push({
+      id: "pipeline",
+      label: "Build your first pipeline",
+      done: pipelines.length > 0,
+      link: steward ? href.newPipeline() : null,
+      cta: "Build a pipeline",
+    });
+  const key = steps.map((s) => s.id).join(",");
   const done = steps.filter((s) => s.done).length;
   const next = steps.find((s) => !s.done);
 
   if (!next) {
-    if (dismissed) return null;
+    if (dismissed === key) return null;
     return (
       <section className="km-strip km-strip--good" aria-labelledby="setup-h">
         <Icon name="circle-check" size={18} />
@@ -593,8 +676,8 @@ function SetupCard({
           All set up
         </h2>
         <p className="km-strip-text">
-          Sources connected and scanned, rules added{model ? ", a local model connected" : ""}
-          {pipelines ? " and a pipeline built" : ""}.
+          Sources connected and scanned, rules added{localModel ? ", a local model connected" : ""}
+          {pipelines?.length ? " and a pipeline built" : ""}.
         </p>
         <button
           type="button"
@@ -602,11 +685,11 @@ function SetupCard({
           aria-label="Dismiss All set up"
           onClick={() => {
             try {
-              window.localStorage.setItem(SETUP_DISMISSED, "1");
+              window.localStorage.setItem(SETUP_DISMISSED, key);
             } catch {
               // Storage blocked: dismissed until the page is reloaded.
             }
-            setDismissed(true);
+            setDismissed(key);
           }}
         >
           <Icon name="close" size={18} />

@@ -13,7 +13,8 @@ import { href, type Route } from "../router";
 export const Sidebar = forwardRef<HTMLDivElement, {
   route: Route;
   version: string | null;
-  openIssues: number | null;
+  /** The open-issue count as shown ("12", "500+"), or null for none or unknown. */
+  openIssues: string | null;
   /** What's new has changed since this browser last opened it. */
   whatsNew: boolean;
   drawerOpen: boolean;
@@ -23,19 +24,19 @@ export const Sidebar = forwardRef<HTMLDivElement, {
 }>(function Sidebar({ route, version, openIssues, whatsNew, drawerOpen, onNavigate, onCloseDrawer, inert }, ref) {
   const item = (n: (typeof NAV)[number]) => {
     const current = n.current(route);
-    const count = n.badge === "issues" && openIssues ? openIssues : 0;
+    const count = n.badge === "issues" ? openIssues : null;
     return (
       <li key={n.id}>
         <a
           href={n.href}
           className={`nav-item nav-tint-${n.tint}`}
           aria-current={current}
-          title={n.label}
+          data-tip={n.label}
           onClick={onNavigate}
         >
           <Icon name={n.icon} size={18} className="nav-icon" />
           <span className="nav-label">{n.label}</span>
-          {count > 0 && (
+          {count && (
             <span className="nav-badge num">
               <span className="visually-hidden">, </span>
               {count}
@@ -45,7 +46,8 @@ export const Sidebar = forwardRef<HTMLDivElement, {
           {n.badge === "new" && whatsNew && (
             <span className="nav-badge nav-badge--new">
               <span className="visually-hidden">, </span>
-              New<span className="visually-hidden"> since you last looked</span>
+              <span className="nav-badge-text">New</span>
+              <span className="visually-hidden"> since you last looked</span>
             </span>
           )}
         </a>

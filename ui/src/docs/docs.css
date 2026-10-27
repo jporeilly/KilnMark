@@ -96,5 +96,5 @@
 }
 
 .doc-body [id^="doc-"] {
-  scroll-margin-top: 16px;
+  scroll-margin-top: calc(var(--km-topbar-h) + 16px);
 }

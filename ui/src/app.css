@@ -520,6 +520,17 @@ main:focus {
   outline: none;
 }
 
+/* Anything scrolled into view (a heading, a linked section, a focused message) clears the sticky
+   top bar. */
+main h1,
+main h2,
+main h3,
+main h4,
+main [id],
+main [tabindex="-1"] {
+  scroll-margin-top: calc(var(--km-topbar-h) + 16px);
+}
+
 .drawer-backdrop {
   position: fixed;
   inset: 0;
@@ -926,6 +937,22 @@ a.km-inner:hover {
   white-space: nowrap;
 }
 
+/* A card that could not be loaded: what went wrong, and Try again. */
+.km-load-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--km-surface-2);
+}
+
+.km-load-error p {
+  margin: 0;
+  flex: 1 1 240px;
+}
+
 /* A slim strip across the page: a state worth one line, not a card. */
 .km-strip {
   display: flex;
@@ -1122,8 +1149,12 @@ button.danger,
 }
 
 .actions {
-  margin: 8px 0 16px;
+  margin: 8px 0 var(--km-gap);
   align-items: flex-start;
+}
+
+.actions + [role="status"]:not(:empty) {
+  margin-bottom: var(--km-gap);
 }
 
 /* ======================================================================= forms */
@@ -3354,6 +3385,21 @@ a.km-link-card:hover {
   margin-bottom: 14px;
 }
 
+.km-toolbar-find input {
+  width: 100%;
+}
+
+.km-gallery-more {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 0;
+}
+
+.km-gallery-more:empty {
+  display: none;
+}
+
 .km-toolbar-switch {
   margin-left: auto;
   min-width: 220px;
@@ -4022,17 +4068,47 @@ h1.with-tile {
     display: inline;
   }
 
-  /* On the rail the New badge becomes a dot; its word stays for screen readers. */
+  /* On the rail the New badge is a small tag in the corner; the word stays visible. */
   .shell:not(.drawer-open) .nav-badge--new {
     position: absolute;
-    top: 6px;
-    right: 6px;
-    width: 9px;
-    height: 9px;
-    padding: 0;
-    overflow: hidden;
-    color: transparent;
+    top: 0;
+    right: -4px;
+    padding: 0 4px;
+    font-size: 9px;
+    line-height: 14px;
     box-shadow: 0 0 0 2px var(--km-side-bg);
+  }
+
+  /* The rail's tooltip: the item's name beside it, on hover and on keyboard focus. */
+  .shell:not(.drawer-open) .nav-item::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: calc(100% + 10px);
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 5;
+    padding: 5px 10px;
+    border-radius: var(--km-radius-sm);
+    background: var(--km-ink-strong);
+    color: var(--km-surface);
+    font-size: var(--km-text-sm);
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: var(--km-shadow-raised);
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.1s var(--km-ease);
+  }
+
+  .shell:not(.drawer-open) .nav-item:hover::after,
+  .shell:not(.drawer-open) .nav-item:focus-visible::after {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .shell:not(.drawer-open) .sidebar {
+    overflow: visible;
   }
 
   .km-grid-4 {

@@ -58,10 +58,18 @@ function switchHelp(hint: string): string {
 const NUMBER_KEY = /(^|_)(port|timeout|seconds|limit|rows|size|retries)$/;
 const SECRET_KEY = /(password|secret|token|private_key)$/;
 
+/**
+ * A hint that offers just true and false: it starts with one of them ("true (the default) or
+ * false", "false (the default) …; true …"), not a hint that only mentions the words in passing.
+ */
+const BOOLEAN_HINT = /^\s*(true|false)\b(\s*\(the default\))?\s*(or|:|;|,|\s(lets|keeps|stores|for))/i;
+
 export function settingKind(s: ConnectorSetting): SettingKind {
   if (CHOICES[s.key]) return { kind: "select", ...CHOICES[s.key] };
+  // A secret is never a switch, whatever its hint says.
+  if (SECRET_KEY.test(s.key)) return { kind: "password", help: s.hint };
   const listed = Object.hasOwn(SWITCH_HELP, s.key);
-  const offersBoolean = /\btrue\b/i.test(s.hint) && /\bfalse\b/i.test(s.hint) && !s.multiple;
+  const offersBoolean = BOOLEAN_HINT.test(s.hint) && !s.multiple;
   if (listed || offersBoolean) {
     return {
       kind: "switch",
@@ -70,7 +78,6 @@ export function settingKind(s: ConnectorSetting): SettingKind {
     };
   }
   if (NUMBER_KEY.test(s.key)) return { kind: "number", min: 0, help: s.hint };
-  if (SECRET_KEY.test(s.key)) return { kind: "password", help: s.hint };
   return { kind: "text" };
 }
 
@@ -79,6 +86,17 @@ export function settingText(s: ConnectorSetting | undefined, value: string): str
   if (!s) return value;
   const k = settingKind(s);
   if (k.kind === "switch") return value.toLowerCase() === "true" ? "On" : value.toLowerCase() === "false" ? "Off" : value;
-  if (k.kind === "select") return k.choices.find((c) => c.value === value)?.label.replace(" (default)", "") ?? value;
+  if (k.kind === "select")
+    return k.choices.find((c) => c.value === value.trim().toLowerCase())?.label.replace(" (default)", "") ?? value;
   return value;
+}
+
+/**
+ * A setting every source has whose only choices are false and true (allow_writing) is a switch:
+ * its default and help, said in terms of on and off. Null for other common settings.
+ */
+export function commonSwitch(c: { choices: string[]; defaultValue: string | null; hint: string }) {
+  const choices = [...c.choices].map((x) => x.toLowerCase()).sort();
+  if (choices.length !== 2 || choices[0] !== "false" || choices[1] !== "true") return null;
+  return { defaultOn: c.defaultValue === "true", help: switchHelp(c.hint).replace(/^on lets/i, "Lets") };
 }

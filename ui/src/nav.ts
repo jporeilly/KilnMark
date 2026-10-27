@@ -40,11 +40,14 @@ export const NAV: NavItem[] = [
     tint: "sky",
     current: (r) => (r.page === "sources" ? "page" : r.page === "source" ? "true" : undefined),
   },
-  // Pipelines arrive from the pipelines branch. Add them here, after Sources, when that merges:
-  // {
-  //   id: "pipelines", label: "Pipelines", href: href.pipelines(), icon: "pipelines", tint: "mint",
-  //   current: (r) => (r.page === "pipelines" ? "page" : ["pipeline", "pipeline-run"].includes(r.page) ? "true" : undefined),
-  // },
+  {
+    id: "pipelines",
+    label: "Pipelines",
+    href: href.pipelines(),
+    icon: "pipelines",
+    tint: "mint",
+    current: (r) => (r.page === "pipelines" ? "page" : r.page === "pipeline" || r.page === "pipeline-run" ? "true" : undefined),
+  },
   { id: "browse", label: "Browse", href: href.browse(), icon: "browse", tint: "violet", current: on("browse") },
   {
     id: "relationships",

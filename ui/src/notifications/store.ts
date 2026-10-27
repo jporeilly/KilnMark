@@ -28,6 +28,7 @@ export function refreshNotifications(): Promise<void> {
   loading ??= notificationsApi
     .list(6)
     .then((p) => set({ available: true, items: p.items, unread: p.unread, error: null }))
+    // Only "not here" (404, 405) hides the bell for good; other failures keep it and retry on the next poll.
     .catch((e: Error) => (isMissing(e) ? set({ available: false }) : set({ error: e.message })))
     .finally(() => {
       loading = null;
@@ -36,21 +37,29 @@ export function refreshNotifications(): Promise<void> {
 }
 
 async function pollUnread() {
-  if (state.available !== true) return;
+  if (state.available === false) return;
+  // The first load failed with a server error: try the list again rather than giving up.
+  if (state.available === null || state.items === null) {
+    await refreshNotifications();
+    return;
+  }
   try {
     const { unread } = await notificationsApi.unreadCount();
     // Something new or read elsewhere: fetch the list again so both views match the count.
     if (unread !== state.unread) await refreshNotifications();
   } catch (e) {
     if (isMissing(e)) set({ available: false });
+    // Anything else (a 5xx, the network): keep what is shown and try again at the next poll.
   }
 }
 
 /** Marks the given notifications, or all of them, read; the views update at once. */
 export async function markNotificationsRead(ids: string[] | "all"): Promise<void> {
   const before = state;
+  // Optimistic: the server's unread count less the unread ones marked here (the list holds only six).
+  const marked = ids === "all" ? state.unread : (state.items ?? []).filter((n) => !n.read && ids.includes(n.id)).length;
   const items = state.items?.map((n) => (ids === "all" || ids.includes(n.id) ? { ...n, read: true } : n)) ?? null;
-  set({ items, unread: items ? items.filter((n) => !n.read).length : 0 });
+  set({ items, unread: Math.max(0, state.unread - marked) });
   try {
     await notificationsApi.markRead(ids);
     await refreshNotifications();

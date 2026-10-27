@@ -11,7 +11,7 @@ import {
 import { ContainerPicker } from "./ContainerPicker";
 import { ConnectorTile, tileProps } from "./ConnectorTile";
 import { Icon } from "./icons";
-import { settingKind } from "./settingKinds";
+import { commonSwitch, settingKind } from "./settingKinds";
 import { SideSheet, Switch } from "./ui";
 import { useRole } from "./role";
 
@@ -228,7 +228,7 @@ export function ConnectionPanel({
           <label htmlFor={field(`s-${s.key}`)}>{s.label}</label>
           <select
             id={field(`s-${s.key}`)}
-            value={value || k.defaultValue}
+            value={value.trim().toLowerCase() || k.defaultValue}
             onChange={(e) => set(s.key, e.target.value)}
             aria-describedby={field(`s-${s.key}-hint`)}
           >
@@ -296,7 +296,26 @@ export function ConnectionPanel({
     );
   };
 
-  const commonField = (c: CommonSetting) =>
+  const commonField = (c: CommonSetting) => {
+    const sw = commonSwitch(c);
+    if (sw) {
+      const v = (settings[c.key] ?? "").trim().toLowerCase();
+      return (
+        <Switch
+          key={c.key}
+          id={field(`c-${c.key}`)}
+          label={c.label}
+          help={sw.help}
+          defaultNote={`Default: ${sw.defaultOn ? "on" : "off"}`}
+          checked={v === "" ? sw.defaultOn : v === "true"}
+          onChange={(on) => set(c.key, on ? "true" : "false")}
+        />
+      );
+    }
+    return commonSelectOrText(c);
+  };
+
+  const commonSelectOrText = (c: CommonSetting) =>
     c.choices.length > 0 ? (
       <div className="field" key={c.key}>
         <label htmlFor={field(`c-${c.key}`)}>{c.label}</label>
@@ -351,7 +370,7 @@ export function ConnectionPanel({
         <ConnectorTile {...tileProps(connector)} size="md" />
         <div className="km-panel-title">
           <h2 id={`${id}-title`}>{editing ? `Edit ${existing.displayName}` : `New ${connector.displayName} connection`}</h2>
-          <p className="hint">{connector.displayName} connection</p>
+          {editing && <p className="hint">{connector.displayName}</p>}
         </div>
         <button type="button" className="km-icon-button km-close" onClick={requestClose} aria-label="Close the connection panel">
           <Icon name="close" size={20} />

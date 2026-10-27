@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import React, { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { allows, api, ApiError, qualityApi, session, SIGNED_OUT, type Me } from "./api";
 import { go, href, useRoute } from "./router";
 import { HomePage } from "./pages/HomePage";
@@ -7,24 +7,29 @@ import { AssetPage } from "./pages/AssetPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { SourcePage } from "./pages/SourcePage";
 import { SignInPage, type SignInNotice } from "./pages/SignInPage";
-import { TokensPage } from "./pages/TokensPage";
-import { AiPage } from "./pages/AiPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { AiUsagePage } from "./pages/AiUsagePage";
 import { BrowsePage } from "./browse/BrowsePage";
-import { RelationshipsPage } from "./browse/RelationshipsPage";
 import { RoleContext } from "./components/role";
-import { RulesPage } from "./pages/RulesPage";
 import { IssuesPage } from "./pages/IssuesPage";
-import { PipelinesPage } from "./pipelines/PipelinesPage";
-import { PipelinePage } from "./pipelines/PipelinePage";
-import { PipelineRunPage } from "./pipelines/PipelineRunPage";
 import "./docs/docs.css";
 import { AssistantPanel } from "./assistant/AssistantPanel";
 import { useAssistant } from "./assistant/useAssistant";
 
-// The documentation viewer carries the guides and a Markdown reader, so it loads when first opened.
+// Heavier pages load when first opened, so the main bundle stays small: the documentation (the
+// guides and a Markdown reader), pipelines (the YAML editor and diagram), the rule form, AI models,
+// tokens and relationships.
 const DocsPage = lazy(() => import("./pages/DocsPage"));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const page = <T extends Record<K, React.ComponentType<any>>, K extends keyof T>(load: () => Promise<T>, key: K) =>
+  lazy(() => load().then((m) => ({ default: m[key] })));
+const AiPage = page(() => import("./pages/AiPage"), "AiPage");
+const AiUsagePage = page(() => import("./pages/AiUsagePage"), "AiUsagePage");
+const TokensPage = page(() => import("./pages/TokensPage"), "TokensPage");
+const PipelinesPage = page(() => import("./pipelines/PipelinesPage"), "PipelinesPage");
+const PipelinePage = page(() => import("./pipelines/PipelinePage"), "PipelinePage");
+const PipelineRunPage = page(() => import("./pipelines/PipelineRunPage"), "PipelineRunPage");
+const RulesPage = page(() => import("./pages/RulesPage"), "RulesPage");
+const RelationshipsPage = page(() => import("./browse/RelationshipsPage"), "RelationshipsPage");
 import { Icon } from "./components/icons";
 import { Card, EmptyState, PageHeader } from "./components/ui";
 import { NotificationBell } from "./notifications/NotificationBell";
@@ -147,7 +152,7 @@ function Shell({ me }: { me: Me }) {
   const [query, setQuery] = useState(route.page === "search" ? route.q : "");
   const first = useRef(true);
   const [version, setVersion] = useState<string | null>(null);
-  const [openIssues, setOpenIssues] = useState<number | null>(null);
+  const [openIssues, setOpenIssues] = useState<string | null>(null);
   const whatsNew = useWhatsNewBadge(version, route.page === "docs" && route.doc === WHATS_NEW);
   // The Ask panel (src/assistant): its conversation lives here, so it stays across pages and goes on sign-out.
   const assistant = useAssistant();
@@ -213,9 +218,10 @@ function Shell({ me }: { me: Me }) {
 
   // The open-issue count on the sidebar, refreshed as people move around (resolving one updates it).
   useEffect(() => {
+    // The list stops at 500: a full list shows as "500+".
     qualityApi
-      .issues("open")
-      .then((list) => setOpenIssues(list.length))
+      .issues("open", 500)
+      .then((list) => setOpenIssues(list.length === 0 ? null : list.length >= 500 ? "500+" : String(list.length)))
       .catch(() => setOpenIssues(null));
   }, [route]);
 
@@ -310,6 +316,7 @@ function Shell({ me }: { me: Me }) {
           </header>
           <RoleContext.Provider value={me.role}>
           <main id="main" tabIndex={-1}>
+          <Suspense fallback={<p role="status" className="muted">Loading…</p>}>
           {route.page === "home" && <HomePage me={me} />}
           {route.page === "settings" && <SettingsPage role={me.role} />}
           {route.page === "search" && <SearchPage q={route.q} ask={route.ask} />}
@@ -333,17 +340,14 @@ function Shell({ me }: { me: Me }) {
             <PipelinePage key={route.name ?? "#new"} name={route.name} version={route.version} role={me.role} />
           )}
           {route.page === "pipeline-run" && <PipelineRunPage id={route.id} role={me.role} />}
-          {route.page === "docs" && (
-            <Suspense fallback={<p role="status">Loading the documentation…</p>}>
-              <DocsPage doc={route.doc} section={route.section} />
-            </Suspense>
-          )}
+          {route.page === "docs" && <DocsPage doc={route.doc} section={route.section} />}
           {route.page === "tokens" &&
             (allows(me.role, "admin") ? (
               <TokensPage me={me} />
             ) : (
               <NotAllowed title="API tokens">Only admins can manage API tokens. Ask an admin if you need a token.</NotAllowed>
             ))}
+          </Suspense>
           </main>
           </RoleContext.Provider>
         </div>

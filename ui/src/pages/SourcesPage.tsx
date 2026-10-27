@@ -30,6 +30,9 @@ const CATEGORY: Record<string, string> = {
   other: "Other",
 };
 
+/** Sources shown before "Show more". */
+const PAGE = 24;
+
 const busy = (s: Source) => s.lastRun?.status === "queued" || s.lastRun?.status === "running";
 
 const HEALTH: Record<string, { tone: Tone; word: string }> = {
@@ -57,12 +60,13 @@ export function SourcesPage({ role, add = false }: { role: AccessRole; add?: boo
   const [notice, setNotice] = useState("");
   const [category, setCategory] = useState("all");
   const [grouped, setGrouped] = useState(false);
-  const [adding, setAdding] = useState(add && canAdd);
+  const [find, setFind] = useState("");
+  const [limit, setLimit] = useState(PAGE);
+  const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const addHeading = useRef<HTMLHeadingElement>(null);
   const importHeading = useRef<HTMLHeadingElement>(null);
 
-  useEffect(() => setAdding(add && canAdd), [add, canAdd]);
 
   const load = useCallback(() => {
     api
@@ -86,11 +90,26 @@ export function SourcesPage({ role, add = false }: { role: AccessRole; add?: boo
   const open = (which: "add" | "import") => {
     if (which === "add") setAdding(true);
     else setImporting(true);
+    // After the shell has put focus on the page heading (it does so a tick after a route change).
     window.setTimeout(() => {
       const h = (which === "add" ? addHeading : importHeading).current;
       h?.scrollIntoView({ block: "start" });
       h?.focus();
-    }, 0);
+    }, 50);
+  };
+
+  // #/sources?add=1 opens Add a connection the same way the button does: scrolled to and focused.
+  useEffect(() => {
+    if (add && canAdd) open("add");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [add, canAdd]);
+
+  const closeAdd = () => {
+    setAdding(false);
+    if (/[?&]add=1/.test(window.location.hash)) {
+      window.history.replaceState(null, "", href.sources());
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    }
   };
 
   const categories = [...new Set((sources ?? []).map((s) => s.category))].sort(
@@ -150,7 +169,13 @@ export function SourcesPage({ role, add = false }: { role: AccessRole; add?: boo
     </ul>
   );
 
-  const shown = (sources ?? []).filter((s) => category === "all" || s.category === category);
+  const words = find.trim().toLowerCase();
+  const matching = (sources ?? []).filter(
+    (s) =>
+      (category === "all" || s.category === category) &&
+      (!words || `${s.displayName} ${s.name} ${s.kind}`.toLowerCase().includes(words)),
+  );
+  const shown = matching.slice(0, limit);
 
   return (
     <>
@@ -199,6 +224,24 @@ export function SourcesPage({ role, add = false }: { role: AccessRole; add?: boo
         {sources && sources.length > 0 && (
           <>
             <div className="km-toolbar">
+              {sources.length > 8 && (
+                <div className="field km-field-narrow km-toolbar-find">
+                  <label htmlFor="src-find" className="visually-hidden">
+                    Find a source
+                  </label>
+                  <input
+                    id="src-find"
+                    type="search"
+                    value={find}
+                    placeholder="Find a source"
+                    autoComplete="off"
+                    onChange={(e) => {
+                      setFind(e.target.value);
+                      setLimit(PAGE);
+                    }}
+                  />
+                </div>
+              )}
               {categories.length > 1 && (
                 <FilterChips
                   label="Show sources by category"
@@ -231,7 +274,24 @@ export function SourcesPage({ role, add = false }: { role: AccessRole; add?: boo
                       {gallery(sources.filter((s) => s.category === c), CATEGORY[c] ?? c)}
                     </section>
                   ))
-              : gallery(shown, "Sources")}
+              : (
+                <>
+                  {gallery(shown, "Sources")}
+                  {matching.length === 0 && <p className="muted">No source matches “{find.trim()}”.</p>}
+                  <p role="status" className="km-gallery-more">
+                    {matching.length > shown.length && (
+                      <>
+                        <span className="muted">
+                          Showing {shown.length} of {formatNumber(matching.length)}.
+                        </span>{" "}
+                        <Button size="sm" onClick={() => setLimit((n) => n + PAGE)}>
+                          Show more
+                        </Button>
+                      </>
+                    )}
+                  </p>
+                </>
+              )}
           </>
         )}
       </section>
@@ -244,7 +304,7 @@ export function SourcesPage({ role, add = false }: { role: AccessRole; add?: boo
           {adding && (
             <AddConnection
               headingRef={addHeading}
-              onClose={() => setAdding(false)}
+              onClose={closeAdd}
               onSaved={(s, queued) => {
                 setNotice(
                   queued
