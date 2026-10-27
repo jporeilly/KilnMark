@@ -80,7 +80,8 @@ podman compose up --build       # PostgreSQL (AGE, pgvector) and the Kilnmark se
 On Windows, `.\build.ps1` in PowerShell does the whole thing: it checks Node.js, runs
 `gradlew.bat release`, builds both images directly (podman-compose on Windows cannot build an
 image whose Containerfile is in a sub-folder), restarts the stack and waits until the server
-answers. `-NoRestart` builds only; `-Lab` also starts the reference lab.
+answers. `-NoRestart` builds only; `-Lab` also starts every demo source of the reference lab, and
+`-Lab postgres,sqlserver` just those (see `lab/README.md`).
 
 If `podman compose` reports `failed to connect to the docker API at npipe:////./pipe/podman-machine-default`,
 the compose tool cannot find Podman: start the machine (`podman machine start`), or point it at
@@ -302,12 +303,15 @@ GRANT SELECT ON ALL TABLES IN SCHEMA sales TO kilnmark_reader;
 
 ## Try it on the reference lab
 
-Start Kilnmark first, then the lab, which joins Kilnmark's network (`kilnmark`):
+Start Kilnmark first, then the lab's demo sources, which join Kilnmark's network (`kilnmark`):
 
 ```
 podman compose up -d                          # Kilnmark on http://localhost:8780
-podman compose -f lab/compose.yaml up -d      # the lab, reachable from Kilnmark by name
+./lab/lab.sh start postgres                   # Windows: .\lab\lab.ps1 start postgres; or: start all
 ```
+
+Each demo source is a compose profile (`podman compose -f lab/compose.yaml --profile all up -d`
+starts them all); `lab/README.md` lists them, with `list`, `stop`, `reset` and `logs`.
 
 Open http://localhost:8780, sign in, go to **Sources**, and add the lab. Kilnmark reaches it by service
 name, the same under Podman and Docker:
@@ -412,7 +416,10 @@ sets a looser one says so in its notes. The stored password stays unless the row
 moves it; a row with a password always counts as updated, since comparing it with the stored one
 would let anyone running imports test guesses. Columns: `name`, `kind`,
 `display_name`, `password` or `password_ref`, the connector's settings, the common ones above, and,
-for databases, `host`, `port` and `database` instead of `url`. Options on
+for databases, `host`, `port` and `database` instead of `url`. In a CSV, list settings (`schemas`,
+`containers`) may separate their values with semicolons; every other value is kept as written, so
+a SQL Server URL, a `;` delimiter or a password keeps its semicolons (`include` and `exclude` keep
+theirs too). Rows may be shorter than the header: missing cells are empty. Options on
 `POST /api/v1/sources/import`:
 
 | Option | Effect |

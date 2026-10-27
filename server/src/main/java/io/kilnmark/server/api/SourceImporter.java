@@ -427,6 +427,33 @@ public class SourceImporter {
     }
 
     public List<Row> fromCsv(String text) {
+        return fromCsv(text, listKeys(connectors.all()));
+    }
+
+    /**
+     * The settings that hold lists, which a CSV cell may separate with semicolons: every
+     * connector's multiple-valued settings and its container setting ({@code schemas},
+     * {@code containers}). Every other value, such as a SQL Server URL
+     * ({@code jdbc:sqlserver://db:1433;databaseName=sales}), a delimiter or a description, is kept
+     * as written; {@code include} and {@code exclude} keep their semicolons too.
+     */
+    static Set<String> listKeys(java.util.Collection<Connector> all) {
+        Set<String> keys = new HashSet<>();
+        for (Connector c : all) {
+            keys.add(c.containerKind().setting());
+            for (Connector.Setting setting : c.settings()) {
+                if (setting.multiple()) {
+                    keys.add(setting.key());
+                }
+            }
+        }
+        keys.remove(AssetFilter.INCLUDE);
+        keys.remove(AssetFilter.EXCLUDE);
+        return Set.copyOf(keys);
+    }
+
+    /** {@link #fromCsv(String)} with the list settings given, whose semicolons become commas. */
+    static List<Row> fromCsv(String text, Set<String> listKeys) {
         List<List<String>> records = Csv.parse(text);
         if (records.isEmpty()) {
             throw new IllegalArgumentException("The file is empty");
@@ -456,9 +483,8 @@ public class SourceImporter {
                 if (!RESERVED.contains(h.getKey())) {
                     String v = cell(rec, header, h.getKey());
                     if (v != null) {
-                        // include and exclude keep their semicolons: a pattern may hold {a,b}
-                        boolean patterns = h.getKey().equals(AssetFilter.INCLUDE) || h.getKey().equals(AssetFilter.EXCLUDE);
-                        settings.put(h.getKey(), patterns ? v : v.replace(';', ','));
+                        // only lists turn ; into , (include and exclude keep theirs: a pattern may hold {a,b})
+                        settings.put(h.getKey(), listKeys.contains(h.getKey()) ? v.replace(';', ',') : v);
                     }
                 }
             }

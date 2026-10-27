@@ -2,14 +2,18 @@
 #
 #   .\build.ps1            build the release, both images, then restart the stack
 #   .\build.ps1 -NoRestart build only
-#   .\build.ps1 -Lab       also start the reference lab (lab/compose.yaml)
+#   .\build.ps1 -Lab       also start every demo source of the reference lab (lab/lab.ps1 start all)
+#   .\build.ps1 -Lab postgres,sqlserver   also start just those demo sources (see lab/README.md)
 #
 # podman-compose on Windows cannot build images whose Containerfile is in a sub-folder, so the
 # images are built directly here and the stack is started without --build.
 
 param(
     [switch]$NoRestart,
-    [switch]$Lab
+    [switch]$Lab,
+    # Demo sources to start with -Lab (postgres, s3, sqlserver, ...); all when left out.
+    [Parameter(Position = 0)]
+    [string[]]$LabSources
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,11 +57,14 @@ $started = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 if ($started -ne 0) { throw 'Starting the stack failed: see the messages above.' }
 
-if ($Lab) {
-    Step 'Starting the reference lab'
-    $ErrorActionPreference = 'Continue'
-    & $engine compose -f lab/compose.yaml --profile all up -d 2>&1 | Out-Host
-    $ErrorActionPreference = 'Stop'
+if ($Lab -or $LabSources) {
+    $labNames = @('all')
+    if ($LabSources) { $labNames = $LabSources }
+    Step "Starting the reference lab: $($labNames -join ', ')"
+    & (Join-Path -Path $PSScriptRoot -ChildPath 'lab\lab.ps1') start @labNames
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'The reference lab did not start: see the messages above.' -ForegroundColor Yellow
+    }
 }
 
 Step 'Waiting for Kilnmark to answer'
