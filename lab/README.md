@@ -16,6 +16,7 @@ podman compose -f lab/compose.yaml down -v   # stop and wipe
 | PostgreSQL 18 | `localhost:5433`, database `lab` | `lab` / `lab` |
 | S3-compatible (VersityGW) | `localhost:9000`, bucket `lab-raw`, path-style addressing | `labadmin` / `labadmin123` |
 | File share | `lab/files/share` on disk | none |
+| Mail server (Mailpit), demo source `mail` | SMTP `localhost:1025`, web page http://localhost:8025 | none (any user name and password are accepted) |
 
 These are lab-only credentials for local testing. The `lab` login owns the lab database, which is
 fine for a lab; for real sources, register a read-only login that is not a superuser (see
@@ -26,6 +27,35 @@ Kilnmark reads folders only inside the ones its administrator allows. The main `
 mounts `lab/files/share` read-only at `/srv/files` and allows it, so in the compose stack add a
 source of kind **files** with path `/srv/files`. Running the server outside a container, set
 `KILNMARK_FILES_ROOTS` to the full path of `lab/files/share` and use that path.
+
+## Try email notifications
+
+Mailpit, the demo source `mail`, catches every email Kilnmark sends and shows it on a web page;
+nothing is delivered anywhere. It has the compose profile `mail` (and `all`), so it starts only
+when asked:
+
+```
+podman compose -f lab/compose.yaml --profile mail up -d     # Mailpit alone (lab.sh / lab.ps1: start mail)
+podman compose -f lab/compose.yaml --profile all up -d      # the whole lab with it
+```
+
+In Kilnmark, as an admin, open **Settings > Email** and enter:
+
+| Field | Value |
+| --- | --- |
+| SMTP server | `lab-mailpit` (from the compose stack), or `localhost` for a server outside a container |
+| Port | `1025` |
+| Security | None |
+| User name / password | empty: with security None, Kilnmark refuses to send a password unless **Allow sign-in without encryption** is on |
+| From address | `kilnmark@example.com` |
+| Address of Kilnmark | `http://localhost:8780` |
+
+Press **Save mail settings**, then **Send a test email** to any example.com address, and open
+http://localhost:8025 to read it. Then choose emails for yourself under **Settings >
+Notifications**: give an example.com address, open the confirmation email in Mailpit and follow its
+link (or type its code), then add the lab with a wrong password and test its connection, for
+example, and the alert arrives in Mailpit. Use example.com addresses only; Mailpit keeps the last 500 emails until
+the lab is stopped with `down -v`.
 
 ## Register the lab in one go
 
@@ -119,6 +149,6 @@ the QQ prefix that HMRC never issues, and emails use example.com, .org and .net.
 ## Licences
 
 VersityGW, the S3 server, is Apache 2.0. It serves `lab/files/bucket` as a bucket directly, so
-there is nothing to upload. (MinIO's images stopped being publicly available in 2026.) It is a
-local test tool and is never shipped with Kilnmark
+there is nothing to upload. (MinIO's images stopped being publicly available in 2026.) Mailpit,
+the mail catcher, is MIT. Both are local test tools and are never shipped with Kilnmark
 ([ADR 0007](../docs/adr/0007-dependency-policy.md)).

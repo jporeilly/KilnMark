@@ -63,6 +63,102 @@ public interface KilnmarkConfig {
     /** The operator's branding folder: the organisation's name and logo, and connector logos. */
     Branding branding();
 
+    /**
+     * The outgoing mail server and the rules for email, until an admin saves them under Settings ›
+     * Email (which then win, except for settings listed in {@link Mail#locked()}). A password
+     * configured here is used only while the saved server and user name are the ones configured here.
+     */
+    Mail mail();
+
+    /** Email notifications: retries, rate limit and log (docs/design/notifications.md). */
+    Notifications notifications();
+
+    /** Defaults for the mail settings; see {@link io.kilnmark.server.notify.MailSettings}. */
+    interface Mail {
+        /** The SMTP server, such as {@code smtp.example.com}. */
+        Optional<String> host();
+
+        /** Its port; unset for the usual one for {@link #security()} (587, 465 or 25). */
+        Optional<Integer> port();
+
+        /** {@code starttls} (the default), {@code tls} or {@code none}. */
+        @WithDefault("starttls")
+        io.kilnmark.server.notify.MailSecurity security();
+
+        /** Who to sign in as; unset to send without signing in. */
+        Optional<String> username();
+
+        /** The password, for example from {@code KILNMARK_MAIL_PASSWORD}. Never logged or returned. */
+        Optional<String> password();
+
+        /** The sender's address, such as {@code kilnmark@example.com}. */
+        Optional<String> from();
+
+        /** The sender's name. */
+        @WithDefault("Kilnmark")
+        String fromName();
+
+        /** How people reach Kilnmark, for links in emails, such as {@code https://kilnmark.example.com}. */
+        Optional<String> baseUrl();
+
+        /**
+         * Whether a password entered under Settings › Email may be sent without encryption (security
+         * none). The configured password never is.
+         */
+        @WithDefault("false")
+        boolean allowPlainAuth();
+
+        /** The domains email may go to, such as {@code example.com} (subdomains included); unset for any. */
+        Optional<List<String>> allowedDomains();
+
+        /** Whether people must confirm their address (a link or code sent to it) before it gets email. */
+        @WithDefault("true")
+        boolean requireConfirmation();
+
+        /**
+         * Settings admins may not change under Settings › Email: they always come from here. Any of
+         * host, port, security, username, from, from-name, base-url, allow-plain-auth,
+         * allowed-domains, require-confirmation, max-attempts, rate-limit-per-hour,
+         * undelivered-after, undelivered-action. Another name stops the server.
+         */
+        Optional<List<String>> locked();
+    }
+
+    /** Email notifications. */
+    interface Notifications {
+        /** Emails of their own one address may get in an hour; the rest wait for its next daily digest. */
+        @WithDefault("20")
+        int rateLimitPerHour();
+
+        /** Tries before an email is given up (1 to 10; back-off: 1, 3, 9, 27 minutes, then hourly). */
+        @WithDefault("5")
+        int maxAttempts();
+
+        /** An email still not sent after this long (email paused, server down) goes to the digest or is dropped. */
+        @WithDefault("24h")
+        Duration undeliveredAfter();
+
+        /** {@code digest} (the default) or {@code drop}: what happens to an email after {@link #undeliveredAfter()}. */
+        @WithDefault("digest")
+        String undeliveredAction();
+
+        /** How often workers look for emails to send. */
+        @WithDefault("10s")
+        Duration pollInterval();
+
+        /** How long one SMTP connection, sign-in or write may take. */
+        @WithDefault("20s")
+        Duration sendTimeout();
+
+        /** How long the send log, and events with nothing left to send, are kept. */
+        @WithDefault("30d")
+        Duration logRetention();
+
+        /** How long people's in-app notifications are kept, read or not. */
+        @WithDefault("90d")
+        Duration inAppRetention();
+    }
+
     /** See docs/guide/branding.md. */
     interface Branding {
         /**

@@ -30,6 +30,9 @@ const PipelinePage = page(() => import("./pipelines/PipelinePage"), "PipelinePag
 const PipelineRunPage = page(() => import("./pipelines/PipelineRunPage"), "PipelineRunPage");
 const RulesPage = page(() => import("./pages/RulesPage"), "RulesPage");
 const RelationshipsPage = page(() => import("./browse/RelationshipsPage"), "RelationshipsPage");
+const NotificationsPage = page(() => import("./pages/NotificationsPage"), "NotificationsPage");
+const EmailSettingsPage = page(() => import("./pages/EmailSettingsPage"), "EmailSettingsPage");
+const SentEmailsPage = page(() => import("./pages/SentEmailsPage"), "SentEmailsPage");
 import { Icon } from "./components/icons";
 import { Card, EmptyState, PageHeader } from "./components/ui";
 import { NotificationBell } from "./notifications/NotificationBell";
@@ -341,6 +344,13 @@ function Shell({ me }: { me: Me }) {
           )}
           {route.page === "pipeline-run" && <PipelineRunPage id={route.id} role={me.role} />}
           {route.page === "docs" && <DocsPage doc={route.doc} section={route.section} />}
+          {route.page === "notifications" && <NotificationsPage confirm={route.confirm} />}
+          {(route.page === "email" || route.page === "email-log") &&
+            (allows(me.role, "admin") ? (
+              route.page === "email" ? <EmailSettingsPage /> : <SentEmailsPage />
+            ) : (
+              <NotAllowed title="Email">Only admins can set up email. Choose your own notifications under Settings, Notifications.</NotAllowed>
+            ))}
           {route.page === "tokens" &&
             (allows(me.role, "admin") ? (
               <TokensPage me={me} />

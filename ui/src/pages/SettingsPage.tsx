@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { IconTile, PageHeader, type Tint } from "../components/ui";
+import { Card, IconTile, PageHeader, type Tint } from "../components/ui";
 import { allows, type AccessRole } from "../api";
 import { useProductName } from "../components/Brand";
 import { href } from "../router";
@@ -26,9 +26,10 @@ export function SettingsPage({ role }: { role: AccessRole }) {
   useTitle("Settings");
   const admin = allows(role, "admin");
   const product = useProductName();
-  // Notification settings arrive from another branch: add their entry here.
   const items: { title: string; link: string; text: string; icon: string; tint: Tint; external?: boolean }[] = [
     { title: "API tokens", link: href.tokens(), icon: "key", tint: "amber", text: "Create, list and revoke tokens for people, scripts and AI assistants." },
+    { title: "Email", link: href.email(), icon: "mail", tint: "green", text: "The mail server notifications go through, the rules for email, a test email, and team addresses." },
+    { title: "Sent emails", link: href.emailLog(), icon: "mail-queued", tint: "slate", text: "Every email sent or tried in the last 30 days, with errors." },
     { title: "AI models", link: href.ai(), icon: "model", tint: "violet", text: "Local and hosted models, which feature uses which, and the rule for hosted models." },
     { title: "AI usage", link: href.aiUsage(), icon: "chart", tint: "sky", text: "Model calls by day and model, with failures and refusals." },
     {
@@ -46,6 +47,13 @@ export function SettingsPage({ role }: { role: AccessRole }) {
         title="Settings"
         lead={admin ? `How ${product} looks for you, and administration for this server.` : `How ${product} looks for you.`}
       />
+      <Card title="Notifications" titleId="notifications-heading" icon={<Icon name="bell" size={18} />}
+        actions={<a href={href.notifications()}>Choose what you get</a>} className="km-section">
+        <p>
+          What {product} tells you about in the app, and by email if you turn it on: failing rules and their recovery,
+          new issues, failed scans and connection tests, drift, and pipeline runs.
+        </p>
+      </Card>
       <Appearance />
       {admin && (
         <section aria-labelledby="admin-heading" className="km-section">

@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **Email alerts and notifications.** A bell in the top bar and a Notifications card on the home
+  page tell you when a quality rule starts failing or recovers, an issue is opened, a scan or
+  connection test fails, or drift is found. Turn on email under **Settings**, **Notifications**:
+  each alert as it happens or a daily digest, for every source or only yours. Admins set the mail
+  server, team addresses and who may get email under **Settings**, **Email**, and can see every
+  email sent. Emails never contain values from your data.
 - **A new look.** A dark sidebar with coloured icons, a light page with white cards, new fonts and
   clearer status chips, in Light, Dark and High contrast. Orange is still the default accent, and
   you can choose another under **Settings**, **Appearance**.
@@ -28,6 +34,35 @@ details.
   longer scroll sideways on a phone.
 
 ### Details
+
+- **Notifications and email alerts** (docs/guide/notifications.md, docs/design/notifications.md):
+  rules that start to warn, fail or not run and that recover, new issues, failed scans, drift
+  against the previous scan and failed connection tests become notifications. One internal event
+  type (`NotificationEvent`, fired through `NotificationPublisher`, recorded off the caller's
+  thread), told once per failing streak and once on recovery (`notify_state`). **In the app** for
+  every person (a token that opens the app; not scripts or AI assistants' tokens), per kind, with
+  `GET /api/v1/notifications` (each item's channels: in-app, and the caller's email with its status;
+  team emails by name for admins), `GET /api/v1/notifications/unread-count` (99 with `more: true`
+  beyond) and `POST /api/v1/notifications/read`; kept 90 days. **By email** for those who opt in
+  and confirm their address (admins get high-severity events at once): kinds, least severity, at
+  once or a daily digest at an hour in the server's time zone, every source or some
+  (`/api/v1/me/notifications`, **Settings › Notifications**). Admins set the mail server and its
+  rules under **Settings › Email** (`/api/v1/mail/settings`): STARTTLS, TLS or none; the password
+  sealed with the server's key, write-only, never logged, and only ever sent where it was entered
+  for (changing the server, port, security or user name asks for it again); sign-in without
+  encryption refused unless allowed; allowed email domains (others paused); confirmation of
+  personal addresses; tries, the hourly limit per address, and what happens to emails unsent
+  after a while. `kilnmark.mail.*` gives the defaults, and `kilnmark.mail.locked` fixes settings
+  the UI then shows read-only. A test email reports the server's answer in plain words, scrubbed
+  of the sign-in. Team addresses get what a viewer sees. Emails are plain text and simple HTML,
+  without images or tracking, never with values from the data: what a database said (a failed scan
+  or connection test) only for stewards and admins, for admins alone on sources with sensitive
+  columns. Workers send them with Jakarta Mail (Eclipse Angus), one claim at a time, retrying after
+  1, 3, 9 and 27 minutes then hourly, at least once, and log every attempt (**Settings › Sent
+  emails**, `GET /api/v1/mail/log`, kept 30 days). Pipeline runs (failed, or below their quality
+  threshold) have their kinds and a one-line hook, `NotificationPublisher.pipelineRunFinished`, for
+  the pipelines change to call. Migration V13 (after V12). The reference lab gains Mailpit, demo
+  source `mail` (compose profile `mail`; SMTP on 1025, its web page on 8025).
 
 - Design tokens reworked (`ui/src/tokens.css`): page, card and sidebar colours, tints for chips and
   tiles, chart and bar fills, radii, shadows and type sizes, for light, dark (cards `#1b2030` on

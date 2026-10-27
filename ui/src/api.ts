@@ -1169,3 +1169,152 @@ export const pipelinesApi = {
   /** The step catalogue with settings schemas: not used yet; the canvas (step 2) builds its palette from it. */
   steps: () => call<StepType[]>("/api/v1/steps"),
 };
+
+// ---- Notifications (docs/guide/notifications.md): the in-app feed, each person's choices, and email for admins.
+
+export type NotificationKindId =
+  | "rule_failed"
+  | "rule_recovered"
+  | "issue_opened"
+  | "scan_failed"
+  | "drift"
+  | "connection_failed"
+  | "pipeline_failed"
+  | "pipeline_low_quality";
+/** The feed itself (items, unread count, marking read) is in src/notifications/api.ts, shared with the shell's bell. */
+export type NotificationSeverity = "high" | "medium" | "low" | "info";
+export type EmailStatus = "sent" | "queued" | "failed" | "skipped";
+export type KindChoice = { id: NotificationKindId; label: string; description: string };
+/** What a person hears about; sources null means every source. */
+export type MyNotifications = {
+  available: boolean;
+  unavailable: string | null;
+  saved: boolean;
+  email: string | null;
+  enabled: boolean;
+  kinds: NotificationKindId[];
+  minSeverity: NotificationSeverity;
+  mode: "immediate" | "digest";
+  digestHour: number;
+  sources: string[] | null;
+  inAppKinds: NotificationKindId[];
+  timeZone: string;
+  mailReady: boolean;
+  mailNote: string | null;
+  kindChoices: KindChoice[];
+  confirmationRequired: boolean;
+  confirmed: boolean;
+  confirmationSentAt: string | null;
+  paused: string | null;
+  allowedDomains: string[];
+};
+export type SubscriptionInput = {
+  email: string;
+  enabled: boolean;
+  kinds: NotificationKindId[];
+  minSeverity: NotificationSeverity;
+  mode: "immediate" | "digest";
+  digestHour: number;
+  /** Ignored when allSources is true. */
+  sources: string[] | null;
+  allSources: boolean;
+};
+export type MailSecurity = "none" | "starttls" | "tls";
+export type MailSettingsView = {
+  enabled: boolean;
+  host: string | null;
+  port: number | null;
+  effectivePort: number;
+  security: MailSecurity;
+  username: string | null;
+  hasPassword: boolean;
+  fromAddress: string | null;
+  fromName: string | null;
+  baseUrl: string | null;
+  allowPlainAuth: boolean;
+  allowedDomains: string[];
+  requireConfirmation: boolean;
+  maxAttempts: number;
+  rateLimitPerHour: number;
+  undeliveredHours: number;
+  undeliveredAction: "digest" | "drop";
+  /** Settings that come from the server's configuration, by name (host, allowed-domains, ...). */
+  locked: string[];
+  saved: boolean;
+  updatedBy: string | null;
+  updatedAt: string | null;
+  ready: boolean;
+  notReady: string | null;
+  timeZone: string;
+  pausedAddresses: { kind: "person" | "team"; name: string | null; email: string }[];
+  limits: {
+    minAttempts: number;
+    maxAttempts: number;
+    minRatePerHour: number;
+    maxRatePerHour: number;
+    minUndeliveredHours: number;
+    maxUndeliveredHours: number;
+  };
+};
+/** password: leave it out to keep the stored one, "" to remove it. */
+export type MailSettingsInput = {
+  enabled: boolean;
+  host: string;
+  port: number | null;
+  security: MailSecurity;
+  username: string;
+  password?: string;
+  fromAddress: string;
+  fromName: string;
+  baseUrl: string;
+  allowPlainAuth: boolean;
+  allowedDomains: string[];
+  requireConfirmation: boolean;
+  maxAttempts: number;
+  rateLimitPerHour: number;
+  undeliveredHours: number;
+  undeliveredAction: "digest" | "drop";
+};
+export type TeamAddress = Omit<SubscriptionInput, "allSources"> & {
+  id: number;
+  name: string;
+  paused: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+export type MailLogEntry = {
+  id: number;
+  at: string;
+  recipient: string;
+  subscriberId: number | null;
+  kind: string;
+  eventIds: number[];
+  subject: string | null;
+  status: "sent" | "retrying" | "failed" | "rate_limited";
+  attempt: number;
+  error: string | null;
+};
+
+/** Notification settings and, for admins, email: the feed is notificationsApi in src/notifications/api.ts. */
+export const notifyApi = {
+  mine: () => call<MyNotifications>("/api/v1/me/notifications"),
+  saveMine: (s: SubscriptionInput & { inAppKinds: NotificationKindId[] }) =>
+    call<MyNotifications>("/api/v1/me/notifications", { method: "PUT", body: JSON.stringify(s) }),
+  confirm: (code: string) =>
+    call<MyNotifications>("/api/v1/me/notifications/confirm", { method: "POST", body: JSON.stringify({ code }) }),
+  resendConfirmation: () => call<MyNotifications>("/api/v1/me/notifications/confirm/resend", { method: "POST" }),
+  settings: () => call<MailSettingsView>("/api/v1/mail/settings"),
+  saveSettings: (s: MailSettingsInput) =>
+    call<MailSettingsView>("/api/v1/mail/settings", { method: "PUT", body: JSON.stringify(s) }),
+  test: (to: string) =>
+    call<{ ok: boolean; message: string }>("/api/v1/mail/test", { method: "POST", body: JSON.stringify({ to }) }),
+  teams: () => call<TeamAddress[]>("/api/v1/mail/teams"),
+  addTeam: (t: SubscriptionInput & { name: string }) =>
+    call<TeamAddress>("/api/v1/mail/teams", { method: "POST", body: JSON.stringify(t) }),
+  updateTeam: (id: number, t: SubscriptionInput & { name: string }) =>
+    call<TeamAddress>(`/api/v1/mail/teams/${id}`, { method: "PUT", body: JSON.stringify(t) }),
+  deleteTeam: (id: number) => call<null>(`/api/v1/mail/teams/${id}`, { method: "DELETE" }),
+  log: (status: string, limit = 200) =>
+    call<MailLogEntry[]>(`/api/v1/mail/log?status=${encodeURIComponent(status)}&limit=${limit}`),
+};

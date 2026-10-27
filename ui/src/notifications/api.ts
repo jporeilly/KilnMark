@@ -26,11 +26,14 @@ export type AppNotification = {
   teamEmails?: TeamEmail[];
 };
 
-export type NotificationPage = { items: AppNotification[]; unread: number };
+/** `more` is true when there are more unread than `unread` says (the count stops at 99: show "99+"). */
+export type NotificationPage = { items: AppNotification[]; unread: number; more?: boolean };
+export type UnreadCount = { unread: number; more?: boolean };
 
 export const notificationsApi = {
-  list: (limit = 6) => call<NotificationPage>(`/api/v1/notifications?limit=${limit}`),
-  unreadCount: () => call<{ unread: number }>("/api/v1/notifications/unread-count"),
+  list: (limit = 6, unread = false) =>
+    call<NotificationPage>(`/api/v1/notifications?limit=${limit}${unread ? "&unread=true" : ""}`),
+  unreadCount: () => call<UnreadCount>("/api/v1/notifications/unread-count"),
   markRead: (ids: string[] | "all") =>
     call<null>("/api/v1/notifications/read", {
       method: "POST",

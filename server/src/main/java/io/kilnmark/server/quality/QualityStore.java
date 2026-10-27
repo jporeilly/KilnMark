@@ -933,15 +933,16 @@ public class QualityStore {
 
     // ---- issues ----
 
-    /** Opens an issue for a failing rule, or refreshes the one already open. */
-    public void openRuleIssue(Rule rule, String title, String detail, String severity) {
-        db.tx(c -> {
+    /** Opens an issue for a failing rule, or refreshes the one already open; the new issue's id when one was opened. */
+    public Optional<Long> openRuleIssue(Rule rule, String title, String detail, String severity) {
+        return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO kilnmark.quality_issue (asset_urn, field_name, rule_id, issue_key, title, detail, severity)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (asset_urn, issue_key) WHERE status = 'open'
                 DO UPDATE SET title = EXCLUDED.title, detail = EXCLUDED.detail, severity = EXCLUDED.severity,
-                    updated_at = now()""")) {
+                    updated_at = now()
+                RETURNING id, xmax = 0""")) {
                 ps.setString(1, rule.assetUrn());
                 ps.setString(2, rule.field());
                 ps.setLong(3, rule.id());
@@ -949,10 +950,16 @@ public class QualityStore {
                 ps.setString(5, title);
                 ps.setString(6, detail);
                 ps.setString(7, severity);
-                ps.executeUpdate();
+                return opened(ps);
             }
-            return null;
         });
+    }
+
+    /** The id of the row an upsert inserted ({@code xmax = 0}), or empty when it updated one. */
+    private static Optional<Long> opened(PreparedStatement ps) throws SQLException {
+        try (ResultSet rs = ps.executeQuery()) {
+            return rs.next() && rs.getBoolean(2) ? Optional.of(rs.getLong(1)) : Optional.empty();
+        }
     }
 
     /** Resolves a rule's open issue once it passes again. */
@@ -963,16 +970,19 @@ public class QualityStore {
 
     /**
      * Opens an issue for drift, or refreshes the open one for the same kind of change on the same
-     * column (key {@code drift:<change>:<field>}), pointing it at the latest event.
+     * column (key {@code drift:<change>:<field>}), pointing it at the latest event. Returns the new
+     * issue's id when one was opened.
      */
-    public void openDriftIssue(String urn, String field, String change, long driftEventId, String title, String detail,
-                               String severity) {
-        update("""
-            INSERT INTO kilnmark.quality_issue (asset_urn, field_name, drift_event_id, issue_key, title, detail, severity)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (asset_urn, issue_key) WHERE status = 'open'
-            DO UPDATE SET drift_event_id = EXCLUDED.drift_event_id, title = EXCLUDED.title, detail = EXCLUDED.detail,
-                severity = EXCLUDED.severity, updated_at = now()""", ps -> {
+    public Optional<Long> openDriftIssue(String urn, String field, String change, long driftEventId, String title,
+                                         String detail, String severity) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("""
+                INSERT INTO kilnmark.quality_issue (asset_urn, field_name, drift_event_id, issue_key, title, detail, severity)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (asset_urn, issue_key) WHERE status = 'open'
+                DO UPDATE SET drift_event_id = EXCLUDED.drift_event_id, title = EXCLUDED.title, detail = EXCLUDED.detail,
+                    severity = EXCLUDED.severity, updated_at = now()
+                RETURNING id, xmax = 0""")) {
                 ps.setString(1, urn);
                 ps.setString(2, field);
                 ps.setLong(3, driftEventId);
@@ -980,7 +990,9 @@ public class QualityStore {
                 ps.setString(5, title);
                 ps.setString(6, detail);
                 ps.setString(7, severity);
-            });
+                return opened(ps);
+            }
+        });
     }
 
     private static final String ISSUE_COLUMNS = "id, asset_urn, field_name, rule_id, drift_event_id, title, detail, "

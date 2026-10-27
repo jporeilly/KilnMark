@@ -61,6 +61,9 @@ public class QualityService {
     private final ObjectMapper json;
     /** One client for every webhook call. */
     private final Webhooks hooks;
+    /** Notifications (docs/design/notifications.md); field injection keeps the constructor as other streams know it. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.notify.NotificationPublisher notifications;
 
     public QualityService(GraphStore graph, QualityStore store, Connectors connectors, SecretBox secrets,
                           KilnmarkConfig config, ObjectMapper json) {
@@ -316,14 +319,19 @@ public class QualityService {
             List<Drift.Event> found = Drift.compare(now, previous, cadence, band);
             List<Long> ids = store.saveDrift(now.assetUrn(), versionId, previous.versionId(), "previous", found);
             events += found.size();
+            if (notifications != null) {
+                notifications.driftFound(now.assetUrn(), versionId, found);
+            }
             for (int i = 0; i < found.size(); i++) {
                 Drift.Event e = found.get(i);
                 if (e.change().equals("column_renamed")) {
                     store.carrySensitive(now.assetUrn(), e.evidence().path("from").asText(), e.field());
                 }
                 if (!e.severity().equals("low")) {
-                    store.openDriftIssue(now.assetUrn(), e.field(), e.change(), ids.get(i), "Drift: " + e.message(),
-                        "Found when comparing with the previous scan (" + previous.observedAt() + ").", e.severity());
+                    String title = "Drift: " + e.message();
+                    store.openDriftIssue(now.assetUrn(), e.field(), e.change(), ids.get(i), title,
+                        "Found when comparing with the previous scan (" + previous.observedAt() + ").", e.severity())
+                        .ifPresent(issue -> issueOpened(issue, now.assetUrn(), title, e.severity()));
                 }
             }
         }
@@ -429,8 +437,13 @@ public class QualityService {
                 String detail = status == Rule.Status.ERROR ? "The rule could not run: " + e.error()
                     : Measures.count(e.failing()) + " of " + Measures.count(e.total()) + " rows fail"
                         + (e.message() == null || quiet ? "" : " (" + e.message() + ")");
-                store.openRuleIssue(rule, "Rule '" + rule.name() + "' " + status.id() + "s", detail, severity);
+                String title = "Rule '" + rule.name() + "' " + status.id() + "s";
+                store.openRuleIssue(rule, title, detail, severity)
+                    .ifPresent(issue -> issueOpened(issue, rule.assetUrn(), title, severity));
             }
+        }
+        if (notifications != null) {
+            notifications.ruleEvaluated(rule, status, previous, e.failing(), e.total(), e.error());
         }
         boolean notable = status != Rule.Status.PASS || (previous != null && previous != Rule.Status.PASS);
         if (rule.actions().webhook() != null && notable) {
@@ -456,6 +469,12 @@ public class QualityService {
                 store.noteResult(resultId, "The webhook was not called: its address is no longer on this server's "
                     + "webhook allow-list (kilnmark.quality.webhook-allow-list).");
             }
+        }
+    }
+
+    private void issueOpened(long issue, String urn, String title, String severity) {
+        if (notifications != null) {
+            notifications.issueOpened(issue, urn, title, severity);
         }
     }
 

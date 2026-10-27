@@ -80,6 +80,10 @@ public class PipelineService {
     @Inject
     QualityService quality;
 
+    /** Notifications: a run that fails is told, once until a run of the pipeline succeeds (docs/design/notifications.md). */
+    @Inject
+    io.kilnmark.server.notify.NotificationPublisher notifications;
+
 
     @Inject
     public PipelineService(PipelineStore store, PipelineCompilerPort compiler, StepFactories steps, GraphRunner runner,
@@ -651,6 +655,7 @@ public class PipelineService {
             result.put("rowsWritten", total);
             result.set("notes", notes);
             store.finishRun(id, o.status(), o.error(), result.toString());
+            finished(run.pipeline(), id, o.status());
             LOG.infof("Run %d of pipeline %s: %s", id, run.pipeline(), o.status());
         } catch (InterruptedException e) {
             Thread.interrupted(); // cleared so the run's record can be written
@@ -659,6 +664,7 @@ public class PipelineService {
             }
             store.finishRun(id, "failed", "The worker running this pipeline was stopped before it started writing. "
                 + "Run it again.", null);
+            finished(run.pipeline(), id, "failed");
         } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException e) {
             // The exception's own text may hold a source's secret: log it scrubbed, without the trace.
             LOG.errorf("Run %d of pipeline %s failed: %s", id, run.pipeline(), context.scrub(String.valueOf(e)));
@@ -666,6 +672,7 @@ public class PipelineService {
                 PipelineExecution.closeSteps(c.graph()); // created, never handed to the runner
             }
             store.finishRun(id, "failed", context.scrub("The run failed: " + e.getMessage()), null);
+            finished(run.pipeline(), id, "failed");
         } finally {
             for (String urn : held) {
                 try {
@@ -693,6 +700,16 @@ public class PipelineService {
         store.finishRun(id, cancelled ? "cancelled" : "failed", cancelled ? "Cancelled before it started"
             : "The worker running this pipeline was stopped before it started. Run it again.", null);
         return true;
+    }
+
+    /**
+     * Tells of a finished run. Runs carry no quality score yet, so only a failure is told; pass the
+     * score and the pipeline's threshold here once they exist, and {@code pipeline_low_quality} follows.
+     */
+    void finished(String pipeline, long id, String status) {
+        if (notifications != null) {
+            notifications.pipelineRunFinished(pipeline, id, status, null, null, "#/pipeline-runs/" + id);
+        }
     }
 
     private static AccessRole role(String text) {
