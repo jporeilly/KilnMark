@@ -402,9 +402,11 @@ database's host, port and database build its URL; the full URL is under Advanced
 **Choose what to scan** (schemas or folders with counts, patterns, and a preview of any table or
 file), and **Save** (display name, description, AI rule; Save, or Save and scan). Edit on a
 source's page opens the same panel. Escape, the close button or a click beside it closes it. On and off settings (sub-folders, header
-row, keep document text, read text on demand, path-style addressing) are switches; the form knows
-which settings are which from `ui/src/components/settingKinds.ts`, because the connectors API
-gives settings a label and a hint but no type.
+row, keep document text, read text on demand, path-style addressing) are switches, choices such as SQL Server's read isolation are lists, and numbers are number boxes:
+the connectors API gives each setting a `kind` (`text`, `number`, `boolean`, `choice` or `url`), its
+`choices` and its `defaultValue` ([setting kinds](design/connectors.md#setting-kinds)), and a save
+refuses a value of the wrong kind (`header: true or false, not 'yes'`). `ui/src/components/settingKinds.ts`
+guesses from the key and hint only for a setting without a kind.
 
 **Preview.** The first rows of a table or file (100 by default, at most 1,000), read live through
 the connector with the same time limit and places as connection tests, and never stored, logged
@@ -432,6 +434,12 @@ listed by `GET /api/v1/common-settings`:
 | `ai_egress` | Which AI models may see the source's metadata and data: `local_only` (the default) only models on servers marked local, `allowed` any configured model, `none` no model |
 | `include` | Only tables or files matching these patterns (see below); empty for all |
 | `exclude` | Leave out tables or files matching these patterns |
+| `allow_writing` | `true` lets pipelines write to the source; `false` (the default) keeps it read-only. Admins only |
+| `keep_samples` | `true` (the default) keeps sample rows and example values; `false` keeps shapes and statistics only |
+| `sample_rows` | Rows sampled per table or file for profiling, 0 to 10,000; empty for the server's setting |
+| `table_sample_above_rows` | Databases: tables above this many rows (at least 1000) are profiled from a sample |
+
+Each has a kind (text, choice, boolean or number) that a save checks, as for connector settings.
 
 Patterns are globs, matched ignoring case: `*` (not across `/`), `**` (across `/`), `?`, `[abc]`,
 `{a,b}`, `\` before a character to take it literally; up to 100 per setting, each up to 200

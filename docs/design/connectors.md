@@ -12,7 +12,7 @@ line in a services file; nothing in the server changes.
 | --- | --- |
 | `kind()` | Stable identifier stored with each source: `postgresql`, `sqlserver`, `files`, `s3` |
 | `displayName()` | For people: "SQL Server" |
-| `settings()` | The settings a source takes, in form order (key, label, required, hint, multiple) |
+| `settings()` | The settings a source takes, in form order (key, label, required, hint, multiple, kind, choices, default); see [Setting kinds](#setting-kinds) |
 | `validate(source)` | Problems with the settings without connecting, each starting `setting: ...` |
 | `catalog(source)` | Every asset the source holds, with its fields; throws `ConnectorException` with a message a person can act on |
 | `reader(source, asset, read)` | The first pipeline step that reads one asset as Arrow batches |
@@ -71,6 +71,43 @@ A `RelationshipInfo` is a relationship the source declares between two of its as
 the constraint's `name`. Both assets must be in the same catalogue. Relationships Kilnmark infers
 from names and values are not the connector's business: the server proposes those after the scan
 ([ADR 0019](../adr/0019-relationships.md)).
+
+### Setting kinds
+
+Every `Connector.Setting` has a kind, which decides the control the connection form shows and how
+a save checks the value. The kinds are those of `SettingSpec.Kind` that fit a value stored as
+text, plus `URL`:
+
+| Kind | Control | A save accepts |
+| --- | --- | --- |
+| `TEXT` | A text box | Anything |
+| `NUMBER` | A number box | A whole or decimal number (`5000`, `2.5`) |
+| `BOOLEAN` | A switch | `true` or `false`, in any case; not `yes`, `on` or `1` |
+| `CHOICE` | A list | One of `choices`, in any case |
+| `URL` | A text box for an address | A scheme and no spaces (`https://...`, `jdbc:...`) |
+
+Declare them with `Setting.text`, `Setting.url`, `Setting.number`, `Setting.bool` and
+`Setting.choice`, giving the default where there is one (`Setting.bool("header", ..., true, ...)`).
+The five-argument constructor still works and gives `TEXT` with no default. A `multiple` setting
+has each comma-separated value checked. There is no secret kind on purpose: settings are stored and
+shown as plain text, so a password, key or token goes in the source's secret, which is encrypted.
+
+Values are still stored as text, so declaring a kind needs no migration, and values saved before
+kinds load as they are; only a save checks them. The kind check runs before the connector's own
+`validate`, which still checks what a kind cannot say (a delimiter of one character, a URL of the
+right database). `GET /api/v1/connectors` gives each setting's `kind` in lower case, its `choices`
+and its `defaultValue`; the settings every source has (`GET /api/v1/common-settings`) carry a
+`kind` too.
+
+The built-in connectors declare:
+
+| Connector | Setting kinds |
+| --- | --- |
+| PostgreSQL | `url` URL; `username`, `schemas` TEXT |
+| SQL Server | as PostgreSQL; `trust_server_certificate` BOOLEAN (false); `isolation` CHOICE (`read-uncommitted`, `snapshot`, `read-committed`; default `read-uncommitted`) |
+| Folder | `path`, `encoding`, `delimiter` TEXT; `recursive` BOOLEAN (true); `header` BOOLEAN (true); `keep_text` BOOLEAN (true); `read_text_on_demand` BOOLEAN (false) |
+| S3 | `endpoint` URL; `region`, `bucket`, `prefix`, `access_key_id`, `encoding`, `delimiter` TEXT; `path_style` BOOLEAN (false); `header`, `keep_text`, `read_text_on_demand` as for folders |
+| Every source | `description`, `include`, `exclude` TEXT; `ai_egress` CHOICE; `allow_writing` BOOLEAN (false); `keep_samples` BOOLEAN (true); `sample_rows` NUMBER (0 to 10,000); `table_sample_above_rows` NUMBER (databases) |
 
 ## The reader step
 
@@ -321,7 +358,8 @@ values per shape as one `SAMPLE` metadata event, which the server stores under t
 
 List the class in `kiln-plugins/src/main/resources/META-INF/services/io.kilnmark.kiln.connect.Connector`.
 The UI's add-source form, bulk import (one CSV column per setting) and `GET /api/v1/connectors`
-pick it up from `settings()`.
+pick it up from `settings()`. Give every setting its kind ([Setting kinds](#setting-kinds)): the
+form then shows switches, lists and numbers without guessing.
 
 ## Testing it
 

@@ -1,17 +1,19 @@
 import type { ConnectorSetting } from "../api";
 
 /**
- * Which control a connector setting gets. The server describes connector settings with a label
- * and a hint only (Views.Setting has no type), and some hints read "true (the default) or false",
- * so the form needs to know which are on/off settings, lists of choices, numbers or secrets. Known
- * keys are listed here; other settings whose hint offers just true and false are treated as
- * switches too. Values are still sent as the strings the server expects ("true", "false").
+ * Which control a connector setting gets. The server declares each setting's kind (text, number,
+ * boolean, choice or url), its choices and its default, and the form follows that. The guesses
+ * below are only a fallback for a setting without a kind (a server from before kinds): known keys
+ * are listed, and settings whose hint offers just true and false are treated as switches. The
+ * tables of help and choice labels are used for either, since they say things in terms of the
+ * control. Values are still sent as the strings the server expects ("true", "false").
  */
 export type SettingKind =
   | { kind: "switch"; defaultOn: boolean; help: string }
   | { kind: "select"; choices: { value: string; label: string }[]; defaultValue: string; help: string }
   | { kind: "number"; min?: number; max?: number; help: string }
   | { kind: "password"; help: string }
+  | { kind: "url" }
   | { kind: "text" };
 
 /** Help for the on/off settings, said in terms of the switch rather than "true" and "false". */
@@ -64,7 +66,47 @@ const SECRET_KEY = /(password|secret|token|private_key)$/;
  */
 const BOOLEAN_HINT = /^\s*(true|false)\b(\s*\(the default\))?\s*(or|:|;|,|\s(lets|keeps|stores|for))/i;
 
+/** The control for a setting the server gave a kind; null when it gave none. */
+function declaredKind(s: ConnectorSetting): SettingKind | null {
+  switch (s.kind) {
+    case "boolean":
+      return {
+        kind: "switch",
+        defaultOn: s.defaultValue != null ? s.defaultValue.toLowerCase() === "true" : (defaultFromHint(s.hint) ?? false),
+        help: SWITCH_HELP[s.key] ?? switchHelp(s.hint),
+      };
+    case "choice": {
+      const known = CHOICES[s.key];
+      const values = s.choices ?? [];
+      const defaultValue = s.defaultValue ?? known?.defaultValue ?? "";
+      const label = (v: string) =>
+        known?.choices.find((c) => c.value === v)?.label ?? (v === defaultValue ? `${v} (default)` : v);
+      return {
+        kind: "select",
+        choices: [
+          // No default: an empty choice, so leaving it unset stays possible.
+          ...(defaultValue === "" ? [{ value: "", label: "Not set" }] : []),
+          ...values.map((v) => ({ value: v, label: label(v) })),
+        ],
+        defaultValue,
+        help: known?.help ?? s.hint,
+      };
+    }
+    case "number":
+      return { kind: "number", min: 0, help: s.hint };
+    case "url":
+      return { kind: "url" };
+    case "text":
+      // A secret is never shown as plain text, whatever kind it was given.
+      return SECRET_KEY.test(s.key) ? { kind: "password", help: s.hint } : { kind: "text" };
+    default:
+      return null;
+  }
+}
+
 export function settingKind(s: ConnectorSetting): SettingKind {
+  const declared = declaredKind(s);
+  if (declared) return declared;
   if (CHOICES[s.key]) return { kind: "select", ...CHOICES[s.key] };
   // A secret is never a switch, whatever its hint says.
   if (SECRET_KEY.test(s.key)) return { kind: "password", help: s.hint };
@@ -87,15 +129,23 @@ export function settingText(s: ConnectorSetting | undefined, value: string): str
   const k = settingKind(s);
   if (k.kind === "switch") return value.toLowerCase() === "true" ? "On" : value.toLowerCase() === "false" ? "Off" : value;
   if (k.kind === "select")
-    return k.choices.find((c) => c.value === value.trim().toLowerCase())?.label.replace(" (default)", "") ?? value;
+    return (
+      k.choices.find((c) => c.value.toLowerCase() === value.trim().toLowerCase())?.label.replace(" (default)", "") ??
+      value
+    );
   return value;
 }
 
 /**
- * A setting every source has whose only choices are false and true (allow_writing) is a switch:
- * its default and help, said in terms of on and off. Null for other common settings.
+ * A setting every source has of kind boolean (allow_writing, keep_samples) is a switch: its
+ * default and help, said in terms of on and off. Null for other common settings. Without a kind
+ * (an older server), one whose only choices are false and true is taken for a switch.
  */
-export function commonSwitch(c: { choices: string[]; defaultValue: string | null; hint: string }) {
+export function commonSwitch(c: { choices: string[]; defaultValue: string | null; hint: string; kind?: string }) {
+  if (c.kind === "boolean") {
+    return { defaultOn: c.defaultValue === "true", help: switchHelp(c.hint).replace(/^on lets/i, "Lets") };
+  }
+  if (c.kind) return null;
   const choices = [...c.choices].map((x) => x.toLowerCase()).sort();
   if (choices.length !== 2 || choices[0] !== "false" || choices[1] !== "true") return null;
   return { defaultOn: c.defaultValue === "true", help: switchHelp(c.hint).replace(/^on lets/i, "Lets") };

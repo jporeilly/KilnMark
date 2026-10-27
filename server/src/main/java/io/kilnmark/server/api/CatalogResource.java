@@ -126,7 +126,8 @@ public class CatalogResource {
     static Views.Connector view(io.kilnmark.kiln.connect.Connector c) {
         var kind = c.containerKind();
         java.util.List<Views.Setting> settings = new java.util.ArrayList<>(c.settings().stream()
-            .map(s -> new Views.Setting(s.key(), s.label(), s.required(), s.hint(), s.multiple(), c.example(s.key())))
+            .map(s -> new Views.Setting(s.key(), s.label(), s.required(), s.hint(), s.multiple(), c.example(s.key()),
+                s.kind().name().toLowerCase(java.util.Locale.ROOT), s.choices(), s.defaultValue()))
             .toList());
         if (settings.stream().noneMatch(s -> s.key().equals(kind.setting()))) {
             settings.add(new Views.Setting(kind.setting(), kind.label(), false, "Leave empty to scan them all, or "

@@ -28,8 +28,18 @@ public final class Views {
                          Map<String, Integer> formats) {
     }
 
-    /** One setting of a kind of source. {@code example} is a sample value for forms, or null. */
-    public record Setting(String key, String label, boolean required, String hint, boolean multiple, String example) {
+    /**
+     * One setting of a kind of source. {@code example} is a sample value for forms, or null.
+     * {@code kind} is {@code text}, {@code number}, {@code boolean}, {@code choice} or {@code url};
+     * {@code choices} lists a choice's values (empty otherwise); {@code defaultValue} is the value used
+     * when the setting is left empty, as stored text, or null.
+     */
+    public record Setting(String key, String label, boolean required, String hint, boolean multiple, String example,
+                          String kind, List<String> choices, String defaultValue) {
+
+        public Setting(String key, String label, boolean required, String hint, boolean multiple, String example) {
+            this(key, label, required, hint, multiple, example, "text", List.of(), null);
+        }
     }
 
     /**
@@ -80,9 +90,13 @@ public final class Views {
     public record PreviewColumn(String name, String kind, String sourceType) {
     }
 
-    /** A setting every source has. {@code choices} lists the values allowed; empty for free text. */
+    /**
+     * A setting every source has. {@code choices} lists the values allowed; empty for free text.
+     * {@code kind} is {@code text}, {@code number}, {@code boolean} or {@code choice}, as for
+     * {@link Setting}.
+     */
     public record CommonSetting(String key, String label, String hint, boolean multiple, List<String> choices,
-                                String defaultValue) {
+                                String defaultValue, String kind) {
     }
 
     /** The outcome of a connection test. {@code problem} is null when it worked; it never holds a secret. */

@@ -106,7 +106,7 @@ public final class FilesConnector extends FileSourceConnector {
                 "The full path of a folder this server can read, inside one of the folders its administrator "
                     + "allows" + (roots.isEmpty() ? "" : " (" + String.join(", ", roots.stream().map(Path::toString)
                     .toList()) + ")"), false),
-            new Setting("recursive", "Include sub-folders", false, "true (the default) or false", false),
+            Setting.bool("recursive", "Include sub-folders", true, "true (the default) or false"),
             ENCODING, DELIMITER, HEADER, KEEP_TEXT, READ_TEXT_ON_DEMAND);
     }
 

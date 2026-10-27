@@ -35,9 +35,9 @@ public abstract class FileSourceConnector implements Connector {
         "Leave empty to detect it (comma, semicolon, tab or |). Write tab as \\t", false);
 
     /** The optional setting saying delimited files have no header row. */
-    static final Setting HEADER = new Setting("header", "Header row", false,
+    static final Setting HEADER = Setting.bool("header", "Header row", true,
         "true (the default): the first row names the columns. false: it is data, and columns are named "
-            + "column_1, column_2 and so on", false);
+            + "column_1, column_2 and so on");
 
     /** The formats read as rows (Excel sheets as tables), and documents read as text. */
     static final List<String> FORMATS = List.of("csv", "tsv", "json", "jsonl", "parquet", "excel", "documents");
@@ -72,15 +72,14 @@ public abstract class FileSourceConnector implements Connector {
     }
 
     /** Whether to keep the text of documents, or only their properties. */
-    static final Setting KEEP_TEXT = new Setting("keep_text", "Keep document text", false,
+    static final Setting KEEP_TEXT = Setting.bool("keep_text", "Keep document text", true,
         "true (the default) stores documents' text in Kilnmark for search and reading. false stores only their "
-            + "properties (title, author, pages, language, words) and deletes text stored before at the next scan",
-        false);
+            + "properties (title, author, pages, language, words) and deletes text stored before at the next scan");
 
     /** With keep_text false, whether stewards may have a document's text read from the source to view it. */
-    static final Setting READ_TEXT_ON_DEMAND = new Setting("read_text_on_demand", "Read text on demand", false,
+    static final Setting READ_TEXT_ON_DEMAND = Setting.bool("read_text_on_demand", "Read text on demand", false,
         "Only when keep_text is false. true lets stewards view a document's text, read from the source when they "
-            + "open it and never stored; false (the default) shows only its properties", false);
+            + "open it and never stored; false (the default) shows only its properties");
 
     /**
      * A setting only the server sets, on its own copy of a source, for a read a person asked for:

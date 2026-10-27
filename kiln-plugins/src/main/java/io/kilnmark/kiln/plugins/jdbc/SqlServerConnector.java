@@ -99,13 +99,13 @@ public final class SqlServerConnector extends JdbcConnector {
     @Override
     public List<Setting> settings() {
         List<Setting> settings = new ArrayList<>(super.settings());
-        settings.add(new Setting(TRUST_SERVER_CERTIFICATE, "Trust the server certificate", false, "Only for test "
-            + "servers with a self-signed certificate. Off by default. With it off, the certificate must be valid",
-            false));
-        settings.add(new Setting("isolation", "Read isolation", false, "read-uncommitted (the default) takes no "
+        settings.add(Setting.bool(TRUST_SERVER_CERTIFICATE, "Trust the server certificate", false, "Only for test "
+            + "servers with a self-signed certificate. Off by default. With it off, the certificate must be valid"));
+        settings.add(Setting.choice("isolation", "Read isolation", List.copyOf(ISOLATION.keySet()), "read-uncommitted",
+            "read-uncommitted (the default) takes no "
             + "shared locks, so reading never blocks the application's writes, but may see changes not yet "
             + "committed; snapshot reads a consistent view without locks if the database allows snapshot "
-            + "isolation; read-committed takes shared locks and can block writers", false));
+            + "isolation; read-committed takes shared locks and can block writers"));
         return List.copyOf(settings);
     }
 

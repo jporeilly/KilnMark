@@ -92,9 +92,8 @@ public final class S3Connector extends FileSourceConnector {
     @Override
     public List<Setting> settings() {
         return List.of(
-            new Setting("endpoint", "Endpoint", false,
-                "Leave empty for AWS. For S3-compatible storage, its URL, for example http://storage.example.com:9000",
-                false),
+            Setting.url("endpoint", "Endpoint", false,
+                "Leave empty for AWS. For S3-compatible storage, its URL, for example http://storage.example.com:9000"),
             new Setting("region", "Region", false, "For example eu-west-2; default us-east-1", false),
             new Setting("bucket", "Bucket", true, "The bucket to scan, for example landing-bucket", false),
             new Setting("prefix", "Prefix", false, "Only objects whose keys start with this, for example raw/", false),
@@ -102,8 +101,8 @@ public final class S3Connector extends FileSourceConnector {
                 "The secret access key goes in the source's secret"
                     + (allowDefaultCredentials ? ". On AWS, leave empty to use the server's own AWS credentials" : ""),
                 false),
-            new Setting("path_style", "Path-style addressing", false,
-                "true for most S3-compatible storage (VersityGW, MinIO); false (the default) for AWS", false),
+            Setting.bool("path_style", "Path-style addressing", false,
+                "true for most S3-compatible storage (VersityGW, MinIO); false (the default) for AWS"),
             ENCODING, DELIMITER, HEADER, KEEP_TEXT, READ_TEXT_ON_DEMAND);
     }
 
