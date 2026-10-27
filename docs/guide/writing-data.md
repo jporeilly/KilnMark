@@ -153,7 +153,7 @@ used only for tables the step creates.
   - id: orphans
     type: write
     input: joined.rejected
-    source: lab-share
+    source: file-share
     path: quarantine/orphan-spend.csv
     format: csv
 ```
@@ -220,7 +220,7 @@ reads the table's columns from the database's description of it, so a login that
 can append. Kilnmark checks these before writing, except, on SQL Server, the right to repeat the
 old table's grants after a replace, and to give a table's own owner `CONTROL` of the new one: a
 login without it fails at that point and nothing changes. If something is missing, the run stops with a message such
-as "the login lab cannot write to billing.customer_spend in warehouse: ask a database
+as "the login kilnmark_writer cannot write to billing.customer_spend in warehouse: ask a database
 administrator to grant INSERT on billing.customer_spend". Pass it on as it is.
 
 ## What Kilnmark records

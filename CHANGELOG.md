@@ -35,6 +35,60 @@ details.
 
 ### Details
 
+- **The release holds the product only** (ADR 0024): the reference lab is for development, tests
+  and demos, and never ships. The release has its own `compose.yaml`, made from
+  `containers/compose.release.yaml`: no lab defaults, a commented-out example for the folder to
+  scan, images tagged with the version, and the server image built from the release folder (the
+  server Containerfile's new `APP_DIR` argument). It has no default password or token: it requires
+  `KILNMARK_DB_PASSWORD` and `KILNMARK_ADMIN_TOKEN` and stops, naming the missing one, without
+  them; `.env.example` beside it lists every setting; the database is published on the machine
+  itself only. The root `compose.yaml` is the developer setup, with its defaults.
+  **New pipeline** starts from the first source with scanned tables or files and the first that
+  allows writing, or from placeholders such as `<your source>`, instead of lab sources. Guide and
+  message examples use neutral names (`sales-db`, `warehouse`, `file-share`, `landing-bucket`).
+  `release` now runs `checkProductOnly`, which fails on any lab folder, source name, path, lab-only
+  port or mention in the release, in Kilnmark's own jars (the UI bundle included) and in the
+  bundled guides, and on a default or literal value for any password, secret or token in the
+  shipped `compose.yaml` or `.env.example`; justified exceptions go in
+  `config/product-only-allow.txt`.
+- **Reference lab: `lab-warehouse`** (lab/README.md): a second bucket on the lab's VersityGW server,
+  an anonymous volume that starts empty (no new service). `lab/sources.csv` registers it with
+  `allow_writing=true`; the column's empty cells keep `lab-db`, `lab-bucket` and `lab-share`
+  read-only, also on a later import. Reset it by emptying the bucket.
+- **A lab bucket for pipeline output (development).** The reference lab has an empty bucket, `lab-warehouse`,
+  that pipelines may write to, so the lab's synthetic source data stays read-only.
+
+- **A sample SQL Server database in the reference lab (development).** `.\lab\lab.ps1 start sqlserver` (or
+  `./lab/lab.sh start sqlserver`) starts SQL Server 2022 Developer with `labdb`, a synthetic
+  field-service and sales database with problems planted for profiling and rules to find. Start,
+  stop and reset each demo source on its own, and every new connector now comes with a lab dataset.
+- **Reference lab: SQL Server and per-source scripts** (lab/README.md): service `lab-sqlserver`
+  (`mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04`, the tag `SqlServerIngestTest`
+  pins; port 14330; named volume; about 2 GB of memory; starting it accepts Microsoft's Developer
+  licence, `ACCEPT_EULA=Y`) and a one-shot `lab-sqlserver-init` that loads `labdb` once with the
+  image's `sqlcmd`: schemas `sales`, `hr`, `ops` (9 tables, a view, 6,901 rows, synthetic personal
+  data marked in descriptions and sensitivity classifications) and an empty `warehouse` for
+  pipeline writes. Logins `kiln_reader` (read-only) and `kiln_writer` (tables in `warehouse` only).
+  Planted: null emails, duplicate keys in a staging table with no primary key, out-of-range dates
+  and five phone formats. `lab/sources.csv` adds `lab-sqlserver`, with
+  `trust_server_certificate=true` for the server's self-signed certificate. Every lab service
+  is now in a compose profile named after its demo source plus `all`, so a bare `up` starts
+  nothing; `lab/lab.ps1` and `lab/lab.sh` (`list`, `start`, `stop`, `status`, `reset`, `logs`,
+  `sources`) start just what is needed, and `build.ps1 -Lab` takes names
+  (`-Lab postgres,sqlserver`). docs/design/connectors.md gains a definition of done: a connector
+  ships with a lab dataset, or for SaaS and cloud-only connectors a mock or emulator and a test
+  account recipe; lab/README.md has a lab coverage table.
+- **SQL Server: Trust the server certificate** (docs/design/connectors.md): new setting
+  `trust_server_certificate` (`true` or `false`, off by default) for test servers with a
+  self-signed certificate. It passes `trustServerCertificate=true` to the driver as a connection
+  property on every connection, scans, checks, rules and reads (`JdbcConnector.driverSettings`,
+  `driver.` settings of the reader step), and never edits the URL; a URL that also sets
+  `trustServerCertificate` is refused with the setting, and changing it needs the password again.
+  The connection-failure hint names it instead of the URL property.
+- **Bulk import keeps semicolons** (docs/development.md): only list settings (`schemas`,
+  `containers`) turn `;` into `,`. A SQL Server URL in a `url` column, a `;` delimiter and a
+  description were corrupted before; passwords never were.
+
 - **Notifications and email alerts** (docs/guide/notifications.md, docs/design/notifications.md):
   rules that start to warn, fail or not run and that recover, new issues, failed scans, drift
   against the previous scan and failed connection tests become notifications. One internal event

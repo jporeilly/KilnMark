@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -24,7 +25,8 @@ import io.kilnmark.kiln.StepException;
 /**
  * Reads a database table into Arrow batches.
  *
- * <p>Settings: {@code url}, {@code user}, {@code password}, either {@code query} (with
+ * <p>Settings: {@code url}, {@code user}, {@code password}, driver properties as
+ * {@code driver.}<i>name</i> (for example {@code driver.trustServerCertificate}), either {@code query} (with
  * {@code label} naming what it reads) or {@code schema} and {@code table}, {@code asset-urn}
  * (for the row count it reports), {@code batch-size} (default 8192) and {@code row-limit}
  * (default 0, every row; with {@code query}, the query must apply the limit itself) and
@@ -42,6 +44,8 @@ public final class JdbcTableInput implements Step {
 
     public static final String TYPE = "jdbc-table-input";
 
+    /** Settings starting with this are driver properties, passed to the driver without it. */
+    public static final String DRIVER_PREFIX = "driver.";
     /** The setting holding the transaction isolation level the read runs at, as a JDBC level number. */
     public static final String ISOLATION = "transaction-isolation";
     /** Setting: sample tables estimated above this many rows. */
@@ -88,8 +92,7 @@ public final class JdbcTableInput implements Step {
                 + (rowLimit > 0 ? " LIMIT " + rowLimit : "");
         }
         try {
-            connection = DriverManager.getConnection(context.setting("url"), context.setting("user", null),
-                context.settings().get("password"));
+            connection = DriverManager.getConnection(context.setting("url"), connectionProperties(context.settings()));
             connection.setReadOnly(true);
             connection.setAutoCommit(false); // PostgreSQL streams with a cursor only inside a transaction
             if (context.settings().containsKey(ISOLATION)) {
@@ -113,6 +116,23 @@ public final class JdbcTableInput implements Step {
         } catch (SQLException e) {
             throw new StepException("Cannot read " + label + ": " + e.getMessage(), e);
         }
+    }
+
+    /** The user, password and {@code driver.} settings as the driver's connection properties. */
+    static Properties connectionProperties(Map<String, String> settings) {
+        Properties p = new Properties();
+        settings.forEach((k, v) -> {
+            if (v != null && k.startsWith(DRIVER_PREFIX) && k.length() > DRIVER_PREFIX.length()) {
+                p.setProperty(k.substring(DRIVER_PREFIX.length()), v);
+            }
+        });
+        if (settings.get("user") != null) {
+            p.setProperty("user", settings.get("user"));
+        }
+        if (settings.get("password") != null) {
+            p.setProperty("password", settings.get("password"));
+        }
+        return p;
     }
 
     @Override

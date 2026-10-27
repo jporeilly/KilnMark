@@ -1,16 +1,20 @@
 # Reference lab: the test estate Kilnmark discovers. It joins Kilnmark's network, so start
-# Kilnmark first (podman compose up -d), then the lab:
-#   podman compose -f lab/compose.yaml up -d      (or: docker compose ...)
+# Kilnmark first (podman compose up -d), then the demo sources you need:
+#   .\lab\lab.ps1 start sqlserver          ./lab/lab.sh start postgres s3        (or: start all)
+#   podman compose -f lab/compose.yaml --profile all up -d      (or: docker compose ...)
+# Every service has a profile named after its demo source (postgres, s3, sqlserver, ...) and the
+# profile all, so a bare "up" with no profile starts nothing. See lab/README.md.
 # Sources it provides:
 #   From Kilnmark:      jdbc:postgresql://lab-postgres:5432/lab     S3 endpoint http://lab-s3:7070
 #   From this machine:  localhost:5433                              S3 endpoint http://localhost:9000
 #   PostgreSQL  db=lab  user=lab  password=lab   (schemas crm, billing)
-#   S3          access key=labadmin  secret=labadmin123  bucket=lab-raw  (path-style)
+#   S3          access key=labadmin  secret=labadmin123  buckets lab-raw, lab-warehouse  (path-style)
 #   File share  lab/files/share (read directly from disk)
 #   Mailpit     (profile mail) SMTP lab-mailpit:1025 from Kilnmark (localhost:1025 here), no sign-in,
 #               security none; the emails it catches at http://localhost:8025
 services:
   lab-postgres:
+    profiles: ["postgres", "all"]
     image: docker.io/library/postgres:18
     environment:
       POSTGRES_DB: lab
@@ -26,8 +30,11 @@ services:
       retries: 30
 
   # S3-compatible object storage: VersityGW (Apache 2.0) serves a folder as a bucket.
-  # Each folder under /data is a bucket, so lab/files/bucket appears as bucket lab-raw.
+  # Each folder under /data is a bucket, so lab/files/bucket appears as bucket lab-raw (the
+  # synthetic source data, which pipelines never write). An anonymous volume appears as bucket
+  # lab-warehouse, empty at first, for pipeline output; down and up again gives a new, empty one.
   lab-s3:
+    profiles: ["s3", "all"]
     image: ghcr.io/versity/versitygw:v1.10.0
     command: ["posix", "/data"]
     environment:
@@ -35,6 +42,7 @@ services:
       ROOT_SECRET_KEY: labadmin123
     volumes:
       - ./files/bucket:/data/lab-raw:Z
+      - /data/lab-warehouse
     ports:
       - "9000:7070"
 
@@ -54,8 +62,63 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  # ---- SQL Server: synthetic operations data, database labdb (profile sqlserver) ----------------
+  # From Kilnmark:      jdbc:sqlserver://lab-sqlserver:1433;databaseName=labdb with the source setting
+  #                     trust_server_certificate=true (the certificate is self-signed)
+  # From this machine:  localhost,14330 (14330, so it never clashes with a SQL Server you already run)
+  # Logins (lab only):  kiln_reader / Lab-Reader-2026 (read-only)   kiln_writer / Lab-Writer-2026
+  #                     (creates tables in schema warehouse only)   sa / Lab-Admin-2026
+  # Needs about 2 GB of memory. The image is x86-64 only.
+  #
+  # LICENCE: ACCEPT_EULA=Y below means that starting lab-sqlserver accepts Microsoft's licence terms
+  # for SQL Server Developer edition (free for development and testing, never for production):
+  #   https://go.microsoft.com/fwlink/?linkid=857698
+  # If you do not accept them, do not start the sqlserver profile (or all).
+  lab-sqlserver:
+    profiles: ["sqlserver", "all"]
+    # The tag SqlServerIngestTest pins, so the lab and CI run the same build.
+    image: mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04
+    environment:
+      ACCEPT_EULA: "Y"            # accepts Microsoft's SQL Server licence: see above
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: Lab-Admin-2026
+      MSSQL_MEMORY_LIMIT_MB: "2048"
+      SQLCMDPASSWORD: Lab-Admin-2026   # for the health check's sqlcmd
+    volumes:
+      - lab-sqlserver-data:/var/opt/mssql
+    ports:
+      - "14330:1433"
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-C", "-l", "5", "-b",
+             "-Q", "SELECT 1", "-o", "/dev/null"]
+      interval: 10s
+      timeout: 10s
+      start_period: 60s
+      retries: 30
+
+  # Loads labdb once (lab/sqlserver/seed.sh): waits for the server, skips if labdb is already
+  # loaded, then exits. Uses the server image only for its sqlcmd, so nothing more is pulled.
+  lab-sqlserver-init:
+    profiles: ["sqlserver", "all"]
+    image: mcr.microsoft.com/mssql/server:2022-CU27-GDR1-ubuntu-22.04
+    entrypoint: ["/bin/bash"]
+    command: ["/seed/seed.sh"]
+    environment:
+      SQLCMDPASSWORD: Lab-Admin-2026
+    volumes:
+      - ./sqlserver:/seed:ro,Z
+    depends_on:
+      - lab-sqlserver
+    restart: "no"
+  # ---- end SQL Server -----------------------------------------------------------------------------
+
 # Kilnmark's network (created by the main compose.yaml), so Kilnmark reaches these services by name.
 networks:
   default:
     name: kilnmark
     external: true
+
+# Named volumes. lab-sqlserver-data holds SQL Server's databases; lab/lab.sh reset sqlserver
+# drops it (it is called lab_lab-sqlserver-data on the machine).
+volumes:
+  lab-sqlserver-data:

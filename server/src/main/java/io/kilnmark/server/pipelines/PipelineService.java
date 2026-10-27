@@ -422,7 +422,7 @@ public class PipelineService {
     /** Lineage recorded by pipeline writes: what an asset came from, and what was made from it. */
     public PipelineViews.AssetLineage lineage(String urn) {
         if (urn == null || !urn.startsWith("urn:kilnmark:")) {
-            throw new IllegalArgumentException("urn: an asset reference, such as urn:kilnmark:lab-db:crm.customers");
+            throw new IllegalArgumentException("urn: an asset reference, such as urn:kilnmark:sales-db:crm.customers");
         }
         List<PipelineViews.LineageEntry> up = new ArrayList<>();
         List<PipelineViews.LineageEntry> down = new ArrayList<>();

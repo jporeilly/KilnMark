@@ -14,11 +14,13 @@ Requirements: any Java 17 or later to start the Gradle wrapper. The wrapper down
 ```
 ./gradlew build          # compile and test everything (Windows: gradlew.bat build)
 ./gradlew :server:quarkusDev   # run the server in dev mode on http://localhost:8780
-./gradlew release        # assemble dist/release/kilnmark-<version>
+./gradlew release        # assemble dist/release/kilnmark-<version>, the product only
 ```
 
 The server needs PostgreSQL with Apache AGE and pgvector; `podman compose up --build` starts both
-(Docker works too).
+(Docker works too). The root `compose.yaml` is the developer setup; customers install from the
+release folder, which has its own `compose.yaml` and never the reference lab
+([ADR 0024](docs/adr/0024-the-lab-is-not-the-product.md)).
 See the [development guide](docs/development.md).
 
 ## Layout
@@ -32,7 +34,7 @@ See the [development guide](docs/development.md).
 | `ui/` | Web UI: React and TypeScript |
 | `sidecar-python/` | AI sidecar (from v0.4) |
 | `containers/` | PostgreSQL and server images (Containerfiles) |
-| `lab/` | Reference lab with synthetic data |
+| `lab/` | Reference lab with synthetic data, for development, tests and demos only: never shipped |
 | `pipelines/` | Built-in pipeline definitions |
 | `tests/regression/` | End-to-end suite against the lab |
 | `docs/` | All documentation |

@@ -1,4 +1,6 @@
-name,display_name,kind,host,port,database,username,password,schemas,description,ai_egress,endpoint,bucket,access_key_id,path_style,path
-lab-db,Lab database,postgresql,localhost,5433,lab,lab,lab,crm;billing,Synthetic CRM and billing data,local_only,,,,,
-lab-bucket,Lab bucket,s3,,,,,labadmin123,,Synthetic exports and raw files,local_only,http://localhost:9000,lab-raw,labadmin,true,
-lab-share,Lab file share,files,,,,,,,Synthetic letters and plans,none,,,,,/srv/files
+name,display_name,kind,host,port,database,username,password,schemas,description,ai_egress,endpoint,bucket,access_key_id,path_style,path,trust_server_certificate,allow_writing
+lab-db,Lab database,postgresql,localhost,5433,lab,lab,lab,crm;billing,Synthetic CRM and billing data,local_only,,,,,,,
+lab-bucket,Lab bucket,s3,,,,,labadmin123,,Synthetic exports and raw files,local_only,http://localhost:9000,lab-raw,labadmin,true,,,
+lab-share,Lab file share,files,,,,,,,Synthetic letters and plans,none,,,,,/srv/files,,
+lab-sqlserver,Lab SQL Server,sqlserver,localhost,14330,labdb,kiln_reader,Lab-Reader-2026,sales;hr;ops,Synthetic operations data on SQL Server,local_only,,,,,,true,
+lab-warehouse,Lab warehouse,s3,,,,,labadmin123,,Synthetic warehouse for pipeline output,local_only,http://localhost:9000,lab-warehouse,labadmin,true,,,true

@@ -32,6 +32,11 @@ import io.kilnmark.kiln.connect.SourceConfig;
  * by default, so profiling a large table takes no shared locks and never blocks the
  * application's writes; {@code snapshot} for a consistent view without locks, where the database
  * allows snapshot isolation; or {@code read-committed}.
+ *
+ * <p>The driver encrypts connections and checks the server's certificate by default. The
+ * {@code trust_server_certificate} setting ({@code true} or {@code false}, off by default) passes
+ * {@code trustServerCertificate=true} to the driver as a connection property, without touching
+ * the URL, for test servers with a self-signed certificate.
  */
 public final class SqlServerConnector extends JdbcConnector {
 
@@ -45,6 +50,10 @@ public final class SqlServerConnector extends JdbcConnector {
 
     /** The {@code isolation} setting's values and the JDBC levels they set; the first is the default. */
     private static final Map<String, Integer> ISOLATION = isolationLevels();
+
+    /** The setting that trusts a self-signed certificate, and the driver property it sets. */
+    static final String TRUST_SERVER_CERTIFICATE = "trust_server_certificate";
+    private static final String DRIVER_TRUST = "trustServerCertificate";
 
     /** Types whose readable form is their {@code ToString()} method rather than their bytes. */
     private static final Set<String> READ_THROUGH_TO_STRING = Set.of("geography", "geometry", "hierarchyid");
@@ -90,6 +99,9 @@ public final class SqlServerConnector extends JdbcConnector {
     @Override
     public List<Setting> settings() {
         List<Setting> settings = new ArrayList<>(super.settings());
+        settings.add(new Setting(TRUST_SERVER_CERTIFICATE, "Trust the server certificate", false, "Only for test "
+            + "servers with a self-signed certificate. Off by default. With it off, the certificate must be valid",
+            false));
         settings.add(new Setting("isolation", "Read isolation", false, "read-uncommitted (the default) takes no "
             + "shared locks, so reading never blocks the application's writes, but may see changes not yet "
             + "committed; snapshot reads a consistent view without locks if the database allows snapshot "
@@ -105,7 +117,33 @@ public final class SqlServerConnector extends JdbcConnector {
             problems.add("isolation: one of " + String.join(", ", ISOLATION.keySet())
                 + ", or leave it empty for read-uncommitted");
         }
+        String trust = source.setting(TRUST_SERVER_CERTIFICATE);
+        if (trust != null && !trust.equalsIgnoreCase("true") && !trust.equalsIgnoreCase("false")) {
+            problems.add(TRUST_SERVER_CERTIFICATE + ": true or false, not '" + trust + "'");
+        } else if (trust != null && urlProperties(source.setting("url")).containsKey(DRIVER_TRUST.toLowerCase(Locale.ROOT))) {
+            problems.add(TRUST_SERVER_CERTIFICATE + ": the URL sets trustServerCertificate too. Take it out of the URL "
+                + "and use this setting alone");
+        }
         return problems;
+    }
+
+    /** {@code trustServerCertificate=true} when the source's setting says so; nothing otherwise. */
+    @Override
+    protected java.util.Properties driverSettings(SourceConfig source) {
+        java.util.Properties p = new java.util.Properties();
+        if ("true".equalsIgnoreCase(source.setting(TRUST_SERVER_CERTIFICATE))) {
+            p.setProperty(DRIVER_TRUST, "true");
+        }
+        return p;
+    }
+
+    /**
+     * The URL, user name and whether the certificate is trusted decide where the password can go:
+     * trusting any certificate is a change the password must be entered again for.
+     */
+    @Override
+    public Set<String> secretScope() {
+        return Set.of("url", "username", TRUST_SERVER_CERTIFICATE);
     }
 
     @Override
@@ -282,8 +320,8 @@ public final class SqlServerConnector extends JdbcConnector {
         } else if (e.getErrorCode() == CANNOT_OPEN_DATABASE) {
             hint = "Check databaseName in the URL, and that this user has access to that database.";
         } else if (message.contains("PKIX") || message.contains("secure connection") || message.contains("certificate")) {
-            hint = "The server's TLS certificate is not trusted: add it to Kilnmark's trust store, or, for a lab "
-                + "server only, add trustServerCertificate=true to the URL.";
+            hint = "The server's TLS certificate is not trusted: add it to Kilnmark's trust store, or, for a test "
+                + "server only, turn on Trust the server certificate (trust_server_certificate=true).";
         } else if ("08S01".equals(e.getSQLState())) {
             hint = "Check the host and port in the URL, that SQL Server accepts TCP/IP connections, and that no "
                 + "firewall blocks the port.";

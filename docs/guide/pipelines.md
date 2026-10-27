@@ -27,9 +27,11 @@ Stewards see **Run now** beside each pipeline, and **New pipeline** at the top.
 
 ## Starting a new pipeline
 
-Choose **New pipeline**. The editor opens with a template that reads 100 customers from the lab
-database (`lab-db`) and writes them as a CSV file to the lab file share (`lab-share`). All the
-lab's data is made up.
+Choose **New pipeline**. The editor opens with a template that reads the first 100 rows of a
+table or file from one of your sources and writes them to a source that allows writing: the first
+of each that you have, by name. Where you have no such source yet, the template shows a
+placeholder in angle brackets, such as `<your source>`, which the check reports until you replace
+it with a source's name.
 
 1. Give the pipeline a **Name**: small letters, digits and dashes, such as `customer-billing`.
    The name cannot change once saved; the YAML's `name` line follows what you type.
@@ -48,7 +50,7 @@ description: Monthly spend per customer.
 steps:
   - id: customers
     type: read
-    source: lab-db
+    source: sales-db
     asset: crm.customers
 
   - id: spend

@@ -1,0 +1,176 @@
+# Kilnmark @VERSION@: PostgreSQL and the Kilnmark server, two containers on one Linux VM.
+# Works with Podman and Docker. From this folder:
+#   podman compose up -d --build          (or: docker compose up -d --build)
+# If your compose tool cannot build (podman-compose on Windows, for example), build the two images
+# by hand, then start without --build:
+#   podman build -t localhost/kilnmark-postgres:@VERSION@ -f containers/postgres/Containerfile containers/postgres
+#   podman build -t localhost/kilnmark-server:@VERSION@ --build-arg APP_DIR=server -f containers/server/Containerfile .
+#   podman compose up -d
+# Then open http://localhost:8780 and sign in with your admin token.
+#
+# Before the first start, set the required secrets: copy .env.example to .env beside this file and
+# fill it in (or set them as environment variables). Nothing here has a default password or token:
+# without them, compose stops with a message naming the missing one.
+#   KILNMARK_DB_PASSWORD   required: password of Kilnmark's database, and of its PostgreSQL owner
+#   KILNMARK_ADMIN_TOKEN   required: Kilnmark's admin API token
+#   KILNMARK_PORT          optional: the port Kilnmark is published on (8780)
+#   KILNMARK_DB_PORT       optional: the port its database is published on, on this machine only (5442)
+# The key that encrypts stored source passwords is generated on first start, in the keys volume.
+services:
+  postgres:
+    image: localhost/kilnmark-postgres:@VERSION@
+    build:
+      context: containers/postgres
+      dockerfile: Containerfile
+    environment:
+      POSTGRES_DB: kilnmark
+      POSTGRES_USER: kilnmark
+      # The kilnmark user owns the database and is its PostgreSQL superuser: no default password.
+      POSTGRES_PASSWORD: ${KILNMARK_DB_PASSWORD:?Set KILNMARK_DB_PASSWORD to a strong password before starting Kilnmark (see .env.example)}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kilnmark -d kilnmark"]
+      interval: 5s
+      retries: 20
+    ports:
+      # Kilnmark reaches the database inside this stack; it is published on this machine only, for
+      # backups and administration, on 5442 so it never clashes with another PostgreSQL here.
+      - "127.0.0.1:${KILNMARK_DB_PORT:-5442}:5432"
+
+  kilnmark:
+    image: localhost/kilnmark-server:@VERSION@
+    build:
+      context: .
+      dockerfile: containers/server/Containerfile
+      args:
+        APP_DIR: server     # the built server in this folder
+    environment:
+      KILNMARK_ROLES: api,scheduler,worker
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/kilnmark
+      QUARKUS_DATASOURCE_USERNAME: kilnmark
+      QUARKUS_DATASOURCE_PASSWORD: ${KILNMARK_DB_PASSWORD:?Set KILNMARK_DB_PASSWORD to a strong password before starting Kilnmark (see .env.example)}
+      # The admin API token: km_ followed by 43 or more letters, digits, - or _ (see .env.example).
+      KILNMARK_ADMIN_TOKEN: ${KILNMARK_ADMIN_TOKEN:?Set KILNMARK_ADMIN_TOKEN to a new admin token before starting Kilnmark (see .env.example)}
+      # Folders that folder sources may read. Mount yours there (see volumes below); with nothing
+      # mounted, folder sources find no files.
+      KILNMARK_FILES_ROOTS: /srv/files
+      # Optional host names bulk import rewrites when asked to (remapHosts=true), as from=to pairs,
+      # for example localhost=host.docker.internal. Unset by default.
+      KILNMARK_SOURCES_HOST_MAP: ${KILNMARK_SOURCES_HOST_MAP:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
+    volumes:
+      - keys:/var/lib/kilnmark     # the key for stored source passwords: back it up apart from pgdata
+      # A folder of files to scan, read-only. Uncomment and put your own folder on the left; in
+      # Kilnmark, add a source of kind files with path /srv/files.
+      # - /path/to/your/share:/srv/files:ro,Z
+      # Optional organisation branding: product name, logo and connector logos you are licensed to use
+      # (Documentation, "Branding and appearance"). Kilnmark reads /etc/kilnmark/branding; without
+      # it, Kilnmark's own name and letter tiles are shown.
+      # - ./branding:/etc/kilnmark/branding:ro,Z
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Ready when the database answers, migrations are applied and the worker runs (/q/health/ready).
+    # The image has no curl, so bash asks over a plain TCP connection.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8780 && printf 'GET /q/health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    # On stop, running scans get 30 s to finish and 15 s to hand back to the queue
+    # (kilnmark.worker.shutdown-timeout); the default 10 s would cut them off.
+    stop_grace_period: 60s
+    ports:
+      # 8780, not 8080, which Tomcat and many Java servers use. Change the host side with KILNMARK_PORT.
+      - "${KILNMARK_PORT:-8780}:8780"
+
+  # AI models, started only when asked for. llama.cpp's llama-server serves GGUF model files from
+  # the models volume through the OpenAI API, inside this stack's network. Download the models first:
+  #   podman compose --profile ai-download run --rm ai-download
+  # then start one of:
+  #   podman compose --profile ai up -d          # CPU: chat on ai, embeddings on ai-embed
+  #   podman compose --profile ai-cuda up -d     # NVIDIA GPU: chat on ai-cuda, embeddings on ai-embed
+  # and add them in Kilnmark under AI models (base URLs http://ai:8080/v1 or http://ai-cuda:8080/v1,
+  # and http://ai-embed:8080/v1). Images are pinned by tag and digest.
+  # Slots: chat has 2 (--parallel 2) sharing 8,192 tokens, so 4,096 each, matching Kilnmark's
+  # default of 2 calls at a time per model; embeddings have 2 slots of 512 tokens, bge's maximum.
+  # llama-server refuses a longer input instead of cutting it, so give the embedding profile a
+  # context size of 512 in Kilnmark: it then sizes asset text to fit (1.5 characters per token).
+  ai:
+    image: ghcr.io/ggml-org/llama.cpp:server-b11429@sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1
+    profiles: ["ai"]
+    command: ["-m", "/models/${KILNMARK_AI_CHAT_MODEL:-qwen2.5-1.5b-instruct-q4_k_m.gguf}",
+              "--alias", "${KILNMARK_AI_CHAT_ALIAS:-qwen2.5-1.5b-instruct}",
+              "--host", "0.0.0.0", "--port", "8080", "--ctx-size", "8192", "--parallel", "2", "--jinja"]
+    volumes:
+      - models:/models:ro
+    ports:
+      # On this machine only, for a Kilnmark server run outside this stack.
+      - "127.0.0.1:${KILNMARK_AI_PORT:-8781}:8080"
+
+  ai-cuda:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b11429@sha256:883915ea20a4b350e98f7284098f4d400c21e9b366e248d397cd42d90602a84c
+    profiles: ["ai-cuda"]
+    command: ["-m", "/models/${KILNMARK_AI_CHAT_MODEL:-qwen2.5-1.5b-instruct-q4_k_m.gguf}",
+              "--alias", "${KILNMARK_AI_CHAT_ALIAS:-qwen2.5-1.5b-instruct}",
+              "--host", "0.0.0.0", "--port", "8080", "--ctx-size", "8192", "--parallel", "2", "--jinja",
+              "--n-gpu-layers", "999"]
+    volumes:
+      - models:/models:ro
+    ports:
+      - "127.0.0.1:${KILNMARK_AI_PORT:-8781}:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            # Docker: NVIDIA Container Toolkit. Podman: CDI (nvidia-ctk cdi generate).
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Embeddings are small and fast on a CPU, so one service serves both profiles.
+  ai-embed:
+    image: ghcr.io/ggml-org/llama.cpp:server-b11429@sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1
+    profiles: ["ai", "ai-cuda"]
+    command: ["-m", "/models/${KILNMARK_AI_EMBED_MODEL:-bge-small-en-v1.5-q8_0.gguf}",
+              "--alias", "${KILNMARK_AI_EMBED_ALIAS:-bge-small-en-v1.5}",
+              "--embeddings", "--host", "0.0.0.0", "--port", "8080", "--ctx-size", "1024", "--parallel", "2"]
+    volumes:
+      - models:/models:ro
+    ports:
+      - "127.0.0.1:${KILNMARK_AI_EMBED_PORT:-8782}:8080"
+
+  # Downloads the default models into the models volume (about 1.2 GB), once. Each file is pinned to
+  # a commit of its repository and checked against its SHA-256 before it is kept; a file already
+  # there is checked, not trusted. For an offline install, copy the .gguf files into the volume.
+  ai-download:
+    image: docker.io/curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    profiles: ["ai-download"]
+    user: "0:0"    # a new volume is owned by root; the image's own user could not write to it
+    volumes:
+      - models:/models
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -e; cd /models;
+        get() {
+          if test -f "$$1" && echo "$$3  $$1" | sha256sum -c -s; then echo "$$1: present and verified"; return; fi;
+          curl -fL --retry 3 -o "$$1.part" "$$2";
+          echo "$$3  $$1.part" | sha256sum -c -s || { echo "$$1: checksum mismatch, not kept"; rm -f "$$1.part"; exit 1; };
+          mv "$$1.part" "$$1"; echo "$$1: downloaded and verified";
+        };
+        get qwen2.5-1.5b-instruct-q4_k_m.gguf
+        https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf
+        6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e;
+        get bge-small-en-v1.5-q8_0.gguf
+        https://huggingface.co/ggml-org/bge-small-en-v1.5-Q8_0-GGUF/resolve/f2068edd9b54f2a369549ccc71f70ed273a2a801/bge-small-en-v1.5-q8_0.gguf
+        f046db1dc724cf4f6f0a0c5917e922823b73eb1d27b8f9a9c2797f7866974804;
+        ls -l /models
+
+volumes:
+  pgdata:
+  keys:
+  models:     # GGUF model files for the AI profiles

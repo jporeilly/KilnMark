@@ -71,6 +71,11 @@ Useful endpoints in dev mode (all but the first and the `/q` ones need an API to
 
 ## Run the stack
 
+The `compose.yaml` at the root of the repository is the **developer setup**: it builds from this
+repository and keeps conveniences for the reference lab (its file share as the default folder to
+scan, a fixed network the lab joins). It is never shipped; a release has its own (see
+[Install a release](#install-a-release)).
+
 ```
 podman machine start            # Windows and macOS only, once per boot
 ./gradlew :server:quarkusBuild  # build the server first
@@ -80,7 +85,8 @@ podman compose up --build       # PostgreSQL (AGE, pgvector) and the Kilnmark se
 On Windows, `.\build.ps1` in PowerShell does the whole thing: it checks Node.js, runs
 `gradlew.bat release`, builds both images directly (podman-compose on Windows cannot build an
 image whose Containerfile is in a sub-folder), restarts the stack and waits until the server
-answers. `-NoRestart` builds only; `-Lab` also starts the reference lab.
+answers. `-NoRestart` builds only; `-Lab` also starts every demo source of the reference lab, and
+`-Lab postgres,sqlserver` just those (see `lab/README.md`).
 
 If `podman compose` reports `failed to connect to the docker API at npipe:////./pipe/podman-machine-default`,
 the compose tool cannot find Podman: start the machine (`podman machine start`), or point it at
@@ -93,6 +99,56 @@ in Podman Desktop's settings.
 same `compose.yaml` and Containerfiles work for both
 ([ADR 0011](adr/0011-container-runtime.md)).
 
+The server applies database migrations on start. To run separate roles, set `KILNMARK_ROLES`,
+for example `KILNMARK_ROLES=worker`.
+
+## Install a release
+
+`./gradlew release` assembles `dist/release/kilnmark-<version>`: the built server, both
+Containerfiles, the licences, a `compose.yaml` made for customers from
+`containers/compose.release.yaml`, and `.env.example` (from `containers/release.env.example`). That
+is what to hand over or copy to the server; it holds the product only, never the reference lab,
+tests or developer docs ([ADR 0024](adr/0024-the-lab-is-not-the-product.md)).
+
+**Nothing that ships has a default password or token.** The release's `compose.yaml` requires two
+secrets, and refuses to start, naming the missing one, while either is unset or empty:
+
+| Variable | What it is |
+| --- | --- |
+| `KILNMARK_DB_PASSWORD` | Password of Kilnmark's database, whose `kilnmark` user is its PostgreSQL superuser. A long random value (`openssl rand -base64 32`); it takes effect when the database volume is first created |
+| `KILNMARK_ADMIN_TOKEN` | The admin API token, `km_` and 43 or more letters, digits, `-` or `_` (see [Sign in](#sign-in)) |
+
+The key that encrypts stored source passwords is not a setting: the server generates it on first
+start in the `keys` volume. `.env.example` lists every variable, with the required ones empty and a
+comment on how to make each. On the server, from the release folder:
+
+```
+cp .env.example .env && chmod 600 .env    # then fill in .env
+podman compose up -d --build              # or: docker compose up -d --build
+```
+
+Without the values, compose stops before starting anything, for example
+`required variable KILNMARK_DB_PASSWORD is missing a value: Set KILNMARK_DB_PASSWORD to a strong
+password before starting Kilnmark (see .env.example)`. It builds
+`localhost/kilnmark-postgres:<version>` and `localhost/kilnmark-server:<version>` (the server image
+from the release's `server` folder, through the Containerfile's `APP_DIR` argument) and starts
+them. Optional settings: `KILNMARK_PORT`, `KILNMARK_DB_PORT` (the database is published on this
+machine only; Kilnmark reaches it inside the stack) and `KILNMARK_SOURCES_HOST_MAP`. Nothing is
+scanned until a source is added. For folder sources, uncomment the
+example volume and mount the customer's folder at `/srv/files`; there is no default folder. The
+AI profiles work as described in [AI models](#ai-models).
+
+`release` also runs `checkProductOnly`, which fails the build if the release folder, Kilnmark's own
+jars, the UI bundle or the bundled guides name the lab (any `lab-<name>`, `labadmin`, a path into
+`lab/`, the lab-only ports 5433 and 9000), or if the shipped `compose.yaml`, the Containerfiles,
+the guides or the changelog's "What's new" mention it. It also fails if the shipped `compose.yaml`
+gives a variable whose name holds `PASSWORD`, `SECRET` or `TOKEN` a default (`:-`, even an empty
+one) or sets one to a literal value, if `.env.example` fills one in, or if the release holds a
+`.env` file. The developer `compose.yaml` keeps its defaults. A justified exception goes in
+`config/product-only-allow.txt` with its reason. Run it on its own with `./gradlew checkProductOnly`.
+
+## Integration tests
+
 Integration tests use Testcontainers, against the same PostgreSQL image Kilnmark ships. Build it
 once (and after changing it) before `./gradlew build`:
 
@@ -103,9 +159,6 @@ podman build -t kilnmark-postgres:dev -f containers/postgres/Containerfile conta
 With Podman, point Testcontainers at the Podman socket:
 set `DOCKER_HOST` to the address `podman machine inspect` reports, and
 `TESTCONTAINERS_RYUK_DISABLED=true` if Ryuk fails to start under rootless Podman.
-
-The server applies database migrations on start. To run separate roles, set `KILNMARK_ROLES`,
-for example `KILNMARK_ROLES=worker`.
 
 ## Sign in
 
@@ -302,12 +355,15 @@ GRANT SELECT ON ALL TABLES IN SCHEMA sales TO kilnmark_reader;
 
 ## Try it on the reference lab
 
-Start Kilnmark first, then the lab, which joins Kilnmark's network (`kilnmark`):
+Start Kilnmark first, then the lab's demo sources, which join Kilnmark's network (`kilnmark`):
 
 ```
 podman compose up -d                          # Kilnmark on http://localhost:8780
-podman compose -f lab/compose.yaml up -d      # the lab, reachable from Kilnmark by name
+./lab/lab.sh start postgres                   # Windows: .\lab\lab.ps1 start postgres; or: start all
 ```
+
+Each demo source is a compose profile (`podman compose -f lab/compose.yaml --profile all up -d`
+starts them all); `lab/README.md` lists them, with `list`, `stop`, `reset` and `logs`.
 
 Open http://localhost:8780, sign in, go to **Sources**, and add the lab. Kilnmark reaches it by service
 name, the same under Podman and Docker:
@@ -412,7 +468,10 @@ sets a looser one says so in its notes. The stored password stays unless the row
 moves it; a row with a password always counts as updated, since comparing it with the stored one
 would let anyone running imports test guesses. Columns: `name`, `kind`,
 `display_name`, `password` or `password_ref`, the connector's settings, the common ones above, and,
-for databases, `host`, `port` and `database` instead of `url`. Options on
+for databases, `host`, `port` and `database` instead of `url`. In a CSV, list settings (`schemas`,
+`containers`) may separate their values with semicolons; every other value is kept as written, so
+a SQL Server URL, a `;` delimiter or a password keeps its semicolons (`include` and `exclude` keep
+theirs too). Rows may be shorter than the header: missing cells are empty. Options on
 `POST /api/v1/sources/import`:
 
 | Option | Effect |
@@ -428,8 +487,8 @@ progress (the UI polls it). The host map, `KILNMARK_SOURCES_HOST_MAP`, is a list
 set by an administrator, for example `localhost=host.docker.internal,127.0.0.1=host.docker.internal`:
 sources written down from a desktop then work from inside a container. Only whole host names in
 the host part of address settings (a JDBC `url`, an S3 `endpoint`, the `host` column) are
-replaced, never other settings, and only when an import asks for it. The compose stack sets
-that example by default.
+replaced, never other settings, and only when an import asks for it. The developer
+`compose.yaml` sets that example by default; a release's leaves it unset.
 
 ## Security of sources
 

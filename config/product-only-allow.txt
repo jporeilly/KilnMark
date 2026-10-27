@@ -1,0 +1,14 @@
+# Exceptions to checkProductOnly (gradle/product-only.gradle.kts, ADR 0024): the reference lab is
+# never shipped, named or depended on by anything in the release. Keep this list short, and give
+# every entry a comment saying why it is justified.
+#
+# One exception per line:   <path glob> | <exact text around the hit>
+#   path glob   the file in the release folder, relative to it; inside a jar, <jar>!/<entry>, for
+#               example server/app/*.jar!/META-INF/resources/assets/*.js. * stays within a folder,
+#               ** crosses folders.
+#   text        must contain the matched name and appear within 200 characters of it.
+#
+# The changelog's details may describe lab changes and need no entry here; its "What's new"
+# sections may not.
+#
+# (No exceptions yet.)

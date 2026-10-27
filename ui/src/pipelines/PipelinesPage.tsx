@@ -79,7 +79,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
             No pipelines yet.{" "}
             {steward ? (
               <>
-                Choose <strong>New pipeline</strong> to start from a template that uses the lab sources.
+                Choose <strong>New pipeline</strong> to start from a template that uses your sources.
               </>
             ) : (
               "Stewards add them."

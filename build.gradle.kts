@@ -44,10 +44,14 @@ subprojects {
     }
 }
 
-// Copies the runnable server and supporting files into dist/release.
-tasks.register<Sync>("release") {
+// Copies the runnable server and supporting files into dist/release: the product only. The
+// reference lab, the tests and the developer docs never ship (ADR 0024); the release gets its own
+// compose.yaml, made from containers/compose.release.yaml, not the developer one at the root, and
+// a .env.example listing the secrets it requires: nothing that ships has a default password.
+val releaseVersion = project.version.toString()
+tasks.register<Sync>("assembleRelease") {
     group = "distribution"
-    description = "Assembles a release folder in dist/release."
+    description = "Copies the release's files into dist/release (release also checks them)."
     dependsOn(":server:quarkusBuild", ":server:checkLicense")
     into(distDir.dir("release/kilnmark-${project.version}"))
     from(distDir.dir("build/server/quarkus-app")) {
@@ -55,8 +59,17 @@ tasks.register<Sync>("release") {
         // Only this version's application jar: an earlier build's jar can linger in the build folder.
         exclude { it.name.startsWith("server-") && it.name.endsWith(".jar") && it.name != "server-${project.version}.jar" }
     }
-    from("compose.yaml")
-    from("containers") { into("containers") }
+    from("containers/compose.release.yaml") {
+        rename { "compose.yaml" }
+        filter { line -> line.replace("@VERSION@", releaseVersion) }
+    }
+    inputs.property("version", releaseVersion)
+    // Every setting compose.yaml requires (the database password, the admin token), with no values.
+    from("containers/release.env.example") { rename { ".env.example" } }
+    from("containers") {
+        into("containers")
+        exclude("compose.release.yaml", "release.env.example")
+    }
     from("LICENSE", "NOTICE")
     from(distDir.dir("licenses")) { include("THIRD-PARTY-NOTICES.md") }
     // The web UI's packages and their licences, written by the UI build (ui/scripts/ui-notices.mjs).
@@ -64,4 +77,13 @@ tasks.register<Sync>("release") {
         include("third-party-notices.txt")
         rename { "THIRD-PARTY-NOTICES-UI.txt" }
     }
+}
+
+// checkProductOnly: fails if the release depends on, names or bundles the reference lab.
+apply(from = "gradle/product-only.gradle.kts")
+
+tasks.register("release") {
+    group = "distribution"
+    description = "Assembles a release folder in dist/release, and checks it holds the product only."
+    dependsOn("assembleRelease", "checkProductOnly")
 }
