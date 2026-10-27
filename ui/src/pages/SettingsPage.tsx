@@ -29,6 +29,7 @@ export function SettingsPage({ role }: { role: AccessRole }) {
   const items: { title: string; link: string; text: string; icon: string; tint: Tint; external?: boolean }[] = [
     { title: "API tokens", link: href.tokens(), icon: "key", tint: "amber", text: "Create, list and revoke tokens for people, scripts and AI assistants." },
     { title: "Email", link: href.email(), icon: "mail", tint: "green", text: "The mail server notifications go through, the rules for email, a test email, and team addresses." },
+    { title: "Drivers", link: href.drivers(), icon: "connected", tint: "orange", text: "Drivers some databases need that cannot ship with Kilnmark: accept their licence and install them." },
     { title: "Sent emails", link: href.emailLog(), icon: "mail-queued", tint: "slate", text: "Every email sent or tried in the last 30 days, with errors." },
     { title: "AI models", link: href.ai(), icon: "model", tint: "violet", text: "Local and hosted models, which feature uses which, and the rule for hosted models." },
     { title: "AI usage", link: href.aiUsage(), icon: "chart", tint: "sky", text: "Model calls by day and model, with failures and refusals." },

@@ -58,3 +58,7 @@ jobs:
 
       - name: SQL Server, MySQL and MariaDB integration tests
         run: ./gradlew :kiln-plugins:heavyTest -PskipUi --no-daemon
+
+      # Oracle in a Gradle run of its own, so the servers above are stopped first (the runner has 7 GB)
+      - name: Oracle integration tests
+        run: ./gradlew :kiln-plugins:oracleTest -PskipUi --no-daemon

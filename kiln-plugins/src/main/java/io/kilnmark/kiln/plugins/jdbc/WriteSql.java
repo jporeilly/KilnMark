@@ -72,6 +72,23 @@ abstract class WriteSql {
     /** Whether two column names are the same column (SQL Server's usual collations ignore case). */
     abstract boolean sameName(String a, String b);
 
+    /**
+     * The name a column created from the input gets: the input's name as it is by default; Oracle
+     * writes a plain lower-case name in upper case, as an unquoted name would be.
+     */
+    String storedName(String name) {
+        return name;
+    }
+
+    /**
+     * For a timestamp column of an existing table, how many digits of a second it keeps, so a value
+     * with more is refused rather than rounded; -1 (the default) when the database refuses such
+     * values itself or keeps microseconds.
+     */
+    int fractionDigits(WritePlan.TargetColumn column) {
+        return -1;
+    }
+
     /** The column type a table created from the input gets. */
     abstract String columnType(WriteColumn c, int textLength);
 
@@ -98,7 +115,7 @@ abstract class WriteSql {
         return "SELECT * FROM " + table(t) + " WHERE 1 = 0";
     }
 
-    final String drop(TableName t) {
+    String drop(TableName t) {
         return "DROP TABLE " + table(t);
     }
 

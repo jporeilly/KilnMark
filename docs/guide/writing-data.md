@@ -1,7 +1,7 @@
 # Writing data from a pipeline
 
 A pipeline ends in one or more `write` steps. Each writes the rows it receives to a table in a
-database (PostgreSQL, SQL Server, MySQL or MariaDB) or to a CSV or Parquet file in a folder or S3 bucket. This
+database (PostgreSQL, SQL Server, MySQL, MariaDB or Oracle) or to a CSV or Parquet file in a folder or S3 bucket. This
 guide explains the modes, the file formats, the rights a write needs, and what `replace` keeps.
 
 ## Before you start
@@ -41,19 +41,19 @@ so `Billing.Customers` and `billing.customers` are different tables in PostgreSQ
 
 **create** chooses a column type for each input column:
 
-| Input column | PostgreSQL | SQL Server | MySQL and MariaDB |
-| --- | --- | --- | --- |
-| whole numbers | `smallint`, `integer`, `bigint` | `smallint`, `int`, `bigint` | `smallint`, `int`, `bigint` |
-| decimals | `numeric(p,s)` | `decimal(p,s)` | `decimal(p,s)` |
-| floating point | `real`, `double precision` | `real`, `float` | `float`, `double` |
-| text | `text` | `nvarchar(max)` | `longtext` (UTF-8) |
-| true or false | `boolean` | `bit` | `tinyint(1)` |
-| bytes | `bytea` | `varbinary(max)` | `longblob` |
-| dates and times | `date`, `time`, `timestamp`, `timestamptz` | `date`, `time(6)`, `datetime2(6)`, `datetimeoffset(6)` | `date`, `time(6)`, `datetime(6)`, `datetime(6)` in UTC |
+| Input column | PostgreSQL | SQL Server | MySQL and MariaDB | Oracle |
+| --- | --- | --- | --- | --- |
+| whole numbers | `smallint`, `integer`, `bigint` | `smallint`, `int`, `bigint` | `smallint`, `int`, `bigint` | `NUMBER(5)`, `NUMBER(10)`, `NUMBER(19)` |
+| decimals | `numeric(p,s)` | `decimal(p,s)` | `decimal(p,s)` | `NUMBER(p,s)` |
+| floating point | `real`, `double precision` | `real`, `float` | `float`, `double` | `BINARY_FLOAT`, `BINARY_DOUBLE` |
+| text | `text` | `nvarchar(max)` | `longtext` (UTF-8) | `CLOB` |
+| true or false | `boolean` | `bit` | `tinyint(1)` | `BOOLEAN` (23ai), `NUMBER(1)` before |
+| bytes | `bytea` | `varbinary(max)` | `longblob` | `BLOB` |
+| dates and times | `date`, `time`, `timestamp`, `timestamptz` | `date`, `time(6)`, `datetime2(6)`, `datetimeoffset(6)` | `date`, `time(6)`, `datetime(6)`, `datetime(6)` in UTC | `DATE`, `VARCHAR2(15)`, `TIMESTAMP(6)`, `TIMESTAMP(6) WITH TIME ZONE` |
 
 Lists and other nested values are written as text. Every column allows nulls; add keys and
 indexes yourself afterwards if you need them. To give text columns a length, set
-`text_length: 200` (at most 4000 on SQL Server, 16,383 on MySQL and MariaDB).
+`text_length: 200` (at most 4000 on SQL Server and Oracle, 16,383 on MySQL and MariaDB).
 
 **append** checks the table before sending any row and lists every problem at once, for
 example "the input's column flag is boolean but the table's column flag is integer". A column fits
@@ -65,7 +65,7 @@ write with its row named ("Row 2: the value 1.2345 in column amount has more dec
 the column's 2"). Nothing is rounded. The run stops there, and nothing from it stays in the
 table, since the write is one transaction; with `commit_every`, the rows committed before that
 batch stay. This holds for any declared decimal column, beyond 38 digits too, and for PostgreSQL's
-negative scales (`numeric(5,-2)` takes whole hundreds). PostgreSQL, SQL Server, MySQL and MariaDB behave the same.
+negative scales (`numeric(5,-2)` takes whole hundreds). PostgreSQL, SQL Server, MySQL, MariaDB and Oracle behave the same.
 Text is never turned into numbers or dates: add a `select` step to cast columns first. Columns the
 input lacks are left to their defaults, so a column that is `NOT NULL` without a default must be in
 the input. Two input columns whose names differ only in capitals cannot both go to one column. Text
@@ -89,6 +89,9 @@ every row (and the write is slower).
   needs a unique index or primary key on exactly the key columns; if there is none, the message
   gives the `ALTER TABLE … ADD UNIQUE` statement to ask for. Any other unique index on the table
   also makes a row update instead of insert.
+- On Oracle each row is merged with `MERGE`, and the table needs a unique index or primary key on
+  exactly the key columns; if there is none, the message gives the `ALTER TABLE … ADD UNIQUE`
+  statement to ask for.
 - Rows with an empty key column are refused. If the input holds the same key twice, the last row
   wins.
 
@@ -174,6 +177,34 @@ work:
 - **The source's database.** A source set to one `database` writes only there; give the target as
   `database.table`.
 
+### Oracle
+
+Writing to Oracle needs its driver, which an admin installs once (see "Installing database
+drivers"). Tables are written as above, with these differences:
+
+- **Names.** A plain name written in lower case, such as `sales.order_totals`, is the upper-case
+  `SALES.ORDER_TOTALS` Oracle makes of unquoted names, unless a table with the lower-case name
+  already exists. Columns created from the input are named the same way.
+- **Creating and replacing commit by themselves**, as on MySQL: the new table is filled under a
+  temporary name and given its name at the end. Replace renames the old table away, the new one
+  in, and drops the old one in one step that puts the names back if anything fails. Oracle cannot
+  swap two names at once, so for that instant someone reading the table may get an error saying
+  it does not exist.
+- **What replace keeps.** Grants on the table (set `keep_grants: false` to skip them). Not kept:
+  indexes, keys, triggers, comments and defaults. Replace refuses a view, a materialized view, a
+  partitioned or temporary table, a table with triggers or a materialized view log, and a table
+  other tables' foreign keys refer to. With virtual private database policies it needs
+  `allow_dropping_row_security: true`.
+- **Empty text.** Oracle stores empty text as null, so a write with empty text stops and names the
+  row, unless you set `empty_text_as_null: true`.
+- **Nothing is rounded.** Besides decimals, a timestamp with more digits of a second than the
+  column keeps (a `DATE` keeps whole seconds) stops the write, as does a decimal with more than 38
+  significant digits. A time of day is written as text, `09:30:00.5`, since Oracle has no time of
+  day type.
+- **The login.** Writing to the login's own schema needs `CREATE TABLE` and a quota on its
+  tablespace; writing to another schema needs `CREATE ANY TABLE`, `INSERT ANY TABLE`,
+  `ALTER ANY TABLE` and `DROP ANY TABLE`.
+
 ## Writing to a file
 
 ```yaml
@@ -235,12 +266,12 @@ with pyarrow.
 
 ## Rights the login needs
 
-| Mode | PostgreSQL | SQL Server | MySQL and MariaDB |
-| --- | --- | --- | --- |
-| `create` | `CREATE` on the schema | `CREATE TABLE` in the database and `ALTER` on the schema | `CREATE`, `INSERT`, `ALTER` and `DROP` on the database |
-| `append` | `INSERT` on the table | `INSERT` on the table | `INSERT` on the table |
-| `upsert` | `INSERT`, `UPDATE` and `SELECT` on the table | `INSERT`, `UPDATE` and `SELECT` on the table | `INSERT` and `UPDATE` on the table |
-| `replace` | as `create`, and owning the table (or belonging to its owning role) | as `create`, and `ALTER` on the table | as `create`, and `ALTER` and `DROP` on the table |
+| Mode | PostgreSQL | SQL Server | MySQL and MariaDB | Oracle |
+| --- | --- | --- | --- | --- |
+| `create` | `CREATE` on the schema | `CREATE TABLE` in the database and `ALTER` on the schema | `CREATE`, `INSERT`, `ALTER` and `DROP` on the database | `CREATE TABLE` in its own schema; the `ANY TABLE` privileges for another |
+| `append` | `INSERT` on the table | `INSERT` on the table | `INSERT` on the table | `INSERT` on the table |
+| `upsert` | `INSERT`, `UPDATE` and `SELECT` on the table | `INSERT`, `UPDATE` and `SELECT` on the table | `INSERT` and `UPDATE` on the table | `INSERT`, `UPDATE` and `SELECT` on the table |
+| `replace` | as `create`, and owning the table (or belonging to its owning role) | as `create`, and `ALTER` on the table | as `create`, and `ALTER` and `DROP` on the table | as `create` |
 
 Grants on some columns only count: the database then checks each column as rows go in. Append
 reads the table's columns from the database's description of it, so a login that may only insert

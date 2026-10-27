@@ -30,8 +30,9 @@ then only the demo sources you want:
 | `reset <name...>` | Deletes that source's data and loads it again, after asking (`-Force` in PowerShell, `--yes` in bash, to skip the question) |
 | `logs <name>` | The last 100 lines of its containers' logs |
 | `sources` | Where `lab/sources.csv` is, and how to import it |
+| `driver oracle` | Downloads Oracle's JDBC driver after showing its licence, checks it and copies it into a running Kilnmark (see [Oracle](#oracle)) |
 
-Demo sources: `postgres`, `s3`, `sqlserver`, `mariadb`, `mail` and `files` (nothing to start: Kilnmark reads the
+Demo sources: `postgres`, `s3`, `sqlserver`, `mariadb`, `oracle`, `mail` and `files` (nothing to start: Kilnmark reads the
 share from disk). An unknown name lists the right ones. The scripts use Podman if it is on the
 PATH and Docker otherwise, need no administrator rights, and exit with a non-zero code when
 something fails. `.\build.ps1 -Lab` starts every demo source after a build, and
@@ -60,9 +61,11 @@ nothing: before the profiles it started the whole lab, so add `--profile all` to
 | Mail server (Mailpit), demo source `mail` | SMTP `localhost:1025`, web page http://localhost:8025 | none (any user name and password are accepted) |
 | SQL Server 2022 Developer | `localhost,14330`, database `labdb` | `kiln_reader` / `Lab-Reader-2026` (read-only) |
 | MariaDB 11.4 | `localhost:3307`, databases `shop` and `stock` | `kiln_reader` / `Lab-Reader-2026` (read-only) |
+| Oracle Database Free 23ai | `localhost:1522`, service `FREEPDB1`, schemas `FLEET` and `FREIGHT` | `kiln_reader` / `Lab-Reader-2026` (read-only) |
 
 These are lab-only credentials for local testing (the SQL Server logins are under
-[SQL Server](#sql-server), the MariaDB ones under [MariaDB](#mariadb)). The `lab` login owns the lab database, which is fine for a lab; for
+[SQL Server](#sql-server), the MariaDB ones under [MariaDB](#mariadb), the Oracle ones under
+[Oracle](#oracle)). The `lab` login owns the lab database, which is fine for a lab; for
 real sources, register a read-only login that is not a superuser (see
 "Security" in docs/development.md): data quality rules run as that login, and custom SQL rules
 can read anything it can see.
@@ -104,7 +107,7 @@ the lab is stopped with `down -v`.
 ## Register the lab in one go
 
 `lab/sources.csv` lists the lab sources as you see them from this machine (`localhost:5433`,
-`localhost:9000`, `localhost:14330`, `localhost:3307`; `lab-warehouse` is a bucket on the same server as `lab-bucket`); `./lab/lab.sh sources` prints its path. Sources you have
+`localhost:9000`, `localhost:14330`, `localhost:3307`, `localhost:1522`; `lab-warehouse` is a bucket on the same server as `lab-bucket`); `./lab/lab.sh sources` prints its path. Sources you have
 not started are still added, but their connection test fails until you start them. In Kilnmark,
 open **Sources > Import sources from a file**, choose the file, tick **Rewrite host names for this
 server** and, if you like, **Test each connection** and **Queue a scan**, then press **Import**. The compose stack's host map (`KILNMARK_SOURCES_HOST_MAP`, by default
@@ -124,7 +127,7 @@ source's page). Nothing needs editing after the import. Only turn that setting o
 
 ## Somewhere for pipelines to write
 
-The lab's data is what discovery is tested against, so `lab-db`, `lab-bucket`, `lab-share`, `lab-sqlserver` and `lab-mariadb` stay
+The lab's data is what discovery is tested against, so `lab-db`, `lab-bucket`, `lab-share`, `lab-sqlserver`, `lab-mariadb` and `lab-oracle` stay
 read-only to pipelines: the file registers them without **Allow writing**. Pipelines write to
 `lab-warehouse` instead, a second bucket on the same VersityGW server, with the same endpoint and
 credentials as `lab-bucket`.
@@ -228,6 +231,24 @@ integers, `ENUM`, `SET`, `JSON`, `YEAR`, `TINYINT(1)`, `DATETIME(3)`, `BLOB`).
 
 The database `warehouse` is empty, for pipelines to write to with the `kiln_writer` login.
 
+**Oracle** (`lab/oracle/01-logistics.sql`, schemas `FLEET` and `FREIGHT`, loaded on first start,
+same rows every time): a parcel carrier, using Oracle's own types (`NUMBER` with and without
+precision, `NUMBER(*,0)`, a negative scale, `BINARY_DOUBLE`, `DATE` with a time of day,
+`TIMESTAMP WITH TIME ZONE`, `INTERVAL`, `NVARCHAR2`, `CHAR`, `CLOB`, `BLOB`, `RAW`, `BOOLEAN`).
+
+| Table | Rows | Notes |
+| --- | --- | --- |
+| `FLEET.DEPOTS` | 12 | `NUMBER(8,-2)` floor area, `BOOLEAN` hub flag |
+| `FLEET.VEHICLES` | 150 | Foreign key to depots, unique registration, `BINARY_DOUBLE`, `INTERVAL`, `RAW` |
+| `FLEET.DRIVERS` | 300 | Personal data (name, email, phone, date of birth, licence number). `NVARCHAR2`, `CLOB` notes |
+| `FREIGHT.CARRIERS` | 25 | `BLOB` logo for a few |
+| `FREIGHT.SHIPMENTS` | 5,000 | Foreign keys to carriers and, across schemas, to `FLEET.VEHICLES`. `DATE`, `TIMESTAMP WITH TIME ZONE` in three zones, `NUMBER` without precision |
+| `FREIGHT.SHIPMENT_EVENTS` | 20,000 | `shipment_id` with no declared key |
+| `FREIGHT.SCAN_STAGING` | 1,003 | A heap with no primary key, loaded from a scanner feed |
+| `FREIGHT.LATE_SHIPMENTS` | 557 | A view: shipments not delivered yet, or delivered more than three days after they left |
+
+The schema `WAREHOUSE` is empty: the `warehouse` login writes its pipelines' tables there.
+
 ## What discovery should find (the answer key)
 
 | Finding | Where |
@@ -257,6 +278,15 @@ The database `warehouse` is empty, for pipelines to write to with the `kiln_writ
 | Declared keys | MariaDB: orders to customers, lines to orders, stock levels and movements to products and warehouses |
 | Undeclared join across databases | MariaDB `shop.order_lines.product_id` to `stock.products` (proposed) |
 | True or false columns | MariaDB `TINYINT(1)` columns (`is_active`, `gift_wrap`, `discontinued`, `in_stock`) read as booleans |
+| Name, email, phone, date of birth, licence number | Oracle `FLEET.DRIVERS` |
+| Null emails | Oracle: carriers 7, 14 and 21 in `FREIGHT.CARRIERS` |
+| Out-of-range dates | Oracle `FREIGHT.SHIPMENTS.SHIPPED_ON` in 1900 (shipments 404 and 1212) and 2099 (shipment 777); `DELIVERED_AT` before `SHIPPED_ON` (shipments 13, 113 and 2500) |
+| Negative weights | Oracle `FREIGHT.SHIPMENTS.WEIGHT_KG`: -1.5 for shipments 50, 150 and 250 |
+| Duplicate keys, no primary key | Oracle `FREIGHT.SCAN_STAGING`: `TRK0000040`, `TRK0000080` and `TRK0000120` twice each |
+| Inconsistent formats | Oracle `FREIGHT.SHIPMENTS.POSTCODE`: `AB1 2CD`, `ab12cd` and `AB1-2CD` |
+| Exact numbers without a declared precision | Oracle `FREIGHT.SHIPMENTS.DECLARED_VALUE` (`NUMBER`), read as text holding its digits |
+| Declared keys | Oracle: vehicles and drivers to depots, shipments to carriers, and across schemas shipments to `FLEET.VEHICLES` |
+| Undeclared join | Oracle `FREIGHT.SHIPMENT_EVENTS.SHIPMENT_ID` to `FREIGHT.SHIPMENTS` (proposed) |
 
 ## SQL Server
 
@@ -322,6 +352,36 @@ MariaDB 11.4 image, the same tag the MariaDB tests pin. Kilnmark's `mariadb` kin
 These passwords are for the lab only. `lab/sources.csv` registers it as `lab-mariadb` with host
 `localhost`, port `3307` and the databases `shop` and `stock`.
 
+## Oracle
+
+Started with `.\lab\lab.ps1 start oracle` (or `./lab/lab.sh start oracle`). It is Oracle Database
+Free 23ai in the community image `gvenzl/oracle-free`, the same version the Oracle tests pin.
+
+- **The driver.** Kilnmark does not ship Oracle's JDBC driver: its licence, the Oracle Free Use
+  Terms and Conditions, does not allow it in a product that is sold. Install it as a customer
+  would, in Kilnmark under **Settings > Drivers** (accept the licence, then **Accept and
+  download**), or with `./lab/lab.sh driver oracle` (`.\lab\lab.ps1 driver oracle`), which shows
+  the licence, downloads the pinned version into `lab/drivers` (not committed), checks its
+  checksum and copies it into a running Kilnmark container. Until then the source's connection test
+  says it needs its driver.
+- **Port 1522.** From this machine the server is `localhost:1522`, service `FREEPDB1`, so it never
+  clashes with an Oracle you already run on 1521. From Kilnmark, in the compose stack, it is host
+  `lab-oracle`, port `1521`.
+- **First start.** The image is about 850 MB to download. The first start creates the database and
+  then loads the data, a few minutes in all: `logs oracle` ends with `DATABASE IS READY TO USE!`.
+  Later starts take seconds. It needs about 2 GB of memory.
+- **Reset.** `.\lab\lab.ps1 reset oracle` deletes the `lab_lab-oracle-data` volume, so the next start
+  creates the database and loads the data again.
+
+| Login | Password | Can |
+| --- | --- | --- |
+| `kiln_reader` | `Lab-Reader-2026` | Read the tables and the view of `FLEET` and `FREIGHT`. What Kilnmark scans with |
+| `warehouse` | `Lab-Writer-2026` | Create, fill and drop tables in its own schema `WAREHOUSE`, for pipeline writes |
+| `system` | `Lab-Admin-2026` | Everything in the database |
+
+These passwords are for the lab only. `lab/sources.csv` registers it as `lab-oracle` with host
+`localhost`, port `1522`, service `FREEPDB1` and the schemas `FLEET` and `FREIGHT`.
+
 ## Profiles: one per demo source
 
 Every service in `lab/compose.yaml` belongs to two profiles: the demo source's name and `all`.
@@ -332,7 +392,7 @@ Every service in `lab/compose.yaml` belongs to two profiles: the demo source's n
 ```
 
 A source's set-up or seed jobs share its profile (`lab-sqlserver-init` is in `sqlserver`). The
-names so far: `postgres`, `s3`, `sqlserver`, `mariadb` and `mail` (Mailpit). A source that needs nothing running, like `files`, has no profile. Ports avoid
+names so far: `postgres`, `s3`, `sqlserver`, `mariadb`, `oracle` and `mail` (Mailpit). A source that needs nothing running, like `files`, has no profile. Ports avoid
 8080, 8780 and 3306.
 
 Adding a demo source:
@@ -358,7 +418,7 @@ in [docs/design/connector-catalogue.md](../docs/design/connector-catalogue.md).
 | Documents and Excel | `documents/` in the file share (and the bucket) | none | `lab-share` | Present |
 | SQL Server | `lab-sqlserver` (profile `sqlserver`) | 14330 | `lab-sqlserver` | Present |
 | MySQL and MariaDB | `lab-mariadb`, MariaDB 11.4 (profile `mariadb`) | 3307 | `lab-mariadb` | Present (MySQL 8.4 is covered by the tests) |
-| Oracle | | | | Lab dataset due with the connector (wave 1) |
+| Oracle | `lab-oracle`, Oracle Database Free 23ai (profile `oracle`) | 1522 | `lab-oracle` | Present (its driver: Settings > Drivers or `lab.sh driver oracle`) |
 | Generic JDBC | | | | Lab dataset due with the connector (wave 1) |
 | SMB / Windows share | | | | Lab dataset due with the connector (wave 1) |
 | SFTP and FTP(S) | | | | Lab dataset due with the connector (wave 1) |
@@ -402,6 +462,11 @@ the mail catcher, is MIT. Both are local test tools and are never shipped with K
 MariaDB's server is GPL 2.0. It runs only in the lab's container, as a separate program Kilnmark
 talks to over the network, and is never shipped with Kilnmark; the driver Kilnmark ships is the
 LGPL MariaDB Connector/J ([ADR 0007](../docs/adr/0007-dependency-policy.md)).
+
+Oracle Database Free is Oracle's, free to use under Oracle's terms; the lab runs it from
+the community image `gvenzl/oracle-free`, a local test tool that is never shipped. Oracle's JDBC
+driver is under the Oracle Free Use Terms and Conditions; Kilnmark never ships it, and
+`lab.sh driver oracle` shows those terms before downloading it.
 
 SQL Server is Microsoft's, used under its Developer edition licence, which starting the
 `sqlserver` demo source accepts (see [SQL Server](#sql-server)). The image is pulled from

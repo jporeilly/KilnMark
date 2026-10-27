@@ -45,12 +45,15 @@ public final class Views {
     /**
      * A kind of source. {@code containerSetting} is the list setting holding the containers chosen
      * for scanning (schemas, folders), {@code containerLabel} what they are called and
-     * {@code containerCounted} what their counts count.
+     * {@code containerCounted} what their counts count. {@code driver} says whether its driver is
+     * there: {@code bundled} (it ships with Kilnmark), {@code ready} (installed by the customer and
+     * verified), or {@code missing}, {@code mismatch} or {@code unreadable}, when the source needs
+     * its driver installed under Settings › Drivers.
      */
     public record Connector(String kind, String displayName, List<Setting> settings, String containerSetting,
                             String containerLabel, String containerCounted, String category, String family,
                             List<String> capabilities, List<String> formats, String icon, String monogram,
-                            String docsAnchor, boolean addressFields, boolean driverBundled) {
+                            String docsAnchor, boolean addressFields, boolean driverBundled, String driver) {
     }
 
     /**

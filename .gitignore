@@ -21,3 +21,6 @@ Thumbs.db
 # Local settings and secrets
 .env
 *.local
+
+# Drivers the lab scripts download for the developer (lab.sh driver oracle); never committed
+/lab/drivers/

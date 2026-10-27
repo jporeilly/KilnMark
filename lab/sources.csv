@@ -5,3 +5,4 @@ lab-share,Lab file share,files,,,,,,,Synthetic letters and plans,none,,,,,/srv/f
 lab-sqlserver,Lab SQL Server,sqlserver,localhost,14330,labdb,kiln_reader,Lab-Reader-2026,sales;hr;ops,Synthetic operations data on SQL Server,local_only,,,,,,true,
 lab-warehouse,Lab warehouse,s3,,,,,labadmin123,,Synthetic warehouse for pipeline output,local_only,http://localhost:9000,lab-warehouse,labadmin,true,,,true
 lab-mariadb,Lab MariaDB,mariadb,localhost,3307,,kiln_reader,Lab-Reader-2026,shop;stock,Synthetic shop orders and inventory on MariaDB,local_only,,,,,,,
+lab-oracle,Lab Oracle,oracle,localhost,1522,FREEPDB1,KILN_READER,Lab-Reader-2026,FLEET;FREIGHT,Synthetic parcel fleet and freight on Oracle,local_only,,,,,,,

@@ -49,6 +49,11 @@ public interface SqlDialect {
     /** Whether {@link #readOnly} is enforced by the database rather than only advised. */
     boolean enforcesReadOnly();
 
+    /** A condition true when the text {@code expression} is empty or only spaces. */
+    default String blank(String expression) {
+        return "LTRIM(RTRIM(" + expression + ")) = ''";
+    }
+
     /** Statements that stop any statement of the current transaction after {@code millis}; empty if none. */
     default List<String> timeout(long millis) {
         return List.of();
@@ -156,9 +161,59 @@ public interface SqlDialect {
     /** MariaDB 10.6 and later: MySQL's dialect, with its own statement time limit. */
     SqlDialect MARIADB = new MySql(true);
 
+    /**
+     * Oracle Database 19c and later. Names are quoted as written ({@code "Orders"} and
+     * {@code "ORDERS"} are two tables); empty text is null, so a blank value is one that trims to
+     * null. Regular expressions are left to Kiln: rules are written in PostgreSQL's syntax, which
+     * {@code REGEXP_LIKE} does not follow. Sessions use time zone {@code +00:00} and ISO date
+     * formats (the connector sets them), so date literals compare as written.
+     */
+    SqlDialect ORACLE = new SqlDialect() {
+        @Override
+        public String quote(String identifier) {
+            return "\"" + identifier.replace("\"", "\"\"") + "\"";
+        }
+
+        @Override
+        public String text(String expression) {
+            return "TO_CHAR(" + expression + ")";
+        }
+
+        @Override
+        public String limit(String select, int n) {
+            return "SELECT * FROM (" + select + ") limited FETCH FIRST " + n + " ROWS ONLY";
+        }
+
+        @Override
+        public String regex(String expression, String pattern) {
+            return null; // evaluated by Kiln instead, while streaming the table
+        }
+
+        @Override
+        public String now() {
+            return "SYS_EXTRACT_UTC(SYSTIMESTAMP)";
+        }
+
+        @Override
+        public String blank(String expression) {
+            return "TRIM(" + expression + ") IS NULL";
+        }
+
+        @Override
+        public List<String> readOnly() {
+            return List.of("SET TRANSACTION READ ONLY");
+        }
+
+        @Override
+        public boolean enforcesReadOnly() {
+            return true;
+        }
+    };
+
     /** The dialect for a source kind, or the standard one. */
     static SqlDialect forKind(String kind) {
         return switch (kind == null ? "" : kind.toLowerCase(Locale.ROOT)) {
+            case "oracle" -> ORACLE;
             case "sqlserver" -> SQL_SERVER;
             case "mysql" -> MYSQL;
             case "mariadb" -> MARIADB;

@@ -32,6 +32,15 @@ details.
 - **Ask Kilnmark, notifications and your account in the top bar.** The theme switch has moved into
   the menu under your name. **What's new** is now the first entry under Documentation in the
   sidebar, marked **New** after an upgrade.
+- **Oracle.** Add Oracle Database (19c and later) as a source by host, port and service name:
+  Kilnmark discovers and profiles its schemas, reads its tables in pipelines and writes to them in
+  every mode, without ever rounding a number or turning empty text into null behind your back.
+  Oracle's driver cannot ship with Kilnmark, so an admin installs it once, under **Settings**,
+  **Drivers**.
+- **Settings, Drivers.** Where admins install the drivers some databases need that Kilnmark may not
+  ship: accept the licence and Kilnmark downloads the exact version it was tested with and checks
+  it, or, on a server without internet access, shows which file to copy where. Until then those
+  connectors say **Needs its driver**.
 - **MySQL and MariaDB.** Add MySQL (8.0.19 and later) or MariaDB (10.6 and later) as a source by
   host, port and database: Kilnmark discovers and profiles their databases, reads their tables in
   pipelines and writes to them in every mode. MySQL's own types are understood: `UNSIGNED`
@@ -46,6 +55,31 @@ details.
 
 ### Details
 
+- **Oracle connector** (kind `oracle`): settings `host`, `port`, `service_name`, `username`,
+  `encryption` (`accepted`, `required` or `tls`) and `schemas`, with kinds declared; the address is
+  always built, never given. Catalogue from the `ALL_*` views, keys across schemas, `NUM_ROWS` as
+  the estimate, `SAMPLE` for sampling. `NUMBER` without precision reads as text holding its exact
+  digits; `DATE` as a timestamp. Writes: `create`, `append`, `upsert` (`MERGE`) and `replace` (one
+  PL/SQL block that puts the names back on failure), refusing empty text (unless
+  `empty_text_as_null`), decimals past 38 digits and timestamps with more digits of a second than
+  the column keeps. Tests against Oracle Database Free in CI's heavy-databases job, in their own
+  Gradle run (`./gradlew :kiln-plugins:oracleTest`).
+- **Drivers the customer installs** (ADR 0007, docs/design/drivers.md): connectors declare their
+  driver (coordinates, pinned version, SHA-256, licence, driver class); the drivers folder
+  (`kilnmark.drivers.dir`, `/var/lib/kilnmark/drivers` in the image) loads only verified jars, from
+  a private copy, each in a class loader that sees only the JDK. `GET /api/v1/drivers` and
+  `POST /api/v1/drivers/{id}/accept` (admins) record who accepted the licence and download from
+  `kilnmark.drivers.maven-url`; `kilnmark.drivers.download=false` for servers without internet
+  access. `GET /api/v1/connectors` adds each connector's `driver` state. Oracle's driver is a
+  test-only dependency, and `./gradlew release` fails if one reaches the release folder
+  (`checkNoCustomerDrivers`). Database migration V14 adds `driver_licence`.
+- **Lab: Oracle** (development). `lab-oracle` (Oracle Database Free 23ai, profiles `oracle` and
+  `all`) on host port 1522, service `FREEPDB1`, with a synthetic parcel carrier in schemas `FLEET`
+  and `FREIGHT` and planted quality problems (null emails, out-of-range and backwards dates,
+  negative weights, duplicate tracking numbers in a table without a key, three postcode formats, a
+  `NUMBER` without precision), an empty `WAREHOUSE` schema for pipeline writes, a `lab-oracle` row
+  in `lab/sources.csv`, `oracle` in `lab.ps1` and `lab.sh`, and `lab.sh driver oracle`, which
+  downloads Oracle's driver after showing its licence. CI loads the seed and checks the answer key.
 - **MySQL and MariaDB connector** (kinds `mysql` and `mariadb`), through MariaDB Connector/J
   3.5.10 (LGPL 2.1, allowed for that module only: ADR 0007). Settings `host`, `port`, `database`,
   `username`, `tls_mode` (`preferred` by default), `server_ca` and `tinyint1_as_boolean`, with

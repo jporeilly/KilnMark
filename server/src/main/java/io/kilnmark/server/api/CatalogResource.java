@@ -119,11 +119,29 @@ public class CatalogResource {
     @GET
     @Path("connectors")
     public java.util.List<Views.Connector> connectors() {
-        return connectors.all().stream().map(CatalogResource::view).toList();
+        return connectors.all().stream().map(c -> view(c, drivers)).toList();
+    }
+
+    /** Customer-installed drivers, for whether a connector's driver is there. */
+    @jakarta.inject.Inject
+    io.kilnmark.kiln.connect.DriverFolder drivers;
+
+    /** A connector as the form needs it, without looking for drivers (as if none were installed). */
+    static Views.Connector view(io.kilnmark.kiln.connect.Connector c) {
+        return view(c, null);
+    }
+
+    /** Whether a connector's driver is there: {@code bundled}, or its state in the drivers folder. */
+    static String driverState(io.kilnmark.kiln.connect.Connector c, io.kilnmark.kiln.connect.DriverFolder drivers) {
+        if (c.driver() == null) {
+            return "bundled";
+        }
+        return drivers == null ? "missing"
+            : drivers.status(c.driver()).state().name().toLowerCase(java.util.Locale.ROOT);
     }
 
     /** A connector as the form needs it: its settings, plus its container setting if it does not list it. */
-    static Views.Connector view(io.kilnmark.kiln.connect.Connector c) {
+    static Views.Connector view(io.kilnmark.kiln.connect.Connector c, io.kilnmark.kiln.connect.DriverFolder drivers) {
         var kind = c.containerKind();
         java.util.List<Views.Setting> settings = new java.util.ArrayList<>(c.settings().stream()
             .map(s -> new Views.Setting(s.key(), s.label(), s.required(), s.hint(), s.multiple(), c.example(s.key()),
@@ -137,7 +155,7 @@ public class CatalogResource {
             .values()).filter(c.capabilities()::contains).map(x -> x.name().toLowerCase(java.util.Locale.ROOT)).toList();
         return new Views.Connector(c.kind(), c.displayName(), java.util.List.copyOf(settings), kind.setting(),
             kind.label(), kind.counted(), c.category(), c.family(), capabilities, c.formats(), c.icon(),
-            c.monogram(), c.docsAnchor(), addressFields(c), c.driver() == null);
+            c.monogram(), c.docsAnchor(), addressFields(c), c.driver() == null, driverState(c, drivers));
     }
 
     /**
@@ -161,7 +179,7 @@ public class CatalogResource {
         java.util.List<Views.ConnectorCategory> out = new java.util.ArrayList<>();
         for (String[] cat : PlannedConnectors.CATEGORIES) {
             java.util.List<Views.Connector> built = connectors.all().stream()
-                .filter(c -> c.category().equals(cat[0])).map(CatalogResource::view).toList();
+                .filter(c -> c.category().equals(cat[0])).map(c -> view(c, drivers)).toList();
             java.util.List<Views.PlannedConnector> later = planned
                 ? PlannedConnectors.ALL.stream().filter(p -> p.category().equals(cat[0])).toList() : java.util.List.of();
             if (cat[0].equals("other") && built.isEmpty()) {

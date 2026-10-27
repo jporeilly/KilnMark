@@ -31,7 +31,7 @@ export function sourceWords(kind: string): { kind: string; container: string; co
   if (kind === "s3") return { kind: "S3 bucket", container: "prefix", containers: "prefixes" };
   if (kind === "mysql" || kind === "mariadb")
     return { kind: kind === "mysql" ? "MySQL" : "MariaDB", container: "database", containers: "databases" };
-  const names: Record<string, string> = { postgresql: "PostgreSQL", sqlserver: "SQL Server" };
+  const names: Record<string, string> = { postgresql: "PostgreSQL", sqlserver: "SQL Server", oracle: "Oracle" };
   return { kind: names[kind] ?? kind, container: "schema", containers: "schemas" };
 }
 

@@ -12,6 +12,8 @@
 #   File share  lab/files/share (read directly from disk)
 #   MariaDB     (profile mariadb) host lab-mariadb port 3306 from Kilnmark (localhost:3307 here),
 #               user kiln_reader password Lab-Reader-2026 (databases shop, stock)
+#   Oracle      (profile oracle) host lab-oracle port 1521 service FREEPDB1 from Kilnmark (localhost:1522
+#               here), user kiln_reader password Lab-Reader-2026 (schemas FLEET, FREIGHT)
 #   Mailpit     (profile mail) SMTP lab-mailpit:1025 from Kilnmark (localhost:1025 here), no sign-in,
 #               security none; the emails it catches at http://localhost:8025
 services:
@@ -139,6 +141,34 @@ services:
       retries: 30
   # ---- end MariaDB --------------------------------------------------------------------------------
 
+  # ---- Oracle: a synthetic parcel carrier's fleet and freight, schemas FLEET and FREIGHT (profile oracle)
+  # From Kilnmark:      host lab-oracle, port 1521, service FREEPDB1 (source kind oracle)
+  # From this machine:  localhost:1522, service FREEPDB1 (1522, so it never clashes with an Oracle on 1521)
+  # Logins (lab only):  kiln_reader / Lab-Reader-2026 (SELECT on FLEET and FREIGHT)
+  #                     warehouse / Lab-Writer-2026 (its own empty schema WAREHOUSE)   system / Lab-Admin-2026
+  # Kilnmark needs Oracle's JDBC driver, which it does not ship: Settings > Drivers, or lab.sh driver oracle.
+  # The image runs lab/oracle/*.sql on the first start (an empty volume), after creating the
+  # database, which takes a minute or two; later starts skip both. Needs about 2 GB of memory.
+  lab-oracle:
+    profiles: ["oracle", "all"]
+    # Oracle Database Free 23ai (free to use, also in production; Oracle's terms). The tests pin the
+    # faststart build of the same version.
+    image: docker.io/gvenzl/oracle-free:23.26.3-slim
+    environment:
+      ORACLE_PASSWORD: Lab-Admin-2026
+    volumes:
+      - ./oracle:/container-entrypoint-initdb.d:ro,Z
+      - lab-oracle-data:/opt/oracle/oradata
+    ports:
+      - "1522:1521"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 10s
+      start_period: 180s
+      retries: 30
+  # ---- end Oracle ---------------------------------------------------------------------------------
+
 # Kilnmark's network (created by the main compose.yaml), so Kilnmark reaches these services by name.
 networks:
   default:
@@ -150,3 +180,4 @@ networks:
 volumes:
   lab-sqlserver-data:
   lab-mariadb-data:
+  lab-oracle-data:

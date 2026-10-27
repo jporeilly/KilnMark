@@ -102,6 +102,8 @@ final class JdbcTableOutput implements Step {
     private boolean committed;
     /** Whether this step created {@link #loadInto}. */
     private boolean created;
+    /** Timestamp columns of the table that keep fewer than nine digits of a second, by name. */
+    private final Map<String, Integer> fractionDigits = new HashMap<>();
 
     JdbcTableOutput(JdbcConnector connector, WriteSql sql, SourceConfig source, TableName target, String mode,
                     List<String> key, WriteSettings settings, String assetUrn, Map<String, String> profiling)
@@ -368,7 +370,9 @@ final class JdbcTableOutput implements Step {
                 for (String g : grants) {
                     execute(new WriteSql.Sql(g));
                 }
-                bindings = WritePlan.identity(input, textLength);
+                bindings = WritePlan.identity(input, textLength).stream()
+                    .map(b -> new Binding(b.index(), b.input(), sql.storedName(b.target()), b.kind(), b.maxLength(),
+                        b.key(), b.precision(), b.scale())).toList();
                 writtenTypes = input.stream().map(c -> sql.columnType(c, textLength)).toList();
             }
             default -> {
@@ -380,6 +384,12 @@ final class JdbcTableOutput implements Step {
                 bindings = plan.bindings();
                 Map<String, String> types = new HashMap<>();
                 targetColumns.forEach(t -> types.put(t.name(), t.described()));
+                targetColumns.forEach(t -> {
+                    int digits = sql.fractionDigits(t);
+                    if (digits >= 0 && digits < 9) {
+                        fractionDigits.put(t.name(), digits);
+                    }
+                });
                 writtenTypes = bindings.stream().map(b -> types.get(b.target())).toList();
             }
         }
@@ -474,7 +484,7 @@ final class JdbcTableOutput implements Step {
         List<WriteSql.Sql> steps = exists ? sql.swap(target, newName, "kiln_old_" + WriteSql.hexName())
             : List.of(sql.rename(loadInto, target.table()));
         for (int i = 0; i < steps.size(); i++) {
-            if (exists && !sql.transactionalDdl() && i == steps.size() - 1) {
+            if (exists && !sql.transactionalDdl() && steps.size() > 1 && i == steps.size() - 1) {
                 // The new table is in place and committed; dropping the old one is only tidying up.
                 try {
                     execute(steps.get(i));
@@ -597,6 +607,16 @@ final class JdbcTableOutput implements Step {
                     + "or filter it with a compute step, or ask for the column to be widened");
             }
             return exact;
+        }
+        Integer digits = fractionDigits.get(binding.target());
+        if (digits != null) {
+            int nanos = v instanceof java.time.LocalDateTime t ? t.getNano() : v instanceof java.time.Instant i
+                ? i.getNano() : 0;
+            if (nanos % (int) Math.pow(10, 9 - digits) != 0) {
+                throw new StepException("Row " + rowNumber + ": the value " + v + " in column " + binding.target()
+                    + " has more digits of a second than the column keeps (" + digits + "), and is never rounded. "
+                    + "Truncate it with a compute step, or ask for the column to keep more");
+            }
         }
         if (v instanceof String s) {
             if (binding.maxLength() > 0 && sql.length(s) > binding.maxLength()) {

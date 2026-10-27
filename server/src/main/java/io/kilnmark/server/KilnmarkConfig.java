@@ -48,6 +48,9 @@ public interface KilnmarkConfig {
     /** Settings for the {@code s3} connector. */
     S3 s3();
 
+    /** Drivers the customer installs, for connectors whose driver Kilnmark does not ship (docs/design/drivers.md). */
+    Drivers drivers();
+
     /** Managing sources: connection tests, container discovery and bulk import. */
     Sources sources();
 
@@ -268,6 +271,26 @@ public interface KilnmarkConfig {
 
         /** Where native compression libraries are unpacked; default {@code ~/.kilnmark/native}. */
         Optional<String> nativeDir();
+    }
+
+    interface Drivers {
+        /** The drivers folder: one jar per driver, named as Maven Central names it. */
+        String dir();
+
+        /**
+         * Whether an admin may have the server download a driver, after accepting its licence.
+         * false for a server without internet access: the admin puts the file in the folder.
+         */
+        @WithDefault("true")
+        boolean download();
+
+        /** The Maven repository drivers are downloaded from: Maven Central, or the organisation's mirror of it. */
+        @WithDefault("https://repo1.maven.org/maven2/")
+        String mavenUrl();
+
+        /** How long a download may take. */
+        @WithDefault("120s")
+        Duration downloadTimeout();
     }
 
     interface S3 {

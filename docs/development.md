@@ -408,6 +408,19 @@ the connectors API gives each setting a `kind` (`text`, `number`, `boolean`, `ch
 refuses a value of the wrong kind (`header: true or false, not 'yes'`). `ui/src/components/settingKinds.ts`
 guesses from the key and hint only for a setting without a kind.
 
+**Drivers the customer installs.** Connectors whose driver Kilnmark may not ship (Oracle's) need
+it installed once, under **Settings > Drivers** ([docs/design/drivers.md](design/drivers.md)):
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `kilnmark.drivers.dir` (`KILNMARK_DRIVERS_DIR`) | `~/.kilnmark/drivers`; `/var/lib/kilnmark/drivers` in the image | The drivers folder: one jar per driver, as Maven Central names it, used only if its checksum is the pinned one |
+| `kilnmark.drivers.download` | `true` | Whether an admin may have the server download a driver after accepting its licence; `false` for a server without internet access |
+| `kilnmark.drivers.maven-url` | `https://repo1.maven.org/maven2/` | Where drivers come from: Maven Central or the organisation's mirror |
+| `kilnmark.drivers.download-timeout` | `120s` | How long a download may take |
+
+In the compose stack the folder is in the `keys` volume, so a driver survives upgrades. To put one
+in by hand: `podman compose cp ojdbc11-23.26.3.0.0.jar kilnmark:/var/lib/kilnmark/drivers/`.
+
 **Preview.** The first rows of a table or file (100 by default, at most 1,000), read live through
 the connector with the same time limit and places as connection tests, and never stored, logged
 or sent to a model. Values longer than 500 characters are cut, bytes are shown as hex with their

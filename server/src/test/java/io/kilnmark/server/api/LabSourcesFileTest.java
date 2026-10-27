@@ -29,10 +29,10 @@ class LabSourcesFileTest {
     @Test
     void onlyTheWarehouseAllowsWriting() throws Exception {
         Map<String, SourceImporter.Row> rows = rows();
-        assertEquals(List.of("lab-bucket", "lab-db", "lab-mariadb", "lab-share", "lab-sqlserver", "lab-warehouse"), rows.keySet().stream().sorted().toList());
+        assertEquals(List.of("lab-bucket", "lab-db", "lab-mariadb", "lab-oracle", "lab-share", "lab-sqlserver", "lab-warehouse"), rows.keySet().stream().sorted().toList());
         assertTrue(CommonSettings.allowsWriting(rows.get("lab-warehouse").settings()));
         assertTrue(CommonSettings.problems(rows.get("lab-warehouse").settings()).isEmpty());
-        for (String read : List.of("lab-db", "lab-bucket", "lab-share", "lab-sqlserver", "lab-mariadb")) {
+        for (String read : List.of("lab-db", "lab-bucket", "lab-share", "lab-sqlserver", "lab-mariadb", "lab-oracle")) {
             assertFalse(CommonSettings.allowsWriting(rows.get(read).settings()), read);
         }
     }

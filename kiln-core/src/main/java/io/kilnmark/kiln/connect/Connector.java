@@ -250,7 +250,9 @@ public interface Connector {
 
     /**
      * The driver this connector needs that does not ship with Kilnmark, or null when everything it
-     * needs is bundled (the default). Installing drivers arrives with the first connector wave.
+     * needs is bundled (the default). The customer installs it (docs/design/drivers.md): an admin
+     * accepts its licence and the server downloads that exact version, or puts the file in the
+     * drivers folder; the connector then gets it through {@link ConnectorContext#drivers()}.
      */
     default Driver driver() {
         return null;
@@ -274,17 +276,57 @@ public interface Connector {
     }
 
     /**
-     * A driver to be installed by the customer.
+     * A driver to be installed by the customer: one jar, pinned by version and checksum, loaded on
+     * its own ({@link DriverFolder}).
      *
      * @param coordinates Maven coordinates, group:artifact
      * @param version     the pinned version
-     * @param sha256      the jar's checksum
+     * @param sha256      the jar's SHA-256, lower-case hex
      * @param licence     the licence's name
      * @param licenceUrl  where to read it
      * @param bundleable  whether Kilnmark may ship it
+     * @param driverClass the {@link java.sql.Driver} class in the jar, for JDBC drivers; null otherwise
      */
     record Driver(String coordinates, String version, String sha256, String licence, String licenceUrl,
-                  boolean bundleable) {
+                  boolean bundleable, String driverClass) {
+
+        private static final java.util.regex.Pattern PART = java.util.regex.Pattern.compile("[A-Za-z0-9_.-]+");
+
+        public Driver {
+            String[] ga = coordinates == null ? new String[0] : coordinates.split(":");
+            if (ga.length != 2 || !PART.matcher(ga[0]).matches() || !PART.matcher(ga[1]).matches()
+                || version == null || !PART.matcher(version).matches()) {
+                throw new IllegalArgumentException("A driver needs group:artifact coordinates and a version, not "
+                    + coordinates + " " + version);
+            }
+            if (sha256 == null || !sha256.matches("[0-9a-f]{64}")) {
+                throw new IllegalArgumentException("A driver's SHA-256 is 64 lower-case hex digits");
+            }
+        }
+
+        /** Without a driver class. */
+        public Driver(String coordinates, String version, String sha256, String licence, String licenceUrl,
+                      boolean bundleable) {
+            this(coordinates, version, sha256, licence, licenceUrl, bundleable, null);
+        }
+
+        public String group() {
+            return coordinates.substring(0, coordinates.indexOf(':'));
+        }
+
+        public String artifact() {
+            return coordinates.substring(coordinates.indexOf(':') + 1);
+        }
+
+        /** The jar's file name, as Maven Central names it: {@code ojdbc11-23.26.3.0.0.jar}. */
+        public String fileName() {
+            return artifact() + "-" + version + ".jar";
+        }
+
+        /** The jar's path in a Maven repository: {@code com/oracle/database/jdbc/ojdbc11/23.26.3.0.0/ojdbc11-23.26.3.0.0.jar}. */
+        public String repositoryPath() {
+            return group().replace('.', '/') + "/" + artifact() + "/" + version + "/" + fileName();
+        }
     }
 
     // ------------------------------------------------------------------ looking before scanning

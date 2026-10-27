@@ -71,6 +71,9 @@ dependencies {
     "testImplementation"(libs.testcontainers.mssqlserver)
     "testImplementation"(libs.testcontainers.junit)
     "testImplementation"(libs.postgresql)
+    // Oracle's JDBC driver: tests only, never shipped (FUTC; ADR 0007). The connector reaches it
+    // through the drivers folder, as on a customer's server: OracleServers copies this jar there.
+    "testRuntimeOnly"(libs.ojdbc11)
 }
 
 // The version Parquet files written by Kilnmark name in their footer (created_by): in the manifest,
@@ -90,11 +93,13 @@ tasks.withType<Test>().configureEach {
 
 // Tests against heavy databases (SQL Server's image is 2.3 GB and needs 2 GB of memory; MySQL 8.4 and
 // MariaDB 11.4 add two more servers) are tagged and run apart: ./gradlew :kiln-plugins:heavyTest.
-// The ordinary build stays quick.
+// Oracle Database Free needs about 2 GB too, so its tests run in a JVM of their own, after the
+// others' servers are gone: ./gradlew :kiln-plugins:oracleTest. The ordinary build stays quick.
 val heavy = listOf("sqlserver", "mysql", "mariadb")
+val oracle = listOf("oracle")
 
 tasks.named<Test>("test") {
-    useJUnitPlatform { excludeTags(*heavy.toTypedArray()) }
+    useJUnitPlatform { excludeTags(*(heavy + oracle).toTypedArray()) }
 }
 
 tasks.register<Test>("heavyTest") {
@@ -104,4 +109,14 @@ tasks.register<Test>("heavyTest") {
     testClassesDirs = main.output.classesDirs
     classpath = main.runtimeClasspath
     useJUnitPlatform { includeTags(*heavy.toTypedArray()) }
+}
+
+tasks.register<Test>("oracleTest") {
+    description = "Runs the integration tests against Oracle Database Free, through the drivers folder."
+    group = "verification"
+    val main = project.extensions.getByType<SourceSetContainer>()["test"]
+    testClassesDirs = main.output.classesDirs
+    classpath = main.runtimeClasspath
+    useJUnitPlatform { includeTags(*oracle.toTypedArray()) }
+    mustRunAfter("heavyTest")
 }
