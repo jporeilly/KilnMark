@@ -253,7 +253,7 @@ public final class PipelineCompiler {
             boolean scalar = v instanceof String || v instanceof Number || v instanceof Boolean;
             boolean name = v instanceof String || v instanceof Number;
             return switch (spec.kind()) {
-                case TEXT, EXPRESSION -> scalar ? Checked.ok(written(v, text))
+                case TEXT, URL, EXPRESSION -> scalar ? Checked.ok(written(v, text))
                     : Checked.wrong("must be a single value, not a list or mapping");
                 case COLUMN, SOURCE, ASSET -> name ? Checked.ok(written(v, text))
                     : Checked.wrong("must be a name, such as customer_id");

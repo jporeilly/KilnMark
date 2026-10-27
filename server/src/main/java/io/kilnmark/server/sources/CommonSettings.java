@@ -8,7 +8,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+import io.kilnmark.kiln.SettingSpec;
 import io.kilnmark.kiln.connect.AssetFilter;
+import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.SourceConfig;
 
 /**
@@ -24,19 +26,49 @@ import io.kilnmark.kiln.connect.SourceConfig;
  *       tables or files to scan, applied by {@link AssetFilter} for every kind of source.</li>
  *   <li>{@value #ALLOW_WRITING}: whether pipelines may write to the source ({@code true}); read-only
  *       ({@code false}) when absent. Only admins may change it (docs/design/pipelines.md).</li>
+ *   <li>{@value #KEEP_SAMPLES}, {@value #SAMPLE_ROWS} and {@value #TABLE_SAMPLE_ABOVE_ROWS}: how
+ *       profiling samples a source (docs/design/data-quality.md); the last applies to databases.</li>
  * </ul>
+ *
+ * <p>Each has a kind, as connector settings do ({@code Connector.Setting}), which a save checks.
  */
 public final class CommonSettings {
 
     public static final String DESCRIPTION = "description";
     public static final String AI_EGRESS = "ai_egress";
     public static final String ALLOW_WRITING = "allow_writing";
+    public static final String KEEP_SAMPLES = "keep_samples";
+    public static final String SAMPLE_ROWS = "sample_rows";
+    public static final String TABLE_SAMPLE_ABOVE_ROWS = "table_sample_above_rows";
+
+    /** The most rows a source's {@value #SAMPLE_ROWS} may ask for. */
+    public static final int MAX_SAMPLE_ROWS = 10_000;
 
     static final int MAX_DESCRIPTION = 2000;
 
-    /** One common setting, as forms show it. {@code choices} is empty for free text. */
+    /**
+     * One common setting, as forms show it. {@code choices} is empty for free text. {@code kind} is
+     * {@code TEXT}, {@code NUMBER}, {@code BOOLEAN} or {@code CHOICE}; without one, {@code CHOICE}
+     * when there are choices and {@code TEXT} otherwise.
+     */
     public record Definition(String key, String label, String hint, boolean multiple, List<String> choices,
-                             String defaultValue) {
+                             String defaultValue, SettingSpec.Kind kind) {
+
+        public Definition {
+            choices = choices == null ? List.of() : List.copyOf(choices);
+            kind = kind != null ? kind : choices.isEmpty() ? SettingSpec.Kind.TEXT : SettingSpec.Kind.CHOICE;
+        }
+
+        public Definition(String key, String label, String hint, boolean multiple, List<String> choices,
+                          String defaultValue) {
+            this(key, label, hint, multiple, choices, defaultValue, null);
+        }
+
+        /** The setting as a connector would declare it, so a value is checked by kind the same way. */
+        Connector.Setting asSetting() {
+            return new Connector.Setting(key, label, false, hint, multiple, kind, kind == SettingSpec.Kind.CHOICE
+                ? choices : List.of(), defaultValue);
+        }
     }
 
     /**
@@ -88,7 +120,16 @@ public final class CommonSettings {
             + "example tmp_*, *_backup or archive/**", true, List.of(), null),
         new Definition(ALLOW_WRITING, "Allow writing", "true lets pipelines write tables or files to this source, "
             + "with an account that has write rights; false keeps it read-only. Only admins can change it", false,
-            List.of("false", "true"), "false"));
+            List.of("false", "true"), "false", SettingSpec.Kind.BOOLEAN),
+        new Definition(KEEP_SAMPLES, "Keep samples", "true (the default) keeps sample rows, example values and "
+            + "failing rows for stewards to see; false keeps only shapes and statistics", false, List.of(), "true",
+            SettingSpec.Kind.BOOLEAN),
+        new Definition(SAMPLE_ROWS, "Rows sampled", "Rows sampled from each table or file for profiling, up to "
+            + MAX_SAMPLE_ROWS + ". Leave empty for the server's setting", false, List.of(), null,
+            SettingSpec.Kind.NUMBER),
+        new Definition(TABLE_SAMPLE_ABOVE_ROWS, "Sample tables above (rows)", "Databases only: tables with more rows "
+            + "than this, at least 1000, are profiled from a sample of about that many rows. Leave empty to read "
+            + "every row", false, List.of(), null, SettingSpec.Kind.NUMBER));
 
     private static final Set<String> KEYS = keys(DEFINITIONS);
 
@@ -111,18 +152,25 @@ public final class CommonSettings {
         return KEYS;
     }
 
-    /** {@code settings} with common values written the one way they are stored ({@code ai_egress} in lower case). */
+    /** {@code settings} with common values written the one way they are stored: in lower case. */
     public static Map<String, String> normalise(Map<String, String> settings) {
         Map<String, String> out = new HashMap<>(settings);
         AiEgress e = AiEgress.parse(out.get(AI_EGRESS));
         if (e != null) {
             out.put(AI_EGRESS, e.id());
         }
-        String w = out.get(ALLOW_WRITING);
-        if (w != null && (w.trim().equalsIgnoreCase("true") || w.trim().equalsIgnoreCase("false"))) {
-            out.put(ALLOW_WRITING, w.trim().toLowerCase(Locale.ROOT));
+        for (Definition d : DEFINITIONS) {
+            String w = out.get(d.key());
+            if (d.kind() == SettingSpec.Kind.BOOLEAN && w != null
+                && (w.trim().equalsIgnoreCase("true") || w.trim().equalsIgnoreCase("false"))) {
+                out.put(d.key(), w.trim().toLowerCase(Locale.ROOT));
+            }
         }
         return out;
+    }
+
+    private static boolean wholeUpTo(String v, int max) {
+        return v.matches("\\d{1,9}") && Integer.parseInt(v) <= max;
     }
 
     /** Whether pipelines may write to a source with these settings: {@code allow_writing=true}. */
@@ -143,10 +191,18 @@ public final class CommonSettings {
         if (egress != null && !egress.isBlank() && AiEgress.parse(egress) == null) {
             problems.add(AI_EGRESS + ": one of local_only, allowed or none, not '" + egress + "'");
         }
-        String writing = settings.get(ALLOW_WRITING);
-        if (writing != null && !writing.isBlank() && !writing.trim().equalsIgnoreCase("true")
-            && !writing.trim().equalsIgnoreCase("false")) {
-            problems.add(ALLOW_WRITING + ": true or false, not '" + writing + "'");
+        for (Definition d : DEFINITIONS) {
+            if (!d.key().equals(AI_EGRESS)) {
+                String p = d.asSetting().problem(settings.get(d.key()));
+                if (p != null) {
+                    problems.add(p);
+                }
+            }
+        }
+        String rows = settings.get(SAMPLE_ROWS);
+        if (rows != null && !rows.isBlank() && !wholeUpTo(rows.strip(), MAX_SAMPLE_ROWS)) {
+            problems.removeIf(p -> p.startsWith(SAMPLE_ROWS + ":"));
+            problems.add(SAMPLE_ROWS + ": a whole number from 0 to " + MAX_SAMPLE_ROWS + ", not '" + rows + "'");
         }
         problems.addAll(AssetFilter.problems(new SourceConfig("check", "check", settings, null)));
         return problems;

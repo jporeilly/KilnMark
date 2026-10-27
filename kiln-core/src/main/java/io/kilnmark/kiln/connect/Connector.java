@@ -423,7 +423,145 @@ public interface Connector {
         }
     }
 
-    /** One setting a source of this kind takes. */
-    record Setting(String key, String label, boolean required, String hint, boolean multiple) {
+    /**
+     * One setting a source of this kind takes, as the connection form shows it and a save checks it.
+     * Values are stored as text whatever the kind ({@code "true"}, {@code "5000"}); the kind says
+     * which text is acceptable and which control a form uses.
+     *
+     * @param key          the stored key
+     * @param label        what people read
+     * @param required     whether a source cannot be saved without it
+     * @param hint         one sentence on what it does
+     * @param multiple     whether it holds several values, separated by commas (each checked by kind)
+     * @param kind         one of {@link #KINDS}: {@code TEXT}, {@code NUMBER}, {@code BOOLEAN},
+     *                     {@code CHOICE} or {@code URL}; {@code TEXT} when null. There is no secret
+     *                     kind: settings are stored and shown as plain text, so a password or key
+     *                     goes in the source's secret, which is encrypted
+     * @param choices      the allowed values for {@code CHOICE}, matched ignoring case; else empty
+     * @param defaultValue the value used when it is left empty, as stored text, or null when there is
+     *                     none (or it depends on other settings)
+     */
+    record Setting(String key, String label, boolean required, String hint, boolean multiple,
+                   io.kilnmark.kiln.SettingSpec.Kind kind, List<String> choices, String defaultValue) {
+
+        /** The kinds a connector setting may have: the step kinds that fit a stored text value, and URL. */
+        public static final Set<io.kilnmark.kiln.SettingSpec.Kind> KINDS = Set.of(io.kilnmark.kiln.SettingSpec.Kind.TEXT,
+            io.kilnmark.kiln.SettingSpec.Kind.NUMBER, io.kilnmark.kiln.SettingSpec.Kind.BOOLEAN,
+            io.kilnmark.kiln.SettingSpec.Kind.CHOICE, io.kilnmark.kiln.SettingSpec.Kind.URL);
+
+        public Setting {
+            java.util.Objects.requireNonNull(key, "key");
+            java.util.Objects.requireNonNull(label, "label");
+            hint = hint == null ? "" : hint;
+            kind = kind == null ? io.kilnmark.kiln.SettingSpec.Kind.TEXT : kind;
+            choices = choices == null ? List.of() : List.copyOf(choices);
+            if (!KINDS.contains(kind)) {
+                throw new IllegalArgumentException(key + ": a connector setting cannot be of kind " + kind);
+            }
+            if ((kind == io.kilnmark.kiln.SettingSpec.Kind.CHOICE) == choices.isEmpty()) {
+                throw new IllegalArgumentException(key + ": choices go with CHOICE, and CHOICE needs them");
+            }
+            if (defaultValue != null) {
+                String wrong = wrong(kind, choices, defaultValue);
+                if (wrong != null) {
+                    throw new IllegalArgumentException(key + ": the default must be " + wrong);
+                }
+            }
+        }
+
+        /** Free text with no default: the setting as connectors declared it before settings had kinds. */
+        public Setting(String key, String label, boolean required, String hint, boolean multiple) {
+            this(key, label, required, hint, multiple, io.kilnmark.kiln.SettingSpec.Kind.TEXT, List.of(), null);
+        }
+
+        /** Free text. */
+        public static Setting text(String key, String label, boolean required, String hint) {
+            return new Setting(key, label, required, hint, false);
+        }
+
+        /** An address: a JDBC URL, an endpoint. */
+        public static Setting url(String key, String label, boolean required, String hint) {
+            return new Setting(key, label, required, hint, false, io.kilnmark.kiln.SettingSpec.Kind.URL, List.of(),
+                null);
+        }
+
+        /** An optional number, with its default (or null). */
+        public static Setting number(String key, String label, String defaultValue, String hint) {
+            return new Setting(key, label, false, hint, false, io.kilnmark.kiln.SettingSpec.Kind.NUMBER, List.of(),
+                defaultValue);
+        }
+
+        /** An optional on/off setting, stored as {@code true} or {@code false}. */
+        public static Setting bool(String key, String label, boolean defaultValue, String hint) {
+            return new Setting(key, label, false, hint, false, io.kilnmark.kiln.SettingSpec.Kind.BOOLEAN, List.of(),
+                Boolean.toString(defaultValue));
+        }
+
+        /** An optional choice of {@code choices}, with its default (or null). */
+        public static Setting choice(String key, String label, List<String> choices, String defaultValue,
+                                     String hint) {
+            return new Setting(key, label, false, hint, false, io.kilnmark.kiln.SettingSpec.Kind.CHOICE, choices,
+                defaultValue);
+        }
+
+        /**
+         * The problem with a value for this setting, starting with its key, or null when its kind
+         * accepts it. Null and blank values are left to {@code required} and the connector's own checks.
+         */
+        public String problem(String value) {
+            if (value == null || value.isBlank()) {
+                return null;
+            }
+            List<String> values = multiple ? java.util.Arrays.stream(value.split(",")).map(String::strip)
+                .filter(v -> !v.isEmpty()).toList() : List.of(value);
+            for (String v : values) {
+                String wrong = wrong(kind, choices, v);
+                if (wrong != null) {
+                    return key + ": " + wrong + ", not '" + v + "'";
+                }
+            }
+            return null;
+        }
+
+        /** The kind problems of every setting of {@code settings} that {@code source} gives a value. */
+        public static List<String> problems(List<Setting> settings, SourceConfig source) {
+            List<String> problems = new java.util.ArrayList<>();
+            for (Setting s : settings) {
+                String p = s.problem(source.setting(s.key()));
+                if (p != null) {
+                    problems.add(p);
+                }
+            }
+            return problems;
+        }
+
+        /** What a value of {@code kind} must be, when {@code value} is not one; null when it is. */
+        private static String wrong(io.kilnmark.kiln.SettingSpec.Kind kind, List<String> choices, String value) {
+            String v = value.strip();
+            return switch (kind) {
+                case BOOLEAN -> v.equalsIgnoreCase("true") || v.equalsIgnoreCase("false") ? null : "true or false";
+                case NUMBER -> isNumber(v) ? null : "a number";
+                case CHOICE -> choices.stream().anyMatch(c -> c.equalsIgnoreCase(v)) ? null
+                    : "one of " + String.join(", ", choices);
+                case URL -> URL_SHAPE.matcher(v).matches() ? null : "an address such as "
+                    + "https://storage.example.com or jdbc:postgresql://db.example.com/sales, with no spaces";
+                default -> null;
+            };
+        }
+
+        private static final java.util.regex.Pattern URL_SHAPE =
+            java.util.regex.Pattern.compile("[A-Za-z][A-Za-z0-9+.-]*:\\S+");
+
+        private static boolean isNumber(String v) {
+            if (v.isEmpty() || !v.chars().allMatch(c -> Character.isDigit(c) || c == '.' || c == '-')) {
+                return false;
+            }
+            try {
+                new java.math.BigDecimal(v);
+                return true;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
     }
 }

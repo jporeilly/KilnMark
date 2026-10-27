@@ -303,7 +303,7 @@ public abstract class JdbcConnector implements Connector {
     @Override
     public List<Setting> settings() {
         return List.of(
-            new Setting("url", "JDBC URL", true, "For example " + exampleUrl(), false),
+            Setting.url("url", "JDBC URL", true, "For example " + exampleUrl()),
             new Setting("username", "User name", false, "A read-only account is enough for scanning; "
                 + "pipelines that write to this source need a login with write rights", false),
             new Setting("schemas", "Schemas", false, "Leave empty to scan every schema, or choose them from a list", true));

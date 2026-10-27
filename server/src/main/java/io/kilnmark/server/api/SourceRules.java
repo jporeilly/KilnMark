@@ -67,6 +67,10 @@ final class SourceRules {
                 return s.key() + ": required for " + c.displayName();
             }
         }
+        List<String> wrongKind = Connector.Setting.problems(c.settings(), source);
+        if (!wrongKind.isEmpty()) {
+            return wrongKind.get(0);
+        }
         List<String> chosen = source.list(c.containerKind().setting());
         if (chosen.size() > MAX_CONTAINERS) {
             return c.containerKind().setting() + ": at most " + MAX_CONTAINERS + " " + c.containerKind().label()

@@ -119,6 +119,8 @@ export type Source = {
   formats: Record<string, number>;
 };
 
+/** The kind of value a connector or common setting takes; values are always sent as text. */
+export type SettingValueKind = "text" | "number" | "boolean" | "choice" | "url";
 export type ConnectorSetting = {
   key: string;
   label: string;
@@ -126,6 +128,12 @@ export type ConnectorSetting = {
   hint: string;
   multiple: boolean;
   example: string | null;
+  /** Missing from older servers: the form then guesses from the key and hint (settingKinds.ts). */
+  kind?: SettingValueKind;
+  /** The allowed values of a choice; empty otherwise. */
+  choices?: string[];
+  /** The value used when the setting is left empty, as text, or null. */
+  defaultValue?: string | null;
 };
 export type Capability = "discover" | "read" | "write" | "stream";
 /** containerSetting holds the containers (schemas, folders) chosen for scanning. */
@@ -254,6 +262,7 @@ export type CommonSetting = {
   multiple: boolean;
   choices: string[];
   defaultValue: string | null;
+  kind?: SettingValueKind;
 };
 
 /** A source as the add and edit forms send it. source names the saved source a check is for. */

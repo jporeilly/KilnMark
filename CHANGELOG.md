@@ -30,11 +30,24 @@ details.
 - **Ask Kilnmark, notifications and your account in the top bar.** The theme switch has moved into
   the menu under your name. **What's new** is now the first entry under Documentation in the
   sidebar, marked **New** after an upgrade.
+- **Every connection setting has the right control.** On and off settings, such as trusting a
+  test server's certificate, are switches; settings with a fixed set of values, such as SQL
+  Server's read isolation, are lists; and saving says plainly when a value is the wrong kind,
+  for example "true or false, not 'yes'".
 - **Better on small screens.** The sidebar becomes a row of icons, then a menu, and pages no
   longer scroll sideways on a phone.
 
 ### Details
 
+- **Setting kinds.** `Connector.Setting` has a kind (`TEXT`, `NUMBER`, `BOOLEAN`, `CHOICE` or
+  the new `URL`, from `SettingSpec.Kind`), its choices and its default; the old constructor gives
+  `TEXT`. Every built-in connector declares them, and the settings every source has carry a kind
+  too, now including `keep_samples`, `sample_rows` and `table_sample_above_rows`.
+  `GET /api/v1/connectors` adds `kind`, `choices` and `defaultValue` to each setting and
+  `GET /api/v1/common-settings` adds `kind`; nothing was removed. Saves and bulk imports refuse a
+  value of the wrong kind; stored values stay text, so nothing is migrated and values saved before
+  still load. The connection panel follows the kinds and keeps its old guesses only for a setting
+  without one.
 - **The release holds the product only** (ADR 0024): the reference lab is for development, tests
   and demos, and never ships. The release has its own `compose.yaml`, made from
   `containers/compose.release.yaml`: no lab defaults, a commented-out example for the folder to

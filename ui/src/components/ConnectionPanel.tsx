@@ -204,7 +204,10 @@ export function ConnectionPanel({
   const commonOf = (keys: Set<string>) => common.filter((c) => keys.has(c.key));
   const containerSetting = connector.settings.find((s) => s.key === connector.containerSetting);
 
-  /** A connector setting with the control its kind needs: switch, list, number, secret or text. */
+  /**
+   * A connector setting with the control its kind needs: switch, list, number, address, secret or
+   * text. The kind is the one the server declares; settingKinds.ts guesses only for a setting without.
+   */
   const settingField = (s: ConnectorSetting) => {
     const k = settingKind(s);
     const value = settings[s.key] ?? "";
@@ -228,7 +231,9 @@ export function ConnectionPanel({
           <label htmlFor={field(`s-${s.key}`)}>{s.label}</label>
           <select
             id={field(`s-${s.key}`)}
-            value={value.trim().toLowerCase() || k.defaultValue}
+            value={
+              k.choices.find((c) => c.value.toLowerCase() === value.trim().toLowerCase())?.value ?? k.defaultValue
+            }
             onChange={(e) => set(s.key, e.target.value)}
             aria-describedby={field(`s-${s.key}-hint`)}
           >
@@ -253,13 +258,13 @@ export function ConnectionPanel({
         <input
           id={field(`s-${s.key}`)}
           type={k.kind === "number" ? "number" : k.kind === "password" ? "password" : "text"}
-          inputMode={k.kind === "number" ? "numeric" : undefined}
+          inputMode={k.kind === "number" ? "numeric" : k.kind === "url" ? "url" : undefined}
           min={k.kind === "number" ? k.min : undefined}
           value={value}
           required={s.required}
           autoComplete={k.kind === "password" ? "new-password" : "off"}
           spellCheck={false}
-          placeholder={s.example ?? undefined}
+          placeholder={s.example ?? s.defaultValue ?? undefined}
           aria-describedby={field(`s-${s.key}-hint`)}
           onChange={(e) => set(s.key, e.target.value)}
         />
