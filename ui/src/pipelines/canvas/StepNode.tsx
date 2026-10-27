@@ -106,7 +106,6 @@ function StepBox({ data, selected }: NodeProps<StepNodeType>) {
                 id={`in:${p}`}
                 className="cv-handle"
                 isConnectable={connectable}
-                aria-label={`${step.id} input ${p}`}
               />
               {p}
             </li>
@@ -122,7 +121,6 @@ function StepBox({ data, selected }: NodeProps<StepNodeType>) {
                 id={`out:${p}`}
                 className="cv-handle"
                 isConnectable={connectable}
-                aria-label={`${step.id} output ${p}`}
               />
             </li>
           ))}

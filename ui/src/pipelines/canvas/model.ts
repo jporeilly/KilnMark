@@ -177,7 +177,7 @@ export function readGraph(text: string, catalogue: Catalogue = new Map()): ReadR
   if (doc.errors.length > 0) {
     const e = doc.errors[0];
     const line = e.linePos?.[0]?.line ?? 0;
-    return { ok: false, error: e.message.split("\n")[0], line };
+    return { ok: false, error: e.message.split("\n")[0].replace(/ at line \d+, column \d+:?$/, ""), line };
   }
   if (doc.contents != null && !isMap(doc.contents)) {
     return { ok: false, error: "A pipeline starts with kilnmark: pipeline/v1, followed by its name and steps", line: 1 };

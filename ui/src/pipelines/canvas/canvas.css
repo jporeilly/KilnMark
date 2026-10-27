@@ -263,6 +263,14 @@
   font-weight: 600;
 }
 
+.cv-flow .react-flow__attribution {
+  background: var(--km-surface);
+}
+
+.cv-flow .react-flow__attribution a {
+  color: var(--km-ink-soft);
+}
+
 .cv-empty {
   position: absolute;
   inset: 0;
@@ -631,8 +639,8 @@ p.cv-field-problems {
 
 .cv-pair {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-  gap: 4px 8px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--km-divider);
 }
@@ -721,6 +729,8 @@ button.cv-danger {
 
 .cv-offers button {
   width: 100%;
+  justify-content: flex-start;
+  gap: 0.4em;
   text-align: left;
   font-weight: 500;
 }
