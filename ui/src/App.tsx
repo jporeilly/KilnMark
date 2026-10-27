@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
-import { allows, api, ApiError, notifyApi, session, SIGNED_OUT, type Me } from "./api";
+import React, { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { allows, api, ApiError, qualityApi, session, SIGNED_OUT, type Me } from "./api";
 import { go, href, useRoute } from "./router";
 import { HomePage } from "./pages/HomePage";
 import { SearchPage } from "./pages/SearchPage";
@@ -7,28 +7,38 @@ import { AssetPage } from "./pages/AssetPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { SourcePage } from "./pages/SourcePage";
 import { SignInPage, type SignInNotice } from "./pages/SignInPage";
-import { TokensPage } from "./pages/TokensPage";
-import { AiPage } from "./pages/AiPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { AiUsagePage } from "./pages/AiUsagePage";
 import { BrowsePage } from "./browse/BrowsePage";
-import { RelationshipsPage } from "./browse/RelationshipsPage";
 import { RoleContext } from "./components/role";
-import { RulesPage } from "./pages/RulesPage";
 import { IssuesPage } from "./pages/IssuesPage";
-import { NotificationsPage } from "./pages/NotificationsPage";
-import { docHref, WHATS_NEW } from "./docs/links";
 import "./docs/docs.css";
 import { AssistantPanel } from "./assistant/AssistantPanel";
 import { useAssistant } from "./assistant/useAssistant";
 
-// The documentation viewer carries the guides and a Markdown reader, so it loads when first opened.
+// Heavier pages load when first opened, so the main bundle stays small: the documentation (the
+// guides and a Markdown reader), pipelines (the YAML editor and diagram), the rule form, AI models,
+// tokens and relationships.
 const DocsPage = lazy(() => import("./pages/DocsPage"));
-// Admins' email pages are opened rarely, so they load when first opened.
-const EmailSettingsPage = lazy(() => import("./pages/EmailSettingsPage").then((m) => ({ default: m.EmailSettingsPage })));
-const SentEmailsPage = lazy(() => import("./pages/SentEmailsPage").then((m) => ({ default: m.SentEmailsPage })));
-import { Brand } from "./components/Brand";
-import { ThemeQuickSwitch } from "./components/ThemeQuickSwitch";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const page = <T extends Record<K, React.ComponentType<any>>, K extends keyof T>(load: () => Promise<T>, key: K) =>
+  lazy(() => load().then((m) => ({ default: m[key] })));
+const AiPage = page(() => import("./pages/AiPage"), "AiPage");
+const AiUsagePage = page(() => import("./pages/AiUsagePage"), "AiUsagePage");
+const TokensPage = page(() => import("./pages/TokensPage"), "TokensPage");
+const PipelinesPage = page(() => import("./pipelines/PipelinesPage"), "PipelinesPage");
+const PipelinePage = page(() => import("./pipelines/PipelinePage"), "PipelinePage");
+const PipelineRunPage = page(() => import("./pipelines/PipelineRunPage"), "PipelineRunPage");
+const RulesPage = page(() => import("./pages/RulesPage"), "RulesPage");
+const RelationshipsPage = page(() => import("./browse/RelationshipsPage"), "RelationshipsPage");
+const NotificationsPage = page(() => import("./pages/NotificationsPage"), "NotificationsPage");
+const EmailSettingsPage = page(() => import("./pages/EmailSettingsPage"), "EmailSettingsPage");
+const SentEmailsPage = page(() => import("./pages/SentEmailsPage"), "SentEmailsPage");
+import { Icon } from "./components/icons";
+import { Card, EmptyState, PageHeader } from "./components/ui";
+import { NotificationBell } from "./notifications/NotificationBell";
+import { WHATS_NEW } from "./docs/links";
+import { Sidebar } from "./shell/Sidebar";
+import { AskButton, SearchForm, UserMenu } from "./shell/TopBar";
 
 /**
  * Checks who is signed in, then shows either the sign-in page or the app. Signing out (the
@@ -71,7 +81,7 @@ export function App() {
   if (checking) {
     return (
       <main id="main" className="signin">
-        <p role="status">Loading Kilnmark…</p>
+        <p role="status" className="muted">Loading Kilnmark…</p>
       </main>
     );
   }
@@ -92,13 +102,61 @@ export function App() {
   return <Shell me={me} />;
 }
 
-/** App shell: skip link, search bar (Ctrl+K), who is signed in, main navigation and the current page. */
+const SEEN_KEY = "kilnmark.whatsNewSeen";
+
+/**
+ * Whether to badge What's new: the version has changed since this browser last opened that page.
+ * Kept in localStorage (a per-viewer convenience; storage may be blocked, so every access is
+ * guarded and the badge simply shows). Opening the page records the version.
+ */
+function useWhatsNewBadge(version: string | null, onPage: boolean): boolean {
+  const read = () => {
+    try {
+      return window.localStorage.getItem(SEEN_KEY);
+    } catch {
+      return null;
+    }
+  };
+  const [seen, setSeen] = useState<string | null>(read);
+  useEffect(() => {
+    if (!onPage || !version) return;
+    try {
+      window.localStorage.setItem(SEEN_KEY, version);
+    } catch {
+      // Storage blocked: the badge goes for this page load only.
+    }
+    setSeen(version);
+  }, [onPage, version]);
+  return version != null && seen !== version;
+}
+
+/** Whether a media query matches now, following changes. */
+function useMedia(query: string): boolean {
+  const [matches, setMatches] = useState(() => window.matchMedia?.(query).matches ?? false);
+  useEffect(() => {
+    const m = window.matchMedia?.(query);
+    if (!m) return;
+    const onChange = () => setMatches(m.matches);
+    onChange();
+    m.addEventListener("change", onChange);
+    return () => m.removeEventListener("change", onChange);
+  }, [query]);
+  return matches;
+}
+
+/**
+ * App shell: skip link, the dark sidebar (an icon rail under 1200 px, a drawer under 768 px), the
+ * top bar with search (Ctrl+K), Ask Kilnmark (Alt+A), notifications and the user menu, and the
+ * current page.
+ */
 function Shell({ me }: { me: Me }) {
   const route = useRoute();
   const searchBox = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState(route.page === "search" ? route.q : "");
   const first = useRef(true);
   const [version, setVersion] = useState<string | null>(null);
+  const [openIssues, setOpenIssues] = useState<string | null>(null);
+  const whatsNew = useWhatsNewBadge(version, route.page === "docs" && route.doc === WHATS_NEW);
   // The Ask panel (src/assistant): its conversation lives here, so it stays across pages and goes on sign-out.
   const assistant = useAssistant();
   const [askOpen, setAskOpen] = useState(false);
@@ -113,14 +171,7 @@ function Shell({ me }: { me: Me }) {
     setAskFocus((n) => n + 1);
   };
   // Below 1100px the panel covers the page, so the page behind it is inert (the panel acts as a modal).
-  const [narrow, setNarrow] = useState(() => window.matchMedia?.("(max-width: 1099px)").matches ?? false);
-  useEffect(() => {
-    const m = window.matchMedia?.("(max-width: 1099px)");
-    if (!m) return;
-    const onChange = () => setNarrow(m.matches);
-    m.addEventListener("change", onChange);
-    return () => m.removeEventListener("change", onChange);
-  }, []);
+  const narrow = useMedia("(max-width: 1099px)");
   const covered = askOpen && narrow;
   const closeAsk = (returnFocus = true) => {
     setAskOpen(false);
@@ -131,10 +182,35 @@ function Shell({ me }: { me: Me }) {
     window.setTimeout(() => target?.focus(), 0);
   };
 
-  // Asking for the unread count marks this token as a person in the app, so notifications are kept for them.
+  // Under 768px the sidebar is a drawer: a modal dialog over the page, opened from the top bar.
+  const drawerMode = useMedia("(max-width: 767px)");
+  const [drawer, setDrawer] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const sidebar = useRef<HTMLDivElement>(null);
+  const drawerOpen = drawer && drawerMode;
+  const closeDrawer = (returnFocus = true) => {
+    setDrawer(false);
+    if (returnFocus) window.setTimeout(() => menuButton.current?.focus(), 0);
+  };
   useEffect(() => {
-    notifyApi.unreadCount().catch(() => undefined);
-  }, []);
+    if (!drawerMode) setDrawer(false);
+  }, [drawerMode]);
+  useEffect(() => {
+    if (!drawerOpen) return;
+    // After the drawer becomes visible (it slides in), focus its first item.
+    const raf = window.requestAnimationFrame(() => sidebar.current?.querySelector<HTMLElement>(".nav-item")?.focus());
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeDrawer();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [drawerOpen]);
 
   useEffect(() => {
     api
@@ -142,6 +218,15 @@ function Shell({ me }: { me: Me }) {
       .then((i) => setVersion(i.version))
       .catch(() => setVersion(null));
   }, []);
+
+  // The open-issue count on the sidebar, refreshed as people move around (resolving one updates it).
+  useEffect(() => {
+    // The list stops at 500: a full list shows as "500+".
+    qualityApi
+      .issues("open", 500)
+      .then((list) => setOpenIssues(list.length === 0 ? null : list.length >= 500 ? "500+" : String(list.length)))
+      .catch(() => setOpenIssues(null));
+  }, [route]);
 
   const openAskRef = useRef(openAsk);
   openAskRef.current = openAsk;
@@ -178,7 +263,7 @@ function Shell({ me }: { me: Me }) {
       return;
     }
     const t = window.setTimeout(() => {
-      // A widget that changes the page in place (the browse tree) keeps the focus where it is.
+      // A widget that changes the page in place (the browse tree, tabs) keeps the focus where it is.
       if (document.activeElement?.closest("[data-keeps-focus]")) return;
       document.querySelector<HTMLElement>("main h1")?.focus();
     }, 0);
@@ -191,145 +276,61 @@ function Shell({ me }: { me: Me }) {
     if (query.trim()) go(route.page === "search" && route.ask ? href.ask(query.trim()) : href.search(query.trim()));
   };
 
-  const current = (page: string) => (route.page === page ? "page" : undefined);
-  const inSources = route.page === "sources" || route.page === "source";
-
   return (
     <>
-      <a href="#main" className="skip" inert={covered} onClick={(e) => {
+      <a href="#main" className="skip" inert={covered || drawerOpen} onClick={(e) => {
         e.preventDefault();
         document.getElementById("main")?.focus();
       }}>
         Skip to main content
       </a>
-      <div className={askOpen ? "shell assistant-open" : "shell"}>
-        <header className="topbar" inert={covered}>
-          <a className="brand" href={href.home()}>
-            <Brand />
-          </a>
-          <form role="search" className="searchbar" onSubmit={submit}>
-            <label htmlFor="q" className="visually-hidden">
-              Search the catalogue
-            </label>
-            <input
-              id="q"
-              ref={searchBox}
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search tables, views and columns"
-              autoComplete="off"
-              aria-describedby="q-hint"
-            />
-            <span id="q-hint" className="kbd-hint">
-              <kbd>Ctrl</kbd>+<kbd>K</kbd>
-            </span>
-            <button type="submit">Search</button>
-          </form>
-          <button
-            type="button"
-            ref={askButton}
-            className="ask-button"
-            aria-expanded={askOpen}
-            aria-controls={askOpen ? "assistant" : undefined}
-            aria-keyshortcuts="Alt+A"
-            title="Ask a question about Kilnmark (Alt+A)"
-            onClick={() => (askOpen ? closeAsk() : openAsk())}
-          >
-            Ask
-          </button>
-          <div className="who">
-            <ThemeQuickSwitch />
-            <span>
-              {me.signInRequired ? "Signed in as " : ""}
-              <strong>{me.name}</strong> <span className="muted">({me.role})</span>
-            </span>
-            {me.signInRequired && <a href={href.signOut()}>Sign out</a>}
-          </div>
-        </header>
-        <nav aria-label="Main" className="sidenav" inert={covered}>
-          <ul>
-            <li>
-              <a href={href.home()} aria-current={current("home")}>
-                Home
-              </a>
-            </li>
-            <li>
-              <a href={href.sources()} aria-current={route.page === "source" ? "true" : inSources ? "page" : undefined}>
-                Sources
-              </a>
-            </li>
-            <li>
-              <a href={href.browse()} aria-current={current("browse")}>
-                Browse
-              </a>
-            </li>
-            <li>
-              <a href={href.relationships()} aria-current={current("relationships")}>
-                Relationships
-              </a>
-            </li>
-            <li>
-              <a href={href.rules()} aria-current={current("rules")}>
-                Quality rules
-              </a>
-            </li>
-            <li>
-              <a href={href.issues()} aria-current={current("issues")}>
-                Issues
-              </a>
-            </li>
-            <li>
-              <a href={docHref()} aria-current={current("docs")}>
-                Documentation
-              </a>
-            </li>
-            <li>
-              <a
-                href={href.settings()}
-                aria-current={
-                  ["settings", "tokens", "ai", "ai-usage", "notifications", "email", "email-log"].includes(route.page)
-                    ? "page"
-                    : undefined
-                }
-              >
-                Settings
-              </a>
-            </li>
-          </ul>
-          <p className="small muted nav-version">
-            {version && <>Kilnmark {version} · </>}
-            <a href={docHref(WHATS_NEW)}>What's new</a>
-          </p>
-        </nav>
-        <RoleContext.Provider value={me.role}>
-        <main id="main" tabIndex={-1} inert={covered}>
-          {route.page === "home" && <HomePage />}
+      <div className={`shell${askOpen ? " assistant-open" : ""}${drawerOpen ? " drawer-open" : ""}`}>
+        <Sidebar
+          ref={sidebar}
+          route={route}
+          version={version}
+          openIssues={openIssues}
+          whatsNew={whatsNew}
+          drawerOpen={drawerOpen}
+          onNavigate={() => drawerOpen && closeDrawer(false)}
+          onCloseDrawer={() => closeDrawer()}
+          inert={covered}
+        />
+        {drawerOpen && <div className="drawer-backdrop" aria-hidden="true" onClick={() => closeDrawer()} />}
+        <div className="workspace" inert={covered || drawerOpen}>
+          <header className="topbar">
+            <button
+              type="button"
+              ref={menuButton}
+              className="km-icon-button menu-button"
+              aria-label="Open the menu"
+              aria-expanded={drawerOpen}
+              aria-controls="sidebar"
+              onClick={() => setDrawer(true)}
+            >
+              <Icon name="menu" size={22} />
+            </button>
+            <SearchForm query={query} setQuery={setQuery} onSubmit={submit} inputRef={searchBox} />
+            <div className="topbar-actions">
+              <AskButton ref={askButton} open={askOpen} onClick={() => (askOpen ? closeAsk() : openAsk())} />
+              <NotificationBell role={me.role} />
+              <UserMenu me={me} />
+            </div>
+          </header>
+          <RoleContext.Provider value={me.role}>
+          <main id="main" tabIndex={-1}>
+          <Suspense fallback={<p role="status" className="muted">Loading…</p>}>
+          {route.page === "home" && <HomePage me={me} />}
           {route.page === "settings" && <SettingsPage role={me.role} />}
-          {route.page === "notifications" && <NotificationsPage confirm={route.confirm} />}
-          {(route.page === "email" || route.page === "email-log") &&
-            (allows(me.role, "admin") ? (
-              <Suspense fallback={<p role="status">Loading…</p>}>
-                {route.page === "email" ? <EmailSettingsPage /> : <SentEmailsPage />}
-              </Suspense>
-            ) : (
-              <>
-                <h1 tabIndex={-1}>Email</h1>
-                <p>Only admins can set up email. Choose your own notifications under Settings, Notifications.</p>
-              </>
-            ))}
           {route.page === "search" && <SearchPage q={route.q} ask={route.ask} />}
-          {route.page === "asset" && <AssetPage urn={route.urn} />}
-          {route.page === "sources" && <SourcesPage role={me.role} />}
+          {route.page === "asset" && <AssetPage urn={route.urn} tab={route.tab} />}
+          {route.page === "sources" && <SourcesPage role={me.role} add={route.add} />}
           {route.page === "source" && <SourcePage name={route.name} role={me.role} />}
           {(route.page === "ai" || route.page === "ai-usage") &&
             (allows(me.role, "admin") ? (
               route.page === "ai" ? <AiPage /> : <AiUsagePage />
             ) : (
-              <>
-                <h1 tabIndex={-1}>AI models</h1>
-                <p>Only admins can manage AI models. Ask an admin if a feature needs a model.</p>
-              </>
+              <NotAllowed title="AI models">Only admins can manage AI models. Ask an admin if a feature needs a model.</NotAllowed>
             ))}
           {route.page === "browse" && (
             <BrowsePage source={route.source} container={route.container} asset={route.asset} />
@@ -337,22 +338,29 @@ function Shell({ me }: { me: Me }) {
           {route.page === "relationships" && <RelationshipsPage status={route.status} />}
           {route.page === "rules" && <RulesPage role={me.role} urn={route.urn} />}
           {route.page === "issues" && <IssuesPage role={me.role} />}
-          {route.page === "docs" && (
-            <Suspense fallback={<p role="status">Loading the documentation…</p>}>
-              <DocsPage doc={route.doc} section={route.section} />
-            </Suspense>
+          {route.page === "pipelines" && <PipelinesPage role={me.role} />}
+          {route.page === "pipeline" && (
+            <PipelinePage key={route.name ?? "#new"} name={route.name} version={route.version} role={me.role} />
           )}
+          {route.page === "pipeline-run" && <PipelineRunPage id={route.id} role={me.role} />}
+          {route.page === "docs" && <DocsPage doc={route.doc} section={route.section} />}
+          {route.page === "notifications" && <NotificationsPage confirm={route.confirm} />}
+          {(route.page === "email" || route.page === "email-log") &&
+            (allows(me.role, "admin") ? (
+              route.page === "email" ? <EmailSettingsPage /> : <SentEmailsPage />
+            ) : (
+              <NotAllowed title="Email">Only admins can set up email. Choose your own notifications under Settings, Notifications.</NotAllowed>
+            ))}
           {route.page === "tokens" &&
             (allows(me.role, "admin") ? (
               <TokensPage me={me} />
             ) : (
-              <>
-                <h1 tabIndex={-1}>API tokens</h1>
-                <p>Only admins can manage API tokens. Ask an admin if you need a token.</p>
-              </>
+              <NotAllowed title="API tokens">Only admins can manage API tokens. Ask an admin if you need a token.</NotAllowed>
             ))}
-        </main>
-        </RoleContext.Provider>
+          </Suspense>
+          </main>
+          </RoleContext.Provider>
+        </div>
         {askOpen && (
           <AssistantPanel
             route={route}
@@ -363,6 +371,20 @@ function Shell({ me }: { me: Me }) {
           />
         )}
       </div>
+    </>
+  );
+}
+
+/** A page this role cannot use: says so, and who can help. */
+function NotAllowed({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <>
+      <PageHeader title={title} />
+      <Card>
+        <EmptyState icon={<Icon name="key" size={22} />} title="Admins only">
+          {children}
+        </EmptyState>
+      </Card>
     </>
   );
 }

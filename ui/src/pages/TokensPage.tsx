@@ -1,4 +1,5 @@
 import { href } from "../router";
+import { PageHeader, Switch } from "../components/ui";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { aiApi, api, formatTime, type AccessRole, type ApiToken, type CreatedToken, type Me } from "../api";
 import { useTitle } from "../components/useTitle";
@@ -75,19 +76,16 @@ export function TokensPage({ me }: { me: Me }) {
 
   return (
     <>
-      <nav aria-label="Breadcrumb" className="crumbs">
-        <ol>
-          <li>
-            <a href={href.settings()}>Settings</a>
-          </li>
-          <li aria-current="page">API tokens</li>
-        </ol>
-      </nav>
-      <h1 tabIndex={-1}>API tokens</h1>
-      <p className="lead">
-        Scripts, pipelines and people sign in with an API token. Each token has a role, and can expire or be revoked at
+      <PageHeader
+        crumbs={[{ label: "Settings", href: href.settings() }, { label: "API tokens" }]}
+        title="API tokens"
+        lead={
+          <>
+            Scripts, pipelines and people sign in with an API token. Each token has a role, and can expire or be revoked at
         any time.
-      </p>
+          </>
+        }
+      />
       <p role="status" className="notice">
         {notice}
       </p>
@@ -155,15 +153,13 @@ export function TokensPage({ me }: { me: Me }) {
                     <td className="small">{t.expiresAt ? formatTime(t.expiresAt) : "Never"}</td>
                     <td className="small">{t.lastUsedAt ? formatTime(t.lastUsedAt) : "Not yet"}</td>
                     <td>
-                      <label className="choice small">
-                        <input
-                          type="checkbox"
-                          checked={assistants.includes(t.id)}
-                          onChange={(e) => setAssistant(t, e.target.checked)}
-                          aria-describedby="assistant-hint"
-                        />
-                        <span className="visually-hidden">{t.name}: </span>Yes
-                      </label>
+                      <Switch
+                        compact
+                        label={`${t.name}: local AI assistant`}
+                        checked={assistants.includes(t.id)}
+                        onChange={(on) => setAssistant(t, on)}
+                        describedBy="assistant-hint"
+                      />
                     </td>
                     <td>
                       {t.status !== "revoked" && (
@@ -179,7 +175,7 @@ export function TokensPage({ me }: { me: Me }) {
           </div>
         )}
         <p id="assistant-hint" className="hint">
-          Local AI assistant: tick only for a token used by an AI assistant whose model runs on your own network. Through
+          Local AI assistant: turn it on only for a token used by an AI assistant whose model runs on your own network. Through
           the MCP server it then also sees sources that allow only local models; other tokens see only sources that allow
           any model.
         </p>
@@ -214,7 +210,7 @@ function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
   };
 
   return (
-    <section aria-labelledby="create-h" className="panel">
+    <section aria-labelledby="create-h" className="panel km-form-card">
       <h2 id="create-h">Create a token</h2>
       {error && (
         <p role="alert" className="error" tabIndex={-1} ref={errorRef}>

@@ -186,7 +186,8 @@ public final class RowSampler {
 
     private static long cellHash(FieldVector v, int row) {
         String text = CellText.of(v, row);
-        return text == null ? 0x6E756C6CL : MurmurHash3.hash(text.getBytes(StandardCharsets.UTF_8), SEED)[0];
+        return text == null ? 0x6E756C6CL : text.isEmpty() ? 0x656D707479L
+            : MurmurHash3.hash(text.getBytes(StandardCharsets.UTF_8), SEED)[0];
     }
 
     private static long mix(long h, long cell) {

@@ -130,6 +130,9 @@ public class JobWorker {
                 LOG.infof("Recovered jobs left by a stopped worker: %d queued again, %d failed", r.requeued(),
                     r.failed());
             }
+            if (pipelines != null) {
+                pipelines.failOrphanedRuns();
+            }
         } catch (RuntimeException e) {
             LOG.warnf("Could not check for jobs left by a stopped worker: %s. Will try again shortly.", e.getMessage());
         }
@@ -170,8 +173,16 @@ public class JobWorker {
         }
     }
 
-    /** Runs one claimed job while holding its source's scan lock. */
+    /** Runs jobs of kind {@value io.kilnmark.server.pipelines.PipelineStore#JOB_KIND}. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.pipelines.PipelineService pipelines;
+
+    /** Runs one claimed job while holding its source's scan lock (a pipeline job: its own lock). */
     void execute(JobQueue.Job job) {
+        if (io.kilnmark.server.pipelines.PipelineStore.JOB_KIND.equals(job.kind())) {
+            executePipeline(job);
+            return;
+        }
         boolean qualityJob = io.kilnmark.server.quality.QualityService.JOB_KIND.equals(job.kind()) && job.sourceId() >= 0;
         if (!qualityJob && (!"scan".equals(job.kind()) || job.runId() < 0 || job.sourceId() < 0)) {
             queue.retryOrFail(new JobQueue.Job(job.id(), job.kind(), job.runId(), job.sourceId(), job.maxAttempts(),
@@ -210,6 +221,46 @@ public class JobWorker {
             LOG.errorf(e, "Job %d (run %d) failed", job.id(), job.runId());
             if (lost.remove(job.id()) == null && !queue.retryOrFail(job, String.valueOf(e.getMessage())) && !qualityJob) {
                 scanFailedForGood(job);
+            }
+        } finally {
+            running.remove(job.id());
+            lease.get().close();
+            lost.remove(job.id());
+        }
+    }
+
+    /**
+     * Runs a pipeline job while holding its own lock (no source lock: runs of a pipeline may read
+     * sources being scanned). A pipeline job is tried once; a run stopped by shutdown is marked
+     * failed rather than repeated, since its writes may have begun.
+     */
+    private void executePipeline(JobQueue.Job job) {
+        Optional<JobQueue.ScanLease> lease;
+        try {
+            lease = queue.lockPipelineJob(job.id());
+        } catch (RuntimeException e) {
+            queue.retryOrFail(job, e.getMessage());
+            return;
+        }
+        if (lease.isEmpty()) {
+            queue.release(job, LOCKED_RETRY, null);
+            return;
+        }
+        AtomicBoolean cancelled = new AtomicBoolean();
+        running.put(job.id(), new Execution(job, lease.get(), cancelled));
+        try {
+            ScanService.Result result = pipelines.execute(job.id(), lease.get(), cancelled::get);
+            if (lost.remove(job.id()) != null) {
+                LOG.warnf("Pipeline job %d lost its lock while running", job.id());
+            } else {
+                queue.complete(job, result.note());
+            }
+        } catch (RuntimeException e) {
+            // Not the exception's text or trace: a source's secret could be in it.
+            LOG.errorf("Pipeline job %d failed with %s", job.id(), e.getClass().getName());
+            if (lost.remove(job.id()) == null) {
+                queue.retryOrFail(job, "The pipeline job failed (" + e.getClass().getSimpleName() + "); the run "
+                    + "says why");
             }
         } finally {
             running.remove(job.id());

@@ -2,9 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import { allows, formatTime, qualityApi, type AccessRole, type Issue } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
+import { Icon } from "../components/icons";
+import { formatAgo } from "../format";
+import { Card, DataTable, EmptyState, FilterChips, PageHeader, SeverityChip, StatusChip, type Tone } from "../components/ui";
 
-const SEVERITY: Record<Issue["severity"], string> = { high: "High", medium: "Medium", low: "Low" };
 const STATUS: Record<Issue["status"], string> = { open: "Open", resolved: "Resolved", dismissed: "Dismissed" };
+const STATUS_TONE: Record<Issue["status"], Tone> = { open: "orange", resolved: "good", dismissed: "neutral" };
+
+/** "crm.customers" and its source from an asset URN, for people to read. */
+const assetName = (urn: string) => {
+  const m = /^urn:kilnmark:([^:]+):(.*)$/.exec(urn);
+  return m ? { source: m[1], path: m[2] } : { source: "", path: urn };
+};
 
 /** The stewards' task list: failing rules and significant drift, most severe first. */
 export function IssuesPage({ role }: { role: AccessRole }) {
@@ -39,11 +48,11 @@ export function IssuesPage({ role }: { role: AccessRole }) {
 
   return (
     <>
-      <h1 tabIndex={-1}>Issues</h1>
-      <p className="lead">
-        Rules that fail or warn (when the rule asks for a task) and significant drift between scans. A rule's task
-        closes itself when the rule passes again.
-      </p>
+      <PageHeader
+        title="Issues"
+        meta={issues ? `${issues.length} ${STATUS[status as Issue["status"]]?.toLowerCase() ?? "in all"}` : undefined}
+        lead="Rules that fail or warn (when the rule asks for a task) and significant drift between scans. A rule's task closes itself when the rule passes again."
+      />
       <p role="status" className="notice">
         {notice}
       </p>
@@ -52,57 +61,74 @@ export function IssuesPage({ role }: { role: AccessRole }) {
           {error}
         </p>
       )}
-      <section aria-labelledby="issues-h" className="panel">
-        <h2 id="issues-h">{STATUS[status as Issue["status"]] ?? "All"} issues</h2>
-        <div className="field inline-field">
-          <label htmlFor="issue-status">Show</label>
-          <select id="issue-status" value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="open">Open</option>
-            <option value="resolved">Resolved</option>
-            <option value="dismissed">Dismissed</option>
-            <option value="all">All</option>
-          </select>
-        </div>
-        {issues === null && !error && <p>Loading…</p>}
-        {issues?.length === 0 && <p>Nothing here. {status === "open" ? "No open issues." : ""}</p>}
+      <Card
+        title={`${STATUS[status as Issue["status"]] ?? "All"} issues`}
+        titleId="issues-h"
+        actions={
+          <FilterChips
+            label="Show issues"
+            selected={status}
+            onSelect={setStatus}
+            options={[
+              { id: "open", label: "Open" },
+              { id: "resolved", label: "Resolved" },
+              { id: "dismissed", label: "Dismissed" },
+              { id: "all", label: "All" },
+            ]}
+          />
+        }
+      >
+        {issues === null && !error && <p role="status" className="muted">Loading…</p>}
+        {issues?.length === 0 && (
+          <EmptyState compact icon={<Icon name="circle-check" size={22} />} title={status === "open" ? "No open issues" : "Nothing here"}>
+            Failing rules and drift between scans show here.
+          </EmptyState>
+        )}
         {issues && issues.length > 0 && (
-          <div className="table-scroll" role="region" aria-label="Issues table (scrolls sideways on small screens)" tabIndex={0}>
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Severity</th>
-                  <th scope="col">Issue</th>
-                  <th scope="col">Asset</th>
-                  <th scope="col">Status</th>
-                  {steward && (
-                    <th scope="col">
-                      <span className="visually-hidden">Actions</span>
-                    </th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {issues.map((i) => (
+          <DataTable label="Issues table (scrolls sideways on small screens)">
+            <thead>
+              <tr>
+                <th scope="col">Severity</th>
+                <th scope="col">Issue</th>
+                <th scope="col">Asset</th>
+                <th scope="col">Status</th>
+                {steward && (
+                  <th scope="col">
+                    <span className="visually-hidden">Actions</span>
+                  </th>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {issues.map((i) => {
+                const a = assetName(i.assetUrn);
+                return (
                   <tr key={i.id}>
                     <td>
-                      <span className={`badge badge-sev-${i.severity}`}>{SEVERITY[i.severity]}</span>
+                      <SeverityChip severity={i.severity} />
                     </td>
                     <th scope="row">
                       {i.title}
                       {i.detail && <div className="small muted">{i.detail}</div>}
-                      <div className="small muted">Opened {formatTime(i.createdAt)}</div>
+                      <div className="small muted">
+                        {i.driftEventId != null ? "Drift · " : i.ruleId != null ? "Rule · " : ""}
+                        Opened <time dateTime={i.createdAt} title={formatTime(i.createdAt)}>{formatAgo(i.createdAt)}</time>
+                      </div>
                     </th>
                     <td className="small">
-                      <a href={href.asset(i.assetUrn)} className="mono">{i.assetUrn}</a>
-                      {i.field && <div className="mono">{i.field}</div>}
+                      <a href={href.asset(i.assetUrn, "quality")} className="km-strong-link" title={i.assetUrn}>
+                        {a.path}
+                      </a>
+                      <div className="muted">{a.source}</div>
+                      {i.field && <span className="km-code">{i.field}</span>}
                     </td>
                     <td>
-                      {STATUS[i.status]}
+                      <StatusChip tone={STATUS_TONE[i.status]}>{STATUS[i.status]}</StatusChip>
                       {i.closedBy && <div className="small muted">by {i.closedBy}</div>}
                     </td>
                     {steward && (
                       <td>
-                        <div className="buttons">
+                        <div className="buttons tight">
                           {i.status === "open" ? (
                             <>
                               <button type="button" onClick={() => set(i, "resolved")} aria-label={`Resolve: ${i.title}`}>
@@ -121,12 +147,12 @@ export function IssuesPage({ role }: { role: AccessRole }) {
                       </td>
                     )}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                );
+              })}
+            </tbody>
+          </DataTable>
         )}
-      </section>
+      </Card>
       {!steward && <p className="hint">Your role ({role}) can read issues. Stewards resolve and dismiss them.</p>}
     </>
   );

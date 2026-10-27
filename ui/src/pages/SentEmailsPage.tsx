@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { formatTime, notifyApi, type MailLogEntry } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
+import { Card, DataTable, EmptyState, PageHeader, StatusChip, type Tone } from "../components/ui";
 
 const STATUSES: { value: string; label: string }[] = [
   { value: "all", label: "Every attempt" },
@@ -11,12 +12,7 @@ const STATUSES: { value: string; label: string }[] = [
   { value: "rate_limited", label: "Over the hourly limit, moved to the digest" },
 ];
 
-const BADGE: Record<MailLogEntry["status"], string> = {
-  sent: "badge badge-succeeded",
-  retrying: "badge badge-queued",
-  failed: "badge badge-failed",
-  rate_limited: "badge badge-none",
-};
+const TONE: Record<MailLogEntry["status"], Tone> = { sent: "good", retrying: "warn", failed: "bad", rate_limited: "neutral" };
 
 const LABEL: Record<MailLogEntry["status"], string> = {
   sent: "Sent",
@@ -43,22 +39,12 @@ export function SentEmailsPage() {
   }, [status]);
   return (
     <>
-      <nav aria-label="Breadcrumb" className="crumbs">
-        <ol>
-          <li>
-            <a href={href.settings()}>Settings</a>
-          </li>
-          <li>
-            <a href={href.email()}>Email</a>
-          </li>
-          <li aria-current="page">Sent emails</li>
-        </ol>
-      </nav>
-      <h1 tabIndex={-1}>Sent emails</h1>
-      <p className="lead">
-        Every attempt to send an email, newest first, kept for 30 days. Only the subject is kept, never the email's text.
-      </p>
-      <div className="field">
+      <PageHeader
+        title="Sent emails"
+        crumbs={[{ label: "Settings", href: href.settings() }, { label: "Email", href: href.email() }, { label: "Sent emails" }]}
+        lead="Every attempt to send an email, newest first, kept for 30 days. Only the subject is kept, never the email's text."
+      />
+      <div className="field km-field-narrow">
         <label htmlFor="log-status">Show</label>
         <select id="log-status" value={status} onChange={(e) => setStatus(e.target.value)}>
           {STATUSES.map((s) => (
@@ -73,13 +59,11 @@ export function SentEmailsPage() {
           {error}
         </p>
       )}
-      <section className="panel" aria-labelledby="log-h">
-        <h2 id="log-h">Attempts</h2>
-        {entries === null && !error && <p role="status">Loading…</p>}
-        {entries?.length === 0 && <p>None.</p>}
+      <Card title="Attempts" titleId="log-h" className="km-section">
+        {entries === null && !error && <p role="status" className="muted">Loading…</p>}
+        {entries?.length === 0 && <EmptyState title="None" compact>No emails of this kind in the last 30 days.</EmptyState>}
         {entries && entries.length > 0 && (
-          <div className="table-scroll" role="region" aria-label="Sent emails (scrolls sideways on small screens)" tabIndex={0}>
-            <table>
+          <DataTable label="Sent emails">
               <thead>
                 <tr>
                   <th scope="col">When</th>
@@ -102,17 +86,16 @@ export function SentEmailsPage() {
                       </div>
                     </td>
                     <td>
-                      <span className={BADGE[e.status]}>{LABEL[e.status]}</span>
+                      <StatusChip tone={TONE[e.status]} dot>{LABEL[e.status]}</StatusChip>
                       {e.attempt > 1 && <div className="small muted">attempt {e.attempt}</div>}
                     </td>
                     <td className="small">{e.error ?? ""}</td>
                   </tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+          </DataTable>
         )}
-      </section>
+      </Card>
     </>
   );
 }

@@ -518,4 +518,4 @@ Owning this outright depends less on the code than on where the ideas and code c
 - [ ] Decided: a standalone product, separate from any Pentaho product. Plan and scope live in the companion plan doc.
 - [ ] Decided: Kilnmark (product) and Kiln (engine). Trademark (UK IPO, USPTO, classes 9 and 42) and domain checks still to do.
 - [ ] Decided: Quarkus, one image with api, scheduler and worker roles.
-- [ ] Which three data sources first (e.g. PostgreSQL, S3/MinIO, local files from the CSCU lab)?
+- [x] Decided: the first sources are PostgreSQL, S3-compatible object storage and local files, then SQL Server. The reference lab uses VersityGW for S3 (ADR 0015); MinIO is supported as a customer's store but not used in the lab.

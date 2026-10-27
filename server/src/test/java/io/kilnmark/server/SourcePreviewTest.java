@@ -185,7 +185,7 @@ class SourcePreviewTest {
         // Test-only connectors (kind test-...) are registered on the test class path; leave them out.
         assertEquals(List.of("postgresql", "sqlserver"), c.<String>getList("categories[0].connectors.kind").stream()
             .filter(k -> !k.startsWith("test-")).toList());
-        assertEquals(List.of("discover", "read"), c.getList("categories[0].connectors[0].capabilities"));
+        assertEquals(List.of("discover", "read", "write"), c.getList("categories[0].connectors[0].capabilities"));
         assertTrue(c.getBoolean("categories[0].connectors[0].addressFields"));
         assertTrue(c.getBoolean("categories[0].connectors[0].driverBundled"));
         assertEquals(List.of("files", "s3"), c.getList("categories[2].connectors.kind"));

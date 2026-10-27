@@ -1,27 +1,86 @@
-/* In-app documentation (src/docs) and the version line under the navigation. Uses the tokens in tokens.css. */
+/* In-app documentation (src/docs). Uses the tokens in tokens.css. */
 
-.nav-version {
-  margin: 16px 12px 0;
+.km-article {
+  display: grid;
+  gap: var(--km-gap);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
 }
 
-.sidenav .nav-version a {
-  display: inline;
+@media (min-width: 1100px) {
+  .km-article--toc {
+    grid-template-columns: minmax(0, 1fr) 240px;
+  }
+
+  .km-article--toc .km-toc {
+    order: 2;
+    position: sticky;
+    top: calc(var(--km-topbar-h) + 16px);
+    max-height: calc(100vh - var(--km-topbar-h) - 32px);
+    overflow-y: auto;
+  }
+}
+
+.km-toc {
+  padding: 16px 18px;
+  font-size: var(--km-text-sm);
+}
+
+.km-toc-title {
+  margin: 0 0 8px;
+  font: 700 var(--km-text-sm) var(--km-font-display);
+  color: var(--km-ink-strong);
+}
+
+.km-toc ul {
+  list-style: none;
+  margin: 0;
   padding: 0;
-  color: var(--km-link);
+  display: grid;
+  gap: 6px;
+}
+
+.km-toc a {
+  text-decoration: none;
+}
+
+.km-toc a:hover {
   text-decoration: underline;
-  font-weight: 500;
 }
 
 .doc-body {
-  max-width: 75ch;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+.doc-body > * {
+  max-width: 78ch;
+}
+
+.doc-body > :first-child {
+  margin-top: 0;
 }
 
 .doc-body pre {
   overflow-x: auto;
-  padding: 12px;
-  background: var(--km-ground);
-  border: 1px solid var(--km-border);
-  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--km-surface-2);
+  border: 1px solid var(--km-divider);
+  border-radius: 12px;
+}
+
+.doc-body :not(pre) > code {
+  padding: 1px 5px;
+  border-radius: var(--km-radius-xs);
+  background: var(--km-surface-3);
+}
+
+.doc-body h2 {
+  margin-top: 28px;
+}
+
+.doc-body table {
+  margin: 12px 0;
 }
 
 .doc-body code {
@@ -29,11 +88,13 @@
 }
 
 .doc-body blockquote {
-  margin: 0;
-  padding-left: 12px;
-  border-left: 3px solid var(--km-border);
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-left: 4px solid var(--km-accent);
+  border-radius: 0 12px 12px 0;
+  background: var(--km-accent-tint);
 }
 
 .doc-body [id^="doc-"] {
-  scroll-margin-top: 16px;
+  scroll-margin-top: calc(var(--km-topbar-h) + 16px);
 }

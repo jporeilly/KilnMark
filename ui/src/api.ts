@@ -991,7 +991,11 @@ export const qualityApi = {
   runRule: (id: number) => call<QualityRun>(`/api/v1/quality/rules/${id}/run`, { method: "POST" }),
   result: (id: number, unmask = false) =>
     call<RuleResult>(`/api/v1/quality/results/${id}${unmask ? "?unmask=true" : ""}`),
-  issues: (status: string) => call<Issue[]>(`/api/v1/quality/issues?status=${encodeURIComponent(status)}`),
+  /** A rule's recent results, newest first. */
+  results: (ruleId: number, limit = 10) => call<RuleResult[]>(`/api/v1/quality/rules/${ruleId}/results?limit=${limit}`),
+  /** Issues by status; the server returns at most `limit` (100 when left out, 500 at most). */
+  issues: (status: string, limit?: number) =>
+    call<Issue[]>(`/api/v1/quality/issues?status=${encodeURIComponent(status)}${limit ? `&limit=${limit}` : ""}`),
   setIssue: (id: number, status: Issue["status"]) =>
     call<Issue>(`/api/v1/quality/issues/${id}`, { method: "PUT", body: JSON.stringify({ status }) }),
 };
@@ -1006,6 +1010,166 @@ export function rating(score: number): { word: string; tone: "good" | "fair" | "
   return { word: "Poor", tone: "poor" };
 }
 
+// ---- Pipelines (docs/design/pipelines.md) ----
+
+/** line and column count from 1; 0 when the problem has no place in the text. */
+export type PipelineProblem = { line: number; column: number; step: string | null; message: string };
+export type PipelineColumn = { name: string; type: string };
+/** columns: per output port, or null for a port whose columns are not known before a run. */
+export type PipelineStepOutline = {
+  id: string;
+  type: string | null;
+  kind: string | null;
+  line: number;
+  inputs: string[];
+  outputs: string[];
+  columns: Record<string, PipelineColumn[] | null>;
+};
+export type PipelineEdge = { fromStep: string; fromPort: string; toStep: string; toPort: string };
+export type PipelineValidation = {
+  valid: boolean;
+  name: string | null;
+  description: string | null;
+  problems: PipelineProblem[];
+  notes: PipelineProblem[];
+  steps: PipelineStepOutline[];
+  edges: PipelineEdge[];
+};
+export type PipelineRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type PipelineRun = {
+  id: number;
+  pipeline: string;
+  version: number;
+  status: PipelineRunStatus;
+  requestedBy: string;
+  requestedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  cancelRequested: boolean;
+  error: string | null;
+  rowsWritten: number | null;
+};
+export type PipelineSummary = {
+  name: string;
+  displayName: string;
+  description: string | null;
+  latestVersion: number;
+  valid: boolean;
+  updatedBy: string;
+  updatedAt: string;
+  lastRun: PipelineRun | null;
+};
+export type PipelineVersionSummary = {
+  n: number;
+  message: string | null;
+  author: string;
+  createdAt: string;
+  valid: boolean;
+  problems: number;
+};
+export type PipelineVersion = {
+  n: number;
+  yaml: string;
+  message: string | null;
+  author: string;
+  createdAt: string;
+  valid: boolean;
+  problems: PipelineProblem[];
+};
+export type PipelineDetail = {
+  name: string;
+  displayName: string;
+  description: string | null;
+  latestVersion: number;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  latest: PipelineVersion | null;
+  lastRun: PipelineRun | null;
+};
+/** ports: rows per input and output port; null where the engine did not count a port on its own. */
+export type PipelineStepRun = {
+  step: string;
+  type: string;
+  position: number;
+  rowsIn: number | null;
+  rowsOut: number | null;
+  ports: { in?: Record<string, number | null>; out?: Record<string, number | null> } | null;
+  peakMemory: number | null;
+  durationMs: number | null;
+  error: string | null;
+  /** How the step ended; a step the engine stopped is not a clean finish. Null when not recorded. */
+  outcome: "finished" | "ended_early" | "stopped" | "failed" | null;
+};
+export type PipelineWrittenAsset = {
+  step: string;
+  urn: string;
+  source: string;
+  target: string;
+  mode: string;
+  rows: number | null;
+  registered: boolean;
+};
+export type PipelineRunDetail = {
+  run: PipelineRun;
+  steps: PipelineStepRun[];
+  written: PipelineWrittenAsset[];
+  read: string[];
+  lineage: { step: string; input: string; output: string }[];
+  notes: string[];
+};
+export type StepTypeSetting = {
+  key: string;
+  label: string;
+  kind: string;
+  required: boolean;
+  defaultValue: unknown;
+  help: string;
+  choices: string[];
+};
+export type StepType = {
+  type: string;
+  kind: string;
+  label: string;
+  help: string;
+  inputs: string[];
+  manyInputs: string[];
+  outputs: string[];
+  settings: StepTypeSetting[];
+};
+
+const pipe = (name: string) => `/api/v1/pipelines/${encodeURIComponent(name)}`;
+
+export const pipelinesApi = {
+  list: () => call<PipelineSummary[]>("/api/v1/pipelines"),
+  get: (name: string) => call<PipelineDetail>(pipe(name)),
+  create: (p: { name: string; displayName?: string; yaml: string; message?: string }) =>
+    call<PipelineDetail>("/api/v1/pipelines", { method: "POST", body: JSON.stringify(p) }),
+  /** version: the latest version as read; the server refuses the save (409) if someone has saved another since. */
+  save: (name: string, p: { yaml: string; message: string }, version?: number) =>
+    call<PipelineDetail>(pipe(name), {
+      method: "PUT",
+      body: JSON.stringify(p),
+      headers: version ? { "If-Match": `"${version}"` } : undefined,
+    }),
+  remove: (name: string) => call<null>(pipe(name), { method: "DELETE" }),
+  validate: (yaml: string, name?: string) =>
+    call<PipelineValidation>(name ? `${pipe(name)}/validate` : "/api/v1/pipelines/validate", {
+      method: "POST",
+      body: JSON.stringify({ yaml }),
+    }),
+  versions: (name: string) => call<PipelineVersionSummary[]>(`${pipe(name)}/versions`),
+  version: (name: string, n: number) => call<PipelineVersion>(`${pipe(name)}/versions/${n}`),
+  run: (name: string, version?: number) =>
+    call<PipelineRun>(`${pipe(name)}/runs`, { method: "POST", body: JSON.stringify({ version: version ?? null }) }),
+  runs: (name: string) => call<PipelineRun[]>(`${pipe(name)}/runs?limit=50`),
+  runDetail: (id: number) => call<PipelineRunDetail>(`/api/v1/pipeline-runs/${id}`),
+  cancel: (id: number) => call<PipelineRun>(`/api/v1/pipeline-runs/${id}/cancel`, { method: "POST" }),
+  /** The step catalogue with settings schemas: not used yet; the canvas (step 2) builds its palette from it. */
+  steps: () => call<StepType[]>("/api/v1/steps"),
+};
+
 // ---- Notifications (docs/guide/notifications.md): the in-app feed, each person's choices, and email for admins.
 
 export type NotificationKindId =
@@ -1017,25 +1181,9 @@ export type NotificationKindId =
   | "connection_failed"
   | "pipeline_failed"
   | "pipeline_low_quality";
+/** The feed itself (items, unread count, marking read) is in src/notifications/api.ts, shared with the shell's bell. */
 export type NotificationSeverity = "high" | "medium" | "low" | "info";
 export type EmailStatus = "sent" | "queued" | "failed" | "skipped";
-export type NotificationChannel = { type: "in_app" } | { type: "email"; status: EmailStatus; at: string };
-/** One in-app notification, written for the signed-in person's role. teamEmails is there for admins only. */
-export type NotificationItem = {
-  id: string;
-  kind: NotificationKindId;
-  severity: NotificationSeverity;
-  title: string;
-  detail: string | null;
-  link: string | null;
-  createdAt: string;
-  read: boolean;
-  channels: NotificationChannel[];
-  teamEmails?: { name: string; status: EmailStatus }[];
-};
-/** more is true when there are more unread than `unread` says: show "99+". */
-export type NotificationFeed = { items: NotificationItem[]; unread: number; more?: boolean };
-export type UnreadCount = { unread: number; more?: boolean };
 export type KindChoice = { id: NotificationKindId; label: string; description: string };
 /** What a person hears about; sources null means every source. */
 export type MyNotifications = {
@@ -1148,13 +1296,8 @@ export type MailLogEntry = {
   error: string | null;
 };
 
+/** Notification settings and, for admins, email: the feed is notificationsApi in src/notifications/api.ts. */
 export const notifyApi = {
-  feed: (limit = 20, unread = false) =>
-    call<NotificationFeed>(`/api/v1/notifications?limit=${limit}&unread=${unread}`),
-  unreadCount: () => call<UnreadCount>("/api/v1/notifications/unread-count"),
-  markRead: (ids: string[]) =>
-    call<null>("/api/v1/notifications/read", { method: "POST", body: JSON.stringify({ ids }) }),
-  markAllRead: () => call<null>("/api/v1/notifications/read", { method: "POST", body: JSON.stringify({ all: true }) }),
   mine: () => call<MyNotifications>("/api/v1/me/notifications"),
   saveMine: (s: SubscriptionInput & { inAppKinds: NotificationKindId[] }) =>
     call<MyNotifications>("/api/v1/me/notifications", { method: "PUT", body: JSON.stringify(s) }),

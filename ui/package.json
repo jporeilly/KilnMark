@@ -2,7 +2,7 @@
   "name": "kilnmark-ui",
   "private": true,
   "license": "BUSL-1.1",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "type": "module",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.2",
+    "@fontsource/inter": "5.2.8",
+    "@fontsource/manrope": "5.2.8",
     "@tabler/icons-react": "3.48.0",
     "@xyflow/react": "^12.12.0",
     "marked": "18.1.0",

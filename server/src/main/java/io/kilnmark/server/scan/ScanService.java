@@ -324,6 +324,15 @@ public class ScanService {
         if (stop.getAsBoolean()) {
             throw new Stopped();
         }
+        recordEvent(e, runId);
+    }
+
+    /**
+     * Stores a row count or column profile an engine step reported, under run {@code runId}: the
+     * scan's own path, also used by pipelines to record what their writes wrote. The asset must
+     * already be recorded ({@code saveAsset}).
+     */
+    public void recordEvent(MetadataEvent e, long runId) {
         switch (e.kind()) {
             case ROW_COUNT -> store.saveRowCount(e.assetUrn(), io.kilnmark.server.quality.QualityService.reportedRows(
                 e.attributes()),

@@ -199,50 +199,6 @@ export function EmailChoiceFields({
 export const severityPhrase = (s: NotificationSeverity) =>
   ({ high: "high only", medium: "medium and high", low: "low, medium and high", info: "everything" })[s];
 
-/**
- * A real switch: a native checkbox with role="switch", which assistive technology announces as on
- * or off by itself. {@code readOnly} shows a setting the server's configuration fixes.
- */
-export function Switch({
-  id,
-  label,
-  checked,
-  onChange,
-  hint,
-  readOnly,
-}: {
-  id: string;
-  label: string;
-  checked: boolean;
-  onChange: (on: boolean) => void;
-  hint?: string;
-  readOnly?: boolean;
-}) {
-  const described = [hint ? `${id}-hint` : null, readOnly ? `${id}-locked` : null].filter(Boolean).join(" ");
-  return (
-    <div className="field">
-      <label className="choice" htmlFor={id}>
-        <input
-          id={id}
-          type="checkbox"
-          role="switch"
-          checked={checked}
-          disabled={readOnly}
-          onChange={(e) => onChange(e.target.checked)}
-          aria-describedby={described || undefined}
-        />
-        <strong>{label}</strong>
-      </label>
-      {readOnly && <Locked id={`${id}-locked`} />}
-      {hint && (
-        <p id={`${id}-hint`} className="hint">
-          {hint}
-        </p>
-      )}
-    </div>
-  );
-}
-
 /** The label for a setting fixed by the server's configuration (kilnmark.mail.locked). */
 export function Locked({ id }: { id: string }) {
   return (

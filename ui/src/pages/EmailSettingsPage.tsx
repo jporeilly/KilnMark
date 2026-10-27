@@ -10,7 +10,8 @@ import {
 } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
-import { EmailChoiceFields, Locked, severityPhrase, Switch, type EmailChoices } from "../components/NotificationChoices";
+import { Button, Card, DataTable, PageHeader, StatusChip, Switch } from "../components/ui";
+import { EmailChoiceFields, Locked, severityPhrase, type EmailChoices } from "../components/NotificationChoices";
 import { useFocusOn } from "./NotificationsPage";
 
 const SECURITY: { value: MailSecurity; label: string }[] = [
@@ -40,20 +41,18 @@ export function EmailSettingsPage() {
   }, []);
   return (
     <>
-      <nav aria-label="Breadcrumb" className="crumbs">
-        <ol>
-          <li>
-            <a href={href.settings()}>Settings</a>
-          </li>
-          <li aria-current="page">Email</li>
-        </ol>
-      </nav>
-      <h1 tabIndex={-1}>Email</h1>
-      <p className="lead">
-        The mail server Kilnmark sends notifications through, the rules for email, and team addresses for distribution
-        lists. Each person chooses their own emails under <a href={href.notifications()}>Settings, Notifications</a>. See
-        every email sent or tried under <a href={href.emailLog()}>Sent emails</a>.
-      </p>
+      <PageHeader
+        title="Email"
+        crumbs={[{ label: "Settings", href: href.settings() }, { label: "Email" }]}
+        lead={
+          <>
+            The mail server Kilnmark sends notifications through, the rules for email, and team addresses for
+            distribution lists. Each person chooses their own emails under{" "}
+            <a href={href.notifications()}>Settings, Notifications</a>. See every email sent or tried under{" "}
+            <a href={href.emailLog()}>Sent emails</a>.
+          </>
+        }
+      />
       <MailServer />
       {kinds.length > 0 && <Teams kinds={kinds} timeZone={timeZone} sources={sources} />}
     </>
@@ -121,16 +120,15 @@ function MailServer() {
 
   if (!form || !view) {
     return (
-      <section className="panel" aria-labelledby="server-h">
-        <h2 id="server-h">Mail server</h2>
+      <Card title="Mail server" titleId="server-h" className="km-section">
         {error ? (
           <p role="alert" className="error" tabIndex={-1} ref={errorRef}>
             {error.text}
           </p>
         ) : (
-          <p role="status">Loading…</p>
+          <p role="status" className="muted">Loading…</p>
         )}
-      </section>
+      </Card>
     );
   }
 
@@ -222,8 +220,7 @@ function MailServer() {
   );
 
   return (
-    <section className="panel" aria-labelledby="server-h">
-      <h2 id="server-h">Mail server</h2>
+    <Card title="Mail server" titleId="server-h" className="km-section">
       {!view.saved && (
         <p className="hint">
           Not saved yet: what is shown comes from the server's configuration (kilnmark.mail), if any. Saving keeps these
@@ -262,7 +259,7 @@ function MailServer() {
           label="Send emails"
           checked={form.enabled}
           onChange={(enabled) => set({ enabled })}
-          hint="Off pauses every email: they wait, and go once it is back on (or as the undelivered rule below says). In-app notifications go on regardless."
+          help="Off pauses every email: they wait, and go once it is back on (or as the undelivered rule below says). In-app notifications go on regardless."
         />
         <div className="field-row">
           {text("host", "host", "SMTP server", { autoComplete: "off", placeholder: "smtp.example.com", required: form.enabled })}
@@ -313,9 +310,10 @@ function MailServer() {
           id="mail-plain"
           label="Allow sign-in without encryption"
           checked={form.allowPlainAuth}
-          readOnly={locked("allow-plain-auth")}
+          disabled={locked("allow-plain-auth")}
+          defaultNote={locked("allow-plain-auth") ? "Set by the server's configuration" : undefined}
           onChange={(allowPlainAuth) => set({ allowPlainAuth })}
-          hint="With security None, the user name and password are then sent unencrypted: anyone on the network between Kilnmark and the mail server can read them. Only for a relay on a trusted network, and only for a password entered here; a password from the server's configuration is never sent unencrypted. Turning this on is written to the server log."
+          help="With security None, the user name and password are then sent unencrypted: anyone on the network between Kilnmark and the mail server can read them. Only for a relay on a trusted network, and only for a password entered here; a password from the server's configuration is never sent unencrypted. Turning this on is written to the server log."
         />
         {plain && !form.allowPlainAuth && (
           <p className="warning">
@@ -338,9 +336,10 @@ function MailServer() {
             id="mail-confirm"
             label="Personal addresses need confirming"
             checked={form.requireConfirmation}
-            readOnly={locked("require-confirmation")}
+            disabled={locked("require-confirmation")}
+            defaultNote={locked("require-confirmation") ? "Set by the server's configuration" : undefined}
             onChange={(requireConfirmation) => set({ requireConfirmation })}
-            hint="A person's new address gets a confirmation email with a link and a code, and nothing else until they confirm it. Team addresses, which only admins add, need none."
+            help="A person's new address gets a confirmation email with a link and a code, and nothing else until they confirm it. Team addresses, which only admins add, need none."
           />
           {!form.requireConfirmation && (
             <p className="warning">
@@ -379,12 +378,12 @@ function MailServer() {
             {locked("undelivered-action") && <Locked id="undelivered-action-locked" />}
           </fieldset>
         </fieldset>
-        <button type="submit" className="primary" aria-disabled={saving || undefined}>
+        <Button type="submit" variant="primary" aria-disabled={saving || undefined}>
           {saving ? "Saving…" : "Save mail settings"}
-        </button>
+        </Button>
       </form>
       <TestEmail ready={!!view.host && !!view.fromAddress} />
-    </section>
+    </Card>
   );
 }
 
@@ -462,13 +461,13 @@ function DomainList({ value, onChange, readOnly }: { value: string[]; onChange: 
             <li key={d}>
               <span className="mono">{d}</span>
               {!readOnly && (
-                <button type="button" className="small" aria-label={`Remove ${d}`}
+                <Button size="sm" variant="ghost" aria-label={`Remove ${d}`}
                   onClick={() => {
                     onChange(value.filter((x) => x !== d));
                     setStatus(`${d} removed. Save to apply.`);
                   }}>
                   Remove
-                </button>
+                </Button>
               )}
             </li>
           ))}
@@ -481,9 +480,9 @@ function DomainList({ value, onChange, readOnly }: { value: string[]; onChange: 
           </label>
           <input id="domain-new" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKey}
             placeholder="example.com" aria-describedby="domains-hint" autoComplete="off" />
-          <button type="button" onClick={add} disabled={!draft.trim()}>
+          <Button onClick={add} disabled={!draft.trim()}>
             Add domain
-          </button>
+          </Button>
         </span>
       )}
       <p role="status" className="hint">
@@ -521,9 +520,9 @@ function TestEmail({ ready }: { ready: boolean }) {
           <input id="test-to" type="email" value={to} onChange={(e) => setTo(e.target.value)} required
             placeholder="you@example.com" />
         </div>
-        <button type="submit" disabled={!ready} aria-disabled={sending || undefined}>
+        <Button type="submit" disabled={!ready} aria-disabled={sending || undefined}>
           {sending ? "Sending…" : "Send a test email"}
-        </button>
+        </Button>
       </form>
       {!ready && <p className="hint">Save a mail server and a from address first.</p>}
       {result && (
@@ -618,15 +617,12 @@ function Teams({
   };
 
   return (
-    <section className="panel" aria-labelledby="teams-h">
-      <div className="panel-head">
-        <h2 id="teams-h">Team addresses</h2>
-        {editing === null && (
-          <button type="button" onClick={() => edit(null)}>
-            Add a team address
-          </button>
-        )}
-      </div>
+    <Card
+      title="Team addresses"
+      titleId="teams-h"
+      className="km-section"
+      actions={editing === null ? <Button onClick={() => edit(null)}>Add a team address</Button> : undefined}
+    >
       <p className="hint">
         A plain address, such as a distribution list, with its own choices. Team emails are written for a viewer: they
         never include detail only stewards may see. Team addresses need no confirmation and get no in-app notifications.
@@ -641,8 +637,7 @@ function Teams({
       )}
       {teams?.length === 0 && editing === null && <p>No team addresses yet.</p>}
       {teams && teams.length > 0 && (
-        <div className="table-scroll" role="region" aria-label="Team addresses (scrolls sideways on small screens)" tabIndex={0}>
-          <table>
+        <DataTable label="Team addresses">
             <thead>
               <tr>
                 <th scope="col">Name and address</th>
@@ -655,14 +650,18 @@ function Teams({
                   <th scope="row">
                     {t.name}
                     <div className="small muted">{t.email}</div>
-                    {t.paused && <div className="small">Paused: outside the allowed domains</div>}
+                    {t.paused && (
+                      <div className="small">
+                        <StatusChip tone="warn">Paused: outside the allowed domains</StatusChip>
+                      </div>
+                    )}
                     <div className="buttons row-actions">
-                      <button type="button" className="small" onClick={() => edit(t)} aria-label={`Edit ${t.name}`}>
+                      <Button size="sm" onClick={() => edit(t)} aria-label={`Edit ${t.name}`}>
                         Edit
-                      </button>
-                      <button type="button" className="small" onClick={() => remove(t)} aria-label={`Delete ${t.name}`}>
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => remove(t)} aria-label={`Delete ${t.name}`}>
                         Delete
-                      </button>
+                      </Button>
                     </div>
                   </th>
                   <td className="small">
@@ -675,8 +674,7 @@ function Teams({
                 </tr>
               ))}
             </tbody>
-          </table>
-        </div>
+        </DataTable>
       )}
       {editing !== null && (
         <form onSubmit={save} className="form" aria-labelledby="team-form-h">
@@ -705,15 +703,13 @@ function Teams({
             disabled={!form.enabled}
           />
           <div className="buttons">
-            <button type="submit" className="primary">
+            <Button type="submit" variant="primary">
               Save team address
-            </button>
-            <button type="button" onClick={() => setEditing(null)}>
-              Cancel
-            </button>
+            </Button>
+            <Button onClick={() => setEditing(null)}>Cancel</Button>
           </div>
         </form>
       )}
-    </section>
+    </Card>
   );
 }

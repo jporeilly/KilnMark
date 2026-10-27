@@ -36,14 +36,10 @@ A successful scan clears `scan:<source>` and `connection:<source>` quietly
 (`NotificationCleared`); a successful connection test clears only `connection:<source>`. So the
 next failure is told.
 
-**Pipelines hook.** The pipelines change (branch r3d-service) wires its runs with one line where
-`PipelineService` writes a run's final status:
-
-```java
-notifications.pipelineRunFinished(run.pipeline(), id, o.status(), score, threshold, link);
-```
-
-with `NotificationPublisher notifications` injected. Nothing in this change touches pipeline code.
+**Pipelines hook.** `PipelineService.finished` calls `notifications.pipelineRunFinished(pipeline,
+id, status, score, threshold, link)` wherever a run gets its final status on the worker. Runs carry
+no quality score yet, so `score` and `threshold` are null and only failures are told; once a score
+exists, pass both and `pipeline_low_quality` follows without further change.
 
 ## Recording: off the caller's thread
 
@@ -183,8 +179,8 @@ no in-app notification left after `log-retention` (30 days); states of deleted r
 
 Migration V13 (`mail_settings`, `notify_subscriber`, `notify_event`, `notify_state`,
 `notify_inbox`, `notify_person`, `notify_delivery`, `notify_log`) refers only to V1, V4 and V6
-(`api_token.local_assistant`). V12 belongs to the pipelines change, which ships first; V13 applies
-cleanly on top of V12, and on V11 alone. Flyway runs with its default (no out-of-order
+(`api_token.local_assistant`), never to V12 (pipelines), so a fresh database applies V1 to V13 in
+order and a database at V12 takes V13 on top. Flyway runs with its default (no out-of-order
 migrations): the order is the release order.
 
 ## Not done yet

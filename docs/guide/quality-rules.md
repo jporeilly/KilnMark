@@ -12,8 +12,9 @@ fails.
   their results. Your role is set by the API token you signed in with; ask an admin for a steward
   token if you need one.
 - **Where rules live:**
-  - On an asset's page, the **Quality** section shows its scores, value patterns, rules and
-    results, drift and recommended rules.
+  - On an asset's page, the **Quality** tab shows its overall score and a score for each
+    dimension, the rules on it with their latest result and a bar for each of the last ten
+    results, recommended rules, value patterns, drift and sample rows.
   - The **Quality rules** page lists every rule on every asset and has the form for writing a
     new one or editing one. Open it from the navigation, or with **Manage rules for this asset**
     on an asset page, which filters the list to that asset.
@@ -22,8 +23,8 @@ fails.
 
 ## The quickest way: let the profile write the rule
 
-Every scan already tells Kilnmark what your data looks like. Three buttons on the asset page turn
-that into rules in one click. Start here before writing rules by hand.
+Every scan already tells Kilnmark what your data looks like. Three places on an asset's
+**Quality** tab turn that into rules in a click or two. Start here before writing rules by hand.
 
 ### 1. Accept a value pattern
 
@@ -55,10 +56,18 @@ pattern* rule with it.
 
 ### 3. Add a recommended rule
 
-At the foot of the Quality section, **Recommended rules** lists what the data already obeys:
-columns with no nulls, columns where every value is unique, small sets of values, ranges, dates
-that keep up to date, and steady row counts. Each comes with the reason it was suggested. **Add
-rule** turns it into a rule, so that you notice when the data stops obeying it.
+Beside the rules, **Recommended from the profile** lists what the data already obeys: columns
+with no nulls, columns where every value is unique, small sets of values, ranges, patterns, dates
+that keep up to date, and steady row counts. Each line shows the column, the check, how much of
+the data it fits (*fits 100%*, or *not a row check* for freshness and row counts) and the reason
+it was suggested.
+
+Suggestions that fit every row are ticked already. Tick or untick the ones you want; the chips
+above the list (**Completeness**, **Validity** and so on) show one dimension at a time, and
+**Select all** ticks every suggestion shown. **Add N selected** adds them one by one, then one
+message says which were added and which could not be, and why. Added rules run after the next
+scan, or press **Run rules now**. A suggestion on a sensitive column whose values are hidden from
+you cannot be ticked.
 
 ## Writing a rule yourself
 
@@ -109,7 +118,7 @@ Each check is tagged with a quality dimension, which decides which score it affe
 
 | Check | What fails | What you fill in | Dimension |
 | --- | --- | --- | --- |
-| **Not null** | Empty values. With **Also count blank text as missing**, blank text such as `""` or `"  "` fails too | The tick box | Completeness |
+| **Not null** | Empty values. With **Also count blank text as missing**, blank text such as `""` or `"  "` fails too | The switch | Completeness |
 | **Unique** | Values that appear more than once | Either the column, or **A key of several columns together** and the key columns ticked | Uniqueness |
 | **Allowed values** | Any value not in the list | The values, one per line: up to 1,000, matched exactly, capital letters included | Validity |
 | **Matches pattern** | Any value that does not match the regular expression | The **Pattern**, for example `^[A-Z]{2}[0-9]{6}[A-D]$`. **Use the suggested expression** fills in the profile's suggestion when there is one | Validity |
@@ -171,7 +180,7 @@ the rule goes live.
 Rules run:
 
 - **after every scan** of the asset's source;
-- **on demand:** **Run rules now** on the asset page runs all of its rules, and **Run now** on the
+- **on demand:** **Run rules now** on the asset's Quality tab runs all of its rules, and **Run now** on the
   Quality rules page runs one. Runs go through the job queue, so results appear when a worker has
   finished. The asset page waits and refreshes by itself.
 
@@ -238,8 +247,8 @@ When a rule could not run, `failing` and `total` are replaced by `error`, which 
 On the **Quality rules** page, each rule has:
 
 - **Run now:** runs it at once.
-- **Switch off / Switch on:** a rule that is off keeps its history but does not run. Use this
-  instead of deleting a rule you may want back.
+- **On:** a switch. A rule switched off keeps its history but does not run. Use this instead of
+  deleting a rule you may want back.
 - **Edit:** opens the rule in the form, headed **Edit rule**. Change what you need and choose
   **Save changes**, or **Cancel** to leave it as it was. The rule keeps its results so far, and
   the next run uses the new settings. A rule stays on its asset: to check another asset, add a new
@@ -251,7 +260,7 @@ On the **Quality rules** page, each rule has:
   type new ones. A webhook address hidden from your role is kept unless you type a new one.
 - **Delete:** removes the rule and its results, after you confirm.
 
-While a rule is open in the form, its **Switch off** and **Delete** buttons wait, so saving cannot
+While a rule is open in the form, its **On** switch and **Delete** button wait, so saving cannot
 undo them. If someone else changes the rule after you opened it, saving is refused rather than
 undoing their change: choose **Load the rule as it is now** and make your change again.
 
@@ -282,7 +291,7 @@ When no check in the library fits, an admin can write the query that finds the f
 
 | Goal | Check | Column | Settings | Thresholds |
 | --- | --- | --- | --- | --- |
-| Every customer has an email | Not null | `email` | Also count blank text as missing: ticked | Fail above 0 |
+| Every customer has an email | Not null | `email` | Also count blank text as missing: on | Fail above 0 |
 | Emails look like emails | Matches pattern | `email` | Pattern: `^[^@\s]+@[^@\s]+\.[^@\s]+$` | Warn above 0.5, fail above 2 |
 | UK postcodes are well formed | Matches pattern | `postcode` | Pattern: `^[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}$` | Warn above 1, fail above 5 |
 | No duplicate order lines | Unique | (none) | A key of several columns together: `order_id` and `line_no` ticked | Fail above 0 |

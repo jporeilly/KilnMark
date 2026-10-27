@@ -1,25 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import {
-  api,
-  formatTime,
-  notifyApi,
-  type EmailStatus,
-  type MyNotifications,
-  type NotificationFeed,
-  type NotificationKindId,
-} from "../api";
+import { api, formatTime, notifyApi, type MyNotifications, type NotificationKindId } from "../api";
 import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
-import { EmailChoiceFields, KindBoxes, Switch, type EmailChoices } from "../components/NotificationChoices";
-
-/** Badge classes from the existing ones (tokens.css colours), by severity and by email status. */
-export const severityBadge = (s: string) => (s === "info" ? "badge badge-none" : `badge badge-sev-${s}`);
-export const emailBadge: Record<EmailStatus, string> = {
-  sent: "badge badge-succeeded",
-  queued: "badge badge-queued",
-  failed: "badge badge-failed",
-  skipped: "badge badge-none",
-};
+import { Button, Card, EmptyState, PageHeader, Switch } from "../components/ui";
+import { EmailChoiceFields, KindBoxes, type EmailChoices } from "../components/NotificationChoices";
+import { notificationsApi, type NotificationPage } from "../notifications/api";
+import { NotificationList } from "../notifications/NotificationList";
+import { markNotificationsRead } from "../notifications/store";
 
 /** An unread count as the bell shows it: "99+" when the server says there are more. */
 export const unreadText = (n: { unread: number; more?: boolean }) => (n.more ? `${n.unread}+` : String(n.unread));
@@ -115,19 +102,11 @@ export function NotificationsPage({ confirm }: { confirm: string | null }) {
 
   return (
     <>
-      <nav aria-label="Breadcrumb" className="crumbs">
-        <ol>
-          <li>
-            <a href={href.settings()}>Settings</a>
-          </li>
-          <li aria-current="page">Notifications</li>
-        </ol>
-      </nav>
-      <h1 tabIndex={-1}>Notifications</h1>
-      <p className="lead">
-        What Kilnmark tells you about: failing quality rules and their recovery, new issues, failed scans and connection
-        tests, drift, and pipeline runs. Notifications show here in Kilnmark; email is yours to turn on.
-      </p>
+      <PageHeader
+        title="Notifications"
+        crumbs={[{ label: "Settings", href: href.settings() }, { label: "Notifications" }]}
+        lead="What Kilnmark tells you about: failing quality rules and their recovery, new issues, failed scans and connection tests, drift, and pipeline runs. Notifications show here in Kilnmark; email is yours to turn on."
+      />
       <p role="status" className="notice">
         {notice}
       </p>
@@ -138,9 +117,8 @@ export function NotificationsPage({ confirm }: { confirm: string | null }) {
       )}
       {mine && !mine.available && <p className="warning">{mine.unavailable}</p>}
       {mine && choices && mine.available && (
-        <form onSubmit={save} className="form">
-          <section className="panel" aria-labelledby="inapp-h">
-            <h2 id="inapp-h">In Kilnmark</h2>
+        <form onSubmit={save} className="form km-section">
+          <Card title="In Kilnmark" titleId="inapp-h">
             <KindBoxes
               idPrefix="inapp"
               legend="Kinds of event shown in Kilnmark"
@@ -149,16 +127,16 @@ export function NotificationsPage({ confirm }: { confirm: string | null }) {
               value={inApp}
               onChange={setInApp}
             />
-          </section>
-          <section className="panel" aria-labelledby="email-h">
-            <h2 id="email-h">By email</h2>
+          </Card>
+          <Card title="By email" titleId="email-h">
             {!mine.mailReady && mine.mailNote && <p className="hint">{mine.mailNote} You can still choose now.</p>}
             <Switch
               id="email-on"
               label="Send me emails"
               checked={enabled}
               onChange={setEnabled}
-              hint={
+              defaultNote={mine.saved ? undefined : enabled ? "Default for admins: on" : "Default: off"}
+              help={
                 mine.saved
                   ? undefined
                   : "Until you save, this shows the default for your role: on for admins (high-severity events at once), off for everyone else."
@@ -193,10 +171,10 @@ export function NotificationsPage({ confirm }: { confirm: string | null }) {
               timeZone={mine.timeZone}
               disabled={!enabled}
             />
-          </section>
-          <button type="submit" className="primary" aria-disabled={saving || undefined}>
+          </Card>
+          <Button type="submit" variant="primary" aria-disabled={saving || undefined}>
             {saving ? "Saving…" : "Save notification settings"}
-          </button>
+          </Button>
         </form>
       )}
       {mine?.available && <Recent />}
@@ -226,7 +204,7 @@ function Confirmation({
     );
   }
   if (!mine.confirmationRequired || mine.confirmed) {
-    return <p className="hint">{mine.confirmed ? "Your address is confirmed." : ""}</p>;
+    return mine.confirmed ? <p className="hint">Your address is confirmed.</p> : null;
   }
   const submit = async () => {
     try {
@@ -246,8 +224,7 @@ function Confirmation({
     }
   };
   return (
-    <section className="panel" aria-labelledby="confirm-h">
-      <h3 id="confirm-h">Confirm your address</h3>
+    <Card title="Confirm your address" titleId="confirm-h" level={3} accentTop="accent">
       <p>
         Not confirmed yet: you get no email until you are.
         {mine.confirmationSentAt
@@ -260,86 +237,59 @@ function Confirmation({
           spellCheck={false} />
       </div>
       <div className="buttons">
-        <button type="button" onClick={submit} disabled={!code.trim()}>
+        <Button onClick={submit} disabled={!code.trim()}>
           Confirm
-        </button>
-        <button type="button" onClick={resend}>
+        </Button>
+        <Button variant="subtle" onClick={resend}>
           Send another confirmation email
-        </button>
+        </Button>
       </div>
-    </section>
+    </Card>
   );
 }
 
 /** The latest in-app notifications, with how each reached you, and marking them read. */
 function Recent() {
-  const [feed, setFeed] = useState<NotificationFeed | null>(null);
+  const [feed, setFeed] = useState<NotificationPage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
-    notifyApi
-      .feed(20)
+    notificationsApi
+      .list(20)
       .then(setFeed)
       .catch((e: Error) => setError(e.message));
   }, []);
   useEffect(load, [load]);
   const read = async (ids: string[] | "all") => {
     try {
-      await (ids === "all" ? notifyApi.markAllRead() : notifyApi.markRead(ids));
+      await markNotificationsRead(ids);
       load();
     } catch (e) {
       setError((e as Error).message);
     }
   };
   return (
-    <section className="panel" aria-labelledby="recent-h">
-      <div className="panel-head">
-        <h2 id="recent-h">Your latest notifications</h2>
-        {feed && feed.unread > 0 && (
-          <button type="button" onClick={() => read("all")}>
+    <Card
+      title="Your latest notifications"
+      titleId="recent-h"
+      className="km-section"
+      actions={
+        feed && feed.unread > 0 ? (
+          <Button size="sm" onClick={() => read("all")}>
             Mark all read ({unreadText(feed)} unread)
-          </button>
-        )}
-      </div>
+          </Button>
+        ) : undefined
+      }
+    >
       {error && (
         <p role="alert" className="error">
           {error}
         </p>
       )}
-      {feed === null && !error && <p>Loading…</p>}
-      {feed?.items.length === 0 && <p>Nothing yet. Notifications are kept for 90 days.</p>}
-      {feed && feed.items.length > 0 && (
-        <ul className="notification-list">
-          {feed.items.map((n) => {
-            const mail = n.channels.find((c) => c.type === "email");
-            return (
-              <li key={n.id}>
-                <p>
-                  <span className={severityBadge(n.severity)}>{n.severity}</span>{" "}
-                  {n.link ? <a href={n.link}>{n.title}</a> : n.title}
-                  {!n.read && <span className="muted small"> · unread</span>}
-                </p>
-                {n.detail && <p className="small notification-detail">{n.detail}</p>}
-                <p className="small muted">
-                  {formatTime(n.createdAt)}
-                  {mail && mail.type === "email" && (
-                    <>
-                      {" · "}email to you: <span className={emailBadge[mail.status]}>{mail.status}</span>
-                    </>
-                  )}
-                  {n.teamEmails && n.teamEmails.length > 0 && (
-                    <> · team emails: {n.teamEmails.map((t) => `${t.name} (${t.status})`).join(", ")}</>
-                  )}
-                </p>
-                {!n.read && (
-                  <button type="button" className="small" onClick={() => read([n.id])} aria-label={`Mark read: ${n.title}`}>
-                    Mark read
-                  </button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+      {feed === null && !error && <p role="status" className="muted">Loading…</p>}
+      {feed?.items.length === 0 && (
+        <EmptyState title="Nothing yet" compact>Notifications are kept for 90 days.</EmptyState>
       )}
-    </section>
+      {feed && feed.items.length > 0 && <NotificationList items={feed.items} onOpen={(n) => read([n.id])} />}
+    </Card>
   );
 }

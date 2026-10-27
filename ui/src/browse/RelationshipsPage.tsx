@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PageHeader } from "../components/ui";
 import { allows, formatNumber } from "../api";
 import { useRole } from "../components/role";
 import { useTitle } from "../components/useTitle";
@@ -51,13 +52,17 @@ export function RelationshipsPage({ status }: { status: string }) {
 
   return (
     <>
-      <h1 tabIndex={-1}>Relationships</h1>
-      <p className="lead">
-        Keys the sources declare, and joins Kilnmark found in names and values.{" "}
-        {allows(role, "steward")
-          ? "Accept the proposals that are real joins and reject the rest; your decisions are kept on every scan."
-          : "A steward accepts or rejects the proposals."}
-      </p>
+      <PageHeader
+        title="Relationships"
+        lead={
+          <>
+            Keys the sources declare, and joins Kilnmark found in names and values.{" "}
+            {allows(role, "steward")
+              ? "Accept the proposals that are real joins and reject the rest; your decisions are kept on every scan."
+              : "A steward accepts or rejects the proposals."}
+          </>
+        }
+      />
       {/* Changing a filter changes the address; keep focus on the control rather than the heading. */}
       <div className="dg-controls" data-keeps-focus>
         <div className="field">

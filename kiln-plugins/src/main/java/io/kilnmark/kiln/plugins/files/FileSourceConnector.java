@@ -357,6 +357,137 @@ public abstract class FileSourceConnector implements Connector {
         }
     }
 
+    /** Discover and read, and write CSV and Parquet files (docs/guide/writing-data.md). */
+    @Override
+    public java.util.Set<Capability> capabilities() {
+        return java.util.Set.of(Capability.DISCOVER, Capability.READ, Capability.WRITE);
+    }
+
+    /**
+     * A step writing one CSV or Parquet file at {@code write.target()}, a path inside the source
+     * (below an S3 source's prefix); see {@link FileTarget} for what is refused. Mode {@code create}
+     * (or none) refuses an existing file unless the setting {@code overwrite} is true;
+     * {@code replace} replaces it. Further settings: {@code overwrite}, {@code delimiter} (CSV),
+     * {@code compression} (Parquet: snappy, zstd, gzip or none), {@code allow_unscanned},
+     * {@code profile_output} and
+     * {@code keep_values}.
+     */
+    @Override
+    public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+        checkSettings(source);
+        String mode = write.mode() == null || write.mode().isBlank() ? "create"
+            : write.mode().strip().toLowerCase(java.util.Locale.ROOT);
+        io.kilnmark.kiln.plugins.write.WriteSettings settings =
+            new io.kilnmark.kiln.plugins.write.WriteSettings(write.options());
+        boolean overwrite = switch (mode) {
+            case "create" -> settings.bool("overwrite", false);
+            case "replace" -> {
+                if (!settings.bool("overwrite", true)) {
+                    throw new ConnectorException("overwrite: false contradicts mode replace; use mode create to "
+                        + "refuse an existing file");
+                }
+                yield true;
+            }
+            case "append", "upsert" -> throw new ConnectorException("mode: files are written whole, so " + mode
+                + " is for database tables; use create (a new file) or replace (replace the file)");
+            default -> throw new ConnectorException("mode: create or replace for files, not '" + mode + "'");
+        };
+        if (!write.key().isEmpty()) {
+            throw new ConnectorException("key: only upsert into a database table takes key columns");
+        }
+        FileTarget target = FileTarget.of(write.target(), write.format());
+        String storePath = storePath(source, target);
+        if (!settings.bool("allow_unscanned", false)) {
+            String unseen = unscanned(source, storePath);
+            if (unseen != null) {
+                throw new ConnectorException("path: " + target.path() + " would not be found by scans of "
+                    + source.name() + ", because " + unseen + ". Write somewhere the source scans, change the source's "
+                    + "settings, or set allow_unscanned: true to write it anyway");
+            }
+        }
+        String delimiter = csvDelimiter(source, target, settings);
+        return new FileOutput(() -> open(source), storePath, target, overwrite, settings, write.assetUrn(),
+            write.profiling(), delimiter, options(source));
+    }
+
+    /**
+     * The delimiter a CSV file is written with: the step's, else the source's own, else a comma.
+     * A CSV file must be one the source reads back as written, so refused: a delimiter other than
+     * the source's, a source whose CSV files have no header row, and a source reading another
+     * encoding than UTF-8, the one files are written in.
+     */
+    static String csvDelimiter(SourceConfig source, FileTarget target,
+                               io.kilnmark.kiln.plugins.write.WriteSettings settings)
+        throws ConnectorException {
+        String own = source.setting("delimiter");
+        String step = settings.text("delimiter", null);
+        if (!target.format().equals("csv")) {
+            return step;
+        }
+        if (own != null && step != null && CsvEncoder.delimiter(own) != CsvEncoder.delimiter(step)) {
+            throw new ConnectorException("delimiter: " + source.name() + " reads files delimited by '" + own
+                + "', so a file written with '" + step + "' would be read wrongly; leave delimiter out to use the "
+                + "source's");
+        }
+        if ("false".equalsIgnoreCase(source.setting("header"))) {
+            throw new ConnectorException("path: " + source.name() + " reads CSV files without a header row, and "
+                + "Kilnmark writes one; write Parquet, or to a source that reads header rows");
+        }
+        String encoding = source.setting("encoding");
+        if (encoding != null && Charset.isSupported(encoding)
+            && !Charset.forName(encoding).equals(java.nio.charset.StandardCharsets.UTF_8)) {
+            throw new ConnectorException("path: " + source.name() + " reads text files as " + encoding + ", and "
+                + "Kilnmark writes CSV in UTF-8; write Parquet, or to a source reading UTF-8");
+        }
+        return step != null ? step : own;
+    }
+
+    /** Where the store puts a written file: below an S3 source's prefix, as a folder or key path. */
+    private String storePath(SourceConfig source, FileTarget target) {
+        String prefix = prefix(source);
+        String under = prefix.isEmpty() || prefix.endsWith("/") ? prefix : prefix + "/";
+        return under + target.path();
+    }
+
+    /** The written file's asset path, as the catalogue gives it: below the prefix, with % and # escaped. */
+    @Override
+    public String writtenAssetPath(SourceConfig source, WriteOptions write) throws ConnectorException {
+        return urnPath(storePath(source, FileTarget.of(write.target(), write.format())));
+    }
+
+    /** The settings a file write takes; see {@link #writer}. */
+    @Override
+    public List<io.kilnmark.kiln.SettingSpec> writeOptions() {
+        return io.kilnmark.kiln.plugins.write.WriteSettings.withProfiling(
+            io.kilnmark.kiln.plugins.write.WriteSettings.flag("overwrite", "Overwrite", false,
+                "Replace a file of the same name; otherwise an existing file stops the write"),
+            io.kilnmark.kiln.SettingSpec.optional("delimiter", "Delimiter", io.kilnmark.kiln.SettingSpec.Kind.TEXT, null,
+                "CSV only: one character, or \\t for a tab; by default the source's own delimiter, else a comma. A "
+                    + "delimiter other than the source's is refused"),
+            io.kilnmark.kiln.SettingSpec.choice("compression", "Compression", false, "snappy",
+                "Parquet only: how pages are compressed", List.of("snappy", "zstd", "gzip", "none")),
+            io.kilnmark.kiln.plugins.write.WriteSettings.flag("allow_unscanned", "Allow paths scans skip", false,
+                "Write even where scans of this source would not find the file"));
+    }
+
+    /**
+     * Why a scan of {@code source} would not find the file at {@code path} (its store path), or null
+     * when it would: the source does not look in sub-folders, or the folder or name is not among
+     * those the source's containers and patterns keep.
+     */
+    String unscanned(SourceConfig source, String path) {
+        if ("false".equalsIgnoreCase(source.setting("recursive")) && path.substring(prefix(source).length())
+            .contains("/")) {
+            return "the source does not look in sub-folders (recursive is false)";
+        }
+        AssetFilter filter = AssetFilter.of(this, source);
+        if (!filter.keeps(top(source, path), path, fileName(path))) {
+            return "it is outside the folders or patterns the source scans (its containers, include and exclude "
+                + "settings)";
+        }
+        return null;
+    }
+
     /** A scan of a source has ended: shared copies of its workbooks nobody is using are deleted. */
     @Override
     public void finished(SourceConfig source) {

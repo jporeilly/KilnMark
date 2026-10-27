@@ -254,7 +254,10 @@ control for that is where sources may point: limit folder sources to the folders
 lists (`KILNMARK_FILES_ROOTS`) and give database and object storage sources their own credentials,
 which a steward drafting a new connection would also need. Objects in a bucket whose keys start with
 `/` or contain empty, `.` or `..` parts are still scanned from the listing, but cannot be previewed
-or read on demand.
+or read on demand. Pipelines that write to a folder check its sub-folders by path and then use
+them, so anyone who can write inside an allowed folder on the server itself could swap a checked
+folder for a link in that moment: keep the folders in `KILNMARK_FILES_ROOTS` writable only by
+Kilnmark's user and people trusted with what it may write.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -338,11 +341,14 @@ other columns and options; `lab/sources.csv` registers the whole lab (see `lab/R
 (Databases, NoSQL, Files, Streaming, Applications, Lakehouse), with what each can do. Connectors
 that are planned but not built are shown greyed out with their wave; set
 `kilnmark.connectors.show-planned=false` (`KILNMARK_CONNECTORS_SHOW_PLANNED`) to hide them. Choosing
-one opens its panel beside the gallery, in four steps you can move between: **Connect** (a
+one opens its panel as a side sheet over the page, in four steps you can move between: **Connect** (a
 database's host, port and database build its URL; the full URL is under Advanced), **Test**,
 **Choose what to scan** (schemas or folders with counts, patterns, and a preview of any table or
 file), and **Save** (display name, description, AI rule; Save, or Save and scan). Edit on a
-source's page opens the same panel. Escape closes it.
+source's page opens the same panel. Escape, the close button or a click beside it closes it. On and off settings (sub-folders, header
+row, keep document text, read text on demand, path-style addressing) are switches; the form knows
+which settings are which from `ui/src/components/settingKinds.ts`, because the connectors API
+gives settings a label and a hint but no type.
 
 **Preview.** The first rows of a table or file (100 by default, at most 1,000), read live through
 the connector with the same time limit and places as connection tests, and never stored, logged
@@ -720,10 +726,25 @@ npm run build            # type check, contrast check, then writes dist/ui
 npm run check:contrast   # the colour tokens against WCAG AA, for every theme and accent
 ```
 
-Every colour is a token in `ui/src/tokens.css`, defined once per theme; style sheets use only the
-tokens. Icons are Tabler Icons, named in one place (`ui/src/components/icons.tsx`); products get
-letter tiles (`ConnectorTile.tsx`), never vendor logos. The build also writes the UI packages'
-licences to `dist/ui/third-party-notices.txt` ([third-party UI software](legal/third-party-ui.md)).
+Every colour, radius, shadow and type size is a token in `ui/src/tokens.css`, defined once per
+theme (light, dark twice for chosen Dark and System, and high contrast light and dark); style
+sheets use only the tokens. Accent presets have five shades each (`--km-accent-<name>` for
+indicators, `-fill` for main buttons, `-ink` for links, `-tint` for selected rows, `-on-dark` for
+the sidebar); `:root[data-accent=…]` picks one. A token may refer to another of the same theme
+with `var()`. `npm run check:contrast` resolves those and checks text at 4.5:1 (7:1 in high
+contrast) and indicators, control borders, focus rings and bar fills at 3:1, for every theme and
+accent; add a pair to `ui/scripts/check-contrast.mjs` when you add a token people read or rely on.
+
+Pages are built from the shared components in `ui/src/components/ui` (Card, PageHeader,
+StatTile, StatusChip, DataTable, Switch, EmptyState, Tabs, Button and ButtonLink, Meter,
+ScoreRing, FilterChips) and need no CSS of their own; plain elements and the older class names
+(`.panel`, `.badge`, buttons, inputs, tables) are styled to match in `ui/src/app.css`. The sidebar
+entries are in `ui/src/nav.ts`. Inter and Manrope are bundled from @fontsource (`ui/src/fonts.ts`),
+Latin subset only, so nothing loads from the internet.
+
+Icons are Tabler Icons, named in one place (`ui/src/components/icons.tsx`); products get letter
+tiles (`ConnectorTile.tsx`), never vendor logos. The build also writes the UI packages' licences
+to `dist/ui/third-party-notices.txt` ([third-party UI software](legal/third-party-ui.md)).
 
 ## Rules
 
