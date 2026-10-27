@@ -7,7 +7,8 @@
 //              the bundled guides and changelog (kilnmark/docs/guide/*.md, guide.list, CHANGELOG.md)
 //   names      no lab source or service name (lab-db, lab-share, lab-warehouse, lab-sqlserver, ...:
 //              any lab-<name>), no labadmin, no path into lab/ (lab/files, lab/sources.csv, ...)
-//   ports      no lab-only port: localhost:5433 or :9000, or a 5433:5432 or 9000:7070 mapping
+//   ports      no lab-only port: localhost:5433, :9000 or :3307, or a 5433:5432, 9000:7070 or 3307:3306
+//              mapping
 //   words      the shipped compose.yaml, everything under containers/ and the bundled guides do not
 //              mention the lab at all (the word "lab")
 //   changelog  the bundled changelog's "What's new" sections, written for customers, do not either;
@@ -61,8 +62,8 @@ class ProductOnly(private val root: java.io.File, allowFile: java.io.File) {
         Regex("(?<![A-Za-z0-9_.-])lab-[a-z][a-z0-9-]*[a-z0-9]"),
         Regex("(?i)labadmin"),
         Regex("(?<![A-Za-z0-9_-])lab/[A-Za-z]"),
-        Regex("(localhost|127\\.0\\.0\\.1|host\\.(docker|containers)\\.internal):(5433|9000)(?![0-9])"),
-        Regex("(?<![0-9])(5433:5432|9000:7070)(?![0-9])"),
+        Regex("(localhost|127\\.0\\.0\\.1|host\\.(docker|containers)\\.internal):(5433|9000|3307)(?![0-9])"),
+        Regex("(?<![0-9])(5433:5432|9000:7070|3307:3306)(?![0-9])"),
     )
     /** Any mention of the lab, for files people read as the product: compose, containers, guides. */
     private val word = Regex("(?i)(?<![A-Za-z])lab(?![A-Za-z])")

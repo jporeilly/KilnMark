@@ -1,7 +1,7 @@
 # Writing data from a pipeline
 
 A pipeline ends in one or more `write` steps. Each writes the rows it receives to a table in a
-database (PostgreSQL or SQL Server) or to a CSV or Parquet file in a folder or S3 bucket. This
+database (PostgreSQL, SQL Server, MySQL or MariaDB) or to a CSV or Parquet file in a folder or S3 bucket. This
 guide explains the modes, the file formats, the rights a write needs, and what `replace` keeps.
 
 ## Before you start
@@ -41,19 +41,19 @@ so `Billing.Customers` and `billing.customers` are different tables in PostgreSQ
 
 **create** chooses a column type for each input column:
 
-| Input column | PostgreSQL | SQL Server |
-| --- | --- | --- |
-| whole numbers | `smallint`, `integer`, `bigint` | `smallint`, `int`, `bigint` |
-| decimals | `numeric(p,s)` | `decimal(p,s)` |
-| floating point | `real`, `double precision` | `real`, `float` |
-| text | `text` | `nvarchar(max)` |
-| true or false | `boolean` | `bit` |
-| bytes | `bytea` | `varbinary(max)` |
-| dates and times | `date`, `time`, `timestamp`, `timestamptz` | `date`, `time(6)`, `datetime2(6)`, `datetimeoffset(6)` |
+| Input column | PostgreSQL | SQL Server | MySQL and MariaDB |
+| --- | --- | --- | --- |
+| whole numbers | `smallint`, `integer`, `bigint` | `smallint`, `int`, `bigint` | `smallint`, `int`, `bigint` |
+| decimals | `numeric(p,s)` | `decimal(p,s)` | `decimal(p,s)` |
+| floating point | `real`, `double precision` | `real`, `float` | `float`, `double` |
+| text | `text` | `nvarchar(max)` | `longtext` (UTF-8) |
+| true or false | `boolean` | `bit` | `tinyint(1)` |
+| bytes | `bytea` | `varbinary(max)` | `longblob` |
+| dates and times | `date`, `time`, `timestamp`, `timestamptz` | `date`, `time(6)`, `datetime2(6)`, `datetimeoffset(6)` | `date`, `time(6)`, `datetime(6)`, `datetime(6)` in UTC |
 
 Lists and other nested values are written as text. Every column allows nulls; add keys and
 indexes yourself afterwards if you need them. To give text columns a length, set
-`text_length: 200` (at most 4000 on SQL Server).
+`text_length: 200` (at most 4000 on SQL Server, 16,383 on MySQL and MariaDB).
 
 **append** checks the table before sending any row and lists every problem at once, for
 example "the input's column flag is boolean but the table's column flag is integer". A column fits
@@ -65,7 +65,7 @@ write with its row named ("Row 2: the value 1.2345 in column amount has more dec
 the column's 2"). Nothing is rounded. The run stops there, and nothing from it stays in the
 table, since the write is one transaction; with `commit_every`, the rows committed before that
 batch stay. This holds for any declared decimal column, beyond 38 digits too, and for PostgreSQL's
-negative scales (`numeric(5,-2)` takes whole hundreds). PostgreSQL and SQL Server behave the same.
+negative scales (`numeric(5,-2)` takes whole hundreds). PostgreSQL, SQL Server, MySQL and MariaDB behave the same.
 Text is never turned into numbers or dates: add a `select` step to cast columns first. Columns the
 input lacks are left to their defaults, so a column that is `NOT NULL` without a default must be in
 the input. Two input columns whose names differ only in capitals cannot both go to one column. Text
@@ -85,6 +85,10 @@ every row (and the write is slower).
   `CREATE UNIQUE INDEX` statement to ask your database administrator for.
 - On SQL Server each row is merged with `MERGE … WITH (HOLDLOCK)`, so two pipelines upserting at
   the same time cannot both insert the same key. A unique index on the key keeps the table fast.
+- On MySQL and MariaDB each row is written with `INSERT … ON DUPLICATE KEY UPDATE`, so the table
+  needs a unique index or primary key on exactly the key columns; if there is none, the message
+  gives the `ALTER TABLE … ADD UNIQUE` statement to ask for. Any other unique index on the table
+  also makes a row update instead of insert.
 - Rows with an empty key column are refused. If the input holds the same key twice, the last row
   wins.
 
@@ -147,6 +151,29 @@ Other settings: `batch_size` (rows sent to the database at a time; 1,000, or 5,0
 inserts) and, on SQL Server, `bulk_copy: false` to turn off the driver's bulk loading, which is
 used only for tables the step creates.
 
+### MySQL and MariaDB
+
+Tables are written the same way, with these differences, which come from how MySQL and MariaDB
+work:
+
+- **Creating and replacing commit by themselves.** These databases cannot undo a `CREATE TABLE` or
+  `DROP TABLE`, so `create` and `replace` fill the new table under a temporary name (`kiln_new_…`)
+  and give it its name at the end with one `RENAME TABLE`, which swaps both names at once. If the
+  run fails, the half-filled table is dropped and the old one is unchanged.
+- **What replace keeps.** Grants on the table, since MySQL keeps them by table name. Not kept:
+  indexes, keys, comments, `AUTO_INCREMENT` and column defaults. Replace refuses a view, a
+  sequence, a system-versioned or partitioned table, a table other tables' foreign keys refer to,
+  and a table with triggers (they would be dropped with it), naming what is in the way.
+- **Timestamps with a time zone** are written as `datetime(6)` holding UTC, since MySQL's
+  `TIMESTAMP` ends in 2038; they read back as timestamps without a zone. A `TIME` column reads
+  back as text, since MySQL times run from -838:59:59 to 838:59:59.
+- **Large writes.** Tables the step creates are loaded in bulk with `LOAD DATA LOCAL INFILE`, sent
+  from memory, when the server allows it (`local_infile`, off by default on MySQL 8); otherwise,
+  or with `bulk_load: false`, with batched inserts. Values that do not fit fail the write rather
+  than being cut short, whatever the server's own SQL mode.
+- **The source's database.** A source set to one `database` writes only there; give the target as
+  `database.table`.
+
 ## Writing to a file
 
 ```yaml
@@ -208,16 +235,17 @@ with pyarrow.
 
 ## Rights the login needs
 
-| Mode | PostgreSQL | SQL Server |
-| --- | --- | --- |
-| `create` | `CREATE` on the schema | `CREATE TABLE` in the database and `ALTER` on the schema |
-| `append` | `INSERT` on the table | `INSERT` on the table |
-| `upsert` | `INSERT`, `UPDATE` and `SELECT` on the table | `INSERT`, `UPDATE` and `SELECT` on the table |
-| `replace` | as `create`, and owning the table (or belonging to its owning role) | as `create`, and `ALTER` on the table |
+| Mode | PostgreSQL | SQL Server | MySQL and MariaDB |
+| --- | --- | --- | --- |
+| `create` | `CREATE` on the schema | `CREATE TABLE` in the database and `ALTER` on the schema | `CREATE`, `INSERT`, `ALTER` and `DROP` on the database |
+| `append` | `INSERT` on the table | `INSERT` on the table | `INSERT` on the table |
+| `upsert` | `INSERT`, `UPDATE` and `SELECT` on the table | `INSERT`, `UPDATE` and `SELECT` on the table | `INSERT` and `UPDATE` on the table |
+| `replace` | as `create`, and owning the table (or belonging to its owning role) | as `create`, and `ALTER` on the table | as `create`, and `ALTER` and `DROP` on the table |
 
 Grants on some columns only count: the database then checks each column as rows go in. Append
 reads the table's columns from the database's description of it, so a login that may only insert
-can append. Kilnmark checks these before writing, except, on SQL Server, the right to repeat the
+can append. On MySQL and MariaDB, rights that come from a role cannot be seen beforehand, so with a role
+active the database decides as the rows go in. Kilnmark checks these before writing, except, on SQL Server, the right to repeat the
 old table's grants after a replace, and to give a table's own owner `CONTROL` of the new one: a
 login without it fails at that point and nothing changes. If something is missing, the run stops with a message such
 as "the login kilnmark_writer cannot write to billing.customer_spend in warehouse: ask a database

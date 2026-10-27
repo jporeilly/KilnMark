@@ -32,6 +32,11 @@ details.
 - **Ask Kilnmark, notifications and your account in the top bar.** The theme switch has moved into
   the menu under your name. **What's new** is now the first entry under Documentation in the
   sidebar, marked **New** after an upgrade.
+- **MySQL and MariaDB.** Add MySQL (8.0.19 and later) or MariaDB (10.6 and later) as a source by
+  host, port and database: Kilnmark discovers and profiles their databases, reads their tables in
+  pipelines and writes to them in every mode. MySQL's own types are understood: `UNSIGNED`
+  numbers, `ENUM`, `SET`, `JSON`, `YEAR`, and `TINYINT(1)` read as true or false. The driver is
+  included, so there is nothing to install.
 - **Every connection setting has the right control.** On and off settings, such as trusting a
   test server's certificate, are switches; settings with a fixed set of values, such as SQL
   Server's read isolation, are lists; and saving says plainly when a value is the wrong kind,
@@ -41,6 +46,21 @@ details.
 
 ### Details
 
+- **MySQL and MariaDB connector** (kinds `mysql` and `mariadb`), through MariaDB Connector/J
+  3.5.10 (LGPL 2.1, allowed for that module only: ADR 0007). Settings `host`, `port`, `database`,
+  `username`, `tls_mode` (`preferred` by default), `server_ca` and `tinyint1_as_boolean`, with
+  kinds declared; no driver property can be set by people. Zero dates read as null and are
+  counted; `TIME` reads as text. Writes: `create`, `append`, `upsert` (`ON DUPLICATE KEY UPDATE`)
+  and `replace` (an atomic `RENAME TABLE`), with `LOAD DATA LOCAL INFILE` for tables the step
+  creates when the server allows it. The connection form shows their host, port and database once
+  (`addressFields` is false for connectors whose own settings hold the host). Tests against
+  MySQL 8.4.10 and MariaDB 11.4.12 run in CI's heavy-databases job.
+- **Lab: MariaDB** (development). `lab-mariadb` (MariaDB 11.4.12, profiles `mariadb` and `all`) on
+  host port 3307, with synthetic shop orders and inventory in databases `shop` and `stock` and
+  planted quality problems (null emails, zero dates, out-of-range dates, a negative stock level,
+  duplicate SKUs in a table without a key, inconsistent JSON), an empty `warehouse` database for
+  pipeline writes, a `lab-mariadb` row in `lab/sources.csv` and `mariadb` in `lab.ps1` and
+  `lab.sh`.
 - **Setting kinds.** `Connector.Setting` has a kind (`TEXT`, `NUMBER`, `BOOLEAN`, `CHOICE` or
   the new `URL`, from `SettingSpec.Kind`), its choices and its default; the old constructor gives
   `TEXT`. Every built-in connector declares them, and the settings every source has carry a kind

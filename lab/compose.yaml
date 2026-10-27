@@ -10,6 +10,8 @@
 #   PostgreSQL  db=lab  user=lab  password=lab   (schemas crm, billing)
 #   S3          access key=labadmin  secret=labadmin123  buckets lab-raw, lab-warehouse  (path-style)
 #   File share  lab/files/share (read directly from disk)
+#   MariaDB     (profile mariadb) host lab-mariadb port 3306 from Kilnmark (localhost:3307 here),
+#               user kiln_reader password Lab-Reader-2026 (databases shop, stock)
 #   Mailpit     (profile mail) SMTP lab-mailpit:1025 from Kilnmark (localhost:1025 here), no sign-in,
 #               security none; the emails it catches at http://localhost:8025
 services:
@@ -112,13 +114,39 @@ services:
     restart: "no"
   # ---- end SQL Server -----------------------------------------------------------------------------
 
+  # ---- MariaDB: a synthetic shop's orders and inventory, databases shop and stock (profile mariadb) --
+  # From Kilnmark:      host lab-mariadb, port 3306 (source kind mariadb; the connector also reads MySQL)
+  # From this machine:  localhost:3307 (3307, so it never clashes with a MySQL you already run on 3306)
+  # Logins (lab only):  kiln_reader / Lab-Reader-2026 (SELECT on shop and stock)
+  #                     kiln_writer / Lab-Writer-2026 (database warehouse only)   root / Lab-Admin-2026
+  # The image runs lab/mariadb/*.sql on the first start (an empty volume); later starts skip it.
+  lab-mariadb:
+    profiles: ["mariadb", "all"]
+    # The tag MySqlServers pins for the MariaDB tests, so the lab and CI run the same build.
+    image: docker.io/library/mariadb:11.4.12
+    environment:
+      MARIADB_ROOT_PASSWORD: Lab-Admin-2026
+    volumes:
+      - ./mariadb:/docker-entrypoint-initdb.d:ro,Z
+      - lab-mariadb-data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      start_period: 30s
+      retries: 30
+  # ---- end MariaDB --------------------------------------------------------------------------------
+
 # Kilnmark's network (created by the main compose.yaml), so Kilnmark reaches these services by name.
 networks:
   default:
     name: kilnmark
     external: true
 
-# Named volumes. lab-sqlserver-data holds SQL Server's databases; lab/lab.sh reset sqlserver
-# drops it (it is called lab_lab-sqlserver-data on the machine).
+# Named volumes. lab-sqlserver-data holds SQL Server's databases and lab-mariadb-data MariaDB's;
+# lab/lab.sh reset sqlserver (or mariadb) drops it (lab_lab-sqlserver-data on the machine).
 volumes:
   lab-sqlserver-data:
+  lab-mariadb-data:

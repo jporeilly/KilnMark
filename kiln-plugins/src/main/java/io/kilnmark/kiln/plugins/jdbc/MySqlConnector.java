@@ -150,23 +150,23 @@ public class MySqlConnector extends JdbcConnector {
     @Override
     public List<Setting> settings() {
         return List.of(
-            new Setting("host", "Host", true, "The " + product.displayName + " server's name or address", false),
-            new Setting("port", "Port", false, "Leave empty for " + DEFAULT_PORT + ", " + product.displayName
-                + "'s usual port", false),
-            new Setting("database", "Database", false, "Leave empty to see every database as a schema, or give one "
-                + "database to keep the source to it", false),
-            new Setting("username", "User name", true, "A login with SELECT is enough for scanning; pipelines that "
-                + "write to this source need a login with write rights", false),
-            new Setting("tls_mode", "TLS", false, "preferred (the default) encrypts when the server offers TLS, "
-                + "without checking its certificate; required always encrypts; verify-ca also checks the certificate "
-                + "against the server CA certificate; verify-full also checks the host name; disabled never encrypts",
-                false),
-            new Setting("server_ca", "Server CA certificate", false, "For verify-ca and verify-full: the PEM "
+            Setting.text("host", "Host", true, "The " + product.displayName + " server's name or address"),
+            Setting.number("port", "Port", Integer.toString(DEFAULT_PORT), "Leave empty for " + DEFAULT_PORT + ", "
+                + product.displayName + "'s usual port"),
+            Setting.text("database", "Database", false, "Leave empty to see every database as a schema, or give one "
+                + "database to keep the source to it"),
+            Setting.text("username", "User name", true, "A login with SELECT is enough for scanning; pipelines that "
+                + "write to this source need a login with write rights"),
+            Setting.choice("tls_mode", "TLS", List.copyOf(TLS_MODES.keySet()), "preferred", "preferred (the default) "
+                + "encrypts when the server offers TLS, without checking its certificate; required always encrypts; "
+                + "verify-ca also checks the certificate against the server CA certificate; verify-full also checks "
+                + "the host name; disabled never encrypts"),
+            Setting.text("server_ca", "Server CA certificate", false, "For verify-ca and verify-full: the PEM "
                 + "certificate (-----BEGIN CERTIFICATE----- ...) of the authority that signed the server's "
-                + "certificate. Leave empty to use the certificates this server trusts", false),
-            new Setting("tinyint1_as_boolean", "Read TINYINT(1) as true or false", false, "true (the default) reads "
+                + "certificate. Leave empty to use the certificates this server trusts"),
+            Setting.bool("tinyint1_as_boolean", "Read TINYINT(1) as true or false", true, "true (the default) reads "
                 + "TINYINT(1) columns, which is how " + product.displayName + " stores BOOLEAN, as true or false; "
-                + "false reads them as numbers", false),
+                + "false reads them as numbers"),
             new Setting("schemas", "Databases", false, "Leave empty to scan every database, or choose them from a list",
                 true));
     }

@@ -10,7 +10,7 @@ line in a services file; nothing in the server changes.
 
 | Method | Does |
 | --- | --- |
-| `kind()` | Stable identifier stored with each source: `postgresql`, `sqlserver`, `files`, `s3` |
+| `kind()` | Stable identifier stored with each source: `postgresql`, `sqlserver`, `mysql`, `mariadb`, `files`, `s3` |
 | `displayName()` | For people: "SQL Server" |
 | `settings()` | The settings a source takes, in form order (key, label, required, hint, multiple, kind, choices, default); see [Setting kinds](#setting-kinds) |
 | `validate(source)` | Problems with the settings without connecting, each starting `setting: ...` |
@@ -104,6 +104,7 @@ The built-in connectors declare:
 | Connector | Setting kinds |
 | --- | --- |
 | PostgreSQL | `url` URL; `username`, `schemas` TEXT |
+| MySQL, MariaDB | `host` TEXT; `port` NUMBER (3306); `database`, `username`, `server_ca`, `schemas` TEXT; `tls_mode` CHOICE (`preferred`, `disabled`, `required`, `verify-ca`, `verify-full`; default `preferred`); `tinyint1_as_boolean` BOOLEAN (true) |
 | SQL Server | as PostgreSQL; `trust_server_certificate` BOOLEAN (false); `isolation` CHOICE (`read-uncommitted`, `snapshot`, `read-committed`; default `read-uncommitted`) |
 | Folder | `path`, `encoding`, `delimiter` TEXT; `recursive` BOOLEAN (true); `header` BOOLEAN (true); `keep_text` BOOLEAN (true); `read_text_on_demand` BOOLEAN (false) |
 | S3 | `endpoint` URL; `region`, `bucket`, `prefix`, `access_key_id`, `encoding`, `delimiter` TEXT; `path_style` BOOLEAN (false); `header`, `keep_text`, `read_text_on_demand` as for folders |
@@ -164,7 +165,7 @@ The step is an ordinary Kiln `Step` with an input and no output:
 - messages say what to do: which column does not fit, which grant to ask for, which setting to
   change.
 
-The built-in writers: `JdbcTableOutput` (PostgreSQL and SQL Server; the SQL is in `WriteSql`, the
+The built-in writers: `JdbcTableOutput` (PostgreSQL, SQL Server, MySQL and MariaDB; the SQL is in `WriteSql`, the
 matching of input to table in `WritePlan`) and `FileOutput` (folders and S3; `FileTarget` checks
 paths, `CsvEncoder` and `ParquetEncoder` write the formats, and each `FileStore` writes with
 `create(path, overwrite)`, which returns an `Upload` to commit or abort). The decisions are in
@@ -237,6 +238,50 @@ reads alike, and never edits the URL. A URL that sets `trustServerCertificate` i
 but not together with the setting. Turning it on asks for the password again, since a server
 whose certificate is not checked could be another server. Connectors add driver properties like
 this by overriding `driverSettings`; the reader step receives them as `driver.<name>` settings.
+
+### MySQL and MariaDB
+
+Two kinds, `mysql` and `mariadb`, share `MySqlConnector` (`MariaDbConnector` sets the product).
+Both use MariaDB Connector/J, which speaks to either; MySQL's own driver is GPL and is never
+used. Each kind refuses a server of the other product (with a hint to add it as that kind) and
+servers older than MySQL 8.0.19 or MariaDB 10.6.
+
+**Settings** are the connector's own, not a JDBC URL: `host`, `port` (3306 by default),
+`database` (empty: every database the login sees is a schema; set: the source keeps to it, and
+writes elsewhere are refused), `username`, the password as the source's secret, `tls_mode`,
+`server_ca` (a PEM certificate for `verify-ca` and `verify-full`), `tinyint1_as_boolean` and
+`schemas` (the databases to scan). So the connection form shows them as fields, and its host,
+port and database fields that build a URL for other databases are off (`addressFields` false
+in `GET /api/v1/connectors`). No driver property can be given: the connector sets them all, so
+a source cannot make the driver read local files, follow a server's redirect to another host or
+run statements of its own.
+
+| `tls_mode` | Effect |
+| --- | --- |
+| `preferred` (default) | Encrypts when the server offers TLS, without checking its certificate; connects without TLS when the server has none |
+| `disabled` | Never encrypts |
+| `required` | Always encrypts, without checking the certificate |
+| `verify-ca` | Encrypts and checks the certificate against `server_ca` (or the certificates the server trusts) |
+| `verify-full` | As `verify-ca`, and checks the host name |
+
+**Types** (`MySqlTypes`): integers by size, `UNSIGNED` widened (`INT UNSIGNED` to int64, `BIGINT
+UNSIGNED` to decimal(20,0)); `TINYINT(1)` as boolean while `tinyint1_as_boolean` is true;
+`DECIMAL` up to 38 digits as decimal, wider as text; `YEAR` as int16; `DATE`, `DATETIME`
+(wall-clock) and `TIMESTAMP` (an instant: sessions use time zone `+00:00`), read from the
+server's text, never through `java.sql` types; zero and impossible dates (`0000-00-00`) as null,
+counted in the read's `ROW_COUNT` as `zero_dates`; `TIME` as text, since it is a duration from
+-838:59:59 to 838:59:59; `JSON`, `ENUM` and `SET` as text; spatial types as well-known text through
+`ST_AsText`; anything else as text. The catalogue comes from `information_schema` (`MySqlCatalog`):
+table and column comments, primary keys and declared foreign keys, including keys to other
+databases the source scans.
+
+**Reads** stream in a read-only transaction at the server's isolation level (InnoDB's consistent
+snapshot). **Writes** follow the writer contract: `create`, `append`, `upsert` (`INSERT … ON
+DUPLICATE KEY UPDATE`) and `replace` (fill `kiln_new_…`, then one atomic `RENAME TABLE`). Their
+DDL commits by itself, so a failed create or replace drops the table it made. Tables the step
+creates are loaded with `LOAD DATA LOCAL INFILE` streamed from memory when the server allows
+`local_infile`, otherwise with batched inserts; sessions run in strict mode. Rights are checked
+from `information_schema`'s privilege views before any row is written.
 
 ## Files and object storage
 
@@ -395,6 +440,8 @@ A connector is done when:
 ## Rules
 
 - Libraries yes, platforms no ([ADR 0007](../adr/0007-dependency-policy.md)); Apache-2.0, MIT or
-  BSD licences only, and say why in the commit if a dependency is large.
+  BSD licences only, and say why in the commit if a dependency is large. The one exception is the
+  MariaDB Connector/J driver (LGPL 2.1, that module only, shipped unmodified as its own jar); no
+  GPL driver, not even in tests.
 - Code adapted from Kettle 10.2 keeps its Apache header and is logged in
   [provenance.md](../legal/provenance.md).

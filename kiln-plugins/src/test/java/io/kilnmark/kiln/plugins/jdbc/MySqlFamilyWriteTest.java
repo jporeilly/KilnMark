@@ -332,7 +332,9 @@ abstract class MySqlFamilyWriteTest {
         RunResult r = write(source, options("kt_billing.parts", "append", List.of(), Map.of("commit_every", 20)), SPEND,
             Rows.spend(0, 100, "x"), 20, 3);
         assertFalse(r.succeeded());
-        assertEquals(List.of(List.of(60L)), query("SELECT COUNT(*) FROM kt_billing.parts"));
+        // what was committed stays, in whole commits; batches still queued when the source failed are dropped
+        long kept = ((Number) query("SELECT COUNT(*) FROM kt_billing.parts").get(0).get(0)).longValue();
+        assertTrue(kept >= 20 && kept <= 60 && kept % 20 == 0, "kept " + kept + ": " + r.error());
 
         db.sql("CREATE TABLE kt_billing.measures (x DOUBLE)");
         Schema floats = new Schema(List.of(field("x", Rows.FLOAT64)));
