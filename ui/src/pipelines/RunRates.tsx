@@ -1,5 +1,5 @@
 import { useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { pipelinesApi, type PipelineRunDetail, type PipelineRunEvent } from "../api";
+import { pipelinesApi, type PipelineProgressSeries, type PipelineRunDetail, type PipelineRunEvent } from "../api";
 import { rateWords } from "./live";
 import { FULL, nearest, ratePath, rates, type RateLine } from "./rates";
 import { offsetWords, pct, runOrigin, shareWords, ticks, type Clock } from "./timeline";
@@ -92,10 +92,27 @@ function Spark({ line, span }: { line: RateLine; span: number }) {
  * rows aside marked on the time axis. A table says the same.
  */
 export function RunRates({ detail, clock, tick }: { detail: PipelineRunDetail; clock?: Clock; tick: number }) {
-  const r = rates(detail, clock);
-  const origin = runOrigin(detail);
+  const [series, setSeries] = useState<PipelineProgressSeries | null>(null);
   const [marks, setMarks] = useState<PipelineRunEvent[]>([]);
   const id = detail.run.id;
+  // The points since the last look; all of them the first time, or when the run's points were merged.
+  useEffect(() => {
+    let live = true;
+    const after = series?.points.at(-1)?.t;
+    pipelinesApi
+      .series(id, after)
+      .then((next) => {
+        if (!live) return;
+        if (series == null || after == null) return setSeries(next);
+        if (next.stride !== series.stride) return pipelinesApi.series(id).then((all) => live && setSeries(all));
+        setSeries((old) => (old ? { ...old, points: [...old.points, ...next.points.filter((p) => p.t > after)] } : next));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, tick]);
   useEffect(() => {
     let live = true;
     pipelinesApi
@@ -106,6 +123,23 @@ export function RunRates({ detail, clock, tick }: { detail: PipelineRunDetail; c
       live = false;
     };
   }, [id, tick]);
+  return <RatesChart detail={detail} series={series} clock={clock} marks={marks} />;
+}
+
+/** The chart itself, from a run, its series and the events to mark: see {@link RunRates}. */
+export function RatesChart({
+  detail,
+  series,
+  clock,
+  marks,
+}: {
+  detail: PipelineRunDetail;
+  series: PipelineProgressSeries | null;
+  clock?: Clock;
+  marks: PipelineRunEvent[];
+}) {
+  const r = rates(detail, series, clock);
+  const origin = runOrigin(detail);
   if (!r || origin == null) {
     const unfinished = detail.run.status === "queued" || detail.run.status === "running";
     return (

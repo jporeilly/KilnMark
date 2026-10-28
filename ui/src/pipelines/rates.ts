@@ -3,7 +3,7 @@
  * queue was (back-pressure: the next step not keeping up), on the worker's clock from the run's
  * origin. Pure functions, unit tested.
  */
-import type { PipelineRunDetail } from "../api";
+import type { PipelineProgressSeries, PipelineRunDetail } from "../api";
 import { runNow, runOrigin, type Clock } from "./timeline";
 
 export type RatePoint = { t: number; rate: number; fill: number };
@@ -26,8 +26,7 @@ export type Rates = { span: number; lines: RateLine[] };
 export const FULL = 0.95;
 
 /** The run's rates over time, or null when no snapshots were kept (older runs, or before the first). */
-export function rates(detail: PipelineRunDetail, clock: Clock = {}): Rates | null {
-  const series = detail.progressSeries;
+export function rates(detail: PipelineRunDetail, series: PipelineProgressSeries | null, clock: Clock = {}): Rates | null {
   const origin = runOrigin(detail);
   if (!series || series.points.length === 0 || origin == null) return null;
   const outputs = new Set((detail.progress?.edges ?? []).map((e) => e.from));

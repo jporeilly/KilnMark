@@ -560,7 +560,20 @@ public class PipelineService {
             .map(l -> new PipelineViews.LineageLink(l.stepId(), l.inputUrn(), l.outputUrn())).toList();
         List<PipelineViews.StepQualityView> quality = store.quality(id).stream().map(this::qualityView).toList();
         return new PipelineViews.RunDetail(summary(r, sights), stepViews, written, read, lineage, notes, quality,
-            tree(store.progress(id)), tree(store.progressSeries(id)));
+            tree(store.progress(id)));
+    }
+
+    /**
+     * A run's rows a second over time: its points after {@code after} (ms from the worker's start).
+     * Counts only. When {@code stride} has changed since the caller last read, it reads again from 0:
+     * the points were merged.
+     */
+    public PipelineViews.RunSeries series(long id, long after) {
+        store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline run " + id));
+        PipelineStore.Series s = store.series(id, Math.max(-1, after));
+        List<PipelineViews.SeriesPoint> points = s.points().stream()
+            .map(p -> new PipelineViews.SeriesPoint(p.t(), tree(p.rates()), tree(p.fills()))).toList();
+        return new PipelineViews.RunSeries(tree(s.steps()), s.stride(), points);
     }
 
     /** Events per page of a run's log, at most. */
@@ -896,6 +909,8 @@ public class PipelineService {
             }
             // Each write's asset under the URN its connector worked out (for a prefixed S3 source, the prefix
             // and the path), as a scan of the source records it.
+            log.gates(c.steps().stream().filter(st -> "gate".equals(st.kind()) || "gate".equals(st.type()))
+                .map(PipelineCompilerPort.StepOutline::id).collect(java.util.stream.Collectors.toSet()));
             List<PipelineExecution.WriteTarget> writes = PipelineExecution.writes(c, context);
             java.util.Set<String> assets = new java.util.TreeSet<>(context.reads());
             assets.addAll(PipelineExecution.reads(c, context).values());

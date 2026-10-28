@@ -1374,9 +1374,11 @@ export type PipelineRunDetail = {
   quality?: PipelineStepQuality[];
   /** Where the rows are, while the run goes (and the last snapshot once it has ended); missing from older servers. */
   progress?: PipelineRunProgress | null;
-  /** The snapshots over the run: t is ms from workerStartedAt; r each step's rows/s, q its output queue's fill (0 to 1). */
-  progressSeries?: PipelineProgressSeries | null;
 };
+/**
+ * A run's rows a second over time, read on its own (pipelinesApi.series): t is ms from workerStartedAt; r each step's
+ * rows/s, q its output queue's fill (0 to 1), in steps' order. When stride changes the points were merged: read again.
+ */
 export type PipelineProgressSeries = { steps: string[]; stride: number; points: { t: number; r: number[]; q: number[] }[] };
 export type StepTypeSetting = {
   key: string;
@@ -1429,6 +1431,9 @@ export const pipelinesApi = {
   runs: (name: string) => call<PipelineRun[]>(`${pipe(name)}/runs?limit=50`),
   runDetail: (id: number) => call<PipelineRunDetail>(`/api/v1/pipeline-runs/${id}`),
   cancel: (id: number) => call<PipelineRun>(`/api/v1/pipeline-runs/${id}/cancel`, { method: "POST" }),
+  /** A run's rows a second over time, the points after `after` ms (all when left out). */
+  series: (id: number, after?: number) =>
+    call<PipelineProgressSeries>(`/api/v1/pipeline-runs/${id}/series${after != null ? `?after=${after}` : ""}`),
   /** A page of a run's log; level is the least serious shown (warn: warnings and errors). */
   events: (id: number, f: RunLogFilter & { after?: number; limit?: number } = {}) =>
     call<PipelineRunEvents>(`/api/v1/pipeline-runs/${id}/events${logQuery({ ...f, after: f.after ?? 0, limit: f.limit ?? 200 })}`),

@@ -21,9 +21,9 @@ import io.kilnmark.kiln.graph.RunProgress;
  * A run's log and progress, as the worker hears them (V19, docs/design/pipelines.md section 5,
  * "Seeing inside a run"). The engine's calls are kept and written to {@code pipeline_run_event} in
  * batches, with each progress snapshot (about every two seconds) and when the run ends; the snapshot
- * itself goes to {@code pipeline_run.progress}, and a series of them, for rows a second over time, to
- * {@code pipeline_run.progress_series}, so the API, which may be another container, reads them from
- * the database. Every time is on the worker's clock: the snapshot says when the worker started on
+ * itself goes to {@code pipeline_run.progress}, and each step's rows a second and output fill, a point
+ * at a time, to {@code pipeline_run_point} (appended, never rewritten), so the API, which may be another
+ * container, reads them from the database. Every time is on the worker's clock: the snapshot says when the worker started on
  * the run ({@code workerStartedAt}) and, once it has finished, when it did, so pages never mix it with
  * the database's or the browser's clock.
  *
@@ -42,7 +42,10 @@ final class RunLog implements RunListener {
     static final int MAX_DETAIL = 8_000;
     /** The least time between two progress writes, so a run writes its progress at most every two seconds. */
     static final long PROGRESS_EVERY_MILLIS = 2_000;
-    /** Points kept in the series of snapshots; when it fills, every other one goes and later ones are kept half as often. */
+    /**
+     * Points kept per run; when a run reaches this, its points are merged in pairs (the higher rate and
+     * fill kept, so spikes survive) and each later point stands for twice as many snapshots.
+     */
     static final int MAX_POINTS = 900;
 
     private final PipelineStore store;
@@ -55,18 +58,30 @@ final class RunLog implements RunListener {
     private boolean truncated;    // guarded by this
     private long progressWritten; // System.nanoTime() of the last progress write, 0 for none; guarded by this
     private ObjectNode lastProgress; // guarded by this
-    // The series: the steps' order, one point per kept snapshot, and how many snapshots make a point.
+    private boolean finished;     // guarded by this: the worker is done; a late snapshot changes nothing
+    // Rows a second: the steps' order, the points kept (as written), how many snapshots a point stands
+    // for, and the point being filled (the highest rate and fill of its snapshots so far).
     private final List<String> seriesSteps = new ArrayList<>(); // guarded by this
-    private final List<ObjectNode> points = new ArrayList<>();  // guarded by this
+    private final List<PipelineStore.Point> points = new ArrayList<>(); // guarded by this
     private int stride = 1;       // guarded by this
-    private long snapshots;       // guarded by this
+    private int inBucket;         // guarded by this
+    private long bucketT;         // guarded by this
+    private double[] bucketRates; // guarded by this
+    private double[] bucketFills; // guarded by this
+    private Set<String> gates = Set.of();
     private final Set<String> quarantining = new HashSet<>(); // gates said to have started setting rows aside
+    private final Set<String> ended = new HashSet<>();        // steps said to have ended; guarded by this
 
     RunLog(PipelineStore store, long runId, RunContext context, ObjectMapper json) {
         this.store = store;
         this.runId = runId;
         this.context = context;
         this.json = json;
+    }
+
+    /** The pipeline's gate steps: the first rows a gate sends anywhere but on {@code out} are it setting rows aside. */
+    void gates(Set<String> ids) {
+        gates = Set.copyOf(ids);
     }
 
     /** When the worker started on the run, on its own clock: the origin of every page's times. */
@@ -103,6 +118,15 @@ final class RunLog implements RunListener {
             case STOPPED -> "warn";
             default -> "info";
         };
+        boolean again;
+        synchronized (this) {
+            again = !ended.add(step);
+        }
+        if (again) { // the engine found, once every step had ended, that it had not freed its memory
+            add(at, step, level, "step_ended", "Step " + step + " counted as " + (outcome == RunResult.Outcome.FAILED
+                ? "failed: it did not free all its memory" : outcome.name().toLowerCase(Locale.ROOT)), null);
+            return;
+        }
         String how = switch (outcome) {
             case FINISHED -> "finished";
             case ENDED_EARLY -> "ended early";
@@ -131,59 +155,153 @@ final class RunLog implements RunListener {
 
     @Override
     public void progress(RunProgress p) {
-        // A gate setting its first rows aside, as a mark on the run's time axis.
+        // A gate sending its first rows anywhere but on, as a mark on the run's time axis.
         for (RunProgress.EdgeProgress e : p.edges()) {
-            if (e.fromPort().equals("quarantine") && e.rows() > 0 && quarantining.add(e.fromStep())) {
+            if (gates.contains(e.fromStep()) && !e.fromPort().equals("out") && e.rows() > 0
+                && quarantining.add(e.fromStep())) {
                 add(p.at(), e.fromStep(), "warn", "gate_quarantining", "Gate " + e.fromStep()
                     + " started setting rows aside", null);
             }
         }
-        boolean ended = p.steps().stream().allMatch(s -> s.state() == RunProgress.State.ENDED
+        boolean last = p.steps().stream().allMatch(s -> s.state() == RunProgress.State.ENDED
             || s.state() == RunProgress.State.NOT_STARTED);
-        String progress;
-        String series;
+        String progress = null;
+        List<PipelineStore.Point> append = new ArrayList<>();
+        List<PipelineStore.Point> rewrite = null;
+        String steps;
+        int strideNow;
         synchronized (this) {
+            if (finished) {
+                return; // the worker has written its last snapshot, with when it finished
+            }
             long now = System.nanoTime();
             lastProgress = progressNode(p);
-            boolean point = ended || snapshots++ % stride == 0;
-            if (point) {
-                addPoint(p);
-            }
-            if (!ended && progressWritten != 0 && (now - progressWritten) / 1_000_000 < PROGRESS_EVERY_MILLIS - 100) {
-                progress = null;
-                series = null;
-            } else {
+            rewrite = sample(p, last, append);
+            if (last || progressWritten == 0 || (now - progressWritten) / 1_000_000 >= PROGRESS_EVERY_MILLIS - 100) {
                 progressWritten = now;
                 progress = lastProgress.toString();
-                series = seriesJson();
             }
+            steps = stepsJson();
+            strideNow = stride;
         }
         if (progress != null) {
-            writeProgress(progress, series);
+            writeProgress(progress);
         }
+        writePoints(steps, strideNow, append, rewrite);
         flush();
     }
 
     /**
      * The worker has finished with the run: the last snapshot says when, on the worker's clock (or, if
-     * the engine never ran, says when the worker started), so pages measure the run on one clock.
+     * the engine never ran, says when the worker started), so pages measure the run on one clock. A
+     * snapshot that reaches the log after this changes nothing.
      */
     void finish() {
         String progress;
-        String series;
         synchronized (this) {
+            finished = true;
             ObjectNode p = lastProgress != null ? lastProgress : progressNode(null);
             p.put("workerFinishedAt", Instant.now().toString());
             progress = p.toString();
-            series = points.isEmpty() ? null : seriesJson();
         }
-        writeProgress(progress, series);
+        writeProgress(progress);
         flush();
     }
 
-    private void writeProgress(String progress, String series) {
+    /**
+     * Folds a snapshot into the point being filled (the highest rate and fill of its snapshots), adding
+     * the point to {@code append} once it stands for {@code stride} snapshots, or at the end. When the
+     * run reaches {@link #MAX_POINTS}, merges its points in pairs and doubles the stride, and returns
+     * the merged points to write instead; else null.
+     */
+    private List<PipelineStore.Point> sample(RunProgress p, boolean last, List<PipelineStore.Point> append) {
+        if (seriesSteps.isEmpty()) {
+            p.steps().forEach(s -> seriesSteps.add(s.name()));
+        }
+        int n = seriesSteps.size();
+        if (inBucket == 0) {
+            bucketT = Math.max(0, p.at().toEpochMilli() - workerStarted.toEpochMilli());
+            bucketRates = new double[n];
+            bucketFills = new double[n];
+        }
+        for (int i = 0; i < n; i++) {
+            RunProgress.StepProgress s = p.step(seriesSteps.get(i));
+            if (s != null) {
+                bucketRates[i] = Math.max(bucketRates[i], s.rowsPerSecond());
+                bucketFills[i] = Math.max(bucketFills[i], s.outputFill());
+            }
+        }
+        inBucket++;
+        if (inBucket < stride && !last) {
+            return null;
+        }
+        inBucket = 0;
+        PipelineStore.Point point = new PipelineStore.Point(bucketT, array(bucketRates, 10), array(bucketFills, 100));
+        points.add(point);
+        if (points.size() < MAX_POINTS) {
+            append.add(point);
+            return null;
+        }
+        List<PipelineStore.Point> merged = new ArrayList<>();
+        for (int i = 0; i < points.size(); i += 2) {
+            merged.add(i + 1 < points.size() ? merge(points.get(i), points.get(i + 1)) : points.get(i));
+        }
+        points.clear();
+        points.addAll(merged);
+        stride *= 2;
+        return List.copyOf(merged);
+    }
+
+    /** Two points as one: the first's time, the higher rate and fill of each step. */
+    private PipelineStore.Point merge(PipelineStore.Point a, PipelineStore.Point b) {
+        return new PipelineStore.Point(a.t(), maxArray(a.rates(), b.rates()), maxArray(a.fills(), b.fills()));
+    }
+
+    private String maxArray(String a, String b) {
         try {
-            store.saveProgress(runId, progress, series);
+            com.fasterxml.jackson.databind.JsonNode x = json.readTree(a);
+            com.fasterxml.jackson.databind.JsonNode y = json.readTree(b);
+            ArrayNode out = json.createArrayNode();
+            for (int i = 0; i < Math.max(x.size(), y.size()); i++) {
+                out.add(Math.max(x.path(i).asDouble(0), y.path(i).asDouble(0)));
+            }
+            return out.toString();
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return a;
+        }
+    }
+
+    private String array(double[] values, int scale) {
+        ArrayNode out = json.createArrayNode();
+        for (double v : values) {
+            out.add(Math.round(v * scale) / (double) scale);
+        }
+        return out.toString();
+    }
+
+    private String stepsJson() {
+        ArrayNode out = json.createArrayNode();
+        seriesSteps.forEach(out::add);
+        return out.toString();
+    }
+
+    private void writePoints(String steps, int strideNow, List<PipelineStore.Point> append,
+                             List<PipelineStore.Point> rewrite) {
+        try {
+            if (rewrite != null) {
+                store.replacePoints(runId, steps, strideNow, rewrite);
+            }
+            for (PipelineStore.Point point : append) {
+                store.addPoint(runId, steps, strideNow, point);
+            }
+        } catch (RuntimeException e) {
+            LOG.warnf("Could not store rows a second of run %d: %s", runId, context.scrub(e.getMessage()));
+        }
+    }
+
+    private void writeProgress(String progress) {
+        try {
+            store.saveProgress(runId, progress);
         } catch (RuntimeException e) {
             LOG.warnf("Could not store the progress of run %d: %s", runId, context.scrub(e.getMessage()));
         }
@@ -273,6 +391,12 @@ final class RunLog implements RunListener {
         try {
             store.addEvents(runId, batch);
         } catch (RuntimeException e) {
+            if (!dataError(e)) {
+                // A timeout or a lost connection: trying each event would only wait again for each.
+                LOG.warnf("Could not store %d events of run %d; they are dropped: %s", batch.size(), runId,
+                    context.scrub(e.getMessage()));
+                return;
+            }
             LOG.warnf("Could not store %d events of run %d together, trying each: %s", batch.size(), runId,
                 context.scrub(e.getMessage()));
             int lost = 0;
@@ -287,6 +411,20 @@ final class RunLog implements RunListener {
                 LOG.warnf("Could not store %d events of run %d", lost, runId);
             }
         }
+    }
+
+    /**
+     * Whether the database refused the data itself (SQLState class 22, data exception, or 23, a
+     * constraint): then one event may be at fault and the others can be stored on their own.
+     */
+    static boolean dataError(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof java.sql.SQLException sql && sql.getSQLState() != null) {
+                String state = sql.getSQLState();
+                return state.startsWith("22") || state.startsWith("23");
+            }
+        }
+        return false;
     }
 
     /** How many events have been kept, the one saying the log was cut short included. */
@@ -353,39 +491,6 @@ final class RunLog implements RunListener {
             n.put("fill", Math.round(e.fill() * 100) / 100.0);
         }
         return root;
-    }
-
-    /** One point of the series: when (ms from the worker's start), each step's rows a second and output fill. */
-    private void addPoint(RunProgress p) {
-        if (seriesSteps.isEmpty()) {
-            p.steps().forEach(s -> seriesSteps.add(s.name()));
-        }
-        ObjectNode point = json.createObjectNode();
-        point.put("t", Math.max(0, p.at().toEpochMilli() - workerStarted.toEpochMilli()));
-        ArrayNode r = point.putArray("r");
-        ArrayNode q = point.putArray("q");
-        for (String id : seriesSteps) {
-            RunProgress.StepProgress s = p.step(id);
-            r.add(s == null ? 0 : Math.round(s.rowsPerSecond() * 10) / 10.0);
-            q.add(s == null ? 0 : Math.round(s.outputFill() * 100) / 100.0);
-        }
-        points.add(point);
-        if (points.size() >= MAX_POINTS) {
-            for (int i = points.size() - 2; i > 0; i -= 2) { // keep the first and the last
-                points.remove(i);
-            }
-            stride *= 2;
-        }
-    }
-
-    private String seriesJson() {
-        ObjectNode root = json.createObjectNode();
-        ArrayNode steps = root.putArray("steps");
-        seriesSteps.forEach(steps::add);
-        root.put("stride", stride);
-        ArrayNode out = root.putArray("points");
-        points.forEach(out::add);
-        return root.toString();
     }
 
     /** How many points the series holds; for tests. */

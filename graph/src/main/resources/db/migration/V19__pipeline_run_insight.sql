@@ -24,14 +24,26 @@ ALTER TABLE pipeline_step_run
 -- {at, workerStartedAt, workerFinishedAt, slowest, steps: [{step, state, rowsIn, rowsOut, rowsPerSecond,
 --  startedAt, firstRowAt, lastRowAt, finishedAt, waitingForRowsMs, heldUpMs, outputFill}],
 --  edges: [{from, fromPort, to, toPort, rows, queued, capacity, full, empty, fill}]}
--- progress_series keeps the snapshots over the run, for rows a second over time: at most 900 points
--- (each time it fills, every other point is dropped and later ones are kept half as often):
--- {steps: [step], stride, points: [{t (ms from workerStartedAt), r: [rows/s per step],
---  q: [fill of its fullest output queue per step, 0 to 1]}]}
 ALTER TABLE pipeline_run
-    ADD COLUMN progress         jsonb,
-    ADD COLUMN progress_at      timestamptz,
-    ADD COLUMN progress_series  jsonb;
+    ADD COLUMN progress     jsonb,
+    ADD COLUMN progress_at  timestamptz,
+    -- the steps in the order of each point's values below, and how many snapshots a point stands for
+    ADD COLUMN series_steps   jsonb,
+    ADD COLUMN series_stride  integer CHECK (series_stride IS NULL OR series_stride >= 1);
+
+-- Rows a second over the run: one row per point, appended as the run goes (never the whole series
+-- rewritten), at most 900 a run. When a run reaches 900, its points are merged in pairs (keeping the
+-- higher rate and fill, so spikes survive) and later points stand for twice as many snapshots
+-- (series_stride doubles). t_ms is from the worker's start on the run (progress.workerStartedAt);
+-- rates and fills hold each step's rows a second and its fullest output queue's fill (0 to 1), in
+-- series_steps' order. Counts only, never values. Deleted with the run.
+CREATE TABLE pipeline_run_point (
+    run_id  bigint NOT NULL REFERENCES pipeline_run (id) ON DELETE CASCADE,
+    t_ms    bigint NOT NULL CHECK (t_ms >= 0),
+    rates   jsonb NOT NULL,
+    fills   jsonb NOT NULL,
+    PRIMARY KEY (run_id, t_ms)
+);
 
 -- The run's log: what happened, in order. text is the server's own words, shown to everyone who may
 -- see the run; detail, an engine's or database's message, may quote values from the rows and is held

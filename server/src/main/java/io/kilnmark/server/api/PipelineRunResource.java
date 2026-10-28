@@ -74,6 +74,21 @@ public class PipelineRunResource {
     }
 
     @GET
+    @Path("{id}/series")
+    @Operation(summary = "A pipeline run's rows a second over time", description = "Each step's rows a second "
+        + "and how full its output queue was, at each kept snapshot after after (ms from the worker's start on "
+        + "the run; 0 or left out for all). At most 900 points; when stride changes the points were merged, so "
+        + "read again from 0. Counts only. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The points"),
+        @APIResponse(responseCode = "400", description = "after is not a whole number"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "404", description = "No such run")})
+    public PipelineViews.RunSeries series(@PathParam("id") long id, @QueryParam("after") String after) {
+        return pipelines.series(id, after == null || after.isBlank() ? -1 : PipelineService.count(after, "after", 0));
+    }
+
+    @GET
     @Path("{id}/events/download")
     @Produces({MediaType.TEXT_PLAIN, "application/x-ndjson"})
     @Operation(summary = "Download a pipeline run's log", description = "The whole log, with the same filters and "

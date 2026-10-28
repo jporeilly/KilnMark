@@ -146,7 +146,8 @@ Added while building the engine (round 3, step 1):
   A `RunListener` hears `stepStarted`, `firstRowIn`, `firstRowOut`, `lastRowOut` and
   `stepEnded(outcome)`, each with when it happened. A step is ended once its thread and any tee
   copying its rows have (a tee's failure is the step's); if memory it did not free is found once
-  every step has ended, `stepEnded` is called again with the corrected outcome.
+  every step has ended, `stepEnded` is called again with the corrected outcome (the log says "Step
+  write counted as failed: it did not free all its memory").
   `progress(RunProgress)` every `progressEvery` (2 seconds unless set in the four-argument
   constructor) and once at the end; and `note(level, step, text, at)` (defaulting to the
   three-argument form) for a step's failure, a stall (error) and memory a step did not free
@@ -677,27 +678,32 @@ asset's previous profile.
   `waiting_for_rows_ms`, `held_up_ms`, and `duration_ms`, now filled). Each progress snapshot goes
   to `pipeline_run.progress` (JSON: counts, states, fills and times, never values; `progress_at`),
   written at most every two seconds and once more when the worker has finished with the run, with
-  `workerStartedAt` and `workerFinishedAt`; and the snapshots over the run to
-  `pipeline_run.progress_series` (each step's rows a second and output fill per point, at most 900
-  points: when it fills, every other point goes and later ones are kept half as often). All of it
-  goes through the database because the API may run in another container. **One clock:** every
+  `workerStartedAt` and `workerFinishedAt` (a snapshot reaching the log after that changes
+  nothing); and each step's rows a second and output fill, a point at a time, to
+  `pipeline_run_point` (appended as the run goes, never rewritten; the steps' order and the
+  stride on `pipeline_run`). A point stands for `stride` snapshots and keeps their highest rate and
+  fill, so spikes survive; when a run reaches 900 points they are merged in pairs the same way and
+  the stride doubles, keeping them evenly spaced. All of it goes through the database because the API may run in another container. **One clock:** every
   time the run page draws counts from `workerStartedAt`, on the worker's clock, never the
   database's (`pipeline_run.started_at`) or the browser's; a live run's "now" is its last
   snapshot's `at` plus the time since the page fetched it. The log is `pipeline_run_event` (run,
   seq, at, step or null, level info, warn or error, kind, text, detail), written in batches with
   each snapshot and at the end: the run starting and ending, each step starting, its first row in
   and out, its last row out and how it ended, the engine's notes (stamped with when the engine
-  noticed them), a gate starting to set rows aside (`gate_quarantining`, from the first rows on its
-  `quarantine` port), each gate's verdict (`gate_verdict`: "Gate check quarantined 229 rows (email
+  noticed them), a gate starting to set rows aside (`gate_quarantining`: the first rows a gate step
+  sends anywhere but `out`), each gate's verdict (`gate_verdict`: "Gate check quarantined 229 rows (email
   format: 229)": rule names and counts, as the run's quality section shows everyone; a rule's
   message and a stop reason are the detail, as they can hold values) and the run's own notes, as
   information or warnings as each is. At most 10,000 events a run, then one `log_truncated`;
   deleted with the run. An event's `text` is always the server's words ("Step check reported an
   error"); anything an engine says is its `detail`, with the run's secrets and any NUL character
   removed, and is held back exactly as the run's error is (below). Storing the log or progress
-  never fails or holds up a run: each statement is given up after 5 seconds (`setQueryTimeout`, so
-  a stuck connection is cancelled), a batch of events the database refuses is tried event by event,
-  and what still fails is logged as a warning. The page reads the log again from the start when the
+  never fails a run, and a slow statement or a lock wait does not hold it up for long: each
+  statement is given up after 5 seconds (`setQueryTimeout`). That does not cover a connection that
+  has died without closing (the datasource has no socket timeout yet; that is for the hardening
+  round). A batch of events the database refuses as data (SQLState class 22 or 23) is tried event
+  by event; a timeout or a lost connection drops the batch with one warning, rather than waiting
+  again for each event. The page reads the log again from the start when the
   run ends, so events written late, after its last live look, are not missed.
 - **On the run page.** Tiles for wall-clock time, most steps at once, the longest step and what
   limited the run. **Where each step spent its time**: per step, its time split into working,
@@ -710,7 +716,10 @@ asset's previous profile.
   marked on the time axis, each point readable by pointer or keyboard, and a table. Each step's
   share of the run is in the steps table. The Gantt chart (with its critical path) is kept in the
   code for flows, not shown on pipeline runs.
-- **API.** The run view adds each step's times and waits, `progress` and `progressSeries`. `GET
+- **API.** The run view adds each step's times and waits and `progress`; it stays small however
+  long the run, as rows a second are read on their own: `GET /api/v1/pipeline-runs/{id}/series?after=`
+  gives the steps, the stride and the points after `after` ms (the page reads only the new ones while
+  the run goes, and all of them again when the stride has changed). `GET
   /api/v1/pipeline-runs/{id}/events?step=&level=&after=&limit=` pages the log (`level` is the least
   serious shown; `next` is the `after` of the next page; at most 1,000 a page) and
   `.../events/download?format=text|ndjson` streams all of it, with the same filters, as a file

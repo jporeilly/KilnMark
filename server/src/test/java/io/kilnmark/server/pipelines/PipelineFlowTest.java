@@ -265,8 +265,17 @@ class PipelineFlowTest {
         }
         assertTrue(run.getString("progress.workerStartedAt") != null && run.getString("progress.workerFinishedAt") != null,
             run.prettify());
-        assertEquals(List.of("people", "out"), run.getList("progressSeries.steps"), run.prettify());
-        assertTrue(run.getList("progressSeries.points").size() >= 1, run.prettify());
+        assertFalse(run.prettify().contains("progressSeries"), "the run view stays small: rows a second are read on their own");
+        JsonPath series = as(viewer).get("/api/v1/pipeline-runs/" + firstRun + "/series").then().statusCode(200).extract()
+            .jsonPath();
+        assertEquals(List.of("people", "out"), series.getList("steps"), series.prettify());
+        assertEquals(1, series.getInt("stride"));
+        List<Integer> times = series.getList("points.t", Integer.class);
+        assertTrue(!times.isEmpty(), series.prettify());
+        as(viewer).queryParam("after", times.getLast()).get("/api/v1/pipeline-runs/" + firstRun + "/series").then()
+            .statusCode(200).body("points.size()", equalTo(0));
+        as(viewer).queryParam("after", "x").get("/api/v1/pipeline-runs/" + firstRun + "/series").then().statusCode(400);
+        as(viewer).get("/api/v1/pipeline-runs/999999/series").then().statusCode(404);
         assertEquals(2500L, run.getLong("progress.steps.find { it.step == 'out' }.rowsIn"), run.prettify());
         assertEquals("ended", run.getString("progress.steps.find { it.step == 'out' }.state"));
         assertEquals(2500L, run.getLong("progress.edges[0].rows"));

@@ -5,7 +5,7 @@ import { badgeRows, runWords, stepChips } from "./canvas/StepNode";
 import { liveEdgeRows, liveSteps, rateWords } from "./live";
 import { RunTimeline, qualityMark } from "./RunTimeline";
 import { RunTimeSpent, limitWords } from "./RunTimeSpent";
-import { RunRates } from "./RunRates";
+import { RatesChart } from "./RunRates";
 import { rates, nearest, ratePath } from "./rates";
 import { limiting, shares, timeSpent } from "./timeSpent";
 import {
@@ -510,7 +510,6 @@ describe("rows a second through the run", () => {
   };
   const d = () =>
     detail({
-      progressSeries: series,
       progress: {
         at: at(4000),
         workerStartedAt: at(0),
@@ -535,7 +534,7 @@ describe("rows a second through the run", () => {
     });
 
   test("a line per step with its peak, average and how often its output queue was full", () => {
-    const r = rates(d())!;
+    const r = rates(d(), series)!;
     expect(r.span).toBe(4000);
     const read = r.lines[0];
     expect(read.peak).toBe(300);
@@ -545,11 +544,11 @@ describe("rows a second through the run", () => {
     expect(r.lines[1].hasOutput).toBe(false);
     expect(nearest(read.points, 2400)).toBe(1);
     expect(ratePath(read.points, 4000, 300, 1000, 36)).toBe("M250.0,23.7 L500.0,-1.0 L750.0,35.0".replace("-1.0", "1.0"));
-    expect(rates(detail())).toBeNull();
+    expect(rates(detail(), null)).toBeNull();
   });
 
   test("drawn with a Held up band, its words and a table", () => {
-    const html = renderToStaticMarkup(<RunRates detail={d()} tick={0} />);
+    const html = renderToStaticMarkup(<RatesChart detail={d()} series={series} marks={[]} />);
     expect(html).toContain("peak 300 rows/s");
     expect(html).toContain("output queue full 67% of the time");
     expect(html).toContain("Held up: how full its output queue was");

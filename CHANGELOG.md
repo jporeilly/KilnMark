@@ -21,11 +21,11 @@ details.
   listener that throws or hangs never fails or holds up a run; no allocation per batch) it reports
   each step starting, its first row in and out, its last row out and how it ended, the engine's
   notes, and a snapshot every two seconds: rows and rows a second per step, waits so far, each
-  queue's fill, and the **Slowest** step. The worker keeps the latest snapshot and a series of them
-  (at most 900 points) on `pipeline_run`, and the log in `pipeline_run_event` (at most 10,000
+  queue's fill, and the **Slowest** step. The worker keeps the latest snapshot on `pipeline_run` and
+  rows a second in `pipeline_run_point` (appended, at most 900 points, spikes kept), and the log in `pipeline_run_event` (at most 10,000
   events; the engine's words and rule messages are the held-back detail; each write gives up after
   5 seconds). Every time is on the worker's clock. `GET /api/v1/pipeline-runs/{id}/events` (by
-  step and level, paged) and a streamed `.../events/download` (text or NDJSON). The run page shows
+  step and level, paged), `.../series` and a streamed `.../events/download` (text or NDJSON). The run page shows
   the run at a glance in tiles, **where each step spent its time** (working, waiting for rows, held
   up by the next step, with "What limited this run: check, working 90% of the time"), **rows per
   second through the run** (a line per step with a Held up band for its output queue, and warnings,

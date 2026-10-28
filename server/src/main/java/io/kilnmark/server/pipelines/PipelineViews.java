@@ -103,13 +103,24 @@ public final class PipelineViews {
      * edges: [{from, fromPort, to, toPort, rows, queued, capacity, full, empty}]}. {@code slowest} is
      * the step holding the run back: its input queues are full while its output queues are not.
      * Counts, states and times only, on the worker's clock ({@code workerStartedAt}, and
-     * {@code workerFinishedAt} once it has finished). {@code progressSeries}: the snapshots over the
-     * run, {steps: [step], stride, points: [{t (ms from workerStartedAt), r: [rows/s per step], q: [fill
-     * of its fullest output queue, 0 to 1]}]}, at most 900 points; or null.
+     * {@code workerFinishedAt} once it has finished). Rows a second over the run are read on their
+     * own ({@code GET .../series}), so this stays small however long the run.
      */
     public record RunDetail(RunSummary run, List<StepRunView> steps, List<WrittenAsset> written, List<String> read,
                             List<LineageLink> lineage, List<String> notes, List<StepQualityView> quality,
-                            JsonNode progress, JsonNode progressSeries) {
+                            JsonNode progress) {
+    }
+
+    /**
+     * A run's rows a second over time ({@code GET /api/v1/pipeline-runs/{id}/series?after=}): its steps,
+     * how many snapshots a point stands for, and the points after {@code after}: {@code t} ms from the
+     * worker's start, {@code r} each step's rows a second and {@code q} its fullest output queue's fill
+     * (0 to 1), in {@code steps}' order.
+     */
+    public record RunSeries(JsonNode steps, int stride, List<SeriesPoint> points) {
+    }
+
+    public record SeriesPoint(long t, JsonNode r, JsonNode q) {
     }
 
     /**
