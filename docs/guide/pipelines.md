@@ -27,17 +27,132 @@ Stewards see **Run now** beside each pipeline, and **New pipeline** at the top.
 
 ## Starting a new pipeline
 
-Choose **New pipeline**. The editor opens with a template that reads the first 100 rows of a
-table or file from one of your sources and writes them to a source that allows writing: the first
-of each that you have, by name. Where you have no such source yet, the template shows a
+Choose **New pipeline**. The pipeline opens on the canvas with a template that reads the first 100
+rows of a table or file from one of your sources and writes them to a source that allows writing:
+the first of each that you have, by name. Where you have no such source yet, the template shows a
 placeholder in angle brackets, such as `<your source>`, which the check reports until you replace
-it with a source's name.
+it with a source's name. To start from nothing instead, choose **Start with an empty canvas**;
+**Start from the template** brings the template back.
 
 1. Give the pipeline a **Name**: small letters, digits and dashes, such as `customer-billing`.
    The name cannot change once saved; the YAML's `name` line follows what you type.
 2. Optionally give it a **Display name**, which is what people see.
-3. Change the YAML (see below), watching the problems list under the editor.
+3. Build it on the canvas (see [Building on the canvas](#building-on-the-canvas)) or change its
+   YAML (see below), watching the problems list under both.
 4. Choose **Save pipeline**.
+
+## Building on the canvas
+
+The **Canvas** and **YAML** tabs show the same pipeline: a change on the canvas rewrites only the
+lines it changes in the YAML, so your comments, layout and every other setting stay exactly as
+they were, and a change to the YAML redraws the canvas. Kilnmark remembers which tab you used last.
+
+The canvas uses the page's full width. On the left is a narrow rail with a button per folder of
+step types; the pipeline fills the rest, with an overview in its corner for finding your way
+around a large one. The selected step's settings open in a panel over the right of the canvas (below
+it on a narrow screen), and close with its **×** or when nothing is selected.
+
+### Adding and connecting steps
+
+- **Add a step** by dragging its type from the list onto the canvas, or by choosing it: with a step
+  selected, the new step is added after it and reads from it.
+- **The step list** is in folders: Read, Write, Filter and route, Transform, Combine, Aggregate,
+  Quality, AI and Other, each with how many types it holds, and **Recently used** first with the
+  last five types you added. The first button on the rail opens the whole list, with **Find a
+  step** to search every folder at once (the folders with a match open by themselves); choose a
+  folder's icon on the rail to see just its steps beside it. Folders holding the steps your
+  pipeline uses start open, and Kilnmark remembers in this browser which folders you open.
+- **Each step** shows its type, its id, a line summing up its settings, its input ports on the
+  left and output ports on the right, and how many problems it has. Hover over a step, or move the
+  focus to it, to see the columns leaving it.
+- **Connect steps** by dragging from an output port to an input port. A connection Kilnmark cannot
+  make is refused with the reason: a step reading from itself, a loop, or an input that already
+  reads from another step (combine rows with a union step instead). Lines for ports other than
+  `out` are dashed and labelled.
+- **Remove a connection** with **Disconnect** beside it in the settings of the step it feeds, or
+  click it and press Delete.
+- **Move** a step by dragging it. **Auto-layout** lays the steps out again from left to right.
+  **Fit** shows the whole pipeline, however small that makes it; **Readable size** shows it at a
+  size you can read, from its first steps if it is too wide for that. The overview in the corner
+  shows where you are: drag in it to move around.
+- **Duplicate** copies a step with its settings and inputs; **Delete step** removes it and its
+  connections. **Undo** and **Redo** step back and forward through your changes, including a burst
+  of typing in the YAML tab and loading the latest version; they are off while the canvas cannot
+  change the pipeline.
+
+Where each step is drawn is kept at the end of the YAML, in a `layout` block. Kilnmark ignores it
+when it runs the pipeline, so moving steps never changes what a pipeline does, and **Run now** does
+not ask about unsaved changes that only move steps (saving them suggests the message "Moved
+steps"):
+
+```yaml
+# Where the canvas draws each step. Kilnmark ignores this when it runs the pipeline.
+layout:
+  customers: {x: 40, y: 120}
+  tidy: {x: 320, y: 120}
+```
+
+### Settings
+
+Select a step to see its settings. Each has its help and, where there is one, its default; a
+setting left at its default is left out of the YAML.
+
+- On and off settings are switches; numbers, choices and text are fields and lists.
+- **Source** lists your saved sources; for a write, those that do not allow writing say so.
+  **Table or file** suggests the tables and files of the chosen source.
+- Column settings offer the columns arriving at the step, as the last check worked them out, so
+  you choose rather than type. Before the columns are known you can type names.
+- Expressions (a filter's condition, computed columns, aggregate values, routes) have the arriving
+  columns as buttons below them: choosing one puts its name where the cursor is.
+- A write step shows the settings of its source's writer, such as **Commit every N rows** for a
+  database or **Overwrite** for files, once you choose the source.
+- **Step id** renames the step, and the steps reading from it follow.
+
+Problems the check finds show on the step (as a count), under the setting they are about, and in
+the problems list under the canvas. Choosing a problem in the list selects its step and moves to
+the setting. If the YAML cannot be read at all (a typing mistake in the YAML tab), the canvas shows
+the last pipeline that could be read, does not let you change it, and says so; fix the YAML to go
+on.
+
+### After a run
+
+Once a run has finished, each step on the canvas shows the rows it passed on and how it ended
+(Finished, Ended early, Stopped by the engine or Failed), and each connection its rows. The steps
+table under the canvas says the same.
+
+**Run now** runs the saved version. If you have changes that are not saved, Kilnmark says so first
+and asks you to confirm; save them to run them.
+
+### Using the keyboard
+
+Everything on the canvas can be done without a mouse. Press Tab to move from step to step (each
+step is described when it gets the focus), and on to its settings. Press `?` on the canvas for this
+list:
+
+| Keys | What they do |
+| --- | --- |
+| Tab, Shift+Tab | Move between steps, and on to the settings |
+| Arrow keys | Move to a connected step: right to the next, left to the one before; up and down to the step above or below |
+| Shift+arrow keys | Move the step on the canvas |
+| Alt+arrow keys | Pan the canvas |
+| A | Open the step list at **Find a step**; type, Tab to the type and press Enter to add it after the selected step |
+| Arrow keys in the step list | Up and down through the folders and steps; Right opens a folder, Left closes it; Enter adds the step. On the rail, Right opens a folder's steps beside it |
+| C | **Connect to…**: a list of the steps this step can send rows to or read rows from |
+| Enter | Go to the step's settings |
+| Delete or Backspace | Remove the step (or a connection you clicked) |
+| Ctrl+D | Duplicate the step |
+| Ctrl+Z; Ctrl+Shift+Z or Ctrl+Y | Undo; redo |
+| + and - | Zoom in and out |
+| F | Fit the whole pipeline in view |
+| R | Readable size |
+| L | Lay the steps out again |
+| Escape | Clear the selection, or close a list |
+
+On a Mac, use Cmd for Ctrl. These keys work on the canvas and its tools, not while you are in the
+settings or the step list. Connections are not in the Tab order: remove one with **Disconnect**
+in the settings, and add one with **Connect to…**. What each change did is announced to screen readers, the steps are
+also listed as a table under the canvas, and the canvas does not animate when your system asks for
+reduced motion.
 
 ## YAML basics
 
@@ -102,20 +217,21 @@ catalogue (`GET /api/v1/steps`) lists every type this server has, with the setti
 
 ## Checking as you type
 
-A moment after you stop typing, Kilnmark checks the YAML. Under the editor it says how many
-problems it found, and lists each one with its line and the step it is about. Lines with a problem
-are marked with `!` beside their number.
+A moment after you stop typing, or after a change on the canvas, Kilnmark checks the pipeline.
+Under the canvas or the editor it says how many problems it found, and lists each one with its line
+and the step it is about. In the editor, lines with a problem are marked with `!` beside their
+number.
 
-- **Choose a problem** to move the cursor to its line.
+- **Choose a problem** to move the cursor to its line (on the canvas: to select its step).
 - **Notes** do not stop a run. For example, a table that has not been scanned yet has columns
   Kilnmark only learns when the pipeline runs.
 - In the editor, Tab indents by two spaces. Press Escape and then Tab to move on to the next
   control.
 
-The **Steps** panel draws the pipeline as a graph: each step with its input ports on the left
-and output ports on the right, and lines from port to port. Hover over or move the focus to a step
-to see the columns leaving it. The table under the graph says the same in words; choose a step's
-id there to go to its line.
+Beside the YAML, **Steps** draws the pipeline as a read-only graph: each step with its input ports
+on the left and output ports on the right, and lines from port to port. Hover over or move the
+focus to a step to see the columns leaving it. **Steps as a table** says the same in words; choose
+a step's id there to go to its line (or, on the canvas, to select it).
 
 ## Saving versions
 
@@ -128,8 +244,9 @@ A pipeline with problems can be saved as a draft, so you can come back to it, bu
 until they are fixed.
 
 If someone else saved a version after you opened the page, Kilnmark refuses your save rather than
-undo theirs unseen. Copy your text if you want to keep it, choose **Load the latest version**, and
-make your change again.
+undo theirs unseen. Your changes stay on the page. **Show my version in the YAML tab** shows them as
+text; **Load the latest and keep mine as an undo step** loads the latest version in their place,
+and **Undo** brings yours back, to compare or to make your change again.
 
 The **Versions** list shows every version with who saved it, when and why. Open one to see its
 YAML exactly as it was saved.

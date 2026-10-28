@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Tabs, TabPanel, useTabsId } from "../components/ui";
 import {
   allows,
   ApiError,
@@ -9,6 +10,7 @@ import {
   type PipelineDetail,
   type PipelineProblem,
   type PipelineRun,
+  type PipelineRunDetail,
   type PipelineValidation,
   type PipelineVersion,
   type PipelineVersionSummary,
@@ -18,21 +20,41 @@ import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { RunStatus, runTime } from "./RunStatus";
 import { columnsText } from "./outline";
-import { findStarterPicks, renamed, starterYaml } from "./template";
+import { emptyYaml, findStarterPicks, renamed, starterYaml, withoutLayout } from "./template";
 import { YamlEditor, type YamlEditorHandle } from "./YamlEditor";
+import type { CanvasRun } from "./canvas/CanvasView";
+import type { Graph } from "./canvas/model";
 import "./pipelines.css";
 
-// The graph library is large, so the graph loads when the page first shows one.
+// The graph library is large, so the graph and the canvas load when the page first shows one.
 const PipelineDiagram = lazy(() => import("./PipelineDiagram"));
+const CanvasView = lazy(() => import("./canvas/CanvasView"));
 
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const CHECK_DELAY_MS = 600;
+/** Changes to one setting this close together are one step to undo. */
+const COALESCE_MS = 1500;
+const HISTORY = 200;
+
+type View = "canvas" | "yaml";
+const VIEW_KEY = "kilnmark.pipeline.view";
+function savedView(): View {
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === "yaml" ? "yaml" : "canvas";
+  } catch {
+    return "canvas";
+  }
+}
+type Undo = { text: string; label: string; key?: string; at: number };
+const MOVED = "Moved steps";
 
 /**
- * One pipeline: its YAML in an editor that checks it as you type and lists problems by line
- * (choosing one moves the caret there), Save with a message, a read-only graph of its steps, its
- * versions and its runs. With name null, a new pipeline from the starter template. With a version,
- * that saved version, read-only.
+ * One pipeline, built on the canvas or written as YAML: two views of one document. The canvas
+ * (palette, graph, settings panel) and the YAML editor edit the same text; the YAML is checked a
+ * moment after each change and the problems are listed below both (choosing one selects its step
+ * on the canvas, or moves the caret to its line in the YAML). Save with a message, Run the saved
+ * version, its versions and its runs. With name null, a new pipeline from the starter template or
+ * an empty canvas. With a version, that saved version, read-only.
  */
 export function PipelinePage({ name, version, role }: { name: string | null; version: number | null; role: AccessRole }) {
   const steward = allows(role, "steward");
@@ -59,6 +81,60 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   const [runs, setRuns] = useState<PipelineRun[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const editor = useRef<YamlEditorHandle>(null);
+  const [view, setViewState] = useState<View>(savedView);
+  const setView = (v: View) => {
+    setViewState(v);
+    try {
+      window.localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // A remembered view is a convenience only.
+    }
+  };
+  const tabsId = useTabsId();
+  const [selected, setSelected] = useState<string | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{ step: string; key: string | null; n: number } | null>(null);
+  const [confirmRun, setConfirmRun] = useState(false);
+  const [runShown, setRunShown] = useState<PipelineRunDetail | null>(null);
+  const canvasMemory = useRef<{ lastGood?: Graph | null }>({});
+  // Undo and redo for changes made on the canvas (the YAML editor has the browser's own).
+  const yamlNow = useRef(yaml);
+  yamlNow.current = yaml;
+  const undos = useRef<Undo[]>([]);
+  const redos = useRef<Undo[]>([]);
+  const [, setHistoryTick] = useState(0);
+  const edit = useCallback((next: string, label: string, key?: string) => {
+    const now = Date.now();
+    const last = undos.current.at(-1);
+    if (key && last?.key === key && now - last.at < COALESCE_MS) {
+      last.at = now;
+    } else {
+      undos.current = [...undos.current, { text: yamlNow.current, label, key, at: now }].slice(-HISTORY);
+    }
+    redos.current = [];
+    yamlNow.current = next;
+    setYaml(next);
+    setHistoryTick((n) => n + 1);
+  }, []);
+  const undo = useCallback((): string | null => {
+    const last = undos.current.at(-1);
+    if (!last) return null;
+    undos.current = undos.current.slice(0, -1);
+    redos.current = [...redos.current, { ...last, text: yamlNow.current }];
+    yamlNow.current = last.text;
+    setYaml(last.text);
+    setHistoryTick((n) => n + 1);
+    return last.label;
+  }, []);
+  const redo = useCallback((): string | null => {
+    const next = redos.current.at(-1);
+    if (!next) return null;
+    redos.current = redos.current.slice(0, -1);
+    undos.current = [...undos.current, { ...next, text: yamlNow.current, key: undefined }];
+    yamlNow.current = next.text;
+    setYaml(next.text);
+    setHistoryTick((n) => n + 1);
+    return next.label;
+  }, []);
   const errorRef = useRef<HTMLParagraphElement>(null);
   // Each failure moves the focus to its message once it is on the page (even the same message again).
   const [failures, setFailures] = useState(0);
@@ -122,6 +198,29 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
     return () => window.clearInterval(t);
   }, [active, loadLists]);
 
+  // The latest run, step by step, for the canvas: refreshed when the runs list changes.
+  const latestRun = runs?.[0] ?? null;
+  const latestKey = latestRun ? `${latestRun.id}:${latestRun.status}` : "";
+  useEffect(() => {
+    if (!latestRun || latestRun.status === "queued") return;
+    let live = true;
+    pipelinesApi
+      .runDetail(latestRun.id)
+      .then((d) => live && setRunShown(d))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestKey]);
+  const canvasRun: CanvasRun | null = useMemo(
+    () =>
+      runShown && !viewing
+        ? { id: runShown.run.id, version: runShown.run.version, status: runShown.run.status, steps: runShown.steps }
+        : null,
+    [runShown, viewing],
+  );
+
   const text = viewing ? (shown?.yaml ?? "") : yaml;
 
   // Check the YAML a moment after typing stops. Only the latest answer counts.
@@ -151,6 +250,12 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   const problemLines = useMemo(() => new Set(problems.filter((p) => p.line > 0).map((p) => p.line)), [problems]);
   const problemSteps = useMemo(() => new Set(problems.map((p) => p.step).filter((s): s is string => !!s)), [problems]);
   const dirty = !viewing && (isNew || (savedYaml != null && yaml !== savedYaml));
+  // Moving steps changes only the layout block: that is no reason to warn before a run.
+  const contentDirty = dirty && !isNew && savedYaml != null && withoutLayout(yaml) !== withoutLayout(savedYaml);
+  const layoutOnly = dirty && !isNew && !contentDirty;
+  useEffect(() => {
+    setMessage((m) => (layoutOnly && m.trim() === "" ? MOVED : !layoutOnly && m === MOVED ? "" : m));
+  }, [layoutOnly]);
   const nameProblem = isNew && !NAME.test(newName)
     ? "Start with a small letter, then use small letters, digits and dashes (at most 63)."
     : null;
@@ -202,16 +307,36 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
     }
   };
 
+  /** Loads the latest saved version in place of the text here, which stays one undo away. */
   const reloadLatest = async () => {
-    setConflict(false);
-    setError(null);
-    await load();
-    loadLists();
-    setNotice("Loaded the latest version. Make your change again, then save.");
+    if (!name) return;
+    try {
+      const d = await pipelinesApi.get(name);
+      setDetail(d);
+      if (d.latest) {
+        edit(d.latest.yaml, "Loaded the latest version");
+        setSavedYaml(d.latest.yaml);
+      }
+      setConflict(false);
+      setError(null);
+      loadLists();
+      setNotice(
+        `Loaded version ${d.latestVersion}. Your version is one undo away: press Undo on the canvas to get it back, then save again.`,
+      );
+    } catch (err) {
+      fail(err);
+    }
   };
 
   const runNow = async () => {
     if (!name) return;
+    // From the text as it is now: a setting typed a moment ago may not have been drawn yet.
+    const unsaved = savedYaml != null && withoutLayout(yamlNow.current) !== withoutLayout(savedYaml);
+    if (unsaved && !confirmRun) {
+      setConfirmRun(true);
+      return;
+    }
+    setConfirmRun(false);
     setError(null);
     try {
       const run = await pipelinesApi.run(name);
@@ -234,7 +359,33 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   };
 
   const goTo = (p: PipelineProblem) => {
-    if (p.line > 0) editor.current?.goToLine(p.line, p.column);
+    if (view === "canvas" && p.step) {
+      // The setting is the word the message starts with, or the key on the problem's line.
+      const key =
+        /Setting '([^']+)' of step/.exec(p.message)?.[1] ??
+        /has no setting '([^']+)'/.exec(p.message)?.[1] ??
+        /needs the setting '([^']+)'/.exec(p.message)?.[1] ??
+        /^Step [^:]+: ([a-z_][a-z0-9_]*):/.exec(p.message)?.[1] ??
+        null;
+      setSelected(p.step);
+      setFocusRequest((r) => ({ step: p.step!, key, n: (r?.n ?? 0) + 1 }));
+      return;
+    }
+    if (view === "canvas") setView("yaml");
+    if (p.line > 0) window.setTimeout(() => editor.current?.goToLine(p.line, p.column), 0);
+  };
+
+  const startEmpty = () => {
+    edit(emptyYaml(NAME.test(newName) ? newName : "my-pipeline"), "Started with an empty canvas.");
+    setSelected(null);
+    setView("canvas");
+  };
+  const startTemplate = () => {
+    const n = NAME.test(newName) ? newName : "my-pipeline";
+    edit(starterYaml(n), "Started from the template.");
+    findStarterPicks()
+      .then((picks) => setYaml((y) => (y === starterYaml(n) ? starterYaml(n, picks) : y)))
+      .catch(() => {});
   };
 
   if (loadError && !detail) {
@@ -285,27 +436,58 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
               className="primary"
               onClick={runNow}
               disabled={!detail?.latest?.valid}
-              aria-describedby={dirty ? "pl-run-hint" : undefined}
+              aria-describedby={contentDirty ? "pl-run-hint" : undefined}
             >
               Run now
             </button>
-            {dirty && (
-              <span id="pl-run-hint" className="small muted">
-                Runs the saved version {detail?.latestVersion}, not your unsaved changes.
-              </span>
-            )}
             <button type="button" onClick={remove}>
               Delete
             </button>
           </div>
         )}
       </div>
+      {/* Below the buttons, with its line kept, so nothing moves as it comes and goes (a click
+          that starts as the text changes would otherwise miss its button). */}
+      {!isNew && !viewing && steward && (
+        <p id="pl-run-hint" className="small muted pl-run-hint">
+          {contentDirty ? `Run now runs the saved version ${detail?.latestVersion}, not your unsaved changes.` : ""}
+        </p>
+      )}
+      {confirmRun && (
+        <div className="warning pl-confirm" role="alert">
+          <p>
+            You have changes that are not saved. Run now runs the saved version {detail?.latestVersion}, without them.
+            Save first to run your changes.
+          </p>
+          <div className="buttons">
+            <button type="button" className="primary" onClick={runNow}>
+              Run version {detail?.latestVersion}
+            </button>
+            <button type="button" onClick={() => setConfirmRun(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       {detail?.description && <p className="lead">{detail.description}</p>}
       {isNew && (
-        <p className="lead">
-          Start from the template, which reads from one of your sources and writes to one that allows writing;
-          replace anything in angle brackets. The YAML is checked as you type. <a href={docHref("pipelines")}>How pipelines are written</a>.
-        </p>
+        <div className="lead pl-start">
+          <p>
+            Build the pipeline on the canvas, or write its YAML: both edit the same pipeline, and it is checked as you go.
+            It starts from a template that reads from one of your sources and writes to one that allows writing; replace
+            anything in angle brackets. <a href={docHref("pipelines")}>How pipelines are built</a>.
+          </p>
+          {steward && (
+            <div className="buttons">
+              <button type="button" onClick={startTemplate}>
+                Start from the template
+              </button>
+              <button type="button" onClick={startEmpty}>
+                Start with an empty canvas
+              </button>
+            </div>
+          )}
+        </div>
       )}
       {!isNew && !viewing && detail?.latest && (
         <p className="small muted">
@@ -336,193 +518,269 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
         </p>
       )}
       {conflict && (
-        <p>
-          <button type="button" onClick={reloadLatest}>
-            Load the latest version
-          </button>{" "}
-          <span className="small muted">Your text here is replaced; copy it first if you want to keep it.</span>
-        </p>
+        <div className="pl-conflict">
+          <p className="small">Your changes are still here, not saved.</p>
+          <div className="buttons">
+            <button
+              type="button"
+              onClick={() => {
+                setView("yaml");
+                window.setTimeout(() => editor.current?.goToLine(1), 0);
+              }}
+            >
+              Show my version in the YAML tab
+            </button>
+            <button type="button" onClick={reloadLatest}>
+              Load the latest and keep mine as an undo step
+            </button>
+          </div>
+        </div>
       )}
 
-      <div className="pl-layout">
-        <section aria-labelledby="yaml-h" className="panel pl-yaml">
-          <h2 id="yaml-h">YAML</h2>
-          {isNew && (
-            <div className="field-row">
-              <div className="field">
-                <label htmlFor="pl-name">Name</label>
-                <input
-                  id="pl-name"
-                  value={newName}
-                  required
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-invalid={nameProblem ? true : undefined}
-                  aria-describedby="pl-name-hint"
-                  onChange={(e) => {
-                    const v = e.target.value.trim();
-                    if (NAME.test(v)) setYaml((y) => renamed(y, v));
-                    setNewName(v);
-                  }}
-                />
-                <p id="pl-name-hint" className={nameProblem ? "hint pl-bad" : "hint"}>
-                  {nameProblem ?? "Fixed once saved: small letters, digits and dashes, such as customer-billing."}
+      {isNew && (
+        <div className="field-row">
+          <div className="field">
+            <label htmlFor="pl-name">Name</label>
+            <input
+              id="pl-name"
+              value={newName}
+              required
+              autoComplete="off"
+              spellCheck={false}
+              aria-invalid={nameProblem ? true : undefined}
+              aria-describedby="pl-name-hint"
+              onChange={(e) => {
+                const v = e.target.value.trim();
+                if (NAME.test(v)) setYaml((y) => renamed(y, v));
+                setNewName(v);
+              }}
+            />
+            <p id="pl-name-hint" className={nameProblem ? "hint pl-bad" : "hint"}>
+              {nameProblem ?? "Fixed once saved: small letters, digits and dashes, such as customer-billing."}
+            </p>
+          </div>
+          <div className="field">
+            <label htmlFor="pl-display">Display name (optional)</label>
+            <input id="pl-display" value={displayName} maxLength={200} onChange={(e) => setDisplayName(e.target.value)} />
+          </div>
+        </div>
+      )}
+
+      <section aria-labelledby="pl-build-h" className={`panel pl-build${view === "canvas" ? " pl-wide" : ""}`}>
+        <h2 id="pl-build-h" className="visually-hidden">
+          {editable ? "Build the pipeline" : "The pipeline"}
+        </h2>
+        <div className="pl-view-tabs">
+          <Tabs
+            label="How to show the pipeline"
+            idBase={tabsId}
+            selected={view}
+            onSelect={(v) => setView(v as View)}
+            tabs={[
+              { id: "canvas", label: "Canvas" },
+              { id: "yaml", label: "YAML" },
+            ]}
+          />
+        </div>
+        <TabPanel idBase={tabsId} selected={view}>
+          {view === "canvas" ? (
+            <Suspense fallback={<p role="status">Loading the canvas…</p>}>
+              <CanvasView
+                yaml={text}
+                onEdit={edit}
+                onUndo={undo}
+                onRedo={redo}
+                canUndo={undos.current.length > 0}
+                canRedo={redos.current.length > 0}
+                readOnly={!editable}
+                check={check}
+                selected={selected}
+                onSelect={setSelected}
+                focusRequest={focusRequest}
+                run={canvasRun}
+                title={title ?? "the pipeline"}
+                memory={canvasMemory.current}
+              />
+            </Suspense>
+          ) : (
+            <div className="pl-layout">
+              <div className="pl-yaml">
+                <p id="yaml-hint" className="hint">
+                  {editable
+                    ? "Tab indents by two spaces; press Escape, then Tab, to move on. Problems are listed below with their lines."
+                    : viewing
+                      ? "A saved version, shown as it was saved."
+                      : "Your role can read this pipeline. Stewards edit it."}
                 </p>
+                <YamlEditor
+                  ref={editor}
+                  id="pl-yaml"
+                  label={`YAML of ${title}`}
+                  value={text}
+                  onChange={(v) => edit(v, "Typed in the YAML", "yaml")}
+                  readOnly={!editable}
+                  problemLines={problemLines}
+                  describedBy="yaml-hint pl-check-summary"
+                />
               </div>
-              <div className="field">
-                <label htmlFor="pl-display">Display name (optional)</label>
-                <input id="pl-display" value={displayName} maxLength={200} onChange={(e) => setDisplayName(e.target.value)} />
+              <div className="pl-graph">
+                <h3 id="graph-h">Steps</h3>
+                {check && check.steps.length > 0 ? (
+                  <Suspense fallback={<p role="status">Loading the graph…</p>}>
+                    <PipelineDiagram steps={check.steps} edges={check.edges} problemSteps={problemSteps} />
+                  </Suspense>
+                ) : (
+                  <p className="muted">{checking ? "Checking…" : "The steps appear here once the YAML can be read."}</p>
+                )}
               </div>
             </div>
           )}
-          <p id="yaml-hint" className="hint">
-            {editable
-              ? "Tab indents by two spaces; press Escape, then Tab, to move on. Problems are listed below with their lines."
-              : viewing
-                ? "A saved version, shown as it was saved."
-                : "Your role can read this pipeline. Stewards edit it."}
-          </p>
-          <YamlEditor
-            ref={editor}
-            id="pl-yaml"
-            label={`YAML of ${title}`}
-            value={text}
-            onChange={setYaml}
-            readOnly={!editable}
-            problemLines={problemLines}
-            describedBy="yaml-hint pl-check-summary"
-          />
-          <div className="pl-problems">
-            {checking && (
-              <p className="pl-summary muted" aria-hidden="true">
-                Checking…
-              </p>
-            )}
-            <p
-              id="pl-check-summary"
-              className={problems.length > 0 ? "pl-summary pl-bad" : "pl-summary"}
-              aria-live="polite"
-            >
-              {summary}
+        </TabPanel>
+
+        <div className="pl-problems">
+          {checking && (
+            <p className="pl-summary muted" aria-hidden="true">
+              Checking…
             </p>
-            {problems.length > 0 && (
-              <ul className="pl-problem-list" aria-label="Problems">
-                {problems.map((p, i) => (
+          )}
+          <p id="pl-check-summary" className={problems.length > 0 ? "pl-summary pl-bad" : "pl-summary"} aria-live="polite">
+            {summary}
+          </p>
+          {problems.length > 0 && (
+            <ul className="pl-problem-list" aria-label="Problems">
+              {problems.map((p, i) => (
+                <li key={i}>
+                  {p.line > 0 || (view === "canvas" && p.step) ? (
+                    <button type="button" className="pl-problem" onClick={() => goTo(p)}>
+                      {p.line > 0 && <span className="pl-problem-at">Line {p.line}</span>}
+                      {p.step && <span className="mono"> ({p.step})</span>}: {p.message}
+                    </button>
+                  ) : (
+                    <span className="pl-problem">
+                      {p.step && <span className="mono">{p.step}: </span>}
+                      {p.message}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {check && check.notes.length > 0 && (
+            <details className="small">
+              <summary>
+                {check.notes.length} {check.notes.length === 1 ? "note" : "notes"} (do not stop a run)
+              </summary>
+              <ul>
+                {check.notes.map((n, i) => (
                   <li key={i}>
-                    {p.line > 0 ? (
-                      <button type="button" className="pl-problem" onClick={() => goTo(p)}>
-                        <span className="pl-problem-at">Line {p.line}</span>
-                        {p.step && <span className="mono"> ({p.step})</span>}: {p.message}
-                      </button>
-                    ) : (
-                      <span className="pl-problem">
-                        {p.step && <span className="mono">{p.step}: </span>}
-                        {p.message}
-                      </span>
-                    )}
+                    {n.line > 0 ? `Line ${n.line}: ` : ""}
+                    {n.message}
                   </li>
                 ))}
               </ul>
-            )}
-            {check && check.notes.length > 0 && (
-              <details className="small">
-                <summary>
-                  {check.notes.length} {check.notes.length === 1 ? "note" : "notes"} (do not stop a run)
-                </summary>
-                <ul>
-                  {check.notes.map((n, i) => (
-                    <li key={i}>
-                      {n.line > 0 ? `Line ${n.line}: ` : ""}
-                      {n.message}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-          </div>
-          {(editable || (isNew && steward)) && (
-            <form className="pl-save" onSubmit={save}>
-              <div className="field">
-                <label htmlFor="pl-message">{isNew ? "Message (optional)" : "What changed"}</label>
-                <input
-                  id="pl-message"
-                  value={message}
-                  maxLength={500}
-                  placeholder={isNew ? "First version" : "For example: drop test customers"}
-                  onChange={(e) => setMessage(e.target.value)}
-                />
-              </div>
-              <div className="buttons">
-                <button type="submit" className="primary" aria-disabled={saving || (!dirty && !isNew)}>
-                  {saving ? "Saving…" : isNew ? "Save pipeline" : "Save new version"}
+            </details>
+          )}
+        </div>
+        {(editable || (isNew && steward)) && (
+          <form className="pl-save" onSubmit={save}>
+            <div className="field">
+              <label htmlFor="pl-message">{isNew ? "Message (optional)" : "What changed"}</label>
+              <input
+                id="pl-message"
+                value={message}
+                maxLength={500}
+                placeholder={isNew ? "First version" : "For example: drop test customers"}
+                onChange={(e) => setMessage(e.target.value)}
+              />
+            </div>
+            <div className="buttons">
+              <button type="submit" className="primary" aria-disabled={saving || (!dirty && !isNew)}>
+                {saving ? "Saving…" : isNew ? "Save pipeline" : "Save new version"}
+              </button>
+              {!isNew && dirty && savedYaml != null && (
+                <button type="button" onClick={() => edit(savedYaml, "Undid my changes")}>
+                  Undo my changes
                 </button>
-                {!isNew && dirty && savedYaml != null && (
-                  <button type="button" onClick={() => setYaml(savedYaml)}>
-                    Undo my changes
-                  </button>
-                )}
-              </div>
-              <p className="hint">
-                {problems.length > 0
-                  ? "A pipeline with problems can be saved as a draft, but it cannot run until they are fixed."
-                  : dirty
-                    ? "Unsaved changes."
-                    : "No unsaved changes."}
-              </p>
-            </form>
-          )}
-        </section>
+              )}
+            </div>
+            <p className="hint">
+              {problems.length > 0
+                ? "A pipeline with problems can be saved as a draft, but it cannot run until they are fixed."
+                : dirty
+                  ? "Unsaved changes."
+                  : "No unsaved changes."}
+            </p>
+          </form>
+        )}
+      </section>
 
-        <section aria-labelledby="graph-h" className="panel pl-graph">
-          <h2 id="graph-h">Steps</h2>
-          {check && check.steps.length > 0 ? (
-            <>
-              <Suspense fallback={<p role="status">Loading the graph…</p>}>
-                <PipelineDiagram steps={check.steps} edges={check.edges} problemSteps={problemSteps} />
-              </Suspense>
-              <div className="table-scroll" role="region" aria-label="Steps table" tabIndex={0}>
-                <table className="small">
-                  <thead>
-                    <tr>
-                      <th scope="col">Step</th>
-                      <th scope="col">Type</th>
-                      <th scope="col">Reads from</th>
-                      <th scope="col">Columns out</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {check.steps.map((s) => (
-                      <tr key={s.id}>
-                        <th scope="row">
-                          <button
-                            type="button"
-                            className="pl-link mono"
-                            onClick={() => editor.current?.goToLine(s.line)}
-                            aria-label={`${s.id}: go to line ${s.line}`}
-                          >
-                            {s.id}
-                          </button>
-                          {problemSteps.has(s.id) && <div className="pl-bad">Has a problem</div>}
-                        </th>
-                        <td>{s.type ?? "–"}</td>
-                        <td className="mono">
-                          {check.edges
-                            .filter((e) => e.toStep === s.id)
-                            .map((e) => `${e.fromStep}${e.fromPort === "out" ? "" : `.${e.fromPort}`}${e.toPort === "in" ? "" : ` → ${e.toPort}`}`)
-                            .join(", ") || "–"}
+      <section aria-labelledby="steps-table-h" className="panel">
+        <h2 id="steps-table-h">Steps as a table</h2>
+        {check && check.steps.length > 0 ? (
+          <div className="table-scroll" role="region" aria-label="Steps table" tabIndex={0}>
+            <table className="small">
+              <thead>
+                <tr>
+                  <th scope="col">Step</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">Reads from</th>
+                  <th scope="col">Columns out</th>
+                  {canvasRun && <th scope="col">Last run</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {check.steps.map((s) => {
+                  const ran = canvasRun?.steps.find((r) => r.step === s.id);
+                  return (
+                    <tr key={s.id}>
+                      <th scope="row">
+                        <button
+                          type="button"
+                          className="pl-link mono"
+                          onClick={() => {
+                            if (view === "canvas") {
+                              setSelected(s.id);
+                              setFocusRequest((r) => ({ step: s.id, key: null, n: (r?.n ?? 0) + 1 }));
+                            } else {
+                              editor.current?.goToLine(s.line);
+                            }
+                          }}
+                          aria-label={view === "canvas" ? `${s.id}: select it on the canvas` : `${s.id}: go to line ${s.line}`}
+                        >
+                          {s.id}
+                        </button>
+                        {problemSteps.has(s.id) && <div className="pl-bad">Has a problem</div>}
+                      </th>
+                      <td>{s.type ?? "–"}</td>
+                      <td className="mono">
+                        {check.edges
+                          .filter((e) => e.toStep === s.id)
+                          .map((e) => `${e.fromStep}${e.fromPort === "out" ? "" : `.${e.fromPort}`}${e.toPort === "in" ? "" : ` → ${e.toPort}`}`)
+                          .join(", ") || "–"}
+                      </td>
+                      <td>{columnsText(s)}</td>
+                      {canvasRun && (
+                        <td>
+                          {ran
+                            ? [
+                                ran.rowsOut != null ? `${formatNumber(ran.rowsOut)} rows out` : ran.rowsIn != null ? `${formatNumber(ran.rowsIn)} rows in` : "",
+                                ran.outcome ? ran.outcome.replace("_", " ") : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")
+                            : "–"}
                         </td>
-                        <td>{columnsText(s)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          ) : (
-            <p className="muted">{checking ? "Checking…" : "The steps appear here once the YAML can be read."}</p>
-          )}
-        </section>
-      </div>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="muted">{checking ? "Checking…" : "The steps are listed here once the pipeline can be read."}</p>
+        )}
+      </section>
 
       {!isNew && (
         <div className="pl-lists">

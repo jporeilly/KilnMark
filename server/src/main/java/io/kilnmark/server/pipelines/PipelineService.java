@@ -529,7 +529,8 @@ public class PipelineService {
                     s.required(), s.defaultValue(), s.help(), s.choices()));
             }
             out.add(new PipelineViews.StepType(f.type(), f.kind().name().toLowerCase(Locale.ROOT), f.label(), f.help(),
-                inputs, many, f.outputPorts(), settings));
+                inputs, many, f.outputPorts(), settings,
+                f instanceof WriteStepFactory w ? w.writerSettingsByKind() : null, f.category()));
         }
         return out;
     }
@@ -635,6 +636,10 @@ public class PipelineService {
                     String profileFailure = profileFailure(o.events(), w.urn());
                     if (profileFailure != null) {
                         profileFailureNote(notes, w, context.scrub(profileFailure));
+                    }
+                    String warning = writeWarning(o.events(), w.urn());
+                    if (warning != null) {
+                        note(notes, w.step() + ": " + context.scrub(warning), null);
                     }
                     registered = register(w, rows, o.events(), profileFailure == null, c, context, notes, lease,
                         shutdown);
@@ -782,6 +787,23 @@ public class PipelineService {
         return null;
     }
 
+    /**
+     * What a writer that succeeded left for a person to attend to, from its {@code ROW_COUNT} event
+     * ({@code write_warning}: a table it could not tidy away, say), in the writer's own words, which
+     * name the asset and never quote the data; null when there is none.
+     */
+    static String writeWarning(List<MetadataEvent> events, String urn) {
+        for (MetadataEvent e : events) {
+            if (e.kind() == MetadataEvent.Kind.ROW_COUNT && e.assetUrn().equals(urn)) {
+                String warning = e.attributes().get(WriteReport.WRITE_WARNING);
+                if (warning != null && !warning.isBlank()) {
+                    return warning;
+                }
+            }
+        }
+        return null;
+    }
+
     /** The run's note for a write whose profile failed: the server's words, the writer's reason as its detail. */
     static void profileFailureNote(ArrayNode notes, PipelineExecution.WriteTarget w, String reason) {
         note(notes, w.step() + ": what it wrote could not be profiled; scan " + w.source() + " to profile "
@@ -810,10 +832,12 @@ public class PipelineService {
                 continue;
             }
             if (e.kind() == MetadataEvent.Kind.ROW_COUNT && (e.attributes().containsKey(WriteReport.PROFILED)
-                || e.attributes().containsKey(WriteReport.PROFILE_ERROR))) {
+                || e.attributes().containsKey(WriteReport.PROFILE_ERROR)
+                || e.attributes().containsKey(WriteReport.WRITE_WARNING))) {
                 Map<String, String> a = new LinkedHashMap<>(e.attributes());
                 a.remove(WriteReport.PROFILED);
                 a.remove(WriteReport.PROFILE_ERROR);
+                a.remove(WriteReport.WRITE_WARNING);
                 e = new MetadataEvent(e.assetUrn(), e.kind(), a, e.observedAt());
             }
             out.add(e);

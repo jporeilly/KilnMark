@@ -265,6 +265,14 @@ run statements of its own.
 | `verify-ca` | Encrypts and checks the certificate against `server_ca` (or the certificates the server trusts) |
 | `verify-full` | As `verify-ca`, and checks the host name |
 
+Without `server_ca`, `verify-ca` and `verify-full` check the certificate against the certificates
+Kilnmark's server trusts. Against MariaDB 11.4 and later they also accept the server's own
+self-signed certificate when the driver can prove it with the login's password (MariaDB's
+zero-configuration TLS: the server signs the certificate's fingerprint with the password hash,
+for logins using `mysql_native_password`, `ed25519` or `parsec`); a man in the middle without the
+password cannot pass. Against MySQL, or with any other login, give `server_ca` for a certificate
+those authorities did not sign.
+
 **Types** (`MySqlTypes`): integers by size, `UNSIGNED` widened (`INT UNSIGNED` to int64, `BIGINT
 UNSIGNED` to decimal(20,0)); `TINYINT(1)` as boolean while `tinyint1_as_boolean` is true;
 `DECIMAL` up to 38 digits as decimal, wider as text; `YEAR` as int16; `DATE`, `DATETIME`
@@ -281,8 +289,25 @@ snapshot). **Writes** follow the writer contract: `create`, `append`, `upsert` (
 DUPLICATE KEY UPDATE`) and `replace` (fill `kiln_new_…`, then one atomic `RENAME TABLE`). Their
 DDL commits by itself, so a failed create or replace drops the table it made. Tables the step
 creates are loaded with `LOAD DATA LOCAL INFILE` streamed from memory when the server allows
-`local_infile`, otherwise with batched inserts; sessions run in strict mode. Rights are checked
-from `information_schema`'s privilege views before any row is written.
+`local_infile`, otherwise with batched inserts; after each load `@@warning_count` must be 0.
+Sessions set a fixed `sql_mode` (`STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,
+ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`), never the server's, whose modes could change
+data silently. Rights are checked from `information_schema`'s privilege views before any row is
+written.
+
+Because `ON DUPLICATE KEY UPDATE` updates the row any unique index matches, upsert refuses a
+table with a unique index that lacks a key column (prefix and expression parts count as lacking
+it), naming the index, unless `allow_other_unique_keys` is true. Replace also refuses tables of
+engines other than InnoDB, Aria and MyISAM, and, unless the login itself holds `TRIGGER`, tables
+whose triggers it cannot see. Foreign keys from tables the login cannot see are looked up in
+`INNODB_FOREIGN` (MariaDB: `INNODB_SYS_FOREIGN`) when it has `PROCESS`; otherwise, if the old
+table's `DROP` fails with 1451, 1217 or 3730 after the swap, one `RENAME TABLE` puts both names
+back (the key follows the table) and the replace fails. Any other failure to drop `kiln_old_…`
+keeps the new rows and puts a `write_warning` on the `ROW_COUNT` event, which the server shows as
+a note on the run. Values checked per row: DATETIME(p), TIMESTAMP(p) and TIME(p) refuse more
+digits of a second than p; TIME columns take only times and text; YEAR takes 1901 to 2155. On a
+server with `lower_case_table_names` not 0 the target is written, and its asset recorded, in
+lower case.
 
 ### Oracle
 

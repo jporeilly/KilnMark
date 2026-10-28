@@ -93,6 +93,22 @@ class WriteContractTest {
     }
 
     @Test
+    void aWriteWarningOnRowCountBecomesANoteAndIsNotStored() {
+        String urn = "urn:kilnmark:warehouse:shop.orders";
+        Instant now = Instant.now();
+        String warning = "The new rows are in shop.orders, but the old table could not be dropped and is kept as "
+            + "shop.kiln_old_1f: ask a database administrator to drop it";
+        MetadataEvent count = new MetadataEvent(urn, MetadataEvent.Kind.ROW_COUNT, Map.of("rows", "3", "complete",
+            "true", "written", "true", WriteReport.WRITE_WARNING, warning), now);
+        assertEquals(warning, PipelineService.writeWarning(List.of(count), urn));
+        assertNull(PipelineService.writeWarning(List.of(count), "urn:kilnmark:warehouse:shop.other"));
+        assertNull(PipelineService.writeWarning(List.of(new MetadataEvent(urn, MetadataEvent.Kind.ROW_COUNT,
+            Map.of("rows", "3"), now)), urn));
+        assertEquals(Map.of("rows", "3", "complete", "true", "written", "true"),
+            PipelineService.reported(List.of(count), urn).get(0).attributes());
+    }
+
+    @Test
     void aProfileFailureOnRowCountBecomesANoteWhoseReasonIsHeldBack() {
         String urn = "urn:kilnmark:warehouse:crm.copy";
         Instant now = Instant.now();

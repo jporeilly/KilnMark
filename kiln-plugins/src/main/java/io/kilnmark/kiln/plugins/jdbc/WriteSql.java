@@ -81,12 +81,25 @@ abstract class WriteSql {
     }
 
     /**
-     * For a timestamp column of an existing table, how many digits of a second it keeps, so a value
-     * with more is refused rather than rounded; -1 (the default) when the database refuses such
-     * values itself or keeps microseconds.
+     * For a timestamp or time column of an existing table, how many digits of a second it keeps, so
+     * a value with more is refused rather than rounded or cut; -1 (the default) when the database
+     * refuses such values itself or keeps microseconds.
      */
     int fractionDigits(WritePlan.TargetColumn column) {
         return -1;
+    }
+
+    /**
+     * Why the input column {@code c} cannot go into {@code t} although {@link WritePlan#misfit}
+     * accepts it (a database type that reads as text but parses values its own way), or null.
+     */
+    String targetMisfit(WriteColumn c, WritePlan.TargetColumn t) {
+        return null;
+    }
+
+    /** Why the converted value {@code v} cannot go into {@code t}, or null (a YEAR column's range). */
+    String targetValueProblem(WritePlan.TargetColumn t, Object v) {
+        return null;
     }
 
     /** The column type a table created from the input gets. */
@@ -136,6 +149,38 @@ abstract class WriteSql {
 
     /** Unique indexes usable to detect a conflict, as rows (index, column); null if not needed. */
     Sql uniqueKeys(TableName t) {
+        return null;
+    }
+
+    /**
+     * Where an upsert's insert turns into an update on a conflict with any unique index, not only
+     * the key's (MySQL's {@code ON DUPLICATE KEY UPDATE}): every unique index of the table, as rows
+     * (index, column), the column null for a part that is a prefix or an expression. Null (the
+     * default) where only the key's index decides.
+     */
+    Sql allUniqueKeys(TableName t) {
+        return null;
+    }
+
+    /**
+     * Foreign keys on the table that {@link #blockers} may not see (MySQL lists only those on
+     * tables the login has rights on), one reason a row; null when there is no other place to look.
+     * A failure to read it (a missing privilege) is ignored.
+     */
+    Sql hiddenBlockers(TableName t) {
+        return null;
+    }
+
+    /** Whether dropping the old table failed because a foreign key still refers to it. */
+    boolean foreignKeyRefused(SQLException e) {
+        return false;
+    }
+
+    /**
+     * Where DDL commits by itself: the statement putting the old table back after {@link #swap}
+     * renamed it, the new table taking {@code newName} again; null where the swap is one transaction.
+     */
+    Sql swapBack(TableName target, String newName, String oldName) {
         return null;
     }
 
@@ -306,6 +351,18 @@ abstract class WriteSql {
         @Override
         SqlDialect dialect() {
             return SqlDialect.POSTGRESQL;
+        }
+
+        /**
+         * {@code timestamp(p)}, {@code timestamptz(p)} and {@code time(p)} with p below 6 round what
+         * they cannot keep; the driver reports p as the scale (6 when not declared).
+         */
+        @Override
+        int fractionDigits(WritePlan.TargetColumn column) {
+            return switch (column.kind()) {
+                case TIME, TIMESTAMP, TIMESTAMP_TZ -> column.scale() >= 0 && column.scale() < 6 ? column.scale() : -1;
+                default -> -1;
+            };
         }
 
         @Override

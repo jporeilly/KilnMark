@@ -17,4 +17,5 @@ copyright notices. Dependencies are limited to the licences in config/allowed-li
 
 MariaDB Connector/J, the driver for MySQL and MariaDB sources, is licensed under the GNU Lesser
 General Public License 2.1 or later. It is shipped unmodified, as a separate jar that can be
-replaced; its source is at https://github.com/mariadb-corporation/mariadb-connector-j.
+replaced; its source is at https://github.com/mariadb-corporation/mariadb-connector-j. The
+licence's full text is in licenses/LGPL-2.1.txt.

@@ -1170,6 +1170,10 @@ export type StepType = {
   manyInputs: string[];
   outputs: string[];
   settings: StepTypeSetting[];
+  /** write only: for each kind of source that can be written to, the keys of the writer settings it takes. */
+  writerSettings?: Record<string, string[]> | null;
+  /** The palette folder: Read, Write, Filter and route, Transform, Combine, Aggregate, Quality, AI or Other. */
+  category?: string;
 };
 
 const pipe = (name: string) => `/api/v1/pipelines/${encodeURIComponent(name)}`;
@@ -1199,7 +1203,7 @@ export const pipelinesApi = {
   runs: (name: string) => call<PipelineRun[]>(`${pipe(name)}/runs?limit=50`),
   runDetail: (id: number) => call<PipelineRunDetail>(`/api/v1/pipeline-runs/${id}`),
   cancel: (id: number) => call<PipelineRun>(`/api/v1/pipeline-runs/${id}/cancel`, { method: "POST" }),
-  /** The step catalogue with settings schemas: not used yet; the canvas (step 2) builds its palette from it. */
+  /** The step catalogue with settings schemas, from which the canvas builds its palette and settings panels. */
   steps: () => call<StepType[]>("/api/v1/steps"),
 };
 

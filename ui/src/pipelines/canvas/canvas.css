@@ -1,0 +1,913 @@
+/* The pipeline canvas: palette, graph and settings panel. Colours from tokens.css only; the kind
+   colours are the tint pairs the contrast check covers (fg on bg) and the status colours. */
+
+.cv-wrap {
+  display: grid;
+  gap: 12px;
+}
+
+.cv-banner {
+  margin: 0;
+}
+
+/* The stage: the icon rail, the canvas, and the drawers over it. */
+.cv-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 8px;
+  height: max(480px, calc(100vh - var(--km-topbar-h) - 150px));
+}
+
+.cv-side-title {
+  margin: 0 0 8px;
+  font-size: var(--km-text-md);
+}
+
+/* ---- the step list: icon rail, fly-out and expanded tree ---- */
+
+.cv-palette {
+  position: relative;
+  min-width: 0;
+}
+
+.cv-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  height: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--km-border);
+  border-radius: var(--km-radius-card);
+  background: var(--km-surface);
+  overflow-y: auto;
+}
+
+.cv-rail-button {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  flex: none;
+}
+
+.cv-rail-button.is-open,
+.cv-rail-button[aria-expanded="true"] {
+  background: var(--km-accent-tint);
+  border-color: var(--km-accent);
+}
+
+.cv-rail-sep {
+  width: 24px;
+  height: 1px;
+  background: var(--km-divider);
+}
+
+.cv-flyout,
+.cv-palette-panel {
+  position: absolute;
+  top: 0;
+  left: 56px;
+  z-index: 20;
+  box-sizing: border-box;
+  background: var(--km-surface);
+  border: 1px solid var(--km-border-control);
+  border-radius: var(--km-radius-card);
+  box-shadow: var(--km-shadow-raised);
+  padding: 12px;
+}
+
+.cv-flyout {
+  width: 240px;
+  max-height: 100%;
+  overflow: auto;
+}
+
+.cv-palette-panel {
+  width: 272px;
+  height: 100%;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.cv-folders {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.cv-folder {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 6px;
+  border-color: transparent;
+  background: transparent;
+  font-weight: 600;
+}
+
+.cv-folder:hover {
+  background: var(--km-surface-3);
+}
+
+.cv-count {
+  color: var(--km-muted);
+  font-weight: 400;
+}
+
+.cv-type-list[hidden] {
+  display: none;
+}
+
+.cv-folders .cv-type-list {
+  margin: 2px 0 6px 22px;
+}
+
+@media (max-width: 700px) {
+  .cv-palette-panel,
+  .cv-flyout {
+    width: min(272px, calc(100vw - 110px));
+  }
+}
+
+.cv-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--km-border-control);
+  border-radius: var(--km-radius-control);
+  background: var(--km-surface);
+  color: var(--km-muted);
+}
+
+.cv-search:focus-within {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 2px;
+}
+
+.cv-search input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  min-width: 0;
+  flex: 1;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.cv-group-title {
+  margin: 4px 0 6px;
+  font-size: var(--km-text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--km-muted);
+}
+
+.cv-type-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+
+
+.cv-type {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  font-weight: 500;
+  padding: 6px 8px;
+  border: 1px solid var(--km-border);
+  border-radius: var(--km-radius-sm);
+  background: var(--km-surface);
+  color: var(--km-ink);
+  cursor: grab;
+}
+
+.cv-type:hover:not(:disabled) {
+  background: var(--km-surface-3);
+}
+
+.cv-type:disabled {
+  cursor: not-allowed;
+}
+
+.cv-type-icon,
+.cv-node-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--km-radius-xs);
+}
+
+/* Kind colours: icon squares and chips. */
+.cv-kind-source .cv-type-icon,
+.cv-kind-source .cv-node-icon,
+.cv-kind-chip.cv-kind-source {
+  background: var(--km-tint-blue-bg);
+  color: var(--km-tint-blue-fg);
+}
+
+.cv-kind-transform .cv-type-icon,
+.cv-kind-transform .cv-node-icon,
+.cv-kind-chip.cv-kind-transform {
+  background: var(--km-tint-violet-bg);
+  color: var(--km-tint-violet-fg);
+}
+
+.cv-kind-gate .cv-type-icon,
+.cv-kind-gate .cv-node-icon,
+.cv-kind-chip.cv-kind-gate {
+  background: var(--km-tint-green-bg);
+  color: var(--km-tint-green-fg);
+}
+
+.cv-kind-sink .cv-type-icon,
+.cv-kind-sink .cv-node-icon,
+.cv-kind-chip.cv-kind-sink {
+  background: var(--km-tint-amber-bg);
+  color: var(--km-tint-amber-fg);
+}
+
+.cv-kind-unknown .cv-node-icon,
+.cv-kind-chip.cv-kind-unknown {
+  background: var(--km-tint-slate-bg);
+  color: var(--km-tint-slate-fg);
+}
+
+/* ---- the canvas ---- */
+
+.cv-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cv-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.cv-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  min-height: 36px;
+}
+
+.cv-tool-sep {
+  width: 1px;
+  height: 24px;
+  background: var(--km-divider);
+  margin: 0 4px;
+}
+
+.cv-flow {
+  position: relative;
+  height: 100%;
+  border: 1px solid var(--km-border);
+  border-radius: var(--km-radius-card);
+  background: var(--km-ground);
+  overflow: hidden;
+}
+
+.cv-toolbar .cv-run-legend {
+  margin-left: auto;
+}
+
+.cv-flow .react-flow__minimap {
+  --xy-minimap-background-color: var(--km-surface);
+  --xy-minimap-mask-background-color: rgb(127 127 127 / 25%);
+  --xy-minimap-node-background-color: var(--km-surface-3);
+  --xy-minimap-node-stroke-color: var(--km-ink-soft);
+  border: 1px solid var(--km-border-control);
+  border-radius: 6px;
+}
+
+/* Clear of the settings drawer when it is open. */
+.cv-stage.has-drawer .react-flow__minimap {
+  right: min(340px, 38%);
+}
+
+.cv-flow .react-flow__minimap .cv-mini-source {
+  stroke: var(--km-tint-blue-fg);
+}
+
+.cv-flow .react-flow__minimap .cv-mini-sink {
+  stroke: var(--km-tint-amber-fg);
+}
+
+@media (max-width: 700px) {
+  .cv-flow .react-flow__minimap {
+    display: none;
+  }
+}
+
+.cv-flow:focus-visible {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 2px;
+}
+
+.cv-flow .react-flow {
+  --xy-background-color: var(--km-ground);
+  --xy-background-pattern-color: var(--km-border);
+  --xy-edge-stroke: var(--km-ink-soft);
+  --xy-edge-stroke-selected: var(--km-accent);
+  --xy-edge-label-background-color: var(--km-surface);
+  --xy-edge-label-color: var(--km-ink);
+  --xy-node-background-color: transparent;
+  --xy-node-border: none;
+  --xy-node-boxshadow-selected: none;
+  --xy-handle-background-color: var(--km-ink-soft);
+  --xy-handle-border-color: var(--km-surface);
+  --xy-attribution-background-color: var(--km-surface);
+  color: var(--km-ink);
+}
+
+.cv-flow .react-flow__node {
+  border-radius: 10px;
+}
+
+.cv-flow .react-flow__node:focus-visible {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 3px;
+}
+
+.cv-flow .react-flow__edge:focus-visible .react-flow__edge-path,
+.cv-flow .react-flow__edge.is-selected .react-flow__edge-path {
+  stroke: var(--km-accent);
+  stroke-width: 3;
+}
+
+.cv-flow .react-flow__edge-path {
+  stroke-width: 2;
+}
+
+.cv-flow .cv-edge-other .react-flow__edge-path {
+  stroke-dasharray: 6 4;
+}
+
+.cv-flow .react-flow__edge-textbg {
+  fill: var(--km-surface);
+}
+
+.cv-flow .react-flow__edge-text {
+  fill: var(--km-ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.cv-flow .react-flow__attribution {
+  background: var(--km-surface);
+}
+
+.cv-flow .react-flow__attribution a {
+  color: var(--km-ink-soft);
+}
+
+.cv-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  padding: 24px;
+  text-align: center;
+  color: var(--km-ink-soft);
+}
+
+.cv-empty p {
+  max-width: 34ch;
+  background: var(--km-surface);
+  border: 1px dashed var(--km-border-control);
+  border-radius: var(--km-radius-card);
+  padding: 16px;
+  margin: 0;
+}
+
+.cv-hint,
+.cv-run-legend {
+  margin: 0;
+}
+
+.cv-refusal {
+  margin: 0;
+}
+
+/* ---- a step ---- */
+
+.cv-node {
+  width: 212px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border-control);
+  border-radius: 10px;
+  box-shadow: var(--km-shadow-card);
+  font-size: 12px;
+  position: relative;
+}
+
+.cv-node.is-selected {
+  border: 2px solid var(--km-accent);
+  margin: -1px;
+}
+
+.cv-node.has-problem {
+  border-style: dashed;
+  border-color: var(--km-bad);
+}
+
+.cv-node.has-problem.is-selected {
+  border-style: solid;
+  border-color: var(--km-accent);
+}
+
+.cv-node-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 0;
+}
+
+.cv-node-kind {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--km-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cv-node-id {
+  padding: 4px 10px 0;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--km-ink-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cv-node-summary {
+  padding: 2px 10px 6px;
+  color: var(--km-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--km-divider);
+}
+
+.cv-node-ports {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.cv-port-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cv-port {
+  position: relative;
+  height: 22px;
+  line-height: 22px;
+  padding: 0 12px;
+  color: var(--km-muted);
+  font-family: var(--km-mono);
+  font-size: 11px;
+}
+
+.cv-port-list-out .cv-port {
+  text-align: right;
+}
+
+.cv-flow .cv-handle {
+  width: 12px;
+  height: 12px;
+  background: var(--km-surface);
+  border: 2px solid var(--km-ink-soft);
+}
+
+.cv-flow .cv-handle.connectingto,
+.cv-flow .cv-handle.valid {
+  background: var(--km-accent);
+  border-color: var(--km-accent);
+}
+
+.cv-node-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 10px 8px;
+}
+
+.cv-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: var(--km-radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--km-tint-slate-bg);
+  color: var(--km-tint-slate-fg);
+}
+
+.cv-badge-bad,
+.cv-run-failed {
+  background: var(--km-tint-red-bg);
+  color: var(--km-tint-red-fg);
+}
+
+.cv-run-finished {
+  background: var(--km-tint-green-bg);
+  color: var(--km-tint-green-fg);
+}
+
+.cv-run-ended_early,
+.cv-run-stopped {
+  background: var(--km-tint-amber-bg);
+  color: var(--km-tint-amber-fg);
+}
+
+.cv-node-columns {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 10;
+  width: 300px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border-control);
+  border-radius: 6px;
+  box-shadow: var(--km-shadow-raised);
+}
+
+.react-flow__node:hover .cv-node-columns,
+.react-flow__node:focus-visible .cv-node-columns {
+  display: block;
+}
+
+/* ---- the settings panel ---- */
+
+/* The selected step's settings: a drawer over the right of the canvas. */
+.cv-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 15;
+  width: min(340px, 38%);
+  box-sizing: border-box;
+  overflow: auto;
+  border: 1px solid var(--km-border-control);
+  border-radius: var(--km-radius-card);
+  background: var(--km-surface);
+  box-shadow: var(--km-shadow-raised);
+  padding: 14px 16px;
+}
+
+.cv-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cv-drawer-head .cv-side-title {
+  margin: 0;
+}
+
+/* On a phone the drawer is below the canvas, so the canvas stays usable. */
+@media (max-width: 700px) {
+  .cv-stage {
+    height: auto;
+    grid-template-rows: 440px auto;
+  }
+
+  .cv-rail {
+    height: 440px;
+  }
+
+  .cv-drawer {
+    position: static;
+    grid-column: 1 / -1;
+    width: auto;
+    box-shadow: none;
+  }
+}
+
+.cv-panel-body {
+  display: grid;
+  gap: 14px;
+}
+
+.cv-panel-head {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.cv-kind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: var(--km-radius-pill);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cv-panel-title {
+  margin: 2px 0 0;
+  font-size: var(--km-text-lg);
+  overflow-wrap: anywhere;
+}
+
+.cv-type-help {
+  margin: 0;
+}
+
+.cv-section h4 {
+  margin: 0 0 6px;
+  font-size: var(--km-text-sm);
+}
+
+.cv-section > .cv-field + .cv-field {
+  margin-top: 14px;
+}
+
+.cv-field {
+  display: grid;
+  gap: 4px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.cv-label {
+  font-weight: 600;
+  padding: 0;
+}
+
+.cv-required {
+  font-weight: 400;
+  color: var(--km-muted);
+}
+
+.cv-field .hint {
+  margin: 0;
+}
+
+.cv-default {
+  white-space: nowrap;
+}
+
+.cv-field input,
+.cv-field select,
+.cv-field textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.cv-number {
+  max-width: 14ch;
+}
+
+.cv-expression {
+  font-size: 13px;
+  resize: vertical;
+  min-height: 2.6em;
+}
+
+.cv-field-problems,
+.cv-step-problems {
+  margin: 0;
+  padding: 6px 8px 6px 22px;
+  border-left: 4px solid var(--km-bad);
+  background: var(--km-tint-red-bg);
+  color: var(--km-tint-red-fg);
+  border-radius: 4px;
+  font-size: var(--km-text-sm);
+}
+
+p.cv-field-problems {
+  padding-left: 8px;
+}
+
+.cv-column-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cv-chip {
+  min-height: 0;
+  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--km-radius-pill);
+}
+
+.cv-mini {
+  min-height: 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.cv-chosen {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cv-chip-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--km-border-control);
+  border-radius: var(--km-radius-pill);
+}
+
+.cv-add-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.cv-add-row select,
+.cv-add-row input {
+  flex: 1;
+}
+
+.cv-pairs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.cv-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--km-divider);
+}
+
+.cv-pair-remove {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
+.cv-sub {
+  display: block;
+  font-size: var(--km-text-xs);
+  color: var(--km-muted);
+  margin-bottom: 2px;
+}
+
+.cv-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.cv-links ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 0 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.cv-port-name {
+  font-family: var(--km-mono);
+  font-weight: 600;
+}
+
+.cv-link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cv-panel-actions {
+  flex-wrap: wrap;
+}
+
+button.cv-danger {
+  color: var(--km-bad);
+}
+
+/* ---- menus ---- */
+
+.cv-dialog {
+  max-width: min(560px, calc(100vw - 32px));
+  width: 100%;
+  border: 1px solid var(--km-border-control);
+  border-radius: var(--km-radius-card);
+  background: var(--km-surface);
+  color: var(--km-ink);
+  box-shadow: var(--km-shadow-raised);
+  padding: 20px;
+}
+
+.cv-dialog::backdrop {
+  background: var(--km-backdrop);
+}
+
+.cv-dialog h3 {
+  margin-top: 0;
+}
+
+.cv-dialog h4 {
+  margin: 12px 0 6px;
+  font-size: var(--km-text-sm);
+}
+
+.cv-offers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.cv-offers button {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 0.4em;
+  text-align: left;
+  font-weight: 500;
+}
+
+.cv-dialog table th[scope="row"] {
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+/* ---- the tabs above (canvas, YAML) ---- */
+
+.pl-view-tabs {
+  margin-bottom: 12px;
+}
+
+@media (forced-colors: active) {
+  .cv-node,
+  .cv-type,
+  .cv-flow,
+  .cv-drawer,
+  .cv-rail,
+  .cv-palette-panel,
+  .cv-flyout {
+    border-color: CanvasText;
+  }
+
+  .cv-node.is-selected {
+    border-color: Highlight;
+  }
+
+  .cv-flow .cv-handle {
+    border-color: CanvasText;
+  }
+}

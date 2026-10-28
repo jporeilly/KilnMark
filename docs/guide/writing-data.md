@@ -87,8 +87,11 @@ every row (and the write is slower).
   the same time cannot both insert the same key. A unique index on the key keeps the table fast.
 - On MySQL and MariaDB each row is written with `INSERT … ON DUPLICATE KEY UPDATE`, so the table
   needs a unique index or primary key on exactly the key columns; if there is none, the message
-  gives the `ALTER TABLE … ADD UNIQUE` statement to ask for. Any other unique index on the table
-  also makes a row update instead of insert.
+  gives the `ALTER TABLE … ADD UNIQUE` statement to ask for. These databases update the row that
+  *any* unique index matches, not only the key's: if the table has another unique index that
+  lacks one of the key columns, a row could overwrite a different row than the one with its key.
+  Upsert then stops before writing and names that index. Set `allow_other_unique_keys: true` only
+  if updating such rows is what you want.
 - On Oracle each row is merged with `MERGE`, and the table needs a unique index or primary key on
   exactly the key columns; if there is none, the message gives the `ALTER TABLE … ADD UNIQUE`
   statement to ask for.
@@ -166,14 +169,30 @@ work:
 - **What replace keeps.** Grants on the table, since MySQL keeps them by table name. Not kept:
   indexes, keys, comments, `AUTO_INCREMENT` and column defaults. Replace refuses a view, a
   sequence, a system-versioned or partitioned table, a table other tables' foreign keys refer to,
-  and a table with triggers (they would be dropped with it), naming what is in the way.
+  a table with triggers (they would be dropped with it), and a table stored by an engine other
+  than InnoDB, Aria or MyISAM (such as FEDERATED, CONNECT, SPIDER, MERGE or MEMORY), naming what is
+  in the way. The login must hold the `TRIGGER` privilege itself (not through a role) so it can see
+  whether there are triggers; otherwise replace is refused. A foreign key on a table the login has
+  no rights on cannot be seen beforehand (unless the login has `PROCESS`): if one stops the old
+  table being dropped, the old table is put back, the replace fails, and nothing changes. If the old
+  table cannot be dropped for another reason, the new rows stay and the run carries a note naming
+  the leftover `kiln_old_…` table for an administrator to drop.
 - **Timestamps with a time zone** are written as `datetime(6)` holding UTC, since MySQL's
   `TIMESTAMP` ends in 2038; they read back as timestamps without a zone. A `TIME` column reads
-  back as text, since MySQL times run from -838:59:59 to 838:59:59.
+  back as text, since MySQL times run from -838:59:59 to 838:59:59; only times and text can be
+  written to it. A `YEAR` column takes whole numbers from 1901 to 2155.
+- **Fractions of a second are never rounded.** A value with more digits of a second than a
+  `DATETIME(p)`, `TIMESTAMP(p)` or `TIME(p)` column keeps stops the write, naming the row; so does
+  one for a PostgreSQL `timestamp(p)` or `time(p)` column.
 - **Large writes.** Tables the step creates are loaded in bulk with `LOAD DATA LOCAL INFILE`, sent
   from memory, when the server allows it (`local_infile`, off by default on MySQL 8); otherwise,
   or with `bulk_load: false`, with batched inserts. Values that do not fit fail the write rather
-  than being cut short, whatever the server's own SQL mode.
+  than being cut short: Kilnmark writes with its own SQL mode (`STRICT_ALL_TABLES`,
+  `NO_ZERO_IN_DATE`, `NO_ZERO_DATE`, `ERROR_FOR_DIVISION_BY_ZERO`, `NO_ENGINE_SUBSTITUTION`), not the
+  server's, so modes such as `EMPTY_STRING_IS_NULL` or `TIME_TRUNCATE_FRACTIONAL` never change what
+  is written.
+- **Names in lower case.** On a server with `lower_case_table_names` set (Windows and macOS servers,
+  and some Linux ones), the table is written and recorded in lower case, as the server stores it.
 - **The source's database.** A source set to one `database` writes only there; give the target as
   `database.table`.
 

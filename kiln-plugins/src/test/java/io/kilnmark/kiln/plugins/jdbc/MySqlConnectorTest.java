@@ -85,12 +85,14 @@ class MySqlConnectorTest {
     void writeOptionsAreDeclaredWithRealKinds() {
         Map<String, SettingSpec> o = new HashMap<>();
         MYSQL.writeOptions().forEach(s -> o.put(s.key(), s));
-        assertEquals(Set.of("commit_every", "batch_size", "text_length", "lock_timeout", "bulk_load", "profile_output",
-            "keep_values"), o.keySet());
+        assertEquals(Set.of("commit_every", "batch_size", "text_length", "lock_timeout", "bulk_load",
+            "allow_other_unique_keys", "profile_output", "keep_values"), o.keySet());
         for (String flag : List.of("bulk_load", "profile_output", "keep_values")) {
             assertEquals(SettingSpec.Kind.BOOLEAN, o.get(flag).kind(), flag);
             assertEquals(true, o.get(flag).defaultValue(), flag);
         }
+        assertEquals(SettingSpec.Kind.BOOLEAN, o.get("allow_other_unique_keys").kind());
+        assertEquals(false, o.get("allow_other_unique_keys").defaultValue());
         for (String number : List.of("commit_every", "batch_size", "text_length", "lock_timeout")) {
             assertEquals(SettingSpec.Kind.NUMBER, o.get(number).kind(), number);
         }
@@ -398,7 +400,8 @@ class MySqlConnectorTest {
     @Test
     void everyCatalogueQueryHasAParameterForEachPlaceholder() {
         List<WriteSql.Sql> queries = new java.util.ArrayList<>(List.of(MY.exists(T), MY.requiredColumns(T),
-            MY.uniqueKeys(T), MY.blockers(T), MY.rowSecurity(T), MY.owner(T), MY.grants(T), MARIA.blockers(T)));
+            MY.uniqueKeys(T), MY.blockers(T), MY.rowSecurity(T), MY.owner(T), MY.grants(T), MARIA.blockers(T),
+            MY.allUniqueKeys(T), MY.hiddenBlockers(T), MARIA.hiddenBlockers(T)));
         for (String mode : List.of("create", "replace", "append", "upsert")) {
             for (boolean exists : List.of(true, false)) {
                 MY.privileges(mode, T, exists).forEach(c -> queries.add(c.query()));
@@ -410,8 +413,8 @@ class MySqlConnectorTest {
             assertEquals(marks, q.params().size(), q.text());
             assertFalse(q.text().contains("order`s"), "names are parameters, never in the SQL: " + q.text());
         }
-        assertTrue(MY.blockers(T).text().contains("CURRENT_ROLE() <> 'NONE'"));
-        assertTrue(MARIA.blockers(T).text().contains("CURRENT_ROLE() IS NOT NULL"));
+        assertTrue(MY.privileges("append", T, true).get(0).query().text().contains("CURRENT_ROLE() <> 'NONE'"));
+        assertTrue(MARIA.privileges("append", T, true).get(0).query().text().contains("CURRENT_ROLE() IS NOT NULL"));
     }
 
     @Test
@@ -501,5 +504,69 @@ class MySqlConnectorTest {
         assertTrue(assertThrows(ConnectorException.class, () -> MYSQL.writer(s, new Connector.WriteOptions(
             "shop.orders", "create", List.of(), null, Map.of("bulk_load", "maybe"), "urn:kilnmark:shop:shop.orders")))
             .getMessage().startsWith("bulk_load:"));
+    }
+
+    @Test
+    void theWriterKeepsToItsOwnRulesWhateverTheServerSays() {
+        assertEquals("STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
+            MySqlWriteSql.SQL_MODE);
+        for (int code : List.of(1451, 1217, 3730)) {
+            assertTrue(MY.foreignKeyRefused(new SQLException("refused", "23000", code)), Integer.toString(code));
+        }
+        assertFalse(MY.foreignKeyRefused(new SQLException("lock", "HY000", 1205)));
+        TableName t = new TableName("shop", "orders");
+        assertEquals("RENAME TABLE `shop`.`orders` TO `shop`.`kiln_new_1`, `shop`.`kiln_old_2` TO `shop`.`orders`",
+            MY.swapBack(t, "kiln_new_1", "kiln_old_2").text());
+        assertTrue(MY.hiddenBlockers(t).text().contains("information_schema.INNODB_FOREIGN "));
+        assertTrue(MySqlWriteSql.MARIADB.hiddenBlockers(t).text().contains("information_schema.INNODB_SYS_FOREIGN "));
+        assertTrue(MY.allUniqueKeys(t).text().contains("SUB_PART IS NULL"));
+        assertNull(WriteSql.POSTGRESQL.allUniqueKeys(t),
+            "PostgreSQL's ON CONFLICT names its index: other unique indexes fail the row instead");
+        assertEquals(new TableName("shop", "orders"), MySqlConnector.asStored(true, new TableName("Shop", "Orders")));
+        assertEquals(new TableName("Shop", "Orders"), MySqlConnector.asStored(false, new TableName("Shop", "Orders")));
+    }
+
+    @Test
+    void timeYearAndFractionalSecondsAreCheckedAgainstTheColumn() {
+        WritePlan.TargetColumn datetime0 = new WritePlan.TargetColumn("at", "datetime", Kind.TIMESTAMP, 0, 0, 0);
+        WritePlan.TargetColumn datetime6 = new WritePlan.TargetColumn("at", "datetime", Kind.TIMESTAMP, 0, 6, 0);
+        WritePlan.TargetColumn timestamp3 = new WritePlan.TargetColumn("at", "timestamp", Kind.TIMESTAMP_TZ, 0, 3, 0);
+        assertEquals(0, MY.fractionDigits(datetime0));
+        assertEquals(-1, MY.fractionDigits(datetime6));
+        assertEquals(3, MY.fractionDigits(timestamp3));
+        WritePlan.TargetColumn time0 = new WritePlan.TargetColumn("took", "time", Kind.TEXT, 0, 0, 0);
+        WritePlan.TargetColumn time3 = new WritePlan.TargetColumn("took", "time", Kind.TEXT, 0, 3, 0);
+        assertNull(MY.targetValueProblem(time0, "09:30:00"));
+        assertNull(MY.targetValueProblem(time0, "09:30:00.000"));
+        assertTrue(MY.targetValueProblem(time0, "09:30:00.5").contains("more digits of a second than the column keeps (0)"));
+        assertNull(MY.targetValueProblem(time3, "-838:59:59.123"));
+        assertTrue(MY.targetValueProblem(time3, "838:59:59.1234").contains("keeps (3)"));
+        WritePlan.TargetColumn year = new WritePlan.TargetColumn("season", "year", Kind.INT16, 0, 0, 0);
+        assertNull(MY.targetValueProblem(year, 1901L));
+        assertNull(MY.targetValueProblem(year, 2155L));
+        assertTrue(MY.targetValueProblem(year, 1900L).contains("1901 to 2155"));
+        assertTrue(MY.targetValueProblem(year, 99L).contains("1901 to 2155"));
+        WriteColumn stamp = new WriteColumn("took", Kind.TIMESTAMP, 0, 0, null);
+        WriteColumn number = new WriteColumn("took", Kind.INT64, 0, 0, null);
+        WriteColumn time = new WriteColumn("took", Kind.TIME, 0, 0, null);
+        WriteColumn text = new WriteColumn("took", Kind.TEXT, 0, 0, null);
+        assertTrue(MY.targetMisfit(stamp, time0).contains("which takes only times or text"));
+        assertTrue(MY.targetMisfit(number, time0).contains("which takes only times or text"));
+        assertNull(MY.targetMisfit(time, time0));
+        assertNull(MY.targetMisfit(text, time0));
+        WriteSql pg = WriteSql.POSTGRESQL;
+        assertEquals(3, pg.fractionDigits(new WritePlan.TargetColumn("at", "timestamp", Kind.TIMESTAMP, 0, 3, 0)));
+        assertEquals(0, pg.fractionDigits(new WritePlan.TargetColumn("at", "time", Kind.TIME, 0, 0, 0)));
+        assertEquals(-1, pg.fractionDigits(new WritePlan.TargetColumn("at", "timestamptz", Kind.TIMESTAMP_TZ, 0, 6, 0)));
+    }
+
+    @Test
+    void replaceRefusesOtherEnginesAndTriggersItCannotSee() {
+        String blockers = MY.blockers(new TableName("shop", "orders")).text();
+        assertTrue(blockers.contains("NOT IN ('INNODB', 'ARIA', 'MYISAM')"), blockers);
+        assertTrue(blockers.contains("one a role gives cannot be checked"), blockers);
+        assertFalse(blockers.contains("CURRENT_ROLE"), "a role active no longer lets an unseen trigger through");
+        long marks = blockers.chars().filter(c -> c == '?').count();
+        assertEquals(marks, MY.blockers(new TableName("shop", "orders")).params().size());
     }
 }

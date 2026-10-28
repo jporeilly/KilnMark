@@ -315,3 +315,39 @@ button.pl-problem:hover {
     color: Mark;
   }
 }
+
+/* Above the canvas and YAML: starting a new pipeline, and the warning before running unsaved work. */
+.pl-start p {
+  margin: 0 0 10px;
+}
+
+.pl-confirm p {
+  margin: 0 0 8px;
+}
+
+.pl-build .pl-problems {
+  margin-top: 16px;
+}
+
+/* The canvas takes the page's full width. */
+main:has(.pl-wide) {
+  max-width: none;
+}
+
+.pl-build.pl-wide {
+  padding: 12px;
+}
+
+.pl-conflict {
+  margin-bottom: 12px;
+}
+
+.pl-conflict p {
+  margin: 0 0 6px;
+}
+
+.pl-run-hint {
+  margin: 4px 0 0;
+  min-height: 1.5em;
+  text-align: right;
+}

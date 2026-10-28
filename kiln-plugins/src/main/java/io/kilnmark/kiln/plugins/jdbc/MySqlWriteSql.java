@@ -14,7 +14,6 @@ import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HexFormat;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -168,14 +167,94 @@ final class MySqlWriteSql extends WriteSql {
     String keyIndexAdvice(TableName t, List<String> key) {
         return "MySQL and MariaDB find the existing row through a unique index or primary key, and the table has none "
             + "on exactly those columns. Ask a database administrator to add one, for example ALTER TABLE " + table(t)
-            + " ADD UNIQUE (" + columnList(key) + "). Note that any other unique index on the table also makes a row "
-            + "update instead of insert";
+            + " ADD UNIQUE (" + columnList(key) + ")";
+    }
+
+    /**
+     * Every unique index, the column null for a part that is a prefix of a column or an expression:
+     * {@code ON DUPLICATE KEY UPDATE} updates the row any of them matches.
+     */
+    @Override
+    Sql allUniqueKeys(TableName t) {
+        return new Sql("SELECT INDEX_NAME, CASE WHEN SUB_PART IS NULL THEN COLUMN_NAME END FROM "
+            + "information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND NON_UNIQUE = 0 "
+            + "ORDER BY INDEX_NAME, SEQ_IN_INDEX", List.of(t.schema(), t.table()));
+    }
+
+    /**
+     * Foreign keys from InnoDB's own list ({@code INNODB_FOREIGN} on MySQL,
+     * {@code INNODB_SYS_FOREIGN} on MariaDB), which shows those on tables the login has no rights
+     * on; reading it needs the PROCESS privilege.
+     */
+    @Override
+    Sql hiddenBlockers(TableName t) {
+        return new Sql("SELECT CONCAT('the foreign key ', SUBSTRING_INDEX(ID, '/', -1), ' on ', REPLACE(FOR_NAME, '/', "
+            + "'.'), ' refers to it') FROM information_schema." + (mariadb ? "INNODB_SYS_FOREIGN" : "INNODB_FOREIGN")
+            + " WHERE REF_NAME = CONCAT(?, '/', ?) AND FOR_NAME <> REF_NAME", List.of(t.schema(), t.table()));
+    }
+
+    /** 1451, 1217 and 3730: a foreign key refers to the table. */
+    @Override
+    boolean foreignKeyRefused(SQLException e) {
+        return Set.of(1451, 1217, 3730).contains(e.getErrorCode());
+    }
+
+    /** One RENAME TABLE puts both names back, atomically. */
+    @Override
+    Sql swapBack(TableName target, String newName, String oldName) {
+        return new Sql("RENAME TABLE " + table(target) + " TO " + table(new TableName(target.schema(), newName)) + ", "
+            + table(new TableName(target.schema(), oldName)) + " TO " + table(target));
+    }
+
+    /** DATETIME(p) and TIMESTAMP(p) with p below 6, whose precision {@link MySqlConnector#targetColumns} gives as the scale. */
+    @Override
+    int fractionDigits(WritePlan.TargetColumn column) {
+        return (column.kind() == Kind.TIMESTAMP || column.kind() == Kind.TIMESTAMP_TZ) && column.scale() >= 0
+            && column.scale() < 6 ? column.scale() : -1;
+    }
+
+    /**
+     * TIME reads as text (it holds durations too), but parses what it is given its own way: a
+     * timestamp would lose its date, a number would become a duration. Only times and text go in.
+     */
+    @Override
+    String targetMisfit(WriteColumn c, WritePlan.TargetColumn t) {
+        if (t.typeName().equals("time") && c.kind() != Kind.TIME && c.kind() != Kind.TEXT) {
+            return "the input's column " + c.name() + " is " + c.kindName() + " but the table's column " + t.name()
+                + " is time, which takes only times or text";
+        }
+        return null;
+    }
+
+    /**
+     * A YEAR column holds 1901 to 2155 (a number outside it would be read as a two-digit year, or
+     * refused); a TIME(p) column keeps p digits of a second, and rounds the rest.
+     */
+    @Override
+    String targetValueProblem(WritePlan.TargetColumn t, Object v) {
+        if (t.typeName().equals("year") && v instanceof Long y && (y < 1901 || y > 2155)) {
+            return "the year " + y + " is outside what a YEAR column holds (1901 to 2155)";
+        }
+        if (t.typeName().equals("time") && v instanceof String text && t.scale() < 6) {
+            int dot = text.lastIndexOf('.');
+            if (dot > text.lastIndexOf(':') && dot >= 0) {
+                String fraction = text.substring(dot + 1).strip().replaceAll("0+$", "");
+                if (fraction.length() > t.scale()) {
+                    return "the value " + text + " has more digits of a second than the column keeps (" + t.scale()
+                        + "), and is never rounded. Truncate it with a compute step, or ask for the column to keep more";
+                }
+            }
+        }
+        return null;
     }
 
     /**
      * Not a table (a view, or a MariaDB sequence); system-versioned (its history would be lost);
      * partitioned (the new table would not be); foreign keys from other tables, which the rename
-     * would point at the old table and the drop then refuse; triggers, which go with the old table.
+     * would point at the old table and the drop then refuse; triggers, which go with the old table,
+     * and a login that cannot be shown to see them (with a role active, refused rather than guessed);
+     * storage engines other than InnoDB, Aria and MyISAM (FEDERATED, CONNECT, SPIDER, MERGE, MEMORY),
+     * whose tables are not data a new InnoDB table can stand in for.
      */
     @Override
     Sql blockers(TableName t) {
@@ -187,6 +266,9 @@ final class MySqlWriteSql extends WriteSql {
             + "AND TABLE_NAME = ? AND TABLE_TYPE = 'SEQUENCE' "
             + "UNION ALL SELECT 'it is system-versioned, and its history would be lost' FROM information_schema.TABLES "
             + "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'SYSTEM VERSIONED' "
+            + "UNION ALL SELECT CONCAT('it uses the ', ENGINE, ' storage engine, which replace does not support (only "
+            + "InnoDB, Aria and MyISAM tables)') FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? "
+            + "AND TABLE_TYPE = 'BASE TABLE' AND UPPER(ENGINE) NOT IN ('INNODB', 'ARIA', 'MYISAM') "
             + "UNION ALL SELECT DISTINCT 'it is partitioned, and the new table would not be' FROM "
             + "information_schema.PARTITIONS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND PARTITION_NAME IS NOT NULL "
             + "UNION ALL SELECT DISTINCT CONCAT('the foreign key ', CONSTRAINT_NAME, ' on ', CONSTRAINT_SCHEMA, "
@@ -195,9 +277,10 @@ final class MySqlWriteSql extends WriteSql {
             + "AND TABLE_NAME = ?) "
             + "UNION ALL SELECT CONCAT('the trigger ', TRIGGER_NAME, ' is on it, and would be dropped with it') FROM "
             + "information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = ? AND EVENT_OBJECT_TABLE = ? "
-            + "UNION ALL SELECT 'the login cannot see whether triggers are on it (that needs the TRIGGER privilege)' "
-            + "FROM DUAL WHERE " + notAllowed("TRIGGER", true),
-            List.of(s, n, s, n, s, n, s, n, s, n, s, n, s, n, s, s, n, s, n));
+            + "UNION ALL SELECT 'the login cannot be shown to see whether triggers are on it (that needs the TRIGGER "
+            + "privilege granted to the login itself; one a role gives cannot be checked)' FROM DUAL WHERE NOT "
+            + granted("TRIGGER", true),
+            List.of(s, n, s, n, s, n, s, n, s, n, s, n, s, n, s, n, s, s, n, s, n));
     }
 
     /** No row-level security in MySQL. */
@@ -312,15 +395,6 @@ final class MySqlWriteSql extends WriteSql {
             + " AND PRIVILEGE_TYPE = " + p + " AND TABLE_SCHEMA = ? AND TABLE_NAME = ?) OR EXISTS (SELECT 1 FROM "
             + "information_schema.COLUMN_PRIVILEGES WHERE GRANTEE = " + ME + " AND PRIVILEGE_TYPE = " + p
             + " AND TABLE_SCHEMA = ? AND TABLE_NAME = ?)" : "") + ")";
-    }
-
-    /**
-     * A condition true when the login certainly lacks {@code privilege} on the table: not granted
-     * to it, and no role active that might grant it. Takes five parameters: schema, then schema
-     * and table twice.
-     */
-    private String notAllowed(String privilege, boolean onTable) {
-        return "NOT " + granted(privilege, onTable) + " AND NOT " + rolesActive();
     }
 
     private String rolesActive() {
@@ -451,28 +525,21 @@ final class MySqlWriteSql extends WriteSql {
         return false;
     }
 
+    /** The session's sql_mode for writing, whatever the server's: see {@link #prepareSession}. */
+    static final String SQL_MODE = "STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,"
+        + "NO_ENGINE_SUBSTITUTION";
+
     /**
-     * Strict mode ({@code STRICT_ALL_TABLES}), so a value that does not fit fails the write rather
-     * than being cut or zeroed with a warning; and without {@code NO_BACKSLASH_ESCAPES}, so the
-     * privilege checks' patterns read as MySQL's grants write them. The time zone ({@code +00:00})
-     * is set when connecting.
+     * A fixed sql_mode ({@link #SQL_MODE}), not the server's: strict, so a value that does not fit
+     * fails the write rather than being cut or zeroed with a warning; and nothing else, since modes a
+     * server may set change data silently ({@code EMPTY_STRING_IS_NULL}, {@code ORACLE},
+     * {@code TIME_TRUNCATE_FRACTIONAL}) or how names and patterns read ({@code ANSI_QUOTES},
+     * {@code NO_BACKSLASH_ESCAPES}). The time zone ({@code +00:00}) is set when connecting.
      */
     @Override
     void prepareSession(Connection connection) throws SQLException {
-        String mode;
-        try (Statement s = connection.createStatement(); ResultSet rs = s.executeQuery("SELECT @@SESSION.sql_mode")) {
-            mode = rs.next() && rs.getString(1) != null ? rs.getString(1) : "";
-        }
-        Set<String> modes = new LinkedHashSet<>();
-        for (String m : mode.split(",")) {
-            if (!m.isBlank() && !m.strip().equalsIgnoreCase("NO_BACKSLASH_ESCAPES")) {
-                modes.add(m.strip().toUpperCase(Locale.ROOT));
-            }
-        }
-        modes.add("STRICT_ALL_TABLES");
-        try (PreparedStatement ps = connection.prepareStatement("SET SESSION sql_mode = ?")) {
-            ps.setString(1, String.join(",", modes));
-            ps.execute();
+        try (Statement s = connection.createStatement()) {
+            s.execute("SET SESSION sql_mode = '" + SQL_MODE + "'");
         }
     }
 
