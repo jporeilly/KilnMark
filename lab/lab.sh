@@ -28,7 +28,7 @@ NETWORK=kilnmark     # created by Kilnmark's own compose.yaml
 # The name is also the compose profile. A source with no services (files) needs nothing running.
 # Keep this table the same as the one in lab.ps1.
 SOURCES='postgres|lab-postgres|||5433|lab-db|PostgreSQL 18: database lab (crm, billing)
-s3|lab-s3|||9000|lab-bucket|S3-compatible storage (VersityGW): bucket lab-raw
+s3|lab-s3|||9020|lab-bucket|S3-compatible storage (VersityGW): bucket lab-raw
 sqlserver|lab-sqlserver|lab-sqlserver-init|lab-sqlserver-data|14330|lab-sqlserver|SQL Server 2022: database labdb (sales, hr, ops)
 mariadb|lab-mariadb||lab-mariadb-data|3307|lab-mariadb|MariaDB 11.4: databases shop and stock (orders, inventory)
 oracle|lab-oracle||lab-oracle-data|1522|lab-oracle|Oracle Database Free 23ai: schemas FLEET and FREIGHT (needs its driver)
@@ -182,12 +182,32 @@ cmd_list() {
     done
 }
 
+# What is listening on a port: a container publishing it, else a process; empty if free.
+port_holder() {
+    local port=$1 row
+    row=$("$ENGINE" ps --format '{{.Names}}|{{.Ports}}' 2>/dev/null | grep -E "[]:]$port->" | head -n 1)
+    if [ -n "$row" ]; then echo "the container ${row%%|*}"; return; fi
+    if command -v lsof >/dev/null 2>&1; then
+        row=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1 " (process id " $2 ")"}')
+        if [ -n "$row" ]; then echo "$row"; return; fi
+    fi
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then echo "another program"; fi
+}
+
 cmd_start() {
-    local names n a args=()
+    local names n a port service holder args=()
     names=$(expand "$@") || exit 2
     for n in $names; do
-        if [ -z "$(field "$(record "$n")" 2)" ]; then
+        service=$(field "$(record "$n")" 2)
+        if [ -z "$service" ]; then
             echo "$n: nothing to start; Kilnmark reads it from disk."
+        fi
+        port=$(field "$(record "$n")" 5)
+        if [ -n "$service" ] && [ "${port#*[!0-9]}" = "$port" ] && [ -n "$port" ] && ! running "${service%% *}"; then
+            holder=$(port_holder "$port")
+            if [ -n "$holder" ]; then
+                die "$n: port $port is already in use by $holder. Stop that, then start $n again (see 'Port already in use' in lab/README.md)."
+            fi
         fi
         if [ "$n" = "sqlserver" ]; then
             echo "sqlserver: starting it accepts Microsoft's SQL Server Developer licence terms: $SQLSERVER_LICENCE"

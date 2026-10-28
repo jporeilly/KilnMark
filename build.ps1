@@ -19,6 +19,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
+# Podman's notice that it runs an external compose provider is noise here.
+$env:PODMAN_COMPOSE_WARNING_LOGS = 'false'
 
 function Step($text) { Write-Host "`n== $text" -ForegroundColor Cyan }
 
@@ -52,8 +54,12 @@ Step 'Restarting Kilnmark'
 # the error stream; under $ErrorActionPreference = 'Stop' PowerShell would treat those as failures,
 # so compose runs with errors allowed and only the exit code decides.
 $ErrorActionPreference = 'Continue'
-& $engine compose down 2>&1 | Out-Host
-& $engine compose up -d 2>&1 | Out-Host
+# Lines podman prints that are not problems: the compose-provider notice, and the shared network
+# that compose down cannot remove while the lab's containers are attached to it.
+$quiet = 'Executing external compose provider|disable this message|has associated containers|^used$'
+function Show-Output { process { $line = "$_"; if ($line -notmatch $quiet) { Write-Host $line } } }
+& $engine compose down 2>&1 | Show-Output
+& $engine compose up -d 2>&1 | Show-Output
 $started = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 if ($started -ne 0) { throw 'Starting the stack failed: see the messages above.' }

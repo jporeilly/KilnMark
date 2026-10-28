@@ -5,6 +5,17 @@ details.
 
 ## Unreleased
 
+### Details
+
+- **Quieter Windows builds** (development): `build.ps1` and `lab.ps1` no longer show podman's
+  "Executing external compose provider" notice, or the harmless message that the shared network is
+  still in use, as errors. `lab.ps1 start` and `lab.sh start` check each demo source's port first and
+  name the container or program already holding it, instead of failing inside compose with
+  "address already in use" (lab/README.md, "Port already in use").
+- **The lab's S3 moves to port 9020** (development), from 9000, which other S3 servers such as MinIO
+  commonly take. `lab/sources.csv`, the lab scripts and the guides say 9020; import `lab/sources.csv`
+  again to update `lab-bucket` and `lab-warehouse`.
+
 ## 0.0.7 (28 October 2026)
 
 ### What's new

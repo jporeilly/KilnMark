@@ -28,7 +28,7 @@ The release build enforces this: `./gradlew release` runs `checkProductOnly`
 folder, or when the shipped `compose.yaml`, anything under the release's `containers/`, Kilnmark's
 own jars (classes, the UI bundle, `application.properties` outside `%dev` and `%test`) or the
 bundled guides name a lab source (any `lab-<name>`, `labadmin`), a path into `lab/` or a lab-only
-port (5433, 9000). The compose file, the Containerfiles, the guides and "What's new" may not
+port (5433, 9020). The compose file, the Containerfiles, the guides and "What's new" may not
 mention the lab at all. Justified exceptions are listed, each with its reason, in
 `config/product-only-allow.txt`. CI runs `release` on every push and pull request.
 

@@ -6,7 +6,7 @@
 # profile all, so a bare "up" with no profile starts nothing. See lab/README.md.
 # Sources it provides:
 #   From Kilnmark:      jdbc:postgresql://lab-postgres:5432/lab     S3 endpoint http://lab-s3:7070
-#   From this machine:  localhost:5433                              S3 endpoint http://localhost:9000
+#   From this machine:  localhost:5433                              S3 endpoint http://localhost:9020
 #   PostgreSQL  db=lab  user=lab  password=lab   (schemas crm, billing)
 #   S3          access key=labadmin  secret=labadmin123  buckets lab-raw, lab-warehouse  (path-style)
 #   File share  lab/files/share (read directly from disk)
@@ -48,7 +48,7 @@ services:
       - ./files/bucket:/data/lab-raw:Z
       - /data/lab-warehouse
     ports:
-      - "9000:7070"
+      - "9020:7070"
 
   # A mail server that keeps every email it is sent and shows them in a web page, for trying
   # Kilnmark's notifications (Settings > Email: server lab-mailpit, port 1025, security None).
