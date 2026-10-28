@@ -45,7 +45,12 @@ public record SettingSpec(String key, String label, Kind kind, boolean required,
         /** A saved source, by name. */
         SOURCE,
         /** An asset of the chosen source: a table, view or file path. */
-        ASSET
+        ASSET,
+        /**
+         * Quality rules written in the pipeline: a list of mappings, each with a {@code type} and
+         * the rule's own settings (for the gate step). The step's factory checks each rule.
+         */
+        RULES
     }
 
     public SettingSpec {

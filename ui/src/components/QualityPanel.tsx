@@ -5,6 +5,7 @@ import {
   formatShare,
   formatTime,
   qualityApi,
+  formatScore,
   rating,
   type Asset,
   type AssetQuality,
@@ -90,7 +91,7 @@ export function ScoreText({ score }: { score: number }) {
       <span className="score-bar" aria-hidden="true">
         <span className={`tone-${r.tone}`} style={{ width: `${Math.round(score * 100)}%` }} />
       </span>
-      <strong>{Math.round(score * 100)}%</strong> <span className={`rating rating-${r.tone}`}>{r.word}</span>
+      <strong>{formatScore(score)}</strong> <span className={`rating rating-${r.tone}`}>{r.word}</span>
     </span>
   );
 }
@@ -236,7 +237,7 @@ function Scores({ quality, rules }: { quality: AssetQuality; rules: RuleView[] }
     <section aria-label="Quality scores" className="km-scores" style={{ ["--km-dims" as string]: Math.min(Math.max(dims.length, 1), 4) }}>
       <div className="km-card km-card--dark km-score-card">
         {overall ? (
-          <ScoreRing value={overall.score} label={`Overall quality ${Math.round(overall.score * 100)} percent, ${rating(overall.score).word}`} />
+          <ScoreRing value={overall.score} label={`Overall quality ${formatScore(overall.score).replace("%", " percent")}, ${rating(overall.score).word}`} />
         ) : (
           <span className="km-icon-tile km-icon-tile--lg km-tint-slate" aria-hidden="true">
             –
@@ -265,7 +266,7 @@ function DimensionCard({ score }: { score: DimensionScore }) {
   return (
     <div className="km-card km-dim">
       <h3 className="km-dim-label">{DIMENSIONS[score.dimension] ?? score.dimension}</h3>
-      <p className="km-dim-value num">{Math.round(score.score * 100)}%</p>
+      <p className="km-dim-value num">{formatScore(score.score)}</p>
       <Meter value={score.score} tone={DIM_FILL[score.dimension] ?? "accent"} size="lg" />
       {why && (
         <p className="hint km-dim-why km-clamp-2" title={why}>

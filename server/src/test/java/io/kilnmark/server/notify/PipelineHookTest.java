@@ -62,4 +62,20 @@ class PipelineHookTest {
         assertEquals("pipeline-quality:7", p.fired.get(0).dedupeKey());
         assertTrue(p.fired.get(0).detail().contains("50"), p.fired.get(0).detail());
     }
+
+    @Test
+    void theLowQualityNoticeNamesTheOutputAndComesOncePerRun() {
+        Fake p = new Fake();
+        p.pipelineRunFinished("x", 8, "succeeded", 0.912, 0.95, "good", "#/pipeline-runs/8");
+        assertEquals(1, p.fired.size());
+        NotificationEvent e = p.fired.get(0);
+        assertEquals(NotificationKind.PIPELINE_LOW_QUALITY, e.kind());
+        assertEquals("Quality score 91.2% for what step good wrote, below the pipeline's threshold of 95%.", e.detail());
+        assertEquals("pipeline-quality:8", e.dedupeKey(), "one per run, whatever else is told");
+        // At the threshold is not below it; a failed run is told as a failure, not as low quality.
+        p.pipelineRunFinished("x", 9, "succeeded", 0.95, 0.95, "good", null);
+        p.pipelineRunFinished("x", 10, "failed", 0.1, 0.95, "good", null);
+        assertEquals(List.of(NotificationKind.PIPELINE_LOW_QUALITY, NotificationKind.PIPELINE_FAILED),
+            p.fired.stream().map(NotificationEvent::kind).toList());
+    }
 }

@@ -214,6 +214,8 @@ public final class MemoryConnector implements Connector {
         private final String secret;
         private final String mode;
         private final boolean breakProfile;
+        /** Empty values seen in each column, for the profile it reports. */
+        private final Map<String, Long> nulls = new java.util.HashMap<>();
 
         Counter(String urn, boolean fail, String secret) {
             this(urn, fail, secret, "replace", false);
@@ -254,6 +256,12 @@ public final class MemoryConnector implements Connector {
                 return false;
             }
             WRITTEN.get(urn).addAndGet(b.getRowCount());
+            for (String column : List.of("id", "name")) {
+                org.apache.arrow.vector.FieldVector v = b.getVector(column);
+                if (v != null) {
+                    nulls.merge(column, (long) v.getNullCount(), Long::sum);
+                }
+            }
             b.close();
             return true;
         }
@@ -278,9 +286,10 @@ public final class MemoryConnector implements Connector {
             context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.ROW_COUNT, Map.of("rows",
                 Long.toString(rows), "complete", "true", "written", "true"), now));
             for (String field : List.of("id", "name")) {
+                long empty = nulls.getOrDefault(field, 0L);
                 context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.PROFILE, Map.of("field", field,
-                    "shape", field.equals("id") ? "integer" : "text", "rows", Long.toString(rows), "nulls", "0",
-                    "distinct", Long.toString(rows)), now));
+                    "shape", field.equals("id") ? "integer" : "text", "rows", Long.toString(rows), "nulls",
+                    Long.toString(empty), "distinct", Long.toString(rows - empty)), now));
             }
         }
     }

@@ -409,6 +409,16 @@ public class QualityService {
         return new Outcome(rules.size(), failing);
     }
 
+    /** An asset's enabled rules, for a pipeline's quality gate. */
+    public List<Rule> enabledRules(String urn) {
+        return store.rules(urn, null, true);
+    }
+
+    /** The row count of an asset's latest profile version (its last scan or write), or null. */
+    public Long latestRowCount(String urn) {
+        return store.latestVersion(urn).map(QualityStore.Version::rowCount).orElse(null);
+    }
+
     private Long previousRows(String urn) {
         List<QualityStore.Version> v = store.versions(urn, 2);
         // The latest version is this scan's (or the last scan's, on demand): compare with the one before it.

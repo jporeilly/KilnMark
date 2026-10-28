@@ -555,6 +555,33 @@
   color: var(--km-tint-amber-fg);
 }
 
+.cv-quality-good {
+  background: var(--km-tint-green-bg);
+  color: var(--km-tint-green-fg);
+}
+
+.cv-quality-fair {
+  background: var(--km-tint-amber-bg);
+  color: var(--km-tint-amber-fg);
+}
+
+.cv-quality-poor,
+.cv-quality-stopped {
+  background: var(--km-tint-red-bg);
+  color: var(--km-tint-red-fg);
+}
+
+.cv-quality-none {
+  background: var(--km-tint-slate-bg);
+  color: var(--km-tint-slate-fg);
+}
+
+.cv-quality-dims,
+.cv-quality-rules {
+  margin: 4px 0;
+  padding-left: 1.2em;
+}
+
 .cv-node-columns {
   display: none;
   position: absolute;
@@ -789,6 +816,19 @@ p.cv-field-problems {
   gap: 6px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--km-divider);
+}
+
+.cv-rule-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  gap: 6px 10px;
+}
+
+.cv-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--km-text-sm, 13px);
 }
 
 .cv-pair-remove {

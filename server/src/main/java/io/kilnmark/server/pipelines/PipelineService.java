@@ -397,7 +397,32 @@ public class PipelineService {
         }
         List<PipelineViews.LineageLink> lineage = store.lineageOfRun(id).stream()
             .map(l -> new PipelineViews.LineageLink(l.stepId(), l.inputUrn(), l.outputUrn())).toList();
-        return new PipelineViews.RunDetail(summary(r, sights), stepViews, written, read, lineage, notes);
+        List<PipelineViews.StepQualityView> quality = store.quality(id).stream().map(this::qualityView).toList();
+        return new PipelineViews.RunDetail(summary(r, sights), stepViews, written, read, lineage, notes, quality);
+    }
+
+    /** A step's stored quality as the API gives it; scores and gate results hold words and counts only. */
+    private PipelineViews.StepQualityView qualityView(PipelineStore.QualityRow q) {
+        return new PipelineViews.StepQualityView(q.stepId(), q.role(), q.assetUrn(),
+            scoreView(q.measured(), q.measuredDimensions(), q.measuredReasons()),
+            scoreView(q.predicted(), q.predictedDimensions(), null), q.note(), tree(q.gate()));
+    }
+
+    private PipelineViews.ScoreView scoreView(Double overall, String dimensions, String reasons) {
+        if (overall == null) {
+            return null;
+        }
+        Map<String, Double> dims = new LinkedHashMap<>();
+        JsonNode d = tree(dimensions);
+        if (d != null) {
+            d.properties().forEach(e -> dims.put(e.getKey(), e.getValue().asDouble()));
+        }
+        List<String> words = new ArrayList<>();
+        JsonNode r = tree(reasons);
+        if (r != null) {
+            r.forEach(n -> words.add(n.asText()));
+        }
+        return new PipelineViews.ScoreView(overall, dims, words);
     }
 
     /** Asks a run to stop: a queued run is cancelled at once, a running one within a few seconds. */
@@ -508,9 +533,12 @@ public class PipelineService {
         Long rows = result != null && result.hasNonNull("rowsWritten") ? result.get("rowsWritten").asLong() : null;
         // Only a failed run's error can come from the engine; "Cancelled by ..." and the like are the server's.
         String withheld = r.error() == null || !"failed".equals(r.status()) ? null : withheld(r, sights);
+        JsonNode q = result == null ? null : result.path("quality");
+        Double score = q != null && q.hasNonNull("score") ? q.get("score").asDouble() : null;
+        Double threshold = q != null && q.hasNonNull("threshold") ? q.get("threshold").asDouble() : null;
         return new PipelineViews.RunSummary(r.id(), r.pipeline(), r.version(), r.status(), r.requestedBy(),
             r.requestedAt(), r.startedAt(), r.finishedAt(), r.cancelRequested(),
-            withheld == null ? r.error() : "The run failed. " + withheld, rows);
+            withheld == null ? r.error() : "The run failed. " + withheld, rows, score, threshold);
     }
 
     // ---- the step catalogue ----
@@ -620,6 +648,7 @@ public class PipelineService {
             PipelineExecution.Outcome o = execution.run(runner, c.graph(), writes, context,
                 () -> store.cancelRequested(id), shutdown);
             store.saveStepRuns(id, o.steps());
+            List<RunQuality.StepQuality> measured = measure(c, writes, o);
             ObjectNode result = json.createObjectNode();
             ArrayNode read = result.putArray("read");
             PipelineExecution.reads(c, context).values().stream().distinct().forEach(read::add);
@@ -659,8 +688,15 @@ public class PipelineService {
             }
             result.put("rowsWritten", total);
             result.set("notes", notes);
+            Double threshold = threshold(v.yaml());
+            Double score = RunQuality.lowestOutput(measured);
+            ObjectNode q = result.putObject("quality");
+            putScore(q, "score", score);
+            putScore(q, "threshold", threshold);
+            saveQuality(id, measured, context);
             store.finishRun(id, o.status(), o.error(), result.toString());
-            finished(run.pipeline(), id, o.status());
+            RunQuality.StepQuality lowest = RunQuality.lowestOutputStep(measured);
+            finished(run.pipeline(), id, o.status(), score, threshold, lowest == null ? null : lowest.step());
             LOG.infof("Run %d of pipeline %s: %s", id, run.pipeline(), o.status());
         } catch (InterruptedException e) {
             Thread.interrupted(); // cleared so the run's record can be written
@@ -707,13 +743,83 @@ public class PipelineService {
         return true;
     }
 
-    /**
-     * Tells of a finished run. Runs carry no quality score yet, so only a failure is told; pass the
-     * score and the pipeline's threshold here once they exist, and {@code pipeline_low_quality} follows.
-     */
+    /** Tells of a run that finished without measuring anything (it failed before its steps ran). */
     void finished(String pipeline, long id, String status) {
+        finished(pipeline, id, status, null, null, null);
+    }
+
+    /**
+     * Tells of a finished run: a failure, or a success whose lowest output score (what it wrote,
+     * as measured) is below the pipeline's {@code quality.min_score}, which tells
+     * {@code pipeline_low_quality} (once per run; the publisher dedupes). {@code output} is the write
+     * step with that score, for the notification's words.
+     */
+    void finished(String pipeline, long id, String status, Double score, Double threshold, String output) {
         if (notifications != null) {
-            notifications.pipelineRunFinished(pipeline, id, status, null, null, "#/pipeline-runs/" + id);
+            notifications.pipelineRunFinished(pipeline, id, status, score, threshold, output, "#/pipeline-runs/" + id);
+        }
+    }
+
+    /** The pipeline's {@code quality.min_score} in this YAML, or null. */
+    static Double threshold(String yaml) {
+        try {
+            io.kilnmark.kiln.yaml.PipelineDefinition d = io.kilnmark.kiln.yaml.PipelineDefinition.parse(yaml).definition();
+            return d == null || d.quality() == null ? null : d.quality().minScore();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static void putScore(ObjectNode n, String key, Double v) {
+        if (v == null) {
+            n.putNull(key);
+        } else {
+            n.put(key, v);
+        }
+    }
+
+    /**
+     * The run's measured quality: each gate's outcome (also when it stopped the run), and, when the
+     * run succeeded, each write's score from the profile its writer made while writing.
+     */
+    List<RunQuality.StepQuality> measure(PipelineCompilerPort.Compilation c, List<PipelineExecution.WriteTarget> writes,
+                                         PipelineExecution.Outcome o) {
+        List<RunQuality.StepQuality> out = new ArrayList<>();
+        try {
+            for (io.kilnmark.kiln.graph.GraphStep s : c.graph().steps()) {
+                if (s.step() instanceof QualityGate g && g.outcome() != null) {
+                    out.add(RunQuality.gate(s.id(), g.outcome()));
+                }
+            }
+            if (o.status().equals("succeeded")) {
+                for (PipelineExecution.WriteTarget w : writes) {
+                    out.add(RunQuality.output(w, o.events(), scans::profileJson, json));
+                }
+            }
+        } catch (RuntimeException e) {
+            LOG.warnf("Could not measure the quality of a run: %s", e.getMessage());
+        }
+        return out;
+    }
+
+    private void saveQuality(long id, List<RunQuality.StepQuality> steps, RunContext context) {
+        if (steps.isEmpty()) {
+            return;
+        }
+        try {
+            List<PipelineStore.QualityRow> rows = new ArrayList<>();
+            for (RunQuality.StepQuality q : steps) {
+                RunQuality.Score m = q.measured();
+                RunQuality.Score p = q.predicted();
+                String gate = q.gate() == null ? null : context.scrub(json.writeValueAsString(q.gate()));
+                rows.add(new PipelineStore.QualityRow(q.step(), q.role(), q.asset(), m == null ? null : m.overall(),
+                    m == null ? null : json.writeValueAsString(m.dimensions()),
+                    m == null ? null : json.writeValueAsString(m.reasons()), p == null ? null : p.overall(),
+                    p == null ? null : json.writeValueAsString(p.dimensions()), q.note(), gate));
+            }
+            store.saveQuality(id, rows);
+        } catch (JsonProcessingException | RuntimeException e) {
+            LOG.warnf("Could not store the quality of run %d: %s", id, context.scrub(e.getMessage()));
         }
     }
 

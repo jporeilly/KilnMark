@@ -16,7 +16,8 @@ import {
   IconShieldCheck,
   IconSum,
 } from "@tabler/icons-react";
-import { formatNumber } from "../../api";
+import { formatNumber, type PipelineStepQuality } from "../../api";
+import { scoreTone, stepQualityWords } from "../quality";
 import { kindWord } from "./insight";
 import type { GraphStep } from "./model";
 
@@ -32,6 +33,8 @@ export type StepData = {
   problems: number;
   columns: string;
   run: StepRunInfo | null;
+  /** After a run: the step's measured quality (writes and gates), or null. */
+  quality: PipelineStepQuality | null;
   connectable: boolean;
 };
 export type StepNodeType = Node<StepData, "step">;
@@ -76,7 +79,8 @@ export function runWords(run: StepRunInfo): string {
  * its rows and how it ended. The columns leaving it show on hover and focus, and are in its label.
  */
 function StepBox({ data, selected }: NodeProps<StepNodeType>) {
-  const { step, kind, label, summary, inputs, outputs, problems, run, columns, connectable } = data;
+  const { step, kind, label, summary, inputs, outputs, problems, run, quality, columns, connectable } = data;
+  const qualityText = stepQualityWords(quality);
   const rows = Math.max(inputs.length, outputs.length, 1);
   return (
     <div
@@ -126,7 +130,7 @@ function StepBox({ data, selected }: NodeProps<StepNodeType>) {
           ))}
         </ul>
       </div>
-      {(problems > 0 || run) && (
+      {(problems > 0 || run || qualityText) && (
         <div className="cv-node-foot">
           {problems > 0 && (
             <span className="cv-badge cv-badge-bad">
@@ -137,6 +141,16 @@ function StepBox({ data, selected }: NodeProps<StepNodeType>) {
           {run && (
             <span className={`cv-badge cv-run-${run.outcome ?? "unknown"}`} title={run.error ?? undefined}>
               {runWords(run)}
+            </span>
+          )}
+          {qualityText && (
+            <span
+              className={`cv-badge cv-quality cv-quality-${scoreTone(quality?.measured?.overall)}${
+                quality?.gate?.decision === "stopped" ? " cv-quality-stopped" : ""
+              }`}
+              title={quality?.note ?? quality?.gate?.stopReason ?? undefined}
+            >
+              {qualityText}
             </span>
           )}
         </div>

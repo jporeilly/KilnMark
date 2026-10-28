@@ -41,10 +41,15 @@ public final class PipelineViews {
                              List<PipelineCompilerPort.StepOutline> steps, List<PipelineCompilerPort.EdgeOutline> edges) {
     }
 
-    /** A run, without its steps. {@code rowsWritten} is the rows its writes received, once it has finished. */
+    /**
+     * A run, without its steps. {@code rowsWritten} is the rows its writes received, once it has
+     * finished. {@code qualityScore} is the lowest measured score (0 to 1) of what it wrote, or null
+     * when nothing it wrote was measured; {@code qualityThreshold} the pipeline's {@code quality.min_score}
+     * for the version that ran, or null.
+     */
     public record RunSummary(long id, String pipeline, int version, String status, String requestedBy,
                              Instant requestedAt, Instant startedAt, Instant finishedAt, boolean cancelRequested,
-                             String error, Long rowsWritten) {
+                             String error, Long rowsWritten, Double qualityScore, Double qualityThreshold) {
     }
 
     /** A pipeline in the list. {@code valid} is whether its latest version can run. */
@@ -86,7 +91,23 @@ public final class PipelineViews {
     }
 
     public record RunDetail(RunSummary run, List<StepRunView> steps, List<WrittenAsset> written, List<String> read,
-                            List<LineageLink> lineage, List<String> notes) {
+                            List<LineageLink> lineage, List<String> notes, List<StepQualityView> quality) {
+    }
+
+    /** A score from 0 to 1, overall and per dimension, with its main reasons (words and counts, never values). */
+    public record ScoreView(Double overall, java.util.Map<String, Double> dimensions, List<String> reasons) {
+    }
+
+    /**
+     * One step's quality in a run: each write ({@code role} output) and each gate. {@code measured} is
+     * what the run measured, null when it could not (and {@code note} says why); {@code predicted} is
+     * the score worked out before the run from the inputs' metadata, null until Kilnmark predicts
+     * scores. {@code gate}, for a gate: {onFail, decision (passed, warned, quarantined or stopped),
+     * rowsIn, rowsPassed, rowsFailing, rowsQuarantined, minScore, maxFailingShare, stopReason, rules:
+     * [{name, type, field, dimension, origin (asset or inline), status, failing, total, message}]}.
+     */
+    public record StepQualityView(String step, String role, String asset, ScoreView measured, ScoreView predicted,
+                                  String note, JsonNode gate) {
     }
 
     /** One setting of a step type, for the canvas's settings panel. */

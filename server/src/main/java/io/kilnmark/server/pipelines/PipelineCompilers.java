@@ -75,6 +75,16 @@ public class PipelineCompilers {
             }
 
             @Override
+            public List<io.kilnmark.server.quality.Rule> rules(String urn) {
+                return quality.enabledRules(urn);
+            }
+
+            @Override
+            public Long rowCount(String urn) {
+                return quality.latestRowCount(urn);
+            }
+
+            @Override
             public List<Connector> connectors() {
                 return List.copyOf(connectors.all());
             }
@@ -110,6 +120,7 @@ public class PipelineCompilers {
     @Produces
     @jakarta.inject.Singleton
     StepFactories steps(PipelineSources sources) {
-        return StepFactories.discover().register(new ReadStepFactory(sources)).register(new WriteStepFactory(sources));
+        return StepFactories.discover().register(new ReadStepFactory(sources)).register(new WriteStepFactory(sources))
+            .register(new GateStepFactory(sources));
     }
 }

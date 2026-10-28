@@ -143,6 +143,35 @@ class RulesUnitTest {
         assertNull(fresh.warnAbove());
     }
 
+    @Test
+    void uniquenessKeepsKeysAsHashesAndSaysWhenItHadToGiveUp() {
+        Rule r = rule("unique", "id", null, null, null, null);
+        // Long keys cost no more than short ones: each is a 128-bit hash.
+        RowChecks.Check c = RowChecks.of(r, List.of("id"), Map.of("id", "text"), null, Instant.now(), 0, "stream");
+        String pad = "x".repeat(5_000);
+        assertFalse(c.test(x -> pad + "a"));
+        assertTrue(c.test(x -> pad + "a"), "a repeat of a long key");
+        assertFalse(c.test(x -> pad + "b"));
+        assertEquals(2, c.finish().failing());
+        // Keys of several columns do not run together: (ab, c) and (a, bc) differ.
+        Rule pair = rule("unique", null, "{'fields':['id','email']}", null, null, null);
+        RowChecks.Check p = RowChecks.of(pair, List.of("id", "email"), Map.of(), null, Instant.now(), 0, "stream");
+        p.row(List.of("ab", "c")::get);
+        assertFalse(p.test(List.of("a", "bc")::get));
+        // Past the limit: an error saying how many repeats were found before it.
+        RowChecks.Check big = RowChecks.of(r, List.of("id"), Map.of(), null, Instant.now(), 0, "stream");
+        assertTrue(!big.test(x -> "k0") && big.test(x -> "k0"));
+        for (int i = 1; i <= RowChecks.UNIQUE_LIMIT; i++) {
+            String k = "k" + i;
+            big.row(x -> k);
+        }
+        assertFalse(big.test(x -> "k1"), "past the limit, repeats are no longer failed");
+        RowChecks.Evaluation e = big.finish();
+        assertTrue(e.error().startsWith("More than 1,048,576 distinct values (about 96 MB of keys)"), e.error());
+        assertTrue(e.error().endsWith("1 repeat was found before then; later rows were not checked for repeats."),
+            e.error());
+    }
+
     private static RowChecks.Evaluation check(Rule r, List<String> columns, List<List<String>> rows) {
         RowChecks.Check c = RowChecks.of(r, columns, Map.of("id", "int64", "email", "text", "amount", "decimal",
             "placed_at", "timestamp_tz", "loaded_at", "timestamp"), 100L, Instant.parse("2026-10-10T00:00:00Z"), 2, "sample");

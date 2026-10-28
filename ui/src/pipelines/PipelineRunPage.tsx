@@ -5,9 +5,21 @@ import {
   formatTime,
   pipelinesApi,
   type AccessRole,
+  rating,
   type PipelineRunDetail,
+  type PipelineStepQuality,
   type PipelineStepRun,
 } from "../api";
+import { Meter, StatusChip, type FillTone, type Tone } from "../components/ui";
+import {
+  belowThreshold,
+  DECISION_WORDS,
+  dimensionWord,
+  gateWords,
+  ON_FAIL_WORDS,
+  percent,
+  RULE_STATUS_WORDS,
+} from "./quality";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { formatBytes, formatDuration, RunStatus, runTime } from "./RunStatus";
@@ -26,6 +38,109 @@ function portRows(ports: Record<string, number | null> | undefined): string {
   return Object.entries(ports)
     .map(([port, n]) => `${port} ${n == null ? "not counted" : formatNumber(n)}`)
     .join(", ");
+}
+
+const TONE: Record<string, Tone> = { good: "good", fair: "warn", poor: "bad" };
+const FILL: Record<string, FillTone> = { good: "good", fair: "warn", poor: "bad" };
+const DECISION_TONE: Record<string, Tone> = { passed: "good", warned: "warn", quarantined: "orange", stopped: "bad" };
+const RULE_TONE: Record<string, Tone> = { pass: "good", warn: "warn", fail: "bad", error: "neutral" };
+
+/** A score as a chip: the percentage and its word, never colour alone. */
+function ScoreChip({ score }: { score: number }) {
+  const r = rating(score);
+  return (
+    <StatusChip tone={TONE[r.tone]}>
+      {percent(score)} · {r.word}
+    </StatusChip>
+  );
+}
+
+/** One write's or gate's measured quality: its score, each dimension and, for a gate, each rule. */
+function StepQuality({ q }: { q: PipelineStepQuality }) {
+  const g = q.gate;
+  const h = `q-${q.step}`;
+  return (
+    <li className="pl-quality-step" aria-labelledby={h}>
+      <h3 id={h} className="pl-quality-head">
+        <span className="mono">{q.step}</span>
+        <span className="small muted">{q.role === "gate" ? "Quality gate" : "Output"}</span>
+        {q.measured ? <ScoreChip score={q.measured.overall} /> : <StatusChip tone="neutral">Not measured</StatusChip>}
+      </h3>
+      {q.asset && (
+        <p className="small">
+          {q.role === "gate" ? "Rules of " : "Wrote "}
+          <a href={href.asset(q.asset)} className="mono">
+            {q.asset}
+          </a>
+        </p>
+      )}
+      {q.note && <p className="small muted">{q.note}</p>}
+      {g && (
+        <p className="small">
+          <StatusChip tone={DECISION_TONE[g.decision] ?? "neutral"}>{DECISION_WORDS[g.decision] ?? g.decision}</StatusChip>{" "}
+          {gateWords(g)} of {formatNumber(g.rowsIn)} checked. When rows fail: {ON_FAIL_WORDS[g.onFail]}
+          {g.minScore != null ? `; lowest score ${percent(g.minScore)}` : ""}
+          {g.maxFailingShare != null ? `; at most ${percent(g.maxFailingShare)} of rows failing` : ""}.
+        </p>
+      )}
+      {g?.stopReason && <p className="small pl-bad">{g.stopReason}</p>}
+      {q.measured && Object.keys(q.measured.dimensions).length > 0 && (
+        <ul className="pl-dims">
+          {Object.entries(q.measured.dimensions).map(([d, v]) => (
+            <li key={d}>
+              <span className="pl-dim-name">{dimensionWord(d)}</span>
+              <Meter value={v} tone={FILL[rating(v).tone]} size="sm" />
+              <span className="pl-dim-value">{percent(v)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {q.measured && q.measured.reasons.length > 0 && (
+        <ul className="small muted pl-reasons">
+          {q.measured.reasons.map((r, i) => (
+            <li key={i}>{r}</li>
+          ))}
+        </ul>
+      )}
+      {g && g.rules.length > 0 && (
+        <div className="table-scroll" role="region" aria-label={`Rules checked by ${q.step}`} tabIndex={0}>
+          <table className="small">
+            <thead>
+              <tr>
+                <th scope="col">Rule</th>
+                <th scope="col">From</th>
+                <th scope="col">Result</th>
+                <th scope="col">Rows failing</th>
+              </tr>
+            </thead>
+            <tbody>
+              {g.rules.map((r, i) => (
+                <tr key={`${i}-${r.origin}`}>
+                  <th scope="row">
+                    {r.name}
+                    <div className="muted">
+                      {r.type.replace(/_/g, " ")}
+                      {r.field ? ` on ${r.field}` : ""} · {dimensionWord(r.dimension)}
+                    </div>
+                  </th>
+                  <td>{r.origin === "asset" ? "The asset's rules" : "Written on the gate"}</td>
+                  <td>
+                    <StatusChip tone={RULE_TONE[r.status] ?? "neutral"}>{RULE_STATUS_WORDS[r.status] ?? r.status}</StatusChip>
+                    {r.message && <div className="muted">{r.message}</div>}
+                  </td>
+                  <td>
+                    {r.status === "error" || ["freshness", "row_count", "row_count_change"].includes(r.type)
+                      ? "–"
+                      : `${formatNumber(r.failing)} of ${formatNumber(r.total)}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </li>
+  );
 }
 
 /**
@@ -136,6 +251,21 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
           <dd>{runTime(r)}</dd>
           <dt>Rows written</dt>
           <dd>{formatNumber(r.rowsWritten)}</dd>
+          {r.qualityScore != null && (
+            <>
+              <dt>Quality</dt>
+              <dd>
+                <ScoreChip score={r.qualityScore} /> <span className="small muted">lowest of what it wrote</span>
+                {r.qualityThreshold != null && (
+                  <div className={`small${belowThreshold(r.qualityScore, r.qualityThreshold) ? " pl-bad" : ""}`}>
+                    {belowThreshold(r.qualityScore, r.qualityThreshold)
+                      ? `Below the pipeline's threshold of ${percent(r.qualityThreshold)}`
+                      : `At or above the pipeline's threshold of ${percent(r.qualityThreshold)}`}
+                  </div>
+                )}
+              </dd>
+            </>
+          )}
         </dl>
         {r.error && (
           <p className={r.status === "failed" ? "pl-bad" : "muted"}>
@@ -211,6 +341,20 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
           </div>
         )}
       </section>
+
+      {(detail.quality?.length ?? 0) > 0 && (
+        <section aria-labelledby="quality-h" className="panel">
+          <h2 id="quality-h">Quality</h2>
+          <p className="small muted">
+            Measured in the run itself: each gate from its rules, each output from the profile made as it was written.
+          </p>
+          <ul className="pl-quality">
+            {detail.quality!.map((q) => (
+              <StepQuality key={q.step} q={q} />
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section aria-labelledby="written-h" className="panel">
         <h2 id="written-h">What it wrote</h2>

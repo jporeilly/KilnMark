@@ -88,9 +88,19 @@ export class Patch {
   }
 
   /** The text of a pair at `indent`: `key: value`, with a block mapping on the lines below. */
-  pairText(key: string, value: unknown, indent: number, opts: { flow: boolean; quote: boolean; inline?: boolean; raw?: string }): string {
+  pairText(
+    key: string,
+    value: unknown,
+    indent: number,
+    opts: { flow: boolean; quote: boolean; inline?: boolean; raw?: string; list?: boolean },
+  ): string {
     const k = scalarYaml(key);
     if (opts.raw != null) return `${k}: ${opts.raw}`;
+    if (opts.list && Array.isArray(value) && value.length > 0 && !opts.flow) {
+      // A block list, one item a line: `- {type: not_null, field: email}`.
+      const pad = " ".repeat(indent + 2);
+      return `${k}:${this.eol}${value.map((item) => `${pad}- ${flowYaml(item, opts.quote)}`).join(this.eol)}`;
+    }
     if (value && typeof value === "object" && !Array.isArray(value) && !opts.flow && !opts.inline) {
       const pad = " ".repeat(indent + 2);
       const lines = Object.entries(value as Record<string, unknown>).map(
@@ -102,13 +112,18 @@ export class Patch {
   }
 
   /** Sets a key of a mapping: its value in place when it is there, else a new pair after `after`. */
-  put(map: YAMLMap, key: string, value: unknown, opts: { quote?: boolean; after?: string[]; inline?: boolean; raw?: string } = {}) {
+  put(
+    map: YAMLMap,
+    key: string,
+    value: unknown,
+    opts: { quote?: boolean; after?: string[]; inline?: boolean; raw?: string; list?: boolean } = {},
+  ) {
     const flow = !!map.flow;
     const pairs = map.items as Pair[];
     const at = pairs.find((p) => isScalar(p.key) && String(p.key.value) === key);
     const first = (pairs[0]?.key as Ranged | undefined)?.range?.[0];
     const indent = first != null ? this.col(first) : 2;
-    const text = this.pairText(key, value, indent, { flow, quote: !!opts.quote, inline: opts.inline, raw: opts.raw });
+    const text = this.pairText(key, value, indent, { flow, quote: !!opts.quote, inline: opts.inline, raw: opts.raw, list: opts.list });
     if (at) {
       this.replace((at.key as Ranged).range![0], this.valueEnd(at), text);
       return;

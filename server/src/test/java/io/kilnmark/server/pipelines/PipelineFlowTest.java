@@ -153,6 +153,10 @@ class PipelineFlowTest {
         assertEquals("Write", steps.getString("find { it.type == 'write' }.category"));
         assertEquals("Filter and route", steps.getString("find { it.type == 'filter' }.category"));
         assertEquals("Combine", steps.getString("find { it.type == 'union' }.category"));
+        assertEquals("Quality", steps.getString("find { it.type == 'gate' }.category"));
+        assertEquals("gate", steps.getString("find { it.type == 'gate' }.kind"));
+        assertEquals(List.of("out", "quarantine"), steps.getList("find { it.type == 'gate' }.outputs"));
+        assertEquals("rules", steps.getString("find { it.type == 'gate' }.settings.find { it.key == 'rules' }.kind"));
         Object readWriterSettings = steps.get("find { it.type == 'read' }.writerSettings");
         assertEquals(null, readWriterSettings);
     }
@@ -271,6 +275,18 @@ class PipelineFlowTest {
         as(steward).post("/api/v1/pipeline-runs/" + id + "/cancel").then().statusCode(409);
         as(steward).post("/api/v1/pipeline-runs/" + firstRun + "/cancel").then().statusCode(409);
         as(viewer).get("/api/v1/pipeline-runs/999999").then().statusCode(404);
+    }
+
+    /** A count that the notifier records in the background: waits until it reaches {@code want}. */
+    private long eventually(String query, long want) throws Exception {
+        long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+        long n = sql(query);
+        while (n < want && System.nanoTime() < deadline) {
+            Thread.sleep(200);
+            n = sql(query);
+        }
+        Thread.sleep(500); // and no second one follows
+        return sql(query);
     }
 
     private long sql(String query) throws Exception {
@@ -448,5 +464,155 @@ class PipelineFlowTest {
         as(viewer).get("/api/v1/pipeline-runs/" + firstRun).then().statusCode(404);
         as(viewer).queryParam("urn", WRITE_URN).get("/api/v1/lineage").then().statusCode(200)
             .body("upstream[0].urn", equalTo(READ_URN));
+    }
+
+    static final String GATED = """
+        kilnmark: pipeline/v1
+        name: people-gate
+        description: Synthetic people, checked on the way.
+        quality:
+          min_score: 0.99
+        steps:
+          - id: people
+            type: read
+            source: mem-src
+            asset: lab.people
+
+          - id: tidy
+            type: compute
+            input: people
+            columns:
+              name: "case when id % 10 = 0 then null else name end"
+
+          - id: check
+            type: gate
+            input: tidy
+            on_fail: quarantine
+            rules:
+              - {name: early ids, type: in_range, field: id, max: 2000}
+
+          - id: good
+            type: write
+            input: check
+            source: mem-out
+            table: lab.people_checked
+            mode: replace
+
+          - id: aside
+            type: write
+            input: check.quarantine
+            source: mem-out
+            table: lab.people_aside
+            mode: replace
+        """;
+
+    @Test
+    @Order(12)
+    void aGateQuarantinesRowsAndEveryOutputIsScored() throws Exception {
+        // The asset read has a rule of its own, which the gate checks beside the one written on it.
+        as(steward).body(Map.of("assetUrn", READ_URN, "field", "id", "type", "not_null", "name", "id present"))
+            .post("/api/v1/quality/rules").then().statusCode(201);
+        as(viewer).body(Map.of("yaml", GATED)).post("/api/v1/pipelines/validate").then().statusCode(200)
+            .body("valid", equalTo(true))
+            .body("steps.find { it.id == 'check' }.outputs", equalTo(List.of("out", "quarantine")))
+            .body("steps.find { it.id == 'check' }.columns.quarantine.name", equalTo(List.of("id", "name")));
+        // Settings problems point at the setting.
+        JsonPath bad = as(viewer).body(Map.of("yaml", GATED.replace("max: 2000}", "max: 2000, colour: red}")))
+            .post("/api/v1/pipelines/validate").then().statusCode(200).body("valid", equalTo(false)).extract()
+            .jsonPath();
+        assertTrue(bad.getString("problems[0].message").contains("rules: rule 1 (early ids): a rule of type in_range "
+            + "has no setting 'colour'"), bad.prettify());
+        assertEquals(22, bad.getInt("problems[0].line"), bad.prettify());
+        as(viewer).body(Map.of("yaml", GATED.replace("on_fail: quarantine", "on_fail: quarantine\n    min_score: 2")))
+            .post("/api/v1/pipelines/validate").then().statusCode(200)
+            .body("problems.message", hasItems(containsString("min_score: a share from 0 to 1")));
+        as(viewer).body(Map.of("yaml", GATED.replace("min_score: 0.99", "min_score: 99")))
+            .post("/api/v1/pipelines/validate").then().statusCode(200)
+            .body("problems.message", hasItems(containsString("quality.min_score must be a share from 0 to 1")));
+
+        // A stop gate: a limit after it would end its rows early; quarantine wired to a gate that sends it none.
+        String limited = GATED.replace("on_fail: quarantine", "on_fail: stop")
+            .replace("  - id: good\n", "  - id: first\n    type: limit\n    input: check\n    rows: 10\n\n  - id: good\n")
+            .replace("    input: check\n    source: mem-out\n    table: lab.people_checked",
+                "    input: first\n    source: mem-out\n    table: lab.people_checked");
+        JsonPath stopped = as(viewer).body(Map.of("yaml", limited)).post("/api/v1/pipelines/validate").then()
+            .statusCode(200).body("valid", equalTo(false)).extract().jsonPath();
+        assertEquals("first", stopped.getString("problems[0].step"), stopped.prettify());
+        assertEquals(25, stopped.getInt("problems[0].line"), stopped.prettify());
+        assertTrue(stopped.getString("problems[0].message").contains("a limit after the stop gate check ends the rows "
+            + "early"), stopped.prettify());
+        assertTrue(stopped.getList("notes.message").toString().contains("on_fail: stop sends no rows to the quarantine "
+            + "port, so aside gets none"), stopped.prettify());
+        assertEquals(21, stopped.getInt("notes.find { it.message.contains('quarantine port') }.line"),
+            stopped.prettify());
+
+        as(steward).body(Map.of("name", "people-gate", "yaml", GATED)).post("/api/v1/pipelines").then()
+            .statusCode(201);
+        long id = as(steward).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract().jsonPath()
+            .getLong("id");
+        JsonPath run = waitForRun(id, "succeeded");
+        String all = run.prettify();
+        assertEquals(2000L, MemoryConnector.WRITTEN.get("urn:kilnmark:mem-out:lab.people_checked").get(), all);
+        assertEquals(500L, MemoryConnector.WRITTEN.get("urn:kilnmark:mem-out:lab.people_aside").get(), all);
+        assertEquals(2000L, run.getLong("steps.find { it.step == 'check' }.ports.out.out"), all);
+        assertEquals(500L, run.getLong("steps.find { it.step == 'check' }.ports.out.quarantine"), all);
+
+        // The gate: what it decided, its rules (the asset's and its own), its score.
+        assertEquals("gate", run.getString("quality.find { it.step == 'check' }.role"), all);
+        assertEquals(READ_URN, run.getString("quality.find { it.step == 'check' }.asset"), all);
+        assertEquals("quarantined", run.getString("quality.find { it.step == 'check' }.gate.decision"), all);
+        assertEquals(2500, run.getInt("quality.find { it.step == 'check' }.gate.rowsIn"), all);
+        assertEquals(500, run.getInt("quality.find { it.step == 'check' }.gate.rowsQuarantined"), all);
+        assertEquals(List.of("id present", "early ids"),
+            run.getList("quality.find { it.step == 'check' }.gate.rules.name"), all);
+        assertEquals(List.of("asset", "inline"), run.getList("quality.find { it.step == 'check' }.gate.rules.origin"),
+            all);
+        assertEquals(List.of("pass", "fail"), run.getList("quality.find { it.step == 'check' }.gate.rules.status"),
+            all);
+        assertEquals(0.9, run.getDouble("quality.find { it.step == 'check' }.measured.overall"), 1e-6, all);
+        assertEquals(0.8, run.getDouble("quality.find { it.step == 'check' }.measured.dimensions.accuracy"), 1e-6,
+            all);
+        Object predicted = run.get("quality.find { it.step == 'check' }.predicted");
+        assertEquals(null, predicted, "predicted comes later");
+
+        // Each output, measured from the profile its writer made: 10% of the good rows have no name.
+        assertEquals("output", run.getString("quality.find { it.step == 'good' }.role"), all);
+        assertEquals(0.95, run.getDouble("quality.find { it.step == 'good' }.measured.dimensions.completeness"), 1e-6,
+            all);
+        double good = run.getDouble("quality.find { it.step == 'good' }.measured.overall");
+        assertTrue(good < 0.99 && good > 0.9, all);
+        assertTrue(run.getDouble("quality.find { it.step == 'aside' }.measured.overall") > 0, all);
+        assertEquals(good, run.getDouble("run.qualityScore"), 1e-9, "the run's score is its lowest output's");
+        assertEquals(0.99, run.getDouble("run.qualityThreshold"), 1e-9);
+
+        // Below the pipeline's threshold: told once, naming the output.
+        long told = eventually("SELECT count(*) FROM kilnmark.notify_event WHERE kind = 'pipeline_low_quality' "
+            + "AND dedupe_key = 'pipeline-quality:" + id + "'", 1);
+        assertEquals(1, told);
+        long named = sql("SELECT count(*) FROM kilnmark.notify_event WHERE kind = 'pipeline_low_quality' "
+            + "AND detail LIKE '%for what step good wrote%'");
+        assertEquals(1, named);
+        as(viewer).get("/api/v1/pipelines/people-gate/runs").then().statusCode(200)
+            .body("[0].qualityThreshold", equalTo(0.99f));
+
+        // Stop: the run fails at the gate, naming the rule and counts, and writes nothing.
+        as(steward).body(Map.of("yaml", GATED.replace("on_fail: quarantine", "on_fail: stop"), "message", "Strict"))
+            .put("/api/v1/pipelines/people-gate").then().statusCode(200);
+        long strict = as(steward).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract()
+            .jsonPath().getLong("id");
+        JsonPath failed = waitForRun(strict, "failed");
+        JsonPath asAdmin = as(Tokens.ADMIN).get("/api/v1/pipeline-runs/" + strict).then().statusCode(200).extract()
+            .jsonPath();
+        assertTrue(asAdmin.getString("run.error").contains("The quality gate stopped the run: rule 'early ids' failed "
+            + "on "), asAdmin.prettify());
+        assertTrue(asAdmin.getString("run.error").contains("more than its limit of 0%"),
+            asAdmin.prettify());
+        assertEquals("failed", failed.getString("steps.find { it.step == 'check' }.outcome"), failed.prettify());
+        assertEquals("stopped", failed.getString("quality.find { it.step == 'check' }.gate.decision"),
+            failed.prettify());
+        assertEquals(1, failed.getList("quality").size(), "a failed run measures no output");
+        assertEquals(0, sql("SELECT count(*) FROM kilnmark.notify_event WHERE kind = 'pipeline_low_quality' "
+            + "AND dedupe_key = 'pipeline-quality:" + strict + "'"));
+        as(steward).delete("/api/v1/pipelines/people-gate").then().statusCode(204);
     }
 }

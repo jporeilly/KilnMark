@@ -360,6 +360,7 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 | `dedupe` | `in` → `out`, `rejected` | Keeps the first row per key |
 | `route` | `in` → named outputs, `out` | Sends each row to the first matching condition's port, others to `out` |
 | `limit` | `in` → `out` | First N rows, for trying a pipeline out |
+| `gate` | `in` → `out`, `quarantine` | Checks rows against the asset's rules and its own in the stream; stops the run, quarantines failing rows or warns (docs/design/data-quality.md section 7) |
 | `write` | `in` → | Writes to a database table or a file in a saved source |
 
 The row steps live in the `kiln-steps` module (`io.kilnmark.kiln.steps`), one `StepFactory` each,
@@ -707,6 +708,7 @@ asset's previous profile.
 - **Step 2, the canvas:** drag steps from the catalogue, connect ports, a settings panel built
   from each step's settings schema, YAML side by side kept in sync, data previews at any step,
   keyboard operation.
-- **Step 3, quality:** the gate step, predicted versus measured scores, AI suggestions,
-  version diffs.
+- **Step 3, quality:** the gate step and measured scores per run and output, with the
+  pipeline's `quality.min_score` and `pipeline_low_quality` (done; docs/guide/pipelines.md,
+  "Quality gates"); then predicted scores beside the measured ones, AI suggestions, version diffs.
 - Later: scheduling, parameters, the importer, push-down to SQL.

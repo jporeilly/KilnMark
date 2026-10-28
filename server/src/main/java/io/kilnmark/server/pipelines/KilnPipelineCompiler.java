@@ -35,9 +35,12 @@ final class KilnPipelineCompiler implements PipelineCompilerPort {
     }
 
     private static Compilation map(Compiled c, StepFactories factories, boolean create) {
-        List<PipelineCompilerPort.Problem> problems = c.problems().stream().map(KilnPipelineCompiler::problem).toList();
-        List<PipelineCompilerPort.Problem> notes = c.notes().stream().map(KilnPipelineCompiler::problem).toList();
+        List<PipelineCompilerPort.Problem> problems = new ArrayList<>(c.problems().stream()
+            .map(KilnPipelineCompiler::problem).toList());
+        List<PipelineCompilerPort.Problem> notes = new ArrayList<>(c.notes().stream().map(KilnPipelineCompiler::problem)
+            .toList());
         PipelineDefinition d = c.definition();
+        int gateProblems = gates(c, factories, problems, notes, create ? RunContext.current().orElse(null) : null);
         List<StepOutline> steps = new ArrayList<>();
         Map<String, Map<String, Object>> configs = new LinkedHashMap<>();
         if (d != null) {
@@ -70,7 +73,7 @@ final class KilnPipelineCompiler implements PipelineCompilerPort {
         }
         String name = d == null ? null : d.name();
         String description = d == null ? null : d.description();
-        if (!create || !c.ok()) {
+        if (!create || !c.ok() || gateProblems > 0) {
             return new Compilation(name, description, problems, notes, steps, edges, configs, null);
         }
         RunContext.current().ifPresent(run -> noteWriteColumns(c, run));
@@ -82,6 +85,79 @@ final class KilnPipelineCompiler implements PipelineCompilerPort {
             return new Compilation(name, description, List.of(new PipelineCompilerPort.Problem(0, 0, null, message)),
                 notes, steps, edges, configs, null);
         }
+    }
+
+    /**
+     * What each gate step checks, which needs the whole graph: the read step upstream whose asset's
+     * rules it takes ({@code asset_rules}, {@code rules_from}); a note when it would check nothing.
+     * With {@code run}, tells the run which read each gate takes its rules from. Returns the number
+     * of problems added.
+     */
+    static int gates(Compiled c, StepFactories factories, List<PipelineCompilerPort.Problem> problems,
+                     List<PipelineCompilerPort.Problem> notes, RunContext run) {
+        PipelineDefinition d = c.definition();
+        if (d == null) {
+            return 0;
+        }
+        Map<String, String> types = new LinkedHashMap<>();
+        Map<String, PipelineDefinition.StepDefinition> byId = new LinkedHashMap<>();
+        for (PipelineDefinition.StepDefinition s : d.steps()) {
+            types.putIfAbsent(s.id(), s.type());
+            byId.putIfAbsent(s.id(), s);
+        }
+        GateStepFactory gate = factories.get(GateStepFactory.TYPE).filter(GateStepFactory.class::isInstance)
+            .map(GateStepFactory.class::cast).orElse(null);
+        int added = 0;
+        if (gate != null) {
+            Map<String, Map<String, Object>> configs = new LinkedHashMap<>();
+            byId.forEach((id, s) -> configs.put(id, c.configs().getOrDefault(id, s.config())));
+            for (GateStepFactory.Finding f : GateStepFactory.graphChecks(types, configs, c.edges())) {
+                PipelineDefinition.StepDefinition s = byId.get(f.step());
+                io.kilnmark.kiln.yaml.Position at = f.key() == null ? s.position() : s.at(f.key());
+                PipelineCompilerPort.Problem p = new PipelineCompilerPort.Problem(at.line(), at.column(), s.id(),
+                    "Step " + s.id() + ": " + f.message());
+                if (f.note()) {
+                    notes.add(p);
+                } else {
+                    problems.add(p);
+                    added++;
+                }
+            }
+        }
+        for (PipelineDefinition.StepDefinition s : d.steps()) {
+            if (!GateStepFactory.TYPE.equals(s.type()) || gate == null) {
+                continue;
+            }
+            Map<String, Object> config = c.configs().getOrDefault(s.id(), s.config());
+            GateStepFactory.Upstream up = GateStepFactory.upstream(s.id(), config, c.edges(), types);
+            if (up.problem() != null) {
+                io.kilnmark.kiln.yaml.Position at = up.key() == null ? s.position() : s.at(up.key());
+                problems.add(new PipelineCompilerPort.Problem(at.line(), at.column(), s.id(), "Step " + s.id() + ": "
+                    + up.problem()));
+                added++;
+                continue;
+            }
+            boolean inline = config.get("rules") instanceof List<?> l && !l.isEmpty();
+            if (up.read() == null) {
+                if (GateStepFactory.assetRules(config) && !inline) {
+                    notes.add(new PipelineCompilerPort.Problem(s.position().line(), s.position().column(), s.id(),
+                        "Step " + s.id() + ": no read step is upstream, so there is no asset's rules to check; write "
+                            + "rules on the gate"));
+                }
+                continue;
+            }
+            Map<String, Object> readConfig = c.configs().getOrDefault(up.read(), byId.get(up.read()).config());
+            RunContext.ReadRef ref = GateStepFactory.readOf(readConfig);
+            if (run != null) {
+                run.gateRead(s.id(), ref);
+            } else if (!inline && !gate.hasRules(PipelineSources.urn(ref.source(), ref.asset()))) {
+                notes.add(new PipelineCompilerPort.Problem(s.position().line(), s.position().column(), s.id(),
+                    "Step " + s.id() + ": " + (ref.asset() == null ? "the asset read" : ref.asset()) + " has no quality "
+                        + "rules yet, so the gate has nothing to check. Add rules to it in Quality, or write rules on "
+                        + "the gate"));
+            }
+        }
+        return added;
     }
 
     private static PipelineCompilerPort.Problem problem(io.kilnmark.kiln.yaml.Problem p) {

@@ -22,8 +22,16 @@ import com.fasterxml.jackson.databind.JsonNode;
  */
 public final class RowChecks {
 
-    /** Distinct keys a uniqueness check holds in memory before it gives up on being exact. */
-    static final int UNIQUE_LIMIT = 1_000_000;
+    /**
+     * Memory a uniqueness check may hold for the keys it has seen. Keys are kept as 128-bit hashes,
+     * so each costs about {@link #BYTES_PER_KEY} however long it is; past the limit the check gives
+     * up on being exact.
+     */
+    static final long UNIQUE_BYTES = 96L << 20;
+    /** What one key seen costs: its hash, its count and the map's entry for it. */
+    static final int BYTES_PER_KEY = 96;
+    /** Distinct keys a uniqueness check holds before it gives up on being exact: 1,048,576. */
+    static final int UNIQUE_LIMIT = (int) (UNIQUE_BYTES / BYTES_PER_KEY);
 
     /**
      * What one check found. {@code error} set means it could not run: {@code error} is for every
@@ -69,6 +77,17 @@ public final class RowChecks {
     /** A check in progress. */
     public interface Check {
         void row(Row row);
+
+        /**
+         * Checks one row, as {@link #row} does, and says whether this row fails the rule: for a
+         * check of rows, a row it counts as failing (for {@code unique}, a repeat of a key seen
+         * before, so the first row with a key passes); always false for a check of the whole data
+         * ({@code freshness}, {@code row_count}), which only {@link #finish} can judge.
+         */
+        default boolean test(Row row) {
+            row(row);
+            return false;
+        }
 
         Evaluation finish();
     }
@@ -231,11 +250,18 @@ public final class RowChecks {
 
         @Override
         public void row(Row row) {
+            test(row);
+        }
+
+        @Override
+        public boolean test(Row row) {
             total++;
             if (fails.test(row)) {
                 count++;
                 failing.add(row);
+                return true;
             }
+            return false;
         }
 
         @Override
@@ -244,12 +270,34 @@ public final class RowChecks {
         }
     }
 
+    /** A key as a uniqueness check keeps it: two independent 64-bit hashes of its text. */
+    record KeyHash(long a, long b) {
+
+        static KeyHash of(CharSequence text) {
+            long a = 0xcbf29ce484222325L; // FNV-1a
+            long b = 0x9E3779B97F4A7C15L;
+            for (int i = 0; i < text.length(); i++) {
+                char c = text.charAt(i);
+                a = (a ^ c) * 0x100000001b3L;
+                b = Long.rotateLeft(b ^ (c * 0xC2B2AE3D27D4EB4FL), 31) * 0x9E3779B97F4A7C15L;
+            }
+            return new KeyHash(mix(a), mix(b ^ text.length()));
+        }
+
+        private static long mix(long z) {
+            z = (z ^ (z >>> 33)) * 0xff51afd7ed558ccdL;
+            z = (z ^ (z >>> 33)) * 0xc4ceb9fe1a85ec53L;
+            return z ^ (z >>> 33);
+        }
+    }
+
     private static final class Unique implements Check {
         private final String method;
         private final Failing failing;
         private final int[] key;
-        private final Map<String, Integer> seen = new HashMap<>();
+        private final Map<KeyHash, Integer> seen = new HashMap<>();
         private long total;
+        private long repeats;
         private boolean overflow;
 
         Unique(String method, Failing failing, int[] key) {
@@ -260,36 +308,46 @@ public final class RowChecks {
 
         @Override
         public void row(Row row) {
+            test(row);
+        }
+
+        @Override
+        public boolean test(Row row) {
             if (overflow) {
-                return;
+                return false;
             }
             StringBuilder b = new StringBuilder();
             for (int k : key) {
                 if (k < 0) {
-                    return;
+                    return false;
                 }
                 String v = row.cell(k);
                 if (v == null) {
-                    return; // keys with a null part are not compared
+                    return false; // keys with a null part are not compared
                 }
-                b.append(v).append('\u001f');
+                b.append(v.length()).append(':').append(v);
             }
             total++;
-            Integer n = seen.merge(b.toString(), 1, Integer::sum);
+            Integer n = seen.merge(KeyHash.of(b), 1, Integer::sum);
             if (n > 1) {
+                repeats++;
                 failing.add(row);
             }
             if (seen.size() > UNIQUE_LIMIT) {
                 overflow = true;
                 seen.clear();
             }
+            return n > 1;
         }
 
         @Override
         public Evaluation finish() {
             if (overflow) {
-                return Evaluation.error(method, "More than " + Measures.count(UNIQUE_LIMIT) + " distinct values: too "
-                    + "many to check exactly while streaming. The profile's uniqueness measure estimates it instead.");
+                return Evaluation.error(method, "More than " + Measures.count(UNIQUE_LIMIT) + " distinct values (about "
+                    + (UNIQUE_BYTES >> 20) + " MB of keys): too many to check exactly while streaming. The profile's "
+                    + "uniqueness measure estimates it instead." + (repeats == 0 ? ""
+                    : " " + Measures.count(repeats) + (repeats == 1 ? " repeat was" : " repeats were")
+                    + " found before then; later rows were not checked for repeats."));
             }
             long dup = 0;
             for (int n : seen.values()) {

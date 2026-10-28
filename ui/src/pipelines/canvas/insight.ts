@@ -65,6 +65,13 @@ export function stepSummary(step: GraphStep): string {
       return keysOf(s.routes).join(", ");
     case "limit":
       return s.rows != null ? `first ${t("rows")} rows` : "";
+    case "gate": {
+      const n = Array.isArray(s.rules) ? s.rules.length : 0;
+      const own = s.asset_rules === false || s.asset_rules === "false" ? "" : "asset's rules";
+      const written = n ? `${n} ${n === 1 ? "rule" : "rules"}` : "";
+      const checks = [own, written].filter(Boolean).join(" + ");
+      return [s.on_fail != null ? t("on_fail") : "stop", checks].filter(Boolean).join(" · ");
+    }
     default:
       return Object.keys(s)
         .slice(0, 2)

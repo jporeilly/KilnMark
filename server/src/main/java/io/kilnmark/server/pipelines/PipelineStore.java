@@ -55,6 +55,17 @@ public class PipelineStore {
                           Instant recordedAt) {
     }
 
+    /**
+     * A step's measured quality in a run (migration V15). The JSON columns are text here:
+     * {@code measuredDimensions} and {@code predictedDimensions} {"dimension": score}, {@code measuredReasons}
+     * a list of words, {@code gate} a gate's outcome. {@code predicted} is null until design-time
+     * scores exist.
+     */
+    public record QualityRow(String stepId, String role, String assetUrn, Double measured, String measuredDimensions,
+                             String measuredReasons, Double predicted, String predictedDimensions, String note,
+                             String gate) {
+    }
+
     /** A pipeline in the list: whether its latest version is valid, and its latest run. */
     public record Summary(Pipeline pipeline, boolean valid, Run lastRun) {
     }
@@ -557,6 +568,60 @@ public class PipelineStore {
         });
     }
 
+    public void saveQuality(long runId, List<QualityRow> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_step_quality (run_id, "
+                + "step_id, role, asset_urn, measured, measured_dimensions, measured_reasons, predicted, "
+                + "predicted_dimensions, note, gate) VALUES (?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?, ?::jsonb) "
+                + "ON CONFLICT (run_id, step_id) DO UPDATE SET role = EXCLUDED.role, asset_urn = EXCLUDED.asset_urn, "
+                + "measured = EXCLUDED.measured, measured_dimensions = EXCLUDED.measured_dimensions, "
+                + "measured_reasons = EXCLUDED.measured_reasons, predicted = EXCLUDED.predicted, "
+                + "predicted_dimensions = EXCLUDED.predicted_dimensions, note = EXCLUDED.note, gate = EXCLUDED.gate")) {
+                for (QualityRow q : rows) {
+                    ps.setLong(1, runId);
+                    ps.setString(2, q.stepId());
+                    ps.setString(3, q.role());
+                    ps.setString(4, q.assetUrn());
+                    setDouble(ps, 5, q.measured());
+                    ps.setString(6, q.measuredDimensions() == null ? "{}" : q.measuredDimensions());
+                    ps.setString(7, q.measuredReasons() == null ? "[]" : q.measuredReasons());
+                    setDouble(ps, 8, q.predicted());
+                    ps.setString(9, q.predictedDimensions());
+                    ps.setString(10, q.note());
+                    ps.setString(11, q.gate());
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+            }
+            return null;
+        });
+    }
+
+    /** A run's measured quality, step by step, in the order the steps ran. */
+    public List<QualityRow> quality(long runId) {
+        return db.tx(c -> {
+            List<QualityRow> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT q.step_id, q.role, q.asset_urn, q.measured, "
+                + "q.measured_dimensions::text, q.measured_reasons::text, q.predicted, q.predicted_dimensions::text, "
+                + "q.note, q.gate::text FROM kilnmark.pipeline_step_quality q LEFT JOIN kilnmark.pipeline_step_run s "
+                + "ON s.run_id = q.run_id AND s.step_id = q.step_id WHERE q.run_id = ? "
+                + "ORDER BY s.position NULLS LAST, q.step_id")) {
+                ps.setLong(1, runId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new QualityRow(rs.getString(1), rs.getString(2), rs.getString(3), getDouble(rs, 4),
+                            rs.getString(5), rs.getString(6), getDouble(rs, 7), rs.getString(8), rs.getString(9),
+                            rs.getString(10)));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
     public List<StepRun> stepRuns(long runId) {
         return db.tx(c -> {
             List<StepRun> out = new ArrayList<>();
@@ -654,6 +719,19 @@ public class PipelineStore {
         } else {
             ps.setLong(i, v);
         }
+    }
+
+    private static void setDouble(PreparedStatement ps, int i, Double v) throws SQLException {
+        if (v == null) {
+            ps.setNull(i, Types.DOUBLE);
+        } else {
+            ps.setDouble(i, v);
+        }
+    }
+
+    private static Double getDouble(ResultSet rs, int i) throws SQLException {
+        double v = rs.getDouble(i);
+        return rs.wasNull() ? null : v;
     }
 
     private static Long getLong(ResultSet rs, int i) throws SQLException {

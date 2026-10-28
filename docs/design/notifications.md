@@ -37,9 +37,11 @@ A successful scan clears `scan:<source>` and `connection:<source>` quietly
 next failure is told.
 
 **Pipelines hook.** `PipelineService.finished` calls `notifications.pipelineRunFinished(pipeline,
-id, status, score, threshold, link)` wherever a run gets its final status on the worker. Runs carry
-no quality score yet, so `score` and `threshold` are null and only failures are told; once a score
-exists, pass both and `pipeline_low_quality` follows without further change.
+id, status, score, threshold, output, link)` wherever a run gets its final status on the worker.
+`score` is the lowest measured score among the run's outputs (each write's, from the profile its
+writer made), `threshold` the pipeline's `quality.min_score` for the version that ran, and `output`
+the write step with that score; any of them is null when there is none, and then only a failure
+can be told.
 
 ## Recording: off the caller's thread
 

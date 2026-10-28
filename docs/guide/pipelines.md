@@ -117,8 +117,11 @@ on.
 ### After a run
 
 Once a run has finished, each step on the canvas shows the rows it passed on and how it ended
-(Finished, Ended early, Stopped by the engine or Failed), and each connection its rows. The steps
-table under the canvas says the same.
+(Finished, Ended early, Stopped by the engine or Failed), and each connection its rows. Each write
+and each quality gate also shows its measured quality, as a percentage and a word (Good, Fair or
+Poor), and a gate what it did with the rows, such as "900 passed · 100 quarantined" (see
+[Quality gates](#quality-gates)). The steps table under the canvas, and the step's settings panel
+with its score per dimension and each rule's result, say the same in words.
 
 **Run now** runs the saved version. If you have changes that are not saved, Kilnmark says so first
 and asks you to confirm; save them to run them.
@@ -178,6 +181,8 @@ steps:
 
 - Each step has an **id** (small letters, digits, `-` and `_`) and a **type**. The other keys are
   the step's settings.
+- An optional `quality:` block sets the pipeline's quality threshold (see
+  [Quality of what a run writes](#quality-of-what-a-run-writes)).
 - **input** says which step feeds this one: `input: customers` takes that step's main output.
   `input: joined.rejected` takes another output port, here the rows a lookup could not match.
   A step with several inputs names each one: `inputs: {main: spend, lookup: customers}`.
@@ -212,8 +217,158 @@ settings, as in [Writing data from a pipeline](writing-data.md), which describes
 source's writer does not take is a problem, with its line.
 
 The steps between reading and writing (filter, compute, select, lookup, aggregate, union, dedupe,
-route and limit) are described in [Pipeline steps and expressions](pipeline-steps.md). The step
+route and limit) are described in [Pipeline steps and expressions](pipeline-steps.md). The quality
+gate is described below. The step
 catalogue (`GET /api/v1/steps`) lists every type this server has, with the settings each takes.
+
+## Quality gates
+
+A `gate` step checks the rows passing through it against quality rules, in the same pass that moves
+them: nothing is read twice. Its rules are
+
+- **the asset's own rules**: the enabled rules of the table or file read upstream, as stewards set
+  them in **Quality** (on unless you set `asset_rules: false`). When rows reach the gate from more
+  than one read step, name the one whose rules apply with `rules_from: <read step id>`;
+- **rules written on the gate**, for this pipeline only, under `rules`.
+
+```yaml
+  - id: check
+    type: gate
+    input: customers
+    on_fail: quarantine          # stop (the default), quarantine or warn
+    rules:
+      - {type: not_null, field: email}
+      - {name: known country, type: allowed_values, field: country, values: [GB, IE, FR]}
+      - {type: in_range, field: amount, min: 0, max: 10000, fail_above: 0.01}
+    max_failing_share: 0.05      # stop the run if more than 5% of rows fail a rule
+
+  - id: good
+    type: write
+    input: check                 # the rows that passed
+    source: warehouse
+    table: crm.customers_clean
+    mode: replace
+
+  - id: aside
+    type: write
+    input: check.quarantine      # the rows that failed
+    source: warehouse
+    table: quarantine.customers
+    mode: append
+```
+
+On the canvas, the gate is in the **Quality** folder, with two outputs: `out` and `quarantine`. Its
+settings panel lists the rules written on it, each with its check, its column and the check's own
+settings.
+
+### Writing rules on a gate
+
+Each rule has a `type` and, except for checks of the whole data, a `field` (a column arriving at the
+gate). The checks and their own settings are those of rules made in **Quality**:
+
+| Type | Fails a row when | Its settings |
+| --- | --- | --- |
+| `not_null` | The value is empty | `blank_is_missing: true` counts blank text as empty too |
+| `unique` | The value was seen in an earlier row: the first row with it passes, each repeat fails | `fields: [a, b]` for a key of several columns, instead of `field` |
+| `allowed_values` | The value is not in the list | `values` |
+| `matches_pattern` | The value does not match the regular expression | `regex` |
+| `in_range` | The value is below `min` or above `max` | `min`, `max` (either may be left out) |
+| `freshness` | (Whole data) The latest date or time is older than allowed | `max_age_hours` |
+| `row_count` | (Whole data) There are fewer than `min` or more than `max` rows | `min`, `max` |
+| `row_count_change` | (Whole data) The row count changed by more than `max_change` (0.2 for 20%) since the asset's last scan | `max_change` |
+
+Empty values pass every check but `not_null`. Every rule may also have a `name` (by default its
+column and type, such as "email not null"), a `dimension`, and its own limit: `fail_above` is how
+many rows may fail before the rule fails, as a share of the rows checked (0.01 for 1%) or, with
+`unit: count`, a number of rows; it is 0 when left out, so any failing row fails the rule.
+`warn_above` makes the rule warn below that. Rules that run in a database, `references` and
+`custom_sql`, cannot check rows in a pipeline; make them rules on the asset instead.
+
+A gate counts only the repeats of a key as failing for `unique`, so its count, its result, its score
+and the rows it sets aside agree. (A `unique` rule run on the asset in **Quality** counts every row of
+a repeated key.) To find repeats, a gate keeps each key it has seen as a short fingerprint, about 96
+bytes whatever the key's length, up to 1,048,576 different keys (about 96 MB). Past that it stops
+checking for repeats: the rule shows **Could not run**, says how many repeats it had found and set
+aside before then, and the rows after it are not checked for repeats. Use the asset's `unique` rule,
+which runs in the database, for larger tables.
+
+### What happens when rows fail
+
+`on_fail` decides:
+
+| `on_fail` | Rows | The run |
+| --- | --- | --- |
+| `stop` (the default) | All go on to `out` | Fails when any rule fails by its own limit, or a threshold below is crossed. It stops as soon as a rule cannot pass any more (a failing row where none may fail, or more failing rows than its count allows); otherwise when the rows end. The writes after the gate have not reached the end of their rows, so they do not commit. |
+| `quarantine` | Rows failing any rule go to `quarantine`; the rest to `out` | Goes on, unless a threshold below is crossed, or a check of the whole data (row count, freshness) fails: no row can be set aside for that. |
+| `warn` | All go on to `out` | Goes on whatever fails. What failed is recorded with the run. |
+
+A stop gate holds back only the writes after it, and only because they commit at the end of their
+rows. So Kilnmark refuses, with a problem at the setting:
+
+- a write after a stop gate with `commit_every` in mode `create`, `append` or `upsert`, which commits
+  as the rows arrive. (`replace` swaps the new rows in at the end, so it may keep `commit_every`.)
+- a `limit` after a stop gate: it ends the rows early, so the gate never sees their end.
+
+And it notes, without stopping the pipeline:
+
+- a write that gets the same rows by another path, not through the gate (read → gate → good, and
+  read → raw): it is written even when the gate stops the run;
+- `on_fail: quarantine` with nothing connected to `quarantine`: the failing rows are dropped;
+- something connected to `quarantine` when `on_fail` is `stop` or `warn`: it never gets rows, and a
+  write there in mode `replace` or `create` empties or creates an empty table on every run.
+
+Two thresholds judge the rows as a whole, with `stop` and `quarantine` (with `warn` they are
+recorded only):
+
+- `max_failing_share`: the run stops when more than this share of the rows (0 to 1) fail at least
+  one rule. A share equal to it is allowed.
+- `min_score`: the run stops when the gate's score (below) is under this (0 to 1). A score equal
+  to it is allowed.
+
+A run the gate stopped says why, naming the rule and its counts, for example "The quality gate
+stopped the run: rule 'email not null' failed on 120 of 9,000 rows (1.3%), more than its limit of 1%".
+If a rule's column does not arrive at the gate, the rule cannot run: it is shown as **Could not
+run** and does not fail the rows. A gate with no rows to check passes every check of rows, but a
+`row_count` with a `min` fails, and so does `freshness`: there is no latest value to be recent.
+If the run ends the gate's rows before it sees their end (another step failed), it shows what it
+checked so far and says it saw only the first rows.
+
+The gate always uses the rules as they are when the run starts. It checks every row: it does not yet
+reuse a recent result of the asset's rules when the data has not changed.
+
+## Quality of what a run writes
+
+Every run measures quality as it goes, without reading anything again:
+
+- **Each gate** gets a score from its rules' results: for each rule, the share of rows that passed,
+  by the rule's dimension (completeness, validity and so on), and overall the mean of the
+  dimensions.
+- **Each write** gets a score from the profile made of the rows as they were written (see
+  [What Kilnmark records about what you write](#what-kilnmark-records-about-what-you-write)): the
+  same measures the catalogue makes after a scan, such as empty values, repeated keys and competing
+  formats, per dimension and overall. Measures that need history, such as freshness and volume,
+  are left out: the rows of one run have none. An `append` or `upsert`, and a write with
+  `profile_output: false`, is not profiled, so it has no score, and the run says so.
+
+The run's page lists them under **Quality**: each write and gate with its score as a percentage and
+a word, its score per dimension, and for a gate what it decided, its row counts and each rule's
+result. The run's summary shows the lowest score of what it wrote.
+
+To be told when a run writes data below a level, give the pipeline a threshold:
+
+```yaml
+kilnmark: pipeline/v1
+name: customer-billing
+quality:
+  min_score: 0.95
+steps:
+  ...
+```
+
+When a run succeeds but a write scores below `min_score`, everyone following the pipeline's
+notifications is told, once for that run, naming the write (**Pipeline quality below threshold**, see
+[Notifications and email alerts](notifications.md)). The threshold only tells; to stop a run on
+quality, use a gate.
 
 ## Checking as you type
 
