@@ -345,4 +345,167 @@ abstract class MySqlFamilyWriteTest {
             + "kt_billing.measures"), own.error());
         assertEquals(List.of(List.of(2L)), query("SELECT COUNT(*) FROM kt_billing.measures"));
     }
+
+    @Test
+    void replacePutsTheOldTableBackWhenAKeyItCouldNotSeeRefusesTheDrop() throws Exception {
+        db.sql("DROP USER IF EXISTS 'kt_writer'@'%'",
+            "CREATE USER 'kt_writer'@'%' IDENTIFIED BY '" + LAB_PASSWORD + "'",
+            "GRANT ALL ON kt_billing.* TO 'kt_writer'@'%'",
+            "CREATE TABLE kt_billing.hub (id BIGINT PRIMARY KEY)",
+            "INSERT INTO kt_billing.hub VALUES (1), (2)",
+            "CREATE TABLE kt_other.spoke (id BIGINT, hub_id BIGINT, CONSTRAINT fk_hub FOREIGN KEY (hub_id) "
+                + "REFERENCES kt_billing.hub (id))",
+            "INSERT INTO kt_other.spoke VALUES (10, 1)");
+        SourceConfig writer = db.source("warehouse", "kt_writer", LAB_PASSWORD, Map.of());
+        Schema ids = new Schema(List.of(field("id", Rows.INT64)));
+        // kt_writer has no rights in kt_other, so information_schema hides the key from it
+        RunResult r = write(writer, options("kt_billing.hub", "replace", List.of(), Map.of()), ids,
+            Rows.list(new Object[] {1L}, new Object[] {2L}, new Object[] {3L}), 4, -1);
+        assertFalse(r.succeeded(), "the run must not succeed with the key pointing at a stale table");
+        assertTrue(r.error().contains("kt_billing.hub"), r.error());
+        assertEquals(List.of(List.of(2L)), query("SELECT COUNT(*) FROM kt_billing.hub"), r.error());
+        assertEquals(List.of(List.of("hub")), query("SELECT REFERENCED_TABLE_NAME FROM "
+            + "information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = 'kt_other' "
+            + "AND CONSTRAINT_NAME = 'fk_hub'"), "the key still refers to the table, under its own name");
+        assertEquals(List.of(), leftovers());
+
+        // with PROCESS, InnoDB's own list shows the key before anything is written
+        db.sql("GRANT PROCESS ON *.* TO 'kt_writer'@'%'");
+        RunResult seen = write(writer, options("kt_billing.hub", "replace", List.of(), Map.of()), ids,
+            Rows.list(new Object[] {1L}), 4, -1);
+        assertTrue(seen.error().contains("Cannot replace kt_billing.hub: the foreign key fk_hub on kt_other.spoke "
+            + "refers to it"), seen.error());
+        assertEquals(List.of(), leftovers());
+    }
+
+    @Test
+    void upsertRefusesAnotherUniqueIndexThatCouldMatchAnotherRow() throws Exception {
+        db.sql("CREATE TABLE kt_billing.accounts (customer_id BIGINT PRIMARY KEY, total DECIMAL(12,2), "
+                + "note VARCHAR(50), UNIQUE KEY uq_note (note))",
+            "INSERT INTO kt_billing.accounts VALUES (1, 1, 'alpha')");
+        List<Object[]> clash = Rows.list(new Object[] {2L, new BigDecimal("2.00"), "alpha"});
+        RunResult refused = write(source, options("kt_billing.accounts", "upsert", List.of("customer_id"), Map.of()),
+            SPEND, clash, 4, -1);
+        assertTrue(refused.error().contains("the unique index uq_note does not hold every key column"),
+            refused.error());
+        assertTrue(refused.error().contains("allow_other_unique_keys: true"), refused.error());
+        assertEquals(List.of(List.of(1L, new BigDecimal("1.00"))),
+            query("SELECT customer_id, total FROM kt_billing.accounts"));
+
+        RunResult allowed = write(source, options("kt_billing.accounts", "upsert", List.of("customer_id"),
+            Map.of("allow_other_unique_keys", true)), SPEND, clash, 4, -1);
+        assertTrue(allowed.succeeded(), allowed.error());
+        assertEquals(List.of(List.of(1L, new BigDecimal("2.00"))),
+            query("SELECT customer_id, total FROM kt_billing.accounts"), "as documented: the row uq_note matched");
+
+        db.sql("CREATE TABLE kt_billing.wide (customer_id BIGINT PRIMARY KEY, total DECIMAL(12,2), note VARCHAR(50), "
+            + "UNIQUE KEY uq_both (note, customer_id))");
+        RunResult wide = write(source, options("kt_billing.wide", "upsert", List.of("customer_id"), Map.of()), SPEND,
+            Rows.spend(0, 5, "x"), 4, -1);
+        assertTrue(wide.succeeded(), "an index holding the key and more matches only the key's row: " + wide.error());
+    }
+
+    @Test
+    void theServersOwnSqlModeNeverChangesWhatIsWritten() throws Exception {
+        String before = (String) query("SELECT @@GLOBAL.sql_mode").get(0).get(0);
+        String odd = db.mariadb() ? "EMPTY_STRING_IS_NULL,NO_BACKSLASH_ESCAPES,ANSI_QUOTES"
+            : "TIME_TRUNCATE_FRACTIONAL,NO_BACKSLASH_ESCAPES,ANSI_QUOTES";
+        db.sql("CREATE TABLE kt_billing.modes (customer_id BIGINT, note VARCHAR(20))");
+        db.sql("SET GLOBAL sql_mode = '" + odd + "'");
+        try {
+            Schema notes = new Schema(List.of(field("customer_id", Rows.INT64), field("note", Rows.TEXT)));
+            RunResult r = write(source, options("kt_billing.modes", "append", List.of(), Map.of()), notes,
+                Rows.list(new Object[] {1L, ""}, new Object[] {2L, "a\\b"}), 4, -1);
+            assertTrue(r.succeeded(), r.error());
+        } finally {
+            db.sql("SET GLOBAL sql_mode = '" + before + "'");
+        }
+        assertEquals(List.of(List.of(1L, "", 0L), List.of(2L, "a\\b", 0L)),
+            query("SELECT customer_id, note, note IS NULL FROM kt_billing.modes ORDER BY customer_id"));
+    }
+
+    @Test
+    void fractionsOfASecondAreNeverRoundedAway() throws Exception {
+        db.sql("CREATE TABLE kt_billing.stamps (id BIGINT, at DATETIME, took TIME, at3 DATETIME(3))");
+        Schema stamps = new Schema(List.of(field("id", Rows.INT64), field("at", Rows.TIMESTAMP),
+            field("took", Rows.TIME), field("at3", Rows.TIMESTAMP)));
+        RunResult ok = write(source, options("kt_billing.stamps", "append", List.of(), Map.of()), stamps,
+            Rows.list(new Object[] {1L, LocalDateTime.parse("2025-01-31T09:30:00"), LocalTime.parse("09:30:00"),
+                LocalDateTime.parse("2025-01-31T09:30:00.123")}), 4, -1);
+        assertTrue(ok.succeeded(), ok.error());
+        RunResult at = write(source, options("kt_billing.stamps", "append", List.of(), Map.of()), stamps,
+            Rows.list(new Object[] {2L, LocalDateTime.parse("2025-01-31T09:30:00.999999"), null, null}), 4, -1);
+        assertTrue(at.error().contains("Row 1: the value 2025-01-31T09:30:00.999999 in column at has more digits of a "
+            + "second than the column keeps (0)"), at.error());
+        RunResult took = write(source, options("kt_billing.stamps", "append", List.of(), Map.of()), stamps,
+            Rows.list(new Object[] {3L, null, LocalTime.parse("09:30:00.5"), null}), 4, -1);
+        assertTrue(took.error().contains("Row 1, column took: the value 09:30:00.5")
+            && took.error().contains("keeps (0)"), took.error());
+        RunResult at3 = write(source, options("kt_billing.stamps", "append", List.of(), Map.of()), stamps,
+            Rows.list(new Object[] {4L, null, null, LocalDateTime.parse("2025-01-31T09:30:00.1234")}), 4, -1);
+        assertTrue(at3.error().contains("keeps (3)"), at3.error());
+        assertEquals(List.of(List.of(1L)), query("SELECT COUNT(*) FROM kt_billing.stamps"));
+    }
+
+    @Test
+    void timeAndYearColumnsTakeOnlyWhatTheyHold() throws Exception {
+        db.sql("CREATE TABLE kt_billing.shifts (id BIGINT, took TIME, season YEAR)");
+        RunResult stamp = write(source, options("kt_billing.shifts", "append", List.of(), Map.of()),
+            new Schema(List.of(field("id", Rows.INT64), field("took", Rows.TIMESTAMP))),
+            Rows.list(new Object[] {1L, LocalDateTime.parse("2025-01-31T09:30:00")}), 4, -1);
+        assertTrue(stamp.error().contains("the table's column took is time, which takes only times or text"),
+            stamp.error());
+        RunResult number = write(source, options("kt_billing.shifts", "append", List.of(), Map.of()),
+            new Schema(List.of(field("id", Rows.INT64), field("took", Rows.INT64))),
+            Rows.list(new Object[] {1L, 5L}), 4, -1);
+        assertTrue(number.error().contains("which takes only times or text"), number.error());
+        Schema seasons = new Schema(List.of(field("id", Rows.INT64), field("took", Rows.TEXT),
+            field("season", Rows.INT16)));
+        RunResult years = write(source, options("kt_billing.shifts", "append", List.of(), Map.of()), seasons,
+            Rows.list(new Object[] {1L, "10:15:00", 1999L}, new Object[] {2L, "10:15:00", 1800L}), 4, -1);
+        assertTrue(years.error().contains("Row 2, column season: the year 1800 is outside what a YEAR column holds "
+            + "(1901 to 2155)"), years.error());
+        assertEquals(List.of(List.of(0L)), query("SELECT COUNT(*) FROM kt_billing.shifts"));
+        RunResult fine = write(source, options("kt_billing.shifts", "append", List.of(), Map.of()), seasons,
+            Rows.list(new Object[] {1L, "10:15:00", 2024L}), 4, -1);
+        assertTrue(fine.succeeded(), fine.error());
+        assertEquals(List.of(List.of("10:15:00", 2024L)), query("SELECT CAST(took AS CHAR), season + 0 FROM "
+            + "kt_billing.shifts"));
+    }
+
+    @Test
+    void replaceRefusesOtherEnginesAndTriggersARoleMightHide() throws Exception {
+        db.sql("CREATE TABLE kt_billing.in_memory (customer_id BIGINT, total DECIMAL(12,2), note VARCHAR(50)) "
+            + "ENGINE=MEMORY");
+        RunResult memory = write(source, options("kt_billing.in_memory", "replace", List.of(), Map.of()), SPEND,
+            Rows.spend(0, 1, "x"), 4, -1);
+        assertTrue(memory.error().contains("it uses the MEMORY storage engine"), memory.error());
+
+        db.sql("DROP USER IF EXISTS 'kt_roled'@'%'", "DROP ROLE IF EXISTS kt_role", "CREATE ROLE kt_role",
+            "GRANT ALL ON kt_billing.* TO kt_role",
+            "CREATE USER 'kt_roled'@'%' IDENTIFIED BY '" + LAB_PASSWORD + "'",
+            "GRANT kt_role TO 'kt_roled'@'%'",
+            db.mariadb() ? "SET DEFAULT ROLE kt_role FOR 'kt_roled'@'%'" : "SET DEFAULT ROLE kt_role TO 'kt_roled'@'%'",
+            "CREATE TABLE kt_billing.by_role (customer_id BIGINT, total DECIMAL(12,2), note VARCHAR(50))");
+        SourceConfig roled = db.source("warehouse", "kt_roled", LAB_PASSWORD, Map.of());
+        RunResult role = write(roled, options("kt_billing.by_role", "replace", List.of(), Map.of()), SPEND,
+            Rows.spend(0, 1, "x"), 4, -1);
+        assertTrue(role.error().contains("the login cannot be shown to see whether triggers are on it"),
+            role.error());
+        assertEquals(List.of(), leftovers());
+    }
+
+    @Test
+    void bulkLoadKeepsBackslashesQuotesAndTheWordNull() throws Exception {
+        Schema notes = new Schema(List.of(field("customer_id", Rows.INT64), field("note", Rows.TEXT)));
+        List<Object[]> rows = Rows.list(new Object[] {1L, "a\\b"}, new Object[] {2L, "NULL"},
+            new Object[] {3L, "\\N"}, new Object[] {4L, null}, new Object[] {5L, "say \"hi\", ok"});
+        RunResult r = write(source, options("kt_billing.loaded", "create", List.of(), Map.of("bulk_load", true)), notes,
+            rows, 10, -1);
+        assertTrue(r.succeeded(), r.error());
+        List<List<Object>> back = query("SELECT customer_id, note, note IS NULL FROM kt_billing.loaded "
+            + "ORDER BY customer_id");
+        assertEquals(List.of(List.of(1L, "a\\b", 0L), List.of(2L, "NULL", 0L), List.of(3L, "\\N", 0L),
+            java.util.Arrays.asList(4L, null, 1L), List.of(5L, "say \"hi\", ok", 0L)), back);
+    }
 }

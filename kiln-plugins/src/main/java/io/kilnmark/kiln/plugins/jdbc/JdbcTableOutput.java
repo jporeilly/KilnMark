@@ -79,6 +79,7 @@ final class JdbcTableOutput implements Step {
     private final boolean keepGrants;
     private final boolean bulk;
     private final boolean allowDroppingRowSecurity;
+    private final boolean allowOtherUniqueKeys;
     private final long lockTimeoutMillis;
 
     private Connection connection;
@@ -102,6 +103,10 @@ final class JdbcTableOutput implements Step {
     private boolean committed;
     /** Whether this step created {@link #loadInto}. */
     private boolean created;
+    /** Timestamp and time columns of the table that keep fewer than nine digits of a second, by name. */
+    private final Map<String, Integer> fractionDigits = new HashMap<>();
+    /** For append and upsert: the table's columns by name. */
+    private final Map<String, TargetColumn> targets = new HashMap<>();
 
     JdbcTableOutput(JdbcConnector connector, WriteSql sql, SourceConfig source, TableName target, String mode,
                     List<String> key, WriteSettings settings, String assetUrn, Map<String, String> profiling)
@@ -121,6 +126,7 @@ final class JdbcTableOutput implements Step {
         this.keepGrants = settings.bool("keep_grants", true);
         this.bulk = sql.bulk(mode, settings);
         this.allowDroppingRowSecurity = settings.bool("allow_dropping_row_security", false);
+        this.allowOtherUniqueKeys = settings.bool("allow_other_unique_keys", false);
         this.lockTimeoutMillis = settings.number("lock_timeout", 30, 1, 3600) * 1000;
         // where DDL commits by itself, a created table is also filled under a temporary name, so the
         // target never appears half-filled
@@ -193,7 +199,17 @@ final class JdbcTableOutput implements Step {
      * something or silently change who may see what.
      */
     private void checkReplaceable() throws SQLException, StepException {
-        List<String> blocking = new ArrayList<>(readNames(sql.blockers(target)));
+        Set<String> found = new java.util.LinkedHashSet<>(readNames(sql.blockers(target)));
+        WriteSql.Sql hidden = sql.hiddenBlockers(target);
+        if (hidden != null) {
+            try {
+                found.addAll(readNames(hidden));
+            } catch (SQLException e) {
+                // not readable by this login (MySQL's InnoDB views need PROCESS); the swap still puts the
+                // old table back if a foreign key it could not see refuses the drop
+            }
+        }
+        List<String> blocking = new ArrayList<>(found);
         if (!blocking.isEmpty()) {
             java.util.Collections.sort(blocking);
             throw new StepException("Cannot replace " + target + ": " + String.join("; ", blocking) + ". Replace "
@@ -258,6 +274,41 @@ final class JdbcTableOutput implements Step {
         if (!indexes.containsValue(new HashSet<>(keyColumns))) {
             throw new StepException("Cannot upsert into " + target + " by (" + String.join(", ", keyColumns)
                 + "): " + sql.keyIndexAdvice(target, keyColumns));
+        }
+        checkOtherUniqueKeys(keyColumns);
+    }
+
+    /**
+     * Where a conflict with any unique index turns the insert into an update (MySQL), a unique index
+     * without every key column could match another row than the key's, which would be overwritten:
+     * refused, naming the index, unless {@code allow_other_unique_keys} is true.
+     */
+    private void checkOtherUniqueKeys(List<String> keyColumns) throws SQLException, StepException {
+        WriteSql.Sql all = sql.allUniqueKeys(target);
+        if (all == null || allowOtherUniqueKeys) {
+            return;
+        }
+        Map<String, List<String>> indexes = new LinkedHashMap<>();
+        try (PreparedStatement ps = prepare(all); ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                indexes.computeIfAbsent(rs.getString(1), i -> new ArrayList<>()).add(rs.getString(2));
+            }
+        }
+        List<String> others = new ArrayList<>();
+        indexes.forEach((index, columns) -> {
+            boolean coversKey = keyColumns.stream().allMatch(k -> columns.stream()
+                .anyMatch(c -> c != null && sql.sameName(c, k)));
+            if (!coversKey) {
+                others.add(index);
+            }
+        });
+        if (!others.isEmpty()) {
+            throw new StepException("Cannot upsert into " + target + " by (" + String.join(", ", keyColumns) + "): the "
+                + "unique " + (others.size() == 1 ? "index " : "indexes ") + String.join(", ", others) + " "
+                + (others.size() == 1 ? "does" : "do") + " not hold every key column, and a row matching "
+                + (others.size() == 1 ? "it" : "one of them") + " would be updated instead of inserted, even when its "
+                + "key is another row's. Set allow_other_unique_keys: true if updating such rows is intended, or "
+                + "upsert into a table whose other unique indexes include the key columns");
         }
     }
 
@@ -373,13 +424,27 @@ final class JdbcTableOutput implements Step {
             }
             default -> {
                 WritePlan.Plan plan = WritePlan.plan(input, targetColumns, required, key);
-                if (!plan.problems().isEmpty()) {
-                    throw new StepException(WritePlan.message(mode, target, plan.problems()));
+                List<String> problems = new ArrayList<>(plan.problems());
+                targetColumns.forEach(t -> targets.put(t.name(), t));
+                for (Binding b : plan.bindings()) {
+                    String misfit = sql.targetMisfit(b.input(), targets.get(b.target()));
+                    if (misfit != null) {
+                        problems.add(misfit);
+                    }
+                }
+                if (!problems.isEmpty()) {
+                    throw new StepException(WritePlan.message(mode, target, problems));
                 }
                 loadInto = target;
                 bindings = plan.bindings();
                 Map<String, String> types = new HashMap<>();
                 targetColumns.forEach(t -> types.put(t.name(), t.described()));
+                targetColumns.forEach(t -> {
+                    int digits = sql.fractionDigits(t);
+                    if (digits >= 0 && digits < 9) {
+                        fractionDigits.put(t.name(), digits);
+                    }
+                });
                 writtenTypes = bindings.stream().map(b -> types.get(b.target())).toList();
             }
         }
@@ -463,7 +528,7 @@ final class JdbcTableOutput implements Step {
      * over, the owner's rights on it), then the new table takes the target's name, waiting at most
      * {@code lock_timeout} for readers of the old table.
      */
-    private void swapIn() throws SQLException {
+    private void swapIn() throws SQLException, StepException {
         for (String s : sql.lockTimeout(lockTimeoutMillis)) {
             execute(new WriteSql.Sql(s));
         }
@@ -471,20 +536,43 @@ final class JdbcTableOutput implements Step {
             execute(new WriteSql.Sql(ownerSettable ? sql.setOwner(loadInto, oldOwner)
                 : sql.grantOwnerRights(loadInto, oldOwner)));
         }
-        List<WriteSql.Sql> steps = exists ? sql.swap(target, newName, "kiln_old_" + WriteSql.hexName())
+        String oldName = "kiln_old_" + WriteSql.hexName();
+        List<WriteSql.Sql> steps = exists ? sql.swap(target, newName, oldName)
             : List.of(sql.rename(loadInto, target.table()));
         for (int i = 0; i < steps.size(); i++) {
             if (exists && !sql.transactionalDdl() && i == steps.size() - 1) {
-                // The new table is in place and committed; dropping the old one is only tidying up.
+                // The new table is in place and committed; the old one goes last, by itself.
                 try {
                     execute(steps.get(i));
                 } catch (SQLException e) {
-                    // left for an administrator; its name starts kiln_old_
+                    oldTableKept(oldName, e);
                 }
             } else {
                 execute(steps.get(i));
             }
         }
+    }
+
+    /**
+     * Where DDL commits by itself, dropping the old table failed after the new one took its name.
+     * A foreign key still referring to it (on a table the login cannot see, so the checks before
+     * the write missed it) now points at the old table under its temporary name: the names are put
+     * back, so the key refers to the table it did, and the replace fails, the new table dropped with
+     * the run. Any other failure leaves the old table for an administrator, with a warning on the run.
+     */
+    private void oldTableKept(String oldName, SQLException e) throws SQLException, StepException {
+        WriteSql.Sql back = sql.swapBack(target, newName, oldName);
+        if (sql.foreignKeyRefused(e) && back != null) {
+            execute(back);
+            throw new StepException("Cannot replace " + target + ": a foreign key on another table refers to it, on a "
+                + "table this login has no rights on, so it could not be seen before writing. Replace drops the old "
+                + "table, which that key refuses, so " + target + " is unchanged and the new rows were not kept. Ask "
+                + "a database administrator to drop or change that foreign key, or empty the table yourself and use "
+                + "mode append (" + e.getMessage() + ")");
+        }
+        TableName old = new TableName(target.schema(), oldName);
+        report.warn("The new rows are in " + target + ", but the old table could not be dropped and is kept as " + old
+            + ": ask a database administrator to drop it");
     }
 
     @Override
@@ -597,6 +685,25 @@ final class JdbcTableOutput implements Step {
                     + "or filter it with a compute step, or ask for the column to be widened");
             }
             return exact;
+        }
+        Integer digits = fractionDigits.get(binding.target());
+        if (digits != null) {
+            int nanos = switch (v) {
+                case java.time.LocalDateTime t -> t.getNano();
+                case java.time.Instant t -> t.getNano();
+                case java.time.LocalTime t -> t.getNano();
+                default -> 0;
+            };
+            if (nanos % (int) Math.pow(10, 9 - digits) != 0) {
+                throw new StepException("Row " + rowNumber + ": the value " + v + " in column " + binding.target()
+                    + " has more digits of a second than the column keeps (" + digits + "), and is never rounded. "
+                    + "Truncate it with a compute step, or ask for the column to keep more");
+            }
+        }
+        TargetColumn into = targets.get(binding.target());
+        String misfit = into == null ? null : sql.targetValueProblem(into, v);
+        if (misfit != null) {
+            throw new StepException("Row " + rowNumber + ", column " + binding.target() + ": " + misfit);
         }
         if (v instanceof String s) {
             if (binding.maxLength() > 0 && sql.length(s) > binding.maxLength()) {
@@ -727,9 +834,18 @@ final class JdbcTableOutput implements Step {
                 s.unwrap(org.mariadb.jdbc.Statement.class).setLocalInfileInputStream(new java.io.ByteArrayInputStream(data));
                 long loaded = s.executeLargeUpdate(statement);
                 java.sql.SQLWarning w = s.getWarnings();
-                if (w != null || loaded != sent) {
+                // @@warning_count counts every warning, even where max_error_count keeps getWarnings() empty
+                long warnings = w == null ? 0 : 1;
+                try (Statement count = connection.createStatement();
+                     ResultSet rs = count.executeQuery("SELECT @@warning_count")) {
+                    if (rs.next()) {
+                        warnings = Math.max(warnings, rs.getLong(1));
+                    }
+                }
+                if (warnings > 0 || loaded != sent) {
                     throw new SQLException("The database loaded " + loaded + " of " + sent + " rows"
-                        + (w == null ? "" : " and warned: " + w.getMessage()));
+                        + (warnings == 0 ? "" : " with " + warnings + " warning" + (warnings == 1 ? "" : "s")
+                        + (w == null ? "" : ", the first: " + w.getMessage())));
                 }
             }
         }

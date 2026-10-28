@@ -6,6 +6,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -620,9 +621,9 @@ public class MySqlConnector extends JdbcConnector {
     }
 
     /**
-     * {@code commit_every}, {@code batch_size}, {@code text_length}, {@code lock_timeout} and
-     * {@code bulk_load}. There is no {@code keep_grants}: MySQL keeps a table's grants under its
-     * name, so a replaced table always has them.
+     * {@code commit_every}, {@code batch_size}, {@code text_length}, {@code lock_timeout},
+     * {@code bulk_load} and {@code allow_other_unique_keys}. There is no {@code keep_grants}: MySQL
+     * keeps a table's grants under its name, so a replaced table always has them.
      */
     @Override
     List<SettingSpec> writeOptionsOfOwn() {
@@ -639,28 +640,72 @@ public class MySqlConnector extends JdbcConnector {
                 "For replace: how long the swap waits for others using the old table"),
             WriteSettings.flag("bulk_load", "Bulk load", true,
                 "Load tables this step creates with LOAD DATA LOCAL INFILE, sent from memory, when the server allows "
-                    + "it (local_infile); otherwise, or when false, with batched inserts"));
+                    + "it (local_infile); otherwise, or when false, with batched inserts"),
+            WriteSettings.flag("allow_other_unique_keys", "Allow other unique keys", false,
+                "For upsert: a row matching any unique index is updated, not only one matching the key, so a table "
+                    + "with a unique index lacking a key column is refused. true allows it, accepting that such rows "
+                    + "are updated"));
     }
 
-    /** {@code database.table}, refused outside the source's database when it keeps to one. */
+    /**
+     * {@code database.table}, refused outside the source's database when it keeps to one; in lower
+     * case on a server that stores names so ({@code lower_case_table_names} not 0), as a scan
+     * records them.
+     */
     @Override
     public String writtenAssetPath(SourceConfig source, WriteOptions write) throws ConnectorException {
-        TableName t = TableName.parse(write.target());
-        checkDatabase(source, t);
+        TableName given = TableName.parse(write.target());
+        boolean folded = lowerCaseNames(source);
+        TableName t = asStored(folded, given);
+        checkDatabase(source, t, folded);
         return t.schema() + "." + t.table();
     }
 
     @Override
     public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+        WriteOptions w = write;
         if (write.target() != null && !write.target().isBlank()) {
-            checkDatabase(source, TableName.parse(write.target()));
+            TableName given = TableName.parse(write.target());
+            boolean folded = lowerCaseNames(source);
+            TableName t = asStored(folded, given);
+            checkDatabase(source, t, folded);
+            w = new WriteOptions(t.toString(), write.mode(), write.key(), write.format(), write.options(),
+                write.assetUrn(), write.profiling());
         }
-        return super.writer(source, write);
+        return super.writer(source, w);
     }
 
-    private static void checkDatabase(SourceConfig source, TableName t) throws ConnectorException {
+    /** {@code @@lower_case_table_names} by server address, read once per server. */
+    private final Map<String, Integer> lowerCaseTableNames = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Whether the server stores names in lower case and compares them so: {@code lower_case_table_names}
+     * not 0 (Windows and macOS servers, and Linux ones set so). False when the server cannot be
+     * reached: the write then says why it cannot connect.
+     */
+    private boolean lowerCaseNames(SourceConfig source) {
+        String url = jdbcUrl(source);
+        Integer mode = lowerCaseTableNames.get(url);
+        if (mode == null) {
+            try (Connection c = connect(source, Duration.ofSeconds(10)); Statement st = c.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT @@lower_case_table_names")) {
+                mode = rs.next() ? rs.getInt(1) : 0;
+                lowerCaseTableNames.put(url, mode);
+            } catch (SQLException | RuntimeException e) {
+                return false;
+            }
+        }
+        return mode != 0;
+    }
+
+    /** {@code t} as the server stores it: in lower case when it {@code folded} names. */
+    static TableName asStored(boolean folded, TableName t) {
+        return folded ? new TableName(t.schema().toLowerCase(Locale.ROOT), t.table().toLowerCase(Locale.ROOT)) : t;
+    }
+
+    private static void checkDatabase(SourceConfig source, TableName t, boolean folded) throws ConnectorException {
         String only = source.setting("database");
-        if (only != null && !only.equals(t.schema())) {
+        if (only != null && !(folded ? only.equalsIgnoreCase(t.schema()) : only.equals(t.schema()))) {
             throw new ConnectorException("table: this source keeps to the database " + only + ", so write to "
                 + only + "." + t.table() + " rather than " + t);
         }
@@ -668,7 +713,8 @@ public class MySqlConnector extends JdbcConnector {
 
     /**
      * The table's columns from {@code information_schema.COLUMNS}, which a login sees with any
-     * privilege on them, so a login that may only insert can still append.
+     * privilege on them, so a login that may only insert can still append. For DATETIME, TIMESTAMP
+     * and TIME columns the scale is the digits of a second they keep ({@code DATETIME_PRECISION}).
      */
     @Override
     List<WritePlan.TargetColumn> targetColumns(Connection connection, SourceConfig source, TableName table)
@@ -676,7 +722,8 @@ public class MySqlConnector extends JdbcConnector {
         boolean tinyint = tinyint1AsBoolean(source);
         List<WritePlan.TargetColumn> out = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement("SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, "
-            + "NUMERIC_PRECISION, NUMERIC_SCALE, CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS WHERE "
+            + "NUMERIC_PRECISION, NUMERIC_SCALE, CHARACTER_MAXIMUM_LENGTH, DATETIME_PRECISION FROM information_schema.COLUMNS "
+            + "WHERE "
             + "TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION")) {
             ps.setString(1, table.schema());
             ps.setString(2, table.table());
@@ -689,8 +736,11 @@ public class MySqlConnector extends JdbcConnector {
                     boolean varchar = type.name().equals("varchar") || type.name().equals("char");
                     int maxLength = varchar && chars != null && chars > 0 && chars < 1_000_000 ? chars.intValue() : 0;
                     String typeName = type.name() + (type.unsigned() ? " unsigned" : "");
+                    Long fraction = longOrNull(rs, 7);
+                    boolean temporal = Set.of("datetime", "timestamp", "time").contains(type.name());
+                    int scale = temporal ? (fraction == null ? 0 : fraction.intValue()) : m.scale();
                     out.add(new WritePlan.TargetColumn(rs.getString(1), typeName, m.kind(),
-                        m.kind() == JdbcColumn.Kind.DECIMAL ? m.precision() : maxLength, m.scale(), maxLength));
+                        m.kind() == JdbcColumn.Kind.DECIMAL ? m.precision() : maxLength, scale, maxLength));
                 }
             }
         }
