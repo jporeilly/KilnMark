@@ -28,6 +28,7 @@ NETWORK=kilnmark     # created by Kilnmark's own compose.yaml
 SOURCES='postgres|lab-postgres|||5433|lab-db|PostgreSQL 18: database lab (crm, billing)
 s3|lab-s3|||9000|lab-bucket|S3-compatible storage (VersityGW): bucket lab-raw
 sqlserver|lab-sqlserver|lab-sqlserver-init|lab-sqlserver-data|14330|lab-sqlserver|SQL Server 2022: database labdb (sales, hr, ops)
+mariadb|lab-mariadb||lab-mariadb-data|3307|lab-mariadb|MariaDB 11.4: databases shop and stock (orders, inventory)
 mail|lab-mailpit|||8025|-|Mailpit: catches the emails Kilnmark sends (SMTP 1025), read them at http://localhost:8025
 files||||-|lab-share|File share lab/files/share, read from disk (mounted at /srv/files)'
 

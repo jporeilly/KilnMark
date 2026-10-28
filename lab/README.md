@@ -31,7 +31,7 @@ then only the demo sources you want:
 | `logs <name>` | The last 100 lines of its containers' logs |
 | `sources` | Where `lab/sources.csv` is, and how to import it |
 
-Demo sources: `postgres`, `s3`, `sqlserver` and `files` (nothing to start: Kilnmark reads the
+Demo sources: `postgres`, `s3`, `sqlserver`, `mariadb`, `mail` and `files` (nothing to start: Kilnmark reads the
 share from disk). An unknown name lists the right ones. The scripts use Podman if it is on the
 PATH and Docker otherwise, need no administrator rights, and exit with a non-zero code when
 something fails. `.\build.ps1 -Lab` starts every demo source after a build, and
@@ -59,9 +59,10 @@ nothing: before the profiles it started the whole lab, so add `--profile all` to
 | File share | `lab/files/share` on disk | none |
 | Mail server (Mailpit), demo source `mail` | SMTP `localhost:1025`, web page http://localhost:8025 | none (any user name and password are accepted) |
 | SQL Server 2022 Developer | `localhost,14330`, database `labdb` | `kiln_reader` / `Lab-Reader-2026` (read-only) |
+| MariaDB 11.4 | `localhost:3307`, databases `shop` and `stock` | `kiln_reader` / `Lab-Reader-2026` (read-only) |
 
 These are lab-only credentials for local testing (the SQL Server logins are under
-[SQL Server](#sql-server)). The `lab` login owns the lab database, which is fine for a lab; for
+[SQL Server](#sql-server), the MariaDB ones under [MariaDB](#mariadb)). The `lab` login owns the lab database, which is fine for a lab; for
 real sources, register a read-only login that is not a superuser (see
 "Security" in docs/development.md): data quality rules run as that login, and custom SQL rules
 can read anything it can see.
@@ -103,7 +104,7 @@ the lab is stopped with `down -v`.
 ## Register the lab in one go
 
 `lab/sources.csv` lists the lab sources as you see them from this machine (`localhost:5433`,
-`localhost:9000`, `localhost:14330`; `lab-warehouse` is a bucket on the same server as `lab-bucket`); `./lab/lab.sh sources` prints its path. Sources you have
+`localhost:9000`, `localhost:14330`, `localhost:3307`; `lab-warehouse` is a bucket on the same server as `lab-bucket`); `./lab/lab.sh sources` prints its path. Sources you have
 not started are still added, but their connection test fails until you start them. In Kilnmark,
 open **Sources > Import sources from a file**, choose the file, tick **Rewrite host names for this
 server** and, if you like, **Test each connection** and **Queue a scan**, then press **Import**. The compose stack's host map (`KILNMARK_SOURCES_HOST_MAP`, by default
@@ -123,7 +124,7 @@ source's page). Nothing needs editing after the import. Only turn that setting o
 
 ## Somewhere for pipelines to write
 
-The lab's data is what discovery is tested against, so `lab-db`, `lab-bucket`, `lab-share` and `lab-sqlserver` stay
+The lab's data is what discovery is tested against, so `lab-db`, `lab-bucket`, `lab-share`, `lab-sqlserver` and `lab-mariadb` stay
 read-only to pipelines: the file registers them without **Allow writing**. Pipelines write to
 `lab-warehouse` instead, a second bucket on the same VersityGW server, with the same endpoint and
 credentials as `lab-bucket`.
@@ -209,6 +210,24 @@ every time): a small field-service company that sells and services equipment.
 Tables with personal data say so in their description (`MS_Description`), and their columns carry
 SQL Server sensitivity classifications. Two first names use non-ASCII letters (Zoë, Søren).
 
+**MariaDB** (`lab/mariadb/01-shop.sql`, databases `shop` and `stock`, loaded on first start, same
+rows every time): an online shop selling home and garden goods, using MySQL's own types (`UNSIGNED`
+integers, `ENUM`, `SET`, `JSON`, `YEAR`, `TINYINT(1)`, `DATETIME(3)`, `BLOB`).
+
+| Table | Rows | Notes |
+| --- | --- | --- |
+| `shop.customers` | 600 | Personal data (name, email, phone, date of birth, postcode). `TINYINT(1)` and `BOOLEAN` flags, `ENUM` loyalty tier, unique customer code |
+| `shop.orders` | 2,000 | Foreign key to customers. `ENUM` status, `SET` channel, `DATETIME(3)`, unsigned `DECIMAL` |
+| `shop.order_lines` | 4,000 | Two-column primary key; `product_id` names a product in `stock` with no declared key |
+| `shop.v_order_totals` | 2,000 | A view: one row per order with its total |
+| `stock.warehouses` | 4 | `YEAR` opened |
+| `stock.products` | 120 | `SET` tags, `JSON` attributes, `YEAR` launch year, `BLOB` image for a few, unique SKU |
+| `stock.stock_levels` | 480 | Two-column key, foreign keys to products and warehouses |
+| `stock.stock_movements` | 3,000 | Receipts, picks, transfers and adjustments, with signed quantities |
+| `stock.supplier_feed` | 123 | A heap with no primary key, loaded from a supplier |
+
+The database `warehouse` is empty, for pipelines to write to with the `kiln_writer` login.
+
 ## What discovery should find (the answer key)
 
 | Finding | Where |
@@ -228,6 +247,16 @@ SQL Server sensitivity classifications. Two first names use non-ASCII letters (Z
 | Inconsistent phone formats | SQL Server: `(201) 555-0123`, `201-555-0123`, `+1 201 555 0123`, `201.555.0123` and `2015550123` side by side in every phone column |
 | Declared keys | SQL Server: orders to customers and employees, lines to orders and products, equipment and work orders to customers |
 | Copy of customer data | SQL Server `ops.customer_import_staging` (half of `sales.customers`) |
+| Name, email, phone, date of birth, postcode | MariaDB `shop.customers` |
+| Null emails | MariaDB: 16 in `shop.customers` (customer ids divisible by 37) |
+| Zero dates, read as null | MariaDB `shop.customers.date_of_birth` 0000-00-00 for customers 50, 150 and 250 |
+| Out-of-range dates | MariaDB `shop.orders.ordered_at` in 1900 (orders 404 and 1212) and 2099 (order 777) |
+| Negative stock | MariaDB `stock.stock_levels`: product 13 in warehouse 2 holds -4 |
+| Duplicate keys, no primary key | MariaDB `stock.supplier_feed`: SKUs `SKU-00040`, `SKU-00080` and `SKU-00120` twice each |
+| Inconsistent JSON | MariaDB `stock.products.attributes`: `weight_g` in grams for most, `weight` as text ("1.2 kg") for products 7, 70 and 107 |
+| Declared keys | MariaDB: orders to customers, lines to orders, stock levels and movements to products and warehouses |
+| Undeclared join across databases | MariaDB `shop.order_lines.product_id` to `stock.products` (proposed) |
+| True or false columns | MariaDB `TINYINT(1)` columns (`is_active`, `gift_wrap`, `discontinued`, `in_stock`) read as booleans |
 
 ## SQL Server
 
@@ -268,6 +297,31 @@ Studio, tick **Trust server certificate**). The port is 14330 so it never clashe
 you already run. The database allows snapshot isolation, so the connector's `isolation` setting can be tried
 with `snapshot`.
 
+## MariaDB
+
+Started with `.\lab\lab.ps1 start mariadb` (or `./lab/lab.sh start mariadb`). It is the official
+MariaDB 11.4 image, the same tag the MariaDB tests pin. Kilnmark's `mariadb` kind reads it; the
+`mysql` kind reads MySQL 8.0.19 and later through the same driver.
+
+- **Port 3307.** From this machine the server is `localhost:3307`, so it never clashes with a MySQL
+  or MariaDB you already run on 3306. From Kilnmark, in the compose stack, it is host
+  `lab-mariadb`, port `3306`.
+- **First start.** The image is about 110 MB to download. The data loads in a few seconds on the
+  first start (`logs mariadb` shows `ready for connections` twice: once for the load, once for
+  the server); later starts skip it. TLS is off, so the source's default TLS mode (`preferred`)
+  connects without it.
+- **Reset.** `.\lab\lab.ps1 reset mariadb` deletes the `lab_lab-mariadb-data` volume and loads
+  the data again.
+
+| Login | Password | Can |
+| --- | --- | --- |
+| `kiln_reader` | `Lab-Reader-2026` | Read `shop` and `stock` (`SELECT`, `SHOW VIEW`). What Kilnmark scans with |
+| `kiln_writer` | `Lab-Writer-2026` | Create, fill and drop tables in database `warehouse` only, for pipeline writes |
+| `root` | `Lab-Admin-2026` | Everything |
+
+These passwords are for the lab only. `lab/sources.csv` registers it as `lab-mariadb` with host
+`localhost`, port `3307` and the databases `shop` and `stock`.
+
 ## Profiles: one per demo source
 
 Every service in `lab/compose.yaml` belongs to two profiles: the demo source's name and `all`.
@@ -278,8 +332,7 @@ Every service in `lab/compose.yaml` belongs to two profiles: the demo source's n
 ```
 
 A source's set-up or seed jobs share its profile (`lab-sqlserver-init` is in `sqlserver`). The
-names so far: `postgres`, `s3`, `sqlserver`, with `mariadb` (MariaDB on port 3307) and `mail`
-(Mailpit) coming. A source that needs nothing running, like `files`, has no profile. Ports avoid
+names so far: `postgres`, `s3`, `sqlserver`, `mariadb` and `mail` (Mailpit). A source that needs nothing running, like `files`, has no profile. Ports avoid
 8080, 8780 and 3306.
 
 Adding a demo source:
@@ -304,7 +357,7 @@ in [docs/design/connector-catalogue.md](../docs/design/connector-catalogue.md).
 | Delimited, JSON and Parquet files | the bucket's `exports/`, `raw/` and `finance/` | 9000 | `lab-bucket` | Present |
 | Documents and Excel | `documents/` in the file share (and the bucket) | none | `lab-share` | Present |
 | SQL Server | `lab-sqlserver` (profile `sqlserver`) | 14330 | `lab-sqlserver` | Present |
-| MySQL and MariaDB | MariaDB (profile `mariadb`) | 3307 | to come | On another branch |
+| MySQL and MariaDB | `lab-mariadb`, MariaDB 11.4 (profile `mariadb`) | 3307 | `lab-mariadb` | Present (MySQL 8.4 is covered by the tests) |
 | Oracle | | | | Lab dataset due with the connector (wave 1) |
 | Generic JDBC | | | | Lab dataset due with the connector (wave 1) |
 | SMB / Windows share | | | | Lab dataset due with the connector (wave 1) |
@@ -345,6 +398,10 @@ VersityGW, the S3 server, is Apache 2.0. It serves `lab/files/bucket` as a bucke
 there is nothing to upload. (MinIO's images stopped being publicly available in 2026.) Mailpit,
 the mail catcher, is MIT. Both are local test tools and are never shipped with Kilnmark
 ([ADR 0007](../docs/adr/0007-dependency-policy.md)).
+
+MariaDB's server is GPL 2.0. It runs only in the lab's container, as a separate program Kilnmark
+talks to over the network, and is never shipped with Kilnmark; the driver Kilnmark ships is the
+LGPL MariaDB Connector/J ([ADR 0007](../docs/adr/0007-dependency-policy.md)).
 
 SQL Server is Microsoft's, used under its Developer edition licence, which starting the
 `sqlserver` demo source accepts (see [SQL Server](#sql-server)). The image is pulled from

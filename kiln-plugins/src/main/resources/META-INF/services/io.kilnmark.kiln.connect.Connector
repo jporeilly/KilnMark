@@ -2,3 +2,5 @@ io.kilnmark.kiln.plugins.jdbc.PostgresConnector
 io.kilnmark.kiln.plugins.jdbc.SqlServerConnector
 io.kilnmark.kiln.plugins.files.FilesConnector
 io.kilnmark.kiln.plugins.files.S3Connector
+io.kilnmark.kiln.plugins.jdbc.MySqlConnector
+io.kilnmark.kiln.plugins.jdbc.MariaDbConnector

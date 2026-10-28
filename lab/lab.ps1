@@ -47,6 +47,8 @@ $Sources = @(
     [pscustomobject]@{ Name = 'sqlserver'; Services = @('lab-sqlserver'); OneShot = @('lab-sqlserver-init')
         Volumes = @('lab-sqlserver-data')
         Port = '14330'; Source = 'lab-sqlserver'; What = 'SQL Server 2022: database labdb (sales, hr, ops)' }
+    [pscustomobject]@{ Name = 'mariadb'; Services = @('lab-mariadb'); OneShot = @(); Volumes = @('lab-mariadb-data')
+        Port = '3307'; Source = 'lab-mariadb'; What = 'MariaDB 11.4: databases shop and stock (orders, inventory)' }
     [pscustomobject]@{ Name = 'mail'; Services = @('lab-mailpit'); OneShot = @(); Volumes = @()
         Port = '8025'; Source = '-'; What = "Mailpit: catches the emails Kilnmark sends (SMTP 1025), read them at http://localhost:8025" }
     [pscustomobject]@{ Name = 'files'; Services = @(); OneShot = @(); Volumes = @()

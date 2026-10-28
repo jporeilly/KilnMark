@@ -36,7 +36,8 @@ import io.kilnmark.kiln.plugins.profile.ProfileStep;
  * <p>Profiling never fails a write. If it fails (bad profiling settings, or an error profiling a
  * batch or computing the profile), profiling stops, the write goes on, and the {@code ROW_COUNT}
  * event says {@code profiled=false} with {@code profile_error}, the reason, which the server can
- * show as a note; no {@code PROFILE} or {@code SAMPLE} events follow.
+ * show as a note; no {@code PROFILE} or {@code SAMPLE} events follow. A write that succeeded but
+ * left something for a person to attend to says so in {@code write_warning} on the same event.
  */
 public final class WriteReport {
 
@@ -46,10 +47,18 @@ public final class WriteReport {
     /** {@code ROW_COUNT} attribute, with {@link #PROFILED} {@code false}: why, in words a person can read. */
     public static final String PROFILE_ERROR = "profile_error";
 
+    /**
+     * {@code ROW_COUNT} attribute: something a person should attend to although the write succeeded
+     * (a database table it could not tidy away), in words a person can read; the server shows it as a
+     * note on the run.
+     */
+    public static final String WRITE_WARNING = "write_warning";
+
     private final String assetUrn;
     private final boolean wholeAsset;
     private ProfileStep profile;
     private String profileError;
+    private String warning;
     private long rows;
 
     /**
@@ -107,6 +116,11 @@ public final class WriteReport {
         return rows;
     }
 
+    /** Records a warning for the run ({@link #WRITE_WARNING}); a later one is added to it. */
+    public void warn(String text) {
+        warning = warning == null ? text : warning + "; " + text;
+    }
+
     /** Why profiling stopped, or null while it works. */
     public String profileError() {
         return profileError;
@@ -135,6 +149,9 @@ public final class WriteReport {
         Map<String, String> count = new LinkedHashMap<>();
         count.put("rows", Long.toString(rows));
         count.put("written", "true");
+        if (warning != null) {
+            count.put(WRITE_WARNING, warning);
+        }
         if (!wholeAsset) {
             count.put("complete", "false");
             count.put("appended", "true");

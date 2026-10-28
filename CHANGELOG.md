@@ -13,6 +13,13 @@ details.
   your sources, tables and columns, with problems shown on the step and setting they are about.
   The canvas and the YAML are the same pipeline, so a change in one shows in the other. After a
   run, each step shows its rows and how it ended. Everything works from the keyboard too.
+- **MySQL and MariaDB.** Add MySQL (8.0.19 and later) or MariaDB (10.6 and later) as a source by
+  host, port and database: Kilnmark discovers and profiles their databases, reads their tables in
+  pipelines and writes to them in every mode. MySQL's own types are understood: `UNSIGNED`
+  numbers, `ENUM`, `SET`, `JSON`, `YEAR`, and `TINYINT(1)` read as true or false. The driver is
+  included, so there is nothing to install. Writes never change data silently: an upsert that could
+  overwrite another row through a second unique index, a time with more fractions of a second than
+  its column keeps, or a replace that a hidden foreign key would break stops with a plain message.
 - **Every connection setting has the right control.** On and off settings, such as trusting a
   test server's certificate, are switches; settings with a fixed set of values, such as SQL
   Server's read isolation, are lists; and saving says plainly when a value is the wrong kind,
@@ -36,6 +43,35 @@ details.
   **Readable size**. Undo also covers typing in the YAML tab and loading the latest version after a
   save conflict, which now keeps your version one undo away; moving steps alone no longer makes
   **Run now** ask about unsaved changes.
+- **MySQL and MariaDB connector** (kinds `mysql` and `mariadb`), through MariaDB Connector/J
+  3.5.10 (LGPL 2.1, allowed for that module only: ADR 0007; the licence's text now ships in the
+  release's `licenses/` folder, named in NOTICE). Settings `host`, `port`, `database`,
+  `username`, `tls_mode` (`preferred` by default), `server_ca` and `tinyint1_as_boolean`, with
+  kinds declared; no driver property can be set by people. Zero dates read as null and are
+  counted; `TIME` reads as text. Writes: `create`, `append`, `upsert` (`ON DUPLICATE KEY UPDATE`)
+  and `replace` (an atomic `RENAME TABLE`), with `LOAD DATA LOCAL INFILE` for tables the step
+  creates when the server allows it. The connection form shows their host, port and database once
+  (`addressFields` is false for connectors whose own settings hold the host). Tests against
+  MySQL 8.4.10 and MariaDB 11.4.12 run in CI's heavy-databases job.
+- **MySQL and MariaDB writes, after review.** Sessions use a fixed `sql_mode`
+  (`STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION`),
+  never the server's. Upsert refuses a table with another unique index that lacks a key column,
+  naming it, unless `allow_other_unique_keys: true` (a new writer setting). Replace refuses
+  engines other than InnoDB, Aria and MyISAM, and tables whose triggers the login cannot be shown
+  to see (with a role active too); it reads foreign keys from `INNODB_FOREIGN` /
+  `INNODB_SYS_FOREIGN` when the login has `PROCESS`, and when a key it could not see refuses the
+  old table's drop, puts both names back and fails. Any other leftover `kiln_old_…` table is a
+  note on the run (`write_warning` on the writer's `ROW_COUNT`). Per value: `DATETIME(p)`,
+  `TIMESTAMP(p)` and `TIME(p)` refuse extra digits of a second (PostgreSQL `timestamp(p)` and
+  `time(p)` too); `TIME` takes only times and text; `YEAR` takes 1901 to 2155. `LOAD DATA` checks
+  `@@warning_count`. On servers with `lower_case_table_names` set, targets are written and recorded
+  in lower case.
+- **Lab: MariaDB** (development). `lab-mariadb` (MariaDB 11.4.12, profiles `mariadb` and `all`) on
+  host port 3307, with synthetic shop orders and inventory in databases `shop` and `stock` and
+  planted quality problems (null emails, zero dates, out-of-range dates, a negative stock level,
+  duplicate SKUs in a table without a key, inconsistent JSON), an empty `warehouse` database for
+  pipeline writes, a `lab-mariadb` row in `lab/sources.csv` and `mariadb` in `lab.ps1` and
+  `lab.sh`.
 - **Setting kinds.** `Connector.Setting` has a kind (`TEXT`, `NUMBER`, `BOOLEAN`, `CHOICE` or
   the new `URL`, from `SettingSpec.Kind`), its choices and its default; the old constructor gives
   `TEXT`. Every built-in connector declares them, and the settings every source has carry a kind

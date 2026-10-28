@@ -23,7 +23,8 @@ import io.kilnmark.kiln.plugins.write.TextForm;
 import io.kilnmark.kiln.plugins.write.WriteColumn;
 
 /**
- * The SQL a database writer runs, for PostgreSQL and SQL Server. Every identifier goes through
+ * The SQL a database writer runs, for PostgreSQL and SQL Server here and MySQL and MariaDB in
+ * {@link MySqlWriteSql}. Every identifier goes through
  * {@link SqlDialect#quote}; values are never written into SQL: they are bound as parameters, or
  * (PostgreSQL's {@code COPY}) streamed as CSV data. The catalogue queries take the table's quoted
  * name as a parameter.
@@ -71,11 +72,33 @@ abstract class WriteSql {
     /** Whether two column names are the same column (SQL Server's usual collations ignore case). */
     abstract boolean sameName(String a, String b);
 
+    /**
+     * For a timestamp or time column of an existing table, how many digits of a second it keeps, so
+     * a value with more is refused rather than rounded or cut; -1 (the default) when the database
+     * refuses such values itself or keeps microseconds.
+     */
+    int fractionDigits(WritePlan.TargetColumn column) {
+        return -1;
+    }
+
+    /**
+     * Why the input column {@code c} cannot go into {@code t} although {@link WritePlan#misfit}
+     * accepts it (a database type that reads as text but parses values its own way), or null.
+     */
+    String targetMisfit(WriteColumn c, WritePlan.TargetColumn t) {
+        return null;
+    }
+
+    /** Why the converted value {@code v} cannot go into {@code t}, or null (a YEAR column's range). */
+    String targetValueProblem(WritePlan.TargetColumn t, Object v) {
+        return null;
+    }
+
     /** The column type a table created from the input gets. */
     abstract String columnType(WriteColumn c, int textLength);
 
     /** {@code CREATE TABLE} with every input column, all allowing nulls. */
-    final String createTable(TableName t, List<WriteColumn> columns, int textLength) {
+    String createTable(TableName t, List<WriteColumn> columns, int textLength) {
         return "CREATE TABLE " + table(t) + " (" + columns.stream()
             .map(c -> quote(c.name()) + " " + columnType(c, textLength)).collect(Collectors.joining(", ")) + ")";
     }
@@ -122,6 +145,38 @@ abstract class WriteSql {
     }
 
     /**
+     * Where an upsert's insert turns into an update on a conflict with any unique index, not only
+     * the key's (MySQL's {@code ON DUPLICATE KEY UPDATE}): every unique index of the table, as rows
+     * (index, column), the column null for a part that is a prefix or an expression. Null (the
+     * default) where only the key's index decides.
+     */
+    Sql allUniqueKeys(TableName t) {
+        return null;
+    }
+
+    /**
+     * Foreign keys on the table that {@link #blockers} may not see (MySQL lists only those on
+     * tables the login has rights on), one reason a row; null when there is no other place to look.
+     * A failure to read it (a missing privilege) is ignored.
+     */
+    Sql hiddenBlockers(TableName t) {
+        return null;
+    }
+
+    /** Whether dropping the old table failed because a foreign key still refers to it. */
+    boolean foreignKeyRefused(SQLException e) {
+        return false;
+    }
+
+    /**
+     * Where DDL commits by itself: the statement putting the old table back after {@link #swap}
+     * renamed it, the new table taking {@code newName} again; null where the swap is one transaction.
+     */
+    Sql swapBack(TableName target, String newName, String oldName) {
+        return null;
+    }
+
+    /**
      * Why replace cannot swap the table, one reason a row as a clause ("the view x depends on it",
      * "it is a partition of y"): it is not a plain table, it is part of a partition or inheritance
      * tree, or other objects depend on it that dropping the old table would break.
@@ -164,7 +219,7 @@ abstract class WriteSql {
     abstract String grant(TableName to, java.sql.ResultSet row) throws SQLException;
 
     /** Swaps the new table in: the old one is renamed out of the way, the new one takes its name, the old one goes. */
-    final List<Sql> swap(TableName target, String newName, String oldName) {
+    List<Sql> swap(TableName target, String newName, String oldName) {
         return List.of(rename(target, oldName), rename(new TableName(target.schema(), newName), target.table()),
             new Sql(drop(new TableName(target.schema(), oldName))));
     }
@@ -230,6 +285,48 @@ abstract class WriteSql {
         return null;
     }
 
+    /** Why a value of {@code kind} cannot be sent, or null: by default only {@link #textProblem} for text. */
+    String valueProblem(Kind kind, Object v) {
+        return v instanceof String s ? textProblem(s) : null;
+    }
+
+    /** Rows sent at a time when the step does not say ({@code batch_size}). */
+    int defaultBatchSize(String mode) {
+        return 1000;
+    }
+
+    /** The longest {@code text_length} a create may ask for. */
+    long maxTextLength() {
+        return 10_485_760;
+    }
+
+    /** Whether rows go through the driver's or database's bulk path for this mode and these settings. */
+    boolean bulk(String mode, io.kilnmark.kiln.plugins.write.WriteSettings settings)
+        throws io.kilnmark.kiln.connect.ConnectorException {
+        return false;
+    }
+
+    /**
+     * Whether CREATE, RENAME and DROP take part in the write's transaction (PostgreSQL, SQL
+     * Server). Where they commit by themselves (MySQL), a created table is filled under a
+     * temporary name and dropped again after a failure.
+     */
+    boolean transactionalDdl() {
+        return true;
+    }
+
+    /** Sets up a write's session before anything else runs (MySQL's strict mode); nothing by default. */
+    void prepareSession(java.sql.Connection connection) throws SQLException {
+        // nothing to set
+    }
+
+    /** Why upsert by {@code key} is refused when no unique index matches, with what to ask for. */
+    String keyIndexAdvice(TableName t, List<String> key) {
+        return "PostgreSQL finds the existing row through a unique index or primary key on exactly those columns, "
+            + "and the table has none. Ask a database administrator to add one, for example CREATE UNIQUE INDEX ON "
+            + table(t) + " (" + columnList(key) + ")";
+    }
+
     static String hexName() {
         return Long.toHexString(new java.security.SecureRandom().nextLong() >>> 1);
     }
@@ -246,6 +343,18 @@ abstract class WriteSql {
         @Override
         SqlDialect dialect() {
             return SqlDialect.POSTGRESQL;
+        }
+
+        /**
+         * {@code timestamp(p)}, {@code timestamptz(p)} and {@code time(p)} with p below 6 round what
+         * they cannot keep; the driver reports p as the scale (6 when not declared).
+         */
+        @Override
+        int fractionDigits(WritePlan.TargetColumn column) {
+            return switch (column.kind()) {
+                case TIME, TIMESTAMP, TIMESTAMP_TZ -> column.scale() >= 0 && column.scale() < 6 ? column.scale() : -1;
+                default -> -1;
+            };
         }
 
         @Override
@@ -580,6 +689,24 @@ abstract class WriteSql {
 
     /** SQL Server: DDL in transactions, {@code sp_rename}, {@code MERGE … WITH (HOLDLOCK)}. */
     static final class SqlServer extends WriteSql {
+
+        /** Inserts go 5,000 at a time; upserts (one MERGE each) 1,000. */
+        @Override
+        int defaultBatchSize(String mode) {
+            return mode.equals("upsert") ? 1000 : 5000;
+        }
+
+        @Override
+        long maxTextLength() {
+            return 4000;
+        }
+
+        /** The driver's bulk copy, for tables the step creates, unless {@code bulk_copy} is false. */
+        @Override
+        boolean bulk(String mode, io.kilnmark.kiln.plugins.write.WriteSettings settings)
+            throws io.kilnmark.kiln.connect.ConnectorException {
+            return (mode.equals("create") || mode.equals("replace")) && settings.bool("bulk_copy", true);
+        }
 
         private static final Set<String> PERMISSIONS = Set.of("SELECT", "INSERT", "UPDATE", "DELETE", "REFERENCES",
             "ALTER", "CONTROL", "TAKE OWNERSHIP", "VIEW DEFINITION", "VIEW CHANGE TRACKING");

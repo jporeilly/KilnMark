@@ -47,7 +47,8 @@ import org.apache.arrow.vector.types.pojo.FieldType;
  * SQL Server's spatial types, hierarchyid, sql_variant and the like) are read as text, so nothing
  * is dropped.
  */
-public record JdbcColumn(String name, String sourceType, Kind kind, ArrowType arrowType, int scale) {
+public record JdbcColumn(String name, String sourceType, Kind kind, ArrowType arrowType, int scale)
+    implements JdbcTableInput.ColumnReader {
 
     /** The engine's view of a column, which decides how it is copied and profiled. */
     public enum Kind { BOOLEAN, INT16, INT32, INT64, FLOAT32, FLOAT64, DECIMAL, TEXT, BINARY, DATE, TIME,
@@ -74,6 +75,7 @@ public record JdbcColumn(String name, String sourceType, Kind kind, ArrowType ar
     /** Bytes in a text column are written as SQL Server shows them: {@code 0xCAFE}. */
     private static final HexFormat HEX = HexFormat.of().withUpperCase();
 
+    @Override
     public Field field() {
         return new Field(name, FieldType.nullable(arrowType), null);
     }
@@ -121,6 +123,7 @@ public record JdbcColumn(String name, String sourceType, Kind kind, ArrowType ar
     }
 
     /** Copies column {@code col} (1-based) of the current row into {@code vector} at {@code row}. */
+    @Override
     public void copy(ResultSet rs, int col, FieldVector vector, int row) throws SQLException {
         switch (kind) {
             case BOOLEAN -> {
