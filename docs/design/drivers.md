@@ -112,7 +112,7 @@ of Kilnmark pinning the jar, **an admin vouches for it** ([ADR 0025](../adr/0025
    trust and key stores; `javax.*`; `tns_admin`) can never be allowed.
 3. Kilnmark reads the jar, loads the class from a private copy in a class loader of its own (a jar
    without that driver is refused at once), and records the jar's **SHA-256** with who registered
-   it and when (`driver_registration`, migration V16). The class is loaded without
+   it and when (`driver_registration`, migration V18). The class is loaded without
    running its initialisers until it is known to implement `java.sql.Driver`. A pinned driver's jar
    cannot be registered, by its name or under another (its checksum is compared). Jars are read
    without following links, at most 200 MB.

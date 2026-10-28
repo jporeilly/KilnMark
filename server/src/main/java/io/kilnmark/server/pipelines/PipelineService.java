@@ -84,6 +84,17 @@ public class PipelineService {
     @Inject
     io.kilnmark.server.notify.NotificationPublisher notifications;
 
+    /** The catalogue's metadata, for predicted quality (docs/design/data-quality.md section 8). */
+    @Inject
+    PredictionCatalogue predictions;
+
+    /** The AI model for suggestions, and each source's AI rule. */
+    @Inject
+    io.kilnmark.server.ai.AiGateway ai;
+
+    @Inject
+    io.kilnmark.server.ai.EgressPolicy egress;
+
 
     @Inject
     public PipelineService(PipelineStore store, PipelineCompilerPort compiler, StepFactories steps, GraphRunner runner,
@@ -192,6 +203,155 @@ public class PipelineService {
         } catch (JsonProcessingException e) {
             return List.of();
         }
+    }
+
+    // ---- predicted quality and suggestions ----
+
+    /**
+     * The predicted quality of pipeline YAML as it is being edited: each write's and gate's score
+     * and the rows on each port, estimated from the catalogue's metadata about what it reads. Never
+     * reads a source.
+     */
+    public PredictionViews.Prediction predict(String yaml, Sights sights) {
+        checkSize(yaml);
+        PipelineCompilerPort.Compilation c = compiler.check(yaml, steps);
+        PredictionCatalogue.Remembering catalogue = predictions.open(sights);
+        QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
+        return PredictionViews.of(new QualityPredictor(catalogue).predict(plan), c.valid());
+    }
+
+    /**
+     * The assets read, by step, before a run resolves them: as the settings name them, or, when the
+     * catalogue has nothing under that name and the path is a file's, under the path as the catalogue
+     * escapes it ({@code #} and {@code %}), as a run's read step finds it.
+     */
+    static Map<String, String> designReads(PipelineCompilerPort.Compilation c, QualityPredictor.Catalogue catalogue) {
+        Map<String, String> out = new LinkedHashMap<>(PipelineExecution.reads(c));
+        for (Map.Entry<String, String> r : out.entrySet()) {
+            Map<String, Object> config = c.configs().getOrDefault(r.getKey(), Map.of());
+            String source = PipelineSources.text(config, "source");
+            String asset = PipelineSources.text(config, "asset");
+            if (asset == null || catalogue.facts(r.getValue()) != null) {
+                continue;
+            }
+            String escaped = PipelineSources.urn(source, ReadStepFactory.escapedFilePath(asset));
+            if (escaped != null && !escaped.equals(r.getValue()) && catalogue.facts(escaped) != null) {
+                r.setValue(escaped);
+            }
+        }
+        return out;
+    }
+
+    /** Most calls to the suggestions model per person in {@link #MODEL_WINDOW}. */
+    static final int MODEL_CALLS = 6;
+    static final java.time.Duration MODEL_WINDOW = java.time.Duration.ofMinutes(1);
+    private final Map<String, java.util.ArrayDeque<Long>> modelCalls = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Whether {@code caller} may ask the suggestions model now; counts the call when so. */
+    boolean mayAskModel(String caller) {
+        long now = System.currentTimeMillis();
+        java.util.ArrayDeque<Long> calls = modelCalls.computeIfAbsent(caller == null ? "" : caller,
+            k -> new java.util.ArrayDeque<>());
+        synchronized (calls) {
+            while (!calls.isEmpty() && calls.peekFirst() < now - MODEL_WINDOW.toMillis()) {
+                calls.pollFirst();
+            }
+            if (calls.size() >= MODEL_CALLS) {
+                return false;
+            }
+            calls.addLast(now);
+            return true;
+        }
+    }
+
+    /** The predicted quality of a saved version, as {@link #predict} works it out now. */
+    public PredictionViews.Prediction predictVersion(String name, int n, Sights sights) {
+        find(name);
+        PipelineStore.Version v = store.version(name, n).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
+            name + " has no version " + n));
+        return predict(v.yaml(), sights);
+    }
+
+    /**
+     * Suggestions to improve the predicted quality of pipeline YAML: Kilnmark's own, then, when
+     * {@code useAi} and a model is routed to pipeline suggestions, ranked, explained and added to by
+     * it, from metadata its sources' AI rules let it see. The model being off or failing never fails
+     * the request: the suggestions are then Kilnmark's own, and {@code ai} says why.
+     */
+    public PredictionViews.Advice suggest(String yaml, boolean useAi, String caller, Sights sights) {
+        checkSize(yaml);
+        PipelineCompilerPort.Compilation c = compiler.check(yaml, steps);
+        PredictionCatalogue.Remembering catalogue = predictions.open(sights);
+        QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
+        PipelineAdvisor advisor = new PipelineAdvisor(catalogue, steps, json);
+        PipelineAdvisor.Model model = null;
+        PipelineAdvisor.AiStatus status;
+        io.kilnmark.server.ai.AiFeature feature = io.kilnmark.server.ai.AiFeature.PIPELINE_SUGGESTIONS;
+        Optional<io.kilnmark.server.ai.ModelProfile> profile = ai == null ? Optional.empty() : ai.profileFor(feature);
+        if (!useAi) {
+            status = new PipelineAdvisor.AiStatus("not_asked", "The suggestions are Kilnmark's own.", null);
+        } else if (profile.isEmpty()) {
+            status = new PipelineAdvisor.AiStatus("off", "No AI model is set for pipeline suggestions, so they are "
+                + "Kilnmark's own. An admin can choose one under AI models.", null);
+        } else if (!mayAskModel(caller)) {
+            status = new PipelineAdvisor.AiStatus("not_asked", "The model has been asked " + MODEL_CALLS + " times in "
+                + "the last minute, so these are Kilnmark's own. Ask again in a minute.", profile.get().name());
+        } else {
+            io.kilnmark.server.ai.ModelProfile p = profile.get();
+            status = null;
+            model = new PipelineAdvisor.Model() {
+                @Override
+                public String name() {
+                    return p.name();
+                }
+
+                @Override
+                public String refusal(Records.Source source) {
+                    return egress.refusal(p, source).orElse(null);
+                }
+
+                @Override
+                public String chat(Records.Source source, io.kilnmark.server.ai.ModelClient.ChatCall call) {
+                    return ai.chatWith(p, feature.id(), source, call, caller, () -> false,
+                        io.kilnmark.server.ai.AiGateway.Budget.INTERACTIVE).answer().text();
+                }
+            };
+        }
+        return PredictionViews.of(advisor.advise(plan, model, status, n -> graph.source(n).orElse(null)));
+    }
+
+    /**
+     * Each write's and gate's predicted quality for a run about to start, from the catalogue as it is
+     * now and the reads as the run resolved them. Never fails the run: a prediction that cannot be
+     * made is left out.
+     */
+    List<RunQuality.StepQuality> predictRun(PipelineCompilerPort.Compilation c, RunContext context) {
+        List<RunQuality.StepQuality> out = new ArrayList<>();
+        try {
+            QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, PipelineExecution.reads(c, context));
+            for (QualityPredictor.Predicted p : new QualityPredictor(predictions.open()).predict(plan).outputs()) {
+                ObjectNode detail = json.createObjectNode();
+                detail.set("reasons", json.valueToTree(p.reasons()));
+                detail.set("unknown", json.valueToTree(p.unknown()));
+                detail.set("assumptions", json.valueToTree(p.assumptions()));
+                if (p.rows() == null) {
+                    detail.putNull("rows");
+                } else {
+                    detail.put("rows", p.rows());
+                }
+                if (p.gate() != null) {
+                    detail.set("gate", json.valueToTree(PredictionViews.of(p.gate())));
+                }
+                RunQuality.Score score = p.overall() == null ? null : new RunQuality.Score(p.overall(), p.dimensions(),
+                    p.reasons());
+                out.add(new RunQuality.StepQuality(p.step(), p.role(), p.asset(), null, score,
+                    "Not measured yet: the run has just started", null, json.writeValueAsString(detail)));
+            }
+        } catch (RuntimeException | JsonProcessingException e) {
+            LOG.warnf("Could not predict the quality of run %d of %s: %s", context.runId(), context.pipeline(),
+                context.scrub(String.valueOf(e.getMessage())));
+        }
+        return out;
     }
 
     // ---- pipelines and versions ----
@@ -403,9 +563,17 @@ public class PipelineService {
 
     /** A step's stored quality as the API gives it; scores and gate results hold words and counts only. */
     private PipelineViews.StepQualityView qualityView(PipelineStore.QualityRow q) {
+        JsonNode detail = tree(q.predictedDetail());
+        String reasons = detail != null && detail.has("reasons") ? detail.get("reasons").toString() : null;
+        JsonNode prediction = null;
+        if (detail != null && detail.isObject()) {
+            ObjectNode p = ((ObjectNode) detail).deepCopy();
+            p.remove("reasons");
+            prediction = p;
+        }
         return new PipelineViews.StepQualityView(q.stepId(), q.role(), q.assetUrn(),
             scoreView(q.measured(), q.measuredDimensions(), q.measuredReasons()),
-            scoreView(q.predicted(), q.predictedDimensions(), null), q.note(), tree(q.gate()));
+            scoreView(q.predicted(), q.predictedDimensions(), reasons), q.note(), tree(q.gate()), prediction);
     }
 
     private PipelineViews.ScoreView scoreView(Double overall, String dimensions, String reasons) {
@@ -601,6 +769,8 @@ public class PipelineService {
         }
         RunContext context = new RunContext(run.pipeline(), id, run.requestedBy(), role(run.requestedRole()));
         List<String> held = new ArrayList<>();
+        List<RunQuality.StepQuality> predicted = new ArrayList<>();
+        boolean measuredSaved = false;
         PipelineCompilerPort.Compilation c = null;
         boolean ran = false;
         try {
@@ -644,11 +814,16 @@ public class PipelineService {
                 }
                 held.add(urn);
             }
+            // What the catalogue predicts for each write and gate, stored before a row moves, so the run
+            // shows its estimate beside what it measures (docs/design/data-quality.md section 8).
+            predicted.addAll(predictRun(c, context));
+            saveQuality(id, predicted, context);
             ran = true;
             PipelineExecution.Outcome o = execution.run(runner, c.graph(), writes, context,
                 () -> store.cancelRequested(id), shutdown);
             store.saveStepRuns(id, o.steps());
-            List<RunQuality.StepQuality> measured = measure(c, writes, o);
+            List<RunQuality.StepQuality> measured = RunQuality.withPredicted(measure(c, writes, o), predicted,
+                o.status());
             ObjectNode result = json.createObjectNode();
             ArrayNode read = result.putArray("read");
             PipelineExecution.reads(c, context).values().stream().distinct().forEach(read::add);
@@ -694,6 +869,7 @@ public class PipelineService {
             putScore(q, "score", score);
             putScore(q, "threshold", threshold);
             saveQuality(id, measured, context);
+            measuredSaved = true;
             store.finishRun(id, o.status(), o.error(), result.toString());
             RunQuality.StepQuality lowest = RunQuality.lowestOutputStep(measured);
             finished(run.pipeline(), id, o.status(), score, threshold, lowest == null ? null : lowest.step());
@@ -703,6 +879,9 @@ public class PipelineService {
             if (!ran && c != null && c.graph() != null) {
                 PipelineExecution.closeSteps(c.graph());
             }
+            if (!measuredSaved && !predicted.isEmpty()) {
+                saveQuality(id, RunQuality.withPredicted(List.of(), predicted, "failed"), context);
+            }
             store.finishRun(id, "failed", "The worker running this pipeline was stopped before it started writing. "
                 + "Run it again.", null);
             finished(run.pipeline(), id, "failed");
@@ -711,6 +890,10 @@ public class PipelineService {
             LOG.errorf("Run %d of pipeline %s failed: %s", id, run.pipeline(), context.scrub(String.valueOf(e)));
             if (!ran && c != null && c.graph() != null) {
                 PipelineExecution.closeSteps(c.graph()); // created, never handed to the runner
+            }
+            if (!measuredSaved && !predicted.isEmpty()) {
+                // The predictions stay; they must not say the run has just started.
+                saveQuality(id, RunQuality.withPredicted(List.of(), predicted, "failed"), context);
             }
             store.finishRun(id, "failed", context.scrub("The run failed: " + e.getMessage()), null);
             finished(run.pipeline(), id, "failed");
@@ -815,7 +998,8 @@ public class PipelineService {
                 rows.add(new PipelineStore.QualityRow(q.step(), q.role(), q.asset(), m == null ? null : m.overall(),
                     m == null ? null : json.writeValueAsString(m.dimensions()),
                     m == null ? null : json.writeValueAsString(m.reasons()), p == null ? null : p.overall(),
-                    p == null ? null : json.writeValueAsString(p.dimensions()), q.note(), gate));
+                    p == null ? null : json.writeValueAsString(p.dimensions()), q.note(), gate,
+                    q.predictedDetail() == null ? null : context.scrub(q.predictedDetail())));
             }
             store.saveQuality(id, rows);
         } catch (JsonProcessingException | RuntimeException e) {

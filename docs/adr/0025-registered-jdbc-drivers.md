@@ -32,7 +32,7 @@ network on the driver's behalf.
 
 ## Consequences
 
-- `driver_registration` and `driver_registration_log` (V16); Settings › JDBC drivers.
+- `driver_registration` and `driver_registration_log` (V18); Settings › JDBC drivers.
 - Writing through generic JDBC is `append` and `create` only: `replace` and `upsert` need SQL no
   driver standardises safely, and are refused with a message.
 - Tests register H2 (MPL 2.0 / EPL 1.0, test-only); `checkNoCustomerDrivers` keeps it out of the

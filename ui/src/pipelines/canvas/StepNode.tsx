@@ -18,6 +18,7 @@ import {
 } from "@tabler/icons-react";
 import { formatNumber, type PipelineStepQuality } from "../../api";
 import { scoreTone, stepQualityWords } from "../quality";
+import { predictedTone, predictedWords, type PredictedQuality } from "../prediction";
 import { kindWord } from "./insight";
 import type { GraphStep } from "./model";
 
@@ -35,6 +36,8 @@ export type StepData = {
   run: StepRunInfo | null;
   /** After a run: the step's measured quality (writes and gates), or null. */
   quality: PipelineStepQuality | null;
+  /** The step's predicted quality as the pipeline stands (writes and gates; an estimate), or null. */
+  predicted?: PredictedQuality | null;
   connectable: boolean;
 };
 export type StepNodeType = Node<StepData, "step">;
@@ -79,8 +82,9 @@ export function runWords(run: StepRunInfo): string {
  * its rows and how it ended. The columns leaving it show on hover and focus, and are in its label.
  */
 function StepBox({ data, selected }: NodeProps<StepNodeType>) {
-  const { step, kind, label, summary, inputs, outputs, problems, run, quality, columns, connectable } = data;
+  const { step, kind, label, summary, inputs, outputs, problems, run, quality, predicted, columns, connectable } = data;
   const qualityText = stepQualityWords(quality);
+  const predictedText = predictedWords(predicted);
   const rows = Math.max(inputs.length, outputs.length, 1);
   return (
     <div
@@ -130,7 +134,7 @@ function StepBox({ data, selected }: NodeProps<StepNodeType>) {
           ))}
         </ul>
       </div>
-      {(problems > 0 || run || qualityText) && (
+      {(problems > 0 || run || qualityText || predictedText) && (
         <div className="cv-node-foot">
           {problems > 0 && (
             <span className="cv-badge cv-badge-bad">
@@ -151,6 +155,14 @@ function StepBox({ data, selected }: NodeProps<StepNodeType>) {
               title={quality?.note ?? quality?.gate?.stopReason ?? undefined}
             >
               {qualityText}
+            </span>
+          )}
+          {predictedText && (
+            <span
+              className={`cv-badge cv-predicted-badge cv-quality-${predictedTone(predicted?.overall)}`}
+            >
+              {predictedText}
+              {predicted?.unknown.length ? ` · ${predicted.unknown.length} not known` : ""}
             </span>
           )}
         </div>

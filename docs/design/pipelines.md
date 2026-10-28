@@ -701,7 +701,8 @@ asset's previous profile.
   step reading from itself, loops, a single-input port fed twice, and the same edge twice (two
   ports of one step may both feed a port that takes many). References split at the last dot, as
   `PortRef.parse` does.
-- Later: data previews at a step, and the gate step's predicted scores on the canvas (step 3).
+- Later: data previews at a step. Each write's and gate's predicted score shows on the canvas
+  (step 3, built).
 
 ## 7. Next
 
@@ -710,5 +711,6 @@ asset's previous profile.
   keyboard operation.
 - **Step 3, quality:** the gate step and measured scores per run and output, with the
   pipeline's `quality.min_score` and `pipeline_low_quality` (done; docs/guide/pipelines.md,
-  "Quality gates"); then predicted scores beside the measured ones, AI suggestions, version diffs.
+  "Quality gates"); predicted scores beside the measured ones and suggestions (done;
+  docs/guide/pipelines.md, "Predicted quality"); then version diffs.
 - Later: scheduling, parameters, the importer, push-down to SQL.

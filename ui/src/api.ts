@@ -1251,9 +1251,17 @@ export type PipelineStepQuality = {
   role: "output" | "gate";
   asset: string | null;
   measured: QualityScore | null;
+  /** Worked out when the run started, from the catalogue's metadata: an estimate. */
   predicted: QualityScore | null;
   note: string | null;
   gate: GateOutcome | null;
+  /** What the estimate said beside its score (pipelines/prediction.ts, PredictionDetail); missing from older servers. */
+  prediction?: {
+    unknown?: string[];
+    assumptions?: string[];
+    rows?: number | null;
+    gate?: { decision: string | null; rowsPassed: number | null; rowsQuarantined: number | null } | null;
+  } | null;
 };
 export type PipelineRunDetail = {
   run: PipelineRun;

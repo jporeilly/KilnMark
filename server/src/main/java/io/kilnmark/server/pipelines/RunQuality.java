@@ -24,8 +24,8 @@ import io.kilnmark.server.quality.Scores;
  * Scores are per dimension and overall, as an asset's are ({@link Scores}), from the measures alone:
  * the rows of one run have no history to judge freshness or volume against.
  *
- * <p>Each step's quality has room for a {@code predicted} score beside the measured one: the score
- * a later change will work out at design time from the inputs' metadata. It is null until then.
+ * <p>Beside each measured score is the {@code predicted} one, worked out when the run started from
+ * the catalogue's metadata about what it reads ({@link QualityPredictor}), so stewards see the gap.
  */
 final class RunQuality {
 
@@ -36,10 +36,45 @@ final class RunQuality {
     /**
      * One step's quality in a run. {@code role} is {@code output} (a write) or {@code gate};
      * {@code measured} is null when it could not be measured, and {@code note} says why;
-     * {@code predicted} is null until design-time prediction exists; {@code gate} is a gate's outcome.
+     * {@code predicted} is the estimate made when the run started (null when none could be made),
+     * {@code predictedDetail} its JSON: {reasons, unknown, assumptions, rows, gate};
+     * {@code gate} is a gate's outcome.
      */
     record StepQuality(String step, String role, String asset, Score measured, Score predicted, String note,
-                       QualityGate.Outcome gate) {
+                       QualityGate.Outcome gate, String predictedDetail) {
+
+        StepQuality(String step, String role, String asset, Score measured, Score predicted, String note,
+                    QualityGate.Outcome gate) {
+            this(step, role, asset, measured, predicted, note, gate, null);
+        }
+    }
+
+    /** What the run could not measure for a step it predicted, by role and how the run ended. */
+    static String notMeasured(String role, String status) {
+        if ("succeeded".equals(status)) {
+            return "output".equals(role) ? "The run did not report what this step wrote" : "The gate did not report";
+        }
+        return "output".equals(role) ? "The run did not succeed, so what this step wrote was not measured"
+            : "The run ended before this gate reported";
+    }
+
+    /**
+     * The measured quality with each step's prediction beside it: a step measured and predicted
+     * gets both; one only predicted (the run failed before it wrote) keeps its prediction and says
+     * why it was not measured.
+     */
+    static List<StepQuality> withPredicted(List<StepQuality> measured, List<StepQuality> predicted, String status) {
+        Map<String, StepQuality> byStep = new LinkedHashMap<>();
+        for (StepQuality p : predicted) {
+            byStep.put(p.step(), new StepQuality(p.step(), p.role(), p.asset(), null, p.predicted(),
+                notMeasured(p.role(), status), null, p.predictedDetail()));
+        }
+        for (StepQuality m : measured) {
+            StepQuality p = byStep.get(m.step());
+            byStep.put(m.step(), p == null ? m : new StepQuality(m.step(), m.role(), m.asset() != null ? m.asset()
+                : p.asset(), m.measured(), p.predicted(), m.note(), m.gate(), p.predictedDetail()));
+        }
+        return new ArrayList<>(byStep.values());
     }
 
     /** Most reasons kept per score. */

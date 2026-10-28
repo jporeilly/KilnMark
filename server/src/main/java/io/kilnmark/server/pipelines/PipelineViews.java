@@ -101,13 +101,21 @@ public final class PipelineViews {
     /**
      * One step's quality in a run: each write ({@code role} output) and each gate. {@code measured} is
      * what the run measured, null when it could not (and {@code note} says why); {@code predicted} is
-     * the score worked out before the run from the inputs' metadata, null until Kilnmark predicts
-     * scores. {@code gate}, for a gate: {onFail, decision (passed, warned, quarantined or stopped),
-     * rowsIn, rowsPassed, rowsFailing, rowsQuarantined, minScore, maxFailingShare, stopReason, rules:
-     * [{name, type, field, dimension, origin (asset or inline), status, failing, total, message}]}.
+     * the estimate made when the run started from the catalogue's metadata about what it reads, null
+     * when none could be made. {@code prediction}: what the estimate says beside its numbers, {unknown,
+     * assumptions, rows, gate: {onFail, rowsIn, rowsPassed, rowsQuarantined, decision, rules: [{name,
+     * type, field, dimension, origin, failingShare, status, basis}]}}, or null. {@code gate}, for a
+     * gate: {onFail, decision (passed, warned, quarantined or stopped), rowsIn, rowsPassed, rowsFailing,
+     * rowsQuarantined, minScore, maxFailingShare, stopReason, rules: [{name, type, field, dimension,
+     * origin (asset or inline), status, failing, total, message}]}.
      */
     public record StepQualityView(String step, String role, String asset, ScoreView measured, ScoreView predicted,
-                                  String note, JsonNode gate) {
+                                  String note, JsonNode gate, JsonNode prediction) {
+
+        public StepQualityView(String step, String role, String asset, ScoreView measured, ScoreView predicted,
+                               String note, JsonNode gate) {
+            this(step, role, asset, measured, predicted, note, gate, null);
+        }
     }
 
     /** One setting of a step type, for the canvas's settings panel. */

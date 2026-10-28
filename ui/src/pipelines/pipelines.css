@@ -409,3 +409,37 @@ main:has(.pl-wide) {
   min-height: 1.5em;
   text-align: right;
 }
+
+/* Predicted beside measured on a run's page: the estimate made when it started, and the gap. */
+.pl-predicted {
+  margin: 8px 0;
+}
+
+.pl-gap {
+  margin: 4px 0 8px;
+}
+
+.pl-predicted-table td,
+.pl-predicted-table th {
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-cell-meter {
+  display: inline-grid;
+  grid-template-columns: 80px auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.pl-gap-wide {
+  font-weight: 600;
+}
+
+.pl-predicted-more ul {
+  margin: 4px 0;
+  padding-left: 1.2em;
+}
+
+.pl-predicted-more summary {
+  cursor: pointer;
+}

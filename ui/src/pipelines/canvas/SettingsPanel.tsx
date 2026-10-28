@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { PipelineProblem, PipelineStepQuality, PipelineValidation, Source, StepType } from "../../api";
 import { dimensionWord, percent, RULE_STATUS_WORDS, stepQualityWords } from "../quality";
+import type { PredictedQuality } from "../prediction";
+import { PredictedSection } from "./PredictedSection";
 import { browseApi } from "../../browse/browseApi";
 import { columnsText } from "../outline";
 import { arrivingColumns, columnSide, kindWord, problemSetting, problemWords, shownSettings } from "./insight";
@@ -57,6 +59,7 @@ export function SettingsPanel({
   readOnly,
   run,
   quality = null,
+  predicted = null,
   onSetting,
   onRename,
   onDisconnect,
@@ -74,6 +77,8 @@ export function SettingsPanel({
   run: StepRunInfo | null;
   /** The step's measured quality in that run, for writes and gates. */
   quality?: PipelineStepQuality | null;
+  /** The step's predicted quality as the pipeline stands, for writes and gates (an estimate). */
+  predicted?: PredictedQuality | null;
   onSetting: (key: string, value: Value | undefined, kind: string) => void;
   onRename: (to: string) => string | null;
   onDisconnect: (edge: GraphEdge) => void;
@@ -271,6 +276,8 @@ export function SettingsPanel({
         <h4 id={`${base}-cols`}>Columns leaving this step</h4>
         <p className="small">{outline ? columnsText(outline) : "Known once the pipeline has been checked."}</p>
       </section>
+
+      {predicted && <PredictedSection p={predicted} id={`${base}-predicted`} />}
 
       {run && (
         <section className="cv-section" aria-labelledby={`${base}-run`}>

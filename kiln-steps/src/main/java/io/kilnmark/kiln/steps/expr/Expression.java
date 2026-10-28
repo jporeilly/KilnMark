@@ -66,6 +66,16 @@ public final class Expression {
         return new Compiled(new Compiler(Compiler.Scope.of(columns), null).compile(root));
     }
 
+    /** A read-only view of the parsed expression, for reasoning about it without running it. */
+    public ExprView view() {
+        return ExprView.of(root);
+    }
+
+    /** Every column the expression names, in the order first seen. */
+    public java.util.Set<String> columns() {
+        return ExprView.columns(view());
+    }
+
     /** Whether the expression calls an aggregate function anywhere. */
     public boolean usesAggregates() {
         return uses(root);

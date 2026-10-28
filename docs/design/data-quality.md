@@ -123,8 +123,7 @@ output port) or `warn`, and run-level thresholds (`min_score`, `max_failing_shar
 each write gets a measured score per dimension and overall, stored with the run
 (`pipeline_step_quality`, beside an empty `predicted` for section 8's design-time scores), and a
 pipeline's `quality.min_score` tells its followers of a run whose outputs score below it. Still to
-come: reusing recent results when the change check says the source is unchanged, and the
-predicted scores and suggestions of section 8.
+come: reusing recent results when the change check says the source is unchanged.
 
 ## 8. Profile once, reuse everywhere
 
@@ -158,6 +157,32 @@ Pipelines do not re-read sources to find out what they hold.
 
 The run then reports the predicted and the measured scores side by side. The gap tells stewards
 where the metadata, or the pipeline, needs attention.
+
+Built (docs/guide/pipelines.md, "Predicted quality"):
+
+- **Prediction** (`QualityPredictor`): each read's latest profile, accepted shapes, relationships
+  and rule results, carried through the steps with a rule per step type, to an estimated profile
+  at each write, scored with the same `Measures` and `Scores` a run uses for what it wrote (so the
+  dimensions match), and to each gate's rules' failing shares, scored as the gate scores itself.
+  Unknown stays unknown: a dimension without evidence gets no score, and each prediction lists
+  what it could not tell and what it assumed. Orphan rates come from a relationship's stored
+  containment, else from the two columns' HyperLogLog sketches (`Containment`), as a share of
+  distinct values used as a share of rows. `POST /api/v1/pipelines/predict` (YAML in, for the
+  canvas, debounced) and `GET /api/v1/pipelines/{name}/versions/{n}/prediction`; no source is read.
+- **At run start** each write's and gate's prediction is stored in `pipeline_step_quality`
+  (`predicted`, `predicted_dimensions`, and V17's `predicted_detail`: reasons, unknowns,
+  assumptions, rows, a gate's expected decision), beside what the run then measures; a run that
+  fails keeps its predictions.
+- **Suggestions** (`PipelineAdvisor`, `POST /api/v1/pipelines/suggest`, stewards): candidates by
+  rule with no model (trim, standardise dates, dedupe on a repeating key, drop orphans with a
+  lookup, quarantine rows outside accepted patterns or without a key), each tried out by predicting
+  the pipeline with it and kept only when it raises the write's score (or, for orphans, leaves rows
+  out). The AI feature `pipeline_suggestions` ranks, explains and adds; it is sent metadata only of
+  columns whose source's `ai_egress` allows that model (`EgressPolicy`), never values, never a
+  computed column, and the gateway checks the call again against the strictest source shown. Its
+  additions are checked like the rest (step types the server has, the settings they take, columns
+  it was shown that reach that point, the step's own check and output schema) and dropped
+  otherwise.
 
 ## 9. Drift
 
@@ -213,4 +238,4 @@ issues queue.
 3. Rule recommendations without AI, then AI suggestions, classification and explanations, after
    the AI runtime merges.
 4. Predicted pipeline quality, AI improvement suggestions and the quality gate, with round 3
-   pipelines.
+   pipelines (built).
