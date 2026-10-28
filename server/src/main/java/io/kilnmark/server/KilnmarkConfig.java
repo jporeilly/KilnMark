@@ -274,8 +274,12 @@ public interface KilnmarkConfig {
     }
 
     interface Drivers {
-        /** The drivers folder: one jar per driver, named as Maven Central names it. */
-        String dir();
+        /**
+         * The drivers folder: one jar per driver, named as Maven Central names it. When not set,
+         * {@code .kilnmark/drivers} in the home folder of the user the server runs as (the image
+         * sets {@code /var/lib/kilnmark/drivers}, in its data volume).
+         */
+        Optional<String> dir();
 
         /**
          * Whether an admin may have the server download a driver, after accepting its licence.

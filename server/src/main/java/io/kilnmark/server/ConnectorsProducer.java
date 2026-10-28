@@ -27,7 +27,8 @@ public class ConnectorsProducer {
     @Produces
     @ApplicationScoped
     DriverFolder drivers(KilnmarkConfig config) {
-        java.nio.file.Path dir = java.nio.file.Path.of(config.drivers().dir());
+        java.nio.file.Path dir = config.drivers().dir().map(java.nio.file.Path::of)
+            .orElse(java.nio.file.Path.of(System.getProperty("user.home"), ".kilnmark", "drivers"));
         try {
             java.nio.file.Files.createDirectories(dir); // so an admin can put a driver straight in
         } catch (java.io.IOException | RuntimeException e) {

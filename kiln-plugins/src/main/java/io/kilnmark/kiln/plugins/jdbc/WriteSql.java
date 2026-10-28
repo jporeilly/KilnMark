@@ -108,7 +108,8 @@ abstract class WriteSql {
     /** {@code CREATE TABLE} with every input column, all allowing nulls. */
     String createTable(TableName t, List<WriteColumn> columns, int textLength) {
         return "CREATE TABLE " + table(t) + " (" + columns.stream()
-            .map(c -> quote(c.name()) + " " + columnType(c, textLength)).collect(Collectors.joining(", ")) + ")";
+            .map(c -> quote(storedName(c.name())) + " " + columnType(c, textLength))
+            .collect(Collectors.joining(", ")) + ")";
     }
 
     final String insert(TableName t, List<String> columns) {
