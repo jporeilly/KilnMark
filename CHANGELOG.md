@@ -5,8 +5,20 @@ details.
 
 ## Unreleased
 
+## 0.0.8 (28 October 2026)
+
 ### What's new
 
+- **See inside a run.** The run page shows where each step spent its time (working, waiting for
+  rows, or held up by the next step) and names what limited the run; rows per second for each step
+  through the run, with a band showing when it was held up; and a log of what happened, gate
+  verdicts included, to filter and download. While a run goes, the canvas shows each step's rows
+  and rows per second and marks the slowest step.
+- **Preview at a step.** Right-click a step and choose **Preview rows**, or open its **Preview**
+  tab, to see the rows as they would leave it, before running, with nothing written. Sensitive
+  columns stay masked, and for anyone but an admin a preview is refused when a step looks inside
+  one.
+- **Models that think before answering** (such as gemma4) now pass **Test** under AI models.
 - **Clearer steps after a run.** On the canvas, a step's rows, its measured quality and its
   predicted quality now each look different, and steps no longer overlap or hide the connections'
   row counts once a run's results are shown.
