@@ -226,7 +226,8 @@ class OracleWriteTest {
         RunResult r = write(source, options("kt_billing.report", "replace", List.of(), Map.of()), SPEND,
             Rows.spend(0, 500, "new"), 100, -1);
         assertTrue(r.succeeded(), r.error());
-        assertEquals(List.of(List.of(500L)), query("SELECT COUNT(*) FROM kt_billing.report WHERE note = 'new'"));
+        assertEquals(List.of(List.of(500L)), query("SELECT COUNT(*) FROM kt_billing.report "
+            + "WHERE DBMS_LOB.SUBSTR(note, 10) = 'new'"));
         SourceConfig peek = db.source("warehouse", "KT_PEEK", PASSWORD, Map.of());
         try (Connection c = db.connector().connect(peek); Statement s = c.createStatement();
              ResultSet rs = s.executeQuery("SELECT COUNT(*) FROM kt_billing.report")) {
@@ -236,7 +237,8 @@ class OracleWriteTest {
         RunResult failed = write(source, options("kt_billing.report", "replace", List.of(), Map.of()), SPEND,
             Rows.spend(0, 500, "failed"), 100, 2);
         assertFalse(failed.succeeded());
-        assertEquals(List.of(List.of(500L)), query("SELECT COUNT(*) FROM kt_billing.report WHERE note = 'new'"));
+        assertEquals(List.of(List.of(500L)), query("SELECT COUNT(*) FROM kt_billing.report "
+            + "WHERE DBMS_LOB.SUBSTR(note, 10) = 'new'"));
         assertEquals(List.of(), leftovers());
         assertEquals(List.of(List.of(0L)), query("SELECT COUNT(*) FROM ALL_TABLES WHERE OWNER = 'KT_BILLING' "
             + "AND TABLE_NAME LIKE 'BIN$%'"), "the old table is purged, not left in the recycle bin");
