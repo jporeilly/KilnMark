@@ -74,6 +74,9 @@ dependencies {
     // Oracle's JDBC driver: tests only, never shipped (FUTC; ADR 0007). The connector reaches it
     // through the drivers folder, as on a customer's server: OracleServers copies this jar there.
     "testRuntimeOnly"(libs.ojdbc11)
+    // H2 (MPL 2.0 or EPL 1.0): tests only, never shipped. The generic JDBC connector's tests copy this
+    // jar into a drivers folder and register it, as an admin registers a customer's driver.
+    "testRuntimeOnly"(libs.h2)
 }
 
 // The version Parquet files written by Kilnmark name in their footer (created_by): in the manifest,

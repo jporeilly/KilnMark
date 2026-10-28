@@ -3,7 +3,7 @@
 Some databases' JDBC drivers cannot ship with Kilnmark because of their licences: Oracle's, under
 the Oracle Free Use Terms and Conditions ([ADR 0007](../adr/0007-dependency-policy.md)). The
 connector ships; its driver is installed by the customer. Generic JDBC, with drivers customers
-bring for any database, will use the same folder.
+bring for any database, uses the same folder: see [Registered drivers](#registered-drivers).
 
 ## Declaring a driver
 
@@ -89,3 +89,60 @@ The driver is a test-only dependency (`testRuntimeOnly` in `kiln-plugins`): the 
 copy it from the test class path into a drivers folder, so they connect as a customer's server
 does, and they check the pinned checksum. `./gradlew release` runs `checkNoCustomerDrivers`, which
 fails if a jar named like one, or holding its classes, is in the release folder.
+
+## Registered drivers
+
+The generic JDBC connector (kind `jdbc`) reads databases Kilnmark has no connector of its own for:
+Db2, Teradata, Snowflake, Sybase, Informix, H2 and the like. Their drivers cannot be pinned in
+advance, since Kilnmark does not know which the customer will bring or which version. So instead
+of Kilnmark pinning the jar, **an admin vouches for it** ([ADR 0025](../adr/0025-registered-jdbc-drivers.md)).
+
+**Registering** (Settings › JDBC drivers, admins only; `GET`, `POST /api/v1/drivers/registered`,
+`GET /api/v1/drivers/files`, `POST /api/v1/drivers/files/{fileName}`):
+
+1. The jar goes in the drivers folder: copied there, or uploaded through the page
+   (`application/octet-stream`, at most 200 MB and the server's request limit, 10 MB unless
+   `quarkus.http.limits.max-body-size` is raised). An upload never replaces a file already there.
+2. The admin names the driver (`db2`: lower-case letters, digits, `-`, `_`), picks the jar, gives
+   its `java.sql.Driver` class and how its URLs start (`jdbc:db2://`).
+3. Kilnmark reads the jar, loads the class from a private copy in a class loader of its own (a jar
+   without that driver is refused at once), and records the jar's **SHA-256** with who registered
+   it and when (`driver_registration`, migration V16). A pinned driver's file cannot be registered.
+
+**Using it** is the pinned path with the recorded checksum in place of a pinned one
+(`DriverFolder.driver(RegisteredDriver)`): the jar is read and hashed, used only while its
+SHA-256 is the registered one, copied to `drivers.loaded`, loaded in its own `URLClassLoader` whose
+parent is the platform class loader, and used directly, never through `DriverManager`. A jar that
+has changed or gone shows as **Jar changed** or **Jar missing**, and its sources stop connecting
+with a message saying why, until the file is put back or the registration is removed and the new
+file registered.
+
+**Removing** a registration is admin-only (`DELETE /api/v1/drivers/registered/{name}`) and refused
+while sources use it; the jar stays in the folder. Every registration and removal is kept for good
+in `driver_registration_log` (`GET /api/v1/drivers/registered/history`), and logged.
+
+**Nothing is downloaded** for a registered driver: there is no address to download from that
+Kilnmark could vouch for.
+
+### Threat model
+
+- *A swapped jar.* Someone with write access to the drivers folder replaces a registered jar: the
+  checksum no longer matches and it is not loaded; a copy already loaded is the verified private
+  copy, which the folder's file cannot change.
+- *A malicious or buggy driver.* A registered driver runs in the server's JVM with the server's
+  rights. Its own class loader keeps it from Kilnmark's classes and other drivers, but a class
+  loader is not a security boundary: registering is trusting the jar, which is why only admins
+  register, the page asks them to confirm the jar's origin, and the audit trail names them.
+- *A hostile URL.* A JDBC URL and driver properties go to the driver uninterpreted, and drivers
+  have features that read files or run scripts (H2's `INIT=RUNSCRIPT`, for example). Kilnmark
+  refuses the properties it can name (files, paths, classes, factories, time limits, other hosts,
+  passwords), but cannot know every driver's, so only admins may set up a generic JDBC source,
+  change its connector settings or check an unsaved one (`Connector.adminOnly()`); stewards still
+  test, scan and preview saved ones. With an allow-list of hosts, a URL whose host Kilnmark cannot
+  read is refused.
+- *Reaching the outside.* Nothing is downloaded; the driver reaches only what its URL names,
+  checked against `kilnmark.sources.allowed-hosts`.
+
+The test driver is H2 (MPL 2.0 or EPL 1.0, not GPL), a `testRuntimeOnly` dependency of
+`kiln-plugins` that the tests copy into a drivers folder and register through this path.
+`checkNoCustomerDrivers` also fails a release holding H2's jar or classes.

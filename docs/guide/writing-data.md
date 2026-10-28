@@ -1,7 +1,7 @@
 # Writing data from a pipeline
 
 A pipeline ends in one or more `write` steps. Each writes the rows it receives to a table in a
-database (PostgreSQL, SQL Server, MySQL, MariaDB or Oracle) or to a CSV or Parquet file in a folder or S3 bucket. This
+database (PostgreSQL, SQL Server, MySQL, MariaDB, Oracle, or another database through Generic JDBC) or to a CSV or Parquet file in a folder or S3 bucket. This
 guide explains the modes, the file formats, the rights a write needs, and what `replace` keeps.
 
 ## Before you start
@@ -231,6 +231,32 @@ drivers"). Tables are written as above, with these differences:
 - **The login.** Writing to the login's own schema needs `CREATE TABLE` and a quota on its
   tablespace; writing to another schema needs `CREATE ANY TABLE`, `INSERT ANY TABLE`,
   `ALTER ANY TABLE` and `DROP ANY TABLE`.
+
+### Generic JDBC
+
+A Generic JDBC source ([Databases without a connector of their own](drivers.md#databases-without-a-connector-of-their-own)) can be written to
+with **`append`** and **`create`** only, and only when its **Read only** setting is off as well as
+**Allow writing** on.
+
+- `replace` and `upsert` are refused, with a message saying so. Swapping in a new table safely, or
+  updating a row or inserting it without two runs getting in each other's way, needs SQL that each
+  database writes its own way, and Kilnmark will not guess. Empty the table yourself and `append`,
+  write to a new table with `create`, or use the database's own connector where there is one.
+- Rows are sent as batches of one `INSERT` with every value as a parameter. Settings: `commit_every`,
+  `batch_size` and `text_length`.
+- `create` chooses each column's type from the types the driver lists. If the database has no type
+  for a column (for example no timestamp with a time zone), the write stops before anything is
+  created and says which column to convert.
+- Every value is checked against the column it goes to, also in a table the step just created: a
+  decimal that would need rounding, text or bytes longer than the column, more digits of a second
+  than the column keeps, or a number outside a `TINYINT` or unsigned column stops the write, naming
+  the row. A column whose size the driver does not say, or whose type Kilnmark does not know, stops
+  an append before any row is sent.
+- On databases where creating a table commits by itself, the new table can be seen, empty or partly
+  filled, until the write ends; if the write fails, Kilnmark drops it again.
+- The login needs `INSERT` on the table, and for `create` the right to create tables in the schema.
+  Kilnmark cannot check rights the same way on every database, so a missing right shows as the
+  database's own refusal.
 
 ## Writing to a file
 

@@ -339,6 +339,286 @@ public final class DriverFolder implements JdbcDrivers {
         }
     }
 
+    // ------------------------------------------------------------------ registered drivers
+
+    /**
+     * Drivers an admin registered for the generic JDBC connector, by name. The server keeps them in
+     * its database (who registered each and when) and hands them here at start and on each change;
+     * this folder only loads them.
+     */
+    private final Map<String, RegisteredDriver> registrations = new ConcurrentHashMap<>();
+    /** Registered drivers loaded, by checksum and class: a jar registered twice is loaded once per class. */
+    private final Map<String, java.sql.Driver> registeredLoaded = new ConcurrentHashMap<>();
+
+    /** A jar in the folder, as the registration screen lists it: nothing is read from it. */
+    public record FolderFile(String fileName, long size, java.time.Instant modified) {
+    }
+
+    /** A jar read and loaded for registration: its checksum and size, and the driver class it holds. */
+    public record Inspected(String fileName, String sha256, long size, int majorVersion, int minorVersion) {
+    }
+
+    /** Replaces the registered drivers with {@code all} (the server's records, at start). */
+    public void registered(java.util.Collection<RegisteredDriver> all) {
+        registrations.clear();
+        all.forEach(r -> registrations.put(r.name(), r));
+    }
+
+    /** Adds or replaces one registration. */
+    public void register(RegisteredDriver r) {
+        registrations.put(r.name(), r);
+    }
+
+    /** Removes the registration called {@code name}; its loaded driver stays loaded but is never handed out again. */
+    public void unregister(String name) {
+        registrations.remove(name);
+    }
+
+    @Override
+    public java.util.List<RegisteredDriver> registered() {
+        return registrations.values().stream().sorted(java.util.Comparator.comparing(RegisteredDriver::name)).toList();
+    }
+
+    @Override
+    public java.util.Optional<RegisteredDriver> registration(String name) {
+        return java.util.Optional.ofNullable(name == null ? null : registrations.get(name));
+    }
+
+    /**
+     * The file called {@code fileName} directly in the folder: a bare name of a jar, never a path, so
+     * nothing outside the folder can be named.
+     *
+     * @throws IOException saying what is wrong with the name
+     */
+    public Path jar(String fileName) throws IOException {
+        java.util.List<String> problems = RegisteredDriver.problems("x", fileName, "x", "jdbc:x:");
+        if (!problems.isEmpty()) {
+            throw new IOException(problems.get(0));
+        }
+        Path file = dir.resolve(fileName).normalize();
+        if (!dir.equals(file.getParent())) {
+            throw new IOException("fileName: a jar directly in the drivers folder");
+        }
+        return file;
+    }
+
+    /**
+     * The jars in the folder, by name, without reading them: the files an admin may register. Links,
+     * folders and files whose names a registration cannot hold are left out.
+     */
+    public java.util.List<FolderFile> jars() {
+        java.util.List<FolderFile> out = new java.util.ArrayList<>();
+        try (java.util.stream.Stream<Path> files = Files.list(dir)) {
+            for (Path f : files.sorted().toList()) {
+                String name = f.getFileName().toString();
+                if (!RegisteredDriver.problems("x", name, "x", "jdbc:x:").isEmpty()) {
+                    continue;
+                }
+                java.nio.file.attribute.BasicFileAttributes a = Files.readAttributes(f,
+                    java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                if (a.isRegularFile()) {
+                    out.add(new FolderFile(name, a.size(), a.lastModifiedTime().toInstant()));
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            // no folder (yet), or not readable: nothing to offer
+        }
+        return out;
+    }
+
+    /**
+     * Puts an uploaded jar in the folder under {@code fileName}: written beside the target under a
+     * temporary name, at most {@link #MAX_BYTES}, then moved into place. A file of that name already
+     * there is never replaced (a registered jar must not change under its registration).
+     *
+     * @return the file's SHA-256
+     */
+    public String upload(String fileName, InputStream in) throws IOException {
+        Path target = jar(fileName);
+        Files.createDirectories(dir);
+        if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            throw new java.nio.file.FileAlreadyExistsException(fileName + " is already in the drivers folder: register "
+                + "that file, or give the new one another name");
+        }
+        Path part = Files.createTempFile(dir, ".upload-", ".part");
+        try {
+            MessageDigest md = digest();
+            long total = 0;
+            try (OutputStream out = Files.newOutputStream(part)) {
+                byte[] buffer = new byte[64 * 1024];
+                for (int n; (n = in.read(buffer)) > 0; ) {
+                    total += n;
+                    if (total > MAX_BYTES) {
+                        throw new IOException(fileName + " is larger than 200 MB, so it is not a JDBC driver; nothing "
+                            + "was saved");
+                    }
+                    md.update(buffer, 0, n);
+                    out.write(buffer, 0, n);
+                }
+            }
+            if (total == 0) {
+                throw new IOException(fileName + " is empty; nothing was saved");
+            }
+            // without REPLACE_EXISTING: a file put there meanwhile is never overwritten
+            Files.move(part, target);
+            return HexFormat.of().formatHex(md.digest());
+        } finally {
+            Files.deleteIfExists(part);
+        }
+    }
+
+    /**
+     * Reads {@code fileName} from the folder and loads {@code driverClass} from it, as registering
+     * does, so an admin learns at once whether the jar holds that driver. The driver is loaded the
+     * way {@link #driver(RegisteredDriver)} loads it, from a private copy, in a class loader of its
+     * own; that instance is used when the registration is.
+     *
+     * @throws IOException  when the file cannot be read or is too large
+     * @throws SQLException when the class is not in the jar or is not a JDBC driver
+     */
+    public Inspected inspect(String fileName, String driverClass) throws IOException, SQLException {
+        Path file = jar(fileName);
+        java.nio.file.attribute.BasicFileAttributes a = Files.readAttributes(file,
+            java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+        if (!a.isRegularFile()) {
+            throw new IOException(fileName + " in the drivers folder is not a plain file");
+        }
+        if (a.size() > MAX_BYTES) {
+            throw new IOException(fileName + " is larger than 200 MB, so it is not a JDBC driver");
+        }
+        byte[] bytes = Files.readAllBytes(file);
+        String sha = sha256(bytes);
+        java.sql.Driver d = loadRegistered(fileName, sha, driverClass, bytes);
+        return new Inspected(fileName, sha, bytes.length, d.getMajorVersion(), d.getMinorVersion());
+    }
+
+    /** Whether a registered driver's jar is there and still the file that was registered. */
+    public Status status(RegisteredDriver r) {
+        Path file;
+        try {
+            file = jar(r.fileName());
+        } catch (IOException e) {
+            return new Status(State.UNREADABLE, dir, null, e.getMessage());
+        }
+        if (!Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return new Status(State.MISSING, file, null, r.fileName() + ", registered as the driver " + r.name()
+                + ", is not in the drivers folder " + dir + " any more. Put it back, unchanged, or remove the "
+                + "registration");
+        }
+        String sha;
+        try {
+            sha = checksum(file);
+        } catch (IOException e) {
+            return new Status(State.UNREADABLE, file, null, "Cannot read " + file + ": " + e.getMessage());
+        }
+        if (!sha.equals(r.sha256())) {
+            return new Status(State.MISMATCH, file, sha.equals(TOO_LARGE) ? null : sha, changed(r, sha));
+        }
+        return new Status(State.READY, file, sha, null);
+    }
+
+    private static String changed(RegisteredDriver r, String sha) {
+        return r.fileName() + " has changed since it was registered as the driver " + r.name() + ", so it is not used: "
+            + (sha.equals(TOO_LARGE) ? "it is now larger than 200 MB" : "its SHA-256 is now " + sha) + ", not "
+            + r.sha256() + ". Put the registered file back, or remove the registration and register the new file";
+    }
+
+    /**
+     * The registered driver, loaded from its jar only while the jar's SHA-256 is the one recorded
+     * at registration, in a class loader of its own; the same instance while the file is unchanged.
+     * Never registered with {@link java.sql.DriverManager}.
+     */
+    @Override
+    public java.sql.Driver driver(RegisteredDriver r) throws SQLException {
+        RegisteredDriver current = registrations.get(r.name());
+        if (current == null || !current.equals(r)) {
+            throw new SQLException(JdbcDrivers.notRegistered(r.name()), "08001");
+        }
+        Path file;
+        byte[] bytes;
+        long size;
+        long modified;
+        try {
+            file = jar(r.fileName());
+            java.nio.file.attribute.BasicFileAttributes a = Files.readAttributes(file,
+                java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            if (!a.isRegularFile()) {
+                throw new NoSuchFileException(file.toString());
+            }
+            size = a.size();
+            modified = a.lastModifiedTime().toMillis();
+            if (size > MAX_BYTES) {
+                throw new SQLException(changed(r, TOO_LARGE), "08001");
+            }
+            Known k = checksums.get(file);
+            if (k != null && k.size() == size && k.modified() == modified && k.sha256().equals(r.sha256())) {
+                java.sql.Driver d = registeredLoaded.get(r.sha256() + "/" + r.driverClass());
+                if (d != null) {
+                    return d;
+                }
+            }
+            bytes = Files.readAllBytes(file);
+        } catch (NoSuchFileException e) {
+            throw new SQLException("The JDBC driver " + r.name() + " (" + r.fileName() + ") is not in the drivers "
+                + "folder any more. An admin puts it back, unchanged, or registers another under Settings, JDBC "
+                + "drivers", "08001", e);
+        } catch (IOException e) {
+            throw new SQLException("Cannot read the JDBC driver " + r.fileName() + " in the drivers folder: "
+                + e.getMessage(), "08001", e);
+        }
+        String sha = sha256(bytes);
+        checksums.put(file, new Known(size, modified, sha));
+        if (!sha.equals(r.sha256())) {
+            throw new SQLException(changed(r, sha), "08001");
+        }
+        return loadRegistered(r.fileName(), sha, r.driverClass(), bytes);
+    }
+
+    /** A registered driver's class from a private copy of {@code bytes}, loaded once per checksum and class. */
+    private java.sql.Driver loadRegistered(String fileName, String sha, String driverClass, byte[] bytes)
+        throws SQLException {
+        String key = sha + "/" + driverClass;
+        java.sql.Driver d = registeredLoaded.get(key);
+        if (d != null) {
+            return d;
+        }
+        synchronized (this) {
+            d = registeredLoaded.get(key);
+            if (d != null) {
+                return d;
+            }
+            try {
+                Path copy = privateCopies().resolve(sha + ".jar");
+                if (!Files.exists(copy)) {
+                    Path part = Files.createTempFile(privateCopies(), "driver", ".part");
+                    Files.write(part, bytes);
+                    Files.move(part, copy, StandardCopyOption.REPLACE_EXISTING);
+                }
+                if (!sha256(Files.readAllBytes(copy)).equals(sha)) {
+                    throw new SQLException("The private copy of " + fileName + " changed", "08001");
+                }
+                URLClassLoader loader = new URLClassLoader("registered driver " + fileName,
+                    new URL[] {copy.toUri().toURL()}, ClassLoader.getPlatformClassLoader());
+                Class<?> c;
+                try {
+                    c = Class.forName(driverClass, true, loader);
+                } catch (ClassNotFoundException e) {
+                    throw new SQLException(fileName + " holds no class " + driverClass + ". Check the driver's class "
+                        + "name in its documentation", "08001", e);
+                }
+                if (!java.sql.Driver.class.isAssignableFrom(c)) {
+                    throw new SQLException(driverClass + " in " + fileName + " is not a JDBC driver (it does not "
+                        + "implement java.sql.Driver)", "08001");
+                }
+                d = (java.sql.Driver) c.getDeclaredConstructor().newInstance();
+            } catch (IOException | ReflectiveOperationException | LinkageError e) {
+                throw new SQLException("Cannot load " + driverClass + " from " + fileName + ": " + e, "08001", e);
+            }
+            registeredLoaded.put(key, d);
+            return d;
+        }
+    }
+
     private String checksum(Path file) throws IOException {
         long size = Files.size(file);
         long modified = Files.getLastModifiedTime(file).toMillis();

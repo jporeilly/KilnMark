@@ -35,7 +35,7 @@ class CatalogueUnitTest {
         assertFalse(c.showPlanned());
         assertTrue(c.categories().stream().allMatch(x -> x.planned().isEmpty()));
         // Test-only connectors (kind test-...) are registered on the test class path; leave them out.
-        assertEquals(7, c.categories().stream().flatMap(x -> x.connectors().stream())
+        assertEquals(8, c.categories().stream().flatMap(x -> x.connectors().stream())
             .filter(x -> !x.kind().startsWith("test-")).count());
         Views.ConnectorCatalogue shown = new CatalogResource(null, null, Connectors.load(), config(true)).catalogue();
         assertTrue(shown.categories().stream().mapToInt(x -> x.planned().size()).sum() > 30);
@@ -43,7 +43,8 @@ class CatalogueUnitTest {
 
     @Test
     void everyBuiltConnectorClaimsOnlyWhatItCanDoToday() {
-        Set<String> writable = Set.of("postgresql", "sqlserver", "mysql", "mariadb", "oracle", "files", "s3");
+        Set<String> writable = Set.of("postgresql", "sqlserver", "mysql", "mariadb", "oracle", "jdbc", "files",
+            "s3");
         for (Connector c : Connectors.load().all()) {
             if (c.kind().startsWith("test-")) {
                 continue; // test-only connectors (the pipeline tests' writer) are not shipped

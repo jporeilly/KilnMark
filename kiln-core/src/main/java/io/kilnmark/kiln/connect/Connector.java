@@ -258,6 +258,16 @@ public interface Connector {
         return null;
     }
 
+    /**
+     * Whether only admins may set up this kind of source, change its connector settings, or check an
+     * unsaved one: true where the settings go to code Kilnmark does not know, such as a JDBC URL
+     * handed to a driver an admin registered, whose features (reading files, running scripts) Kilnmark
+     * cannot vet. Stewards may still test, scan and preview saved sources. False by default.
+     */
+    default boolean adminOnly() {
+        return false;
+    }
+
     /** An example value for a setting, for forms; null when the setting's hint is enough (the default). */
     default String example(String settingKey) {
         return null;

@@ -7,6 +7,15 @@ details.
 
 ### What's new
 
+- **Any database with a JDBC driver.** For databases without a connector of their own, such as
+  Db2, Teradata, Snowflake, Sybase or Informix, an admin registers the database's JDBC driver under
+  **Settings**, **JDBC drivers** (upload the jar or pick it in the drivers folder), then adds a
+  **Generic JDBC** source with its URL. Kilnmark discovers and profiles its schemas and tables,
+  previews and reads them in pipelines with their types (decimals never rounded; unknown types as
+  text, with a note), and, when the source is not read-only, appends to tables or creates them.
+  Kilnmark records the driver's checksum, who registered it and when, and stops using it if the
+  file changes. Replace and upsert are not offered for these sources, as no database-neutral way
+  makes them safe.
 - **Quality gates in pipelines.** Add a **Quality gate** step (in the Quality folder) to check rows
   against quality rules as they pass, with no second read of the data: the rules of the table or
   file the pipeline read, and any you write on the step. When rows fail, the gate can stop the run
@@ -45,6 +54,39 @@ details.
   for example "true or false, not 'yes'".
 
 ### Details
+
+- **Generic JDBC connector** (kind `jdbc`; docs/design/connectors.md, "Generic JDBC"; docs/guide/drivers.md,
+  "Databases without a connector of their own"; docs/guide/writing-data.md, "Generic JDBC"). Settings
+  `driver` (CHOICE of the registered drivers), `url` (TEXT; must start as the driver's URL prefix,
+  hold no password or refused property, and pass the driver's `acceptsURL`), `username`, password as
+  the secret, `properties` (`name=value; ...`, refused when they name files, paths, classes,
+  factories, time limits, other hosts or credentials), `schemas`, `read_only` (default true).
+  `Connector.adminOnly()` (new): only admins add such sources, change their connector settings or
+  check unsaved ones (`SourceService.adminOnlyKind`, 403). Catalogue from `DatabaseMetaData` with
+  fallbacks (schemas, else catalogues, else one `default` container; nulls), types by
+  `GenericTypes` (decimal(p,s) up to 38 digits, wider or undeclared as exact text, timestamps with
+  and without zone, unknown vendor types as text with a note in the column's description). Reads
+  use `SELECT *` quoted as the driver says and `Statement.setMaxRows` for limits
+  (`JdbcTableInput.MAX_ROWS`, new, with the fetch size kept at or below it); quality rules are
+  checked on the rows read (`JdbcConnector.runsRulesInDatabase()`, new). Writes: `append` and
+  `create` only, through `JdbcTableOutput` with `GenericWriteSql` (table, columns, sizes and types
+  from `DatabaseMetaData`); new `WriteSql` hooks `existsByMetadata`, `requiredByMetadata`,
+  `targetColumnsByMetadata`, `createProblem`, `checksCreatedTable` (a created table is described
+  again and every value checked against it) and `dropCreatedOnFailure` (where DDL commits). The
+  other writers are unchanged. `replace` and `upsert` are refused with a message.
+- **Registered JDBC drivers** (docs/design/drivers.md, "Registered drivers"; ADR 0025). Settings ›
+  JDBC drivers and `GET/POST /api/v1/drivers/registered`, `DELETE /api/v1/drivers/registered/{name}`,
+  `GET /api/v1/drivers/registered/history`, `GET /api/v1/drivers/files`,
+  `POST /api/v1/drivers/files/{fileName}` (octet-stream; never replaces a file), all admin-only.
+  Registering loads the class from a private copy and records the jar's SHA-256
+  (`driver_registration`, migration V16); `DriverFolder.driver(RegisteredDriver)` loads only while
+  the checksum matches, in its own class loader, never through `DriverManager`. Removal is refused
+  while sources use the driver; `driver_registration_log` keeps every registration and removal.
+  Nothing is downloaded for registered drivers. The pinned path is unchanged.
+- **H2 for tests only** (`com.h2database:h2` 2.5.252, MPL 2.0 or EPL 1.0): `testRuntimeOnly` in
+  `kiln-plugins`, registered through the drivers folder by the generic JDBC tests.
+  `checkNoCustomerDrivers` now also fails a release holding H2's jar (`h2-*.jar`) or classes
+  (`org/h2/`).
 
 - **Quality gate step** (`type: gate`, docs/guide/pipelines.md, "Quality gates";
   docs/design/data-quality.md sections 7 and 8). Ports `in`, `out` and `quarantine`. Settings:

@@ -346,6 +346,57 @@ abstract class WriteSql {
         return true;
     }
 
+    /**
+     * Whether the table exists, read from the driver's {@link java.sql.DatabaseMetaData} rather than
+     * by {@link #exists}; null (the default) to run {@link #exists}. For databases Kilnmark knows only
+     * through the driver (generic JDBC).
+     */
+    Boolean existsByMetadata(java.sql.Connection connection, TableName t) throws SQLException {
+        return null;
+    }
+
+    /** As {@link #requiredColumns}, from the driver's metadata; null (the default) to run {@link #requiredColumns}. */
+    Set<String> requiredByMetadata(java.sql.Connection connection, TableName t) throws SQLException {
+        return null;
+    }
+
+    /**
+     * The table's columns from the driver's metadata (sizes and decimal digits as
+     * {@link java.sql.DatabaseMetaData#getColumns} reports them), or null (the default) to read them
+     * from a prepared statement's description.
+     */
+    List<WritePlan.TargetColumn> targetColumnsByMetadata(java.sql.Connection connection, TableName t)
+        throws SQLException {
+        return null;
+    }
+
+    /**
+     * Why a table cannot be created with these columns (a kind the database has no type for), or
+     * null (the default) when it can.
+     */
+    String createProblem(List<WriteColumn> columns, int textLength) {
+        return null;
+    }
+
+    /**
+     * Whether a table this step creates is described again once created, so each value is checked
+     * against the columns the database actually made (lengths, digits of a second, decimal places)
+     * as for an append: where the column types are chosen from what the driver offers rather than
+     * known in advance. False by default.
+     */
+    boolean checksCreatedTable() {
+        return false;
+    }
+
+    /**
+     * Where a created table may have been committed by the database on its own (DDL that commits),
+     * though {@link #transactionalDdl()} is true: whether a failed create drops it again. False by
+     * default.
+     */
+    boolean dropCreatedOnFailure() {
+        return false;
+    }
+
     /** Sets up a write's session before anything else runs (MySQL's strict mode); nothing by default. */
     void prepareSession(java.sql.Connection connection) throws SQLException {
         // nothing to set

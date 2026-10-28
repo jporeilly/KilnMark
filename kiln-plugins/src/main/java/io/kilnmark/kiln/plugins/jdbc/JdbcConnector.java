@@ -295,6 +295,15 @@ public abstract class JdbcConnector implements Connector {
         return SqlDialect.POSTGRESQL;
     }
 
+    /**
+     * Whether data quality rules may run as SQL in this database ({@link #dialect()}); true by
+     * default. False where Kilnmark does not know the database's SQL (generic JDBC): rules are then
+     * checked on the rows read, as for files.
+     */
+    public boolean runsRulesInDatabase() {
+        return true;
+    }
+
 
     /**
      * SQL giving the database's estimate of {@code asset}'s row count as one number, or null when

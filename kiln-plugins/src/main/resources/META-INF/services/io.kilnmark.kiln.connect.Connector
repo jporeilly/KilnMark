@@ -5,3 +5,4 @@ io.kilnmark.kiln.plugins.files.S3Connector
 io.kilnmark.kiln.plugins.jdbc.MySqlConnector
 io.kilnmark.kiln.plugins.jdbc.MariaDbConnector
 io.kilnmark.kiln.plugins.jdbc.OracleConnector
+io.kilnmark.kiln.plugins.jdbc.GenericJdbcConnector

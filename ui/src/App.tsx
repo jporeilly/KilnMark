@@ -34,6 +34,7 @@ const NotificationsPage = page(() => import("./pages/NotificationsPage"), "Notif
 const EmailSettingsPage = page(() => import("./pages/EmailSettingsPage"), "EmailSettingsPage");
 const SentEmailsPage = page(() => import("./pages/SentEmailsPage"), "SentEmailsPage");
 const DriversPage = page(() => import("./pages/DriversPage"), "DriversPage");
+const JdbcDriversPage = page(() => import("./pages/JdbcDriversPage"), "JdbcDriversPage");
 import { Icon } from "./components/icons";
 import { Card, EmptyState, PageHeader } from "./components/ui";
 import { NotificationBell } from "./notifications/NotificationBell";
@@ -357,6 +358,12 @@ function Shell({ me }: { me: Me }) {
               <DriversPage />
             ) : (
               <NotAllowed title="Drivers">Only admins can install drivers. Ask an admin to install the one your source needs.</NotAllowed>
+            ))}
+          {route.page === "jdbc-drivers" &&
+            (allows(me.role, "admin") ? (
+              <JdbcDriversPage />
+            ) : (
+              <NotAllowed title="JDBC drivers">Only admins can register JDBC drivers. Ask an admin to register the one your database needs.</NotAllowed>
             ))}
           {route.page === "tokens" &&
             (allows(me.role, "admin") ? (

@@ -26,6 +26,30 @@ public interface JdbcDrivers {
         return null;
     }
 
+    /**
+     * The drivers an admin registered for the generic JDBC connector, by name; none by default.
+     * Read each time it is asked, so a driver registered while the server runs is offered at once.
+     */
+    default java.util.List<RegisteredDriver> registered() {
+        return java.util.List.of();
+    }
+
+    /** The registered driver called {@code name}, if there is one. */
+    default java.util.Optional<RegisteredDriver> registration(String name) {
+        return registered().stream().filter(r -> r.name().equals(name)).findFirst();
+    }
+
+    /**
+     * The registered driver {@code r}, loaded from its jar only while the jar's SHA-256 is the one
+     * recorded when it was registered, in a class loader of its own.
+     *
+     * @throws SQLException with a message a person can act on (SQL state {@code 08001}) when it is
+     *                      gone, changed or cannot be loaded
+     */
+    default java.sql.Driver driver(RegisteredDriver r) throws SQLException {
+        throw new SQLException(notRegistered(r.name()), "08001");
+    }
+
     /** No drivers installed. */
     JdbcDrivers NONE = spec -> {
         throw new SQLException(missing(spec, null), "08001");
@@ -36,5 +60,11 @@ public interface JdbcDrivers {
         return "This kind of source needs its driver, " + spec.coordinates() + " " + spec.version() + ", which "
             + "Kilnmark does not ship because of its licence. An admin can install it under Settings, Drivers"
             + (folder == null ? "" : ", or put " + spec.fileName() + " in " + folder);
+    }
+
+    /** The message for a source naming a driver that is not registered (any more). */
+    static String notRegistered(String name) {
+        return "No JDBC driver called " + name + " is registered on this server. An admin registers drivers under "
+            + "Settings, JDBC drivers";
     }
 }

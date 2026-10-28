@@ -162,7 +162,7 @@ public final class RuleRunner {
     public List<Evaluation> run(List<Rule> rules, Target t, Instant now) throws InterruptedException {
         Map<Integer, Evaluation> out = new HashMap<>();
         List<Integer> streamed = new ArrayList<>();
-        if (t.connector() instanceof JdbcConnector jdbc) {
+        if (t.connector() instanceof JdbcConnector jdbc && jdbc.runsRulesInDatabase()) {
             SqlDialect d = jdbc.dialect();
             SqlRules.Table table = new SqlRules.Table(t.asset().hints().get("schema"), t.asset().hints().get("table"));
             List<SqlRules.Plan> plans = new ArrayList<>();

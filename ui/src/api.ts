@@ -416,6 +416,48 @@ export type DriverItem = {
   acceptedAt: string | null;
 };
 
+/** A JDBC driver an admin registered for the generic JDBC connector (Settings › JDBC drivers). */
+export type RegisteredDriverItem = {
+  name: string;
+  fileName: string;
+  sha256: string;
+  driverClass: string;
+  urlPrefix: string;
+  registeredBy: string;
+  registeredAt: string;
+  /** ready, or missing (the jar is gone), mismatch (the jar changed) or unreadable: then it is not used. */
+  state: "ready" | "missing" | "mismatch" | "unreadable";
+  message: string | null;
+  usedBy: string[];
+};
+
+/** A jar in the drivers folder, for picking one to register. */
+export type DriverFolderFile = {
+  fileName: string;
+  size: number;
+  modified: string;
+  /** The registration using it, if any. */
+  registeredAs: string | null;
+  /** A connector pins this file (installed under Settings › Drivers), so it is not registered. */
+  pinned: boolean;
+};
+
+export type DriverFolderListing = { folder: string; files: DriverFolderFile[]; maxUploadBytes: number };
+
+/** One registration or removal, for the audit trail. */
+export type DriverLogEntry = {
+  action: "registered" | "removed";
+  name: string;
+  fileName: string;
+  sha256: string;
+  driverClass: string;
+  urlPrefix: string;
+  by: string;
+  at: string;
+};
+
+export type DriverRegistration = { name: string; fileName: string; driverClass: string; urlPrefix: string };
+
 export const api = {
   me: () => call<Me>("/api/v1/me"),
   signIn: async (token: string) => {
@@ -432,6 +474,16 @@ export const api = {
   connectors: () => call<Connector[]>("/api/v1/connectors"),
   drivers: () => call<DriverItem[]>("/api/v1/drivers"),
   acceptDriver: (id: string) => call<DriverItem>(`/api/v1/drivers/${encodeURIComponent(id)}/accept`, { method: "POST" }),
+  registeredDrivers: () => call<RegisteredDriverItem[]>("/api/v1/drivers/registered"),
+  driverFiles: () => call<DriverFolderListing>("/api/v1/drivers/files"),
+  driverHistory: () => call<DriverLogEntry[]>("/api/v1/drivers/registered/history"),
+  uploadDriver: (fileName: string, file: Blob) =>
+    call<DriverFolderFile>(`/api/v1/drivers/files/${encodeURIComponent(fileName)}`, { method: "POST", body: file },
+      "application/octet-stream"),
+  registerDriver: (r: DriverRegistration) =>
+    call<RegisteredDriverItem>("/api/v1/drivers/registered", { method: "POST", body: JSON.stringify(r) }),
+  removeDriver: (name: string) =>
+    call<null>(`/api/v1/drivers/registered/${encodeURIComponent(name)}`, { method: "DELETE" }),
   /**
    * Public: the sign-in page shows the organisation's name and logo. Sent without the token, so a
    * stale one in this tab can never sign anyone out from here.
