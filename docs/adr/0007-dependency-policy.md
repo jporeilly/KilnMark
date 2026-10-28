@@ -30,3 +30,21 @@ clause), Eclipse Distribution 1.0, public domain, and Eclipse Public License 2.0
 only for the Jakarta and Parsson APIs that Quarkus brings, which are dual-licensed (EPL 2.0 or GPL
 2.0 with the Classpath Exception) and shipped unmodified. Anything else needs a decision record.
 The generated `THIRD-PARTY-NOTICES.md` ships in every release.
+
+## LGPL for the MariaDB driver (added 25 October 2026)
+
+The MySQL and MariaDB connector needs a JDBC driver. MySQL's own, Connector/J, is GPL 2.0 with
+the Universal FOSS Exception, which does not fit a Business Source License product, so it is not
+used, not even in tests. MariaDB Connector/J speaks to MySQL 5.7, 8.x and 9.x as well as MariaDB
+and is LGPL 2.1 or later, which allows a proprietary or source-available program to use the
+library as long as the library itself stays free: it is shipped unmodified, as its own jar
+(`lib/main/org.mariadb.jdbc.mariadb-java-client-<version>.jar` in the server's folder), so anyone
+can replace it with another build, and its licence and source location are listed in
+`THIRD-PARTY-NOTICES.md`.
+
+`config/allowed-licenses.json` therefore allows `LGPL-2.1-or-later` **for
+`org.mariadb.jdbc:mariadb-java-client` only** (the entry names the module). LGPL in general is
+still not allowed: another LGPL library needs its own decision. Kilnmark never changes the
+driver's code and does not copy any of it; it calls its public API (including
+`setLocalInfileInputStream`, to bulk-load from memory). The driver's optional dependencies
+(Waffle, the AWS SDK, Bouncy Castle, SLF4J) are not shipped.

@@ -38,6 +38,24 @@ class SettingKindsTest {
     }
 
     @Test
+    void mySqlAndMariaDb() {
+        Map<String, String> expected = new LinkedHashMap<>();
+        expected.put("host", "TEXT");
+        expected.put("port", "NUMBER=3306");
+        expected.put("database", "TEXT");
+        expected.put("username", "TEXT");
+        expected.put("tls_mode", "CHOICE=preferred");
+        expected.put("server_ca", "TEXT");
+        expected.put("tinyint1_as_boolean", "BOOLEAN=true");
+        expected.put("schemas", "TEXT");
+        assertEquals(expected, kinds("mysql"));
+        assertEquals(expected, kinds("mariadb"));
+        Connector.Setting tls = Connectors.load().get("mariadb").orElseThrow().settings().stream()
+            .filter(s -> s.key().equals("tls_mode")).findFirst().orElseThrow();
+        assertEquals(List.of("preferred", "disabled", "required", "verify-ca", "verify-full"), tls.choices());
+    }
+
+    @Test
     void filesAndBuckets() {
         Map<String, String> documents = Map.of("keep_text", "BOOLEAN=true", "read_text_on_demand", "BOOLEAN=false");
         Map<String, String> reading = Map.of("encoding", "TEXT", "delimiter", "TEXT", "header", "BOOLEAN=true");

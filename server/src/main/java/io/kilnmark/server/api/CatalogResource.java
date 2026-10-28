@@ -137,7 +137,17 @@ public class CatalogResource {
             .values()).filter(c.capabilities()::contains).map(x -> x.name().toLowerCase(java.util.Locale.ROOT)).toList();
         return new Views.Connector(c.kind(), c.displayName(), java.util.List.copyOf(settings), kind.setting(),
             kind.label(), kind.counted(), c.category(), c.family(), capabilities, c.formats(), c.icon(),
-            c.monogram(), c.docsAnchor(), !c.addressSettings("db.example.com", null, "db").isEmpty(), c.driver() == null);
+            c.monogram(), c.docsAnchor(), addressFields(c), c.driver() == null);
+    }
+
+    /**
+     * Whether the form's host, port and database fields build this connector's address (a JDBC
+     * URL): not when the connector has a host setting of its own, which the form shows anyway, so
+     * the fields would appear twice.
+     */
+    static boolean addressFields(io.kilnmark.kiln.connect.Connector c) {
+        return !c.addressSettings("db.example.com", null, "db").isEmpty()
+            && c.settings().stream().noneMatch(s -> s.key().equals("host"));
     }
 
     /**

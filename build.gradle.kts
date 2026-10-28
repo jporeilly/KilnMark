@@ -71,6 +71,8 @@ tasks.register<Sync>("assembleRelease") {
         exclude("compose.release.yaml", "release.env.example")
     }
     from("LICENSE", "NOTICE")
+    // The full text of licences NOTICE names, such as the LGPL of the MySQL and MariaDB driver.
+    from("config/licenses") { into("licenses") }
     from(distDir.dir("licenses")) { include("THIRD-PARTY-NOTICES.md") }
     // The web UI's packages and their licences, written by the UI build (ui/scripts/ui-notices.mjs).
     from(distDir.dir("ui")) {

@@ -42,8 +42,23 @@ public final class JdbcCatalog {
                          boolean nullable, String comment, JdbcColumn.Kind kind) {
     }
 
+    /**
+     * A table or view.
+     *
+     * @param hints further details for the asset's hints (a row estimate, unique keys); none from
+     *              standard metadata
+     */
     public record Table(String schema, String name, String type, String comment, List<Column> columns,
-                        List<String> primaryKey) {
+                        List<String> primaryKey, Map<String, String> hints) {
+
+        public Table {
+            hints = hints == null ? Map.of() : Map.copyOf(hints);
+        }
+
+        public Table(String schema, String name, String type, String comment, List<Column> columns,
+                     List<String> primaryKey) {
+            this(schema, name, type, comment, columns, primaryKey, Map.of());
+        }
 
         public String path() {
             return schema + "." + name;

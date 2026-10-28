@@ -30,7 +30,7 @@ the wave says when.
 | --- | --- | --- |
 | PostgreSQL ✓ | D R W | built (W in round 3) |
 | SQL Server ✓ | D R W | built (W in round 3) |
-| MySQL and MariaDB | D R W | 1 |
+| MySQL and MariaDB ✓ | D R W | built (wave 1; driver bundled) |
 | Oracle | D R W | 1 |
 | Generic JDBC (any driver the customer supplies) | D R W | 1 |
 | IBM Db2 | D R W | 2 |
@@ -43,7 +43,9 @@ the wave says when.
 | Teradata | D R W | 3 |
 
 Drivers whose licences we cannot bundle (Oracle's, MySQL's GPL driver) are supplied by the
-customer: drop the jar into the drivers folder and the connector finds it. ADR 0007's
+customer: drop the jar into the drivers folder and the connector finds it. MySQL and MariaDB need
+neither: both are read through MariaDB Connector/J (LGPL 2.1), which ships unmodified as its own
+jar ([ADR 0007](../adr/0007-dependency-policy.md)). ADR 0007's
 licence rules stay intact.
 
 ### NoSQL and search
@@ -213,7 +215,7 @@ these themselves:
 - **Round 2:** categories, capabilities and the gallery for the connectors that exist; Excel and
   documents from stream C.
 - **Wave 1 (with round 3 pipelines, which add W):**
-  - databases: MySQL and MariaDB, Oracle, generic JDBC with customer-supplied drivers;
+  - databases: MySQL and MariaDB (built), Oracle, generic JDBC with customer-supplied drivers;
   - file locations: SMB, SFTP and FTP, Azure Blob and ADLS;
   - formats: XML, fixed width, Avro, compressed files;
   - REST;

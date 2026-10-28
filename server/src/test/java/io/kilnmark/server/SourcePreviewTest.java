@@ -183,11 +183,16 @@ class SourcePreviewTest {
         assertEquals(List.of("databases", "nosql", "files", "streaming", "applications", "lakehouse"),
             c.getList("categories.id"));
         // Test-only connectors (kind test-...) are registered on the test class path; leave them out.
-        assertEquals(List.of("postgresql", "sqlserver"), c.<String>getList("categories[0].connectors.kind").stream()
+        assertEquals(List.of("mariadb", "mysql", "postgresql", "sqlserver"),
+            c.<String>getList("categories[0].connectors.kind").stream()
             .filter(k -> !k.startsWith("test-")).toList());
-        assertEquals(List.of("discover", "read", "write"), c.getList("categories[0].connectors[0].capabilities"));
-        assertTrue(c.getBoolean("categories[0].connectors[0].addressFields"));
-        assertTrue(c.getBoolean("categories[0].connectors[0].driverBundled"));
+        String pg = "categories[0].connectors.find { it.kind == 'postgresql' }";
+        assertEquals(List.of("discover", "read", "write"), c.getList(pg + ".capabilities"));
+        assertTrue(c.getBoolean(pg + ".addressFields"));
+        assertTrue(c.getBoolean(pg + ".driverBundled"));
+        String maria = "categories[0].connectors.find { it.kind == 'mariadb' }";
+        assertFalse(c.getBoolean(maria + ".addressFields"), "host, port and database are its own settings");
+        assertTrue(c.getBoolean(maria + ".driverBundled"));
         assertEquals(List.of("files", "s3"), c.getList("categories[2].connectors.kind"));
         assertTrue(c.getList("categories[2].connectors[0].formats").contains("parquet"));
         assertEquals("object storage", c.getString("categories[2].connectors[1].family"));

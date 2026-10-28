@@ -474,4 +474,26 @@ class PostgresWriteTest {
         assertTrue(r.error().contains("Row 2, column note: it holds a zero character"), r.error());
         assertEquals(List.of(), query("SELECT relname FROM pg_class WHERE relname = 'zero'"), "rolled back");
     }
+
+    @Test
+    void timestampsWithFewerDigitsOfASecondAreNeverRounded() throws Exception {
+        sql("CREATE TABLE billing.stamps (id bigint, at timestamp(3), plain timestamp, took time(0))");
+        Schema stamps = new Schema(List.of(Rows.field("id", Rows.INT64), Rows.field("at", Rows.TIMESTAMP),
+            Rows.field("plain", Rows.TIMESTAMP), Rows.field("took", Rows.TIME)));
+        RunResult ok = write(source, options("billing.stamps", "append", List.of(), Map.of()), stamps,
+            Rows.list(new Object[] {1L, java.time.LocalDateTime.parse("2025-01-31T09:30:00.123"),
+                java.time.LocalDateTime.parse("2025-01-31T09:30:00.123456"), java.time.LocalTime.parse("09:30:00")}),
+            4, -1, Rows.events());
+        assertTrue(ok.succeeded(), ok.error());
+        RunResult at = write(source, options("billing.stamps", "append", List.of(), Map.of()), stamps,
+            Rows.list(new Object[] {2L, java.time.LocalDateTime.parse("2025-01-31T09:30:00.1235"), null, null}), 4, -1,
+            Rows.events());
+        assertTrue(at.error().contains("in column at has more digits of a second than the column keeps (3)"),
+            at.error());
+        RunResult took = write(source, options("billing.stamps", "append", List.of(), Map.of()), stamps,
+            Rows.list(new Object[] {3L, null, null, java.time.LocalTime.parse("09:30:00.5")}), 4, -1, Rows.events());
+        assertTrue(took.error().contains("in column took has more digits of a second than the column keeps (0)"),
+            took.error());
+        assertEquals(List.of(List.of(1L)), query("SELECT count(*) FROM billing.stamps"));
+    }
 }

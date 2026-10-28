@@ -94,12 +94,12 @@ Every field is optional.
 | --- | --- |
 | `product.name` | Replaces "Kilnmark" in the sidebar and on the sign-in page. At most 60 characters |
 | `product.logo` | An image shown before the name in place of the letter tile, at 28 pixels high |
-| `connectors` | Keyed by connector id: `postgresql`, `sqlserver`, `files`, `s3`, or a planned connector's id (below) |
+| `connectors` | Keyed by connector id: `postgresql`, `sqlserver`, `mysql`, `mariadb`, `files`, `s3`, or a planned connector's id (below) |
 | `connectors.<id>.file` | An image that replaces the tile |
 | `connectors.<id>.color` | A brand colour as `#rrggbb`. With a file, the background behind the image; without one, the tile's colour, with black or white letters, whichever contrasts more. Not used in the High contrast theme, nor for a planned connector without a file (its tile stays neutral until it is available) |
 | `connectors.<id>.label` | The name of the logo: shown as a tooltip on the tile, and read out as the tile's name wherever the tile stands without its connector name beside it. At most 60 characters |
 
-Planned connector ids, for when they arrive: `mysql`, `oracle`, `jdbc`, `db2`, `sqlite`,
+Planned connector ids, for when they arrive: `oracle`, `jdbc`, `db2`, `sqlite`,
 `snowflake`, `redshift`, `bigquery`, `databricks`, `hana`, `teradata`, `mongodb`, `elasticsearch`,
 `cassandra`, `redis`, `neo4j`, `cosmos-dynamo`, `smb`, `sftp`, `azure-blob`, `gcs`, `http`,
 `hdfs`, `kafka`, `mqtt`, `amqp`, `jms`, `cdc`, `cloud-streams`, `opcua`, `rest`, `graphql`,
