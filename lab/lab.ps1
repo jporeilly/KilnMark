@@ -52,7 +52,7 @@ $Sources = @(
     [pscustomobject]@{ Name = 'postgres'; Services = @('lab-postgres'); OneShot = @(); Volumes = @()
         Port = '5433'; Source = 'lab-db'; What = 'PostgreSQL 18: database lab (crm, billing)' }
     [pscustomobject]@{ Name = 's3'; Services = @('lab-s3'); OneShot = @(); Volumes = @()
-        Port = '9000'; Source = 'lab-bucket'; What = 'S3-compatible storage (VersityGW): bucket lab-raw' }
+        Port = '9020'; Source = 'lab-bucket'; What = 'S3-compatible storage (VersityGW): bucket lab-raw' }
     [pscustomobject]@{ Name = 'sqlserver'; Services = @('lab-sqlserver'); OneShot = @('lab-sqlserver-init')
         Volumes = @('lab-sqlserver-data')
         Port = '14330'; Source = 'lab-sqlserver'; What = 'SQL Server 2022: database labdb (sales, hr, ops)' }

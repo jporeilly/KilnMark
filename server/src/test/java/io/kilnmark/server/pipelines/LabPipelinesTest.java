@@ -36,7 +36,7 @@ class LabPipelinesTest {
             "username", "lab", "schemas", "crm;billing"), "lab");
         s.add("lab-mariadb", "mariadb", Map.of("host", "localhost", "port", "3307", "username", "kiln_reader",
             "schemas", "shop;stock"), "Lab-Reader-2026");
-        s.add("lab-warehouse", "s3", Map.of("endpoint", "http://localhost:9000", "bucket", "lab-warehouse",
+        s.add("lab-warehouse", "s3", Map.of("endpoint", "http://localhost:9020", "bucket", "lab-warehouse",
             "access_key_id", "labadmin", "path_style", "true", "allow_writing", "true"), "labadmin123");
         // Columns as lab/postgres/01-schema.sql and lab/mariadb/01-shop.sql declare them.
         s.asset("urn:kilnmark:lab-db:crm.customers", "customer_id:int64", "first_name:text", "last_name:text",

@@ -153,15 +153,15 @@ These are development scripts: they live in `lab/` and are never shipped with Ki
 ### Port already in use
 
 Each demo source publishes a fixed port on this machine (the table below). `start` checks it first
-and stops with the name of whatever already holds it, for example `s3: port 9000 is already in use
-by the container minio`: another container or program is listening there. Stop that one, then start
+and stops with the name of whatever already holds it, for example `s3: port 9020 is already in use
+by the container other-s3`: another container or program is listening there. Stop that one, then start
 the demo source again. To see for yourself:
 
 ```
 podman ps --format "{{.Names}}  {{.Ports}}"                       # a container publishing it
-Get-NetTCPConnection -LocalPort 9000 -State Listen |
+Get-NetTCPConnection -LocalPort 9020 -State Listen |
   ForEach-Object { Get-Process -Id $_.OwningProcess }             # Windows: the program
-lsof -nP -iTCP:9000 -sTCP:LISTEN                                  # Linux and macOS
+lsof -nP -iTCP:9020 -sTCP:LISTEN                                  # Linux and macOS
 ```
 
 ## Start and stop
@@ -180,7 +180,7 @@ nothing: before the profiles it started the whole lab, so add `--profile all` to
 | Source | Where | Credentials |
 | --- | --- | --- |
 | PostgreSQL 18 | `localhost:5433`, database `lab` | `lab` / `lab` |
-| S3-compatible (VersityGW) | `localhost:9000`, buckets `lab-raw` and `lab-warehouse`, path-style addressing | `labadmin` / `labadmin123` |
+| S3-compatible (VersityGW) | `localhost:9020`, buckets `lab-raw` and `lab-warehouse`, path-style addressing | `labadmin` / `labadmin123` |
 | File share | `lab/files/share` on disk | none |
 | Mail server (Mailpit), demo source `mail` | SMTP `localhost:1025`, web page http://localhost:8025 | none (any user name and password are accepted) |
 | SQL Server 2022 Developer | `localhost,14330`, database `labdb` | `kiln_reader` / `Lab-Reader-2026` (read-only) |
@@ -231,7 +231,7 @@ the lab is stopped with `down -v`.
 ## Register the lab in one go
 
 `lab/sources.csv` lists the lab sources as you see them from this machine (`localhost:5433`,
-`localhost:9000`, `localhost:14330`, `localhost:3307`, `localhost:1522`; `lab-warehouse` is a bucket on the same server as `lab-bucket`); `./lab/lab.sh sources` prints its path. Sources you have
+`localhost:9020`, `localhost:14330`, `localhost:3307`, `localhost:1522`; `lab-warehouse` is a bucket on the same server as `lab-bucket`); `./lab/lab.sh sources` prints its path. Sources you have
 not started are still added, but their connection test fails until you start them. In Kilnmark,
 open **Sources > Import sources from a file**, choose the file, tick **Rewrite host names for this
 server** and, if you like, **Test each connection** and **Queue a scan**, then press **Import**. The compose stack's host map (`KILNMARK_SOURCES_HOST_MAP`, by default
@@ -275,7 +275,7 @@ gone:
 podman compose -f lab/compose.yaml exec lab-s3 sh -c 'rm -rf /data/lab-warehouse/*'
 # or with any S3 client, for example the AWS CLI:
 AWS_ACCESS_KEY_ID=labadmin AWS_SECRET_ACCESS_KEY=labadmin123 AWS_DEFAULT_REGION=us-east-1 \
-  aws --endpoint-url http://localhost:9000 s3 rm s3://lab-warehouse --recursive
+  aws --endpoint-url http://localhost:9020 s3 rm s3://lab-warehouse --recursive
 ```
 
 Stopping the lab with `down -v` and starting it again also gives an empty bucket.
@@ -536,9 +536,9 @@ in [docs/design/connector-catalogue.md](../docs/design/connector-catalogue.md).
 | Connector | Lab service | Port | Source name | Status |
 | --- | --- | --- | --- | --- |
 | PostgreSQL | `lab-postgres` (profile `postgres`) | 5433 | `lab-db` | Present |
-| S3-compatible object storage | `lab-s3`, VersityGW (profile `s3`) | 9000 | `lab-bucket` | Present |
+| S3-compatible object storage | `lab-s3`, VersityGW (profile `s3`) | 9020 | `lab-bucket` | Present |
 | Local or network folder | none: `lab/files/share` on disk | none | `lab-share` | Present |
-| Delimited, JSON and Parquet files | the bucket's `exports/`, `raw/` and `finance/` | 9000 | `lab-bucket` | Present |
+| Delimited, JSON and Parquet files | the bucket's `exports/`, `raw/` and `finance/` | 9020 | `lab-bucket` | Present |
 | Documents and Excel | `documents/` in the file share (and the bucket) | none | `lab-share` | Present |
 | SQL Server | `lab-sqlserver` (profile `sqlserver`) | 14330 | `lab-sqlserver` | Present |
 | MySQL and MariaDB | `lab-mariadb`, MariaDB 11.4 (profile `mariadb`) | 3307 | `lab-mariadb` | Present (MySQL 8.4 is covered by the tests) |

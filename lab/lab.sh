@@ -28,7 +28,7 @@ NETWORK=kilnmark     # created by Kilnmark's own compose.yaml
 # The name is also the compose profile. A source with no services (files) needs nothing running.
 # Keep this table the same as the one in lab.ps1.
 SOURCES='postgres|lab-postgres|||5433|lab-db|PostgreSQL 18: database lab (crm, billing)
-s3|lab-s3|||9000|lab-bucket|S3-compatible storage (VersityGW): bucket lab-raw
+s3|lab-s3|||9020|lab-bucket|S3-compatible storage (VersityGW): bucket lab-raw
 sqlserver|lab-sqlserver|lab-sqlserver-init|lab-sqlserver-data|14330|lab-sqlserver|SQL Server 2022: database labdb (sales, hr, ops)
 mariadb|lab-mariadb||lab-mariadb-data|3307|lab-mariadb|MariaDB 11.4: databases shop and stock (orders, inventory)
 oracle|lab-oracle||lab-oracle-data|1522|lab-oracle|Oracle Database Free 23ai: schemas FLEET and FREIGHT (needs its driver)

@@ -140,7 +140,7 @@ AI profiles work as described in [AI models](#ai-models).
 
 `release` also runs `checkProductOnly`, which fails the build if the release folder, Kilnmark's own
 jars, the UI bundle or the bundled guides name the lab (any `lab-<name>`, `labadmin`, a path into
-`lab/`, the lab-only ports 5433 and 9000), or if the shipped `compose.yaml`, the Containerfiles,
+`lab/`, the lab-only ports 5433 and 9020), or if the shipped `compose.yaml`, the Containerfiles,
 the guides or the changelog's "What's new" mention it. It also fails if the shipped `compose.yaml`
 gives a variable whose name holds `PASSWORD`, `SECRET` or `TOKEN` a default (`:-`, even an empty
 one) or sets one to a literal value, if `.env.example` fills one in, or if the release holds a
@@ -378,7 +378,7 @@ name, the same under Podman and Docker:
 | JDBC URL | `jdbc:postgresql://lab-postgres:5432/lab` |
 | User name / password | `lab` / `lab` |
 
-(From the machine itself the lab is on `localhost:5433`, and its S3 on `localhost:9000`.)
+(From the machine itself the lab is on `localhost:5433`, and its S3 on `localhost:9020`.)
 
 Press **Scan now**. A scan of the lab (six tables, 10 million rows once `lab.make_big_table` has
 run) takes about 15 seconds. Then search for `customer` and open `crm.customers`.
