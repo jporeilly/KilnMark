@@ -483,6 +483,80 @@ export function addStep(
   });
 }
 
+/** A step a suggestion adds: its id, type, settings and inputs (port to `step[.port]`). */
+export type NewStep = { id: string; type: string; settings: Record<string, unknown>; inputs: Record<string, string> };
+
+/**
+ * Adds a suggestion's steps in one change (one undo step): each is listed after the step rows
+ * come from, written as the others are (settings on one line each, expressions double-quoted), and
+ * `before` then reads from `through` instead of `from`. Refused when the pipeline has changed so
+ * the suggestion no longer fits: a step id taken since, or `before` no longer reading `from`.
+ */
+export function insertSteps(
+  text: string,
+  catalogue: Catalogue,
+  steps: NewStep[],
+  placement: { before: string; port: string; from: string; through: string },
+  positions: Record<string, Point> = {},
+): Change {
+  return change(text, catalogue, (ctx) => {
+    const ids = new Set(stepIds(ctx.doc));
+    for (const s of steps) {
+      if (!STEP_ID.test(s.id) || ids.has(s.id)) throw new Error(`The pipeline already has a step called ${s.id}. Ask for the suggestions again.`);
+      ids.add(s.id);
+    }
+    const target = ctx.graph.steps.find((s) => s.id === placement.before);
+    const map = findStep(ctx.doc, placement.before);
+    if (!target || !map) throw new Error(`There is no step ${placement.before} any more. Ask for the suggestions again.`);
+    const ports = portsOf(target, catalogue);
+    const old = parseRef(placement.from);
+    const links = target.inputs.map((l) =>
+      l.from === old.from && l.fromPort === old.fromPort && portOfLink(l, ports) === placement.port ? { ...l, ...parseRef(placement.through) } : l,
+    );
+    if (links.every((l, i) => l === target.inputs[i])) {
+      throw new Error(`${placement.before} no longer reads from ${placement.from}. Ask for the suggestions again.`);
+    }
+    const anchor = parseRef(placement.from).from;
+    for (const s of steps) {
+      const t = catalogue.get(s.type);
+      const kinds = new Map((t?.settings ?? []).map((x) => [x.key, x.kind]));
+      const pairs: [string, unknown][] = [
+        ["id", s.id],
+        ["type", s.type],
+      ];
+      const inputs = Object.entries(s.inputs);
+      if (inputs.length === 1 && (t?.inputs.length ?? 1) <= 1) pairs.push(["input", inputs[0][1]]);
+      else if (inputs.length > 0) pairs.push(["inputs", Object.fromEntries(inputs)]);
+      const lines: string[] = [];
+      for (const [k, v] of Object.entries(s.settings)) {
+        lines.push(`${scalarYaml(k)}: ${flowYaml(v, EXPRESSION_KINDS.has(kinds.get(k) ?? ""))}`);
+      }
+      insertRawStep(ctx, pairs, lines, ctx.graph.steps.some((x) => x.id === anchor) ? anchor : null);
+    }
+    writeInputs(ctx, map, links, ports);
+    const fresh = Object.fromEntries(Object.entries(positions).filter(([id]) => steps.some((s) => s.id === id)));
+    if (Object.keys(fresh).length) writeLayout(ctx, fresh);
+    return placement.through;
+  });
+}
+
+/** As insertStep, with settings lines already written. */
+function insertRawStep(ctx: Ctx, pairs: [string, unknown][], settings: string[], after: string | null) {
+  const { doc, p } = ctx;
+  const seq = topPair(doc, "steps")?.value;
+  if (!isBlockSeq(seq) || seq.items.length === 0) {
+    throw new Error("The steps are not written as a list the canvas can add to. Add the step in the YAML tab.");
+  }
+  const items = seq.items as unknown as { range: [number, number, number] }[];
+  const anchorIndex = after ? seq.items.findIndex((m) => isMap(m) && idOf(m) === after) : -1;
+  const anchor = items[anchorIndex >= 0 ? anchorIndex : items.length - 1];
+  const { prefix } = p.itemPrefix(items[0]);
+  const lines = [...newStepLines(prefix.length, pairs), ...settings.map((l) => " ".repeat(prefix.length) + l)];
+  const end = p.itemEnd(anchor);
+  const lead = p.text[end - 1] === "\n" ? "" : p.eol;
+  p.insert(end, `${lead}${p.eol}${prefix}${lines.join(p.eol)}${p.eol}`);
+}
+
 /** Removes a step, every connection to it and its position. */
 export function removeStep(text: string, id: string, catalogue: Catalogue): Change {
   return change(text, catalogue, (ctx) => {

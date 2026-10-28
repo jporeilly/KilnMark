@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
 import {
   applyNodeChanges,
   Background,
@@ -22,6 +22,7 @@ import {
   IconKeyboard,
   IconLayoutDistributeHorizontal,
   IconPlug,
+  IconSparkles,
   IconTextSize,
   IconX,
   IconZoomIn,
@@ -40,6 +41,7 @@ import {
 import { useColourScheme } from "../../theme/appearance";
 import { columnsText } from "../outline";
 import { stepQualityWords } from "../quality";
+import { predictedWords, predictionApi, predictionsByStep, type Prediction, type Suggestion } from "../prediction";
 import { kindWord, problemsByStep, stepSummary } from "./insight";
 import { autoLayout, placed, spotAfter } from "./layout";
 import {
@@ -49,6 +51,7 @@ import {
   connectProblem,
   disconnect,
   duplicateStep,
+  insertSteps,
   portsOf,
   possibleConnections,
   readGraph,
@@ -105,6 +108,9 @@ const loadCatalogue = () => (catalogueLoad ??= pipelinesApi.steps().catch((e) =>
 }));
 
 const nodeTypes = { step: StepNode };
+const SuggestionsPanel = lazy(() => import("./SuggestionsPanel"));
+/** How long after the last change the predicted scores are worked out again. */
+const PREDICT_AFTER_MS = 700;
 /** Setting kinds typed a character at a time: written to the YAML once typing pauses. */
 const TYPED = new Set(["text", "number", "expression", "expressions", "conditions", "column_map", "asset", "rules"]);
 /** The smallest zoom at which a step's words can still be read. */
@@ -151,6 +157,8 @@ function Canvas(props: CanvasProps) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [connectFor, setConnectFor] = useState<string | null>(null);
+  const [prediction, setPrediction] = useState<Prediction | null>(null);
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const toolbar = useRef<HTMLDivElement>(null);
   // The latest text, also for changes made before React has drawn the last one.
@@ -205,6 +213,29 @@ function Canvas(props: CanvasProps) {
     return m;
   }, [run]);
   const runQuality = useMemo(() => new Map((run?.quality ?? []).map((q) => [q.step, q])), [run]);
+  // Predicted quality from the catalogue's metadata, worked out again a moment after each change.
+  const canPredict = read.ok && yaml.trim() !== "";
+  useEffect(() => {
+    if (!canPredict) return;
+    const ctl = new AbortController();
+    const t = window.setTimeout(() => {
+      predictionApi
+        .predict(yaml, ctl.signal)
+        .then((p) => !ctl.signal.aborted && setPrediction(p))
+        .catch(() => !ctl.signal.aborted && setPrediction(null));
+    }, PREDICT_AFTER_MS);
+    return () => {
+      ctl.abort();
+      window.clearTimeout(t);
+    };
+  }, [yaml, canPredict]);
+  const predicted = useMemo(() => predictionsByStep(prediction), [prediction]);
+  // Choosing a step shows its settings in place of the suggestions.
+  const lastSelected = useRef(selected);
+  useEffect(() => {
+    if (selected && selected !== lastSelected.current) setSuggestOpen(false);
+    lastSelected.current = selected;
+  }, [selected]);
 
   const say = useCallback((words: string) => {
     // Cleared first, so the same words twice are read out twice.
@@ -397,6 +428,21 @@ function Canvas(props: CanvasProps) {
     else flush();
   };
 
+  /** Adds a suggestion's steps between the step rows come from and the write, as one change. */
+  const addSuggestion = (sg: Suggestion): string | null => {
+    if (readOnly || !graph) return "The canvas cannot change this pipeline now.";
+    flush();
+    const from = positions[sg.placement.from.split(".")[0]];
+    const to = positions[sg.placement.before];
+    const base = from && to ? { x: (from.x + to.x) / 2, y: Math.max(from.y, to.y) + 170 } : spotAfter(positions, null);
+    const spots = Object.fromEntries(sg.steps.map((n, i) => [n.id, { x: base.x + i * 250, y: base.y }]));
+    const c = insertSteps(yamlRef.current, catalogue, sg.steps, sg.placement);
+    if ("error" in c) return c.error;
+    // The list stays open (it is worked out again for the changed pipeline); the change is announced.
+    apply(c, `Added ${sg.steps.map((n) => n.id).join(" and ")} before ${sg.placement.before}: ${sg.title}.`, { pin: spots });
+    return null;
+  };
+
   const layOut = () => {
     if (readOnly || !graph) return;
     flush();
@@ -416,6 +462,7 @@ function Canvas(props: CanvasProps) {
       const runInfo = runSteps.get(s.id) ?? null;
       const quality = runQuality.get(s.id) ?? null;
       const qualityText = stepQualityWords(quality);
+      const estimate = predicted.get(s.id) ?? null;
       const summary = stepSummary(s);
       const columns = outline ? columnsText(outline) : "Columns known once the pipeline has been checked";
       return {
@@ -434,6 +481,7 @@ function Canvas(props: CanvasProps) {
           columns,
           run: runInfo,
           quality,
+          predicted: estimate,
           connectable: !readOnly,
         },
         ariaLabel: [
@@ -443,6 +491,7 @@ function Canvas(props: CanvasProps) {
           n ? `${n} ${n === 1 ? "problem" : "problems"}` : "",
           runInfo ? `last run: ${runWords(runInfo)}` : "",
           qualityText ?? "",
+          predictedWords(estimate) ?? "",
         ]
           .filter(Boolean)
           .join(". "),
@@ -450,7 +499,7 @@ function Canvas(props: CanvasProps) {
         domAttributes: { "aria-describedby": `cv-cols-${s.id} cv-node-help` },
       };
     });
-  }, [graph, catalogue, check, problems, runSteps, runQuality, positions, selected, readOnly]);
+  }, [graph, catalogue, check, problems, runSteps, runQuality, predicted, positions, selected, readOnly]);
 
   const [nodes, setNodes] = useState<StepNodeType[]>(derived);
   useEffect(() => {
@@ -844,6 +893,19 @@ function Canvas(props: CanvasProps) {
           <IconKeyboard size={18} stroke={1.8} aria-hidden="true" />
           Shortcuts
         </button>
+        <button
+          type="button"
+          className={`cv-tool${suggestOpen ? " is-on" : ""}`}
+          aria-pressed={suggestOpen}
+          onClick={() => {
+            flush();
+            setSuggestOpen((o) => !o);
+          }}
+          disabled={!graph?.steps.length}
+        >
+          <IconSparkles size={18} stroke={1.8} aria-hidden="true" />
+          Suggestions
+        </button>
         {run && (
           <span className="small cv-run-legend">
             Showing run {run.id} (version {run.version}, {run.status}).
@@ -851,7 +913,7 @@ function Canvas(props: CanvasProps) {
         )}
       </div>
 
-      <div className={`cv-stage${selectedStep ? " has-drawer" : ""}`}>
+      <div className={`cv-stage${selectedStep || suggestOpen ? " has-drawer" : ""}`}>
         <Palette
           types={types}
           usedTypes={graph?.steps.map((s) => s.type ?? "") ?? []}
@@ -959,7 +1021,12 @@ function Canvas(props: CanvasProps) {
           )}
         </div>
 
-        {selectedStep && (
+        {suggestOpen && (
+          <Suspense fallback={<aside className="cv-drawer cv-suggest" aria-busy="true"><p className="small">Loading suggestions…</p></aside>}>
+            <SuggestionsPanel yaml={yaml} readOnly={readOnly} onAdd={addSuggestion} onClose={() => setSuggestOpen(false)} />
+          </Suspense>
+        )}
+        {selectedStep && !suggestOpen && (
           <aside
             className="cv-drawer"
             aria-labelledby="cv-panel-h"
@@ -998,6 +1065,7 @@ function Canvas(props: CanvasProps) {
               readOnly={readOnly}
               run={runSteps.get(selectedStep.id) ?? null}
               quality={runQuality.get(selectedStep.id) ?? null}
+              predicted={predicted.get(selectedStep.id) ?? null}
               onSetting={(key, value, kind) => setOne(selectedStep.id, key, value, kind)}
               onRename={(to) => rename(selectedStep.id, to)}
               onDisconnect={unlink}

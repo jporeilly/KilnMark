@@ -7,6 +7,19 @@ details.
 
 ### What's new
 
+- **Predicted quality before a pipeline runs.** While you edit a pipeline, each write and quality
+  gate on the canvas shows the score Kilnmark predicts for it, such as "Predicted 91% (estimate)",
+  worked out from what the catalogue already knows about the tables and files it reads, without
+  reading any data. What it cannot tell, it says is unknown. Each run keeps its prediction, and the
+  run's page shows the measured score beside the predicted one, per dimension, with the gap: a wide
+  gap shows where the catalogue's information, or the pipeline, needs attention.
+- **Suggestions to improve a pipeline.** **Suggestions** on the canvas lists steps that would raise
+  a write's predicted score, such as trimming spaces, standardising two date formats, keeping one
+  row per key, dropping rows with no match in a related table, or setting aside rows outside the
+  accepted patterns, each with its predicted effect. **Add** puts the step in place, and one Undo
+  takes it out. With an AI model set for **Pipeline suggestions**, it ranks and explains them and
+  adds its own, seeing only names, types, shares and value shapes of sources whose AI rule allows
+  it, never values; what it suggests is checked before you see it.
 - **Quality gates in pipelines.** Add a **Quality gate** step (in the Quality folder) to check rows
   against quality rules as they pass, with no second read of the data: the rules of the table or
   file the pipeline read, and any you write on the step. When rows fail, the gate can stop the run
@@ -45,6 +58,43 @@ details.
   for example "true or false, not 'yes'".
 
 ### Details
+
+- **Predicted quality** (docs/guide/pipelines.md, "Predicted quality"; docs/design/data-quality.md
+  section 8). `QualityPredictor` carries each read asset's latest profile (nulls, blanks, distinct,
+  value shapes, formats, most common values, quantiles, outliers), accepted shapes, relationships
+  and rule results through the steps, one rule per step type (filter conditions from null shares,
+  most common values, quantiles and value shapes; compute's trim, case, coalesce, parse_date and
+  format_date; lookup orphan rates from a relationship's containment or the columns' HyperLogLog
+  sketches; aggregate and dedupe from distinct counts; union weighted by rows; a quarantining gate
+  removing the predicted failing share from `out`). Writes are scored with the same `Measures` and
+  `Scores` as a run's measured output, keeping only the dimensions the estimate can tell; gates
+  from their rules' predicted failing shares, scored as the gate scores itself. Each prediction
+  lists what it could not tell and what it assumed. `kiln-steps` gains `Expression.view()` and
+  `columns()`, a read-only view of a parsed expression (`ExprView`).
+- **API.** `POST /api/v1/pipelines/predict` (`{yaml}`; viewer) returns `{estimate, valid, steps:
+  [{step, type, rows}], outputs: [{step, role, asset, overall, dimensions, reasons, unknown,
+  assumptions, rows, gate}]}`; `GET /api/v1/pipelines/{name}/versions/{n}/prediction` the same for a
+  saved version; `POST /api/v1/pipelines/suggest` (`{yaml, ai}`; steward) returns `{estimate,
+  suggestions: [{id, kind, title, why, source, steps: [{id, type, settings, inputs}], placement:
+  {before, port, from, through}, effect: {output, before, after, dimensionsBefore, dimensionsAfter,
+  rowsBefore, rowsAfter, note}}], ai: {state, message, model}}`. A run's quality rows gain
+  `prediction` (`{unknown, assumptions, rows, gate}`) beside `predicted`.
+- **At run start** each write's and gate's prediction is stored (migration V16 adds
+  `pipeline_step_quality.predicted_detail`); a failed run keeps its predictions, with a note that the
+  write was not measured.
+- **Suggestions** (`PipelineAdvisor`): rule-based candidates with no model, each tried out by
+  predicting the pipeline with it and kept only when it raises the write's score. New AI feature
+  `pipeline_suggestions` (chat): ranks, explains and adds, through `AiGateway` with the interactive
+  budget. Only columns whose source's `ai_egress` lets that model see them are sent (names, kinds,
+  shares, value shapes, accepted shapes; never values, never computed columns), with the strictest
+  of those sources passed to the gateway for its own check; no call is made when no source allows
+  it. The model's additions are checked (step types the server has, settings they take, columns it
+  was shown that reach that point, the step's own check and output schema) and dropped otherwise.
+  An absent, refused, slow or failing model leaves the rule-based suggestions, and says why.
+- **Canvas.** Predicted scores on each write and gate (debounced, labelled "(estimate)", in each
+  step's accessible name and settings drawer); a lazily loaded **Suggestions** panel whose **Add**
+  inserts the steps with `insertSteps` (text edits only, one undo step). The run page shows
+  measured beside predicted per dimension with the gap.
 
 - **Quality gate step** (`type: gate`, docs/guide/pipelines.md, "Quality gates";
   docs/design/data-quality.md sections 7 and 8). Ports `in`, `out` and `quarantine`. Settings:

@@ -20,6 +20,7 @@ import {
   percent,
   RULE_STATUS_WORDS,
 } from "./quality";
+import { dimensionRows, ESTIMATE, gapWords, pointsWords } from "./prediction";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { formatBytes, formatDuration, RunStatus, runTime } from "./RunStatus";
@@ -55,6 +56,77 @@ function ScoreChip({ score }: { score: number }) {
   );
 }
 
+/**
+ * Measured beside predicted, per dimension, with the gap: the estimate made when the run started
+ * from the catalogue's metadata against what the run measured. The gap says where the metadata,
+ * or the pipeline, needs attention.
+ */
+function PredictedBeside({ q }: { q: PipelineStepQuality }) {
+  const rows = dimensionRows(q.measured, q.predicted);
+  const gap = gapWords(q.measured, q.predicted);
+  const unknown = q.prediction?.unknown ?? [];
+  const assumed = q.prediction?.assumptions ?? [];
+  return (
+    <div className="pl-predicted">
+      {gap && <p className="small pl-gap">{gap}</p>}
+      {rows.length > 0 && (
+        <div className="table-scroll" role="region" aria-label={`Measured and predicted quality of ${q.step}`} tabIndex={0}>
+          <table className="small pl-predicted-table">
+            <thead>
+              <tr>
+                <th scope="col">Dimension</th>
+                <th scope="col">Measured</th>
+                <th scope="col">Predicted {ESTIMATE}</th>
+                <th scope="col">Gap</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.dimension}>
+                  <th scope="row">{dimensionWord(r.dimension)}</th>
+                  <td>
+                    {r.measured == null ? (
+                      <span className="muted">Not measured</span>
+                    ) : (
+                      <span className="pl-cell-meter">
+                        <Meter value={r.measured} tone={FILL[rating(r.measured).tone]} size="sm" />
+                        {percent(r.measured)}
+                      </span>
+                    )}
+                  </td>
+                  <td>{r.predicted == null ? <span className="muted">Unknown</span> : percent(r.predicted)}</td>
+                  <td className={r.gap != null && Math.abs(r.gap) > 0.02 ? "pl-gap-wide" : undefined}>
+                    {r.gap == null ? "–" : Math.round(r.gap * 100) === 0 ? "none" : pointsWords(r.gap)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {(unknown.length > 0 || assumed.length > 0) && (
+        <details className="small pl-predicted-more">
+          <summary>What the estimate could not tell, and assumed</summary>
+          {unknown.length > 0 && (
+            <ul aria-label="Not known">
+              {unknown.map((u, i) => (
+                <li key={i}>Not known: {u}</li>
+              ))}
+            </ul>
+          )}
+          {assumed.length > 0 && (
+            <ul aria-label="Assumed">
+              {assumed.map((u, i) => (
+                <li key={i}>Assumed: {u}</li>
+              ))}
+            </ul>
+          )}
+        </details>
+      )}
+    </div>
+  );
+}
+
 /** One write's or gate's measured quality: its score, each dimension and, for a gate, each rule. */
 function StepQuality({ q }: { q: PipelineStepQuality }) {
   const g = q.gate;
@@ -65,6 +137,13 @@ function StepQuality({ q }: { q: PipelineStepQuality }) {
         <span className="mono">{q.step}</span>
         <span className="small muted">{q.role === "gate" ? "Quality gate" : "Output"}</span>
         {q.measured ? <ScoreChip score={q.measured.overall} /> : <StatusChip tone="neutral">Not measured</StatusChip>}
+        {q.predicted ? (
+          <StatusChip tone="neutral" title="Worked out when the run started, from the catalogue's metadata">
+            Predicted {percent(q.predicted.overall)} {ESTIMATE}
+          </StatusChip>
+        ) : q.prediction ? (
+          <StatusChip tone="neutral">Predicted: unknown {ESTIMATE}</StatusChip>
+        ) : null}
       </h3>
       {q.asset && (
         <p className="small">
@@ -84,16 +163,21 @@ function StepQuality({ q }: { q: PipelineStepQuality }) {
         </p>
       )}
       {g?.stopReason && <p className="small pl-bad">{g.stopReason}</p>}
-      {q.measured && Object.keys(q.measured.dimensions).length > 0 && (
-        <ul className="pl-dims">
-          {Object.entries(q.measured.dimensions).map(([d, v]) => (
-            <li key={d}>
-              <span className="pl-dim-name">{dimensionWord(d)}</span>
-              <Meter value={v} tone={FILL[rating(v).tone]} size="sm" />
-              <span className="pl-dim-value">{percent(v)}</span>
-            </li>
-          ))}
-        </ul>
+      {q.predicted || q.prediction ? (
+        <PredictedBeside q={q} />
+      ) : (
+        q.measured &&
+        Object.keys(q.measured.dimensions).length > 0 && (
+          <ul className="pl-dims">
+            {Object.entries(q.measured.dimensions).map(([d, v]) => (
+              <li key={d}>
+                <span className="pl-dim-name">{dimensionWord(d)}</span>
+                <Meter value={v} tone={FILL[rating(v).tone]} size="sm" />
+                <span className="pl-dim-value">{percent(v)}</span>
+              </li>
+            ))}
+          </ul>
+        )
       )}
       {q.measured && q.measured.reasons.length > 0 && (
         <ul className="small muted pl-reasons">
@@ -347,6 +431,8 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
           <h2 id="quality-h">Quality</h2>
           <p className="small muted">
             Measured in the run itself: each gate from its rules, each output from the profile made as it was written.
+            Beside each, the score Kilnmark predicted when the run started from the catalogue's metadata (an estimate);
+            the gap shows where the metadata, or the pipeline, needs attention.
           </p>
           <ul className="pl-quality">
             {detail.quality!.map((q) => (

@@ -546,8 +546,28 @@ class PipelineFlowTest {
         assertEquals(21, stopped.getInt("notes.find { it.message.contains('quarantine port') }.line"),
             stopped.prettify());
 
+        // Predicted before it runs, from the catalogue alone: the scan's profile of lab.people and the asset's rule.
+        JsonPath predicted = as(viewer).body(Map.of("yaml", GATED)).post("/api/v1/pipelines/predict").then()
+            .statusCode(200).body("estimate", equalTo(true)).body("valid", equalTo(true)).extract().jsonPath();
+        String said = predicted.prettify();
+        assertEquals(0.9, predicted.getDouble("outputs.find { it.step == 'check' }.overall"), 0.01, said);
+        assertEquals("quarantined", predicted.getString("outputs.find { it.step == 'check' }.gate.decision"), said);
+        assertEquals(2000, predicted.getInt("outputs.find { it.step == 'check' }.gate.rowsPassed"), 30, said);
+        assertEquals(500, predicted.getInt("outputs.find { it.step == 'check' }.gate.rowsQuarantined"), 30, said);
+        assertEquals(List.of("profile", "quantiles"),
+            predicted.getList("outputs.find { it.step == 'check' }.gate.rules.basis"), said);
+        assertEquals(2500, predicted.getInt("steps.find { it.step == 'people' }.rows.out"), said);
+        // tidy's case expression cannot be predicted: said, not guessed.
+        assertTrue(predicted.getList("outputs.find { it.step == 'good' }.unknown").toString()
+            .contains("name as tidy computes it"), said);
+        assertEquals(1.0, predicted.getDouble("outputs.find { it.step == 'good' }.dimensions.completeness"), 1e-6, said);
+        as(viewer).body(Map.of()).post("/api/v1/pipelines/predict").then().statusCode(400);
+
         as(steward).body(Map.of("name", "people-gate", "yaml", GATED)).post("/api/v1/pipelines").then()
             .statusCode(201);
+        as(viewer).get("/api/v1/pipelines/people-gate/versions/1/prediction").then().statusCode(200)
+            .body("outputs.step", hasItems("check", "good", "aside"));
+        as(viewer).get("/api/v1/pipelines/people-gate/versions/9/prediction").then().statusCode(404);
         long id = as(steward).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract().jsonPath()
             .getLong("id");
         JsonPath run = waitForRun(id, "succeeded");
@@ -572,8 +592,18 @@ class PipelineFlowTest {
         assertEquals(0.9, run.getDouble("quality.find { it.step == 'check' }.measured.overall"), 1e-6, all);
         assertEquals(0.8, run.getDouble("quality.find { it.step == 'check' }.measured.dimensions.accuracy"), 1e-6,
             all);
-        Object predicted = run.get("quality.find { it.step == 'check' }.predicted");
-        assertEquals(null, predicted, "predicted comes later");
+        // The prediction made as the run started, beside what it measured.
+        assertEquals(0.9, run.getDouble("quality.find { it.step == 'check' }.predicted.overall"), 0.01, all);
+        assertEquals(0.8, run.getDouble("quality.find { it.step == 'check' }.predicted.dimensions.accuracy"), 0.01,
+            all);
+        assertEquals(2000, run.getInt("quality.find { it.step == 'check' }.prediction.gate.rowsPassed"), 30, all);
+        assertEquals(1.0, run.getDouble("quality.find { it.step == 'good' }.predicted.dimensions.completeness"), 1e-6,
+            all);
+        assertTrue(run.getList("quality.find { it.step == 'good' }.prediction.unknown").toString()
+            .contains("name as tidy computes it"), all);
+        assertEquals(2000, run.getInt("quality.find { it.step == 'good' }.prediction.rows"), 30, all);
+        assertEquals(1L, sql("SELECT count(*) FROM kilnmark.pipeline_step_quality WHERE run_id = " + id
+            + " AND step_id = 'good' AND predicted IS NOT NULL AND measured IS NOT NULL AND predicted_detail IS NOT NULL"));
 
         // Each output, measured from the profile its writer made: 10% of the good rows have no name.
         assertEquals("output", run.getString("quality.find { it.step == 'good' }.role"), all);
@@ -610,9 +640,75 @@ class PipelineFlowTest {
         assertEquals("failed", failed.getString("steps.find { it.step == 'check' }.outcome"), failed.prettify());
         assertEquals("stopped", failed.getString("quality.find { it.step == 'check' }.gate.decision"),
             failed.prettify());
-        assertEquals(1, failed.getList("quality").size(), "a failed run measures no output");
+        assertEquals(3, failed.getList("quality").size(), "a failed run measures no output, but keeps its predictions");
+        Object unmeasured = failed.get("quality.find { it.step == 'good' }.measured");
+        assertEquals(null, unmeasured, failed.prettify());
+        assertTrue(failed.getString("quality.find { it.step == 'good' }.note").contains("did not succeed"),
+            failed.prettify());
+        assertEquals(1.0, failed.getDouble("quality.find { it.step == 'good' }.predicted.dimensions.completeness"),
+            1e-6, failed.prettify());
+        assertEquals("stopped", failed.getString("quality.find { it.step == 'check' }.prediction.gate.decision"),
+            failed.prettify());
         assertEquals(0, sql("SELECT count(*) FROM kilnmark.notify_event WHERE kind = 'pipeline_low_quality' "
             + "AND dedupe_key = 'pipeline-quality:" + strict + "'"));
         as(steward).delete("/api/v1/pipelines/people-gate").then().statusCode(204);
+    }
+
+    @Test
+    @Order(13)
+    void suggestionsHonourEachSourcesAiRuleEndToEnd() throws Exception {
+        String yaml = GATED.replace("name: people-gate", "name: people-suggest");
+        as(viewer).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(403);
+        // No model routed: Kilnmark's own suggestions, and ai says so.
+        JsonPath own = as(steward).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
+            .body("estimate", equalTo(true)).body("ai.state", equalTo("off")).extract().jsonPath();
+        for (Object s : own.getList("suggestions")) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> m = (Map<String, Object>) s;
+            assertEquals("rules", m.get("source"), own.prettify());
+        }
+        io.kilnmark.server.ai.FakeModelServer fake = io.kilnmark.server.ai.FakeModelServer.get();
+        fake.clear();
+        fake.chatReplies(user -> "{\"ranking\": []}");
+        Map<String, Object> profile = new java.util.HashMap<>();
+        profile.put("name", "pl-chat-hosted");
+        profile.put("provider", "openai-compatible");
+        profile.put("baseUrl", fake.baseUrl());
+        profile.put("model", "fake-chat");
+        profile.put("purpose", "chat");
+        profile.put("local", false);
+        profile.put("timeoutSeconds", 5);
+        Tokens.admin().contentType(ContentType.JSON).body(profile).post("/api/v1/ai/profiles").then().statusCode(201);
+        Map<String, Object> route = new java.util.HashMap<>();
+        route.put("profile", "pl-chat-hosted");
+        Tokens.admin().contentType(ContentType.JSON).body(route).put("/api/v1/ai/features/pipeline_suggestions").then()
+            .statusCode(200);
+        try {
+            // mem-src keeps the default rule, local_only: a hosted model sees nothing and is not called.
+            as(steward).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
+                .body("ai.state", equalTo("withheld")).body("ai.model", equalTo("pl-chat-hosted"));
+            assertTrue(fake.seen().stream().noneMatch(x -> x.path().contains("chat")), "no call was made");
+            // Allowed: the model is asked, with metadata only.
+            sql("UPDATE kilnmark.data_source SET settings = settings || '{\"ai_egress\": \"allowed\"}'::jsonb "
+                + "WHERE name = 'mem-src'");
+            as(steward).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
+                .body("ai.state", equalTo("used"));
+            List<io.kilnmark.server.ai.FakeModelServer.Seen> calls = fake.seen().stream()
+                .filter(x -> x.path().contains("chat")).toList();
+            assertEquals(1, calls.size());
+            String body = calls.get(0).body();
+            // tidy rewrites name with an expression it cannot predict, so only id's metadata goes: shares, no values.
+            assertTrue(body.contains("lab.people") && body.contains("emptyShare") && body.contains("distinctShare"), body);
+            assertFalse(body.contains("Person 1"), "no value from the data is sent: " + body);
+            // A model that fails leaves Kilnmark's own suggestions.
+            fake.failNext(500, 10);
+            as(steward).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
+                .body("ai.state", equalTo("unavailable"));
+        } finally {
+            sql("UPDATE kilnmark.data_source SET settings = settings - 'ai_egress' WHERE name = 'mem-src'");
+            route.put("profile", null);
+            Tokens.admin().contentType(ContentType.JSON).body(route).put("/api/v1/ai/features/pipeline_suggestions");
+            fake.clear();
+        }
     }
 }

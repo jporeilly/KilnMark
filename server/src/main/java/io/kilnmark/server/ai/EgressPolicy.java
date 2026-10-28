@@ -99,7 +99,7 @@ public class EgressPolicy {
      *
      * @param sourceName null when the call carries no source's metadata
      */
-    static String decide(boolean local, String profileName, boolean hostedAllowed, String sourceName,
+    public static String decide(boolean local, String profileName, boolean hostedAllowed, String sourceName,
                          SourceRule rule) {
         if (!local && !hostedAllowed) {
             return "Only local models may be used on this server, and " + profileName + " is not a local model. "
