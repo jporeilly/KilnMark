@@ -177,6 +177,7 @@ function Canvas(props: CanvasProps) {
   // A right-click (or Ctrl+click on a Mac) focuses the step without selecting it, so the drawer does
   // not open under the pointer before the menu does. Cleared however the press ends.
   const menuPress = useRef(false);
+  const askCount = useRef(0);
   useEffect(() => {
     const clear = () => {
       menuPress.current = false;
@@ -934,7 +935,9 @@ function Canvas(props: CanvasProps) {
     setSuggestOpen(false);
     onSelect(id);
     setDrawerTab("preview");
-    setPreviewAsk((a) => ({ step: id, n: (a?.n ?? 0) + 1 }));
+    // Counted here, not from the last ask, which the panel clears once it has run it.
+    askCount.current += 1;
+    setPreviewAsk({ step: id, n: askCount.current });
   };
   const menuItems = (id: string): StepMenuItem[] => {
     const writes = kindOf(id) === "sink";

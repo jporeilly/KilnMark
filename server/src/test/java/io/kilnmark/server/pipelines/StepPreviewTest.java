@@ -316,6 +316,8 @@ class StepPreviewTest {
 
     @Test
     void hiddenStaysHiddenThroughRenamesUnionsAndLimits() {
+        sources.asset("urn:kilnmark:small:lab.people", "id:int64", "name:text");
+        sources.asset("urn:kilnmark:small:lab.other", "id:int64", "name:text");
         StepPreview.Hidden h = hidden("""
               - {id: people, type: read, source: small, asset: lab.people}
               - {id: other, type: read, source: small, asset: lab.other}
@@ -421,6 +423,92 @@ class StepPreviewTest {
             () -> false).rowCount(), "rules on visible columns are fine");
     }
 
+    /** Review 2: a unique rule names its columns in params.fields; inline or the asset's, it is an oracle. */
+    @Test
+    void aGateWithAUniqueRuleOverAHiddenColumnIsRefused() {
+        for (String guess : List.of("Person 1", "Person 9")) {
+            String y = yaml("""
+                  - {id: people, type: read, source: lab-db, asset: lab.people}
+                  - {id: a, type: limit, input: people, rows: 1}
+                  - {id: g, type: gate, input: a, asset_rules: false, max_failing_share: 0, rules: [{type: unique, fields: [id, name]}]}
+                """.replace("Person 1", guess));
+            WebApplicationException e = assertThrows(WebApplicationException.class, () -> previews().preview(y, "g",
+                null, 1, "jo", AccessRole.STEWARD, viewer(false, "name"), () -> false));
+            assertEquals(403, status(e), guess);
+        }
+        sources.rules.put(PEOPLE, GateRules.read(List.of(Map.of("type", "unique", "fields", List.of("id", "name"))),
+            null));
+        WebApplicationException asset = assertThrows(WebApplicationException.class, () -> previews().preview(yaml("""
+              - {id: people, type: read, source: lab-db, asset: lab.people}
+              - {id: g, type: gate, input: people, on_fail: warn}
+            """), "g", null, 1, "jo", AccessRole.STEWARD, viewer(false, "name"), () -> false));
+        assertEquals(403, status(asset));
+        Set<String> cols = new java.util.HashSet<>();
+        PipelinePreviews.ruleColumns(GateRules.read(List.of(Map.of("type", "unique", "fields", List.of("a", "b"))),
+            null).get(0), cols);
+        assertEquals(Set.of("a", "b"), cols);
+    }
+
+    /** Review 2: a union converting a hidden column between types can fail on a value. */
+    @Test
+    void aUnionConvertingAHiddenColumnIsRefused() {
+        sources.asset(PEOPLE, "id:int64", "name:text");
+        sources.asset("urn:kilnmark:small:lab.x", "id:int64", "name:text");
+        for (int scale : new int[] {36, 37}) {
+            String y = yaml("""
+                  - {id: people, type: read, source: lab-db, asset: lab.people}
+                  - {id: a, type: limit, input: people, rows: 10}
+                  - {id: other, type: read, source: small, asset: lab.x}
+                  - {id: b, type: compute, input: other, columns: {id: "cast(0 as decimal(38,%d))"}}
+                  - {id: u, type: union, input: [a, b]}
+                """.formatted(scale));
+            WebApplicationException e = assertThrows(WebApplicationException.class, () -> previews().preview(y, "u",
+                null, 5, "jo", AccessRole.STEWARD, viewer(false, "id"), () -> false));
+            assertEquals(403, status(e));
+            assertTrue(error(e).contains("(union) converts id"), error(e));
+        }
+        String same = yaml("""
+              - {id: people, type: read, source: lab-db, asset: lab.people}
+              - {id: other, type: read, source: small, asset: lab.x}
+              - {id: u, type: union, input: [people, other]}
+            """);
+        PipelineViews.StepPreviewView v = previews().preview(same, "u", null, 5, "jo", AccessRole.STEWARD,
+            viewer(false, "id"), () -> false);
+        assertEquals(List.of("id"), v.masked(), "the same type on every side: nothing converted");
+        String unknown = yaml("""
+              - {id: people, type: read, source: lab-db, asset: lab.people}
+              - {id: other, type: read, source: small, asset: lab.unscanned}
+              - {id: u, type: union, input: [people, other]}
+            """);
+        assertEquals(403, status(assertThrows(WebApplicationException.class, () -> previews().preview(unknown, "u",
+            null, 5, "jo", AccessRole.STEWARD, viewer(false, "id"), () -> false))));
+    }
+
+    /** Review 2: any memory_limit_mb, decimal or text, is replaced by the preview's share. */
+    @Test
+    void theMemoryLimitIsAlwaysTheSharesWhateverWasWritten() {
+        for (String v : List.of("1048576", "1048576.0", "\"1048576\"", "1e30", "0")) {
+            StepPreview.Plan p = StepPreview.plan(yaml("""
+                  - {id: people, type: read, source: lab-db, asset: lab.people}
+                  - {id: d, type: dedupe, input: people, key: [id], memory_limit_mb: %s}
+                """.formatted(v)), "d");
+            assertEquals(256L, p.definition().steps().get(1).config().get("memory_limit_mb"), v);
+            PipelineCompilerPort.Compilation c = KilnPipelineCompiler.compile(p.definition(), factories, false);
+            assertEquals(List.of(), c.problems(), v);
+        }
+    }
+
+    @Test
+    void theRequestsThreadIsNeverLeftInterrupted() {
+        Thread.currentThread().interrupt();
+        try {
+            previews().preview(MAIN, "people", null, 5, "jo", AccessRole.STEWARD, STEWARD, () -> false);
+        } catch (WebApplicationException e) {
+            // stopped, as it was interrupted: fine
+        }
+        assertFalse(Thread.currentThread().isInterrupted());
+    }
+
     // ---- sizes and limits ----
 
     @Test
@@ -493,7 +581,8 @@ class StepPreviewTest {
             WebApplicationException full = assertThrows(WebApplicationException.class, () -> p.preview(MAIN, "people",
                 null, 5, "sam", AccessRole.STEWARD, STEWARD, () -> false));
             assertTrue(error(full).startsWith("Kilnmark is running as many previews"), error(full));
-            // The engine's wait for its steps is bounded too: the preview ends though the step is still stuck.
+            // Once the stuck step lets go, the preview ends and its slots are free.
+            StuckConnector.release.countDown();
             long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
             while (p.stillStopping() > 0 && System.nanoTime() < deadline) {
                 Thread.sleep(50);
@@ -511,6 +600,33 @@ class StepPreviewTest {
         } finally {
             StuckConnector.release.countDown();
         }
+    }
+
+    /** Review 2: a step the engine stopped waiting for still holds the preview's slot and is counted. */
+    @Test
+    void stepsTheEngineStoppedWaitingForStillCount() throws Exception {
+        StuckConnector.release = new java.util.concurrent.CountDownLatch(1);
+        sources.connectors.put(StuckConnector.KIND, new StuckConnector());
+        sources.add("stuck", StuckConnector.KIND, Map.of(), null);
+        // The engine waits 0.1 s for its steps, less than the 0.3 s grace.
+        PipelinePreviews p = new PipelinePreviews(factories, null, sources, new PipelinePreviews.Limits(64L << 20, 4,
+            Duration.ofMillis(500), 100, 1, 256, 50, 10, Duration.ofMillis(300), Duration.ofMillis(100)));
+        try {
+            assertEquals(422, status(assertThrows(WebApplicationException.class, () -> p.preview(
+                yaml("  - {id: s, type: read, source: stuck, asset: lab.stuck}\n"), "s", null, 5, "jo",
+                AccessRole.STEWARD, STEWARD, () -> false))));
+            Thread.sleep(500);
+            assertEquals(1, p.stillStopping(), "the stuck step is still counted");
+            assertTrue(error(assertThrows(WebApplicationException.class, () -> p.preview(MAIN, "people", null, 5,
+                "sam", AccessRole.STEWARD, STEWARD, () -> false))).startsWith("Kilnmark is running as many previews"));
+        } finally {
+            StuckConnector.release.countDown();
+        }
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (p.stillStopping() > 0 && System.nanoTime() < deadline) {
+            Thread.sleep(50);
+        }
+        assertEquals(0, p.stillStopping());
     }
 
     private PipelineViews.StepPreviewView sam(PipelinePreviews p) {

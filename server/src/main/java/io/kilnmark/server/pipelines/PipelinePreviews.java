@@ -172,7 +172,7 @@ public class PipelinePreviews {
             throw PipelineService.fail(Response.Status.TOO_MANY_REQUESTS, "You already have a preview running. Wait "
                 + "for it to finish, then try again.");
         }
-        boolean handedOn = false;
+        java.util.concurrent.atomic.AtomicBoolean handedOn = new java.util.concurrent.atomic.AtomicBoolean();
         try {
             if (!slots.tryAcquire()) {
                 throw PipelineService.fail(Response.Status.TOO_MANY_REQUESTS, "Kilnmark is running as many previews "
@@ -184,17 +184,18 @@ public class PipelinePreviews {
                         + limits.perMinute() + " times in the last minute. Wait a minute, then try again.");
                 }
                 Prepared p = prepare(yaml, step, port, viewer);
-                handedOn = true; // the job releases the slots once its thread has ended
-                return run(p, n, who, role == null ? AccessRole.STEWARD : role, viewer, abandoned);
+                // handedOn is set once the job's thread has started: it then releases the slots.
+                return run(p, n, who, role == null ? AccessRole.STEWARD : role, viewer, abandoned, handedOn);
             } finally {
-                if (!handedOn) {
+                if (!handedOn.get()) {
                     slots.release();
                 }
             }
         } finally {
-            if (!handedOn) {
+            if (!handedOn.get()) {
                 running.remove(who);
             }
+            Thread.interrupted(); // never hand the request's thread back to the pool interrupted
         }
     }
 
@@ -231,10 +232,13 @@ public class PipelinePreviews {
         /** Its thread has given the slots back (guarded by the job). */
         boolean finished;
         volatile Thread thread;
+        /** The engine running it, for the steps it stopped waiting for. */
+        final java.util.concurrent.atomic.AtomicReference<io.kilnmark.kiln.graph.KilnGraphRunner> runner =
+            new java.util.concurrent.atomic.AtomicReference<>();
     }
 
     private PipelineViews.StepPreviewView run(Prepared p, int rows, String who, AccessRole role, Viewer viewer,
-                                              BooleanSupplier abandoned) {
+                                              BooleanSupplier abandoned, AtomicBoolean handedOn) {
         StepPreview.Plan plan = p.plan();
         RunContext context = new RunContext(plan.definition().name(), 0, who, role);
         long started = System.nanoTime();
@@ -244,6 +248,7 @@ public class PipelinePreviews {
         job.thread = Thread.ofVirtual().name("kilnmark-preview-" + plan.step()).unstarted(() -> work(job, context, p,
             rows, who, started));
         job.thread.start();
+        handedOn.set(true);
         try {
             PipelineCompilerPort.Compilation c = await(job, job.created, deadline, abandoned, waits);
             if (!c.valid() || c.graph() == null) {
@@ -306,7 +311,7 @@ public class PipelinePreviews {
             }
             try {
                 job.done.complete(StepPreview.run(graph, p.plan().step(), p.port(), rows, masks, limits.memoryBytes(),
-                    limits.rowSetCapacity(), limits.timeout(), limits.stopWait()));
+                    limits.rowSetCapacity(), limits.timeout(), limits.stopWait(), job.runner));
             } catch (IllegalArgumentException e) {
                 PipelineExecution.closeSteps(graph); // refused before its steps started
                 job.done.completeExceptionally(PreviewFailed.of(context.scrub("The preview could not start: "
@@ -318,6 +323,21 @@ public class PipelinePreviews {
         } finally {
             job.created.completeExceptionally(new IllegalStateException("ended"));
             job.done.completeExceptionally(new IllegalStateException("ended"));
+            // Steps the engine stopped waiting for still hold their slot until they end.
+            io.kilnmark.kiln.graph.KilnGraphRunner runner = job.runner.get();
+            for (Thread left : runner == null ? List.<Thread>of() : runner.threadsLeftRunning()) {
+                boolean again = false;
+                while (left.isAlive()) {
+                    try {
+                        left.join();
+                    } catch (InterruptedException e) {
+                        again = true;
+                    }
+                }
+                if (again) {
+                    LOG.debug("interrupted while a preview's step ended");
+                }
+            }
             slots.release();
             running.remove(who);
             synchronized (job) {
@@ -479,18 +499,14 @@ public class PipelinePreviews {
             Set<String> fields = new LinkedHashSet<>();
             try {
                 for (Rule r : GateRules.read(config.get("rules"), null)) {
-                    if (r.field() != null) {
-                        fields.add(r.field());
-                    }
+                    ruleColumns(r, fields);
                 }
                 if (GateStepFactory.assetRules(config)) {
                     GateStepFactory.Upstream up = GateStepFactory.upstream(s.id(), config, edges, types);
                     if (up.read() != null) {
                         for (String urn : readUrns(c.configs().getOrDefault(up.read(), Map.of()), context)) {
                             for (Rule r : sources == null ? List.<Rule>of() : sources.rules(urn)) {
-                                if (r.field() != null) {
-                                    fields.add(r.field());
-                                }
+                                ruleColumns(r, fields);
                             }
                         }
                     }
@@ -501,6 +517,29 @@ public class PipelinePreviews {
             }
         }
         return out;
+    }
+
+    /**
+     * Adds the columns a gate's rule checks, as {@code RowChecks} finds them ({@code unique} by its
+     * {@code fields}, or its field); throws for a rule whose columns are not known, so the gate counts
+     * as checking every column.
+     */
+    static void ruleColumns(Rule r, Set<String> into) {
+        switch (r.type()) {
+            case ROW_COUNT, ROW_COUNT_CHANGE -> {
+                // counts rows only
+            }
+            case UNIQUE -> {
+                if (r.params() != null && r.params().has("fields")) {
+                    r.params().get("fields").forEach(n -> into.add(n.asText()));
+                } else {
+                    into.add(java.util.Objects.requireNonNull(r.field(), "a unique rule's columns"));
+                }
+            }
+            case NOT_NULL, ALLOWED_VALUES, MATCHES_PATTERN, IN_RANGE, FRESHNESS ->
+                into.add(java.util.Objects.requireNonNull(r.field(), "a rule's column"));
+            default -> throw new IllegalArgumentException("columns not known for rules of type " + r.type());
+        }
     }
 
     private static PipelineViews.StepPreviewView view(PipelineCompilerPort.Compilation c, String step, String port,

@@ -75,6 +75,8 @@ public final class KilnGraphRunner implements GraphRunner {
     private final Duration stallTimeout;
     /** How long a stopped run waits for its steps' threads; null waits until they end. */
     private final Duration stopWait;
+    /** Threads a stopped run stopped waiting for (see {@link #threadsLeftRunning()}). */
+    private final java.util.List<Thread> leftRunning = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /**
      * @param memoryLimitBytes Arrow memory the whole run may hold at once
@@ -111,6 +113,14 @@ public final class KilnGraphRunner implements GraphRunner {
         this.rowSetCapacity = rowSetCapacity;
         this.stallTimeout = stallTimeout;
         this.stopWait = stopWait == null || stopWait.isNegative() ? null : stopWait;
+    }
+
+    /**
+     * The steps' threads still running when a run stopped by interruption gave up waiting for them
+     * ({@code stopWait}), so a caller can wait for them, or count them, itself. Empty otherwise.
+     */
+    public java.util.List<Thread> threadsLeftRunning() {
+        return java.util.List.copyOf(leftRunning);
     }
 
     /**
@@ -757,6 +767,7 @@ public final class KilnGraphRunner implements GraphRunner {
                     } else {
                         long left = deadline - System.nanoTime();
                         if (left <= 0 || !t.join(Duration.ofNanos(left))) {
+                            threads.stream().filter(Thread::isAlive).forEach(leftRunning::add);
                             LOG.log(System.Logger.Level.WARNING, "Run {0}: stopped, but these steps had not ended "
                                 + "after {1}; left to end on their own: {2}", graph.name(), stopWait,
                                 threads.stream().filter(Thread::isAlive).map(Thread::getName).toList());

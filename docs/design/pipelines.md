@@ -738,15 +738,17 @@ or not (`POST /api/v1/pipelines/preview` {yaml, step, port?, rows?}; for a saved
   `preview-concurrency` (2) at once in a process (429 otherwise). Then the plan: at most
   `preview-max-steps` (50) steps and `preview-max-reads` (10) read steps, and each step holding rows
   in its own state (aggregate, dedupe, lookup, union; that state is Java heap counted against its
-  `memory_limit_mb`, which YAML may set very high) has its limit lowered to its share of
-  `preview-memory-limit-mb` (256). The steps are created and run on a thread of their own, and the
+  `memory_limit_mb`, which YAML may set very high) has its limit set to its share of
+  `preview-memory-limit-mb` (256), whatever was written (a lower whole number is kept; a decimal,
+  text or anything larger becomes the share). The steps are created and run on a thread of their own, and the
   request waits for them at most `preview-timeout` (30 seconds), or until its HTTP connection
   closes: it then interrupts that thread, waits two seconds' grace, and answers 422 whatever the
   steps are doing. The preview's `KilnGraphRunner` (its own Arrow memory limit, the run's row set
   capacity, the time limit as its stall timeout) waits at most five seconds for its steps to stop
   (`KilnGraphRunner`'s `stopWait`; a step stuck where an interrupt cannot reach it is left to end
-  on its own, with a warning naming it). A preview answered while still stopping keeps its two slots
-  until it has ended, is logged when it ends and counted (`PipelinePreviews.stillStopping`), so stuck
+  on its own, with a warning naming it, and reported by `threadsLeftRunning()`). A preview answered
+  while still stopping, or whose steps the engine stopped waiting for, keeps its two slots until
+  every one of its threads has ended, is logged when it ends and counted (`PipelinePreviews.stillStopping`), so stuck
   previews can fill the slots but never the process. Two at once, each up to 256 MB of Arrow memory,
   sit beside a run's own 1,024 MB when one process has both roles. Steps that read all their rows
   before passing any on (an aggregate, a lookup's lookup side) are named in the answer, and in the
@@ -762,8 +764,11 @@ or not (`POST /api/v1/pipelines/preview` {yaml, step, port?, rows?}; for a saved
   rows by email, which is marked sensitive …") when any step names one in an expression (compute,
   filter, route, aggregate values, including casts and function calls), groups, deduplicates or
   matches by one (aggregate `group_by`, dedupe `key`, or whole rows when it has none, lookup `on`),
-  changes its type (`select`'s `cast`) or checks it with a rule (a gate, whatever its `on_fail`, with
-  its own rules or the asset's). Masking a value is not enough there: the rows kept, a computed value
+  changes its type (`select`'s `cast`, or a union converting it between its inputs' types: the inputs
+  must agree on its kind, a decimal may come from one input only, and inputs whose columns are not
+  known count as disagreeing) or checks it with a rule (a gate, whatever its `on_fail`, with its own
+  rules or the asset's; a rule's columns are found as `RowChecks` finds them, `unique` by its
+  `fields`, and a rule whose columns are not known counts as checking every column). Masking a value is not enough there: the rows kept, a computed value
   and even whether the preview succeeds or fails can each tell it (a gate with `max_failing_share: 0`
   checking `name` against `^Ada$` on one row answers yes or no). The marks are read through the
   request's `Sights`, for every URN an asset read may be catalogued under (as written, as the

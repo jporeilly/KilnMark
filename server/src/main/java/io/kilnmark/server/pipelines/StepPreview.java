@@ -169,14 +169,19 @@ final class StepPreview {
                 out.add(s);
                 continue;
             }
+            // Always written, whatever was: a lower whole number is kept, anything else (a decimal, text,
+            // a number too large) becomes the share.
             Object asked = s.config().get("memory_limit_mb");
             long limit = share;
-            if (asked instanceof Number n && n.longValue() > 0 && n.longValue() < share
-                && (asked instanceof Integer || asked instanceof Long)) {
-                limit = n.longValue();
-            } else if (asked != null && !(asked instanceof Integer || asked instanceof Long)) {
-                out.add(s); // not a whole number: the check reports it
-                continue;
+            if (asked instanceof Number n) {
+                try {
+                    long v = new java.math.BigDecimal(n.toString()).longValueExact();
+                    if (v > 0 && v < share) {
+                        limit = v;
+                    }
+                } catch (ArithmeticException | NumberFormatException e) {
+                    // not a whole number: the share
+                }
             }
             Map<String, Object> config = new LinkedHashMap<>(s.config());
             config.put("memory_limit_mb", limit);
@@ -348,6 +353,9 @@ final class StepPreview {
                 }
             }
             Map<String, Object> config = c.configs().getOrDefault(id, Map.of());
+            if ("union".equals(s.type())) {
+                unionTypes(id, c.edges(), steps, any);
+            }
             Set<String> gate = gateFields.containsKey(id) ? gateFields.get(id) : null;
             out.put(id, through(s.id(), s.type(), config, in, any, readHidden.getOrDefault(id, Set.of()), gate));
         }
@@ -430,6 +438,48 @@ final class StepPreview {
                         + "columns marked sensitive.");
                 }
                 return Hidden.NONE;
+            }
+        }
+    }
+
+    /**
+     * A union converts a column whose type differs between its inputs (whole numbers to decimals,
+     * one decimal scale to another), and a conversion can fail on a value. So for a hidden column
+     * the inputs must agree on its kind, and a decimal (whose precision and scale the kind does not
+     * say) may come from one input only; an input whose columns are not known before the run counts
+     * as disagreeing.
+     */
+    private static void unionTypes(String id, List<PipelineCompilerPort.EdgeOutline> edges,
+                                   Map<String, PipelineCompilerPort.StepOutline> steps, Hidden hidden) {
+        if (!hidden.any()) {
+            return;
+        }
+        List<Map<String, String>> inputs = new ArrayList<>();
+        for (PipelineCompilerPort.EdgeOutline e : edges) {
+            if (!e.toStep().equals(id)) {
+                continue;
+            }
+            PipelineCompilerPort.StepOutline from = steps.get(e.fromStep());
+            List<PipelineCompilerPort.Column> cols = from == null ? null : from.columns().get(e.fromPort());
+            if (cols == null) {
+                throw new Refused("Only an admin can preview this: step " + id + " (union) combines rows whose "
+                    + "columns are not known before the preview runs, and it may convert columns marked sensitive, "
+                    + "which could give their values away.");
+            }
+            Map<String, String> kinds = new HashMap<>();
+            cols.forEach(col -> kinds.putIfAbsent(key(col.name()), col.type()));
+            inputs.add(kinds);
+        }
+        Set<String> names = new LinkedHashSet<>();
+        inputs.forEach(m -> m.keySet().stream().filter(hidden::hides).forEach(names::add));
+        for (String name : names) {
+            List<String> kinds = inputs.stream().map(m -> m.get(name)).filter(java.util.Objects::nonNull).toList();
+            boolean differ = kinds.stream().distinct().count() > 1;
+            boolean decimals = kinds.contains("decimal") && kinds.size() > 1;
+            if (differ || decimals) {
+                throw new Refused("Only an admin can preview this: step " + id + " (union) converts " + name
+                    + ", which is marked sensitive, between its inputs' types (" + String.join(", ", kinds)
+                    + "), and a conversion can fail on a value, which could give it away.");
             }
         }
     }
@@ -524,7 +574,7 @@ final class StepPreview {
      */
     static Outcome run(PipelineGraph graph, String step, String port, int rows, long memoryBytes, int capacity,
                        Duration stall) throws InterruptedException {
-        return run(graph, step, port, rows, Hidden.NONE, memoryBytes, capacity, stall, null);
+        return run(graph, step, port, rows, Hidden.NONE, memoryBytes, capacity, stall, null, null);
     }
 
     /**
@@ -533,13 +583,19 @@ final class StepPreview {
      * waiting at most {@code stopWait} for the steps to stop when interrupted (null: until they do).
      */
     static Outcome run(PipelineGraph graph, String step, String port, int rows, Hidden hidden, long memoryBytes,
-                       int capacity, Duration stall, Duration stopWait) throws InterruptedException {
+                       int capacity, Duration stall, Duration stopWait,
+                       java.util.concurrent.atomic.AtomicReference<KilnGraphRunner> runnerOut)
+        throws InterruptedException {
         Collector collector = new Collector(rows, hidden);
         List<GraphStep> steps = new ArrayList<>(graph.steps());
         steps.add(new GraphStep(COLLECTOR, collector, Map.of()));
         List<Edge> edges = new ArrayList<>(graph.edges());
         edges.add(new Edge(new PortRef(step, port), new PortRef(COLLECTOR, "in")));
-        RunResult result = new KilnGraphRunner(memoryBytes, capacity, stall, stopWait)
+        KilnGraphRunner runner = new KilnGraphRunner(memoryBytes, capacity, stall, stopWait);
+        if (runnerOut != null) {
+            runnerOut.set(runner);
+        }
+        RunResult result = runner
             .run(new PipelineGraph(graph.name(), steps, edges), event -> {
                 // a preview records nothing
             });

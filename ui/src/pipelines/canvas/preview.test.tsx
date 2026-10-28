@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, test, vi } from "vitest";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-import { act, useState } from "react";
+import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { StepPreview } from "../../api";
 import { StepMenu, type StepMenuItem } from "./StepMenu";
@@ -173,6 +173,27 @@ describe("StepPreviewPanel", () => {
     await act(async () => sw.click());
     await act(async () => {});
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("a second Preview rows from the menu runs again after the first ask was cleared", async () => {
+    const fetch = vi.fn(async () => json(VIEW));
+    vi.stubGlobal("fetch", fetch);
+    let ask: (() => void) | null = null;
+    function Canvas() {
+      const count = useRef(0);
+      const [a, setA] = useState<PreviewAsk | null>(null);
+      ask = () => {
+        count.current += 1;
+        setA({ step: "tidy", n: count.current });
+      };
+      return <Harness ask={a} onAsked={() => setA(null)} />;
+    }
+    await mount(<Canvas />);
+    await act(async () => ask!());
+    await act(async () => {});
+    await act(async () => ask!());
+    await act(async () => {});
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   test("shows the server's refusal as an alert", async () => {
