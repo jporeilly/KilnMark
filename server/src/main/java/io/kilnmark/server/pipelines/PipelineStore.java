@@ -45,10 +45,27 @@ public class PipelineStore {
 
     /**
      * {@code portRows} is JSON: {"in": {port: rows}, "out": {port: rows}}. {@code outcome} is how the
-     * step ended (finished, ended_early, stopped, failed), or null when the engine did not say.
+     * step ended (finished, ended_early, stopped, failed), or null when the engine did not say. The
+     * times (V19) are null for a step that never started and for runs before V19.
      */
     public record StepRun(String stepId, String type, int position, Long rowsIn, Long rowsOut, String portRows,
-                          Long peakMemory, Long durationMs, String error, String outcome) {
+                          Long peakMemory, Long durationMs, String error, String outcome, Instant startedAt,
+                          Instant firstRowAt, Instant lastRowAt, Instant finishedAt, Long waitingForRowsMs,
+                          Long heldUpMs) {
+
+        /** A step without times. */
+        public StepRun(String stepId, String type, int position, Long rowsIn, Long rowsOut, String portRows,
+                       Long peakMemory, Long durationMs, String error, String outcome) {
+            this(stepId, type, position, rowsIn, rowsOut, portRows, peakMemory, durationMs, error, outcome, null, null,
+                null, null, null, null);
+        }
+    }
+
+    /**
+     * One event of a run's log (V19). {@code text} is the server's own words; {@code detail} an
+     * engine's message, which may quote the data. {@code level} is info, warn or error.
+     */
+    public record Event(int seq, Instant at, String stepId, String level, String kind, String text, String detail) {
     }
 
     public record Lineage(String pipeline, Long runId, String stepId, String inputUrn, String outputUrn,
@@ -550,11 +567,15 @@ public class PipelineStore {
     public void saveStepRuns(long runId, List<StepRun> steps) {
         db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_step_run (run_id, step_id, "
-                + "type, position, rows_in, rows_out, port_rows, peak_memory, duration_ms, error, outcome) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?) ON CONFLICT (run_id, step_id) DO UPDATE SET "
+                + "type, position, rows_in, rows_out, port_rows, peak_memory, duration_ms, error, outcome, started_at, "
+                + "first_row_at, last_row_at, finished_at, waiting_for_rows_ms, held_up_ms) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (run_id, step_id) DO UPDATE SET "
                 + "type = EXCLUDED.type, position = EXCLUDED.position, rows_in = EXCLUDED.rows_in, "
                 + "rows_out = EXCLUDED.rows_out, port_rows = EXCLUDED.port_rows, peak_memory = EXCLUDED.peak_memory, "
-                + "duration_ms = EXCLUDED.duration_ms, error = EXCLUDED.error, outcome = EXCLUDED.outcome")) {
+                + "duration_ms = EXCLUDED.duration_ms, error = EXCLUDED.error, outcome = EXCLUDED.outcome, "
+                + "started_at = EXCLUDED.started_at, first_row_at = EXCLUDED.first_row_at, "
+                + "last_row_at = EXCLUDED.last_row_at, finished_at = EXCLUDED.finished_at, "
+                + "waiting_for_rows_ms = EXCLUDED.waiting_for_rows_ms, held_up_ms = EXCLUDED.held_up_ms")) {
                 for (StepRun s : steps) {
                     ps.setLong(1, runId);
                     ps.setString(2, s.stepId());
@@ -567,6 +588,12 @@ public class PipelineStore {
                     setLong(ps, 9, s.durationMs());
                     ps.setString(10, s.error());
                     ps.setString(11, s.outcome());
+                    setInstant(ps, 12, s.startedAt());
+                    setInstant(ps, 13, s.firstRowAt());
+                    setInstant(ps, 14, s.lastRowAt());
+                    setInstant(ps, 15, s.finishedAt());
+                    setLong(ps, 16, s.waitingForRowsMs());
+                    setLong(ps, 17, s.heldUpMs());
                     ps.addBatch();
                 }
                 ps.executeBatch();
@@ -637,14 +664,201 @@ public class PipelineStore {
         return db.tx(c -> {
             List<StepRun> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("SELECT step_id, type, position, rows_in, rows_out, "
-                + "port_rows, peak_memory, duration_ms, error, outcome FROM kilnmark.pipeline_step_run WHERE run_id = ? "
+                + "port_rows, peak_memory, duration_ms, error, outcome, started_at, first_row_at, last_row_at, "
+                + "finished_at, waiting_for_rows_ms, held_up_ms FROM kilnmark.pipeline_step_run WHERE run_id = ? "
                 + "ORDER BY position, step_id")) {
                 ps.setLong(1, runId);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         out.add(new StepRun(rs.getString(1), rs.getString(2), rs.getInt(3), getLong(rs, 4),
                             getLong(rs, 5), rs.getString(6), getLong(rs, 7), getLong(rs, 8), rs.getString(9),
-                            rs.getString(10)));
+                            rs.getString(10), Db.instant(rs.getTimestamp(11)), Db.instant(rs.getTimestamp(12)),
+                            Db.instant(rs.getTimestamp(13)), Db.instant(rs.getTimestamp(14)), getLong(rs, 15),
+                            getLong(rs, 16)));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
+    // ---- the run's log and progress (V19) ----
+
+    /** How long a write of a run's log or progress may take before the database gives it up, in seconds. */
+    static final int INSIGHT_TIMEOUT_SECONDS = 5;
+
+    /**
+     * Keeps where a run's rows are now (JSON, counts and times only), replacing the snapshot before.
+     * Given up after {@value #INSIGHT_TIMEOUT_SECONDS} seconds: that bounds a slow statement or a lock
+     * wait, not a connection that has died without closing.
+     */
+    public void saveProgress(long runId, String progress) {
+        db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.pipeline_run SET progress = ?::jsonb, "
+                + "progress_at = now() WHERE id = ?")) {
+                ps.setQueryTimeout(INSIGHT_TIMEOUT_SECONDS);
+                ps.setString(1, progress);
+                ps.setLong(2, runId);
+                ps.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    /** The run's latest progress snapshot as JSON, or null. */
+    public String progress(long runId) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                "SELECT progress::text FROM kilnmark.pipeline_run WHERE id = ?")) {
+                ps.setLong(1, runId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? rs.getString(1) : null;
+                }
+            }
+        });
+    }
+
+    /** One point of a run's rows a second: when (ms from the worker's start), and JSON arrays of rates and fills. */
+    public record Point(long t, String rates, String fills) {
+    }
+
+    /** A run's rows a second: its steps (a JSON array), how many snapshots a point stands for, and the points. */
+    public record Series(String steps, int stride, List<Point> points) {
+    }
+
+    /** Appends one point to a run's rows a second (V19 {@code pipeline_run_point}), with the series' steps and stride. */
+    public void addPoint(long runId, String steps, int stride, Point p) {
+        db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_run_point (run_id, t_ms, "
+                + "rates, fills) VALUES (?, ?, ?::jsonb, ?::jsonb) ON CONFLICT (run_id, t_ms) DO UPDATE SET "
+                + "rates = EXCLUDED.rates, fills = EXCLUDED.fills")) {
+                ps.setQueryTimeout(INSIGHT_TIMEOUT_SECONDS);
+                ps.setLong(1, runId);
+                ps.setLong(2, p.t());
+                ps.setString(3, p.rates());
+                ps.setString(4, p.fills());
+                ps.executeUpdate();
+            }
+            seriesMeta(c, runId, steps, stride);
+            return null;
+        });
+    }
+
+    /** Replaces a run's points with these (its series merged in pairs), at a new stride, in one transaction. */
+    public void replacePoints(long runId, String steps, int stride, List<Point> points) {
+        db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.pipeline_run_point WHERE run_id = ?")) {
+                ps.setQueryTimeout(INSIGHT_TIMEOUT_SECONDS);
+                ps.setLong(1, runId);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_run_point (run_id, t_ms, "
+                + "rates, fills) VALUES (?, ?, ?::jsonb, ?::jsonb)")) {
+                ps.setQueryTimeout(INSIGHT_TIMEOUT_SECONDS);
+                for (Point p : points) {
+                    ps.setLong(1, runId);
+                    ps.setLong(2, p.t());
+                    ps.setString(3, p.rates());
+                    ps.setString(4, p.fills());
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+            }
+            seriesMeta(c, runId, steps, stride);
+            return null;
+        });
+    }
+
+    private static void seriesMeta(Connection c, long runId, String steps, int stride) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.pipeline_run SET series_steps = ?::jsonb, "
+            + "series_stride = ? WHERE id = ?")) {
+            ps.setQueryTimeout(INSIGHT_TIMEOUT_SECONDS);
+            ps.setString(1, steps);
+            ps.setInt(2, stride);
+            ps.setLong(3, runId);
+            ps.executeUpdate();
+        }
+    }
+
+    /** A run's points after {@code afterT} (ms), in order, with its steps and stride; empty steps when none were kept. */
+    public Series series(long runId, long afterT) {
+        return db.tx(c -> {
+            String steps = null;
+            int stride = 1;
+            try (PreparedStatement ps = c.prepareStatement("SELECT series_steps::text, series_stride FROM "
+                + "kilnmark.pipeline_run WHERE id = ?")) {
+                ps.setLong(1, runId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        steps = rs.getString(1);
+                        int st = rs.getInt(2);
+                        stride = rs.wasNull() ? 1 : st;
+                    }
+                }
+            }
+            List<Point> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT t_ms, rates::text, fills::text FROM "
+                + "kilnmark.pipeline_run_point WHERE run_id = ? AND t_ms > ? ORDER BY t_ms")) {
+                ps.setLong(1, runId);
+                ps.setLong(2, afterT);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new Point(rs.getLong(1), rs.getString(2), rs.getString(3)));
+                    }
+                }
+            }
+            return new Series(steps == null ? "[]" : steps, stride, out);
+        });
+    }
+
+    /** Adds events to a run's log; their sequence numbers are the caller's (see {@link RunLog}). */
+    public void addEvents(long runId, List<Event> events) {
+        if (events.isEmpty()) {
+            return;
+        }
+        db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_run_event (run_id, seq, at, "
+                + "step_id, level, kind, text, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")) {
+                ps.setQueryTimeout(INSIGHT_TIMEOUT_SECONDS);
+                for (Event e : events) {
+                    ps.setLong(1, runId);
+                    ps.setInt(2, e.seq());
+                    setInstant(ps, 3, e.at());
+                    ps.setString(4, e.stepId());
+                    ps.setString(5, e.level());
+                    ps.setString(6, e.kind());
+                    ps.setString(7, e.text());
+                    ps.setString(8, e.detail());
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+            }
+            return null;
+        });
+    }
+
+    /**
+     * A page of a run's log, in order: events after {@code afterSeq}, at least as serious as
+     * {@code minLevel} (info, warn or error; null for all) and about {@code step} (null for all).
+     */
+    public List<Event> events(long runId, String step, String minLevel, int afterSeq, int limit) {
+        List<String> levels = minLevel == null || minLevel.equals("info") ? List.of("info", "warn", "error")
+            : minLevel.equals("warn") ? List.of("warn", "error") : List.of("error");
+        return db.tx(c -> {
+            List<Event> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT seq, at, step_id, level, kind, text, detail "
+                + "FROM kilnmark.pipeline_run_event WHERE run_id = ? AND seq > ? AND level = ANY (?) "
+                + "AND (?::text IS NULL OR step_id = ?) ORDER BY seq LIMIT ?")) {
+                ps.setLong(1, runId);
+                ps.setInt(2, afterSeq);
+                ps.setArray(3, c.createArrayOf("text", levels.toArray()));
+                ps.setString(4, step);
+                ps.setString(5, step);
+                ps.setInt(6, limit);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new Event(rs.getInt(1), Db.instant(rs.getTimestamp(2)), rs.getString(3),
+                            rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7)));
                     }
                 }
             }
@@ -730,6 +944,10 @@ public class PipelineStore {
         } else {
             ps.setLong(i, v);
         }
+    }
+
+    private static void setInstant(PreparedStatement ps, int i, Instant v) throws SQLException {
+        ps.setTimestamp(i, Db.timestamp(v));
     }
 
     private static void setDouble(PreparedStatement ps, int i, Double v) throws SQLException {

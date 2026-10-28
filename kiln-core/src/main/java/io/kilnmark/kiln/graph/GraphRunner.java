@@ -11,4 +11,13 @@ import io.kilnmark.kiln.RunResult;
 public interface GraphRunner {
 
     RunResult run(PipelineGraph graph, MetadataEmitter metadata) throws InterruptedException;
+
+    /**
+     * Runs {@code graph}, telling {@code listener} how it goes. A runner that cannot report runs
+     * without telling it anything.
+     */
+    default RunResult run(PipelineGraph graph, MetadataEmitter metadata, RunListener listener)
+        throws InterruptedException {
+        return run(graph, metadata);
+    }
 }
