@@ -73,6 +73,8 @@ public final class KilnGraphRunner implements GraphRunner {
     private final long memoryLimitBytes;
     private final int rowSetCapacity;
     private final Duration stallTimeout;
+    /** How long a stopped run waits for its steps' threads; null waits until they end. */
+    private final Duration stopWait;
 
     /**
      * @param memoryLimitBytes Arrow memory the whole run may hold at once
@@ -89,6 +91,16 @@ public final class KilnGraphRunner implements GraphRunner {
      *                         run fails as stalled
      */
     public KilnGraphRunner(long memoryLimitBytes, int rowSetCapacity, Duration stallTimeout) {
+        this(memoryLimitBytes, rowSetCapacity, stallTimeout, null);
+    }
+
+    /**
+     * @param stopWait how long a run stopped by interruption waits for its steps' threads before
+     *                 {@link #run} throws anyway (null: until they end). A step stuck where an
+     *                 interrupt cannot reach it (a blocking call that ignores it) is then left to
+     *                 end on its own, with a warning naming it; its memory is released as it can be.
+     */
+    public KilnGraphRunner(long memoryLimitBytes, int rowSetCapacity, Duration stallTimeout, Duration stopWait) {
         if (rowSetCapacity < 1) {
             throw new IllegalArgumentException("rowSetCapacity must be at least 1");
         }
@@ -98,6 +110,7 @@ public final class KilnGraphRunner implements GraphRunner {
         this.memoryLimitBytes = memoryLimitBytes;
         this.rowSetCapacity = rowSetCapacity;
         this.stallTimeout = stallTimeout;
+        this.stopWait = stopWait == null || stopWait.isNegative() ? null : stopWait;
     }
 
     /**
@@ -735,10 +748,21 @@ public final class KilnGraphRunner implements GraphRunner {
          */
         private void joinAll() {
             boolean interrupted = false;
+            long deadline = stopWait == null ? 0 : System.nanoTime() + stopWait.toNanos();
             Thread t;
             while ((t = threads.peek()) != null) {
                 try {
-                    t.join();
+                    if (stopWait == null) {
+                        t.join();
+                    } else {
+                        long left = deadline - System.nanoTime();
+                        if (left <= 0 || !t.join(Duration.ofNanos(left))) {
+                            LOG.log(System.Logger.Level.WARNING, "Run {0}: stopped, but these steps had not ended "
+                                + "after {1}; left to end on their own: {2}", graph.name(), stopWait,
+                                threads.stream().filter(Thread::isAlive).map(Thread::getName).toList());
+                            break;
+                        }
+                    }
                     threads.poll();
                 } catch (InterruptedException again) {
                     interrupted = true;

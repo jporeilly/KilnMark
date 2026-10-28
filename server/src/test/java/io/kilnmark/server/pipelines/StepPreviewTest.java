@@ -37,8 +37,8 @@ class StepPreviewTest {
         .register(new WriteStepFactory(sources)).register(new GateStepFactory(sources));
 
     private PipelinePreviews previews(Duration timeout, int perMinute, long memoryBytes) {
-        return new PipelinePreviews(factories, null, new PipelinePreviews.Limits(memoryBytes, 4, timeout, perMinute, 4,
-            256));
+        return new PipelinePreviews(factories, null, sources, new PipelinePreviews.Limits(memoryBytes, 4, timeout,
+            perMinute, 4, 256));
     }
 
     private PipelinePreviews previews() {
@@ -272,58 +272,59 @@ class StepPreviewTest {
             .rowCount(), "each person has their own count");
     }
 
-    // ---- masking ----
+    // ---- masking: hidden columns pass through untouched, and nothing may look inside one ----
 
     @Test
-    void columnsMadeFromSensitiveColumnsAreMaskedForAllButAdmins() {
-        PipelineViews.StepPreviewView v = previews().preview(MAIN, "tidy", null, 3, "jo", AccessRole.STEWARD,
+    void sensitiveColumnsPassThroughMaskedForAllButAdmins() {
+        String y = yaml("""
+              - {id: people, type: read, source: lab-db, asset: lab.people}
+              - {id: tidy, type: compute, input: people, columns: {next_id: "id + 1"}}
+              - {id: renamed, type: select, input: tidy, rename: {name: who}}
+            """);
+        PipelineViews.StepPreviewView v = previews().preview(y, "renamed", null, 3, "jo", AccessRole.STEWARD,
             viewer(false, "name"), () -> false);
-        assertEquals(List.of("name", "shout"), v.masked(), "upper(name) is made from name");
-        assertEquals(List.of("1", Masking.MASK, Masking.MASK, "2"), v.rows().get(0));
+        assertEquals(List.of("who"), v.masked(), "a renamed hidden column stays hidden");
+        assertEquals(List.of("1", Masking.MASK, "2"), v.rows().get(0));
 
-        PipelineViews.StepPreviewView admin = previews().preview(MAIN, "tidy", null, 3, "ann", AccessRole.ADMIN,
+        PipelineViews.StepPreviewView admin = previews().preview(y, "renamed", null, 3, "ann", AccessRole.ADMIN,
             viewer(true, "name"), () -> false);
         assertEquals(List.of(), admin.masked());
-        assertEquals("PERSON 1", admin.rows().get(0).get(2));
+        assertEquals("Person 1", admin.rows().get(0).get(1));
+    }
+
+    /** The review's proof of concept: a computed column named like a hidden one in another case. */
+    @Test
+    void aComputedColumnInAnotherCaseNeverUnhidesOne() {
+        String y = yaml("""
+              - {id: people, type: read, source: lab-db, asset: lab.people}
+              - {id: c, type: compute, input: people, columns: {NAME: "'x'"}}
+            """);
+        PipelineViews.StepPreviewView v = previews().preview(y, "c", null, 3, "jo", AccessRole.STEWARD,
+            viewer(false, "name"), () -> false);
+        assertTrue(v.masked().contains("name"), v.masked().toString());
+        int at = v.columns().stream().map(PipelineViews.PreviewColumn::name).toList().indexOf("name");
+        assertTrue(at >= 0);
+        assertTrue(v.rows().stream().allMatch(r -> Masking.MASK.equals(r.get(at))), "name's values stay masked");
+        assertFalse(v.rows().stream().flatMap(List::stream).anyMatch(x -> x != null && x.startsWith("Person")));
+        // And an exact-case overwrite stays masked too.
+        PipelineViews.StepPreviewView same = previews().preview(yaml("""
+              - {id: people, type: read, source: lab-db, asset: lab.people}
+              - {id: c, type: compute, input: people, columns: {name: "'x'"}}
+            """), "c", null, 3, "jo", AccessRole.STEWARD, viewer(false, "name"), () -> false);
+        assertTrue(same.masked().contains("name"));
     }
 
     @Test
-    void hiddenColumnsFollowRenamesComputesAndAggregates() {
+    void hiddenStaysHiddenThroughRenamesUnionsAndLimits() {
         StepPreview.Hidden h = hidden("""
-              - {id: people, type: read, source: small, asset: lab.people}
-              - {id: renamed, type: select, input: people, rename: {name: who}}
-              - id: c
-                type: compute
-                input: renamed
-                columns:
-                  initial: "substring(who, 1, 1)"
-                  name: "'anon'"
-                  plain: "id * 2"
-                  later: "initial || '.'"
-            """, "c", Set.of("name"));
-        assertTrue(h.hides("who") && h.hides("WHO") && h.hides("initial") && h.hides("later"));
-        assertFalse(h.hides("name"), "replaced by a value made from no sensitive column");
-        assertFalse(h.hides("plain") || h.hides("id"));
-
-        StepPreview.Hidden agg = hidden("""
-              - {id: people, type: read, source: small, asset: lab.people}
-              - id: a
-                type: aggregate
-                input: people
-                group_by: [name]
-                values: {n: "count(*)", longest: "max(length(name))", top: "max(id)"}
-            """, "a", Set.of("name"));
-        assertTrue(agg.hides("name") && agg.hides("longest"));
-        assertFalse(agg.hides("n") || agg.hides("top"));
-
-        StepPreview.Hidden union = hidden("""
               - {id: people, type: read, source: small, asset: lab.people}
               - {id: other, type: read, source: small, asset: lab.other}
               - {id: u, type: union, input: [people, other]}
-              - {id: l, type: limit, input: u, rows: 5}
+              - {id: r, type: select, input: u, rename: {name: who}}
+              - {id: l, type: limit, input: r, rows: 5}
             """, "l", Set.of("name"));
-        assertTrue(union.hides("name"));
-        assertFalse(union.hides("id"));
+        assertTrue(h.hides("who") && h.hides("WHO") && h.hides("name"));
+        assertFalse(h.hides("id"));
     }
 
     private StepPreview.Hidden hidden(String steps, String step, Set<String> marks) {
@@ -336,8 +337,12 @@ class StepPreviewTest {
         return StepPreview.hidden(c, reads, step);
     }
 
+    /**
+     * No step may look inside a hidden column: an expression, a cast, a key, a group or a rule could
+     * show its values through the rows, a computed value, or whether the preview succeeds.
+     */
     @Test
-    void rowsChosenByASensitiveColumnAreRefusedForAllButAdmins() {
+    void anyStepLookingInsideASensitiveColumnIsRefusedForAllButAdmins() {
         String byName = yaml("""
               - {id: people, type: read, source: lab-db, asset: lab.people}
               - {id: ps, type: filter, input: people, condition: "name like 'Person 1%'"}
@@ -353,19 +358,194 @@ class StepPreviewTest {
             () -> false).rowCount(), "a filter on visible columns is fine");
 
         for (String step : List.of("""
+              - {id: x, type: compute, input: people, columns: {shout: "upper(name)"}}
+            """, """
+              - {id: x, type: compute, input: people, columns: {n: "cast(name as int64)"}}
+            """, """
+              - {id: x, type: select, input: people, cast: {name: int64}}
+            """, """
               - {id: x, type: dedupe, input: people, key: [name]}
             """, """
               - {id: x, type: dedupe, input: people}
             """, """
               - {id: x, type: route, input: people, routes: {p: "length(name) > 8"}}
             """, """
-              - {id: x, type: gate, input: people, on_fail: quarantine, asset_rules: false, rules: [{type: not_null, field: id}]}
+              - {id: x, type: aggregate, input: people, group_by: [name], values: {n: "count(*)"}}
+            """, """
+              - {id: x, type: aggregate, input: people, values: {n: "max(length(name))"}}
+            """, """
+              - {id: y, type: read, source: small, asset: lab.other}
+              - {id: x, type: lookup, inputs: {main: people, lookup: y}, on: {name: name}}
+            """, """
+              - {id: x, type: gate, input: people, on_fail: stop, asset_rules: false, rules: [{type: matches_pattern, field: name, regex: "^Person 1$"}]}
+            """, """
+              - {id: x, type: gate, input: people, on_fail: warn, asset_rules: false, rules: [{type: not_null, field: name}]}
             """)) {
             String y = yaml("  - {id: people, type: read, source: lab-db, asset: lab.people}\n" + step);
             WebApplicationException r = assertThrows(WebApplicationException.class, () -> previews().preview(y, "x",
                 null, 5, "jo", AccessRole.STEWARD, viewer(false, "name"), () -> false), step);
             assertEquals(403, status(r), step);
+            assertTrue(error(r).startsWith("Only an admin can preview this: step x ("), error(r));
         }
+    }
+
+    /** The review's oracle: a gate's success or failure must not tell a hidden value, whatever it does. */
+    @Test
+    void aGateCheckingAHiddenColumnIsRefusedWhetherItsRulesAreInlineOrTheAssets() {
+        String inline = yaml("""
+              - {id: people, type: read, source: lab-db, asset: lab.people}
+              - {id: one, type: limit, input: people, rows: 1}
+              - id: g
+                type: gate
+                input: one
+                asset_rules: false
+                max_failing_share: 0
+                rules: [{type: matches_pattern, field: name, regex: "^Person 1$"}]
+            """);
+        for (String regex : List.of("^Person 1$", "^Person 2$")) {
+            WebApplicationException e = assertThrows(WebApplicationException.class, () -> previews().preview(
+                inline.replace("^Person 1$", regex), "g", null, 1, "jo", AccessRole.STEWARD, viewer(false, "name"),
+                () -> false));
+            assertEquals(403, status(e), "the same answer whatever the value: " + regex);
+        }
+        sources.rules.put(PEOPLE, GateRules.read(List.of(Map.of("type", "not_null", "field", "name")), null));
+        String asset = yaml("""
+              - {id: people, type: read, source: lab-db, asset: lab.people}
+              - {id: g, type: gate, input: people, on_fail: warn}
+            """);
+        WebApplicationException e = assertThrows(WebApplicationException.class, () -> previews().preview(asset, "g",
+            null, 1, "jo", AccessRole.STEWARD, viewer(false, "name"), () -> false));
+        assertEquals(403, status(e));
+        assertTrue(error(e).contains("checks rules on name"), error(e));
+        assertEquals(1, previews().preview(asset, "g", null, 1, "jo", AccessRole.STEWARD, viewer(false, "id"),
+            () -> false).rowCount(), "rules on visible columns are fine");
+    }
+
+    // ---- sizes and limits ----
+
+    @Test
+    void stepsHoldingStateGetAShareOfThePreviewsMemory() {
+        StepPreview.Plan p = StepPreview.plan(yaml("""
+              - {id: people, type: read, source: small, asset: lab.people}
+              - {id: a, type: aggregate, input: people, values: {n: "count(*)"}, memory_limit_mb: 1000000}
+              - {id: d, type: dedupe, input: people, memory_limit_mb: 10}
+              - {id: u, type: union, input: [a, d]}
+            """), "u", new StepPreview.Caps(50, 10, 256));
+        Map<String, Object> a = p.definition().steps().stream().filter(s -> s.id().equals("a")).findFirst().orElseThrow()
+            .config();
+        Map<String, Object> d = p.definition().steps().stream().filter(s -> s.id().equals("d")).findFirst().orElseThrow()
+            .config();
+        Map<String, Object> u = p.definition().steps().stream().filter(s -> s.id().equals("u")).findFirst().orElseThrow()
+            .config();
+        assertEquals(85L, a.get("memory_limit_mb"), "a million MB is lowered to a third of 256");
+        assertEquals(10L, d.get("memory_limit_mb"), "a lower limit is kept");
+        assertEquals(85L, u.get("memory_limit_mb"), "unset: its share");
+        PipelineCompilerPort.Compilation c = KilnPipelineCompiler.compile(p.definition(), factories, false);
+        assertEquals(List.of(), c.problems());
+        assertEquals("85", String.valueOf(c.configs().get("a").get("memory_limit_mb")));
+    }
+
+    @Test
+    void aPreviewHasAtMostSoManyStepsAndReads() {
+        StringBuilder chain = new StringBuilder("  - {id: s0, type: read, source: small, asset: lab.people}\n");
+        for (int i = 1; i <= 5; i++) {
+            chain.append("  - {id: s").append(i).append(", type: limit, input: s").append(i - 1).append(", rows: 5}\n");
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> StepPreview.plan(
+            yaml(chain.toString()), "s5", new StepPreview.Caps(4, 10, 256)));
+        assertTrue(e.getMessage().startsWith("A preview runs at most 4 steps, and s5 needs 6"), e.getMessage());
+        IllegalArgumentException reads = assertThrows(IllegalArgumentException.class, () -> StepPreview.plan(yaml("""
+              - {id: a, type: read, source: small, asset: lab.a}
+              - {id: b, type: read, source: small, asset: lab.b}
+              - {id: u, type: union, input: [a, b]}
+            """), "u", new StepPreview.Caps(50, 1, 256)));
+        assertTrue(reads.getMessage().startsWith("A preview reads from at most 1 read steps"), reads.getMessage());
+        IllegalArgumentException untyped = assertThrows(IllegalArgumentException.class, () -> StepPreview.plan(yaml("""
+              - {id: a, type: read, source: small, asset: lab.a}
+              - {id: b, input: a}
+              - {id: c, type: limit, input: b, rows: 1}
+            """), "c"));
+        assertTrue(untyped.getMessage().startsWith("Step b needs a type"), untyped.getMessage());
+    }
+
+    @Test
+    void theTimeLimitHoldsEvenWhenAStepIgnoresInterrupts() throws Exception {
+        StuckConnector.release = new java.util.concurrent.CountDownLatch(1);
+        sources.connectors.put(StuckConnector.KIND, new StuckConnector());
+        sources.add("stuck", StuckConnector.KIND, Map.of(), null);
+        // Answered after 0.6 s and 0.2 s of grace; the engine waits 2 s for the stuck step, then lets go.
+        PipelinePreviews p = new PipelinePreviews(factories, null, sources, new PipelinePreviews.Limits(64L << 20, 4,
+            Duration.ofMillis(600), 1, 1, 256, 50, 10, Duration.ofMillis(200), Duration.ofSeconds(2)));
+        String y = yaml("  - {id: s, type: read, source: stuck, asset: lab.stuck}\n");
+        try {
+            long started = System.nanoTime();
+            WebApplicationException e = assertThrows(WebApplicationException.class, () -> p.preview(y, "s", null, 5,
+                "jo", AccessRole.STEWARD, STEWARD, () -> false));
+            long took = (System.nanoTime() - started) / 1_000_000;
+            assertEquals(422, status(e));
+            assertTrue(error(e).startsWith("The preview took longer than 1 second"), error(e));
+            assertTrue(took < 1_800, "answered after the limit and a short grace, not when the step let go: " + took);
+            assertEquals(1, p.stillStopping());
+            // Its slots are held until it has ended: the same person's, and (one at a time here) anyone's.
+            WebApplicationException mine = assertThrows(WebApplicationException.class, () -> p.preview(MAIN, "people",
+                null, 5, "jo", AccessRole.STEWARD, STEWARD, () -> false));
+            assertTrue(error(mine).startsWith("You already have a preview running"));
+            WebApplicationException full = assertThrows(WebApplicationException.class, () -> p.preview(MAIN, "people",
+                null, 5, "sam", AccessRole.STEWARD, STEWARD, () -> false));
+            assertTrue(error(full).startsWith("Kilnmark is running as many previews"), error(full));
+            // The engine's wait for its steps is bounded too: the preview ends though the step is still stuck.
+            long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+            while (p.stillStopping() > 0 && System.nanoTime() < deadline) {
+                Thread.sleep(50);
+            }
+            assertEquals(0, p.stillStopping());
+            PipelineViews.StepPreviewView later = null;
+            for (int i = 0; i < 100 && later == null; i++) {
+                later = sam(p);
+                if (later == null) {
+                    Thread.sleep(50);
+                }
+            }
+            assertEquals(5, later == null ? -1 : later.rowCount(),
+                "the slot is free again, and the refusal used none of sam's one preview a minute");
+        } finally {
+            StuckConnector.release.countDown();
+        }
+    }
+
+    private PipelineViews.StepPreviewView sam(PipelinePreviews p) {
+        try {
+            return p.preview(MAIN, "people", null, 5, "sam", AccessRole.STEWARD, STEWARD, () -> false);
+        } catch (WebApplicationException e) {
+            return null;
+        }
+    }
+
+    @Test
+    void runningOutOfTimeWhileLookingUpMarksIsATimeoutNotAServerError() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        PipelinePreviews.Viewer slow = new PipelinePreviews.Viewer() {
+            @Override
+            public boolean mayUnmask() {
+                return false;
+            }
+
+            @Override
+            public Set<String> marks(String urn) {
+                if (calls.incrementAndGet() > 1) {
+                    try {
+                        Thread.sleep(900);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return Set.of();
+            }
+        };
+        WebApplicationException e = assertThrows(WebApplicationException.class, () -> previews(Duration.ofMillis(500),
+            100, 64L << 20).preview(MAIN, "people", null, 5, "jo", AccessRole.STEWARD, slow, () -> false));
+        assertEquals(422, status(e));
+        assertTrue(error(e).startsWith("The preview took longer than"), error(e));
     }
 
     @Test

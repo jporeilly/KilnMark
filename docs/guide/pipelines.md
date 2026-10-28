@@ -139,7 +139,8 @@ and asks you to confirm; save them to run them.
 
 ### Preview a step
 
-To see the rows leaving a step before you run anything, right-click it and choose **Preview rows**,
+To see the rows leaving a step before you run anything, right-click it (Ctrl+click on a Mac) and
+choose **Preview rows**,
 or select it and open the **Preview** tab beside its settings. From the keyboard, press Shift+F10
 (or the menu key) on a step for the same menu. For a step with more than one output, such as a
 quality gate's **out** and **quarantine** or a filter's **out** and **rejected**, choose the
@@ -155,12 +156,17 @@ the read step for a while.
 
 Previews follow the same rules as previewing a source:
 
-- They are for stewards and admins. Each person runs one preview at a time, and up to six a minute.
+- They are for stewards and admins. Each person runs one preview at a time and up to six a minute,
+  and a server runs two at once. A preview runs at most 50 steps, 10 of them reads; a step that holds
+  rows (an aggregate, a dedupe, a lookup or a union) is given a share of the preview's memory,
+  whatever its own `memory_limit_mb` says.
 - Sources are reached as a run reaches them, with their saved credentials and the allowed hosts.
-- Columns marked sensitive are masked (••••) for everyone but admins, and so is every column made
-  from one, such as `upper(email)` or `email` renamed. A preview whose rows are chosen by such a
-  column (a filter, route, dedupe key or lookup key on it, or a gate setting rows aside) is
-  refused for everyone but admins, since the rows shown would give its values away.
+- Columns marked sensitive can pass through a preview, kept, renamed or carried along, and are
+  masked (••••) for everyone but admins. But no step before the one you preview may look at their
+  values: a calculation or condition that uses one, a cast, a group, dedupe or lookup key on one,
+  or a quality gate with a rule on one. For everyone but admins such a preview is refused, and
+  says which step and column, because the rows shown, a value worked out from it, or even whether
+  the preview works, could give the values away. Preview the step before it, or ask an admin.
 - When a step fails, its message may quote values from the rows; if anything read has columns
   marked sensitive, only admins see it, as with a run's errors.
 

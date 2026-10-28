@@ -20,20 +20,26 @@ details.
   its rows first. Only the step and the steps upstream of it run, on the API process while the caller
   waits; a collector takes the rows and finishes, so the engine ends the steps before it early. Only reads
   and the in-memory row steps may run: anything else, writes included, is refused (400). Stewards and
-  admins; reads resolve their sources inside a run context naming the caller; columns made from columns
-  marked sensitive are masked for all but admins, following renames, computes, aggregates, lookups and
-  unions, and a preview whose rows are chosen by such a column (filter, route, dedupe, lookup keys, a gate
-  that quarantines) is refused (403); a failure's message is held back as a run's is. Limits:
-  `kilnmark.pipelines.preview-timeout` (30s), `preview-memory-limit-mb` (256), `previews-per-minute` (6 per
-  person), `preview-concurrency` (4), one per person at a time (429), and a preview stops when its request
-  is closed. Responses are `Cache-Control: no-store`. On the canvas: a step's context menu (right-click,
+  admins; reads resolve their sources inside a run context naming the caller. For all but admins,
+  columns marked sensitive may pass through unchanged and are masked inside the collector; a preview
+  in which any step looks inside one (an expression, cast, group, dedupe or lookup key, or a gate's
+  rule, inline or the asset's, whatever its `on_fail`) is refused (403), since even its success or
+  failure could tell a value; a failure's message is held back as a run's is. Limits, checked before
+  any work: one per person at a time, `previews-per-minute` (6 per person), `preview-concurrency` (2),
+  `preview-max-steps` (50), `preview-max-reads` (10); stateful steps' `memory_limit_mb` lowered to a
+  share of `preview-memory-limit-mb` (256); `preview-timeout` (30s) is hard: the steps run on their
+  own thread and the request is answered after the limit and 2 s of grace whatever they do (a
+  preview still stopping is logged, counted and keeps its slot until it ends); and a preview stops
+  when its request is closed. Responses are `Cache-Control: no-store`. On the canvas: a step's context menu (right-click,
   Shift+F10 or the menu key; `StepMenu`) with Preview rows, Settings, Connect to…, Duplicate and Remove,
   and a Preview tab in the step's drawer (`StepPreviewPanel`, reusing `PreviewTable`). A right-click no
   longer selects the step first, so the drawer does not open under the pointer.
 - **Engine: a step whose readers have all finished ends early even when it writes only to unconnected
   ports** (`KilnGraphRunner`). Before, such a step (a filter whose only connected output is `rejected`,
   say) learnt its readers had gone only when it next wrote to them, and could read its whole input for
-  nothing. `Preview.text` and `Preview.utf8Length` are now public, for the step preview's collector.
+  nothing. `KilnGraphRunner` also takes a `stopWait`: how long a stopped run waits for its steps'
+  threads (unbounded unless set; previews wait 5 s). `Preview.text` and `Preview.utf8Length` are now
+  public, for the step preview's collector.
 
 - **Canvas chips after a run** (`StepNode` `stepChips`, `components/ui/StatusChip`). Each kind of
   chip has its own look and words, so none depends on colour: rows and outcome in a neutral chip

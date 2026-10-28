@@ -124,6 +124,8 @@ class PipelinePreviewApiTest {
             .body("port", equalTo("rejected")).body("rows[0][1]", equalTo("Person 2"));
         as(steward).body(Map.of("step", "named")).post("/api/v1/pipelines/preview-people/versions/9/preview").then()
             .statusCode(404);
+        Tokens.as(steward).contentType(ContentType.TEXT).body("step=named")
+            .post("/api/v1/pipelines/preview-people/versions/1/preview").then().statusCode(415);
         as(viewer).body(Map.of("step", "named")).post("/api/v1/pipelines/preview-people/versions/1/preview").then()
             .statusCode(403);
     }
@@ -144,10 +146,14 @@ class PipelinePreviewApiTest {
         as(steward).body(Map.of("field", "name", "sensitive", true)).queryParam("urn", URN)
             .put("/api/v1/quality/asset/sensitive").then().statusCode(204);
 
-        JsonPath masked = as(steward).body(Map.of("yaml", YAML, "step", "tidy", "rows", 3))
+        JsonPath masked = as(steward).body(Map.of("yaml", YAML, "step", "people", "rows", 3))
             .post("/api/v1/pipelines/preview").then().statusCode(200).extract().jsonPath();
-        assertEquals(List.of("name", "shout"), masked.getList("masked"), "upper(name) is made from name");
-        assertEquals(List.of("1", Masking.MASK, Masking.MASK), masked.getList("rows[0]"));
+        assertEquals(List.of("name"), masked.getList("masked"));
+        assertEquals(List.of("1", Masking.MASK), masked.getList("rows[0]"));
+        // Nothing upstream may look inside it: a calculation or a condition on it is refused.
+        as(steward).body(Map.of("yaml", YAML, "step", "tidy")).post("/api/v1/pipelines/preview").then()
+            .statusCode(403).body("error", startsWith("Only an admin can preview this: step tidy (compute) works out "
+                + "a value from name"));
         as(steward).body(Map.of("yaml", YAML, "step", "named")).post("/api/v1/pipelines/preview").then()
             .statusCode(403).body("error", startsWith("Only an admin can preview this: step named (filter) chooses "
                 + "rows by name"));

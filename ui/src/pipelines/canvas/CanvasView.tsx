@@ -120,6 +120,8 @@ const PREDICT_AFTER_MS = 700;
 const TYPED = new Set(["text", "number", "expression", "expressions", "conditions", "column_map", "asset", "rules"]);
 /** The smallest zoom at which a step's words can still be read. */
 const MIN_READABLE = 0.7;
+/** On a Mac, Ctrl+click opens a context menu; elsewhere it is a click. */
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const reducedMotion = () => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 const isTyping = (el: EventTarget | null) =>
   el instanceof HTMLElement && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
@@ -173,8 +175,21 @@ function Canvas(props: CanvasProps) {
   const role = useRole();
   const drawerTabs = useTabsId();
   // A right-click (or Ctrl+click on a Mac) focuses the step without selecting it, so the drawer does
-  // not open under the pointer before the menu does.
+  // not open under the pointer before the menu does. Cleared however the press ends.
   const menuPress = useRef(false);
+  useEffect(() => {
+    const clear = () => {
+      menuPress.current = false;
+    };
+    document.addEventListener("pointerup", clear, true);
+    document.addEventListener("pointercancel", clear, true);
+    document.addEventListener("contextmenu", clear);
+    return () => {
+      document.removeEventListener("pointerup", clear, true);
+      document.removeEventListener("pointercancel", clear, true);
+      document.removeEventListener("contextmenu", clear);
+    };
+  }, []);
   const wrap = useRef<HTMLDivElement>(null);
   const toolbar = useRef<HTMLDivElement>(null);
   // The latest text, also for changes made before React has drawn the last one.
@@ -1060,10 +1075,7 @@ function Canvas(props: CanvasProps) {
           }}
           onDrop={onDrop}
           onPointerDownCapture={(e) => {
-            menuPress.current = e.button === 2 || (e.button === 0 && e.ctrlKey && !e.metaKey);
-          }}
-          onPointerUpCapture={() => {
-            menuPress.current = false;
+            menuPress.current = e.button === 2 || (e.button === 0 && e.ctrlKey && !e.metaKey && IS_MAC);
           }}
           onFocus={(e) => {
             if (menuPress.current) return;
@@ -1208,6 +1220,7 @@ function Canvas(props: CanvasProps) {
                 ask={previewAsk}
                 last={previewResult}
                 onResult={setPreviewResult}
+                onAsked={() => setPreviewAsk(null)}
               />
             ) : (
             <SettingsPanel

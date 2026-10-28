@@ -79,12 +79,27 @@ final class StepPreview {
     }
 
     /**
+     * How big a preview may be: steps in all and read steps among them, and the memory its steps
+     * holding rows in their own state (aggregate, dedupe, lookup, union) may count between them.
+     */
+    record Caps(int maxSteps, int maxReads, long memoryMb) {
+        static final Caps DEFAULT = new Caps(50, 10, 256);
+    }
+
+    /** Steps that hold rows in state of their own, bounded by their {@code memory_limit_mb}. */
+    static final Set<String> STATEFUL = Set.of("aggregate", "dedupe", "lookup", "union");
+
+    static Plan plan(String yaml, String step) {
+        return plan(yaml, step, Caps.DEFAULT);
+    }
+
+    /**
      * Cuts {@code yaml} down to {@code step} and everything upstream of it. Refuses (with an
      * {@link IllegalArgumentException}, a 400) YAML that cannot be read, an unknown step, a step
      * that writes, any step upstream that a preview may not run, and problems the reading found in
      * the part that would run. Problems elsewhere in the pipeline do not stop a preview.
      */
-    static Plan plan(String yaml, String step) {
+    static Plan plan(String yaml, String step, Caps caps) {
         if (step == null || step.isBlank()) {
             throw new IllegalArgumentException("step: the id of the step to preview");
         }
@@ -108,7 +123,10 @@ final class StepPreview {
                 + "the step that feeds it instead.");
         }
         for (PipelineDefinition.StepDefinition s : sub) {
-            if (s.type() != null && !PREVIEWABLE.contains(s.type())) {
+            if (s.type() == null) {
+                throw new IllegalArgumentException("Step " + s.id() + " needs a type before " + id + " can be previewed.");
+            }
+            if (!PREVIEWABLE.contains(s.type())) {
                 throw new IllegalArgumentException("Step " + s.id() + " (" + clip(s.type()) + ") cannot run in a "
                     + "preview. A preview runs only reads and the steps that work on rows in memory, never a step "
                     + "that writes or could change anything" + (s.id().equals(id) ? "." : ", and " + id
@@ -120,8 +138,54 @@ final class StepPreview {
         if (!mine.isEmpty()) {
             throw new IllegalArgumentException("Fix the YAML before previewing " + id + where(mine));
         }
+        if (sub.size() > caps.maxSteps()) {
+            throw new IllegalArgumentException("A preview runs at most " + caps.maxSteps() + " steps, and " + id
+                + " needs " + sub.size() + ". Preview a step nearer the start.");
+        }
+        long reads = sub.stream().filter(s -> ReadStepFactory.TYPE.equals(s.type())).count();
+        if (reads > caps.maxReads()) {
+            throw new IllegalArgumentException("A preview reads from at most " + caps.maxReads() + " read steps, and "
+                + id + " needs " + reads + ". Preview a step nearer the start.");
+        }
         String name = d.name() == null || d.name().isBlank() ? "preview" : d.name();
-        return new Plan(new PipelineDefinition(name, d.description(), sub, d.quality()), id, chosen.type());
+        return new Plan(new PipelineDefinition(name, d.description(), clamp(sub, caps.memoryMb()), d.quality()), id,
+            chosen.type());
+    }
+
+    /**
+     * The steps with the memory limit of each step holding rows in its own state lowered to its
+     * share of the preview's: that state is counted against {@code memory_limit_mb}, which a
+     * pipeline may set far higher than a preview may hold.
+     */
+    static List<PipelineDefinition.StepDefinition> clamp(List<PipelineDefinition.StepDefinition> steps, long memoryMb) {
+        long stateful = steps.stream().filter(s -> STATEFUL.contains(s.type())).count();
+        if (stateful == 0) {
+            return steps;
+        }
+        long share = Math.max(1, memoryMb / stateful);
+        List<PipelineDefinition.StepDefinition> out = new ArrayList<>();
+        for (PipelineDefinition.StepDefinition s : steps) {
+            if (!STATEFUL.contains(s.type())) {
+                out.add(s);
+                continue;
+            }
+            Object asked = s.config().get("memory_limit_mb");
+            long limit = share;
+            if (asked instanceof Number n && n.longValue() > 0 && n.longValue() < share
+                && (asked instanceof Integer || asked instanceof Long)) {
+                limit = n.longValue();
+            } else if (asked != null && !(asked instanceof Integer || asked instanceof Long)) {
+                out.add(s); // not a whole number: the check reports it
+                continue;
+            }
+            Map<String, Object> config = new LinkedHashMap<>(s.config());
+            config.put("memory_limit_mb", limit);
+            Map<String, Object> text = new LinkedHashMap<>(s.configText());
+            text.put("memory_limit_mb", Long.toString(limit));
+            out.add(new PipelineDefinition.StepDefinition(s.id(), s.type(), s.inputs(), config, s.position(), s.keys(),
+                text));
+        }
+        return out;
     }
 
     /** {@code step} and every step whose rows can reach it, by the inputs the steps name. */
@@ -248,12 +312,27 @@ final class StepPreview {
 
     /**
      * The columns of {@code step}'s output that are hidden from the caller, worked out step by step
-     * from what each read hides ({@code readHidden}, by read step id). Refuses ({@link Refused})
-     * when a step upstream chooses or divides rows by a hidden column (a filter's condition, a
-     * route's, a dedupe's key, a lookup's keys, a gate quarantining rows that have hidden columns),
-     * since the rows shown would then give its values away even with the column masked.
+     * from what each read hides ({@code readHidden}, by read step id); {@code gateFields} holds, for
+     * each gate, the columns its rules check (inline and the asset's), or null when not known.
+     *
+     * <p>The rule (docs/design/pipelines.md, "Preview at a step"): a hidden column may pass through
+     * a preview untouched, and is masked where it leaves; no step may look inside one. Refuses
+     * ({@link Refused}) when any step upstream names a hidden column in an expression (compute,
+     * filter, route, aggregate values), groups, deduplicates or matches by one (aggregate
+     * {@code group_by}, dedupe {@code key} or whole rows, lookup {@code on}), changes its type
+     * ({@code select}'s {@code cast}) or checks it with a rule (a gate, whatever it does on failure).
+     * Each of those could show a value through the rows kept, a computed value, or simply whether
+     * the preview succeeds or fails.
+     *
+     * <p>Names are compared ignoring case, and a column once hidden stays hidden: a computed column
+     * that shares a hidden column's name, in any case, is masked too, so it can never un-hide one.
      */
     static Hidden hidden(PipelineCompilerPort.Compilation c, Map<String, Set<String>> readHidden, String step) {
+        return hidden(c, readHidden, Map.of(), step);
+    }
+
+    static Hidden hidden(PipelineCompilerPort.Compilation c, Map<String, Set<String>> readHidden,
+                         Map<String, Set<String>> gateFields, String step) {
         Map<String, PipelineCompilerPort.StepOutline> steps = new LinkedHashMap<>();
         c.steps().forEach(s -> steps.putIfAbsent(s.id(), s));
         Map<String, Hidden> out = new HashMap<>();
@@ -269,113 +348,106 @@ final class StepPreview {
                 }
             }
             Map<String, Object> config = c.configs().getOrDefault(id, Map.of());
-            out.put(id, through(s.id(), s.type(), config, in, any, readHidden.getOrDefault(id, Set.of())));
+            Set<String> gate = gateFields.containsKey(id) ? gateFields.get(id) : null;
+            out.put(id, through(s.id(), s.type(), config, in, any, readHidden.getOrDefault(id, Set.of()), gate));
         }
         return out.getOrDefault(step, Hidden.NONE);
     }
 
-    /** What one step hides on its outputs, given what arrives hidden on its inputs. */
+    /** What one step hides on its outputs, given what arrives hidden; refuses a step looking inside one. */
     private static Hidden through(String id, String type, Map<String, Object> config, Map<String, Hidden> in,
-                                  Hidden any, Set<String> read) {
+                                  Hidden any, Set<String> read, Set<String> gateFields) {
         Hidden main = in.getOrDefault("in", any);
-        switch (type == null ? "" : type) {
+        String t = type == null ? "" : type;
+        switch (t) {
             case "read" -> {
                 return Hidden.of(read);
             }
             case "compute" -> {
-                if (main.all()) {
-                    return Hidden.ALL;
+                Map<String, String> columns = texts(config.get("columns"));
+                for (String expr : columns.values()) {
+                    uses(id, t, main, refs(expr), "works out a value from");
                 }
-                Set<String> now = new HashSet<>(main.names());
-                for (Map.Entry<String, String> e : texts(config.get("columns")).entrySet()) {
-                    Hidden current = Hidden.of(now);
-                    if (current.touches(refs(e.getValue()))) {
-                        now.add(key(e.getKey()));
-                    } else {
-                        now.remove(key(e.getKey())); // replaced by a value made only from visible columns
-                    }
-                }
-                return Hidden.of(now);
+                // Nothing computed may name a hidden column, so a hidden column stays hidden; a new
+                // column sharing its name in another case is masked too.
+                return main;
             }
             case "select" -> {
+                Map<String, String> casts = texts(config.get("cast"));
+                uses(id, t, main, new ArrayList<>(casts.keySet()), "changes the type of");
                 if (main.all()) {
                     return Hidden.ALL;
                 }
                 Set<String> now = new HashSet<>(main.names());
                 texts(config.get("rename")).forEach((from, to) -> {
-                    if (main.hides(from)) {
-                        now.add(key(to));
+                    if (main.hides(from) && to != null) {
+                        now.add(to);
                     }
                 });
                 return Hidden.of(now);
             }
             case "aggregate" -> {
-                if (main.all()) {
-                    return Hidden.ALL;
+                uses(id, t, main, list(config.get("group_by")), "groups rows by");
+                for (String expr : texts(config.get("values")).values()) {
+                    uses(id, t, main, refs(expr), "works out a value from");
                 }
-                Set<String> now = new HashSet<>();
-                for (String g : list(config.get("group_by"))) {
-                    if (main.hides(g)) {
-                        now.add(g);
-                    }
-                }
-                texts(config.get("values")).forEach((name, expr) -> {
-                    if (main.touches(refs(expr))) {
-                        now.add(name);
-                    }
-                });
-                return Hidden.of(now);
+                return Hidden.NONE; // its columns are the group's and the values, none from a hidden column
             }
             case "filter" -> {
-                chooses(id, "filter", main, refs(text(config.get("condition"))));
+                uses(id, t, main, refs(text(config.get("condition"))), "chooses rows by");
                 return main;
             }
             case "route" -> {
                 for (String cond : texts(config.get("routes")).values()) {
-                    chooses(id, "route", main, refs(cond));
+                    uses(id, t, main, refs(cond), "chooses rows by");
                 }
                 return main;
             }
             case "dedupe" -> {
                 List<String> key = list(config.get("key"));
-                chooses(id, "dedupe", main, key.isEmpty() ? null : key);
+                uses(id, t, main, key.isEmpty() ? null : key, key.isEmpty() ? "compares whole rows, which include"
+                    : "compares rows by");
                 return main;
             }
             case "lookup" -> {
                 Hidden m = in.getOrDefault("main", Hidden.NONE);
                 Hidden l = in.getOrDefault("lookup", Hidden.NONE);
                 Map<String, String> on = texts(config.get("on"));
-                chooses(id, "lookup", m, new ArrayList<>(on.keySet()));
-                chooses(id, "lookup", l, new ArrayList<>(on.values()));
+                uses(id, t, m, new ArrayList<>(on.keySet()), "matches rows by");
+                uses(id, t, l, new ArrayList<>(on.values()), "matches rows by");
                 return m.plus(l);
             }
             case "gate" -> {
-                String onFail = text(config.get("on_fail"));
-                if ("quarantine".equals(onFail) && main.any()) {
-                    throw new Refused("Only an admin can preview this: step " + id + " (gate) sets rows aside by "
-                        + "rules that may check columns marked sensitive, so the rows shown could give their values "
-                        + "away.");
-                }
+                uses(id, t, main, gateFields == null ? null : gateFields, "checks rules on");
                 return main;
             }
             case "limit", "union" -> {
                 return any;
             }
             default -> {
-                return any.any() ? Hidden.ALL : Hidden.NONE;
+                if (any.any()) {
+                    throw new Refused("Only an admin can preview this: step " + id + " (" + clip(t) + ") may use "
+                        + "columns marked sensitive.");
+                }
+                return Hidden.NONE;
             }
         }
     }
 
-    /** Refuses when a step chooses rows by a hidden column ({@code columns} null: not known). */
-    private static void chooses(String id, String type, Hidden in, Collection<String> columns) {
+    /**
+     * Refuses when a step uses a hidden column ({@code columns} null: not known, so any hidden
+     * column counts). {@code doing} says how, in words.
+     */
+    private static void uses(String id, String type, Hidden in, Collection<String> columns, String doing) {
         if (!in.touches(columns)) {
             return;
         }
         String which = in.first(columns);
-        throw new Refused("Only an admin can preview this: step " + id + " (" + type + ") chooses rows by "
-            + (which == null ? "columns that include one marked sensitive" : which + ", which is marked sensitive")
-            + ", so the rows shown would give its values away even with the column masked.");
+        throw new Refused("Only an admin can preview this: step " + id + " (" + type + ") " + doing + " "
+            + (which == null ? "columns that may include one marked sensitive" : which + ", which is marked sensitive")
+            + ". In a preview, columns marked sensitive can only pass through unchanged; anything that looks at "
+            + "their values (a condition, a calculation, a key, a rule) could give them away, even by whether the "
+            + "preview works.");
     }
 
     /** The columns an expression names, or null when it cannot be read (then it may name any). */
@@ -452,12 +524,22 @@ final class StepPreview {
      */
     static Outcome run(PipelineGraph graph, String step, String port, int rows, long memoryBytes, int capacity,
                        Duration stall) throws InterruptedException {
-        Collector collector = new Collector(rows);
+        return run(graph, step, port, rows, Hidden.NONE, memoryBytes, capacity, stall, null);
+    }
+
+    /**
+     * As {@link #run(PipelineGraph, String, String, int, long, int, Duration)}, masking the
+     * {@code hidden} columns as the rows are taken (so the size cap counts what is shown), and
+     * waiting at most {@code stopWait} for the steps to stop when interrupted (null: until they do).
+     */
+    static Outcome run(PipelineGraph graph, String step, String port, int rows, Hidden hidden, long memoryBytes,
+                       int capacity, Duration stall, Duration stopWait) throws InterruptedException {
+        Collector collector = new Collector(rows, hidden);
         List<GraphStep> steps = new ArrayList<>(graph.steps());
         steps.add(new GraphStep(COLLECTOR, collector, Map.of()));
         List<Edge> edges = new ArrayList<>(graph.edges());
         edges.add(new Edge(new PortRef(step, port), new PortRef(COLLECTOR, "in")));
-        RunResult result = new KilnGraphRunner(memoryBytes, capacity, stall)
+        RunResult result = new KilnGraphRunner(memoryBytes, capacity, stall, stopWait)
             .run(new PipelineGraph(graph.name(), steps, edges), event -> {
                 // a preview records nothing
             });
@@ -471,6 +553,9 @@ final class StepPreview {
      */
     static final class Collector implements Step {
         private final int limit;
+        private final Hidden hidden;
+        /** For each column, whether its values are masked. */
+        private boolean[] mask;
         final List<Field> fields = new ArrayList<>();
         final List<List<String>> rows = new ArrayList<>();
         /** The byte cap stopped the rows short of what was asked for. */
@@ -480,7 +565,17 @@ final class StepPreview {
         private long bytes;
 
         Collector(int limit) {
+            this(limit, Hidden.NONE);
+        }
+
+        Collector(int limit, Hidden hidden) {
             this.limit = limit;
+            this.hidden = hidden == null ? Hidden.NONE : hidden;
+        }
+
+        /** Whether column {@code index} (called {@code name}) was masked. */
+        boolean masked(int index, String name) {
+            return mask != null && index < mask.length ? mask[index] : hidden.hides(name);
         }
 
         @Override
@@ -511,11 +606,20 @@ final class StepPreview {
                     fields.addAll(batch.getSchema().getFields());
                 }
                 List<FieldVector> vectors = batch.getFieldVectors();
+                if (mask == null || mask.length != vectors.size()) {
+                    mask = new boolean[vectors.size()];
+                    for (int i = 0; i < vectors.size(); i++) {
+                        mask[i] = hidden.hides(vectors.get(i).getField().getName());
+                    }
+                }
                 for (int r = 0; r < batch.getRowCount() && rows.size() < limit; r++) {
                     List<String> row = new ArrayList<>(vectors.size());
                     long size = 0;
-                    for (FieldVector v : vectors) {
-                        String t = value(v, r);
+                    for (int i = 0; i < vectors.size(); i++) {
+                        FieldVector v = vectors.get(i);
+                        // Masked here, so nothing hidden is held and the size cap counts what is shown.
+                        String t = mask[i] ? (v.isNull(r) ? null : io.kilnmark.server.quality.Masking.MASK)
+                            : value(v, r);
                         size += t == null ? 4 : Preview.utf8Length(t);
                         row.add(t);
                     }

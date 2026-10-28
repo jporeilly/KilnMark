@@ -18,6 +18,8 @@ final class FakeSources implements PipelineSources {
     final Map<String, Records.AssetDetail> assets = new HashMap<>();
     final Map<String, Connector> connectors = new HashMap<>();
     HostPolicy hosts = new HostPolicy(List.of());
+    /** Each asset's enabled quality rules, by URN, for gates. */
+    final Map<String, List<io.kilnmark.server.quality.Rule>> rules = new HashMap<>();
     /** The profiling settings every source gives its writes; null: keep-values from keep_samples, sample-size 10. */
     Map<String, String> profiling;
 
@@ -72,6 +74,11 @@ final class FakeSources implements PipelineSources {
     @Override
     public HostPolicy hosts() {
         return hosts;
+    }
+
+    @Override
+    public List<io.kilnmark.server.quality.Rule> rules(String urn) {
+        return rules.getOrDefault(urn, List.of());
     }
 
     @Override

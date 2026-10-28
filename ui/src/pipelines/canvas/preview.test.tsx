@@ -56,7 +56,14 @@ async function mount(node: React.ReactNode) {
 }
 
 /** The panel with the canvas's state around it, as CanvasView keeps it. */
-function Harness(props: { role?: "viewer" | "steward" | "admin"; kind?: string | null; outputs?: string[]; ask?: PreviewAsk | null; yaml?: string }) {
+function Harness(props: {
+  role?: "viewer" | "steward" | "admin";
+  kind?: string | null;
+  outputs?: string[];
+  ask?: PreviewAsk | null;
+  yaml?: string;
+  onAsked?: () => void;
+}) {
   const [last, setLast] = useState<PreviewResult | null>(null);
   return (
     <StepPreviewPanel
@@ -68,6 +75,7 @@ function Harness(props: { role?: "viewer" | "steward" | "admin"; kind?: string |
       ask={props.ask ?? null}
       last={last}
       onResult={setLast}
+      onAsked={props.onAsked}
     />
   );
 }
@@ -131,6 +139,40 @@ describe("StepPreviewPanel", () => {
     await act(async () => root!.render(<Harness ask={{ step: "tidy", n: 1 }} yaml={YAML + "# edited\n"} />));
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(el.textContent).toContain("The pipeline has changed since this preview.");
+  });
+
+  test("tells the canvas once it has acted on an ask, so switching tabs or steps does not run it again", async () => {
+    const fetch = vi.fn(async () => json(VIEW));
+    vi.stubGlobal("fetch", fetch);
+    const asked = vi.fn();
+    // As the canvas does: the ask is cleared once used, so a fresh panel (another tab, then back) has none.
+    function Canvas() {
+      const [ask, setAsk] = useState<PreviewAsk | null>({ step: "tidy", n: 1 });
+      const [tab, setTab] = useState("preview");
+      return (
+        <>
+          <button type="button" onClick={() => setTab(tab === "preview" ? "settings" : "preview")}>switch</button>
+          {tab === "preview" && (
+            <Harness
+              ask={ask}
+              onAsked={() => {
+                asked();
+                setAsk(null);
+              }}
+            />
+          )}
+        </>
+      );
+    }
+    const el = await mount(<Canvas />);
+    await act(async () => {});
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(asked).toHaveBeenCalledTimes(1);
+    const sw = [...el.querySelectorAll("button")].find((b) => b.textContent === "switch")!;
+    await act(async () => sw.click());
+    await act(async () => sw.click());
+    await act(async () => {});
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   test("shows the server's refusal as an alert", async () => {

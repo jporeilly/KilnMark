@@ -385,9 +385,20 @@ public interface KilnmarkConfig {
         @WithDefault("6")
         int previewsPerMinute();
 
-        /** Previews at a step running at the same time across the server (each person runs one at a time). */
-        @WithDefault("4")
+        /**
+         * Previews at a step running at the same time in this process (each person runs one at a time).
+         * Each may hold {@code preview-memory-limit-mb} of Arrow memory beside the runs' own.
+         */
+        @WithDefault("2")
         int previewConcurrency();
+
+        /** The most steps one preview at a step may run. */
+        @WithDefault("50")
+        int previewMaxSteps();
+
+        /** The most read steps one preview at a step may run. */
+        @WithDefault("10")
+        int previewMaxReads();
     }
 
     interface Scan {

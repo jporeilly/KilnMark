@@ -304,6 +304,56 @@ class KilnGraphRunnerTest {
     }
 
     @Test
+    void aStoppedRunWaitsOnlySoLongForAStepThatIgnoresInterrupts() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch inside = new CountDownLatch(1);
+        Step stuck = new Step() {
+            @Override
+            public String type() {
+                return "stuck";
+            }
+
+            @Override
+            public void init(StepContext context) {
+            }
+
+            @Override
+            public boolean process(StepContext context) {
+                inside.countDown();
+                while (true) {
+                    try {
+                        release.await();
+                        return false;
+                    } catch (InterruptedException ignored) {
+                        // an interrupt does not reach it
+                    }
+                }
+            }
+        };
+        PipelineGraph g = new PipelineGraph("stuck", List.of(new GraphStep("s", stuck, Map.of())), List.of());
+        AtomicReference<Object> outcome = new AtomicReference<>();
+        Thread caller = Thread.ofVirtual().start(() -> {
+            try {
+                outcome.set(new KilnGraphRunner(64L << 20, 2, Duration.ofSeconds(30), Duration.ofMillis(300))
+                    .run(g, e -> { }));
+            } catch (InterruptedException e) {
+                outcome.set(e);
+            }
+        });
+        try {
+            assertTrue(inside.await(10, TimeUnit.SECONDS));
+            long started = System.nanoTime();
+            caller.interrupt();
+            caller.join(Duration.ofSeconds(10));
+            assertFalse(caller.isAlive(), "run returned though its step had not ended");
+            assertInstanceOf(InterruptedException.class, outcome.get());
+            assertTrue(System.nanoTime() - started < Duration.ofSeconds(5).toNanos());
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
     void aStepWithTwoOutputsGoesOnWhenOneReaderStopsEarly() throws Exception {
         Collect evens = new Collect();
         evens.limit = 1;

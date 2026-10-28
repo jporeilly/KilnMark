@@ -147,16 +147,17 @@ public class PipelineResource {
         + "YAML as it stands, saved or not: its columns with their kinds, the rows (100 by default, at most 1,000), "
         + "how long it took and, when a step before it reads all its rows first (an aggregate, a lookup's lookup "
         + "side), that in words. Only the step and the steps upstream of it run, and nothing is written: a preview "
-        + "needing a write, or a step that could change anything, is refused. Read live and never kept. Columns made "
-        + "from columns marked sensitive are masked for all but admins, and a preview whose rows are chosen by one "
-        + "is refused. At most 30 seconds; one preview per person at a time, six a minute. Role: steward.")
+        + "needing a write, or a step that could change anything, is refused. Read live and never kept. For all but "
+        + "admins, columns marked sensitive may only pass through unchanged and are masked; a preview in which any "
+        + "step looks at their values (an expression, a key, a cast or a gate's rule) is refused. At most 30 "
+        + "seconds and 50 steps; one preview per person at a time, six a minute. Role: steward.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The rows"),
         @APIResponse(responseCode = "400", description = "No YAML or step, YAML over the size limit or with problems "
             + "in the part that would run, an unknown step or port, rows out of range, or a step that cannot run in "
             + "a preview"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward, or the rows would give away values of a "
+        @APIResponse(responseCode = "403", description = "Not a steward, or a step would look at the values of a "
             + "column marked sensitive"),
         @APIResponse(responseCode = "422", description = "The preview ran but could not give rows: a step failed, "
             + "it took too long, or a source could not be reached"),
@@ -172,7 +173,7 @@ public class PipelineResource {
 
     @POST
     @Path("{name}/versions/{n}/preview")
-    @Consumes({MediaType.APPLICATION_JSON, MediaType.WILDCARD})
+    @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     @Operation(summary = "Preview a step of a version", description = "As POST /api/v1/pipelines/preview, for a saved "
         + "version: send step, and port and rows if wanted. Role: steward.")
@@ -181,7 +182,7 @@ public class PipelineResource {
         @APIResponse(responseCode = "400", description = "No step, an unknown step or port, rows out of range, or a "
             + "step that cannot run in a preview"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward, or the rows would give away values of a "
+        @APIResponse(responseCode = "403", description = "Not a steward, or a step would look at the values of a "
             + "column marked sensitive"),
         @APIResponse(responseCode = "404", description = "No such pipeline or version"),
         @APIResponse(responseCode = "422", description = "The preview ran but could not give rows"),

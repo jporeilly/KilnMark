@@ -42,6 +42,7 @@ export function StepPreviewPanel({
   ask,
   last,
   onResult,
+  onAsked,
 }: {
   yaml: string;
   step: string;
@@ -51,6 +52,8 @@ export function StepPreviewPanel({
   ask: PreviewAsk | null;
   last: PreviewResult | null;
   onResult: (r: PreviewResult | null) => void;
+  /** Called once the ask has been acted on, so the canvas clears it and switching back does not run it again. */
+  onAsked?: () => void;
 }) {
   const id = useId();
   const mine = last && last.step === step ? last : null;
@@ -99,6 +102,7 @@ export function StepPreviewPanel({
   useEffect(() => {
     if (ask && ask.step === step && asked.current !== ask.n) {
       asked.current = ask.n;
+      onAsked?.();
       run();
     }
   });
