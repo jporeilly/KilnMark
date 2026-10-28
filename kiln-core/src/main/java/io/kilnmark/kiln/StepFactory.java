@@ -20,6 +20,15 @@ public interface StepFactory {
 
     StepKind kind();
 
+    /**
+     * The palette folder this step type is listed in, one of {@link StepCategories}. By default it
+     * follows the kind: sources are Read, sinks Write, gates Quality, transforms Other; a transform
+     * should name its own.
+     */
+    default String category() {
+        return StepCategories.defaultFor(kind());
+    }
+
     /** The name people read, for example "Filter rows". */
     String label();
 

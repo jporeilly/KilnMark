@@ -43,6 +43,11 @@ public final class ComputeFactory implements StepFactory {
     }
 
     @Override
+    public String category() {
+        return io.kilnmark.kiln.StepCategories.TRANSFORM;
+    }
+
+    @Override
     public String label() {
         return "Compute columns";
     }

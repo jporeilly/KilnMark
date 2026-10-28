@@ -25,7 +25,14 @@ public record PipelineDefinition(String name, String description, List<StepDefin
     /** The format this version reads. */
     public static final String FORMAT = "pipeline/v1";
 
-    static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "steps");
+    static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "steps", "layout");
+
+    /**
+     * The top-level key holding where the canvas draws each step ({@code layout: { rows: { x: 40, y: 120 } }}).
+     * Reading accepts it and ignores what it holds: it never changes what a pipeline does, so a pipeline
+     * runs the same however its steps are drawn.
+     */
+    public static final String LAYOUT = "layout";
     static final Set<String> STEP_KEYS = Set.of("id", "type", "input", "inputs");
 
     public PipelineDefinition {
@@ -152,7 +159,8 @@ public record PipelineDefinition(String name, String description, List<StepDefin
         for (YamlReader.Entry e : top.entries().values()) {
             if (!TOP_LEVEL_KEYS.contains(e.key())) {
                 problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + Suggest.clip(e.key()) + "'"
-                    + Suggest.hint(e.key(), TOP_LEVEL_KEYS) + ": a pipeline has kilnmark, name, description and steps"));
+                    + Suggest.hint(e.key(), TOP_LEVEL_KEYS)
+                    + ": a pipeline has kilnmark, name, description, steps and layout"));
             }
         }
         String name = text(top.entries().get("name"), "name", null, problems);

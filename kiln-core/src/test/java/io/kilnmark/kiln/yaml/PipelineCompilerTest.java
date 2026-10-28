@@ -129,6 +129,22 @@ class PipelineCompilerTest {
     }
 
     @Test
+    void theCanvasLayoutIsAcceptedAndIgnored() {
+        String steps = "kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: a, type: numbers }\n";
+        Compiled plain = compile(steps);
+        assertTrue(plain.problems().isEmpty(), plain.problems().toString());
+        // Whatever the layout holds (positions, unknown steps, odd shapes), it changes nothing.
+        for (String layout : List.of("layout:\n  a: { x: 40, y: 120 }\n", "layout:\n  nobody: { x: -1, y: 2.5 }\n",
+            "layout: [1, 2]\n", "layout:\n")) {
+            Compiled c = compile(steps + layout);
+            assertTrue(c.problems().isEmpty(), layout + c.problems());
+            assertEquals(plain.schemas(), c.schemas(), layout);
+            assertEquals(plain.notes(), c.notes(), layout);
+        }
+        contains(only(compile(steps + "layuot:\n  a: { x: 1, y: 2 }\n"), 5), "layuot", "did you mean 'layout'");
+    }
+
+    @Test
     void stepIdsMustBeWordsAndUnique() {
         Compiled c = compile("""
             kilnmark: pipeline/v1
