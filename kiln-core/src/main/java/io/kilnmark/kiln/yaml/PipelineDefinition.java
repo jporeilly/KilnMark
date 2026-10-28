@@ -19,13 +19,15 @@ import java.util.Set;
  * @param name        the pipeline's name
  * @param description what it does, or null
  * @param steps       the steps in the order written
+ * @param quality     the pipeline's quality settings ({@code quality:}), or null when it has none
  */
-public record PipelineDefinition(String name, String description, List<StepDefinition> steps) {
+public record PipelineDefinition(String name, String description, List<StepDefinition> steps, Quality quality) {
 
     /** The format this version reads. */
     public static final String FORMAT = "pipeline/v1";
 
-    static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "steps", "layout");
+    static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "quality", "steps", "layout");
+    static final Set<String> QUALITY_KEYS = Set.of("min_score");
 
     /**
      * The top-level key holding where the canvas draws each step ({@code layout: { rows: { x: 40, y: 120 } }}).
@@ -37,6 +39,21 @@ public record PipelineDefinition(String name, String description, List<StepDefin
 
     public PipelineDefinition {
         steps = List.copyOf(steps);
+    }
+
+    /** A pipeline without quality settings. */
+    public PipelineDefinition(String name, String description, List<StepDefinition> steps) {
+        this(name, description, steps, null);
+    }
+
+    /**
+     * The pipeline's quality settings, from its top-level {@code quality:} mapping.
+     *
+     * @param minScore the lowest measured quality score (0 to 1) an output of a successful run may
+     *                 have before Kilnmark tells the pipeline's followers ({@code pipeline_low_quality});
+     *                 null when not set
+     */
+    public record Quality(Double minScore) {
     }
 
     /**
@@ -160,7 +177,7 @@ public record PipelineDefinition(String name, String description, List<StepDefin
             if (!TOP_LEVEL_KEYS.contains(e.key())) {
                 problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + Suggest.clip(e.key()) + "'"
                     + Suggest.hint(e.key(), TOP_LEVEL_KEYS)
-                    + ": a pipeline has kilnmark, name, description, steps and layout"));
+                    + ": a pipeline has kilnmark, name, description, quality, steps and layout"));
             }
         }
         String name = text(top.entries().get("name"), "name", null, problems);
@@ -168,6 +185,7 @@ public record PipelineDefinition(String name, String description, List<StepDefin
             problems.add(Problem.at(top.position(), null, "The pipeline needs a name"));
         }
         String description = text(top.entries().get("description"), "description", null, problems);
+        Quality quality = quality(top.entries().get("quality"), problems);
 
         List<StepDefinition> steps = new ArrayList<>();
         YamlReader.Entry stepsEntry = top.entries().get("steps");
@@ -187,7 +205,37 @@ public record PipelineDefinition(String name, String description, List<StepDefin
                 }
             }
         }
-        return new Parsed(new PipelineDefinition(name, description, steps), problems);
+        return new Parsed(new PipelineDefinition(name, description, steps, quality), problems);
+    }
+
+    /** The {@code quality:} mapping: {@code min_score}, a share from 0 to 1. Null when absent or wrong. */
+    private static Quality quality(YamlReader.Entry e, List<Problem> problems) {
+        if (e == null) {
+            return null;
+        }
+        if (!(e.value() instanceof YamlReader.Mapping m)) {
+            problems.add(Problem.at(e.value().position(), null,
+                "quality must be a mapping, such as quality: { min_score: 0.9 }"));
+            return null;
+        }
+        for (YamlReader.Entry k : m.entries().values()) {
+            if (!QUALITY_KEYS.contains(k.key())) {
+                problems.add(Problem.at(k.keyPosition(), null, "quality has no setting '" + Suggest.clip(k.key()) + "'"
+                    + Suggest.hint(k.key(), QUALITY_KEYS) + ": it takes min_score"));
+            }
+        }
+        YamlReader.Entry min = m.entries().get("min_score");
+        if (min == null) {
+            return new Quality(null);
+        }
+        Object v = min.value().value();
+        Double score = v instanceof Number n && !(v instanceof java.math.BigInteger) ? n.doubleValue() : null;
+        if (score == null || score.isNaN() || score < 0 || score > 1) {
+            problems.add(Problem.at(min.value().position(), null, "quality.min_score must be a share from 0 to 1, "
+                + "such as 0.9 for 90%"));
+            return new Quality(null);
+        }
+        return new Quality(score);
     }
 
     private static StepDefinition step(YamlReader.Node item, Map<String, Position> ids, List<Problem> problems,

@@ -592,7 +592,8 @@ const NUMBER_TEXT = /^-?(0|[1-9]\d*)(\.\d+)?([eE][-+]?\d+)?$/;
 
 /**
  * Sets one setting of a step, or removes it when the value is empty. Lists are written in flow
- * style (`[a, b]`), mappings one entry a line; expressions are double-quoted, as the guides write
+ * style (`[a, b]`), except a gate's rules, one rule a line (`- {type: not_null, field: email}`);
+ * mappings one entry a line; expressions are double-quoted, as the guides write
  * them. A text value that YAML would read as a number or true/false is quoted, so it stays text. A
  * number setting given as text is written exactly as typed, so no digits are lost.
  */
@@ -611,7 +612,7 @@ export function setSetting(text: string, id: string, key: string, value: Value |
       else ctx.p.put(map, key, Number(value), { raw: value.trim() });
       return;
     }
-    ctx.p.put(map, key, value, { quote: kind != null && EXPRESSION_KINDS.has(kind) });
+    ctx.p.put(map, key, value, { quote: kind != null && EXPRESSION_KINDS.has(kind), list: kind === "rules" });
   });
 }
 

@@ -192,7 +192,8 @@ final class ToyFactories {
                 SettingSpec.optional("limit", "Limit", Kind.NUMBER, null, "At most this many."),
                 SettingSpec.optional("strict", "Strict", Kind.BOOLEAN, false, "Fail on nulls."),
                 SettingSpec.optional("columns", "Columns", Kind.COLUMNS, null, "Columns to keep."),
-                SettingSpec.optional("rename", "Rename", Kind.COLUMN_MAP, null, "New names."));
+                SettingSpec.optional("rename", "Rename", Kind.COLUMN_MAP, null, "New names."),
+                SettingSpec.optional("checks", "Checks", Kind.RULES, null, "Rules, for the rules kind."));
         }
 
         @Override

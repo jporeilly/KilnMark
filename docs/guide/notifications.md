@@ -17,13 +17,17 @@ up email, and what an email contains.
 | **Pipeline run failed** | A pipeline run fails | High |
 | **Pipeline quality below threshold** | A pipeline run succeeds, but what it wrote scores below the pipeline's quality threshold | Medium |
 
-The two pipeline events arrive with pipelines; the other six work now.
+A pipeline has a quality threshold when its YAML sets one, such as `quality: {min_score: 0.95}`
+(see [Building and running a pipeline](pipelines.md#quality-of-what-a-run-writes)). Each run
+measures the quality of every table or file it writes; when the lowest score is below the
+threshold, the notification names the write step and says the score and the threshold.
 
 **One message per problem.** A rule that fails on every scan tells you once, when it starts
 failing. You hear again only if it gets worse, for example when a warning becomes a failure, and
 once more when it recovers. A failed scan is told once until a scan of that source succeeds again.
 A failed connection test is told once until a connection test or a scan of that source succeeds.
-Drift and new issues are told each time they happen.
+A failed pipeline run is told once until a run of that pipeline succeeds. Drift, new issues and
+pipeline runs below their quality threshold are told each time they happen, once per run.
 
 ## In the app
 

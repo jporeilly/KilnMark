@@ -349,7 +349,7 @@ public class ScanService {
         "min_length", "max_length");
 
     /** Profile attributes as a JSON object: counts as numbers, value lists as arrays, the rest as text. */
-    String profileJson(MetadataEvent e) {
+    public String profileJson(MetadataEvent e) {
         ObjectNode o = json.createObjectNode();
         for (var a : e.attributes().entrySet()) {
             String k = a.getKey();

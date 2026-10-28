@@ -226,15 +226,24 @@ public class NotificationPublisher {
      */
     public void pipelineRunFinished(String pipeline, long runId, String status, Double score, Double threshold,
                                     String link) {
+        pipelineRunFinished(pipeline, runId, status, score, threshold, null, link);
+    }
+
+    /**
+     * As {@link #pipelineRunFinished(String, long, String, Double, Double, String)}, naming the write
+     * step whose output scored lowest ({@code output}, or null), so the notification says which.
+     */
+    public void pipelineRunFinished(String pipeline, long runId, String status, Double score, Double threshold,
+                                    String output, String link) {
         try {
-            pipelineRunFinishedNow(pipeline, runId, status, score, threshold, link);
+            pipelineRunFinishedNow(pipeline, runId, status, score, threshold, output, link);
         } catch (RuntimeException ex) {
             LOG.warnf(ex, "Could not tell of an event (%s)", "pipelineRunFinished");
         }
     }
 
     private void pipelineRunFinishedNow(String pipeline, long runId, String status, Double score, Double threshold,
-                                    String link) {
+                                        String output, String link) {
         String key = "pipeline:" + pipeline;
         if ("failed".equals(status)) {
             publish(new NotificationEvent(NotificationKind.PIPELINE_FAILED, Severity.HIGH, null, "Run " + runId + " of "
@@ -249,7 +258,8 @@ public class NotificationPublisher {
         if (score != null && threshold != null && score < threshold) {
             publish(new NotificationEvent(NotificationKind.PIPELINE_LOW_QUALITY, Severity.MEDIUM, null,
                 "Run " + runId + " of " + pipeline + " wrote data below its quality threshold", "Quality score "
-                    + percent(score) + ", below the pipeline's threshold of " + percent(threshold) + ".", link, null,
+                    + percent(score) + (output == null ? "" : " for what step " + output + " wrote")
+                    + ", below the pipeline's threshold of " + percent(threshold) + ".", link, null,
                 null, null, "pipeline-quality:" + runId, null));
         }
     }

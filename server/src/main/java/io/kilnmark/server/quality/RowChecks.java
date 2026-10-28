@@ -70,6 +70,17 @@ public final class RowChecks {
     public interface Check {
         void row(Row row);
 
+        /**
+         * Checks one row, as {@link #row} does, and says whether this row fails the rule: for a
+         * check of rows, a row it counts as failing (for {@code unique}, a repeat of a key seen
+         * before, so the first row with a key passes); always false for a check of the whole data
+         * ({@code freshness}, {@code row_count}), which only {@link #finish} can judge.
+         */
+        default boolean test(Row row) {
+            row(row);
+            return false;
+        }
+
         Evaluation finish();
     }
 
@@ -231,11 +242,18 @@ public final class RowChecks {
 
         @Override
         public void row(Row row) {
+            test(row);
+        }
+
+        @Override
+        public boolean test(Row row) {
             total++;
             if (fails.test(row)) {
                 count++;
                 failing.add(row);
+                return true;
             }
+            return false;
         }
 
         @Override
@@ -260,17 +278,22 @@ public final class RowChecks {
 
         @Override
         public void row(Row row) {
+            test(row);
+        }
+
+        @Override
+        public boolean test(Row row) {
             if (overflow) {
-                return;
+                return false;
             }
             StringBuilder b = new StringBuilder();
             for (int k : key) {
                 if (k < 0) {
-                    return;
+                    return false;
                 }
                 String v = row.cell(k);
                 if (v == null) {
-                    return; // keys with a null part are not compared
+                    return false; // keys with a null part are not compared
                 }
                 b.append(v).append('\u001f');
             }
@@ -283,6 +306,7 @@ public final class RowChecks {
                 overflow = true;
                 seen.clear();
             }
+            return n > 1;
         }
 
         @Override

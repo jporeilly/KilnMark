@@ -27,9 +27,19 @@ import {
   IconZoomIn,
   IconZoomOut,
 } from "@tabler/icons-react";
-import { api, formatNumber, pipelinesApi, type PipelineStepRun, type PipelineValidation, type Source, type StepType } from "../../api";
+import {
+  api,
+  formatNumber,
+  pipelinesApi,
+  type PipelineStepQuality,
+  type PipelineStepRun,
+  type PipelineValidation,
+  type Source,
+  type StepType,
+} from "../../api";
 import { useColourScheme } from "../../theme/appearance";
 import { columnsText } from "../outline";
+import { stepQualityWords } from "../quality";
 import { kindWord, problemsByStep, stepSummary } from "./insight";
 import { autoLayout, placed, spotAfter } from "./layout";
 import {
@@ -59,7 +69,14 @@ import { SettingsPanel } from "./SettingsPanel";
 import { StepNode, runWords, type StepNodeType, type StepRunInfo } from "./StepNode";
 import "./canvas.css";
 
-export type CanvasRun = { id: number; version: number; status: string; steps: PipelineStepRun[] };
+export type CanvasRun = {
+  id: number;
+  version: number;
+  status: string;
+  steps: PipelineStepRun[];
+  /** Each write's and gate's measured quality; empty from servers before measured quality. */
+  quality?: PipelineStepQuality[];
+};
 
 export type CanvasProps = {
   yaml: string;
@@ -89,7 +106,7 @@ const loadCatalogue = () => (catalogueLoad ??= pipelinesApi.steps().catch((e) =>
 
 const nodeTypes = { step: StepNode };
 /** Setting kinds typed a character at a time: written to the YAML once typing pauses. */
-const TYPED = new Set(["text", "number", "expression", "expressions", "conditions", "column_map", "asset"]);
+const TYPED = new Set(["text", "number", "expression", "expressions", "conditions", "column_map", "asset", "rules"]);
 /** The smallest zoom at which a step's words can still be read. */
 const MIN_READABLE = 0.7;
 const reducedMotion = () => typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -187,6 +204,7 @@ function Canvas(props: CanvasProps) {
     for (const s of run?.steps ?? []) m.set(s.step, { rowsIn: s.rowsIn, rowsOut: s.rowsOut, outcome: s.outcome, error: s.error });
     return m;
   }, [run]);
+  const runQuality = useMemo(() => new Map((run?.quality ?? []).map((q) => [q.step, q])), [run]);
 
   const say = useCallback((words: string) => {
     // Cleared first, so the same words twice are read out twice.
@@ -396,6 +414,8 @@ function Canvas(props: CanvasProps) {
       const outline = check?.steps.find((o) => o.id === s.id);
       const n = problems.get(s.id)?.length ?? 0;
       const runInfo = runSteps.get(s.id) ?? null;
+      const quality = runQuality.get(s.id) ?? null;
+      const qualityText = stepQualityWords(quality);
       const summary = stepSummary(s);
       const columns = outline ? columnsText(outline) : "Columns known once the pipeline has been checked";
       return {
@@ -413,6 +433,7 @@ function Canvas(props: CanvasProps) {
           problems: n,
           columns,
           run: runInfo,
+          quality,
           connectable: !readOnly,
         },
         ariaLabel: [
@@ -421,6 +442,7 @@ function Canvas(props: CanvasProps) {
           s.inputs.length ? `reads from ${s.inputs.map((l) => refText(l.from, l.fromPort)).join(" and ")}` : "",
           n ? `${n} ${n === 1 ? "problem" : "problems"}` : "",
           runInfo ? `last run: ${runWords(runInfo)}` : "",
+          qualityText ?? "",
         ]
           .filter(Boolean)
           .join(". "),
@@ -428,7 +450,7 @@ function Canvas(props: CanvasProps) {
         domAttributes: { "aria-describedby": `cv-cols-${s.id} cv-node-help` },
       };
     });
-  }, [graph, catalogue, check, problems, runSteps, positions, selected, readOnly]);
+  }, [graph, catalogue, check, problems, runSteps, runQuality, positions, selected, readOnly]);
 
   const [nodes, setNodes] = useState<StepNodeType[]>(derived);
   useEffect(() => {
@@ -975,6 +997,7 @@ function Canvas(props: CanvasProps) {
               sources={sources}
               readOnly={readOnly}
               run={runSteps.get(selectedStep.id) ?? null}
+              quality={runQuality.get(selectedStep.id) ?? null}
               onSetting={(key, value, kind) => setOne(selectedStep.id, key, value, kind)}
               onRename={(to) => rename(selectedStep.id, to)}
               onDisconnect={unlink}

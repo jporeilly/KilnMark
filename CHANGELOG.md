@@ -7,6 +7,16 @@ details.
 
 ### What's new
 
+- **Quality gates in pipelines.** Add a **Quality gate** step (in the Quality folder) to check rows
+  against quality rules as they pass, with no second read of the data: the rules of the table or
+  file the pipeline read, and any you write on the step. When rows fail, the gate can stop the run
+  before anything is written, send the failing rows to a separate **quarantine** output while the
+  rest carry on, or just warn. A limit on the share of failing rows, or on the score, stops the run
+  when too much is wrong.
+- **Every run measures the quality of what it writes.** After a run, each write and each gate shows
+  its quality score on the canvas, beside its rows, and the run's page lists the score per
+  dimension and each gate's rules. Give a pipeline a quality threshold (`quality: min_score`) and
+  its followers are told when a run writes data that scores below it.
 - **Build pipelines on a canvas.** A pipeline's page has a **Canvas** tab beside the YAML: drag
   steps from a list of folders (Read, Write, Filter and route, Transform, Combine and more, with
   your recently used steps first), connect their ports, and change each step's settings in a panel that offers
@@ -20,6 +30,32 @@ details.
 
 ### Details
 
+- **Quality gate step** (`type: gate`, docs/guide/pipelines.md, "Quality gates";
+  docs/design/data-quality.md sections 7 and 8). Ports `in`, `out` and `quarantine`. Settings:
+  `on_fail` (`stop`, the default; `quarantine`; `warn`), `asset_rules` (on by default: the enabled
+  rules of the asset read upstream), `rules_from` (the read step to take them from when rows come
+  from several), `rules` (inline rules, each a mapping such as `{type: not_null, field: email}`,
+  checked as rules made in Quality are; `references` and `custom_sql` are refused, as they run in
+  the database), and the run-level thresholds `min_score` and `max_failing_share` (0 to 1). Rows are
+  checked in the stream with `RowChecks`, all rules in one pass; `RowChecks.Check.test` says whether
+  a row fails. `stop` fails the run as soon as a rule can no longer pass (a count limit passed, or
+  a failing row where none is allowed), otherwise at the end of the rows, before any write after
+  it commits, naming the rule and its counts; `quarantine` stops only when a threshold is crossed
+  or a check of the whole data (row count, freshness) fails. A new setting kind `RULES`
+  (`SettingSpec.Kind`, `rules` in `GET /api/v1/steps`) takes a list of mappings; the canvas edits
+  it as a list of rules and writes one rule a line. Validation needs the graph for one check: a
+  gate whose rows come from several reads must name one with `rules_from`, and a note says when a
+  gate has nothing to check.
+- **Measured quality per run** (migration V14, `pipeline_step_quality`): each write's score per
+  dimension and overall, from the profile its writer made while writing (Measures and Scores, as an
+  asset is scored, without history), and each gate's score from its rules' results with its
+  decision, row counts and each rule's result. `GET /api/v1/pipeline-runs/{id}` adds `quality`
+  (`[{step, role, asset, measured, predicted, note, gate}]`; `predicted` is null until design-time
+  prediction comes), and run summaries add `qualityScore` (the lowest output's) and
+  `qualityThreshold`. An `append` or `upsert` is not profiled, so it has no score, and says so.
+- **Pipeline quality threshold.** A new top-level `quality:` block with `min_score` (0 to 1). When a
+  run succeeds and an output scores below it, `pipeline_low_quality` is published once for the run,
+  naming the output (`NotificationPublisher.pipelineRunFinished` gains an overload with the step).
 - **The pipeline canvas** (docs/guide/pipelines.md, "Building on the canvas"): a palette of step
   types by kind with search, steps with named ports and problem badges, connections refused with a
   reason, move, duplicate, delete, undo and redo, zoom, fit and a left-to-right auto-layout, and a

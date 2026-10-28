@@ -200,6 +200,64 @@ button.pl-problem:hover {
   gap: 6px;
 }
 
+/* A run's measured quality: each gate and output, its score, dimensions and rules. */
+.pl-quality {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.pl-quality-step {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  border-top: 1px solid var(--km-border);
+  padding-top: 12px;
+}
+
+.pl-quality-step:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.pl-quality-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.pl-dims {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap: 6px 20px;
+}
+
+.pl-dims li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 80px 3.5em;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.pl-dim-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-reasons {
+  margin: 4px 0 8px;
+  padding-left: 1.2em;
+}
+
 /* The graph of steps: boxes with ports; the columns show on hover and focus. */
 .pl-frame {
   height: 420px;

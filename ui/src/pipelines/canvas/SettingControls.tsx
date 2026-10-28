@@ -706,6 +706,248 @@ function PairsControl(p: ControlProps & { kind: PairKind }) {
   );
 }
 
+/** The checks a gate's rule can be, in the order the type list shows them. */
+export const RULE_TYPES: { type: string; label: string; column: boolean }[] = [
+  { type: "not_null", label: "Has a value (not null)", column: true },
+  { type: "unique", label: "No repeats (unique)", column: true },
+  { type: "allowed_values", label: "One of a list of values", column: true },
+  { type: "matches_pattern", label: "Matches a pattern", column: true },
+  { type: "in_range", label: "Between a minimum and maximum", column: true },
+  { type: "freshness", label: "Latest date is recent (freshness)", column: true },
+  { type: "row_count", label: "Number of rows", column: false },
+  { type: "row_count_change", label: "Change in rows since the last scan", column: false },
+];
+
+/** A rule's own settings: the YAML key, its label, and whether it is a number or a list of text. */
+const RULE_PARAMS: Record<string, { key: string; label: string; as: "text" | "number" | "list" | "boolean" }[]> = {
+  not_null: [{ key: "blank_is_missing", label: "Blank text counts as missing", as: "boolean" }],
+  unique: [],
+  allowed_values: [{ key: "values", label: "Allowed values, separated by commas", as: "list" }],
+  matches_pattern: [{ key: "regex", label: "Pattern (regular expression)", as: "text" }],
+  in_range: [
+    { key: "min", label: "Minimum", as: "text" },
+    { key: "max", label: "Maximum", as: "text" },
+  ],
+  freshness: [{ key: "max_age_hours", label: "Latest value at most this many hours old", as: "number" }],
+  row_count: [
+    { key: "min", label: "At least this many rows", as: "number" },
+    { key: "max", label: "At most this many rows", as: "number" },
+  ],
+  row_count_change: [{ key: "max_change", label: "Largest change, as a share (0.2 for 20%)", as: "number" }],
+};
+
+type Rule = { [key: string]: Value };
+
+const NUMERIC = /^-?(0|[1-9]\d*)(\.\d+)?$/;
+
+/** A typed value as the rule keeps it: a number when it reads as one, else the text; empty removes it. */
+function ruleValue(as: "text" | "number" | "list" | "boolean", typed: string | boolean): Value | undefined {
+  if (as === "boolean") return typed === true ? true : undefined;
+  const t = String(typed);
+  if (t.trim() === "") return undefined;
+  if (as === "list") return t.split(",").map((v) => v.trim()).filter(Boolean);
+  if (as === "number" || NUMERIC.test(t.trim())) return NUMERIC.test(t.trim()) ? Number(t.trim()) : t;
+  return t;
+}
+
+const ruleText = (v: Value | undefined) => (v == null ? "" : Array.isArray(v) ? v.join(", ") : typeof v === "object" ? "" : String(v));
+
+/**
+ * A gate's rules, one block each: its check, its column, the check's own settings, an optional
+ * name and how many rows may fail. Settings the canvas does not show (warn_above, unit, dimension,
+ * a unique key of several columns) are kept as they are in the YAML.
+ */
+function RulesControl(p: ControlProps) {
+  const outside = Array.isArray(p.value) ? (p.value.filter((r) => r && typeof r === "object" && !Array.isArray(r)) as Rule[]) : [];
+  const key = JSON.stringify(outside);
+  const [rows, setRows] = useState<Rule[]>(outside);
+  const mine = useRef(key);
+  useEffect(() => {
+    if (key !== mine.current) {
+      setRows(JSON.parse(key) as Rule[]);
+      mine.current = key;
+    }
+  }, [key]);
+  const commit = (next: Rule[]) => {
+    setRows(next);
+    const written = next.filter((r) => typeof r.type === "string" && r.type !== "");
+    mine.current = JSON.stringify(written);
+    p.onChange(written.length ? written : undefined);
+  };
+  const set = (i: number, k: string, v: Value | undefined) =>
+    commit(
+      rows.map((r, j) => {
+        if (j !== i) return r;
+        const out: Rule = { ...r };
+        if (v === undefined) delete out[k];
+        else out[k] = v;
+        return out;
+      }),
+    );
+  const changeType = (i: number, type: string) =>
+    commit(
+      rows.map((r, j) => {
+        if (j !== i) return r;
+        // Keep the name, column and limits; the old check's own settings go.
+        const keep: Rule = { type };
+        for (const k of ["name", "field", "fields", "fail_above", "warn_above", "unit", "dimension"]) if (r[k] != null) keep[k] = r[k];
+        if (!RULE_TYPES.find((t) => t.type === type)?.column) delete keep.field;
+        return keep;
+      }),
+    );
+  return (
+    <Field spec={p.spec} id={p.id} problems={p.problems} group>
+      {(describedBy, invalid) => (
+        <>
+          {rows.length === 0 && (
+            <p className="small muted" id={p.id}>
+              No rules written here.
+            </p>
+          )}
+          <ol className="cv-pairs cv-rules" id={rows.length ? p.id : undefined}>
+            {rows.map((r, i) => {
+              const rowId = `${p.id}-${i}`;
+              const type = typeof r.type === "string" ? r.type : "";
+              const known = RULE_TYPES.find((t) => t.type === type);
+              return (
+                <li key={i} className="cv-pair cv-rule">
+                  <div>
+                    <label className="cv-sub" htmlFor={`${rowId}-type`}>
+                      Rule {i + 1}: check
+                    </label>
+                    <select
+                      id={`${rowId}-type`}
+                      value={type}
+                      disabled={p.readOnly}
+                      aria-describedby={describedBy}
+                      aria-invalid={invalid || undefined}
+                      onChange={(e) => changeType(i, e.target.value)}
+                    >
+                      <option value="">Choose a check</option>
+                      {!known && type !== "" && <option value={type}>{type}</option>}
+                      {RULE_TYPES.map((t) => (
+                        <option key={t.type} value={t.type}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {(known?.column ?? true) && (
+                    <div>
+                      <label className="cv-sub" htmlFor={`${rowId}-field`}>
+                        Rule {i + 1}: column
+                      </label>
+                      <ColumnInput
+                        id={`${rowId}-field`}
+                        value={ruleText(r.field)}
+                        columns={p.context.columns.main}
+                        readOnly={p.readOnly}
+                        describedBy={describedBy}
+                        invalid={invalid}
+                        onChange={(x) => set(i, "field", x === "" ? undefined : x)}
+                      />
+                    </div>
+                  )}
+                  {(RULE_PARAMS[type] ?? []).map((param) => {
+                    const id = `${rowId}-${param.key}`;
+                    if (param.as === "boolean") {
+                      return (
+                        <label key={param.key} className="cv-check" htmlFor={id}>
+                          <input
+                            id={id}
+                            type="checkbox"
+                            checked={r[param.key] === true}
+                            disabled={p.readOnly}
+                            onChange={(e) => set(i, param.key, ruleValue("boolean", e.target.checked))}
+                          />{" "}
+                          {param.label}
+                        </label>
+                      );
+                    }
+                    return (
+                      <div key={param.key}>
+                        <label className="cv-sub" htmlFor={id}>
+                          Rule {i + 1}: {param.label}
+                        </label>
+                        <input
+                          id={id}
+                          className={param.as === "number" ? "num" : "mono"}
+                          inputMode={param.as === "number" ? "decimal" : undefined}
+                          value={ruleText(r[param.key])}
+                          readOnly={p.readOnly}
+                          spellCheck={false}
+                          autoComplete="off"
+                          aria-describedby={describedBy}
+                          onChange={(e) => set(i, param.key, ruleValue(param.as, e.target.value))}
+                        />
+                      </div>
+                    );
+                  })}
+                  <div className="cv-rule-pair">
+                    <div>
+                      <label className="cv-sub" htmlFor={`${rowId}-name`}>
+                        Rule {i + 1}: name (optional)
+                      </label>
+                      <input
+                        id={`${rowId}-name`}
+                        value={ruleText(r.name)}
+                        readOnly={p.readOnly}
+                        autoComplete="off"
+                        onChange={(e) => set(i, "name", e.target.value.trim() === "" ? undefined : e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="cv-sub" htmlFor={`${rowId}-fail`}>
+                        Rule {i + 1}: may fail on at most
+                      </label>
+                      <input
+                        id={`${rowId}-fail`}
+                        className="num"
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={ruleText(r.fail_above)}
+                        readOnly={p.readOnly}
+                        aria-describedby={`${rowId}-fail-help`}
+                        onChange={(e) => set(i, "fail_above", ruleValue("number", e.target.value))}
+                      />
+                      <span id={`${rowId}-fail-help`} className="cv-sub">
+                        {r.unit === "count" ? "rows" : "a share of rows, 0.05 for 5%"}
+                      </span>
+                    </div>
+                  </div>
+                  {!p.readOnly && (
+                    <button
+                      type="button"
+                      className="cv-mini cv-pair-remove"
+                      aria-label={`Remove rule ${i + 1}${r.name ? ` (${ruleText(r.name)})` : ""}`}
+                      onClick={() => commit(rows.filter((_, j) => j !== i))}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+          {!p.readOnly && (
+            <div className="cv-add-row">
+              <button
+                type="button"
+                onClick={() => {
+                  setRows([...rows, { type: "" }]);
+                  requestAnimationFrame(() => document.getElementById(`${p.id}-${rows.length}-type`)?.focus());
+                }}
+              >
+                Add a rule
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </Field>
+  );
+}
+
 /** The control for one setting, chosen by its kind (SettingSpec.Kind). */
 export function SettingControl(p: ControlProps) {
   switch (p.spec.kind) {
@@ -731,6 +973,8 @@ export function SettingControl(p: ControlProps) {
       return <ColumnControl {...p} />;
     case "columns":
       return <ColumnsControl {...p} />;
+    case "rules":
+      return <RulesControl {...p} />;
     default:
       return <TextControl {...p} />;
   }

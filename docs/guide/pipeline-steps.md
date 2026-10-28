@@ -19,6 +19,7 @@ Every step has named **ports**. Most steps read from `in` and write to `out`; so
 | `dedupe` | `in` | `out`, `rejected` |
 | `route` | `in` | one port per route, and `out` |
 | `limit` | `in` | `out` |
+| `gate` | `in` | `out`, `quarantine`: see [Quality gates](pipelines.md#quality-gates) |
 
 In YAML, `input: tidy` reads the `out` port of the step called `tidy`, and `input: tidy.rejected`
 reads its `rejected` port. A step with two inputs names them: `inputs: { main: spend, lookup:

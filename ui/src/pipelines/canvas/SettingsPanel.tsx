@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { PipelineProblem, PipelineValidation, Source, StepType } from "../../api";
+import type { PipelineProblem, PipelineStepQuality, PipelineValidation, Source, StepType } from "../../api";
+import { dimensionWord, percent, RULE_STATUS_WORDS, stepQualityWords } from "../quality";
 import { browseApi } from "../../browse/browseApi";
 import { columnsText } from "../outline";
 import { arrivingColumns, columnSide, kindWord, problemSetting, problemWords, shownSettings } from "./insight";
@@ -55,6 +56,7 @@ export function SettingsPanel({
   sources,
   readOnly,
   run,
+  quality = null,
   onSetting,
   onRename,
   onDisconnect,
@@ -70,6 +72,8 @@ export function SettingsPanel({
   sources: Source[] | null;
   readOnly: boolean;
   run: StepRunInfo | null;
+  /** The step's measured quality in that run, for writes and gates. */
+  quality?: PipelineStepQuality | null;
   onSetting: (key: string, value: Value | undefined, kind: string) => void;
   onRename: (to: string) => string | null;
   onDisconnect: (edge: GraphEdge) => void;
@@ -273,6 +277,34 @@ export function SettingsPanel({
           <h4 id={`${base}-run`}>Last run</h4>
           <p className="small">{runWords(run)}</p>
           {run.error && <p className="small pl-bad">{run.error}</p>}
+          {quality && (
+            <>
+              <p className="small">{stepQualityWords(quality)}</p>
+              {quality.measured && Object.keys(quality.measured.dimensions).length > 0 && (
+                <ul className="small cv-quality-dims">
+                  {Object.entries(quality.measured.dimensions).map(([d, v]) => (
+                    <li key={d}>
+                      {dimensionWord(d)}: {percent(v)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {quality.gate && quality.gate.rules.length > 0 && (
+                <ul className="small cv-quality-rules" aria-label="The gate's rules">
+                  {quality.gate.rules.map((r) => (
+                    <li key={r.name}>
+                      {r.name}: {RULE_STATUS_WORDS[r.status] ?? r.status}
+                      {r.status !== "error" && r.total > 0 && !["freshness", "row_count", "row_count_change"].includes(r.type)
+                        ? `, ${r.failing.toLocaleString("en-GB")} of ${r.total.toLocaleString("en-GB")} rows failing`
+                        : ""}
+                      {r.status === "error" && r.message ? ` (${r.message})` : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {quality.note && <p className="small muted">{quality.note}</p>}
+            </>
+          )}
         </section>
       )}
     </div>

@@ -1057,6 +1057,10 @@ export type PipelineRun = {
   cancelRequested: boolean;
   error: string | null;
   rowsWritten: number | null;
+  /** The lowest measured quality score (0 to 1) of what the run wrote; null when nothing was measured. */
+  qualityScore?: number | null;
+  /** The pipeline's quality.min_score for the version that ran; null when it has none. */
+  qualityThreshold?: number | null;
 };
 export type PipelineSummary = {
   name: string;
@@ -1120,6 +1124,47 @@ export type PipelineWrittenAsset = {
   rows: number | null;
   registered: boolean;
 };
+/** A score from 0 to 1, overall and per dimension, with its main reasons (words and counts only). */
+export type QualityScore = { overall: number; dimensions: Record<string, number>; reasons: string[] };
+export type GateRuleResult = {
+  name: string;
+  type: string;
+  field: string | null;
+  dimension: string;
+  /** asset: one of the asset's own rules; inline: written on the gate. */
+  origin: "asset" | "inline";
+  /** error: the rule could not run, for example its column did not arrive. */
+  status: "pass" | "warn" | "fail" | "error";
+  failing: number;
+  total: number;
+  message: string | null;
+};
+export type GateOutcome = {
+  onFail: "stop" | "quarantine" | "warn";
+  decision: "passed" | "warned" | "quarantined" | "stopped";
+  asset: string | null;
+  rowsIn: number;
+  rowsPassed: number;
+  rowsFailing: number;
+  rowsQuarantined: number;
+  minScore: number | null;
+  maxFailingShare: number | null;
+  stopReason: string | null;
+  rules: GateRuleResult[];
+};
+/**
+ * A step's quality in a run: each write (output) and each gate. `predicted` is the score worked out
+ * before the run from the inputs' metadata: null until Kilnmark predicts scores.
+ */
+export type PipelineStepQuality = {
+  step: string;
+  role: "output" | "gate";
+  asset: string | null;
+  measured: QualityScore | null;
+  predicted: QualityScore | null;
+  note: string | null;
+  gate: GateOutcome | null;
+};
 export type PipelineRunDetail = {
   run: PipelineRun;
   steps: PipelineStepRun[];
@@ -1127,6 +1172,8 @@ export type PipelineRunDetail = {
   read: string[];
   lineage: { step: string; input: string; output: string }[];
   notes: string[];
+  /** Missing from servers before measured quality. */
+  quality?: PipelineStepQuality[];
 };
 export type StepTypeSetting = {
   key: string;

@@ -27,6 +27,11 @@ public final class RunContext {
     private final java.util.Map<String, String> readUrns = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<String, java.util.List<String>> writeColumns =
         new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, ReadRef> gateReads = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** A read step's source and asset, as its settings name them. */
+    public record ReadRef(String source, String asset) {
+    }
 
     public RunContext(String pipeline, long runId, String requestedBy, AccessRole role) {
         this.pipeline = pipeline;
@@ -98,6 +103,18 @@ public final class RunContext {
     public java.util.List<String> writeColumns(String source, String target) {
         return source == null || target == null ? java.util.List.of()
             : writeColumns.getOrDefault(source + "\u0000" + target, java.util.List.of());
+    }
+
+    /** Notes the read step whose asset's rules gate {@code gate} checks. */
+    void gateRead(String gate, ReadRef read) {
+        if (gate != null && read != null && read.source() != null && read.asset() != null) {
+            gateReads.put(gate, read);
+        }
+    }
+
+    /** The read whose asset's rules gate {@code gate} checks, or null for none. */
+    public ReadRef gateRead(String gate) {
+        return gate == null ? null : gateReads.get(gate);
     }
 
     /** The assets the run's read steps read, as catalogued. */

@@ -114,8 +114,17 @@ and the MCP server expose it. Open formats at the edges:
 
 A pipeline's read step can require the asset's contract to hold. It either uses the latest
 results when they are recent enough or runs the checks inline. On failure the run stops, or the
-failing rows are diverted to a quarantine output, as the pipeline chooses. This comes with the
-pipelines in round 3.
+failing rows are diverted to a quarantine output, as the pipeline chooses.
+
+Built so far (docs/guide/pipelines.md, "Quality gates"): a `gate` step that runs the asset's
+enabled rules, and rules written on the step, inline on the Arrow batches passing through
+(`RowChecks`, one pass, no second read), with `on_fail: stop`, `quarantine` (a `quarantine`
+output port) or `warn`, and run-level thresholds (`min_score`, `max_failing_share`). Each gate and
+each write gets a measured score per dimension and overall, stored with the run
+(`pipeline_step_quality`, beside an empty `predicted` for section 8's design-time scores), and a
+pipeline's `quality.min_score` tells its followers of a run whose outputs score below it. Still to
+come: reusing recent results when the change check says the source is unchanged, and the
+predicted scores and suggestions of section 8.
 
 ## 8. Profile once, reuse everywhere
 

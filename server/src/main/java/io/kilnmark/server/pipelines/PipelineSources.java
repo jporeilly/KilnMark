@@ -53,6 +53,16 @@ public interface PipelineSources {
         return profileSettings(source, connector, target, key, urn);
     }
 
+    /** The enabled quality rules of a catalogued asset, for a gate step; empty when it has none. */
+    default java.util.List<io.kilnmark.server.quality.Rule> rules(String urn) {
+        return java.util.List.of();
+    }
+
+    /** An asset's row count at its last scan or write, for a gate's row_count_change rules; null if unknown. */
+    default Long rowCount(String urn) {
+        return null;
+    }
+
     /** A saved source ready to connect to: checked against the allowed hosts, its secret noted for scrubbing. */
     record Resolved(Records.Source source, Connector connector, SourceConfig config) {
     }

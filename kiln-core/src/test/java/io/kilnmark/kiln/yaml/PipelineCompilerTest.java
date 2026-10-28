@@ -145,6 +145,41 @@ class PipelineCompilerTest {
     }
 
     @Test
+    void thePipelinesQualityThresholdIsAShare() {
+        String steps = "steps:\n  - { id: a, type: numbers }\n";
+        Compiled none = compile("kilnmark: pipeline/v1\nname: x\n" + steps);
+        assertNull(none.definition().quality());
+        Compiled c = compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_score: 0.95\n" + steps);
+        assertTrue(c.ok(), c.problems().toString());
+        assertEquals(0.95, c.definition().quality().minScore(), 1e-12);
+        assertEquals(1.0, compile("kilnmark: pipeline/v1\nname: x\nquality: { min_score: 1 }\n" + steps).definition()
+            .quality().minScore());
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_score: 95\n" + steps), 4),
+            "quality.min_score must be a share from 0 to 1");
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_score: high\n" + steps), 4),
+            "quality.min_score");
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_scor: 0.9\n" + steps), 4),
+            "quality has no setting 'min_scor'", "did you mean 'min_score'");
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality: 0.9\n" + steps), 3),
+            "quality must be a mapping");
+        assertNull(compile("kilnmark: pipeline/v1\nname: x\nquality: {}\n" + steps).definition().quality()
+            .minScore());
+    }
+
+    @Test
+    void aRulesSettingIsAListOfMappings() {
+        String head = "kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: a, type: numbers }\n"
+            + "  - id: f\n    type: filter\n    input: a\n    condition: \"n > 0\"\n";
+        Compiled c = compile(head + "    checks:\n      - {type: not_null, field: n}\n      - type: unique\n"
+            + "        fields: [n]\n");
+        assertTrue(c.ok(), c.problems().toString());
+        assertEquals(List.of(Map.of("type", "not_null", "field", "n"), Map.of("type", "unique", "fields", List.of("n"))),
+            c.configs().get("f").get("checks"));
+        contains(only(compile(head + "    checks: not_null\n"), 9), "checks", "must be a list of rules");
+        contains(only(compile(head + "    checks: [not_null]\n"), 9), "must be a list of rules");
+    }
+
+    @Test
     void stepIdsMustBeWordsAndUnique() {
         Compiled c = compile("""
             kilnmark: pipeline/v1

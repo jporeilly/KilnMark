@@ -272,6 +272,9 @@ public final class PipelineCompiler {
                     }
                     yield Checked.ok(Collections.unmodifiableList(out));
                 }
+                case RULES -> v instanceof List<?> l && l.stream().allMatch(i -> i instanceof Map<?, ?>)
+                    ? Checked.ok(v)
+                    : Checked.wrong("must be a list of rules, each a mapping such as { type: not_null, field: email }");
                 case EXPRESSIONS, CONDITIONS, COLUMN_MAP -> {
                     boolean columns = spec.kind() == SettingSpec.Kind.COLUMN_MAP;
                     if (!(v instanceof Map<?, ?> m) || !m.values().stream().allMatch(i -> i instanceof String

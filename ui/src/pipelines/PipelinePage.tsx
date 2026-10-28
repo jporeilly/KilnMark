@@ -20,6 +20,7 @@ import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { RunStatus, runTime } from "./RunStatus";
 import { columnsText } from "./outline";
+import { stepQualityWords } from "./quality";
 import { emptyYaml, findStarterPicks, renamed, starterYaml, withoutLayout } from "./template";
 import { YamlEditor, type YamlEditorHandle } from "./YamlEditor";
 import type { CanvasRun } from "./canvas/CanvasView";
@@ -216,7 +217,13 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   const canvasRun: CanvasRun | null = useMemo(
     () =>
       runShown && !viewing
-        ? { id: runShown.run.id, version: runShown.run.version, status: runShown.run.status, steps: runShown.steps }
+        ? {
+            id: runShown.run.id,
+            version: runShown.run.version,
+            status: runShown.run.status,
+            steps: runShown.steps,
+            quality: runShown.quality ?? [],
+          }
         : null,
     [runShown, viewing],
   );
@@ -731,6 +738,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
               <tbody>
                 {check.steps.map((s) => {
                   const ran = canvasRun?.steps.find((r) => r.step === s.id);
+                  const measured = stepQualityWords(canvasRun?.quality?.find((q) => q.step === s.id));
                   return (
                     <tr key={s.id}>
                       <th scope="row">
@@ -765,6 +773,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                             ? [
                                 ran.rowsOut != null ? `${formatNumber(ran.rowsOut)} rows out` : ran.rowsIn != null ? `${formatNumber(ran.rowsIn)} rows in` : "",
                                 ran.outcome ? ran.outcome.replace("_", " ") : "",
+                                measured ?? "",
                               ]
                                 .filter(Boolean)
                                 .join(" · ")
