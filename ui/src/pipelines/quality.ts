@@ -3,7 +3,7 @@
  * what a run writes"): scores as a percentage and a word, never by colour alone, and what a gate
  * did with the rows. Pure functions, unit tested.
  */
-import { formatNumber, rating, type GateOutcome, type PipelineStepQuality } from "../api";
+import { formatNumber, formatScore, rating, type GateOutcome, type PipelineStepQuality } from "../api";
 
 export const DIMENSION_WORDS: Record<string, string> = {
   completeness: "Completeness",
@@ -18,13 +18,8 @@ export const DIMENSION_WORDS: Record<string, string> = {
 
 export const dimensionWord = (d: string) => DIMENSION_WORDS[d] ?? d;
 
-/** "98%", rounding down below 100 so 99.6% never reads as a perfect 100%. */
-export function percent(score: number): string {
-  const p = Math.round(score * 1e6) / 1e4; // clear of float noise: 0.29 is 29%, not 28.9%
-  if (p >= 100) return "100%";
-  const shown = p >= 10 ? Math.floor(p * 10) / 10 : Math.floor(p * 100) / 100;
-  return `${Number.isInteger(shown) ? shown.toFixed(0) : String(shown)}%`;
-}
+/** A score or share as a percentage, as the asset pages write scores (formatScore): "98%". */
+export const percent = (score: number) => formatScore(score);
 
 /** "Quality 98% (Good)". */
 export const scoreWords = (score: number) => `Quality ${percent(score)} (${rating(score).word})`;

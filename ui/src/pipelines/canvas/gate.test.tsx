@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ReactFlowProvider } from "@xyflow/react";
-import type { GateOutcome, PipelineStepQuality, StepType, StepTypeSetting } from "../../api";
+import { formatScore, type GateOutcome, type PipelineStepQuality, type StepType, type StepTypeSetting } from "../../api";
 import { belowThreshold, gateWords, percent, scoreWords, stepQualityWords } from "../quality";
 import { stepSummary } from "./insight";
 import { catalogueOf, portsOf, readGraph, setSetting, type Change, type GraphStep } from "./model";
@@ -154,12 +154,12 @@ describe("the rules control", () => {
 });
 
 describe("measured quality in words", () => {
-  test("scores are a percentage and a word, never 100% unless they are", () => {
-    expect(percent(0.9833)).toBe("98.3%");
+  test("scores are a whole percentage, rounded as the asset pages round them, and a word", () => {
+    expect(percent(0.9833)).toBe("98%");
     expect(percent(0.29)).toBe("29%");
-    expect(percent(0.9999)).toBe("99.9%");
+    expect(percent(0.925)).toBe(formatScore(0.925));
     expect(percent(1)).toBe("100%");
-    expect(percent(0.0042)).toBe("0.42%");
+    expect(percent(0.05)).toBe("5%");
     expect(scoreWords(0.97)).toBe("Quality 97% (Good)");
     expect(scoreWords(0.85)).toBe("Quality 85% (Fair)");
     expect(scoreWords(0.5)).toBe("Quality 50% (Poor)");

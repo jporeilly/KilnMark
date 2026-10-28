@@ -10,8 +10,8 @@ details.
 - **Quality gates in pipelines.** Add a **Quality gate** step (in the Quality folder) to check rows
   against quality rules as they pass, with no second read of the data: the rules of the table or
   file the pipeline read, and any you write on the step. When rows fail, the gate can stop the run
-  before anything is written, send the failing rows to a separate **quarantine** output while the
-  rest carry on, or just warn. A limit on the share of failing rows, or on the score, stops the run
+  so that the writes after it do not commit, send the failing rows to a separate **quarantine**
+  output while the rest carry on, or just warn. A limit on the share of failing rows, or on the score, stops the run
   when too much is wrong.
 - **Every run measures the quality of what it writes.** After a run, each write and each gate shows
   its quality score on the canvas, beside its rows, and the run's page lists the score per
@@ -46,13 +46,18 @@ details.
   the database), and the run-level thresholds `min_score` and `max_failing_share` (0 to 1). Rows are
   checked in the stream with `RowChecks`, all rules in one pass; `RowChecks.Check.test` says whether
   a row fails. `stop` fails the run as soon as a rule can no longer pass (a count limit passed, or
-  a failing row where none is allowed), otherwise at the end of the rows, before any write after
-  it commits, naming the rule and its counts; `quarantine` stops only when a threshold is crossed
-  or a check of the whole data (row count, freshness) fails. A new setting kind `RULES`
+  a failing row where none is allowed), otherwise at the end of the rows, so the writes after it do
+  not commit, naming the rule and its counts. Validation refuses what would get round that: a write
+  after a stop gate that commits as it goes (`commit_every` with create, append or upsert) and a
+  `limit` after it; it notes a write that gets the gate's rows by another path, and quarantine wiring
+  that drops rows or gets none. `quarantine` stops only when a threshold is crossed or a check of
+  the whole data (row count, freshness) fails. In a gate, `unique` fails only the repeats of a key;
+  it keeps keys as 128-bit hashes, up to 96 MB (`RowChecks` now hashes keys for every streamed
+  uniqueness check), and says how many repeats it had set aside if it reaches that. A gate cut short
+  by the run is still judged on what it saw, marked incomplete. A new setting kind `RULES`
   (`SettingSpec.Kind`, `rules` in `GET /api/v1/steps`) takes a list of mappings; the canvas edits
-  it as a list of rules and writes one rule a line. Validation needs the graph for one check: a
-  gate whose rows come from several reads must name one with `rules_from`, and a note says when a
-  gate has nothing to check.
+  it as a list of rules and writes one rule a line. A gate whose rows come from several reads must
+  name one with `rules_from`, and a note says when a gate has nothing to check.
 - **Measured quality per run** (migration V15, `pipeline_step_quality`): each write's score per
   dimension and overall, from the profile its writer made while writing (Measures and Scores, as an
   asset is scored, without history), and each gate's score from its rules' results with its

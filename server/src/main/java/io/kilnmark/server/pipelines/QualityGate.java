@@ -29,8 +29,8 @@ import io.kilnmark.server.quality.Scores;
  * its rules as the rows stream past, in the one pass the pipeline makes anyway, and then
  * <ul>
  *   <li>{@link OnFail#STOP}: passes every row on {@code out}; at the end, fails the run when a rule
- *       fails by its own limit or the gate's threshold is crossed, before anything downstream can
- *       finish (a write commits only at the end of its rows). A rule that cannot pass any more stops
+ *       fails by its own limit or the gate's threshold is crossed, before the writes after it reach
+ *       the end of their rows and commit (validation refuses writes after it that commit as they go). A rule that cannot pass any more stops
  *       the run at once.</li>
  *   <li>{@link OnFail#QUARANTINE}: rows that fail any rule go to {@code quarantine}, the rest to
  *       {@code out}; the run stops only when the gate's threshold is crossed (too much is failing
@@ -88,7 +88,16 @@ final class QualityGate implements Step {
      */
     record Outcome(String onFail, String decision, String asset, long rowsIn, long rowsPassed, long rowsFailing,
                    long rowsQuarantined, Double score, Map<String, Double> dimensions, List<String> reasons,
-                   List<RuleOutcome> rules, Double minScore, Double maxFailingShare, String stopReason) {
+                   List<RuleOutcome> rules, Double minScore, Double maxFailingShare, String stopReason,
+                   boolean complete) {
+
+        /** An outcome of a gate that saw the end of its rows (or stopped the run itself). */
+        Outcome(String onFail, String decision, String asset, long rowsIn, long rowsPassed, long rowsFailing,
+                long rowsQuarantined, Double score, Map<String, Double> dimensions, List<String> reasons,
+                List<RuleOutcome> rules, Double minScore, Double maxFailingShare, String stopReason) {
+            this(onFail, decision, asset, rowsIn, rowsPassed, rowsFailing, rowsQuarantined, score, dimensions, reasons,
+                rules, minScore, maxFailingShare, stopReason, true);
+        }
     }
 
     private final OnFail onFail;
@@ -132,6 +141,21 @@ final class QualityGate implements Step {
     /** What the gate found; null until it has finished (or failed before starting). */
     Outcome outcome() {
         return outcome;
+    }
+
+    /**
+     * A gate whose rows were cut short (a step after it ended early, or the run stopped elsewhere)
+     * never reaches {@link #finish}: what it checked is judged here so the run still shows it, and
+     * marked incomplete. It can no longer stop anything.
+     */
+    @Override
+    public void close() {
+        if (outcome == null && rowsIn > 0 && rules != null) {
+            Outcome o = judge(null);
+            outcome = new Outcome(o.onFail(), "stopped".equals(o.decision()) ? "warned" : o.decision(), o.asset(),
+                o.rowsIn(), o.rowsPassed(), o.rowsFailing(), o.rowsQuarantined(), o.score(), o.dimensions(),
+                o.reasons(), o.rules(), o.minScore(), o.maxFailingShare(), null, false);
+        }
     }
 
     @Override
@@ -247,7 +271,7 @@ final class QualityGate implements Step {
             if (count ? failingSoFar[k] > r.failAbove() : r.failAbove() == 0) {
                 return "The quality gate stopped the run: rule '" + r.name() + "' failed on " + count(failingSoFar[k])
                     + (failingSoFar[k] == 1 ? " row" : " rows") + " in the first " + count(rowsIn) + ", more than its "
-                    + "limit of " + limit(r) + ". Nothing after the gate was finished.";
+                    + "limit of " + limit(r) + ". The writes after the gate did not commit.";
             }
         }
         return null;
@@ -277,6 +301,12 @@ final class QualityGate implements Step {
             GateRule g = rules.get(k);
             Rule r = g.rule();
             RowChecks.Evaluation e = evaluations.get(k);
+            if (r.type() == io.kilnmark.server.quality.RuleType.UNIQUE && e.error() == null) {
+                // A gate fails the repeats of a key only, the first row with it passes: the count, the
+                // rule's verdict, the score and the rows set aside all agree.
+                e = new RowChecks.Evaluation(e.total(), failingSoFar[k], e.method(), e.failingQuery(), e.failingRows(),
+                    e.message(), null);
+            }
             Rule.Status status = e.error() != null ? Rule.Status.ERROR : r.status(e.failing(), e.total());
             results.add(new RuleOutcome(r.name(), r.type().id(), r.field(), r.dimension().id(), g.origin(), status.id(),
                 e.failing(), e.total(), e.error() != null ? e.error() : e.message()));
@@ -318,7 +348,7 @@ final class QualityGate implements Step {
         }
         String reason = stop == null ? null : "The quality gate stopped the run: " + stop + "."
             + (onFail == OnFail.QUARANTINE && breach == null ? " Rows cannot be set aside for a check of the whole data."
-            : "") + " Nothing after the gate was finished.";
+            : "") + " The writes after the gate did not commit.";
         return new Outcome(onFail.id(), decision, asset == null ? null : asset.urn(), rowsIn, rowsIn - rowsFailing,
             rowsFailing, rowsQuarantined, s.overall(), s.dimensions(), s.reasons(), List.copyOf(results), minScore,
             maxFailingShare, reason);
@@ -338,8 +368,8 @@ final class QualityGate implements Step {
             List<String> columns = List.copyOf(named);
             List<RowChecks.Evaluation> out = new ArrayList<>();
             for (GateRule g : rules) {
-                out.add(RowChecks.of(g.rule(), columns, Map.of(), asset == null ? null : asset.previousRows(),
-                    Instant.now(), 0, "pipeline").finish());
+                Long previous = asset == null || !"asset".equals(g.origin()) ? null : asset.previousRows();
+                out.add(RowChecks.of(g.rule(), columns, Map.of(), previous, Instant.now(), 0, "pipeline").finish());
             }
             return out;
         }

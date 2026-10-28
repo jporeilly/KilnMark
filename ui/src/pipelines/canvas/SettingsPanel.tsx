@@ -291,8 +291,8 @@ export function SettingsPanel({
               )}
               {quality.gate && quality.gate.rules.length > 0 && (
                 <ul className="small cv-quality-rules" aria-label="The gate's rules">
-                  {quality.gate.rules.map((r) => (
-                    <li key={r.name}>
+                  {quality.gate.rules.map((r, i) => (
+                    <li key={`${i}-${r.origin}`}>
                       {r.name}: {RULE_STATUS_WORDS[r.status] ?? r.status}
                       {r.status !== "error" && r.total > 0 && !["freshness", "row_count", "row_count_change"].includes(r.type)
                         ? `, ${r.failing.toLocaleString("en-GB")} of ${r.total.toLocaleString("en-GB")} rows failing`

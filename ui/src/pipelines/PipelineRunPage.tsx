@@ -114,8 +114,8 @@ function StepQuality({ q }: { q: PipelineStepQuality }) {
               </tr>
             </thead>
             <tbody>
-              {g.rules.map((r) => (
-                <tr key={r.name}>
+              {g.rules.map((r, i) => (
+                <tr key={`${i}-${r.origin}`}>
                   <th scope="row">
                     {r.name}
                     <div className="muted">

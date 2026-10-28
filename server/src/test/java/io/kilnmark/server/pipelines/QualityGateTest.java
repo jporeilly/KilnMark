@@ -211,7 +211,8 @@ class QualityGateTest {
     }
 
     @Test
-    void quarantinedRowsWithNothingConnectedAreDropped() throws Exception {
+    void quarantinedRowsWithNothingConnectedGoNowhereAndValidationSaysSo() throws Exception {
+        // The run itself drops them (graphChecks below has the note that warns before it runs).
         Ran r = run(gate("quarantine", null, null, EMAIL_PRESENT), people(50, 5), 7, false);
         assertTrue(r.result().succeeded(), r.result().error());
         assertEquals(40, r.out().ids.size());
@@ -341,7 +342,11 @@ class QualityGateTest {
         assertTrue(r.result().succeeded(), r.result().error());
         assertEquals(List.of(1L, 2L, 3L), r.out().ids);
         assertEquals(List.of(1L, 1L), r.quarantine().ids);
-        assertEquals(3, r.outcome().rules().get(0).failing(), "the rule's count is every row of a repeated key");
+        QualityGate.RuleOutcome u = r.outcome().rules().get(0);
+        assertEquals(2, u.failing(), "the repeats, the rows set aside");
+        assertEquals(2, r.outcome().rowsQuarantined());
+        assertEquals("fail", u.status());
+        assertEquals(0.6, r.outcome().score(), 1e-9, "3 of 5 rows passed");
     }
 
     @Test
@@ -499,10 +504,172 @@ class QualityGateTest {
             new Edge(new PortRef("u", "out"), new PortRef("g", "in")));
         GateStepFactory.Upstream both = GateStepFactory.upstream("g", Map.of(), two, types);
         assertNull(both.read());
-        assertTrue(both.problem().startsWith("rules_from: rows reach this gate from the read steps a, b"),
+        assertNull(both.key(), "about the step, not a setting it may not have");
+        assertTrue(both.problem().startsWith("asset_rules: rows reach this gate from the read steps a, b; name the "
+            + "one whose asset's rules to check with rules_from"),
             both.problem());
         assertEquals("b", GateStepFactory.upstream("g", Map.of("rules_from", "b"), two, types).read());
         assertTrue(GateStepFactory.upstream("g", Map.of("rules_from", "f"), one, types).problem()
             .startsWith("rules_from: 'f' is not a read step"));
+    }
+
+    // ---- what only the whole pipeline shows ----
+
+    static Edge edge(String from, String to) {
+        return new Edge(PortRef.parse(from, "out"), PortRef.parse(to, "in"));
+    }
+
+    static List<String> findings(Map<String, String> types, Map<String, Map<String, Object>> configs, Edge... edges) {
+        return GateStepFactory.graphChecks(types, configs, List.of(edges)).stream()
+            .map(f -> (f.note() ? "note " : "problem ") + f.step() + "." + f.key() + ": " + f.message()).toList();
+    }
+
+    @Test
+    void aWriteThatCommitsAsItGoesCannotFollowAStopGate() {
+        Map<String, String> types = new LinkedHashMap<>(Map.of("r", "read", "g", "gate", "w", "write"));
+        Map<String, Object> append = Map.of("mode", "append", "commit_every", 1000);
+        List<String> f = findings(types, Map.of("g", Map.of(), "w", append), edge("r", "g"), edge("g", "w"));
+        assertEquals(1, f.size(), f.toString());
+        assertTrue(f.get(0).startsWith("problem w.commit_every: commit_every: the rows come through the stop gate g, "
+            + "which decides only at the end of the rows; committing every 1000 rows would write them before it does"),
+            f.get(0));
+        for (String mode : List.of("create", "upsert")) {
+            assertEquals(1, findings(types, Map.of("w", Map.of("mode", mode, "commit_every", 5)), edge("r", "g"),
+                edge("g", "w")).size(), mode);
+        }
+        // Replace swaps the table in at the end; no commit_every, or 0, commits once; quarantine and warn decide per row.
+        assertEquals(List.of(), findings(types, Map.of("w", Map.of("mode", "replace", "commit_every", 5)), edge("r", "g"),
+            edge("g", "w")));
+        assertEquals(List.of(), findings(types, Map.of("w", Map.of("mode", "append", "commit_every", 0)), edge("r", "g"),
+            edge("g", "w")));
+        assertEquals(List.of(), findings(types, Map.of("g", Map.of("on_fail", "warn"), "w", append), edge("r", "g"),
+            edge("g", "w")));
+        // Further down, through other steps, it still counts.
+        types.put("f", "filter");
+        assertEquals(1, findings(types, Map.of("w", append), edge("r", "g"), edge("g", "f"), edge("f", "w")).size());
+    }
+
+    @Test
+    void aStepEndingTheRowsEarlyCannotFollowAStopGate() {
+        Map<String, String> types = Map.of("r", "read", "g", "gate", "l", "limit", "w", "write");
+        List<String> f = findings(types, Map.of(), edge("r", "g"), edge("g", "l"), edge("l", "w"));
+        assertEquals(List.of("problem l.null: a limit after the stop gate g ends the rows early, so the gate never sees "
+            + "their end and cannot stop the run. Put the limit before the gate, or set the gate's on_fail to quarantine "
+            + "or warn"), f);
+        assertEquals(List.of(), findings(types, Map.of(), edge("r", "l"), edge("l", "g"), edge("g", "w")));
+        assertEquals(List.of(), findings(types, Map.of("g", Map.of("on_fail", "warn")), edge("r", "g"), edge("g", "l"),
+            edge("l", "w")));
+    }
+
+    @Test
+    void aWriteGettingTheSameRowsAroundAStopGateIsNoted() {
+        Map<String, String> types = Map.of("r", "read", "g", "gate", "good", "write", "raw", "write");
+        List<String> f = findings(types, Map.of(), edge("r", "g"), edge("g", "good"), edge("r", "raw"));
+        assertEquals(List.of("note g.on_fail: on_fail: the write raw gets the same rows by another path, not through "
+            + "this gate, so it is written even when the gate stops the run"), f);
+        assertEquals(List.of(), findings(types, Map.of("g", Map.of("on_fail", "warn")), edge("r", "g"),
+            edge("g", "good"), edge("r", "raw")));
+    }
+
+    @Test
+    void quarantineWiringIsNoted() {
+        Map<String, String> types = Map.of("r", "read", "g", "gate", "good", "write", "aside", "write");
+        assertEquals(List.of("note g.on_fail: on_fail: rows that fail a rule go to the quarantine port, but nothing is "
+            + "connected to it, so they are dropped. Connect a write to quarantine to keep them"),
+            findings(types, Map.of("g", Map.of("on_fail", "quarantine")), edge("r", "g"), edge("g", "good")));
+        assertEquals(List.of(), findings(types, Map.of("g", Map.of("on_fail", "quarantine")), edge("r", "g"),
+            edge("g", "good"), edge("g.quarantine", "aside")));
+        for (String onFail : List.of("stop", "warn")) {
+            List<String> f = findings(types, Map.of("g", Map.of("on_fail", onFail)), edge("r", "g"), edge("g", "good"),
+                edge("g.quarantine", "aside"));
+            assertEquals(1, f.size(), f.toString());
+            assertTrue(f.get(0).startsWith("note g.on_fail: on_fail: " + onFail + " sends no rows to the quarantine "
+                + "port, so aside gets none, and a write there in mode replace or create empties"), f.get(0));
+        }
+    }
+
+    /** Reads one batch, then ends: as a limit does once it has its rows. */
+    static final class EndsEarly implements Step {
+        @Override
+        public String type() {
+            return "limit";
+        }
+
+        @Override
+        public void init(StepContext context) {
+        }
+
+        @Override
+        public boolean process(StepContext context) throws StepException {
+            try {
+                VectorSchemaRoot b = context.input().take(context.allocator());
+                if (b != null) {
+                    b.close();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new StepException("Interrupted", e);
+            }
+            return false;
+        }
+    }
+
+    @Test
+    void aGateWhoseRowsAreCutShortIsStillJudgedAndSaysSo() throws Exception {
+        QualityGate gate = gate("stop", null, null, List.of(rule("type", "not_null", "field", "email", "fail_above",
+            new BigDecimal("0.5"))));
+        List<GraphStep> steps = List.of(new GraphStep("people", new Source(people(10_000, 10), 100), Map.of()),
+            new GraphStep("check", gate, Map.of()), new GraphStep("first", new EndsEarly(), Map.of()));
+        List<Edge> edges = List.of(edge("people", "check"), edge("check", "first"));
+        RunResult r = new KilnGraphRunner(64L << 20, 2).run(new PipelineGraph("cut", steps, edges), e -> { });
+        assertTrue(r.succeeded(), r.error());
+        QualityGate.Outcome o = gate.outcome();
+        assertNotNull(o, "judged when the step closed");
+        assertFalse(o.complete());
+        assertTrue(o.rowsIn() > 0 && o.rowsIn() < 10_000, String.valueOf(o.rowsIn()));
+        assertEquals("warned", o.decision());
+        assertNull(o.stopReason());
+        assertTrue(RunQuality.gate("check", o).note().startsWith("The gate checked only the first "),
+            RunQuality.gate("check", o).note());
+    }
+
+    @Test
+    void anEmptyInputJudgesRowCountChangeOnlyForTheAssetsOwnRules() throws Exception {
+        // Inline rules have no earlier scan to compare with, whether or not rows arrive.
+        QualityGate g = new QualityGate(QualityGate.OnFail.STOP, null, null, GateRules.read(List.of(rule("type",
+            "row_count_change", "max_change", new BigDecimal("0.1"))), null), true,
+            id -> new QualityGate.AssetRules() {
+                @Override
+                public String urn() {
+                    return "urn:kilnmark:lab-db:crm.people";
+                }
+
+                @Override
+                public List<Rule> rules() {
+                    return List.of();
+                }
+
+                @Override
+                public Map<String, String> kinds() {
+                    return Map.of();
+                }
+
+                @Override
+                public Long previousRows() {
+                    return 500L;
+                }
+            });
+        Ran r = run(g, List.of(), 10, true);
+        assertTrue(r.result().succeeded(), r.result().error());
+        assertEquals("pass", r.outcome().rules().get(0).status());
+        assertEquals("No earlier scan to compare with", r.outcome().rules().get(0).message());
+    }
+
+    @Test
+    void freshnessFailsOnNoRows() throws Exception {
+        Ran r = run(gate("warn", null, null, List.of(rule("type", "freshness", "field", "seen", "max_age_hours", 24))),
+            List.of(), 10, true);
+        assertEquals("fail", r.outcome().rules().get(0).status());
+        assertEquals("No values at all", r.outcome().rules().get(0).message());
     }
 }

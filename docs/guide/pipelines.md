@@ -269,7 +269,7 @@ gate). The checks and their own settings are those of rules made in **Quality**:
 | Type | Fails a row when | Its settings |
 | --- | --- | --- |
 | `not_null` | The value is empty | `blank_is_missing: true` counts blank text as empty too |
-| `unique` | The value was seen in an earlier row (the first row with it passes) | `fields: [a, b]` for a key of several columns, instead of `field` |
+| `unique` | The value was seen in an earlier row: the first row with it passes, each repeat fails | `fields: [a, b]` for a key of several columns, instead of `field` |
 | `allowed_values` | The value is not in the list | `values` |
 | `matches_pattern` | The value does not match the regular expression | `regex` |
 | `in_range` | The value is below `min` or above `max` | `min`, `max` (either may be left out) |
@@ -284,15 +284,38 @@ many rows may fail before the rule fails, as a share of the rows checked (0.01 f
 `warn_above` makes the rule warn below that. Rules that run in a database, `references` and
 `custom_sql`, cannot check rows in a pipeline; make them rules on the asset instead.
 
+A gate counts only the repeats of a key as failing for `unique`, so its count, its result, its score
+and the rows it sets aside agree. (A `unique` rule run on the asset in **Quality** counts every row of
+a repeated key.) To find repeats, a gate keeps each key it has seen as a short fingerprint, about 96
+bytes whatever the key's length, up to 1,048,576 different keys (about 96 MB). Past that it stops
+checking for repeats: the rule shows **Could not run**, says how many repeats it had found and set
+aside before then, and the rows after it are not checked for repeats. Use the asset's `unique` rule,
+which runs in the database, for larger tables.
+
 ### What happens when rows fail
 
 `on_fail` decides:
 
 | `on_fail` | Rows | The run |
 | --- | --- | --- |
-| `stop` (the default) | All go on to `out` | Fails when any rule fails by its own limit, or a threshold below is crossed. It stops as soon as a rule cannot pass any more (a failing row where none may fail, or more failing rows than its count allows); otherwise when the rows end. Writes after the gate commit only once their rows end, so they write nothing. |
+| `stop` (the default) | All go on to `out` | Fails when any rule fails by its own limit, or a threshold below is crossed. It stops as soon as a rule cannot pass any more (a failing row where none may fail, or more failing rows than its count allows); otherwise when the rows end. The writes after the gate have not reached the end of their rows, so they do not commit. |
 | `quarantine` | Rows failing any rule go to `quarantine`; the rest to `out` | Goes on, unless a threshold below is crossed, or a check of the whole data (row count, freshness) fails: no row can be set aside for that. |
 | `warn` | All go on to `out` | Goes on whatever fails. What failed is recorded with the run. |
+
+A stop gate holds back only the writes after it, and only because they commit at the end of their
+rows. So Kilnmark refuses, with a problem at the setting:
+
+- a write after a stop gate with `commit_every` in mode `create`, `append` or `upsert`, which commits
+  as the rows arrive. (`replace` swaps the new rows in at the end, so it may keep `commit_every`.)
+- a `limit` after a stop gate: it ends the rows early, so the gate never sees their end.
+
+And it notes, without stopping the pipeline:
+
+- a write that gets the same rows by another path, not through the gate (read → gate → good, and
+  read → raw): it is written even when the gate stops the run;
+- `on_fail: quarantine` with nothing connected to `quarantine`: the failing rows are dropped;
+- something connected to `quarantine` when `on_fail` is `stop` or `warn`: it never gets rows, and a
+  write there in mode `replace` or `create` empties or creates an empty table on every run.
 
 Two thresholds judge the rows as a whole, with `stop` and `quarantine` (with `warn` they are
 recorded only):
@@ -305,8 +328,10 @@ recorded only):
 A run the gate stopped says why, naming the rule and its counts, for example "The quality gate
 stopped the run: rule 'email not null' failed on 120 of 9,000 rows (1.3%), more than its limit of 1%".
 If a rule's column does not arrive at the gate, the rule cannot run: it is shown as **Could not
-run** and does not fail the rows. A gate with no rows to check passes every check of rows; a
-`row_count` with a `min` still fails.
+run** and does not fail the rows. A gate with no rows to check passes every check of rows, but a
+`row_count` with a `min` fails, and so does `freshness`: there is no latest value to be recent.
+If the run ends the gate's rows before it sees their end (another step failed), it shows what it
+checked so far and says it saw only the first rows.
 
 The gate always uses the rules as they are when the run starts. It checks every row: it does not yet
 reuse a recent result of the asset's rules when the data has not changed.

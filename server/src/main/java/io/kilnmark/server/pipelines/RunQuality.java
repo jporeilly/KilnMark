@@ -156,7 +156,9 @@ final class RunQuality {
     static StepQuality gate(String step, QualityGate.Outcome o) {
         Score s = o.score() == null ? null : new Score(o.score(), o.dimensions(),
             o.reasons().stream().limit(REASONS).toList());
-        String note = s != null ? null : o.rules().isEmpty() ? "The gate had no rules to check"
+        String note = !o.complete() ? "The gate checked only the first " + QualityGate.count(o.rowsIn()) + " rows: the "
+            + "run ended its rows early, so it could not judge the rest"
+            : s != null ? null : o.rules().isEmpty() ? "The gate had no rules to check"
             : "None of the gate's rules could run";
         return new StepQuality(step, "gate", o.asset(), s, null, note, o);
     }

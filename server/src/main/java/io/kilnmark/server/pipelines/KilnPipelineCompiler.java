@@ -108,6 +108,22 @@ final class KilnPipelineCompiler implements PipelineCompilerPort {
         GateStepFactory gate = factories.get(GateStepFactory.TYPE).filter(GateStepFactory.class::isInstance)
             .map(GateStepFactory.class::cast).orElse(null);
         int added = 0;
+        if (gate != null) {
+            Map<String, Map<String, Object>> configs = new LinkedHashMap<>();
+            byId.forEach((id, s) -> configs.put(id, c.configs().getOrDefault(id, s.config())));
+            for (GateStepFactory.Finding f : GateStepFactory.graphChecks(types, configs, c.edges())) {
+                PipelineDefinition.StepDefinition s = byId.get(f.step());
+                io.kilnmark.kiln.yaml.Position at = f.key() == null ? s.position() : s.at(f.key());
+                PipelineCompilerPort.Problem p = new PipelineCompilerPort.Problem(at.line(), at.column(), s.id(),
+                    "Step " + s.id() + ": " + f.message());
+                if (f.note()) {
+                    notes.add(p);
+                } else {
+                    problems.add(p);
+                    added++;
+                }
+            }
+        }
         for (PipelineDefinition.StepDefinition s : d.steps()) {
             if (!GateStepFactory.TYPE.equals(s.type()) || gate == null) {
                 continue;
@@ -115,7 +131,7 @@ final class KilnPipelineCompiler implements PipelineCompilerPort {
             Map<String, Object> config = c.configs().getOrDefault(s.id(), s.config());
             GateStepFactory.Upstream up = GateStepFactory.upstream(s.id(), config, c.edges(), types);
             if (up.problem() != null) {
-                io.kilnmark.kiln.yaml.Position at = s.at(up.key());
+                io.kilnmark.kiln.yaml.Position at = up.key() == null ? s.position() : s.at(up.key());
                 problems.add(new PipelineCompilerPort.Problem(at.line(), at.column(), s.id(), "Step " + s.id() + ": "
                     + up.problem()));
                 added++;

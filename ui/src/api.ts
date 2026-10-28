@@ -1012,6 +1012,9 @@ export const qualityApi = {
 const percentFormat = new Intl.NumberFormat("en-GB", { style: "percent", maximumFractionDigits: 1 });
 export const formatShare = (share: number | null | undefined) => (share == null ? "–" : percentFormat.format(share));
 
+/** A quality score (0 to 1) as people read it everywhere: a whole percentage, "98%". */
+export const formatScore = (score: number) => `${Math.round(score * 100)}%`;
+
 /** A score in words as well as a number, so it never depends on colour. */
 export function rating(score: number): { word: string; tone: "good" | "fair" | "poor" } {
   if (score >= 0.95) return { word: "Good", tone: "good" };

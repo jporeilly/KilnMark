@@ -6,6 +6,7 @@ import {
   ApiError,
   call,
   formatNumber,
+  formatScore,
   pipelinesApi,
   qualityApi,
   type Issue,
@@ -77,7 +78,7 @@ const ISSUE_LIMIT = 500;
 const SOURCE_CARDS = 6;
 
 const busy = (s: Source) => s.lastRun?.status === "queued" || s.lastRun?.status === "running";
-const pct = (score: number) => `${Math.round(score * 100)}%`;
+const pct = formatScore;
 const runTime = (r: PipelineRun) => Date.parse(r.finishedAt ?? r.startedAt ?? r.requestedAt);
 
 /** A card's load failure: what went wrong and Try again. */

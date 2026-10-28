@@ -530,6 +530,22 @@ class PipelineFlowTest {
             .post("/api/v1/pipelines/validate").then().statusCode(200)
             .body("problems.message", hasItems(containsString("quality.min_score must be a share from 0 to 1")));
 
+        // A stop gate: a limit after it would end its rows early; quarantine wired to a gate that sends it none.
+        String limited = GATED.replace("on_fail: quarantine", "on_fail: stop")
+            .replace("  - id: good\n", "  - id: first\n    type: limit\n    input: check\n    rows: 10\n\n  - id: good\n")
+            .replace("    input: check\n    source: mem-out\n    table: lab.people_checked",
+                "    input: first\n    source: mem-out\n    table: lab.people_checked");
+        JsonPath stopped = as(viewer).body(Map.of("yaml", limited)).post("/api/v1/pipelines/validate").then()
+            .statusCode(200).body("valid", equalTo(false)).extract().jsonPath();
+        assertEquals("first", stopped.getString("problems[0].step"), stopped.prettify());
+        assertEquals(25, stopped.getInt("problems[0].line"), stopped.prettify());
+        assertTrue(stopped.getString("problems[0].message").contains("a limit after the stop gate check ends the rows "
+            + "early"), stopped.prettify());
+        assertTrue(stopped.getList("notes.message").toString().contains("on_fail: stop sends no rows to the quarantine "
+            + "port, so aside gets none"), stopped.prettify());
+        assertEquals(21, stopped.getInt("notes.find { it.message.contains('quarantine port') }.line"),
+            stopped.prettify());
+
         as(steward).body(Map.of("name", "people-gate", "yaml", GATED)).post("/api/v1/pipelines").then()
             .statusCode(201);
         long id = as(steward).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract().jsonPath()

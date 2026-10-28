@@ -750,6 +750,65 @@ function ruleValue(as: "text" | "number" | "list" | "boolean", typed: string | b
   return t;
 }
 
+/**
+ * A text box of a rule that keeps exactly what is typed while it has the focus, and writes the
+ * value (a number when it reads as one) when it loses it or Enter is pressed: typing 0.05 key by key
+ * never passes through 0 or 0. on its way.
+ */
+function RuleInput({
+  id,
+  value,
+  as,
+  onCommit,
+  readOnly,
+  className,
+  placeholder,
+  describedBy,
+  inputMode,
+}: {
+  id: string;
+  value: Value | undefined;
+  as: "text" | "number" | "list";
+  onCommit: (v: Value | undefined) => void;
+  readOnly: boolean;
+  className?: string;
+  placeholder?: string;
+  describedBy?: string;
+  inputMode?: "decimal";
+}) {
+  const outside = ruleText(value);
+  const { draft, setDraft, focusProps } = useDraft(outside);
+  const commit = () => {
+    const next = ruleValue(as, draft);
+    if (JSON.stringify(next ?? null) !== JSON.stringify(value ?? null)) onCommit(next);
+  };
+  return (
+    <input
+      id={id}
+      className={className}
+      inputMode={inputMode}
+      placeholder={placeholder}
+      value={draft}
+      readOnly={readOnly}
+      spellCheck={false}
+      autoComplete="off"
+      aria-describedby={describedBy}
+      onFocus={focusProps.onFocus}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        commit();
+        focusProps.onBlur();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        }
+      }}
+    />
+  );
+}
+
 const ruleText = (v: Value | undefined) => (v == null ? "" : Array.isArray(v) ? v.join(", ") : typeof v === "object" ? "" : String(v));
 
 /**
@@ -869,16 +928,15 @@ function RulesControl(p: ControlProps) {
                         <label className="cv-sub" htmlFor={id}>
                           Rule {i + 1}: {param.label}
                         </label>
-                        <input
+                        <RuleInput
                           id={id}
+                          as={param.as}
                           className={param.as === "number" ? "num" : "mono"}
                           inputMode={param.as === "number" ? "decimal" : undefined}
-                          value={ruleText(r[param.key])}
+                          value={r[param.key]}
                           readOnly={p.readOnly}
-                          spellCheck={false}
-                          autoComplete="off"
-                          aria-describedby={describedBy}
-                          onChange={(e) => set(i, param.key, ruleValue(param.as, e.target.value))}
+                          describedBy={describedBy}
+                          onCommit={(v) => set(i, param.key, v)}
                         />
                       </div>
                     );
@@ -888,27 +946,28 @@ function RulesControl(p: ControlProps) {
                       <label className="cv-sub" htmlFor={`${rowId}-name`}>
                         Rule {i + 1}: name (optional)
                       </label>
-                      <input
+                      <RuleInput
                         id={`${rowId}-name`}
-                        value={ruleText(r.name)}
+                        as="text"
+                        value={r.name}
                         readOnly={p.readOnly}
-                        autoComplete="off"
-                        onChange={(e) => set(i, "name", e.target.value.trim() === "" ? undefined : e.target.value)}
+                        onCommit={(v) => set(i, "name", v === undefined ? undefined : String(v))}
                       />
                     </div>
                     <div>
                       <label className="cv-sub" htmlFor={`${rowId}-fail`}>
                         Rule {i + 1}: may fail on at most
                       </label>
-                      <input
+                      <RuleInput
                         id={`${rowId}-fail`}
+                        as="number"
                         className="num"
                         inputMode="decimal"
                         placeholder="0"
-                        value={ruleText(r.fail_above)}
+                        value={r.fail_above}
                         readOnly={p.readOnly}
-                        aria-describedby={`${rowId}-fail-help`}
-                        onChange={(e) => set(i, "fail_above", ruleValue("number", e.target.value))}
+                        describedBy={`${rowId}-fail-help`}
+                        onCommit={(v) => set(i, "fail_above", v)}
                       />
                       <span id={`${rowId}-fail-help`} className="cv-sub">
                         {r.unit === "count" ? "rows" : "a share of rows, 0.05 for 5%"}
@@ -920,7 +979,15 @@ function RulesControl(p: ControlProps) {
                       type="button"
                       className="cv-mini cv-pair-remove"
                       aria-label={`Remove rule ${i + 1}${r.name ? ` (${ruleText(r.name)})` : ""}`}
-                      onClick={() => commit(rows.filter((_, j) => j !== i))}
+                      onClick={() => {
+                        const left = rows.length - 1;
+                        commit(rows.filter((_, j) => j !== i));
+                        // The focus goes to the rule now in this place, or the one before, or Add a rule.
+                        window.setTimeout(() => {
+                          const next = left === 0 ? null : document.getElementById(`${p.id}-${Math.min(i, left - 1)}-type`);
+                          (next ?? document.getElementById(`${p.id}-add`))?.focus();
+                        }, 0);
+                      }}
                     >
                       Remove
                     </button>
@@ -933,6 +1000,7 @@ function RulesControl(p: ControlProps) {
             <div className="cv-add-row">
               <button
                 type="button"
+                id={`${p.id}-add`}
                 onClick={() => {
                   setRows([...rows, { type: "" }]);
                   requestAnimationFrame(() => document.getElementById(`${p.id}-${rows.length}-type`)?.focus());

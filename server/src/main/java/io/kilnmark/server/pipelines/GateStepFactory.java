@@ -91,8 +91,8 @@ public final class GateStepFactory implements StepFactory {
     @Override
     public List<SettingSpec> settings() {
         return List.of(
-            SettingSpec.choice("on_fail", "When rows fail", false, "stop", "stop fails the run before anything after "
-                + "the gate finishes; quarantine sends failing rows to the quarantine port and the rest on; warn lets "
+            SettingSpec.choice("on_fail", "When rows fail", false, "stop", "stop fails the run, so the writes after the "
+                + "gate do not commit; quarantine sends failing rows to the quarantine port and the rest on; warn lets "
                 + "every row through and records what failed", ON_FAIL),
             SettingSpec.optional("asset_rules", "Check the asset's rules", SettingSpec.Kind.BOOLEAN, true,
                 "Checks the enabled quality rules of the table or file read upstream"),
@@ -110,10 +110,12 @@ public final class GateStepFactory implements StepFactory {
     public List<String> check(Map<String, Object> config) {
         List<String> problems = new ArrayList<>();
         List<Rule> inline = List.of();
+        boolean readable = true;
         try {
             inline = GateRules.read(config.get("rules"), null);
         } catch (IllegalArgumentException e) {
             problems.add(e.getMessage());
+            readable = false;
         }
         for (String key : List.of("min_score", "max_failing_share")) {
             Double v = share(config.get(key));
@@ -122,7 +124,7 @@ public final class GateStepFactory implements StepFactory {
                     : "0.05 for 5%"));
             }
         }
-        if (!assetRules(config) && inline.isEmpty() && config.get("rules") == null) {
+        if (!assetRules(config) && inline.isEmpty() && readable) {
             problems.add("rules: the gate has nothing to check. Write rules here, or turn on asset_rules to check "
                 + "the rules of the asset read upstream");
         }
@@ -280,10 +282,119 @@ public final class GateStepFactory implements StepFactory {
             return new Upstream(null, null, null); // nothing read upstream: a note says the gate checks only its own rules
         }
         if (reads.size() > 1) {
-            return new Upstream(null, "rules_from: rows reach this gate from the read steps " + String.join(", ", reads)
-                + "; name the one whose asset's rules to check, or set asset_rules: false", "asset_rules");
+            return new Upstream(null, "asset_rules: rows reach this gate from the read steps " + String.join(", ", reads)
+                + "; name the one whose asset's rules to check with rules_from, or set asset_rules: false", null);
         }
         return new Upstream(reads.get(0), null, null);
+    }
+
+    /**
+     * Something about a gate that only the whole graph shows: a problem (stops the pipeline) or a
+     * note, about step {@code step} and its setting {@code key} (null: the step).
+     */
+    record Finding(String step, String key, String message, boolean note) {
+    }
+
+    /** Steps whose rows can stop before their input ends, so a stop gate before them never judges. */
+    static final java.util.Set<String> ENDS_EARLY = java.util.Set.of("limit");
+
+    /**
+     * The checks of gates against the rest of the pipeline:
+     * <ul>
+     *   <li>a stop gate holds back what comes after it only because writes commit at the end of their
+     *       rows: a write after it that commits as it goes ({@code commit_every} with create, append or
+     *       upsert; replace swaps the table in at the end) is refused, as is a step that ends the rows
+     *       early (limit), which would end the gate before it can judge;</li>
+     *   <li>a note when the rows a stop gate checks also reach a write by another path, which is
+     *       written whatever the gate decides;</li>
+     *   <li>a note when quarantined rows have nowhere to go, or the quarantine port is connected but
+     *       the gate never sends it rows.</li>
+     * </ul>
+     *
+     * @param types   step id to type
+     * @param configs step id to its settings
+     */
+    static List<Finding> graphChecks(Map<String, String> types, Map<String, Map<String, Object>> configs,
+                                     List<Edge> edges) {
+        List<Finding> out = new ArrayList<>();
+        for (Map.Entry<String, String> t : types.entrySet()) {
+            if (!TYPE.equals(t.getValue())) {
+                continue;
+            }
+            String gate = t.getKey();
+            Map<String, Object> config = configs.getOrDefault(gate, Map.of());
+            String onFail = PipelineSources.text(config, "on_fail");
+            onFail = onFail == null ? "stop" : onFail;
+            List<String> quarantine = edges.stream().filter(e -> e.from().step().equals(gate)
+                && e.from().port().equals("quarantine")).map(e -> e.to().step()).distinct().toList();
+            if (onFail.equals("quarantine") && quarantine.isEmpty()) {
+                out.add(new Finding(gate, "on_fail", "on_fail: rows that fail a rule go to the quarantine port, but "
+                    + "nothing is connected to it, so they are dropped. Connect a write to quarantine to keep them", true));
+            }
+            if (!onFail.equals("quarantine") && !quarantine.isEmpty()) {
+                out.add(new Finding(gate, "on_fail", "on_fail: " + onFail + " sends no rows to the quarantine port, so "
+                    + String.join(", ", quarantine) + " gets none, and a write there in mode replace or create empties "
+                    + "or creates an empty table on every run. Set on_fail: quarantine, or disconnect it", true));
+            }
+            if (!onFail.equals("stop")) {
+                continue;
+            }
+            java.util.Set<String> after = downstream(gate, edges);
+            for (String s : after) {
+                String type = types.get(s);
+                Map<String, Object> c = configs.getOrDefault(s, Map.of());
+                if (WriteStepFactory.TYPE.equals(type) && commitsAsItGoes(c)) {
+                    out.add(new Finding(s, "commit_every", "commit_every: the rows come through the stop gate " + gate
+                        + ", which decides only at the end of the rows; committing every " + c.get("commit_every")
+                        + " rows would write them before it does. Remove commit_every, use mode replace, or set the "
+                        + "gate's on_fail to quarantine or warn", false));
+                }
+                if (ENDS_EARLY.contains(type)) {
+                    out.add(new Finding(s, null, "a " + type + " after the stop gate " + gate + " ends the rows early, "
+                        + "so the gate never sees their end and cannot stop the run. Put the " + type + " before the "
+                        + "gate, or set the gate's on_fail to quarantine or warn", false));
+                }
+            }
+            // Writes the gate's rows reach by another path are written whatever it decides.
+            List<String> reads = readsUpstream(gate, edges, types);
+            java.util.Set<String> around = new java.util.TreeSet<>();
+            for (String read : reads) {
+                for (String s : downstream(read, edges)) {
+                    if (WriteStepFactory.TYPE.equals(types.get(s)) && !after.contains(s)) {
+                        around.add(s);
+                    }
+                }
+            }
+            if (!around.isEmpty()) {
+                out.add(new Finding(gate, "on_fail", "on_fail: " + (around.size() == 1 ? "the write " : "the writes ")
+                    + String.join(", ", around) + " " + (around.size() == 1 ? "gets" : "get") + " the same rows by "
+                    + "another path, not through this gate, so " + (around.size() == 1 ? "it is" : "they are")
+                    + " written even when the gate stops the run", true));
+            }
+        }
+        return out;
+    }
+
+    /** Whether a write commits as its rows arrive, rather than once at their end. */
+    static boolean commitsAsItGoes(Map<String, Object> write) {
+        Double every = share(write.get("commit_every"));
+        String mode = WriteStepFactory.mode(write);
+        return every != null && every > 0 && !"replace".equals(mode == null ? "create" : mode);
+    }
+
+    /** Every step the rows of {@code step} can reach, through any of its ports. */
+    static java.util.Set<String> downstream(String step, List<Edge> edges) {
+        java.util.Set<String> seen = new LinkedHashSet<>();
+        ArrayDeque<String> todo = new ArrayDeque<>(List.of(step));
+        while (!todo.isEmpty()) {
+            String s = todo.poll();
+            for (Edge e : edges) {
+                if (e.from().step().equals(s) && seen.add(e.to().step())) {
+                    todo.add(e.to().step());
+                }
+            }
+        }
+        return seen;
     }
 
     /** The source and asset a read step names. */
