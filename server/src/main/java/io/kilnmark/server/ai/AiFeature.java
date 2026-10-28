@@ -13,7 +13,11 @@ public enum AiFeature {
     ASSISTANT("assistant", Purpose.CHAT, "Assistant",
         "Answers questions in the Ask panel from the documentation, with links to the sections it used. Give it a "
             + "model profile of its own, so long answers do not hold up other features. Without it, the panel lists "
-            + "the matching sections.");
+            + "the matching sections."),
+    PIPELINE_SUGGESTIONS("pipeline_suggestions", Purpose.CHAT, "Pipeline suggestions",
+        "Ranks and explains the canvas's suggestions for improving a pipeline's predicted quality, and adds its own. "
+            + "It sees metadata only (column names, types, shares and value shapes), never values, and only of sources "
+            + "whose AI rule allows the model. Without it, the canvas lists Kilnmark's own suggestions.");
 
     private final String id;
     private final Purpose purpose;
@@ -53,7 +57,7 @@ public enum AiFeature {
                 }
             }
         }
-        throw new IllegalArgumentException("feature: use describe, classify, search_nl, embed or assistant");
+        throw new IllegalArgumentException("feature: use describe, classify, search_nl, embed, assistant or pipeline_suggestions");
     }
 
     /** What a model profile is for. */

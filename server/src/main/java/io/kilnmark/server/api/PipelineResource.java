@@ -10,6 +10,7 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.pipelines.PipelineService;
 import io.kilnmark.server.pipelines.PipelineViews;
+import io.kilnmark.server.pipelines.PredictionViews;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
@@ -94,6 +95,46 @@ public class PipelineResource {
         return pipelines.validate(body.yaml(), body.name() == null || body.name().isBlank() ? null : body.name());
     }
 
+    @POST
+    @Path("predict")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Operation(summary = "Predict a pipeline's quality", description = "Estimates the quality of each write and gate "
+        + "from the catalogue's metadata about what the pipeline reads (profiles, value shapes, relationships and "
+        + "rule results), carried through its steps, without reading any data: each one's score overall and per "
+        + "dimension, what could not be told and what was assumed, and the rows expected on each step's ports. "
+        + "Every figure is an estimate. For YAML being edited, valid or not. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The prediction"),
+        @APIResponse(responseCode = "400", description = "No YAML, or YAML over the size limit"),
+        @APIResponse(responseCode = "401", description = "Not signed in")})
+    public PredictionViews.Prediction predict(PredictionViews.PredictRequest body) {
+        if (body == null) {
+            throw new IllegalArgumentException("Send {\"yaml\": \"...\"}");
+        }
+        return pipelines.predict(body.yaml(), sights);
+    }
+
+    @POST
+    @Path("suggest")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @Operation(summary = "Suggest improvements", description = "Steps that would raise the predicted quality of a "
+        + "write, each with its predicted effect (an estimate) and where it goes. Kilnmark's own come from the "
+        + "metadata with no model; when a model is set for pipeline suggestions and ai is not false, it ranks, "
+        + "explains and adds to them, seeing only the metadata of sources whose AI rule allows it, never values. "
+        + "A model that is off, refused or failing leaves Kilnmark's own, and ai says why. Role: steward.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The suggestions, best first"),
+        @APIResponse(responseCode = "400", description = "No YAML, or YAML over the size limit"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not a steward")})
+    public PredictionViews.Advice suggest(PredictionViews.SuggestRequest body) {
+        if (body == null) {
+            throw new IllegalArgumentException("Send {\"yaml\": \"...\"}");
+        }
+        return pipelines.suggest(body.yaml(), !Boolean.FALSE.equals(body.ai()), who(), sights);
+    }
+
     @GET
     @Path("{name}")
     @Operation(summary = "A pipeline", description = "The pipeline with its latest version's YAML and problems, and "
@@ -168,6 +209,19 @@ public class PipelineResource {
         @APIResponse(responseCode = "404", description = "No such pipeline or version")})
     public PipelineViews.VersionDetail version(@PathParam("name") String name, @PathParam("n") int n) {
         return pipelines.version(name, n);
+    }
+
+    @GET
+    @Path("{name}/versions/{n}/prediction")
+    @Operation(summary = "Predict a version's quality", description = "The predicted quality of a saved version, as "
+        + "POST /api/v1/pipelines/predict works it out, from the catalogue as it is now. Estimates only; no data is "
+        + "read. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The prediction"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "404", description = "No such pipeline or version")})
+    public PredictionViews.Prediction prediction(@PathParam("name") String name, @PathParam("n") int n) {
+        return pipelines.predictVersion(name, n, sights);
     }
 
     @POST

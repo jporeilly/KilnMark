@@ -951,3 +951,86 @@ button.cv-danger {
     border-color: CanvasText;
   }
 }
+
+/* Predicted quality: an estimate, so its badge has a dashed outline beside the measured one. */
+.cv-predicted-badge {
+  border: 1px dashed currentColor;
+}
+
+.cv-tool.is-on {
+  border-color: var(--km-accent);
+  box-shadow: inset 0 -2px 0 var(--km-accent);
+}
+
+.cv-predicted-more ul {
+  margin: 2px 0 6px;
+  padding-left: 1.2em;
+}
+
+.cv-predicted-more summary {
+  cursor: pointer;
+}
+
+/* Suggestions beside the canvas, in the drawer's place. */
+.cv-suggest {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.cv-suggest .cv-side-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cv-suggest-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.cv-suggest-ai {
+  margin: 0;
+}
+
+.cv-suggest-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.cv-suggest-item {
+  border: 1px solid var(--km-border);
+  border-radius: var(--km-radius-card);
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  overflow-wrap: anywhere;
+}
+
+.cv-suggest-item p {
+  margin: 0;
+}
+
+.cv-suggest-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+}
+
+.cv-suggest-effect {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.cv-suggest-rows {
+  font-weight: 600;
+}

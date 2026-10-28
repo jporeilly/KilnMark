@@ -63,7 +63,14 @@ public class PipelineStore {
      */
     public record QualityRow(String stepId, String role, String assetUrn, Double measured, String measuredDimensions,
                              String measuredReasons, Double predicted, String predictedDimensions, String note,
-                             String gate) {
+                             String gate, String predictedDetail) {
+
+        public QualityRow(String stepId, String role, String assetUrn, Double measured, String measuredDimensions,
+                          String measuredReasons, Double predicted, String predictedDimensions, String note,
+                          String gate) {
+            this(stepId, role, assetUrn, measured, measuredDimensions, measuredReasons, predicted, predictedDimensions,
+                note, gate, null);
+        }
     }
 
     /** A pipeline in the list: whether its latest version is valid, and its latest run. */
@@ -575,11 +582,13 @@ public class PipelineStore {
         db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_step_quality (run_id, "
                 + "step_id, role, asset_urn, measured, measured_dimensions, measured_reasons, predicted, "
-                + "predicted_dimensions, note, gate) VALUES (?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?::jsonb, ?, ?::jsonb) "
+                + "predicted_dimensions, note, gate, predicted_detail) VALUES (?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, "
+                + "?::jsonb, ?, ?::jsonb, ?::jsonb) "
                 + "ON CONFLICT (run_id, step_id) DO UPDATE SET role = EXCLUDED.role, asset_urn = EXCLUDED.asset_urn, "
                 + "measured = EXCLUDED.measured, measured_dimensions = EXCLUDED.measured_dimensions, "
                 + "measured_reasons = EXCLUDED.measured_reasons, predicted = EXCLUDED.predicted, "
-                + "predicted_dimensions = EXCLUDED.predicted_dimensions, note = EXCLUDED.note, gate = EXCLUDED.gate")) {
+                + "predicted_dimensions = EXCLUDED.predicted_dimensions, note = EXCLUDED.note, gate = EXCLUDED.gate, "
+                + "predicted_detail = EXCLUDED.predicted_detail")) {
                 for (QualityRow q : rows) {
                     ps.setLong(1, runId);
                     ps.setString(2, q.stepId());
@@ -592,6 +601,7 @@ public class PipelineStore {
                     ps.setString(9, q.predictedDimensions());
                     ps.setString(10, q.note());
                     ps.setString(11, q.gate());
+                    ps.setString(12, q.predictedDetail());
                     ps.addBatch();
                 }
                 ps.executeBatch();
@@ -606,7 +616,8 @@ public class PipelineStore {
             List<QualityRow> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("SELECT q.step_id, q.role, q.asset_urn, q.measured, "
                 + "q.measured_dimensions::text, q.measured_reasons::text, q.predicted, q.predicted_dimensions::text, "
-                + "q.note, q.gate::text FROM kilnmark.pipeline_step_quality q LEFT JOIN kilnmark.pipeline_step_run s "
+                + "q.note, q.gate::text, q.predicted_detail::text FROM kilnmark.pipeline_step_quality q "
+                + "LEFT JOIN kilnmark.pipeline_step_run s "
                 + "ON s.run_id = q.run_id AND s.step_id = q.step_id WHERE q.run_id = ? "
                 + "ORDER BY s.position NULLS LAST, q.step_id")) {
                 ps.setLong(1, runId);
@@ -614,7 +625,7 @@ public class PipelineStore {
                     while (rs.next()) {
                         out.add(new QualityRow(rs.getString(1), rs.getString(2), rs.getString(3), getDouble(rs, 4),
                             rs.getString(5), rs.getString(6), getDouble(rs, 7), rs.getString(8), rs.getString(9),
-                            rs.getString(10)));
+                            rs.getString(10), rs.getString(11)));
                     }
                 }
             }

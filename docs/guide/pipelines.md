@@ -120,7 +120,8 @@ Once a run has finished, each step on the canvas shows the rows it passed on and
 (Finished, Ended early, Stopped by the engine or Failed), and each connection its rows. Each write
 and each quality gate also shows its measured quality, as a percentage and a word (Good, Fair or
 Poor), and a gate what it did with the rows, such as "900 passed · 100 quarantined" (see
-[Quality gates](#quality-gates)). The steps table under the canvas, and the step's settings panel
+[Quality gates](#quality-gates)), beside the score Kilnmark predicted for it (see
+[Predicted quality](#predicted-quality)). The steps table under the canvas, and the step's settings panel
 with its score per dimension and each rule's result, say the same in words.
 
 **Run now** runs the saved version. If you have changes that are not saved, Kilnmark says so first
@@ -369,6 +370,77 @@ When a run succeeds but a write scores below `min_score`, everyone following the
 notifications is told, once for that run, naming the write (**Pipeline quality below threshold**, see
 [Notifications and email alerts](notifications.md)). The threshold only tells; to stop a run on
 quality, use a gate.
+
+## Predicted quality
+
+Before a pipeline runs, Kilnmark predicts the quality of each write and gate from what the catalogue
+already knows about the tables and files it reads: their profiles (empty values, distinct values,
+value shapes, formats, most common values, spread), accepted patterns, relationships and rule
+results. No data is read. The estimate is carried through the steps, each with its own rule, and
+each write is then scored with the same measures a run uses for what it wrote, so the prediction
+and the measurement compare directly.
+
+On the canvas, each write and gate shows **Predicted 91% (estimate)** a moment after you stop
+editing; select it to see the score per dimension, what a gate is expected to do with each rule,
+and what the estimate could not tell or had to assume. A read step that has not been scanned has
+no profile, so what follows it is **unknown**: scan its source first. Kilnmark never fills a gap
+with a guess; a dimension it cannot judge has no score. The badge says how many things the estimate
+could not tell; the step's settings list them.
+
+The estimate uses a column's values (its most common values and its spread) only when you may see
+them, as the Quality pages decide: not at all for viewers, and for a column marked sensitive only
+for admins. Otherwise what depends on them, such as how many rows `salary <= 50000` keeps, is
+unknown, so the estimate never gives the values away.
+
+How each step carries the estimate:
+
+| Step | Rule |
+| --- | --- |
+| `read` | The asset's latest profile; with `row_limit`, the first rows are taken to be like the rest |
+| `filter`, `route` | `is [not] null` drops the known share of empty values; `=`, `<>`, `in` use the column's most common values when they account for every value (for a number or time, a value not among them is unknown, since it may be written another way); `<`, `>`, `between` use its quantiles, and bounds on one column joined with `and` make one range; `regex_match` tests each value shape with several letters and digits, and is unknown when they disagree or the pattern names particular letters or digits; `not` leaves out the rows where its test is empty, as SQL does; other conditions joined with `and` and `or` are combined as if independent, which the estimate says. Anything else keeps an unknown share of rows. The columns not tested are taken to be spread the same in the rows kept |
+| `compute` | A copied column keeps its profile; `trim` removes padding, `lower`/`upper` change case, `coalesce(x, 'v')` fills the empty values, `parse_date` empties the values in other shapes, `format_date` writes one shape. Arithmetic and joined text are empty when any part is. Other expressions are unknown |
+| `select` | Kept and renamed columns keep their profile; a cast keeps its empty values |
+| `lookup` | Rows with no match are the main key's empty values plus the share of its distinct values missing from the lookup side, from the stored relationship or the two columns' sketches. `keep` leaves those rows with empty lookup columns; `drop` and `rejected` take them out. With no relationship or sketches, unknown |
+| `aggregate` | One row per distinct value of a single group column; each group is unique. Several group columns, or an input whose rows are unknown: the row count is unknown |
+| `union` | Rows add up; each column's shares are weighted by its inputs' rows, a column an input lacks is empty there. Uniqueness is not predicted |
+| `dedupe` | One row per distinct key value; the key becomes unique. Whole rows: unchanged when a column is already unique |
+| `limit` | At most its rows, taken to be like the rest |
+| `gate` | Each rule's failing share from the column as it arrives (empty values, distinct values, most common values, value shapes, quantiles); for one of the asset's own rules on a column that arrives unchanged, its last result when the profile cannot tell. `quarantine` takes the failing share out of `out` (rules counted as failing independently), and what the rules guarantee holds there (no empty values for a not-null rule) |
+
+When a run starts, each write's and gate's prediction is stored with it. The run's page then shows
+**measured beside predicted**, per dimension, with the gap and what it says: a wide gap means the
+catalogue's metadata, or the pipeline, needs attention (a source changed since its last scan, or a
+step does something the estimate could not see).
+
+### Suggestions
+
+**Suggestions** on the canvas toolbar lists steps that would raise a write's predicted score, each
+with its predicted effect (an estimate), such as "Predicted 89% → 94% (+5 points, estimate)":
+
+- trim the spaces from padded text columns;
+- standardise a column whose dates are written in several formats (to `yyyy-MM-dd`; dates such as
+  `01/02/2024` are read day first);
+- keep one row per key when a key repeats;
+- drop the rows whose key has no match in the related table, with a lookup (the score does not
+  measure this, so the suggestion says how many rows it leaves out);
+- set aside, with a quarantining gate, rows outside a column's accepted patterns, or without a key.
+
+A suggestion that takes rows out (a dedupe, a gate, a lookup that drops rows with no match) also says
+how many fewer rows reach the write, since fewer rows can score higher. Choose **Add** to insert a
+suggestion's steps before the write: the YAML changes only where the steps go, and one **Undo** takes
+it out again. Suggestions are for stewards and admins.
+
+When an admin sets a model for **Pipeline suggestions** under **AI models**, it ranks and explains
+the suggestions and may add its own. It sees metadata only (asset and column names, kinds, shares
+and value shapes, never a value from the data) and only of sources whose AI rule lets that model
+see them: a source set to `none` is never shown, and one set to `local_only` only to a local
+model. What it suggests is checked before it is shown: only step types this server has, settings
+those steps take, and columns that reach that point; anything else is left out, and the panel says
+how many. A step that would read another table is only shown to the model when that table's source allows it.
+The model is asked when the panel opens and when you choose **Ask again**, at most six times a minute
+for each person; after an edit or an **Add**, only Kilnmark's own suggestions are worked out again.
+Without a model, or when it is refused, slow or fails, the suggestions are Kilnmark's own and the
+panel says why. Turn **Ask the AI model too** off to skip it.
 
 ## Checking as you type
 
