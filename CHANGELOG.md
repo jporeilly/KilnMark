@@ -43,7 +43,7 @@ details.
   {before, port, from, through}, effect: {output, before, after, dimensionsBefore, dimensionsAfter,
   rowsBefore, rowsAfter, note}}], ai: {state, message, model}}`. A run's quality rows gain
   `prediction` (`{unknown, assumptions, rows, gate}`) beside `predicted`.
-- **At run start** each write's and gate's prediction is stored (migration V16 adds
+- **At run start** each write's and gate's prediction is stored (migration V17 adds
   `pipeline_step_quality.predicted_detail`); a failed run keeps its predictions, with a note that the
   write was not measured.
 - **Suggestions** (`PipelineAdvisor`): rule-based candidates with no model, each tried out by

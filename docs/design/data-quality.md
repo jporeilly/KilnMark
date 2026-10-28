@@ -170,7 +170,7 @@ Built (docs/guide/pipelines.md, "Predicted quality"):
   distinct values used as a share of rows. `POST /api/v1/pipelines/predict` (YAML in, for the
   canvas, debounced) and `GET /api/v1/pipelines/{name}/versions/{n}/prediction`; no source is read.
 - **At run start** each write's and gate's prediction is stored in `pipeline_step_quality`
-  (`predicted`, `predicted_dimensions`, and V16's `predicted_detail`: reasons, unknowns,
+  (`predicted`, `predicted_dimensions`, and V17's `predicted_detail`: reasons, unknowns,
   assumptions, rows, a gate's expected decision), beside what the run then measures; a run that
   fails keeps its predictions.
 - **Suggestions** (`PipelineAdvisor`, `POST /api/v1/pipelines/suggest`, stewards): candidates by
