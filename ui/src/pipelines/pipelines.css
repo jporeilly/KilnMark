@@ -443,3 +443,599 @@ main:has(.pl-wide) {
 .pl-predicted-more summary {
   cursor: pointer;
 }
+
+/* ---- A run's timeline (RunTimeline): one bar per step, on a shared time axis ---- */
+
+.pl-tl-chart {
+  --pl-tl-name: 11rem;
+  display: grid;
+  gap: 4px;
+}
+
+.pl-tl-axis,
+.pl-tl-row {
+  display: grid;
+  grid-template-columns: var(--pl-tl-name) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.pl-tl-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.pl-tl-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+}
+
+.pl-tl-step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.pl-tl-track {
+  position: relative;
+  height: 22px;
+  border-radius: var(--km-radius-xs);
+  background: var(--km-surface-2);
+}
+
+.pl-tl-axis .pl-tl-track {
+  height: 18px;
+  background: none;
+}
+
+.pl-tl-axis-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: var(--km-text-xs);
+  color: var(--km-muted);
+  white-space: nowrap;
+}
+
+.pl-tl-axis-tick:first-child {
+  transform: none;
+}
+
+.pl-tl-axis-tick:last-child:not(:first-child) {
+  transform: translateX(-100%);
+}
+
+.pl-tl-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--km-divider);
+}
+
+/* Waiting for its first row: a light, hatched band; rows moving: the solid accent bar. */
+.pl-tl-wait,
+.pl-tl-bar {
+  box-sizing: border-box;
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  min-width: 2px;
+  border-radius: 3px;
+}
+
+.pl-tl-wait {
+  background: repeating-linear-gradient(135deg, var(--km-accent-tint) 0 4px, transparent 4px 8px);
+  border: 1px solid var(--km-accent);
+  opacity: 0.85;
+}
+
+.pl-tl-bar {
+  background: var(--km-accent-fill);
+}
+
+.pl-tl-bar.is-failed {
+  background: repeating-linear-gradient(135deg, var(--km-bad) 0 5px, var(--km-tint-red-bg) 5px 8px);
+}
+
+.pl-tl-bar.is-running,
+.pl-tl-wait.is-running {
+  border-right: 3px dotted var(--km-ink);
+}
+
+.pl-tl-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--km-ink-strong);
+}
+
+.pl-tl-tick.is-last {
+  background: var(--km-ink);
+}
+
+.pl-tl-none {
+  position: absolute;
+  inset: 0 8px;
+  display: flex;
+  align-items: center;
+  font-size: var(--km-text-xs);
+  color: var(--km-muted);
+}
+
+.pl-tl-row.is-slowest .pl-tl-track {
+  box-shadow: inset 0 0 0 2px var(--km-tint-orange-fg);
+}
+
+.pl-tl-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 8px 0 0;
+}
+
+.pl-tl-key span {
+  display: inline-block;
+  width: 18px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.pl-tl-key-wait {
+  background: repeating-linear-gradient(135deg, var(--km-accent-tint) 0 4px, transparent 4px 8px);
+  border: 1px solid var(--km-accent);
+}
+
+.pl-tl-key-bar {
+  background: var(--km-accent-fill);
+}
+
+.pl-tl .pl-tl-key .pl-tl-key-tick {
+  width: 2px;
+  height: 14px;
+  background: var(--km-ink-strong);
+}
+
+.pl-tl-table {
+  margin-top: 12px;
+}
+
+/* A phone: the step's name sits above its bar. */
+@media (max-width: 640px) {
+  .pl-tl-axis,
+  .pl-tl-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .pl-tl-axis .pl-tl-name {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .pl-tl-bar,
+  .pl-tl-key-bar {
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .pl-tl-wait,
+  .pl-tl-key-wait {
+    border-color: CanvasText;
+  }
+}
+
+/* ---- A run's log (RunLogPanel) ---- */
+
+.pl-log-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+
+.pl-log-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pl-log-downloads {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.pl-log-scroll {
+  margin: 0 0 12px;
+  max-height: 28rem;
+  overflow-y: auto;
+  border: 1px solid var(--km-border);
+  border-radius: var(--km-radius-inner);
+}
+
+.pl-log-scroll:focus-visible {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 2px;
+}
+
+.pl-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pl-log-event {
+  display: grid;
+  grid-template-columns: 6.5rem 5.5rem minmax(0, 1fr);
+  align-items: start;
+  gap: 4px 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--km-divider);
+}
+
+.pl-log-event:last-child {
+  border-bottom: 0;
+}
+
+.pl-log-event.is-error {
+  background: var(--km-tint-red-bg);
+}
+
+.pl-log-time {
+  color: var(--km-muted);
+  padding-top: 2px;
+}
+
+.pl-log-text {
+  overflow-wrap: anywhere;
+}
+
+.pl-log-detail {
+  display: block;
+  font-family: var(--km-mono);
+  margin-top: 2px;
+}
+
+@media (max-width: 640px) {
+  .pl-log-event {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pl-log-text {
+    grid-column: 1 / -1;
+  }
+
+  .pl-log-downloads {
+    margin-left: 0;
+  }
+}
+
+.pl-log-event > .km-chip {
+  justify-self: start;
+}
+
+/* The timeline's tiles, the critical path (a dashed outline and stripes, not colour alone) and the
+   quality marker at the end of a gate's or a write's bar. */
+.pl-tl-tiles {
+  margin-bottom: 16px;
+}
+
+.pl-tl-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.pl-tl-bar.is-critical {
+  outline: 2px dashed var(--km-ink-strong);
+  outline-offset: 1px;
+  background-image: repeating-linear-gradient(90deg, transparent 0 10px, rgb(255 255 255 / 0.35) 10px 12px);
+}
+
+.pl-tl-row.is-critical .pl-tl-step {
+  font-weight: 700;
+  text-decoration: underline dashed;
+  text-underline-offset: 3px;
+}
+
+.pl-tl-key .pl-tl-key-critical {
+  border: 2px dashed var(--km-ink-strong);
+  background: var(--km-accent-fill);
+}
+
+.pl-tl-mark {
+  position: absolute;
+  top: 1px;
+  transform: translateX(-100%);
+  padding-right: 2px;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.pl-tl-mark .km-chip {
+  font-size: var(--km-text-xs);
+  line-height: 1.4;
+  padding-block: 0;
+}
+
+/* A bar ending near the start: its marker sits after its end, so it stays inside the chart. */
+.pl-tl-mark.is-after {
+  transform: none;
+  padding: 0 0 0 4px;
+}
+
+/* ---- Where each step spent its time (RunTimeSpent): a 100% bar per step, each part its own pattern ---- */
+
+.pl-ts-limit {
+  margin: 4px 0 12px;
+}
+
+.pl-ts-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.pl-ts-row {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr) 15rem;
+  align-items: center;
+  gap: 12px;
+}
+
+.pl-ts-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+}
+
+.pl-ts-track {
+  display: block;
+  height: 20px;
+  border-radius: var(--km-radius-xs);
+  background: var(--km-surface-2);
+  overflow: hidden;
+}
+
+.pl-ts-bar {
+  display: flex;
+  height: 100%;
+}
+
+.pl-ts-working,
+.pl-ts-waiting,
+.pl-ts-heldup {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* Working: solid. Waiting for rows: light diagonal hatching. Held up: dense cross-hatching in amber. */
+.pl-ts-working {
+  background: var(--km-accent-fill);
+}
+
+.pl-ts-waiting {
+  background: repeating-linear-gradient(135deg, var(--km-accent-tint) 0 4px, transparent 4px 8px);
+  box-shadow: inset 0 0 0 1px var(--km-accent);
+}
+
+.pl-ts-heldup {
+  background:
+    repeating-linear-gradient(45deg, var(--km-tint-amber-fg) 0 2px, transparent 2px 5px),
+    repeating-linear-gradient(-45deg, var(--km-tint-amber-fg) 0 2px, transparent 2px 5px),
+    var(--km-tint-amber-bg);
+}
+
+.pl-ts-row.is-limit .pl-ts-track {
+  box-shadow: 0 0 0 2px var(--km-tint-orange-fg);
+}
+
+.pl-ts-result {
+  overflow-wrap: anywhere;
+}
+
+.pl-tl-key .pl-ts-working,
+.pl-tl-key .pl-ts-waiting,
+.pl-tl-key .pl-ts-heldup {
+  display: inline-block;
+  width: 18px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* ---- Rows a second through the run (RunRates): a line per step, a Held up band under it ---- */
+
+.pl-rt-axis,
+.pl-rt-row {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr) 15rem;
+  align-items: center;
+  gap: 12px;
+}
+
+.pl-rt-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.pl-rt-ticks {
+  height: 22px;
+  background: none;
+}
+
+.pl-rt-mark {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%) translateY(2px);
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 700;
+  background: var(--km-tint-amber-bg);
+  color: var(--km-tint-amber-fg);
+  border: 1px solid var(--km-tint-amber-fg);
+  z-index: 1;
+}
+
+.pl-rt-mark.is-error {
+  background: var(--km-tint-red-bg);
+  color: var(--km-tint-red-fg);
+  border-color: var(--km-tint-red-fg);
+}
+
+.pl-rt-chart {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  border-radius: var(--km-radius-xs);
+  cursor: crosshair;
+}
+
+.pl-rt-chart:focus-visible {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 2px;
+}
+
+.pl-rt-line {
+  display: block;
+  width: 100%;
+  height: 36px;
+  background: var(--km-surface-2);
+  border-radius: var(--km-radius-xs);
+}
+
+.pl-rt-line path {
+  fill: none;
+  stroke: var(--km-accent);
+  stroke-width: 2;
+}
+
+.pl-rt-cursor {
+  stroke: var(--km-ink-strong);
+  stroke-width: 1;
+}
+
+.pl-rt-band {
+  display: block;
+  width: 100%;
+  height: 10px;
+}
+
+.pl-rt-band rect {
+  fill: var(--km-tint-amber-fg);
+  opacity: 0.55;
+}
+
+.pl-rt-band rect.is-full {
+  opacity: 1;
+}
+
+.pl-rt-read {
+  min-height: 1.2em;
+  color: var(--km-ink);
+}
+
+.pl-rt-value {
+  display: grid;
+  gap: 2px;
+}
+
+.pl-rt-held {
+  color: var(--km-tint-amber-fg);
+}
+
+.pl-tl-key .pl-rt-key-line {
+  display: inline-block;
+  width: 18px;
+  height: 2px;
+  background: var(--km-accent);
+}
+
+.pl-tl-key .pl-rt-key-band {
+  display: inline-block;
+  width: 18px;
+  height: 8px;
+  background: var(--km-tint-amber-fg);
+}
+
+.pl-tl-key .pl-rt-key-mark {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 700;
+  background: var(--km-tint-amber-bg);
+  color: var(--km-tint-amber-fg);
+  border: 1px solid var(--km-tint-amber-fg);
+}
+
+.pl-rt-marks {
+  margin: 8px 0 0;
+  padding-left: 1.5rem;
+}
+
+@media (max-width: 640px) {
+  .pl-ts-row,
+  .pl-rt-axis,
+  .pl-rt-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .pl-rt-axis .pl-rt-name,
+  .pl-rt-axis .pl-rt-value {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .pl-ts-working,
+  .pl-rt-band rect {
+    background: CanvasText;
+    fill: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .pl-ts-waiting {
+    background: repeating-linear-gradient(135deg, CanvasText 0 1px, Canvas 1px 6px);
+    forced-color-adjust: none;
+  }
+
+  .pl-ts-heldup {
+    background: repeating-linear-gradient(45deg, CanvasText 0 2px, Canvas 2px 4px);
+    forced-color-adjust: none;
+  }
+
+  .pl-rt-line path {
+    stroke: CanvasText;
+  }
+}

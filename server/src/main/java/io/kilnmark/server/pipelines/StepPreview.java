@@ -591,7 +591,8 @@ final class StepPreview {
         steps.add(new GraphStep(COLLECTOR, collector, Map.of()));
         List<Edge> edges = new ArrayList<>(graph.edges());
         edges.add(new Edge(new PortRef(step, port), new PortRef(COLLECTOR, "in")));
-        KilnGraphRunner runner = new KilnGraphRunner(memoryBytes, capacity, stall, stopWait);
+        KilnGraphRunner runner = new KilnGraphRunner(memoryBytes, capacity, stall,
+            KilnGraphRunner.DEFAULT_PROGRESS_EVERY, stopWait);
         if (runnerOut != null) {
             runnerOut.set(runner);
         }

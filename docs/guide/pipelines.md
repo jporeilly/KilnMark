@@ -134,6 +134,13 @@ The canvas makes room for these lines and for the connections' labels: where a l
 the run is too tight, it moves steps apart on the screen only, and the YAML's `layout:` stays as it
 was. **Auto-layout** saves a layout with room for them, and moving a step saves where it is shown.
 
+**While a run goes**, the canvas looks again every two seconds. Each step shows its rows so far
+and how many it is handling a second ("19,814 out · 8,351 rows/s"), or "Waiting for rows", and
+each connection the rows that have crossed it. The step holding the run back says **Slowest**, in
+a chip of its own with an hourglass, and has an orange edge: rows are queuing in front of it while
+the steps after it keep up, so it is the one to look at first (a slow query in a `read`, a
+`lookup` against a large table, a `write` to a busy database).
+
 **Run now** runs the saved version. If you have changes that are not saved, Kilnmark says so first
 and asks you to confirm; save them to run them.
 
@@ -545,11 +552,47 @@ status changes.
 - **Summary:** the status, the version that ran, who asked, when it started and finished, how long
   it took and how many rows its writes received. A failed run says why, naming the step where the
   failure started.
+- **The run at a glance:** four tiles: its **wall-clock time**, the **most steps at once**, the
+  **longest step** (while it runs, the slowest step now) and **what limited this run**. Every time
+  on the page counts from when the worker started on the run, by the worker's own clock.
+- **Where each step spent its time:** one bar per step, its whole time from start to end split into
+  **Working** (solid), **Waiting for rows** (light hatching: the steps before it had nothing for it)
+  and **Held up by the next step** (amber cross-hatching: the step after it was not keeping up, so
+  there was no room to hand rows on; this is back-pressure). At the right, how much of its time it
+  was working and what it did: a gate's verdict (Passed, Quarantined 229, Stopped the run), a
+  write's measured quality (Quality 99% (Good)), else its rows. Above the bars one line says **what
+  limited this run**: of the steps that others were held up by, the one working the largest share
+  of its time, such as "What limited this run: check, working 90% of the time". When nothing was
+  held up it says the run was limited by reading its source. Speed that step up (a simpler rule, a
+  smaller lookup, a faster target) and the run gets faster; speeding up the others does little.
+  **Show where each step spent its time as a table** gives the same in words. While the run goes
+  this is drawn from its latest progress.
+- **Rows per second through the run:** a line per step of the rows it handled each second, from
+  the snapshots taken every two seconds, with its peak at the right. Under it, an amber band shows
+  how full its output queue was (**Held up**: the taller and stronger, the fuller; full means the
+  step was waiting for the next one), and the words "output queue full 78% of the time". Numbered
+  marks on the time axis show the run's warnings and errors, and a gate starting to set rows aside,
+  listed under the chart. Point at a line, or focus it and use the arrow keys, to read the time,
+  rows a second and how full the queue was at that point. **Show rows a second as a table** gives
+  each step's peak, average and how often its output queue was full.
 - **Steps:** for each step, how it ended (Finished; Ended early, as a `limit` does once it has its
   rows; Stopped by the engine, because another step failed or the run was stopped; or Failed), the
   rows that came in and went out, with the count on each port when a step has several (for
-  example, a filter's `out` and `rejected`), the most memory it held, and its error if it failed.
-  A write that was stopped wrote nothing, unless it used `commit_every`.
+  example, a filter's `out` and `rejected`), the most memory it held, how long it took and its
+  share of the run's time, and its error if it failed. A write that was stopped wrote nothing, unless
+  it used `commit_every`. While the run goes, the table shows each step's rows so far and rows a
+  second instead.
+- **Log:** what happened, in order: the run starting, each step starting, its first row in and
+  out, its last row out and how it ended, a gate starting to set rows aside and its verdict ("Gate
+  check quarantined 229 rows (email format: 229)", the rules that failed and their counts; a rule's
+  own message, which can quote the data, is its detail), warnings and errors, and the run's notes.
+  The log is read again from the start when the run ends, so nothing written at the last moment is
+  missed. Choose a step,
+  or **Warnings and errors** or **Errors only**, to narrow it, and **Download as text** (or
+  **NDJSON**, one JSON object a line) to save it with the same choices. Where the engine's own
+  message could quote values from your data, it shows only to those who may see why the run
+  failed (stewards, or admins when the run touched columns marked sensitive); others see that it
+  was held back. A run keeps up to 10,000 events; the log says if it was cut short.
 - **What it wrote:** each table or file a write step wrote, with its mode and rows. Choose one to
   open it in the catalogue.
 - **Lineage:** which assets each written asset came from.

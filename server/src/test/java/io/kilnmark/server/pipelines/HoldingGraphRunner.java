@@ -30,6 +30,12 @@ public class HoldingGraphRunner implements GraphRunner {
 
     @Override
     public RunResult run(PipelineGraph graph, MetadataEmitter metadata) throws InterruptedException {
+        return run(graph, metadata, io.kilnmark.kiln.graph.RunListener.NONE);
+    }
+
+    @Override
+    public RunResult run(PipelineGraph graph, MetadataEmitter metadata, io.kilnmark.kiln.graph.RunListener listener)
+        throws InterruptedException {
         LAST.set(graph);
         String fail = failWith;
         if (fail != null) {
@@ -39,6 +45,6 @@ public class HoldingGraphRunner implements GraphRunner {
         while (hold) {
             Thread.sleep(100);
         }
-        return real.run(graph, metadata);
+        return real.run(graph, metadata, listener);
     }
 }

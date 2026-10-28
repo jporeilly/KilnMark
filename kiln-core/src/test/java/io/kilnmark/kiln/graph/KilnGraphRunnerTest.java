@@ -334,7 +334,8 @@ class KilnGraphRunnerTest {
         AtomicReference<Object> outcome = new AtomicReference<>();
         Thread caller = Thread.ofVirtual().start(() -> {
             try {
-                outcome.set(new KilnGraphRunner(64L << 20, 2, Duration.ofSeconds(30), Duration.ofMillis(300))
+                outcome.set(new KilnGraphRunner(64L << 20, 2, Duration.ofSeconds(30), KilnGraphRunner.DEFAULT_PROGRESS_EVERY,
+                    Duration.ofMillis(300))
                     .run(g, e -> { }));
             } catch (InterruptedException e) {
                 outcome.set(e);

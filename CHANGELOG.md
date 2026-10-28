@@ -13,6 +13,26 @@ details.
 
 ### Details
 
+- **See inside a run** (V19; `RunListener`, `RunProgress`, `RunLog`; `RunTimeSpent`, `RunRates`, `RunLogPanel`).
+  The engine times every step (`StepResult.startedAt`, `firstRowAt`, `lastRowAt`, `finishedAt`) and
+  adds up where its time went: waiting for rows on its inputs and held up by the next step
+  (`RowSet` put and take waits, counted only when it has to wait; `pipeline_step_run` keeps them,
+  and `duration_ms` is now filled). Through an optional `RunListener` on a thread of its own (a
+  listener that throws or hangs never fails or holds up a run; no allocation per batch) it reports
+  each step starting, its first row in and out, its last row out and how it ended, the engine's
+  notes, and a snapshot every two seconds: rows and rows a second per step, waits so far, each
+  queue's fill, and the **Slowest** step. The worker keeps the latest snapshot on `pipeline_run` and
+  rows a second in `pipeline_run_point` (appended, at most 900 points, spikes kept), and the log in `pipeline_run_event` (at most 10,000
+  events; the engine's words and rule messages are the held-back detail; each write gives up after
+  5 seconds). Every time is on the worker's clock. `GET /api/v1/pipeline-runs/{id}/events` (by
+  step and level, paged), `.../series` and a streamed `.../events/download` (text or NDJSON). The run page shows
+  the run at a glance in tiles, **where each step spent its time** (working, waiting for rows, held
+  up by the next step, with "What limited this run: check, working 90% of the time"), **rows per
+  second through the run** (a line per step with a Held up band for its output queue, and warnings,
+  errors and gates quarantining marked on the time axis), each step's time and share of the run,
+  live rows and rates while it runs, and a **Log** to filter and download, with gate verdicts in
+  it. While a run goes the canvas shows each step's rows so far and rows a second ("19,814 out ·
+  8,351 rows/s") and marks the step holding it back Slowest, in words and with an orange edge.
 - **Preview at a step** (`POST /api/v1/pipelines/preview`, `POST /api/v1/pipelines/{name}/versions/{n}/preview`,
   `PipelinePreviews`, `StepPreview`; docs/design/pipelines.md, "Preview at a step"; the guide's "Preview a
   step"). The first rows (100 by default, at most 1,000) leaving one output of one step of the YAML as it
@@ -40,7 +60,6 @@ details.
   nothing. `KilnGraphRunner` also takes a `stopWait`: how long a stopped run waits for its steps'
   threads (unbounded unless set; previews wait 5 s). `Preview.text` and `Preview.utf8Length` are now
   public, for the step preview's collector.
-
 - **Canvas chips after a run** (`StepNode` `stepChips`, `components/ui/StatusChip`). Each kind of
   chip has its own look and words, so none depends on colour: rows and outcome in a neutral chip
   with a rows icon ("5,000 rows out · Finished"; Ended early, Stopped and Failed in a chip of their

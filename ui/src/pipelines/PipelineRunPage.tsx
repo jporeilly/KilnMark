@@ -24,7 +24,19 @@ import { dimensionRows, ESTIMATE, gapWords, pointsWords } from "./prediction";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { formatBytes, formatDuration, RunStatus, runTime } from "./RunStatus";
+import { RunTimeSpent } from "./RunTimeSpent";
+import { RunRates } from "./RunRates";
+import { RunLogPanel } from "./RunLogPanel";
+import { rateWords } from "./live";
+import { runOrigin, shareWords } from "./timeline";
 import "./pipelines.css";
+
+const LIVE_STATE: Record<string, string> = {
+  not_started: "Not started",
+  waiting: "Waiting for rows",
+  running: "Running",
+  ended: "Ended",
+};
 
 const OUTCOME: Record<NonNullable<PipelineStepRun["outcome"]>, string> = {
   finished: "Finished",
@@ -228,9 +240,10 @@ function StepQuality({ q }: { q: PipelineStepQuality }) {
 }
 
 /**
- * One pipeline run: its status and timings, each step's rows in and out per port, memory, time and
- * error, what its writes wrote (linked to the catalogue) and the lineage recorded. Looks again every
- * two seconds until the run has finished, and says when its status changes.
+ * One pipeline run: its status and timings, a timeline of its steps, each step's rows in and out per
+ * port, memory, time and error (while it runs, each step's rows so far and rate, and the step holding
+ * it back), its log, what its writes wrote (linked to the catalogue) and the lineage recorded. Looks
+ * again every two seconds until the run has finished, and says when its status changes.
  */
 export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) {
   useTitle(`Pipeline run ${id}`);
@@ -238,6 +251,10 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
   const [detail, setDetail] = useState<PipelineRunDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  // Counts each look at the run, so the log can fetch what happened since.
+  const [tick, setTick] = useState(0);
+  // When the run was last fetched, by the browser's clock: a live run's "now" is its last snapshot plus the time since.
+  const [fetchedAt, setFetchedAt] = useState(0);
   const last = useRef<string | null>(null);
 
   const load = useCallback(() => {
@@ -249,6 +266,8 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
         }
         last.current = d.run.status;
         setDetail(d);
+        setFetchedAt(Date.now());
+        setTick((n) => n + 1);
         setError(null);
       })
       .catch((e: Error) => setError(e.message));
@@ -287,8 +306,13 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
     );
   }
   const r = detail.run;
-  // The engine does not time steps yet: the column appears once it does.
-  const timed = detail.steps.some((s) => s.durationMs != null);
+  // The run's time on the worker's clock (when it started and finished with the run), as the charts use.
+  const origin = runOrigin(detail);
+  const workerEnd = detail.progress?.workerFinishedAt ? Date.parse(detail.progress.workerFinishedAt) : null;
+  const runMs = origin != null && workerEnd != null ? Math.max(1, workerEnd - origin) : null;
+  const clock = { fetchedAt };
+  const live = unfinished && detail.steps.length === 0 ? (detail.progress?.steps ?? []) : [];
+  const stepNames = detail.steps.length > 0 ? detail.steps.map((s) => s.step) : (detail.progress?.steps.map((s) => s.step) ?? []);
   return (
     <>
       <p className="small">
@@ -359,9 +383,57 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
         )}
       </section>
 
+      <section aria-labelledby="spent-h" className="panel">
+        <h2 id="spent-h">Where each step spent its time</h2>
+        <RunTimeSpent detail={detail} clock={clock} />
+      </section>
+
+      <section aria-labelledby="rates-h" className="panel">
+        <h2 id="rates-h">Rows per second through the run</h2>
+        <RunRates detail={detail} clock={clock} tick={tick} />
+      </section>
+
       <section aria-labelledby="steps-h" className="panel">
         <h2 id="steps-h">Steps</h2>
-        {detail.steps.length === 0 ? (
+        {live.length > 0 ? (
+          <>
+            <p className="small muted">So far; the full record of each step is kept when the run ends.</p>
+            <div className="table-scroll" role="region" aria-label="Steps of the run so far" tabIndex={0}>
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Step</th>
+                    <th scope="col">Now</th>
+                    <th scope="col">Rows in</th>
+                    <th scope="col">Rows out</th>
+                    <th scope="col">Rows a second</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {live.map((s) => (
+                    <tr key={s.step}>
+                      <th scope="row">
+                        <span className="mono">{s.step}</span>
+                      </th>
+                      <td>
+                        {detail.progress?.slowest === s.step ? (
+                          <StatusChip tone="orange" kind="slowest">
+                            Slowest
+                          </StatusChip>
+                        ) : (
+                          LIVE_STATE[s.state]
+                        )}
+                      </td>
+                      <td>{formatNumber(s.rowsIn)}</td>
+                      <td>{formatNumber(s.rowsOut)}</td>
+                      <td>{s.state === "running" ? rateWords(s.rowsPerSecond) : "–"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : detail.steps.length === 0 ? (
           <p className="muted">{unfinished ? "The steps are recorded when the run ends." : "No steps were recorded."}</p>
         ) : (
           <div className="table-scroll" role="region" aria-label="Steps of the run" tabIndex={0}>
@@ -373,7 +445,8 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
                   <th scope="col">Rows in</th>
                   <th scope="col">Rows out</th>
                   <th scope="col">Peak memory</th>
-                  {timed && <th scope="col">Time</th>}
+                  <th scope="col">Time</th>
+                  <th scope="col">Share of the run</th>
                   <th scope="col">Error</th>
                 </tr>
               </thead>
@@ -416,7 +489,8 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
                       )}
                     </td>
                     <td>{formatBytes(s.peakMemory)}</td>
-                    {timed && <td>{formatDuration(s.durationMs)}</td>}
+                    <td>{formatDuration(s.durationMs)}</td>
+                    <td>{runMs && s.durationMs != null ? shareWords(Math.min(1, s.durationMs / runMs)) : "–"}</td>
                     <td className={s.error ? "pl-bad" : undefined}>{s.error ?? "–"}</td>
                   </tr>
                 ))}
@@ -424,6 +498,11 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
             </table>
           </div>
         )}
+      </section>
+
+      <section aria-labelledby="log-h" className="panel">
+        <h2 id="log-h">Log</h2>
+        <RunLogPanel runId={r.id} steps={stepNames} origin={origin} tick={tick} final={!unfinished} />
       </section>
 
       {(detail.quality?.length ?? 0) > 0 && (

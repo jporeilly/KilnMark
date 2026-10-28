@@ -24,6 +24,7 @@ import io.kilnmark.kiln.graph.GraphRunner;
 import io.kilnmark.kiln.graph.GraphStep;
 import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.graph.PortRef;
+import io.kilnmark.kiln.graph.RunListener;
 
 /**
  * One run of a compiled pipeline, without the database: finds what it reads and writes, runs the
@@ -170,6 +171,12 @@ final class PipelineExecution {
      */
     Outcome run(GraphRunner runner, PipelineGraph graph, List<WriteTarget> writes, RunContext context,
                 BooleanSupplier cancelled, BooleanSupplier shutdown) {
+        return run(runner, graph, writes, context, cancelled, shutdown, RunListener.NONE);
+    }
+
+    /** Runs {@code graph} as above, telling {@code listener} how it goes (the run's log and progress). */
+    Outcome run(GraphRunner runner, PipelineGraph graph, List<WriteTarget> writes, RunContext context,
+                BooleanSupplier cancelled, BooleanSupplier shutdown, RunListener listener) {
         Set<String> written = new HashSet<>();
         writes.forEach(w -> written.add(w.urn()));
         List<MetadataEvent> events = Collections.synchronizedList(new ArrayList<>());
@@ -203,7 +210,7 @@ final class PipelineExecution {
                 if (written.contains(e.assetUrn()) && writerEvent(e) && events.size() < MAX_EVENTS) {
                     events.add(e);
                 }
-            });
+            }, listener);
         } catch (InterruptedException e) {
             interrupted = true;
         } catch (RuntimeException e) {
@@ -335,9 +342,13 @@ final class PipelineExecution {
                     outNode.put(port, n);
                 }
             });
+            java.time.Duration took = r == null ? null : r.duration();
             out.add(new PipelineStore.StepRun(id, step.step().type(), position++, rowsInTotal, rowsOut,
-                ports.toString(), r == null ? null : peak, null, context.scrub(error),
-                r == null ? null : r.outcome().name().toLowerCase(java.util.Locale.ROOT)));
+                ports.toString(), r == null ? null : peak, took == null ? null : took.toMillis(), context.scrub(error),
+                r == null ? null : r.outcome().name().toLowerCase(java.util.Locale.ROOT),
+                r == null ? null : r.startedAt(), r == null ? null : r.firstRowAt(), r == null ? null : r.lastRowAt(),
+                r == null ? null : r.finishedAt(), took == null ? null : r.waitingForRowsNanos() / 1_000_000,
+                took == null ? null : r.heldUpNanos() / 1_000_000));
         }
         return out;
     }

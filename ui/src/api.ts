@@ -374,6 +374,37 @@ export async function call<T>(path: string, init?: RequestInit, contentType = "a
   return body as T;
 }
 
+/** A GET whose answer is text (a file to save), with the same sign-in and errors as call. */
+export async function callText(path: string, accept: string): Promise<string> {
+  const token = currentToken();
+  let response: Response;
+  try {
+    response = await fetch(path, { headers: headers({ Accept: accept }, token) });
+  } catch {
+    throw new ApiError("Cannot reach the Kilnmark server. Is it running?", 0);
+  }
+  const text = await response.text();
+  if (response.status === 401) signedOut(token != null);
+  if (!response.ok) {
+    let message = `The server answered ${response.status}`;
+    try {
+      message = JSON.parse(text)?.error ?? message;
+    } catch {
+      // not JSON
+    }
+    throw new ApiError(message, response.status);
+  }
+  return text;
+}
+
+/** "?step=a&level=warn", leaving out what is not set. */
+function logQuery(q: Record<string, string | number | null | undefined>): string {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v != null && v !== "") p.set(k, String(v));
+  const s = p.toString();
+  return s ? `?${s}` : "";
+}
+
 /** Checks a token without storing it; resolves to who it belongs to. */
 async function checkToken(token: string): Promise<Me> {
   let response: Response;
@@ -1204,7 +1235,76 @@ export type PipelineStepRun = {
   error: string | null;
   /** How the step ended; a step the engine stopped is not a clean finish. Null when not recorded. */
   outcome: "finished" | "ended_early" | "stopped" | "failed" | null;
+  /**
+   * When it started, had its first row (in; out for a step with no input), handed on its last row
+   * (out; in for a step with no output) and ended. Null for a step that never started; missing from
+   * older servers.
+   */
+  startedAt?: string | null;
+  firstRowAt?: string | null;
+  lastRowAt?: string | null;
+  finishedAt?: string | null;
+  /** Time it waited for rows on its inputs, and for room on its outputs (held up by the next step); the rest is working. */
+  waitingForRowsMs?: number | null;
+  heldUpMs?: number | null;
 };
+/** One step while a run goes: its rows so far and its rate since the snapshot before. */
+export type PipelineStepProgress = {
+  step: string;
+  state: "not_started" | "waiting" | "running" | "ended";
+  rowsIn: number;
+  rowsOut: number;
+  rowsPerSecond: number;
+  startedAt: string | null;
+  firstRowAt: string | null;
+  lastRowAt: string | null;
+  finishedAt: string | null;
+  /** So far: time it waited for rows, and was held up by the next step; how full its fullest output queue is now (0 to 1). */
+  waitingForRowsMs?: number;
+  heldUpMs?: number;
+  outputFill?: number;
+};
+/** One connection while a run goes: rows so far, and whether its queue is full or empty now. */
+export type PipelineEdgeProgress = {
+  from: string;
+  fromPort: string;
+  to: string;
+  toPort: string;
+  rows: number;
+  queued: number;
+  capacity: number;
+  full: boolean;
+  empty: boolean;
+  /** Batches waiting over capacity, 0 to 1. */
+  fill?: number;
+};
+/**
+ * Where a run's rows are, as the worker last wrote it (every two seconds while it runs). `slowest`
+ * is the step holding the run back: its input queues are full while its output queues are not.
+ */
+export type PipelineRunProgress = {
+  at: string;
+  /** When the worker started on the run, and finished with it: every time on the run page counts from the worker's clock. */
+  workerStartedAt?: string;
+  workerFinishedAt?: string | null;
+  slowest: string | null;
+  steps: PipelineStepProgress[];
+  edges: PipelineEdgeProgress[];
+};
+export type PipelineRunEventLevel = "info" | "warn" | "error";
+/** One event of a run's log: Kilnmark's words, and the engine's detail unless it is held back (withheld says why). */
+export type PipelineRunEvent = {
+  seq: number;
+  at: string;
+  step: string | null;
+  level: PipelineRunEventLevel;
+  kind: string;
+  text: string;
+  detail: string | null;
+  withheld: string | null;
+};
+export type PipelineRunEvents = { events: PipelineRunEvent[]; next: number | null };
+export type RunLogFilter = { step?: string | null; level?: PipelineRunEventLevel | null };
 export type PipelineWrittenAsset = {
   step: string;
   urn: string;
@@ -1272,7 +1372,14 @@ export type PipelineRunDetail = {
   notes: string[];
   /** Missing from servers before measured quality. */
   quality?: PipelineStepQuality[];
+  /** Where the rows are, while the run goes (and the last snapshot once it has ended); missing from older servers. */
+  progress?: PipelineRunProgress | null;
 };
+/**
+ * A run's rows a second over time, read on its own (pipelinesApi.series): t is ms from workerStartedAt; r each step's
+ * rows/s, q its output queue's fill (0 to 1), in steps' order. When stride changes the points were merged: read again.
+ */
+export type PipelineProgressSeries = { steps: string[]; stride: number; points: { t: number; r: number[]; q: number[] }[] };
 export type StepTypeSetting = {
   key: string;
   label: string;
@@ -1324,6 +1431,18 @@ export const pipelinesApi = {
   runs: (name: string) => call<PipelineRun[]>(`${pipe(name)}/runs?limit=50`),
   runDetail: (id: number) => call<PipelineRunDetail>(`/api/v1/pipeline-runs/${id}`),
   cancel: (id: number) => call<PipelineRun>(`/api/v1/pipeline-runs/${id}/cancel`, { method: "POST" }),
+  /** A run's rows a second over time, the points after `after` ms (all when left out). */
+  series: (id: number, after?: number) =>
+    call<PipelineProgressSeries>(`/api/v1/pipeline-runs/${id}/series${after != null ? `?after=${after}` : ""}`),
+  /** A page of a run's log; level is the least serious shown (warn: warnings and errors). */
+  events: (id: number, f: RunLogFilter & { after?: number; limit?: number } = {}) =>
+    call<PipelineRunEvents>(`/api/v1/pipeline-runs/${id}/events${logQuery({ ...f, after: f.after ?? 0, limit: f.limit ?? 200 })}`),
+  /** The whole log (with the same filters) as text, or NDJSON, for saving. */
+  downloadLog: (id: number, format: "text" | "ndjson", f: RunLogFilter = {}) =>
+    callText(
+      `/api/v1/pipeline-runs/${id}/events/download${logQuery({ ...f, format })}`,
+      format === "ndjson" ? "application/x-ndjson" : "text/plain",
+    ),
   /** The step catalogue with settings schemas, from which the canvas builds its palette and settings panels. */
   steps: () => call<StepType[]>("/api/v1/steps"),
   /**

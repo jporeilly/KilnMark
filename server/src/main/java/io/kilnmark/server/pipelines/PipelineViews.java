@@ -104,9 +104,15 @@ public final class PipelineViews {
      * count meaning the engine did not report that port on its own. {@code outcome} is how the step
      * ended: finished, ended_early (a limit had its rows, or nothing read on), stopped (by the
      * engine, after another step failed or the run was stopped) or failed; null if not recorded.
+     * The times: when it started, had its first row (in; out for a source), handed on its last row
+     * (out; in for a sink) and ended, on the worker's clock; null for a step that never started, and
+     * for older runs. {@code waitingForRowsMs} and {@code heldUpMs}: the time it waited for rows on
+     * its inputs, and for room on its outputs (held up by the steps after it); the rest is working.
      */
     public record StepRunView(String step, String type, int position, Long rowsIn, Long rowsOut, JsonNode ports,
-                              Long peakMemory, Long durationMs, String error, String outcome) {
+                              Long peakMemory, Long durationMs, String error, String outcome, Instant startedAt,
+                              Instant firstRowAt, Instant lastRowAt, Instant finishedAt, Long waitingForRowsMs,
+                              Long heldUpMs) {
     }
 
     /** What a write step wrote, and whether it is now in the catalogue. */
@@ -118,8 +124,46 @@ public final class PipelineViews {
     public record LineageLink(String step, String input, String output) {
     }
 
+    /**
+     * {@code progress}: where the run's rows are, as the worker last wrote it (every two seconds while
+     * it runs, and once at its end), or null: {at, slowest, steps: [{step, state (not_started, waiting,
+     * running, ended), rowsIn, rowsOut, rowsPerSecond, startedAt, firstRowAt, lastRowAt, finishedAt}],
+     * edges: [{from, fromPort, to, toPort, rows, queued, capacity, full, empty}]}. {@code slowest} is
+     * the step holding the run back: its input queues are full while its output queues are not.
+     * Counts, states and times only, on the worker's clock ({@code workerStartedAt}, and
+     * {@code workerFinishedAt} once it has finished). Rows a second over the run are read on their
+     * own ({@code GET .../series}), so this stays small however long the run.
+     */
     public record RunDetail(RunSummary run, List<StepRunView> steps, List<WrittenAsset> written, List<String> read,
-                            List<LineageLink> lineage, List<String> notes, List<StepQualityView> quality) {
+                            List<LineageLink> lineage, List<String> notes, List<StepQualityView> quality,
+                            JsonNode progress) {
+    }
+
+    /**
+     * A run's rows a second over time ({@code GET /api/v1/pipeline-runs/{id}/series?after=}): its steps,
+     * how many snapshots a point stands for, and the points after {@code after}: {@code t} ms from the
+     * worker's start, {@code r} each step's rows a second and {@code q} its fullest output queue's fill
+     * (0 to 1), in {@code steps}' order.
+     */
+    public record RunSeries(JsonNode steps, int stride, List<SeriesPoint> points) {
+    }
+
+    public record SeriesPoint(long t, JsonNode r, JsonNode q) {
+    }
+
+    /**
+     * One event of a run's log. {@code text} is in Kilnmark's words; {@code detail} is an engine's
+     * message, which may quote values from the data, and is null with {@code withheld} saying why
+     * when the caller may not read it. {@code level} is info, warn or error; {@code kind} one of
+     * run_started, step_started, first_row_in, first_row_out, last_row_out, step_ended, engine_note,
+     * gate_quarantining, gate_verdict, run_note, run_ended, log_truncated.
+     */
+    public record RunEvent(int seq, Instant at, String step, String level, String kind, String text, String detail,
+                           String withheld) {
+    }
+
+    /** A page of a run's log; {@code next} is the {@code after} for the next page, or null at the end. */
+    public record RunEvents(List<RunEvent> events, Integer next) {
     }
 
     /** A score from 0 to 1, overall and per dimension, with its main reasons (words and counts, never values). */
