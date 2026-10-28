@@ -200,7 +200,17 @@ steps:
   list (`input: [a, b, c]`, or a list under `inputs`) connects several steps to a port that takes
   many.
 - Steps are listed in any order; the edges decide the order of work.
-- Unknown keys are errors, with the line number, so typing mistakes are caught.
+- Unknown keys are errors, with the line number, so typing mistakes are caught. One top-level key
+  is the exception to "checked": `layout` (round 3, step 2) holds where the canvas draws each step,
+  step id → `{ x, y }`, and reading accepts and ignores whatever it holds, so a pipeline runs the
+  same however it is drawn. The canvas writes it last, under a comment saying so:
+
+  ```yaml
+  # Where the canvas draws each step. Kilnmark ignores this when it runs the pipeline.
+  layout:
+    customers: {x: 40, y: 120}
+    tidy: {x: 320, y: 120}
+  ```
 - Secrets never appear: steps name saved sources, and the source holds the credentials.
 
 ### Reading and checking (`io.kilnmark.kiln.yaml`)
@@ -641,7 +651,10 @@ asset's previous profile.
 
 - `GET /api/v1/steps` lists every `StepFactory`: those on the class path (`ServiceLoader`:
   kiln-steps' transforms) and the server's `read` and `write`. `write` takes `target`, or `table` and
-  `path` as other names for it, and `mode` defaults to `create`, which never overwrites.
+  `path` as other names for it, and `mode` defaults to `create`, which never overwrites. Its entry
+  also has `writerSettings`: for each kind of source that can be written to, the keys of the writer
+  settings a step writing to such a source takes, so the canvas offers only those of the chosen
+  source (round 3, step 2).
 - The write step calls the writers' contract directly: `Connector.writeOptions()` for its
   allow-list, `Connector.writtenAssetPath(...)` for the written asset's URN, `WriteOptions.profiling`
   for the source's profiling settings, and `WriteReport.PROFILED` and `PROFILE_ERROR` for a profile
@@ -649,7 +662,45 @@ asset's previous profile.
 - The server reaches the compiler through `PipelineCompilerPort` (adapter `KilnPipelineCompiler`)
   and the runner as a `GraphRunner` bean, both produced in `PipelineCompilers`; tests replace
   the runner with an alternative bean.
-- The YAML editor is a plain textarea with line numbers for now; the canvas replaces it in step 2.
+- The YAML editor is a plain textarea with line numbers; the canvas (step 2) sits beside it as a
+  second view of the same text.
+
+### The canvas (round 3, step 2, decisions)
+
+- **One document.** The YAML text is the only state. The canvas reads the graph from it with the
+  `yaml` library (2.9.1, ISC). A change is made as text edits (`ui/src/pipelines/canvas/patch.ts`):
+  the canvas finds the pairs and items that change by their offsets in the parsed document, writes
+  just those, and splices them into the original text, so every other byte stays as it was
+  (comments and their alignment, indentation, flow maps' spacing, folded and literal blocks,
+  quoting, line endings). A setting that changes is written afresh: a scalar keeps the comment after
+  it, an expression is double-quoted, a list is written `[a, b]`. A change whose result would not
+  read back as YAML is refused, and so is one to a step with both `input` and `inputs`, which the
+  compiler refuses too. Unreadable YAML leaves the last good graph on the canvas, read-only, under a
+  banner.
+- **Positions** go in the top-level `layout` block (section 2). Moving a step writes its position;
+  a change that adds, removes, renames, duplicates, connects or disconnects steps also writes the
+  position of every step drawn without one, so nothing jumps when the layout is worked out again.
+  Steps without a position are placed by a layered layout (dagre). Run's unsaved-changes question
+  ignores the layout block.
+- **Room to work.** The canvas takes the page's full width and the window's height. The step list
+  is an icon rail of folders (`StepFactory.category()`, from `GET /api/v1/steps`), expanding to a
+  searchable tree; the settings are a drawer over the canvas, open while a step is selected; a
+  minimap shows large pipelines. **Fit** fits the whole pipeline into the part of the canvas not
+  under the list or the drawer; **Readable size** never goes below a readable zoom.
+- **React Flow** (`@xyflow/react` 12.12.0, MIT) draws the canvas; the canvas, React Flow and
+  `yaml` load lazily with the pipeline page, outside the main bundle. React Flow's own keyboard
+  moves are off: the canvas's keys move between connected steps, Shift+arrows move a step, C opens
+  Connect to…, and changes are announced in a live region. Connections are not focusable; they
+  are removed with Disconnect in the settings. Single-letter keys act only on the canvas and its
+  toolbar.
+- **Settings panels** come from `GET /api/v1/steps`: one control per `SettingSpec` kind; column
+  pickers use the columns validation worked out for the step's inputs; a write shows the writer
+  settings its source's kind takes (`writerSettings`).
+- **Connections** are refused before they reach the YAML when the compiler would refuse them: a
+  step reading from itself, loops, a single-input port fed twice, and the same edge twice (two
+  ports of one step may both feed a port that takes many). References split at the last dot, as
+  `PortRef.parse` does.
+- Later: data previews at a step, and the gate step's predicted scores on the canvas (step 3).
 
 ## 7. Next
 

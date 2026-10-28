@@ -38,6 +38,11 @@ public final class AggregateFactory implements StepFactory {
     }
 
     @Override
+    public String category() {
+        return io.kilnmark.kiln.StepCategories.AGGREGATE;
+    }
+
+    @Override
     public String label() {
         return "Aggregate";
     }

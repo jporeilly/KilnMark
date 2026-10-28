@@ -1,0 +1,631 @@
+/**
+ * The pipeline YAML as a graph, and every change the canvas makes to it. The YAML text is the one
+ * document both the canvas and the YAML editor edit: the canvas reads the graph from the text, and
+ * each change rewrites only the pairs and items it changes (patch.ts), splicing them into the text,
+ * so every other line stays exactly as it was: comments and their alignment, indentation, quoting,
+ * folded blocks and settings the canvas does not know. Nothing here touches the page; every function
+ * is pure (text in, text out), which is what the unit tests check.
+ *
+ * Positions on the canvas live in a top-level `layout:` block, step id → { x, y }. The compiler
+ * accepts and ignores it (docs/design/pipelines.md section 2), so a pipeline runs the same however
+ * its steps are drawn.
+ */
+import { isMap, isScalar, isSeq, LineCounter, parseDocument, Scalar, type Document, type Pair, type YAMLMap } from "yaml";
+import type { StepType } from "../../api";
+import { flowYaml, isBlockMap, isBlockSeq, Patch, scalarYaml } from "./patch.ts";
+
+export type Catalogue = ReadonlyMap<string, StepType>;
+export const catalogueOf = (types: StepType[]): Catalogue => new Map(types.map((t) => [t.type, t]));
+
+/** A setting as the YAML holds it. */
+export type Value = string | number | boolean | null | Value[] | { [key: string]: Value };
+
+/** One input a step names: `port` is null for `input:`, which means the step's only input port. */
+export type InputLink = { port: string | null; from: string; fromPort: string };
+
+export type GraphStep = {
+  id: string;
+  type: string | null;
+  /** Every key but id, type, input and inputs, in the order written. */
+  settings: Record<string, Value>;
+  /** For scalar settings, the text as written (`007` stays `007`). */
+  texts: Record<string, string>;
+  inputs: InputLink[];
+  /** Line of the step (from 1), and of each of its keys. */
+  line: number;
+  keyLines: Record<string, number>;
+};
+
+export type GraphEdge = { from: string; fromPort: string; to: string; toPort: string };
+export type Point = { x: number; y: number };
+
+export type Graph = {
+  name: string | null;
+  description: string | null;
+  steps: GraphStep[];
+  edges: GraphEdge[];
+  positions: Record<string, Point>;
+};
+
+export type ReadResult = { ok: true; graph: Graph } | { ok: false; error: string; line: number };
+
+export const STEP_ID = /^[a-z][a-z0-9_-]{0,63}$/;
+const STEP_KEYS = new Set(["id", "type", "input", "inputs"]);
+export const LAYOUT = "layout";
+const LAYOUT_COMMENT = " Where the canvas draws each step. Kilnmark ignores this when it runs the pipeline.";
+/** Setting kinds whose text is an expression: written double-quoted, as the guides write them. */
+const EXPRESSION_KINDS = new Set(["expression", "expressions", "conditions"]);
+
+// ---- reading ----
+
+function parse(text: string) {
+  const lines = new LineCounter();
+  const doc = parseDocument(text, { lineCounter: lines });
+  return { doc, lines };
+}
+
+const lineOf = (lines: LineCounter, node: { range?: [number, number, number] | null } | null | undefined) =>
+  node?.range ? lines.linePos(node.range[0]).line : 0;
+
+/** `a` is a's out port; `a.rejected` another of its ports (split at the last dot, as the compiler does). */
+export function parseRef(ref: string): { from: string; fromPort: string } {
+  const dot = ref.lastIndexOf(".");
+  return dot < 0 ? { from: ref.trim(), fromPort: "out" } : { from: ref.slice(0, dot).trim(), fromPort: ref.slice(dot + 1).trim() };
+}
+
+export const refText = (from: string, fromPort: string) => (fromPort === "out" ? from : `${from}.${fromPort}`);
+
+function scalarText(node: unknown): string | null {
+  if (!isScalar(node)) return null;
+  if (node.value == null) return null;
+  if (typeof node.source === "string" && node.type === Scalar.PLAIN) return node.source;
+  return String(node.value);
+}
+
+function refsOf(node: unknown): string[] {
+  if (isSeq(node)) return node.items.map(scalarText).filter((s): s is string => !!s && s.trim() !== "");
+  const t = scalarText(node);
+  return t && t.trim() !== "" ? [t] : [];
+}
+
+function linksOf(map: YAMLMap): InputLink[] {
+  const out: InputLink[] = [];
+  const input = map.get("input", true);
+  const inputs = map.get("inputs", true);
+  if (input != null) {
+    for (const r of refsOf(input)) out.push({ port: null, ...parseRef(r) });
+  } else if (isMap(inputs)) {
+    for (const p of inputs.items) {
+      const port = scalarText(p.key);
+      if (!port) continue;
+      for (const r of refsOf(p.value)) out.push({ port, ...parseRef(r) });
+    }
+  }
+  return out;
+}
+
+function stepMaps(doc: Document): YAMLMap[] {
+  const steps = doc.get("steps", true);
+  return isSeq(steps) ? steps.items.filter((i): i is YAMLMap => isMap(i)) : [];
+}
+
+const idOf = (map: YAMLMap) => {
+  const id = map.get("id", true);
+  return isScalar(id) && typeof id.value === "string" ? id.value : null;
+};
+
+/** The step type's ports; route adds one output per route, and unknown types get the ports used. */
+export function portsOf(
+  step: Pick<GraphStep, "type" | "settings" | "inputs">,
+  catalogue: Catalogue,
+): { inputs: string[]; many: Set<string>; outputs: string[] } {
+  const t = step.type ? catalogue.get(step.type) : undefined;
+  if (!t) {
+    const named = [...new Set(step.inputs.map((l) => l.port ?? "in"))];
+    return { inputs: named.length ? named : ["in"], many: new Set(), outputs: ["out"] };
+  }
+  const outputs = [...t.outputs];
+  if (step.type === "route") {
+    const routes = step.settings.routes;
+    if (routes && typeof routes === "object" && !Array.isArray(routes)) {
+      const routed = Object.keys(routes).filter((k) => !outputs.includes(k));
+      return { inputs: [...t.inputs], many: new Set(t.manyInputs), outputs: [...routed, ...outputs] };
+    }
+  }
+  return { inputs: [...t.inputs], many: new Set(t.manyInputs), outputs };
+}
+
+/** The input port a link feeds. */
+export const portOfLink = (link: InputLink, ports: { inputs: string[] }) => link.port ?? ports.inputs[0] ?? "in";
+
+/**
+ * Reads the graph from the YAML: steps, settings, edges and positions. A document YAML cannot read
+ * is not a graph; a document that reads but is not a valid pipeline still is (validation names its
+ * problems), so the canvas can show what is there.
+ */
+export function readGraph(text: string, catalogue: Catalogue = new Map()): ReadResult {
+  const { doc, lines } = parse(text);
+  if (doc.errors.length > 0) {
+    const e = doc.errors[0];
+    const line = e.linePos?.[0]?.line ?? 0;
+    return { ok: false, error: e.message.split("\n")[0].replace(/ at line \d+, column \d+:?$/, ""), line };
+  }
+  if (doc.contents != null && !isMap(doc.contents)) {
+    return { ok: false, error: "A pipeline starts with kilnmark: pipeline/v1, followed by its name and steps", line: 1 };
+  }
+  const steps: GraphStep[] = [];
+  const seen = new Set<string>();
+  for (const map of stepMaps(doc)) {
+    const id = idOf(map);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const settings: Record<string, Value> = {};
+    const texts: Record<string, string> = {};
+    const keyLines: Record<string, number> = {};
+    for (const pair of map.items) {
+      const key = scalarText(pair.key);
+      if (key == null) continue;
+      keyLines[key] = lineOf(lines, pair.key as Scalar);
+      if (STEP_KEYS.has(key)) continue;
+      const node = pair.value;
+      settings[key] = (node == null ? null : (node as { toJSON: () => Value }).toJSON()) as Value;
+      if (isScalar(node)) {
+        const t = scalarText(node);
+        if (t != null) texts[key] = t;
+      }
+    }
+    const typeNode = map.get("type", true);
+    steps.push({
+      id,
+      type: isScalar(typeNode) && typeNode.value != null ? String(typeNode.value) : null,
+      settings,
+      texts,
+      inputs: linksOf(map),
+      line: lineOf(lines, map),
+      keyLines,
+    });
+  }
+  const edges: GraphEdge[] = [];
+  for (const s of steps) {
+    const ports = portsOf(s, catalogue);
+    for (const l of s.inputs) edges.push({ from: l.from, fromPort: l.fromPort, to: s.id, toPort: portOfLink(l, ports) });
+  }
+  const positions: Record<string, Point> = {};
+  const layout = doc.get(LAYOUT, true);
+  if (isMap(layout)) {
+    for (const p of layout.items) {
+      const id = scalarText(p.key);
+      const v = p.value;
+      if (!id || !isMap(v)) continue;
+      const x = Number((v.get("x", true) as Scalar | undefined)?.value);
+      const y = Number((v.get("y", true) as Scalar | undefined)?.value);
+      if (Number.isFinite(x) && Number.isFinite(y)) positions[id] = { x, y };
+    }
+  }
+  const top = (k: string) => scalarText(doc.get(k, true));
+  return { ok: true, graph: { name: top("name"), description: top("description"), steps, edges, positions } };
+}
+
+// ---- checks ----
+
+/** Steps downstream of `id`, following edges. */
+function downstream(graph: Graph, id: string): Set<string> {
+  const out = new Set<string>();
+  const queue = [id];
+  while (queue.length) {
+    const at = queue.shift()!;
+    for (const e of graph.edges) {
+      if (e.from === at && !out.has(e.to)) {
+        out.add(e.to);
+        queue.push(e.to);
+      }
+    }
+  }
+  return out;
+}
+
+/** Why an output port may not feed an input port, in words, or null when it may. */
+export function connectProblem(graph: Graph, edge: GraphEdge, catalogue: Catalogue): string | null {
+  const from = graph.steps.find((s) => s.id === edge.from);
+  const to = graph.steps.find((s) => s.id === edge.to);
+  if (!from || !to) return "Both steps must be on the canvas.";
+  if (edge.from === edge.to) return `A step cannot read from itself: ${edge.to} would feed its own input.`;
+  const fromPorts = portsOf(from, catalogue);
+  const toPorts = portsOf(to, catalogue);
+  if (!fromPorts.outputs.includes(edge.fromPort)) return `${edge.from} has no output called ${edge.fromPort}.`;
+  if (toPorts.inputs.length === 0) return `${edge.to} (${to.type}) reads from no other step: it is where rows start.`;
+  if (!toPorts.inputs.includes(edge.toPort)) return `${edge.to} has no input called ${edge.toPort}.`;
+  const feeding = graph.edges.filter((e) => e.to === edge.to && e.toPort === edge.toPort);
+  if (feeding.some((e) => e.from === edge.from && e.fromPort === edge.fromPort)) {
+    return `${refText(edge.from, edge.fromPort)} already feeds ${edge.to}.${edge.toPort}.`;
+  }
+  if (!toPorts.many.has(edge.toPort) && feeding.length > 0) {
+    return `${edge.to}.${edge.toPort} already reads from ${refText(feeding[0].from, feeding[0].fromPort)}. Remove that connection first, or combine the rows with a union step.`;
+  }
+  if (downstream(graph, edge.to).has(edge.from)) {
+    return `That would make a loop: ${edge.from} already reads, through other steps, from ${edge.to}.`;
+  }
+  return null;
+}
+
+/** Every connection the step may make from its outputs, and to its inputs, that connectProblem allows. */
+export function possibleConnections(graph: Graph, id: string, catalogue: Catalogue): GraphEdge[] {
+  const me = graph.steps.find((s) => s.id === id);
+  if (!me) return [];
+  const out: GraphEdge[] = [];
+  const mine = portsOf(me, catalogue);
+  for (const other of graph.steps) {
+    if (other.id === id) continue;
+    const theirs = portsOf(other, catalogue);
+    for (const fromPort of mine.outputs) {
+      for (const toPort of theirs.inputs) {
+        const e = { from: id, fromPort, to: other.id, toPort };
+        if (!connectProblem(graph, e, catalogue)) out.push(e);
+      }
+    }
+    for (const fromPort of theirs.outputs) {
+      for (const toPort of mine.inputs) {
+        const e = { from: other.id, fromPort, to: id, toPort };
+        if (!connectProblem(graph, e, catalogue)) out.push(e);
+      }
+    }
+  }
+  return out;
+}
+
+// ---- changes ----
+
+export type Change = { text: string; id?: string } | { error: string };
+
+const CANNOT_READ = "The YAML cannot be read, so the canvas cannot change it. Fix the YAML first.";
+
+type Ctx = { doc: Document; p: Patch; graph: Graph; catalogue: Catalogue };
+
+/**
+ * Makes a change as text edits on the original YAML, so only what changes is rewritten. The result
+ * must read back as YAML; if it would not, the change is refused rather than written.
+ */
+function change(text: string, catalogue: Catalogue, fn: (ctx: Ctx) => string | void): Change {
+  const { doc } = parse(text);
+  if (doc.errors.length) return { error: CANNOT_READ };
+  if (!isMap(doc.contents)) return { error: "The YAML is not a pipeline, so the canvas cannot change it." };
+  const read = readGraph(text, catalogue);
+  if (!read.ok) return { error: CANNOT_READ };
+  const p = new Patch(text);
+  try {
+    const id = fn({ doc, p, graph: read.graph, catalogue });
+    const out = p.result();
+    if (parseDocument(out).errors.length) {
+      return { error: "The canvas could not make this change without breaking the YAML. Make it in the YAML tab." };
+    }
+    return { text: out, id: id ?? undefined };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}
+
+function findStep(doc: Document, id: string): YAMLMap | null {
+  return stepMaps(doc).find((m) => idOf(m) === id) ?? null;
+}
+
+const topPair = (doc: Document, key: string) =>
+  ((doc.contents as YAMLMap).items as Pair[]).find((p) => isScalar(p.key) && String(p.key.value) === key) ?? null;
+
+const has = (map: YAMLMap, key: string) => (map.items as Pair[]).some((p) => isScalar(p.key) && String(p.key.value) === key);
+
+/** Writes a step's inputs: `input:` for its only port, `inputs:` by port for a step with several. */
+function writeInputs(ctx: Ctx, map: YAMLMap, links: InputLink[], ports: { inputs: string[] }) {
+  const id = idOf(map);
+  if (has(map, "input") && has(map, "inputs")) {
+    throw new Error(`Step ${id} has both input and inputs. Keep one of them in the YAML tab, then try again.`);
+  }
+  const { p } = ctx;
+  const old = has(map, "input") ? "input" : has(map, "inputs") ? "inputs" : null;
+  if (links.length === 0) {
+    if (old) p.remove(map, old);
+    return;
+  }
+  const only = ports.inputs.length <= 1 && links.every((l) => l.port == null || l.port === (ports.inputs[0] ?? "in"));
+  let key: string;
+  let value: unknown;
+  if (only) {
+    const refs = links.map((l) => refText(l.from, l.fromPort));
+    key = "input";
+    value = refs.length === 1 ? refs[0] : refs;
+  } else {
+    const byPort: Record<string, string[]> = {};
+    for (const l of links) (byPort[portOfLink(l, ports)] ??= []).push(refText(l.from, l.fromPort));
+    const v: Record<string, string | string[]> = {};
+    for (const port of [...ports.inputs, ...Object.keys(byPort)]) {
+      if (byPort[port] && !(port in v)) v[port] = byPort[port].length === 1 ? byPort[port][0] : byPort[port];
+    }
+    key = "inputs";
+    value = v;
+  }
+  if (old && old !== key) p.remove(map, old);
+  p.put(map, key, value, { inline: true, after: ["id", "type"] });
+}
+
+/** Writes positions in the layout block (creating it, last, if there is none) and drops `drop`. */
+function writeLayout(ctx: Ctx, positions: Record<string, Point>, drop: Iterable<string> = []) {
+  const { doc, p } = ctx;
+  const xy = (pt: Point) => ({ x: Math.round(pt.x), y: Math.round(pt.y) });
+  const pair = topPair(doc, LAYOUT);
+  const layout = pair?.value;
+  const dropped = new Set(drop);
+  if (pair && isBlockMap(layout) && layout.items.length > 0) {
+    const entries = layout.items as Pair[];
+    const fresh: string[] = [];
+    const indent = p.col((entries[0].key as unknown as { range: [number, number, number] }).range[0]);
+    for (const [id, pt] of Object.entries(positions)) {
+      if (dropped.has(id)) continue;
+      const e = entries.find((x) => isScalar(x.key) && String(x.key.value) === id);
+      if (e && e.value) {
+        const r = (e.value as unknown as { range: [number, number, number] }).range;
+        const padded = /^\{\s/.test(p.text.slice(r[0], r[1]));
+        p.replace(r[0], p.valueEnd(e), flowYaml(xy(pt), false, padded));
+      } else if (!e) {
+        fresh.push(`${" ".repeat(indent)}${scalarYaml(id)}: ${flowYaml(xy(pt))}${p.eol}`);
+      } else {
+        p.replace((e.key as unknown as { range: [number, number, number] }).range[0], p.valueEnd(e), `${scalarYaml(id)}: ${flowYaml(xy(pt))}`);
+      }
+    }
+    for (const id of dropped) p.remove(layout, id);
+    if (fresh.length) {
+      const end = p.pairEnd(entries[entries.length - 1]);
+      p.insert(end, (p.text[end - 1] === "\n" ? "" : p.eol) + fresh.join(""));
+    }
+    return;
+  }
+  const kept: Record<string, Point> = {};
+  if (pair && isMap(layout)) {
+    for (const e of layout.items as Pair[]) {
+      const id = scalarText(e.key);
+      const v = e.value;
+      if (id && isMap(v) && !dropped.has(id)) kept[id] = { x: Number(v.get("x")), y: Number(v.get("y")) };
+    }
+  }
+  for (const [id, pt] of Object.entries(positions)) if (!dropped.has(id)) kept[id] = pt;
+  const lines = Object.entries(kept).map(([id, pt]) => `  ${scalarYaml(id)}: ${flowYaml(xy(pt))}`);
+  if (pair) {
+    if (lines.length === 0) {
+      p.replace(p.lineStart((pair.key as unknown as { range: [number, number, number] }).range[0]), p.pairEnd(pair), "");
+      return;
+    }
+    const start = (pair.key as unknown as { range: [number, number, number] }).range[0];
+    p.replace(start, p.valueEnd(pair), `${LAYOUT}:${p.eol}${lines.join(p.eol)}`);
+    return;
+  }
+  if (lines.length === 0) return;
+  const top = doc.contents as YAMLMap & { range: [number, number, number] };
+  const end = top.range[1];
+  const lead = end > 0 && p.text[end - 1] !== "\n" ? p.eol : "";
+  p.insert(end, `${lead}${p.eol}#${LAYOUT_COMMENT}${p.eol}${LAYOUT}:${p.eol}${lines.join(p.eol)}${p.eol}`);
+}
+
+/** The text of a new step: id, type and inputs, as the steps around it are written. */
+function newStepLines(indent: number, pairs: [string, unknown][]): string[] {
+  return pairs.map(([k, v]) => `${k}: ${k === "inputs" ? flowYaml(v) : Array.isArray(v) ? flowYaml(v) : scalarYaml(v as string)}`).map((l, i) => (i === 0 ? l : " ".repeat(indent) + l));
+}
+
+/** Inserts a new step after `after` (or at the end of the steps), written as the others are. */
+function insertStep(ctx: Ctx, pairs: [string, unknown][], after: string | null) {
+  const { doc, p } = ctx;
+  const stepsPair = topPair(doc, "steps");
+  const seq = stepsPair?.value;
+  if (isBlockSeq(seq) && seq.items.length > 0) {
+    const items = seq.items as unknown as { range: [number, number, number] }[];
+    const anchorIndex = after ? seq.items.findIndex((m) => isMap(m) && idOf(m) === after) : -1;
+    const anchor = items[anchorIndex >= 0 ? anchorIndex : items.length - 1];
+    const { prefix } = p.itemPrefix(items[0]);
+    const lines = newStepLines(prefix.length, pairs);
+    const end = p.itemEnd(anchor);
+    const lead = p.text[end - 1] === "\n" ? "" : p.eol;
+    p.insert(end, `${lead}${p.eol}${prefix}${lines.join(p.eol)}${p.eol}`);
+    return;
+  }
+  // No steps yet (or written in flow style): the steps are written out as a block list.
+  const existing = isSeq(seq) ? (seq.toJSON() as Record<string, unknown>[]) : [];
+  const blocks = existing.map((m) =>
+    newStepLines(4, Object.entries(m) as [string, unknown][]).join(p.eol),
+  );
+  blocks.push(newStepLines(4, pairs).join(p.eol));
+  const body = blocks.map((b) => `  - ${b}`).join(p.eol + p.eol);
+  if (stepsPair) {
+    const start = (stepsPair.key as unknown as { range: [number, number, number] }).range[0];
+    p.replace(start, p.valueEnd(stepsPair), `steps:${p.eol}${body}`);
+  } else {
+    const top = doc.contents as YAMLMap & { range: [number, number, number] };
+    const end = top.range[1];
+    p.insert(end, `${end > 0 && p.text[end - 1] !== "\n" ? p.eol : ""}steps:${p.eol}${body}${p.eol}`);
+  }
+}
+
+/** A step id from a type ("filter", "filter-2", …) not used yet. */
+export function freshId(base: string, taken: Iterable<string>): string {
+  const used = new Set(taken);
+  let clean = base.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z]+/, "").slice(0, 56);
+  if (!clean) clean = "step";
+  if (!used.has(clean)) return clean;
+  for (let n = 2; ; n++) if (!used.has(`${clean}-${n}`)) return `${clean}-${n}`;
+}
+
+const stepIds = (doc: Document) => stepMaps(doc).map(idOf).filter((x): x is string => !!x);
+
+/**
+ * Adds a step of `type`. With `after`, the new step reads from that step's port (if it takes
+ * input) and is listed after it; otherwise it is added at the end, unconnected. A position left
+ * in the layout by an earlier step of the same id is replaced, or dropped.
+ */
+export function addStep(
+  text: string,
+  type: string,
+  catalogue: Catalogue,
+  after?: { step: string; port?: string } | null,
+  position?: Point,
+): Change {
+  return change(text, catalogue, (ctx) => {
+    const id = freshId(type, stepIds(ctx.doc));
+    const t = catalogue.get(type);
+    const pairs: [string, unknown][] = [
+      ["id", id],
+      ["type", type],
+    ];
+    if (after && t && t.inputs.length > 0) {
+      const ref = refText(after.step, after.port ?? "out");
+      if (t.inputs.length > 1) pairs.push(["inputs", { [t.inputs[0]]: ref }]);
+      else pairs.push(["input", ref]);
+    }
+    insertStep(ctx, pairs, after?.step ?? null);
+    if (position) writeLayout(ctx, { [id]: position });
+    else if (ctx.graph.positions[id]) writeLayout(ctx, {}, [id]);
+    return id;
+  });
+}
+
+/** Removes a step, every connection to it and its position. */
+export function removeStep(text: string, id: string, catalogue: Catalogue): Change {
+  return change(text, catalogue, (ctx) => {
+    const seq = topPair(ctx.doc, "steps")?.value;
+    const map = findStep(ctx.doc, id);
+    if (!map || !isSeq(seq)) throw new Error(`There is no step ${id}.`);
+    if (!isBlockSeq(seq)) throw new Error("The steps are written in flow style ([ … ]). Remove the step in the YAML tab.");
+    for (const s of ctx.graph.steps) {
+      if (s.id === id || !s.inputs.some((l) => l.from === id)) continue;
+      writeInputs(ctx, findStep(ctx.doc, s.id)!, s.inputs.filter((l) => l.from !== id), portsOf(s, catalogue));
+    }
+    ctx.p.removeItem(seq, map as never);
+    if (ctx.graph.positions[id]) writeLayout(ctx, {}, [id]);
+  });
+}
+
+/** A copy of the step, with the same settings and inputs, listed after it. */
+export function duplicateStep(text: string, id: string, offset: Point = { x: 40, y: 40 }): Change {
+  return change(text, new Map(), (ctx) => {
+    const { p } = ctx;
+    const map = findStep(ctx.doc, id) as (YAMLMap & { range: [number, number, number] }) | null;
+    if (!map) throw new Error(`There is no step ${id}.`);
+    const newId = freshId(`${id}-copy`, stepIds(ctx.doc));
+    const { start } = p.itemPrefix(map);
+    const end = p.itemEnd(map);
+    const idNode = map.get("id", true) as Scalar & { range: [number, number, number] };
+    const copy = p.text.slice(start, idNode.range[0]) + scalarYaml(newId) + p.text.slice(idNode.range[1], end);
+    p.insert(end, `${p.text[end - 1] === "\n" ? "" : p.eol}${p.eol}${copy}${copy.endsWith("\n") ? "" : p.eol}`);
+    const at = ctx.graph.positions[id];
+    if (at) writeLayout(ctx, { [newId]: { x: at.x + offset.x, y: at.y + offset.y } });
+    else if (ctx.graph.positions[newId]) writeLayout(ctx, {}, [newId]);
+    return newId;
+  });
+}
+
+/** Gives a step a new id, and changes every input naming it and its position to match. */
+export function renameStep(text: string, id: string, to: string): Change {
+  if (!STEP_ID.test(to)) {
+    return { error: "A step id starts with a small letter, then small letters, digits, - and _ (at most 64)." };
+  }
+  if (to === id) return { text };
+  return change(text, new Map(), (ctx) => {
+    const { doc, p } = ctx;
+    if (findStep(doc, to)) throw new Error(`There is already a step called ${to}.`);
+    const map = findStep(doc, id);
+    if (!map) throw new Error(`There is no step ${id}.`);
+    p.scalar(map.get("id", true) as Scalar, scalarYaml(to));
+    const fix = (node: unknown) => {
+      if (isScalar(node) && typeof node.value === "string") {
+        const r = parseRef(node.value);
+        if (r.from === id) p.scalar(node, scalarYaml(refText(to, r.fromPort)));
+      } else if (isSeq(node)) node.items.forEach(fix);
+    };
+    for (const m of stepMaps(doc)) {
+      fix(m.get("input", true));
+      const inputs = m.get("inputs", true);
+      if (isMap(inputs)) inputs.items.forEach((e) => fix(e.value));
+    }
+    const layout = topPair(doc, LAYOUT)?.value;
+    if (isMap(layout)) {
+      const mine = (layout.items as Pair[]).find((e) => scalarText(e.key) === id);
+      const stale = (layout.items as Pair[]).find((e) => scalarText(e.key) === to);
+      // A position left by an earlier step called `to` would become a second key: it goes.
+      if (stale) {
+        if (isBlockMap(layout)) p.remove(layout, to);
+        else throw new Error("The layout is written in flow style. Change it in the YAML tab.");
+      }
+      if (mine && isScalar(mine.key)) p.scalar(mine.key, scalarYaml(to));
+    }
+    return to;
+  });
+}
+
+/** Connects an output port to an input port, or says why not. */
+export function connect(text: string, edge: GraphEdge, catalogue: Catalogue): Change {
+  return change(text, catalogue, (ctx) => {
+    const problem = connectProblem(ctx.graph, edge, catalogue);
+    if (problem) throw new Error(problem);
+    const step = ctx.graph.steps.find((s) => s.id === edge.to)!;
+    const ports = portsOf(step, catalogue);
+    const links = [...step.inputs, { port: ports.inputs.length > 1 ? edge.toPort : null, from: edge.from, fromPort: edge.fromPort }];
+    writeInputs(ctx, findStep(ctx.doc, edge.to)!, links, ports);
+  });
+}
+
+/** Removes the connection from an output port to an input port. */
+export function disconnect(text: string, edge: GraphEdge, catalogue: Catalogue): Change {
+  return change(text, catalogue, (ctx) => {
+    const step = ctx.graph.steps.find((s) => s.id === edge.to);
+    if (!step) throw new Error(`There is no step ${edge.to}.`);
+    const ports = portsOf(step, catalogue);
+    const links = step.inputs.filter(
+      (l) => !(l.from === edge.from && l.fromPort === edge.fromPort && portOfLink(l, ports) === edge.toPort),
+    );
+    writeInputs(ctx, findStep(ctx.doc, edge.to)!, links, ports);
+  });
+}
+
+const isEmpty = (v: Value | undefined) =>
+  v === undefined ||
+  v === null ||
+  (typeof v === "string" && v === "") ||
+  (Array.isArray(v) && v.length === 0) ||
+  (typeof v === "object" && v !== null && !Array.isArray(v) && Object.keys(v).length === 0);
+
+const NUMBER_TEXT = /^-?(0|[1-9]\d*)(\.\d+)?([eE][-+]?\d+)?$/;
+
+/**
+ * Sets one setting of a step, or removes it when the value is empty. Lists are written in flow
+ * style (`[a, b]`), mappings one entry a line; expressions are double-quoted, as the guides write
+ * them. A text value that YAML would read as a number or true/false is quoted, so it stays text. A
+ * number setting given as text is written exactly as typed, so no digits are lost.
+ */
+export function setSetting(text: string, id: string, key: string, value: Value | undefined, kind?: string): Change {
+  if (STEP_KEYS.has(key)) return { error: `${key} is not a setting.` };
+  return change(text, new Map(), (ctx) => {
+    const map = findStep(ctx.doc, id);
+    if (!map) throw new Error(`There is no step ${id}.`);
+    if (isEmpty(value)) {
+      ctx.p.remove(map, key);
+      return;
+    }
+    if (kind === "number" && typeof value === "string" && NUMBER_TEXT.test(value.trim())) {
+      const at = (map.items as Pair[]).find((e) => scalarText(e.key) === key);
+      if (at?.value && isScalar(at.value)) ctx.p.scalar(at.value, value.trim());
+      else ctx.p.put(map, key, Number(value), { raw: value.trim() });
+      return;
+    }
+    ctx.p.put(map, key, value, { quote: kind != null && EXPRESSION_KINDS.has(kind) });
+  });
+}
+
+/**
+ * Writes where steps are drawn. Positions of steps that no longer exist are dropped, so the block
+ * never names a step the pipeline does not have.
+ */
+export function setPositions(text: string, positions: Record<string, Point>): Change {
+  return change(text, new Map(), (ctx) => {
+    const ids = new Set(stepIds(ctx.doc));
+    const keep = Object.fromEntries(Object.entries(positions).filter(([id]) => ids.has(id)));
+    const stale = Object.keys(ctx.graph.positions).filter((id) => !ids.has(id));
+    const layout = topPair(ctx.doc, LAYOUT)?.value;
+    // Stale entries are dropped only when they can be: keys in a block layout.
+    writeLayout(ctx, keep, isBlockMap(layout) ? stale : []);
+  });
+}

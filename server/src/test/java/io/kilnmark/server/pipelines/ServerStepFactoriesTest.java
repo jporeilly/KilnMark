@@ -230,6 +230,13 @@ class ServerStepFactoriesTest {
     }
 
     @Test
+    void theCanvasLearnsWhichWriterSettingsEachKindOfSourceTakes() {
+        // By connector kind, so the settings panel offers only the chosen source's writer settings.
+        assertEquals(Map.of(MemoryConnector.KIND, List.of("fail", "break_profile", "delimiter")),
+            write.writerSettingsByKind());
+    }
+
+    @Test
     void writerSettingsAndTheSourcesProfilingReachTheWriter() throws Exception {
         RunContext ctx = run(AccessRole.ADMIN);
         ctx.run(() -> {

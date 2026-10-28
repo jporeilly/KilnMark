@@ -115,6 +115,20 @@ public final class WriteStepFactory implements StepFactory {
     }
 
     /**
+     * For each connector kind that can be written to, the writer settings a step writing to a source
+     * of that kind takes ({@link #writerKeys}), so the canvas offers only those for the chosen source.
+     */
+    public Map<String, List<String>> writerSettingsByKind() {
+        Map<String, List<String>> out = new java.util.TreeMap<>();
+        for (Connector c : sources.connectors()) {
+            if (c.capabilities().contains(Connector.Capability.WRITE)) {
+                out.put(c.kind(), List.copyOf(writerKeys(c)));
+            }
+        }
+        return out;
+    }
+
+    /**
      * The writer settings a step writing to a source of this kind may use: exactly those its writer
      * declares in {@link Connector#writeOptions()}, less any name that says where or as whom to connect.
      * None for a connector that declares none.
