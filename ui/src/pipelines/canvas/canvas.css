@@ -443,6 +443,13 @@
   border-color: var(--km-accent);
 }
 
+/* While a run goes: the step holding it back has a thicker edge in the orange of its "Slowest" chip
+   (the chip says it in words). */
+.cv-node.is-slowest {
+  box-shadow: 0 0 0 3px var(--km-tint-orange-bg), var(--km-shadow-card);
+  border-color: var(--km-tint-orange-fg);
+}
+
 .cv-node-head {
   display: flex;
   align-items: center;

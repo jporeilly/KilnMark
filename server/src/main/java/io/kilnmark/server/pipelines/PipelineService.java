@@ -537,7 +537,7 @@ public class PipelineService {
         List<PipelineViews.StepRunView> stepViews = store.stepRuns(id).stream().map(s -> new PipelineViews.StepRunView(
             s.stepId(), s.type(), s.position(), s.rowsIn(), s.rowsOut(), tree(s.portRows()), s.peakMemory(),
             s.durationMs(), s.error() == null || withheld == null ? s.error() : "This step failed. " + withheld,
-            s.outcome())).toList();
+            s.outcome(), s.startedAt(), s.firstRowAt(), s.lastRowAt(), s.finishedAt())).toList();
         JsonNode result = tree(r.result());
         List<PipelineViews.WrittenAsset> written = new ArrayList<>();
         List<String> read = new ArrayList<>();
@@ -558,7 +558,59 @@ public class PipelineService {
         List<PipelineViews.LineageLink> lineage = store.lineageOfRun(id).stream()
             .map(l -> new PipelineViews.LineageLink(l.stepId(), l.inputUrn(), l.outputUrn())).toList();
         List<PipelineViews.StepQualityView> quality = store.quality(id).stream().map(this::qualityView).toList();
-        return new PipelineViews.RunDetail(summary(r, sights), stepViews, written, read, lineage, notes, quality);
+        return new PipelineViews.RunDetail(summary(r, sights), stepViews, written, read, lineage, notes, quality,
+            tree(store.progress(id)));
+    }
+
+    /** Events per page of a run's log, at most. */
+    public static final int MAX_EVENTS_PAGE = 1000;
+
+    /**
+     * A page of a run's log: events after {@code after}, about {@code step} (null for all), at least
+     * as serious as {@code level} (info, warn or error; null for all). Details are held back as the
+     * run's other messages are.
+     */
+    public PipelineViews.RunEvents events(long id, String step, String level, int after, int limit, Sights sights) {
+        PipelineStore.Run r = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline run " + id));
+        if (level != null && !level.isBlank() && !List.of("info", "warn", "error").contains(level)) {
+            throw new IllegalArgumentException("level: info, warn or error");
+        }
+        String min = level == null || level.isBlank() ? null : level;
+        String which = step == null || step.isBlank() ? null : step;
+        int n = Math.max(1, Math.min(limit, MAX_EVENTS_PAGE));
+        String withheld = withheld(r, sights);
+        List<PipelineStore.Event> rows = store.events(id, which, min, Math.max(0, after), n + 1);
+        boolean more = rows.size() > n;
+        List<PipelineViews.RunEvent> out = rows.stream().limit(n).map(e -> event(e, withheld)).toList();
+        return new PipelineViews.RunEvents(out, more ? out.getLast().seq() : null);
+    }
+
+    /** The whole of a run's log, with the same filters and rules as {@link #events}. */
+    public List<PipelineViews.RunEvent> allEvents(long id, String step, String level, Sights sights) {
+        List<PipelineViews.RunEvent> out = new ArrayList<>();
+        int after = 0;
+        while (true) {
+            PipelineViews.RunEvents page = events(id, step, level, after, MAX_EVENTS_PAGE, sights);
+            out.addAll(page.events());
+            if (page.next() == null) {
+                return out;
+            }
+            after = page.next();
+        }
+    }
+
+    /** One event as a line of the downloaded log: time, level, step, words and detail (or why it is held back). */
+    public static String logLine(PipelineViews.RunEvent e) {
+        String detail = e.detail() != null ? " (" + e.detail().replaceAll("\\R", " ") + ")"
+            : e.withheld() != null ? " [detail held back: " + e.withheld() + "]" : "";
+        return e.at() + "  " + String.format(Locale.ROOT, "%-5s", e.level().toUpperCase(Locale.ROOT)) + "  "
+            + (e.step() == null ? "-" : e.step()) + "  " + e.text() + detail;
+    }
+
+    private static PipelineViews.RunEvent event(PipelineStore.Event e, String withheld) {
+        boolean hide = e.detail() != null && withheld != null;
+        return new PipelineViews.RunEvent(e.seq(), e.at(), e.stepId(), e.level(), e.kind(), e.text(),
+            hide ? null : e.detail(), hide ? withheld : null);
     }
 
     /** A step's stored quality as the API gives it; scores and gate results hold words and counts only. */
@@ -768,6 +820,10 @@ public class PipelineService {
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Pipeline run " + id + " was cancelled");
         }
         RunContext context = new RunContext(run.pipeline(), id, run.requestedBy(), role(run.requestedRole()));
+        RunLog log = new RunLog(store, id, context, json);
+        log.server(null, "info", "run_started", "The run started: version " + run.version() + " of " + run.pipeline()
+            + ", asked for by " + run.requestedBy(), null);
+        log.flush();
         List<String> held = new ArrayList<>();
         List<RunQuality.StepQuality> predicted = new ArrayList<>();
         boolean measuredSaved = false;
@@ -785,6 +841,7 @@ public class PipelineService {
             }
             c = context.run(() -> compiler.compile(v.yaml(), steps));
             if (!c.valid() || c.graph() == null) {
+                ended(log, "failed", "The pipeline could not start: " + firstProblems(c.problems()));
                 store.finishRun(id, "failed", context.scrub("The pipeline could not start: "
                     + firstProblems(c.problems())), null);
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
@@ -820,7 +877,7 @@ public class PipelineService {
             saveQuality(id, predicted, context);
             ran = true;
             PipelineExecution.Outcome o = execution.run(runner, c.graph(), writes, context,
-                () -> store.cancelRequested(id), shutdown);
+                () -> store.cancelRequested(id), shutdown, log);
             store.saveStepRuns(id, o.steps());
             List<RunQuality.StepQuality> measured = RunQuality.withPredicted(measure(c, writes, o), predicted,
                 o.status());
@@ -870,6 +927,11 @@ public class PipelineService {
             putScore(q, "threshold", threshold);
             saveQuality(id, measured, context);
             measuredSaved = true;
+            for (JsonNode n : notes) {
+                log.server(null, "warn", "run_note", n.path("text").asText(), n.hasNonNull("detail")
+                    ? n.get("detail").asText() : null);
+            }
+            ended(log, o.status(), o.error());
             store.finishRun(id, o.status(), o.error(), result.toString());
             RunQuality.StepQuality lowest = RunQuality.lowestOutputStep(measured);
             finished(run.pipeline(), id, o.status(), score, threshold, lowest == null ? null : lowest.step());
@@ -882,6 +944,7 @@ public class PipelineService {
             if (!measuredSaved && !predicted.isEmpty()) {
                 saveQuality(id, RunQuality.withPredicted(List.of(), predicted, "failed"), context);
             }
+            ended(log, "failed", "The worker running this pipeline was stopped before it started writing.");
             store.finishRun(id, "failed", "The worker running this pipeline was stopped before it started writing. "
                 + "Run it again.", null);
             finished(run.pipeline(), id, "failed");
@@ -895,6 +958,7 @@ public class PipelineService {
                 // The predictions stay; they must not say the run has just started.
                 saveQuality(id, RunQuality.withPredicted(List.of(), predicted, "failed"), context);
             }
+            ended(log, "failed", "The run failed: " + e.getMessage());
             store.finishRun(id, "failed", context.scrub("The run failed: " + e.getMessage()), null);
             finished(run.pipeline(), id, "failed");
         } finally {
@@ -907,6 +971,19 @@ public class PipelineService {
             }
         }
         return new ScanService.Result(ScanService.Outcome.FINISHED, null);
+    }
+
+    /**
+     * The log's last event: how the run ended, the error (which may quote the engine) as its detail.
+     * Then writes what the log still holds.
+     */
+    private static void ended(RunLog log, String status, String error) {
+        switch (status) {
+            case "succeeded" -> log.server(null, "info", "run_ended", "The run succeeded", null);
+            case "cancelled" -> log.server(null, "warn", "run_ended", "The run was cancelled", null);
+            default -> log.server(null, "error", "run_ended", "The run failed", error);
+        }
+        log.flush();
     }
 
     /**

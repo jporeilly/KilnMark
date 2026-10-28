@@ -32,6 +32,7 @@ import {
   api,
   formatNumber,
   pipelinesApi,
+  type PipelineRunProgress,
   type PipelineStepQuality,
   type PipelineStepRun,
   type PipelineValidation,
@@ -42,6 +43,7 @@ import { useColourScheme } from "../../theme/appearance";
 import { columnsText } from "../outline";
 import { stepQualityWords } from "../quality";
 import { predictedWords, predictionApi, predictionsByStep, type Prediction, type Suggestion } from "../prediction";
+import { liveEdgeRows, liveSteps } from "../live";
 import { kindWord, problemsByStep, stepLabel, stepSummary } from "./insight";
 import { autoLayout, makeRoom, nodeHeight, placed, spotAfter, type EdgeLabel, type LayoutSizes } from "./layout";
 import {
@@ -79,6 +81,8 @@ export type CanvasRun = {
   steps: PipelineStepRun[];
   /** Each write's and gate's measured quality; empty from servers before measured quality. */
   quality?: PipelineStepQuality[];
+  /** While the run goes: where its rows are (rows and rate per step, the slowest step, rows per connection). */
+  progress?: PipelineRunProgress | null;
 };
 
 export type CanvasProps = {
@@ -208,6 +212,13 @@ function Canvas(props: CanvasProps) {
   const problems = useMemo(() => problemsByStep(check?.problems ?? []), [check]);
   const runSteps = useMemo(() => {
     const m = new Map<string, StepRunInfo>();
+    const going = run != null && (run.status === "queued" || run.status === "running");
+    if (going && run.steps.length === 0) {
+      // Live: rows so far and the rate, from the run's latest progress.
+      for (const [id, l] of liveSteps(run.progress))
+        m.set(id, { rowsIn: l.rowsIn, rowsOut: l.rowsOut, outcome: null, error: null, live: { rate: l.rate, state: l.state, slowest: l.slowest } });
+      return m;
+    }
     for (const s of run?.steps ?? []) m.set(s.step, { rowsIn: s.rowsIn, rowsOut: s.rowsOut, outcome: s.outcome, error: s.error });
     return m;
   }, [run]);
@@ -253,9 +264,12 @@ function Canvas(props: CanvasProps) {
     const out = new Map<string, string>();
     if (!graph) return out;
     const rows = new Map(run?.steps.map((s) => [s.step, s]) ?? []);
+    const live = run && run.steps.length === 0 ? liveEdgeRows(run.progress) : null;
     for (const e of graph.edges) {
       const plain = e.fromPort === "out" && e.toPort === "in";
-      const counted = rows.get(e.from)?.ports?.out?.[e.fromPort] ?? (e.fromPort === "out" ? rows.get(e.from)?.rowsOut : null);
+      const counted = live
+        ? (live.get(`${e.from}.${e.fromPort}>${e.to}.${e.toPort}`) ?? null)
+        : (rows.get(e.from)?.ports?.out?.[e.fromPort] ?? (e.fromPort === "out" ? rows.get(e.from)?.rowsOut : null));
       const parts = [plain ? "" : e.toPort === "in" || e.toPort === "main" ? e.fromPort : `${e.fromPort} → ${e.toPort}`];
       if (run && counted != null) parts.push(`${formatNumber(counted)} rows`);
       out.set(edgeId(e), parts.filter(Boolean).join(" · "));
@@ -531,7 +545,7 @@ function Canvas(props: CanvasProps) {
           summary,
           s.inputs.length ? `reads from ${s.inputs.map((l) => refText(l.from, l.fromPort)).join(" and ")}` : "",
           n ? `${n} ${n === 1 ? "problem" : "problems"}` : "",
-          runInfo ? `last run: ${runWords(runInfo)}` : "",
+          runInfo ? `${runInfo.live ? "running now" : "last run"}: ${runWords(runInfo)}` : "",
           qualityText ?? "",
           predictedWords(estimate) ?? "",
           estimate?.unknown.length

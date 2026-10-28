@@ -13,6 +13,23 @@ details.
 
 ### Details
 
+- **See inside a run** (V19; `RunListener`, `RunProgress`, `RunLog`; `RunTimeline`, `RunLogPanel`).
+  The engine times every step (`StepResult.startedAt`, `firstRowAt`, `lastRowAt`, `finishedAt`;
+  `pipeline_step_run` keeps them and `duration_ms` is now filled) and, through an optional
+  `RunListener` on a thread of its own (a listener that throws or hangs never fails or holds up a
+  run; no allocation per batch), reports each step starting, its first row in and out, its last
+  row out and how it ended, the engine's notes, and a progress snapshot every two seconds: rows
+  per step and edge, rows a second, whether each queue is full or empty, and the **Slowest** step
+  (its input queues full, its output queues not). The worker writes the snapshot to
+  `pipeline_run.progress` and the log to `pipeline_run_event` (at most 10,000 events a run, then
+  one saying it was cut short; the engine's words are each event's detail, held back as run
+  errors are). `GET /api/v1/pipeline-runs/{id}/events` (by step and level, paged) and
+  `.../events/download` (text or NDJSON). The run page has a **Timeline** (a Gantt chart: a bar per
+  step, hatched while it waits for its first row, ticks at its first and last row, with a table
+  alternative), its Time column, live rows and rates while it runs, and a **Log** to filter and
+  download; while a run goes the canvas shows each step's rows so far and rows a second ("19,814
+  out · 8,351 rows/s") and marks the step holding it back Slowest, in words and with an orange
+  edge.
 - **Canvas chips after a run** (`StepNode` `stepChips`, `components/ui/StatusChip`). Each kind of
   chip has its own look and words, so none depends on colour: rows and outcome in a neutral chip
   with a rows icon ("5,000 rows out · Finished"; Ended early, Stopped and Failed in a chip of their

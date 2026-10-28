@@ -124,6 +124,35 @@ Added while building the engine (round 3, step 1):
   settings are turned into text in full only when that is short, otherwise in scientific form
   (`1E-999999999`), so a number can never become a string of a billion zeros.
 
+### Seeing inside a run (`RunListener`, `RunProgress`)
+
+- **Timing.** Each `StepResult` has `startedAt`, `firstRowAt` (its first row in; for a step with
+  no input, its first row out), `lastRowAt` (its last row out; for a step with no output, its last
+  row in) and `finishedAt`, and `duration()`. The nine-argument constructor remains (no times).
+  `RowSet` records, as `System.nanoTime()`, the first and last batch with rows handed over
+  (`firstPutNanos`, `lastPutNanos`) and taken (`firstTakenNanos`, `lastTakenNanos`): plain
+  volatile writes per batch, no allocation. It also tells `capacity()` and `queued()`.
+- **Listening.** `GraphRunner.run(graph, metadata, listener)` (a default method that ignores the
+  listener; `KilnGraphRunner` implements it, and `run(graph, metadata)` uses `RunListener.NONE`).
+  A `RunListener` hears `stepStarted`, `firstRowIn`, `firstRowOut`, `lastRowOut` (once the step has
+  ended) and `stepEnded(outcome)`, each with when it happened; `progress(RunProgress)` every
+  `progressEvery` (2 seconds unless set in the new four-argument constructor) and once at the end;
+  and `note(level, step, text)` for a step's failure, a stall (error) and memory a step did not
+  free (warning). The text may quote the data.
+- **Never in the way.** Steps only record times. The thread watching the run turns them into
+  calls at each of its ticks (at most a second apart) and queues them for the listener's own
+  virtual thread, which calls it in order and drops anything it throws. Past 4,096 calls waiting,
+  a slow listener misses some (logged). At the end the run waits up to 10 seconds for the listener
+  to hear the rest, then goes on without it. With no listener nothing is queued or built.
+- **Progress.** `RunProgress(at, steps, edges, slowest)`: each step's state (not started,
+  waiting for its first row, running, ended), rows in and out, rows a second since the snapshot
+  before and its times; each edge's rows, batches queued, capacity, and whether it is full (or
+  its writer waits) or empty (or its reader waits). `slowest` is a running step whose input
+  queues are full while none of its output queues is: it cannot keep up with what it is given and
+  what comes after it can. With several, the one with the most full inputs, then the first in the
+  graph's order; null when none (a slow source shows as empty queues everywhere, not as a
+  slowest step).
+
 ### Writing a step for graphs
 
 - Read with `input(port)` or, for a port taking many, `inputs(port)` with `RowSet.takeAny`; write
@@ -512,8 +541,9 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
 - **Run** queues a job; a worker compiles the YAML of that exact version into a graph, resolves
   sources (credentials, allowed hosts, write permission) and runs it.
 - Each run records its pipeline version, status, timings, and per step: how it ended, rows in and
-  out per port, peak memory and the error if it failed (a duration per step once the engine times
-  steps; the run's own timings until then). A run can be cancelled.
+  out per port, peak memory, when it started, had its first row, handed on its last and ended
+  (and so its duration), and the error if it failed. While it runs, where its rows are is kept
+  every two seconds, and its log as it goes. A run can be cancelled.
 - **Quality on the way:** every `write` profiles what it writes in the same pass and registers or
   updates the target as an asset, with lineage from the assets that were read (OpenLineage
   events), so the next pipeline downstream starts from metadata. Rows per port show where rows
@@ -628,6 +658,25 @@ asset's previous profile.
   sensitive, only admins see the detail. This is decided through the request's `Sights`, as other
   views of data values are, on the assets the run recorded as it started (`pipeline_run.assets`,
   with read assets under the URNs their read steps catalogue them by).
+- **Seeing inside a run (V19).** The worker gives the engine a `RunLog` listener. Step times go
+  to `pipeline_step_run` (`started_at`, `first_row_at`, `last_row_at`, `finished_at`, and
+  `duration_ms`, now filled). Each progress snapshot goes to `pipeline_run.progress` (JSON: counts,
+  states and times, never values; `progress_at`), written at most every two seconds and once at
+  the end, through the database because the API may run in another container. The log is
+  `pipeline_run_event` (run, seq, at, step or null, level info, warn or error, kind, text, detail),
+  written in batches with each snapshot and at the end: the run starting and ending, each step
+  starting, its first row in and out, its last row out and how it ended, the engine's notes and
+  the run's own notes. At most 10,000 events a run, then one `log_truncated`; deleted with the
+  run. An event's `text` is always the server's words ("Step check reported an error"); anything
+  an engine says is its `detail`, with the run's secrets blanked out, and is held back exactly as
+  the run's error is (below). Storing the log or progress never fails a run: a database error is
+  logged and the run goes on.
+- **API.** The run view adds each step's times and `progress`. `GET
+  /api/v1/pipeline-runs/{id}/events?step=&level=&after=&limit=` pages the log (`level` is the least
+  serious shown; `next` is the `after` of the next page; at most 1,000 a page) and
+  `.../events/download?format=text|ndjson` gives all of it, with the same filters, as a file. Both
+  follow the run's own role and Sights rules: a held-back detail is null, with `withheld` saying
+  why.
 - **Cancelling.** A queued run is cancelled at once and its job taken off the queue; a running one
   is interrupted within about half a second, and one asked to stop while its steps are being set
   up stops before they run. A cancel asked for too late to stop a run is cleared when it ends. A

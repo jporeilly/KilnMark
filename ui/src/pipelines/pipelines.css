@@ -443,3 +443,286 @@ main:has(.pl-wide) {
 .pl-predicted-more summary {
   cursor: pointer;
 }
+
+/* ---- A run's timeline (RunTimeline): one bar per step, on a shared time axis ---- */
+
+.pl-tl-chart {
+  --pl-tl-name: 11rem;
+  display: grid;
+  gap: 4px;
+}
+
+.pl-tl-axis,
+.pl-tl-row {
+  display: grid;
+  grid-template-columns: var(--pl-tl-name) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.pl-tl-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.pl-tl-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+}
+
+.pl-tl-step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.pl-tl-track {
+  position: relative;
+  height: 22px;
+  border-radius: var(--km-radius-xs);
+  background: var(--km-surface-2);
+}
+
+.pl-tl-axis .pl-tl-track {
+  height: 18px;
+  background: none;
+}
+
+.pl-tl-axis-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: var(--km-text-xs);
+  color: var(--km-muted);
+  white-space: nowrap;
+}
+
+.pl-tl-axis-tick:first-child {
+  transform: none;
+}
+
+.pl-tl-axis-tick:last-child:not(:first-child) {
+  transform: translateX(-100%);
+}
+
+.pl-tl-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--km-divider);
+}
+
+/* Waiting for its first row: a light, hatched band; rows moving: the solid accent bar. */
+.pl-tl-wait,
+.pl-tl-bar {
+  box-sizing: border-box;
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  min-width: 2px;
+  border-radius: 3px;
+}
+
+.pl-tl-wait {
+  background: repeating-linear-gradient(135deg, var(--km-accent-tint) 0 4px, transparent 4px 8px);
+  border: 1px solid var(--km-accent);
+  opacity: 0.85;
+}
+
+.pl-tl-bar {
+  background: var(--km-accent-fill);
+}
+
+.pl-tl-bar.is-failed {
+  background: repeating-linear-gradient(135deg, var(--km-bad) 0 5px, var(--km-tint-red-bg) 5px 8px);
+}
+
+.pl-tl-bar.is-running,
+.pl-tl-wait.is-running {
+  border-right: 3px dotted var(--km-ink);
+}
+
+.pl-tl-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--km-ink-strong);
+}
+
+.pl-tl-tick.is-last {
+  background: var(--km-ink);
+}
+
+.pl-tl-none {
+  position: absolute;
+  inset: 0 8px;
+  display: flex;
+  align-items: center;
+  font-size: var(--km-text-xs);
+  color: var(--km-muted);
+}
+
+.pl-tl-row.is-slowest .pl-tl-track {
+  box-shadow: inset 0 0 0 2px var(--km-tint-orange-fg);
+}
+
+.pl-tl-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 8px 0 0;
+}
+
+.pl-tl-key span {
+  display: inline-block;
+  width: 18px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.pl-tl-key-wait {
+  background: repeating-linear-gradient(135deg, var(--km-accent-tint) 0 4px, transparent 4px 8px);
+  border: 1px solid var(--km-accent);
+}
+
+.pl-tl-key-bar {
+  background: var(--km-accent-fill);
+}
+
+.pl-tl .pl-tl-key .pl-tl-key-tick {
+  width: 2px;
+  height: 14px;
+  background: var(--km-ink-strong);
+}
+
+.pl-tl-table {
+  margin-top: 12px;
+}
+
+/* A phone: the step's name sits above its bar. */
+@media (max-width: 640px) {
+  .pl-tl-axis,
+  .pl-tl-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .pl-tl-axis .pl-tl-name {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .pl-tl-bar,
+  .pl-tl-key-bar {
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .pl-tl-wait,
+  .pl-tl-key-wait {
+    border-color: CanvasText;
+  }
+}
+
+/* ---- A run's log (RunLogPanel) ---- */
+
+.pl-log-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+
+.pl-log-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pl-log-downloads {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.pl-log-scroll {
+  margin: 0 0 12px;
+  max-height: 28rem;
+  overflow-y: auto;
+  border: 1px solid var(--km-border);
+  border-radius: var(--km-radius-inner);
+}
+
+.pl-log-scroll:focus-visible {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 2px;
+}
+
+.pl-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pl-log-event {
+  display: grid;
+  grid-template-columns: 6.5rem 5.5rem minmax(0, 1fr);
+  align-items: start;
+  gap: 4px 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--km-divider);
+}
+
+.pl-log-event:last-child {
+  border-bottom: 0;
+}
+
+.pl-log-event.is-error {
+  background: var(--km-tint-red-bg);
+}
+
+.pl-log-time {
+  color: var(--km-muted);
+  padding-top: 2px;
+}
+
+.pl-log-text {
+  overflow-wrap: anywhere;
+}
+
+.pl-log-detail {
+  display: block;
+  font-family: var(--km-mono);
+  margin-top: 2px;
+}
+
+@media (max-width: 640px) {
+  .pl-log-event {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pl-log-text {
+    grid-column: 1 / -1;
+  }
+
+  .pl-log-downloads {
+    margin-left: 0;
+  }
+}
+
+.pl-log-event > .km-chip {
+  justify-self: start;
+}

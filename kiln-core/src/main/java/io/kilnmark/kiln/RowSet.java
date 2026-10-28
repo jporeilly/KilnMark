@@ -38,13 +38,54 @@ public final class RowSet {
     private final AtomicLong moves = new AtomicLong();
     private volatile long readerWaitingSince;
     private volatile long writerWaitingSince;
+    private final int capacity;
+    // System.nanoTime() of the first and last batch with rows handed over and taken; 0 for none yet.
+    // Plain volatile writes per batch, so timing a run allocates nothing.
+    private volatile long firstPut;
+    private volatile long lastPut;
+    private volatile long firstTaken;
+    private volatile long lastTaken;
 
     public RowSet(String name, int capacity) {
         if (capacity < 1) {
             throw new IllegalArgumentException("capacity must be at least 1");
         }
         this.name = name;
+        this.capacity = capacity;
         this.queue = new ArrayBlockingQueue<>(capacity);
+    }
+
+    /** Batches the row set holds before the writer waits. */
+    public int capacity() {
+        return capacity;
+    }
+
+    /** Batches waiting to be taken right now (the end counts as one). */
+    public int queued() {
+        return queue.size();
+    }
+
+    /**
+     * When the first batch with rows was handed over by {@link #put}, as {@link System#nanoTime()};
+     * 0 when none has been.
+     */
+    public long firstPutNanos() {
+        return firstPut;
+    }
+
+    /** When the last batch with rows was handed over by {@link #put}, as {@link System#nanoTime()}; 0 for none. */
+    public long lastPutNanos() {
+        return lastPut;
+    }
+
+    /** When the reader was first given a batch with rows, as {@link System#nanoTime()}; 0 for none. */
+    public long firstTakenNanos() {
+        return firstTaken;
+    }
+
+    /** When the reader was last given a batch with rows, as {@link System#nanoTime()}; 0 for none. */
+    public long lastTakenNanos() {
+        return lastTaken;
     }
 
     public String name() {
@@ -86,6 +127,7 @@ public final class RowSet {
      * @throws StepException if the next step has stopped, in which case the batch has been closed
      */
     public void put(VectorSchemaRoot batch) throws InterruptedException, StepException {
+        int count = batch.getRowCount(); // read before the batch is handed over: the reader may close it
         if (cancelled) { // fail fast even when there is room, or a source would read to its end for nothing
             batch.close();
             throw new CancelledException("the next step stopped reading " + name);
@@ -107,6 +149,13 @@ public final class RowSet {
             writerWaitingSince = 0;
         }
         moves.incrementAndGet();
+        if (count > 0) {
+            long now = System.nanoTime();
+            if (firstPut == 0) {
+                firstPut = now;
+            }
+            lastPut = now;
+        }
         if (cancelled) {
             drain();
         }
@@ -234,7 +283,15 @@ public final class RowSet {
             return null;
         }
         VectorSchemaRoot batch = (VectorSchemaRoot) o;
-        rows.addAndGet(batch.getRowCount());
+        int count = batch.getRowCount();
+        rows.addAndGet(count);
+        if (count > 0) {
+            long now = System.nanoTime();
+            if (firstTaken == 0) {
+                firstTaken = now;
+            }
+            lastTaken = now;
+        }
         return transfer(batch, into);
     }
 

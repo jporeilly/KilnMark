@@ -41,15 +41,35 @@ public record RunResult(String pipeline, Status status, Instant startedAt, Insta
      * @param rowsOutByPort rows handed on through each connected output port, counted once however
      *                      many steps read the port
      * @param outcome       how the step ended, so a step the engine stopped is not shown as a clean finish
+     * @param startedAt     when its thread started, or null if it never did (or the runner does not time steps)
+     * @param firstRowAt    when its first row arrived; for a step with no input (a source), when it
+     *                      handed on its first row. Null when no row came
+     * @param lastRowAt     when it handed on its last row; for a step with no output (a sink), when its
+     *                      last row arrived. Null when no row went
+     * @param finishedAt    when it ended, its resources closed; null if it never started
      */
     public record StepResult(String name, String type, long rowsOut, long peakMemoryBytes, String error,
                              long rowsIn, Map<String, Long> rowsInByPort, Map<String, Long> rowsOutByPort,
-                             Outcome outcome) {
+                             Outcome outcome, Instant startedAt, Instant firstRowAt, Instant lastRowAt,
+                             Instant finishedAt) {
 
         public StepResult {
             rowsInByPort = copy(rowsInByPort);
             rowsOutByPort = copy(rowsOutByPort);
             outcome = error != null ? Outcome.FAILED : outcome != null ? outcome : Outcome.FINISHED;
+        }
+
+        /** A step not timed. */
+        public StepResult(String name, String type, long rowsOut, long peakMemoryBytes, String error,
+                          long rowsIn, Map<String, Long> rowsInByPort, Map<String, Long> rowsOutByPort,
+                          Outcome outcome) {
+            this(name, type, rowsOut, peakMemoryBytes, error, rowsIn, rowsInByPort, rowsOutByPort, outcome, null, null,
+                null, null);
+        }
+
+        /** How long the step ran, from its start to its end; null when it was not timed. */
+        public Duration duration() {
+            return startedAt == null || finishedAt == null ? null : Duration.between(startedAt, finishedAt);
         }
 
         /** A step with rows per port; its outcome follows from {@code error}. */

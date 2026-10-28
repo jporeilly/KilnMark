@@ -253,6 +253,43 @@ class PipelineFlowTest {
             .body("find { it.name == 'people-copy' }.valid", equalTo(true));
         as(viewer).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200).body("[0].id",
             equalTo((int) firstRun));
+
+        // Each step is timed, and the run kept its log and its last progress (V19).
+        for (String step : List.of("people", "out")) {
+            String at = "steps.find { it.step == '" + step + "' }.";
+            for (String time : List.of("startedAt", "firstRowAt", "lastRowAt", "finishedAt")) {
+                assertTrue(run.getString(at + time) != null, step + " " + time + ": " + run.prettify());
+            }
+            assertTrue(run.getLong(at + "durationMs") >= 0, run.prettify());
+        }
+        assertEquals(2500L, run.getLong("progress.steps.find { it.step == 'out' }.rowsIn"), run.prettify());
+        assertEquals("ended", run.getString("progress.steps.find { it.step == 'out' }.state"));
+        assertEquals(2500L, run.getLong("progress.edges[0].rows"));
+        JsonPath log = as(viewer).get("/api/v1/pipeline-runs/" + firstRun + "/events").then().statusCode(200).extract()
+            .jsonPath();
+        List<String> kinds = log.getList("events.kind");
+        assertEquals("run_started", kinds.getFirst(), log.prettify());
+        assertEquals("run_ended", kinds.getLast(), log.prettify());
+        assertTrue(kinds.containsAll(List.of("step_started", "first_row_out", "first_row_in", "last_row_out",
+            "step_ended")), log.prettify());
+        as(viewer).queryParam("step", "out").get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
+            .statusCode(200).body("events.step", org.hamcrest.Matchers.everyItem(equalTo("out")));
+        as(viewer).queryParam("level", "warn").get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
+            .statusCode(200).body("events.size()", equalTo(0));
+        as(viewer).queryParam("level", "loud").get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
+            .statusCode(400);
+        JsonPath first = as(viewer).queryParam("limit", 2).get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
+            .statusCode(200).body("events.size()", equalTo(2)).extract().jsonPath();
+        as(viewer).queryParam("after", first.getInt("next")).get("/api/v1/pipeline-runs/" + firstRun + "/events")
+            .then().statusCode(200).body("events[0].seq", equalTo(3));
+        String text = Tokens.as(viewer).accept("text/plain").get("/api/v1/pipeline-runs/" + firstRun
+            + "/events/download").then().statusCode(200).header("Content-Disposition", containsString("attachment"))
+            .extract().asString();
+        assertTrue(text.contains("The run started") && text.contains("The run succeeded"), text);
+        String nd = Tokens.as(viewer).accept("application/x-ndjson").queryParam("format", "ndjson")
+            .get("/api/v1/pipeline-runs/" + firstRun + "/events/download").then().statusCode(200).extract().asString();
+        assertEquals(kinds.size(), nd.lines().count(), nd);
+        as(viewer).get("/api/v1/pipeline-runs/999999/events").then().statusCode(404);
     }
 
     @Test
@@ -421,6 +458,20 @@ class PipelineFlowTest {
                 assertTrue(ad.getString("run.error").contains("refused the rows"), ad.prettify());
                 assertFalse(ad.prettify().contains(OUT_SECRET), "the secret stays out, even for admins");
             }
+            // The log's details are held back alike; its own words are not.
+            String events = "/api/v1/pipeline-runs/" + failed + "/events";
+            JsonPath vl = as(viewer).queryParam("level", "error").get(events).then().statusCode(200).extract().jsonPath();
+            assertTrue(vl.getList("events.text").contains("Step out failed"), vl.prettify());
+            assertFalse(vl.prettify().contains("refused the rows"), vl.prettify());
+            assertTrue(vl.getList("events.withheld").contains(PipelineService.FOR_STEWARDS), vl.prettify());
+            String stl = as(steward).get(events).then().statusCode(200).extract().asString();
+            assertFalse(stl.contains("refused the rows"), stl);
+            String vText = Tokens.as(viewer).accept("text/plain").get(events + "/download").then().statusCode(200)
+                .extract().asString();
+            assertFalse(vText.contains("refused the rows"), vText);
+            String al = as(admin).get(events).then().statusCode(200).extract().asString();
+            assertTrue(al.contains("refused the rows"), al);
+            assertFalse(al.contains(OUT_SECRET), al);
             as(viewer).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
                 .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_STEWARDS));
             as(steward).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)

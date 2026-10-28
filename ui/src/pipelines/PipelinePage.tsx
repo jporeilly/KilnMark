@@ -205,12 +205,17 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   useEffect(() => {
     if (!latestRun || latestRun.status === "queued") return;
     let live = true;
-    pipelinesApi
-      .runDetail(latestRun.id)
-      .then((d) => live && setRunShown(d))
-      .catch(() => {});
+    const look = () =>
+      pipelinesApi
+        .runDetail(latestRun.id)
+        .then((d) => live && setRunShown(d))
+        .catch(() => {});
+    void look();
+    // While it runs, look every two seconds: the canvas shows each step's rows so far and rate.
+    const t = latestRun.status === "running" ? window.setInterval(look, 2000) : undefined;
     return () => {
       live = false;
+      if (t) window.clearInterval(t);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestKey]);
@@ -223,6 +228,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
             status: runShown.run.status,
             steps: runShown.steps,
             quality: runShown.quality ?? [],
+            progress: runShown.progress ?? null,
           }
         : null,
     [runShown, viewing],

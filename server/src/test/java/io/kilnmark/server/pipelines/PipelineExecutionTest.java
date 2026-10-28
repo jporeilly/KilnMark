@@ -182,4 +182,25 @@ class PipelineExecutionTest {
         assertTrue(PipelineExecution.writerEvent(new MetadataEvent(WRITE_URN, MetadataEvent.Kind.SCHEMA,
             Map.of("columns", "[]"), Instant.now())));
     }
+
+    @Test
+    void eachStepKeepsItsTimesAndDuration() {
+        PipelineCompilerPort.Compilation c = compiled("replace");
+        FakeRunner runner = new FakeRunner();
+        Instant t = Instant.parse("2026-10-28T10:00:00Z");
+        List<RunResult.StepResult> steps = new java.util.ArrayList<>();
+        for (String s : List.of("customers", "emails", "out", "odd")) {
+            steps.add(new RunResult.StepResult(s, "t", 0, 0, null, 0, Map.of(), Map.of(), RunResult.Outcome.FINISHED,
+                t, t.plusMillis(20), t.plusMillis(900), t.plusMillis(1250)));
+        }
+        runner.answer = new RunResult("customer-copy", RunResult.Status.SUCCEEDED, t, t.plusSeconds(2), steps, null);
+        PipelineExecution.Outcome o = new PipelineExecution(JSON).run(runner, c.graph(), PipelineExecution.writes(c),
+            new RunContext("customer-copy", 3, "jo", AccessRole.STEWARD), () -> false, () -> false);
+        PipelineStore.StepRun out = o.steps().stream().filter(s -> s.stepId().equals("out")).findFirst().orElseThrow();
+        assertEquals(1250L, out.durationMs());
+        assertEquals(t, out.startedAt());
+        assertEquals(t.plusMillis(20), out.firstRowAt());
+        assertEquals(t.plusMillis(900), out.lastRowAt());
+        assertEquals(t.plusMillis(1250), out.finishedAt());
+    }
 }

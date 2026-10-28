@@ -12,22 +12,32 @@ import {
   IconDeviceFloppy,
   IconFilter,
   IconGauge,
+  IconHourglass,
   IconListNumbers,
   IconMathFunction,
   IconShieldCheck,
   IconSparkles,
   IconSum,
+  IconActivity,
   IconTableRow,
 } from "@tabler/icons-react";
 import { formatNumber, formatScore, type PipelineStepQuality } from "../../api";
 import { StatusChip, type Tone } from "../../components/ui";
 import { gateWords, scoreTone, scoreWords } from "../quality";
 import { ESTIMATE, type PredictedQuality } from "../prediction";
+import { rateWords, type LiveStep } from "../live";
 import { kindWord, stepLabel } from "./insight";
 import type { BadgeRows } from "./layout";
 import type { GraphStep } from "./model";
 
-export type StepRunInfo = { rowsIn: number | null; rowsOut: number | null; outcome: string | null; error: string | null };
+export type StepRunInfo = {
+  rowsIn: number | null;
+  rowsOut: number | null;
+  outcome: string | null;
+  error: string | null;
+  /** While the run goes: its rate, what it is doing and whether it is holding the run back. */
+  live?: Pick<LiveStep, "rate" | "state" | "slowest"> | null;
+};
 
 export type StepData = {
   step: GraphStep;
@@ -74,8 +84,16 @@ export const OUTCOME_WORDS: Record<string, string> = {
   failed: "Failed",
 };
 
+const LIVE_WORDS: Record<LiveStep["state"], string> = {
+  not_started: "Not started",
+  waiting: "Waiting for rows",
+  running: "Running",
+  ended: "Ended",
+};
+
 /** In words, for the node's label and the panel. */
 export function runWords(run: StepRunInfo): string {
+  if (run.live) return liveWords(run).join(" · ");
   const rows = rowsWords(run);
   const outcome = run.outcome ? OUTCOME_WORDS[run.outcome] ?? run.outcome : "";
   return [rows, outcome].filter(Boolean).join(" · ");
@@ -84,6 +102,15 @@ export function runWords(run: StepRunInfo): string {
 /** "5,000 rows out", else "4,771 rows in", else nothing. */
 const rowsWords = (run: StepRunInfo) =>
   run.rowsOut != null ? `${formatNumber(run.rowsOut)} rows out` : run.rowsIn != null ? `${formatNumber(run.rowsIn)} rows in` : "";
+
+/** While the run goes: "1,200 rows out", "340 rows/s" (or what it is doing), and "Slowest". */
+function liveWords(run: StepRunInfo): string[] {
+  const l = run.live!;
+  const moved = (run.rowsOut ?? 0) > 0 || (run.rowsIn ?? 0) > 0;
+  const rows = (run.rowsOut ?? 0) > 0 || run.rowsIn == null ? `${formatNumber(run.rowsOut ?? 0)} rows out` : `${formatNumber(run.rowsIn)} rows in`;
+  const doing = l.state === "running" && l.rate != null ? rateWords(l.rate) : LIVE_WORDS[l.state];
+  return [moved || l.state === "running" ? rows : "", doing, l.slowest ? "Slowest" : ""].filter(Boolean);
+}
 
 /** A score's chip tone, from the same Good / Fair / Poor as its words. */
 const TONE: Record<string, Tone> = { good: "good", fair: "warn", poor: "bad", none: "neutral" };
@@ -101,13 +128,38 @@ const TONE: Record<string, Tone> = { good: "good", fair: "warn", poor: "bad", no
  *
  * Each kind sits on a row of its own (see BadgeRows), so a step's height is known before it is drawn.
  */
-export type Chip = { kind: "problems" | "rows" | "outcome" | "measured" | "predicted" | "gate"; tone: Tone; text: string; hidden?: string; more?: string; title?: string };
+export type Chip = {
+  kind: "problems" | "rows" | "outcome" | "live" | "slowest" | "measured" | "predicted" | "gate";
+  tone: Tone;
+  text: string;
+  hidden?: string;
+  more?: string;
+  title?: string;
+};
 
 export function stepChips(d: Pick<StepData, "problems" | "run" | "quality" | "predicted">): Chip[][] {
   const { problems, run, quality, predicted } = d;
   const first: Chip[] = [];
   if (problems > 0) first.push({ kind: "problems", tone: "bad", text: `${problems} ${problems === 1 ? "problem" : "problems"}` });
-  if (run) {
+  if (run?.live) {
+    // While the run goes: rows so far and the rate in one chip, and the step holding the run back.
+    // Short on the chip (a step is narrow): "23,370 out · 12,400 rows/s"; in full in its title and the step's name.
+    const [a, b] = liveWords({ ...run, live: { ...run.live, slowest: false } });
+    const short = a ? a.replace(/ rows (out|in)$/, " $1") : "";
+    first.push({
+      kind: "live",
+      tone: run.live.state === "running" ? "info" : "neutral",
+      text: [short, b].filter(Boolean).join(" · "),
+      title: [a, b].filter(Boolean).join(" · "),
+    });
+    if (run.live.slowest)
+      first.push({
+        kind: "slowest",
+        tone: "orange",
+        text: "Slowest",
+        title: "Rows are queuing in front of this step while the steps after it keep up: it is holding the run back",
+      });
+  } else if (run) {
     const ok = run.outcome === "finished";
     const rows = rowsWords(run);
     const outcome = run.outcome ? OUTCOME_WORDS[run.outcome] ?? run.outcome : "";
@@ -156,6 +208,8 @@ const CHIP_ICON: Record<Chip["kind"], typeof IconBox> = {
   problems: IconAlertTriangle,
   rows: IconTableRow,
   outcome: IconAlertTriangle,
+  live: IconActivity,
+  slowest: IconHourglass,
   measured: IconGauge,
   predicted: IconSparkles,
   gate: IconShieldCheck,
@@ -207,7 +261,7 @@ function StepBox({ data, selected }: NodeProps<StepNodeType>) {
     <div
       className={`cv-node cv-kind-${kind ?? "unknown"}${problems ? " has-problem" : ""}${selected ? " is-selected" : ""}${
         run?.outcome === "failed" ? " has-failed" : ""
-      }`}
+      }${run?.live?.slowest ? " is-slowest" : ""}`}
     >
       <div className="cv-node-head">
         <span className="cv-node-icon">
