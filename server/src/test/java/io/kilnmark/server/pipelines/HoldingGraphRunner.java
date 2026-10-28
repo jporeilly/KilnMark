@@ -22,6 +22,8 @@ import jakarta.inject.Singleton;
 public class HoldingGraphRunner implements GraphRunner {
 
     static volatile boolean hold;
+    /** When set, the next run fails in the engine with this message. */
+    static volatile String failWith;
     static final AtomicReference<PipelineGraph> LAST = new AtomicReference<>();
 
     private final GraphRunner real = new KilnGraphRunner(256L << 20, 4);
@@ -29,6 +31,11 @@ public class HoldingGraphRunner implements GraphRunner {
     @Override
     public RunResult run(PipelineGraph graph, MetadataEmitter metadata) throws InterruptedException {
         LAST.set(graph);
+        String fail = failWith;
+        if (fail != null) {
+            failWith = null;
+            throw new IllegalStateException(fail);
+        }
         while (hold) {
             Thread.sleep(100);
         }

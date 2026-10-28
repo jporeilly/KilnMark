@@ -33,13 +33,18 @@ export default function SuggestionsPanel({
     heading.current?.focus();
   }, []);
 
-  // Asked again a moment after the pipeline changes, and when the AI choice changes.
+  // The model is asked when the panel opens, on Ask again, and when it is switched on; after an edit
+  // (or an Add) only Kilnmark's own suggestions are worked out again, a moment later.
+  const asked = useRef<{ ask: number; useAi: boolean } | null>(null);
   useEffect(() => {
     const ctl = new AbortController();
+    const fresh = !asked.current || asked.current.ask !== ask || asked.current.useAi !== useAi;
+    asked.current = { ask, useAi };
+    const withModel = useAi && fresh;
     const t = window.setTimeout(() => {
       setBusy(true);
       predictionApi
-        .suggest(yaml, useAi, ctl.signal)
+        .suggest(yaml, withModel, ctl.signal)
         .then((a) => {
           setAdvice(a);
           setError(null);
@@ -49,13 +54,11 @@ export default function SuggestionsPanel({
           setError(/403|steward/i.test(e.message) ? "Suggestions are for stewards and admins." : e.message);
         })
         .finally(() => !ctl.signal.aborted && setBusy(false));
-    }, advice ? 900 : 0);
+    }, fresh ? 0 : 900);
     return () => {
       ctl.abort();
       window.clearTimeout(t);
     };
-    // advice is read only to choose the delay.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [yaml, useAi, ask]);
 
   return (
@@ -98,6 +101,7 @@ export default function SuggestionsPanel({
             {advice.ai.state === "used" ? "AI ranked" : advice.ai.state === "unavailable" ? "AI unavailable" : "Kilnmark's own"}
           </StatusChip>{" "}
           {advice.ai.message}
+          {advice.ai.state === "not_asked" && useAi ? " Ask again to have the model rank them." : ""}
         </p>
       )}
       {advice && advice.suggestions.length === 0 && !busy && (
@@ -121,8 +125,8 @@ export default function SuggestionsPanel({
               <p className="small cv-suggest-effect">
                 {effectWords(s.effect)}
                 {dims.length > 0 ? `: ${dims.join(", ")}` : ""}
-                {s.effect?.note ? `. ${s.effect.note} (estimate)` : ""}
               </p>
+              {s.effect?.note && <p className="small cv-suggest-rows">{s.effect.note} (estimate).</p>}
               <p className="small muted">
                 Adds {s.steps.map((n) => `${n.id} (${n.type})`).join(" and ")} before {s.placement.before}.
               </p>

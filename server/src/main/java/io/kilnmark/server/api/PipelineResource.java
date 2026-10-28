@@ -111,7 +111,7 @@ public class PipelineResource {
         if (body == null) {
             throw new IllegalArgumentException("Send {\"yaml\": \"...\"}");
         }
-        return pipelines.predict(body.yaml());
+        return pipelines.predict(body.yaml(), sights);
     }
 
     @POST
@@ -132,7 +132,7 @@ public class PipelineResource {
         if (body == null) {
             throw new IllegalArgumentException("Send {\"yaml\": \"...\"}");
         }
-        return pipelines.suggest(body.yaml(), !Boolean.FALSE.equals(body.ai()), who());
+        return pipelines.suggest(body.yaml(), !Boolean.FALSE.equals(body.ai()), who(), sights);
     }
 
     @GET
@@ -221,7 +221,7 @@ public class PipelineResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "404", description = "No such pipeline or version")})
     public PredictionViews.Prediction prediction(@PathParam("name") String name, @PathParam("n") int n) {
-        return pipelines.predictVersion(name, n);
+        return pipelines.predictVersion(name, n, sights);
     }
 
     @POST

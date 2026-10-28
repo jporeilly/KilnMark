@@ -229,7 +229,8 @@ function Canvas(props: CanvasProps) {
       window.clearTimeout(t);
     };
   }, [yaml, canPredict]);
-  const predicted = useMemo(() => predictionsByStep(prediction), [prediction]);
+  // An unreadable YAML shows the last pipeline that could be read, without estimates for it.
+  const predicted = useMemo(() => predictionsByStep(read.ok ? prediction : null), [prediction, read.ok]);
   // Choosing a step shows its settings in place of the suggestions.
   const lastSelected = useRef(selected);
   useEffect(() => {
@@ -492,6 +493,9 @@ function Canvas(props: CanvasProps) {
           runInfo ? `last run: ${runWords(runInfo)}` : "",
           qualityText ?? "",
           predictedWords(estimate) ?? "",
+          estimate?.unknown.length
+            ? `${estimate.unknown.length} ${estimate.unknown.length === 1 ? "thing" : "things"} the estimate could not tell, listed in its settings`
+            : "",
         ]
           .filter(Boolean)
           .join(". "),

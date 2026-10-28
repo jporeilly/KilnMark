@@ -1030,3 +1030,7 @@ button.cv-danger {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
+
+.cv-suggest-rows {
+  font-weight: 600;
+}

@@ -430,16 +430,23 @@ final class PipelineAdvisor {
             return null;
         }
         String note = null;
-        if ("repair_orphans".equals(s.kind()) && before.rows() != null && after.rows() != null
-            && after.rows() < before.rows()) {
-            // A write's score does not measure referential integrity, so what the lookup does is said in words.
-            note = "About " + QualityPredictor.countWords(before.rows() - after.rows()) + " rows with no match are "
-                + "left out";
+        if (before.rows() != null && after.rows() != null && after.rows() < before.rows()) {
+            // Fewer rows can raise a score; the rows left out are said in words beside it. A write's score
+            // does not measure referential integrity, so for a lookup this is all it shows.
+            long lost = before.rows() - after.rows();
+            note = "repair_orphans".equals(s.kind())
+                ? "About " + QualityPredictor.countWords(lost) + " rows with no match are left out"
+                : "About " + QualityPredictor.countWords(lost) + " fewer rows reach " + s.placement().before() + " ("
+                    + QualityPredictor.countWords(before.rows()) + " → " + QualityPredictor.countWords(after.rows())
+                    + ")";
+        } else if (before.rows() != null && after.rows() == null) {
+            note = "How many rows then reach " + s.placement().before() + " is not known";
         }
         Effect effect = new Effect(s.placement().before(), before.overall(), after.overall(), before.dimensions(),
             after.dimensions(), before.rows(), after.rows(), note);
         Double gain = effect.gain();
-        if (gain == null || (gain <= 0.0005 && (note == null || gain < -0.0005))) {
+        boolean unscored = "repair_orphans".equals(s.kind());
+        if (gain == null || (gain <= 0.0005 && (!unscored || note == null || gain < -0.0005))) {
             return null;
         }
         return new Suggestion(s.id(), s.kind(), s.title(), s.why(), s.steps(), s.placement(), effect, s.source());
@@ -702,7 +709,10 @@ final class PipelineAdvisor {
         List<Suggestion> shareable = new ArrayList<>();
         for (Suggestion s : found) {
             Set<String> mine = sent.getOrDefault(s.placement().before(), Set.of());
-            if (columnsOf(s).stream().allMatch(mine::contains)) {
+            // A step reading another asset names it (in its title too): only of a source the model may see.
+            boolean readsAllowed = s.steps().stream().filter(n -> n.type().equals("read"))
+                .allMatch(n -> allowed.containsKey(String.valueOf(n.settings().get("source"))));
+            if (readsAllowed && columnsOf(s).stream().allMatch(mine::contains)) {
                 shareable.add(s);
                 ObjectNode n = cands.addObject().put("id", s.id()).put("kind", s.kind()).put("title", s.title())
                     .put("before", s.placement().before());

@@ -547,7 +547,8 @@ class PipelineFlowTest {
             stopped.prettify());
 
         // Predicted before it runs, from the catalogue alone: the scan's profile of lab.people and the asset's rule.
-        JsonPath predicted = as(viewer).body(Map.of("yaml", GATED)).post("/api/v1/pipelines/predict").then()
+        // (By a steward, who may see the values the estimate uses; a viewer's is below.)
+        JsonPath predicted = as(steward).body(Map.of("yaml", GATED)).post("/api/v1/pipelines/predict").then()
             .statusCode(200).body("estimate", equalTo(true)).body("valid", equalTo(true)).extract().jsonPath();
         String said = predicted.prettify();
         assertEquals(0.9, predicted.getDouble("outputs.find { it.step == 'check' }.overall"), 0.01, said);
@@ -562,6 +563,17 @@ class PipelineFlowTest {
             .contains("name as tidy computes it"), said);
         assertEquals(1.0, predicted.getDouble("outputs.find { it.step == 'good' }.dimensions.completeness"), 1e-6, said);
         as(viewer).body(Map.of()).post("/api/v1/pipelines/predict").then().statusCode(400);
+        // A viewer may not see values: a bound or a value cannot be used to probe the spread through rows.
+        String probe = GATED.replace("  - id: check\n", "  - id: low\n    type: filter\n    input: tidy\n"
+            + "    condition: \"id <= 1000\"\n\n  - id: check\n").replace("    input: tidy\n    on_fail", "    input: low\n"
+            + "    on_fail");
+        JsonPath byViewer = as(viewer).body(Map.of("yaml", probe)).post("/api/v1/pipelines/predict").then()
+            .statusCode(200).body("valid", equalTo(true)).extract().jsonPath();
+        Object hiddenRows = byViewer.get("steps.find { it.step == 'low' }.rows.out");
+        assertEquals(null, hiddenRows, byViewer.prettify());
+        JsonPath bySteward = as(steward).body(Map.of("yaml", probe)).post("/api/v1/pipelines/predict").then()
+            .statusCode(200).extract().jsonPath();
+        assertEquals(1000, bySteward.getInt("steps.find { it.step == 'low' }.rows.out"), 20, bySteward.prettify());
 
         as(steward).body(Map.of("name", "people-gate", "yaml", GATED)).post("/api/v1/pipelines").then()
             .statusCode(201);
@@ -649,6 +661,18 @@ class PipelineFlowTest {
             1e-6, failed.prettify());
         assertEquals("stopped", failed.getString("quality.find { it.step == 'check' }.prediction.gate.decision"),
             failed.prettify());
+
+        // The engine itself fails: the predictions stay, none still saying the run has just started.
+        HoldingGraphRunner.failWith = "engine broke (test)";
+        long broken = as(steward).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract()
+            .jsonPath().getLong("id");
+        JsonPath engine = waitForRun(broken, "failed");
+        assertEquals(3, engine.getList("quality").size(), engine.prettify());
+        assertFalse(engine.getList("quality.note").toString().contains("just started"), engine.prettify());
+        assertTrue(engine.getString("quality.find { it.step == 'good' }.note").contains("did not succeed"),
+            engine.prettify());
+        assertEquals(1.0, engine.getDouble("quality.find { it.step == 'good' }.predicted.dimensions.completeness"),
+            1e-6, engine.prettify());
         assertEquals(0, sql("SELECT count(*) FROM kilnmark.notify_event WHERE kind = 'pipeline_low_quality' "
             + "AND dedupe_key = 'pipeline-quality:" + strict + "'"));
         as(steward).delete("/api/v1/pipelines/people-gate").then().statusCode(204);

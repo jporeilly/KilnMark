@@ -127,13 +127,15 @@ export function dimensionRows(measured: QualityScore | null | undefined, predict
 
 /**
  * What the gap between measured and predicted says, in words, or null when there is nothing to
- * compare: within a couple of points the metadata told the truth; otherwise the dimension with the
+ * compare (no dimension both have). The overall gap is the mean over the dimensions both have: within a couple of points the metadata told the truth; otherwise the dimension with the
  * widest gap is named, since that is where the metadata or the pipeline needs attention.
  */
 export function gapWords(measured: QualityScore | null | undefined, predicted: QualityScore | null | undefined): string | null {
   if (!measured || !predicted || predicted.overall == null) return null;
-  const gap = measured.overall - predicted.overall;
+  // Over the dimensions both have, so a dimension only one side could judge does not make a gap.
   const rows = dimensionRows(measured, predicted).filter((r) => r.gap != null);
+  if (rows.length === 0) return null;
+  const gap = rows.reduce((n, r) => n + r.gap!, 0) / rows.length;
   const widest = rows.sort((a, b) => Math.abs(b.gap!) - Math.abs(a.gap!))[0];
   if (Math.abs(Math.round(gap * 100)) <= 2 && (!widest || Math.abs(Math.round(widest.gap! * 100)) <= 2)) {
     return "Measured as predicted: the catalogue's metadata matched the rows.";

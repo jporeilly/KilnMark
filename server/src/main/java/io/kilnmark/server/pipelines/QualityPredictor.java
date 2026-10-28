@@ -586,20 +586,126 @@ final class QualityPredictor {
 
     /**
      * What a condition does: the share of rows for which it is true ({@code share}, null when it
-     * cannot be told), and what is then certain about the columns of the rows it keeps and of the
-     * rows it does not.
+     * cannot be told), the share for which it is null ({@code nullShare}: its column is empty, so the
+     * condition is neither true nor false; null when unknown), what is then certain about the columns
+     * of the rows it keeps and of the rows it does not, and an assumption it made, or null.
      */
-    record Selection(Double share, Map<String, UnaryOperator<Col>> kept, Map<String, UnaryOperator<Col>> rejected,
-                     String unknown, boolean narrows) {
+    record Selection(Double share, Double nullShare, Map<String, UnaryOperator<Col>> kept,
+                     Map<String, UnaryOperator<Col>> rejected, String unknown, boolean narrows, String assumed) {
+
+        Selection(Double share, Map<String, UnaryOperator<Col>> kept, Map<String, UnaryOperator<Col>> rejected,
+                  String unknown, boolean narrows) {
+            this(share, null, kept, rejected, unknown, narrows, null);
+        }
 
         static Selection unknown(String why) {
             return new Selection(null, Map.of(), Map.of(), why, true);
         }
 
+        Selection nulls(Double n) {
+            return new Selection(share, n, kept, rejected, unknown, narrows, assumed);
+        }
+
+        Selection assuming(String a) {
+            return new Selection(share, nullShare, kept, rejected, unknown, narrows, a);
+        }
+
+        /**
+         * {@code not}: true where this is false, which leaves out the rows where it is null (SQL's
+         * rules), so its share is the rest less the null share. A test that is never null (is null) swaps
+         * what it keeps and sets aside; otherwise the rows kept have the column filled, and nothing more
+         * is known of its values.
+         */
         Selection not() {
-            return new Selection(share == null ? null : 1 - share, rejected, kept, unknown, narrows);
+            if (nullShare == null) {
+                return new Selection(null, null, Map.of(), Map.of(), unknown != null ? unknown
+                    : "which rows the condition is empty for", narrows, assumed);
+            }
+            Double s = share == null ? null : Math.max(0, 1 - nullShare - share);
+            if (nullShare == 0) {
+                return new Selection(s, 0.0, rejected, kept, unknown, narrows, assumed);
+            }
+            Map<String, UnaryOperator<Col>> filled = new LinkedHashMap<>();
+            for (String c : kept.keySet()) {
+                filled.put(c, x -> {
+                    Col y = withoutNulls(x);
+                    y.forgetValues();
+                    return y;
+                });
+            }
+            return new Selection(s, nullShare, filled, Map.of(), unknown, narrows, assumed);
         }
     }
+
+    /** A range a condition sets on one column: a comparison, or between. */
+    record Bound(Col col, Double lo, boolean loIncluded, Double hi, boolean hiIncluded) {
+    }
+
+    /** The range {@code v} sets on a column with a number bound, or null for any other condition. */
+    static Bound rangeOf(ExprView v, Est in) {
+        if (!(v instanceof ExprView.Op o)) {
+            return null;
+        }
+        if (o.op().equals("between")) {
+            Col c = refCol(o.args().get(0), in);
+            Double lo = c == null ? null : number(o.args().get(1), c);
+            Double hi = c == null ? null : number(o.args().get(2), c);
+            return lo == null || hi == null ? null : new Bound(c, lo, true, hi, true);
+        }
+        if (!Set.of("<", "<=", ">", ">=").contains(o.op())) {
+            return null;
+        }
+        ExprView a = o.args().get(0);
+        ExprView b = o.args().get(1);
+        String op = o.op();
+        if (a instanceof ExprView.Lit && b instanceof ExprView.Ref) {
+            ExprView t = a;
+            a = b;
+            b = t;
+            op = switch (op) {
+                case "<" -> ">";
+                case "<=" -> ">=";
+                case ">" -> "<";
+                default -> "<=";
+            };
+        }
+        Col c = refCol(a, in);
+        Double n = c == null ? null : number(b, c);
+        if (n == null) {
+            return null;
+        }
+        return op.startsWith("<") ? new Bound(c, null, false, n, op.equals("<="))
+            : new Bound(c, n, op.equals(">="), null, false);
+    }
+
+    /** Two conditions joined with and, on the same column with bounds, as one range; null otherwise. */
+    private static Selection range(Bound a, Bound b, Selection sa, Selection sb) {
+        if (a == null || b == null || !a.col().name.equals(b.col().name)) {
+            return null;
+        }
+        Col c = a.col();
+        if (c.quantiles == null || c.nulls == null) {
+            return null;
+        }
+        Double lo = a.lo();
+        boolean loIn = a.loIncluded();
+        if (b.lo() != null && (lo == null || b.lo() > lo || (b.lo().equals(lo) && !b.loIncluded()))) {
+            lo = b.lo();
+            loIn = b.loIncluded();
+        }
+        Double hi = a.hi();
+        boolean hiIn = a.hiIncluded();
+        if (b.hi() != null && (hi == null || b.hi() < hi || (b.hi().equals(hi) && !b.hiIncluded()))) {
+            hi = b.hi();
+            hiIn = b.hiIncluded();
+        }
+        double upTo = hi == null ? 1 : below(c.quantiles, hi, hiIn);
+        double from = lo == null ? 0 : below(c.quantiles, lo, !loIn);
+        double share = (1 - c.nulls) * Math.max(0, upTo - from);
+        return new Selection(share, c.nulls, merge(sa.kept(), sb.kept()), Map.of(), null, true, null);
+    }
+
+    static final String INDEPENDENT = "conditions joined with and or or are taken as independent of each other";
 
     private Map<String, Est> filter(PlanStep s, Est in) {
         String condition = PipelineSources.text(s.config(), "condition");
@@ -618,6 +724,9 @@ final class QualityPredictor {
         e.narrowed = e.narrowed || sel.narrows();
         if (share == null) {
             e.unknown.add("how many rows " + step + (kept ? " keeps" : " sets aside") + " (" + sel.unknown() + ")");
+        }
+        if (sel.assumed() != null) {
+            e.assumptions.add(step + ": " + sel.assumed());
         }
         Map<String, UnaryOperator<Col>> changes = kept ? sel.kept() : sel.rejected();
         if (e.cols != null) {
@@ -649,9 +758,15 @@ final class QualityPredictor {
                 case "and" -> {
                     Selection a = selection(o.args().get(0), in);
                     Selection b = selection(o.args().get(1), in);
+                    Selection same = range(rangeOf(o.args().get(0), in), rangeOf(o.args().get(1), in), a, b);
+                    if (same != null) {
+                        return same;
+                    }
                     Map<String, UnaryOperator<Col>> kept = merge(a.kept(), b.kept());
                     Double share = a.share() == null || b.share() == null ? null : a.share() * b.share();
-                    return new Selection(share, kept, Map.of(), a.unknown() != null ? a.unknown() : b.unknown(), true);
+                    Double nulls = Objects.equals(a.nullShare(), 0.0) && Objects.equals(b.nullShare(), 0.0) ? 0.0 : null;
+                    return new Selection(share, nulls, kept, Map.of(), a.unknown() != null ? a.unknown() : b.unknown(),
+                        true, share == null ? null : INDEPENDENT);
                 }
                 case "or" -> {
                     Selection a = selection(o.args().get(0), in);
@@ -659,7 +774,9 @@ final class QualityPredictor {
                     Map<String, UnaryOperator<Col>> rejected = merge(a.rejected(), b.rejected());
                     Double share = a.share() == null || b.share() == null ? null
                         : 1 - (1 - a.share()) * (1 - b.share());
-                    return new Selection(share, Map.of(), rejected, a.unknown() != null ? a.unknown() : b.unknown(), true);
+                    Double nulls = Objects.equals(a.nullShare(), 0.0) && Objects.equals(b.nullShare(), 0.0) ? 0.0 : null;
+                    return new Selection(share, nulls, Map.of(), rejected, a.unknown() != null ? a.unknown()
+                        : b.unknown(), true, share == null ? null : INDEPENDENT);
                 }
                 case "not" -> {
                     return selection(o.args().get(0), in).not();
@@ -671,7 +788,7 @@ final class QualityPredictor {
                     }
                     Selection notNull = new Selection(c.nulls == null ? null : 1 - c.nulls,
                         Map.of(c.name, x -> withoutNulls(x)), Map.of(c.name, x -> Col.allNull(x.name, x.kind)),
-                        c.nulls == null ? c.name + " has no profile" : null, true);
+                        c.nulls == null ? c.name + " has no profile" : null, true).nulls(0.0);
                     return o.op().equals("is_null") ? notNull.not() : notNull;
                 }
                 case "=", "<>", "in", "not_in" -> {
@@ -696,14 +813,14 @@ final class QualityPredictor {
                             y.negatives = 0.0;
                         }
                         return y;
-                    }), Map.of(), null, true);
+                    }), Map.of(), null, true).nulls(c.nulls);
                     return o.op().equals("between") ? between : new Selection(between.share() == null ? null
                         : (1 - c.nulls) * (1 - inside), Map.of(c.name, x -> {
                             Col y = withoutNulls(x);
                             y.quantiles = null;
                             y.outliers = null;
                             return y;
-                        }), Map.of(), null, true);
+                        }), Map.of(), null, true).nulls(c.nulls);
                 }
                 default -> {
                     return Selection.unknown("what the condition keeps");
@@ -719,10 +836,10 @@ final class QualityPredictor {
             }
             Pattern p = Pattern.compile(regex);
             return new Selection((1 - c.nulls) * match, Map.of(c.name, x -> keepShapes(withoutNulls(x), p, true)),
-                Map.of(), null, true);
+                Map.of(), null, true).nulls(c.nulls);
         }
         if (v instanceof ExprView.Lit lit && lit.value() instanceof Boolean b) {
-            return new Selection(b ? 1.0 : 0.0, Map.of(), Map.of(), null, !b);
+            return new Selection(b ? 1.0 : 0.0, Map.of(), Map.of(), null, !b).nulls(0.0);
         }
         return Selection.unknown("what the condition keeps");
     }
@@ -760,7 +877,7 @@ final class QualityPredictor {
                 Col y = withoutNulls(x);
                 y.blanks = 0.0;
                 return y;
-            }), Map.of(), null, true);
+            }), Map.of(), null, true).nulls(c.nulls);
         }
         Col c = refCol(left, in);
         if (c == null) {
@@ -791,7 +908,7 @@ final class QualityPredictor {
             y.distinct = null;
             return y;
         };
-        return new Selection(share, Map.of(c.name, keep), Map.of(), null, true);
+        return new Selection(share, Map.of(c.name, keep), Map.of(), null, true).nulls(c.nulls);
     }
 
     /** {@code x > n} and the like on a number or date with quantiles. */
@@ -828,14 +945,18 @@ final class QualityPredictor {
                 y.negatives = 0.0;
             }
             return y;
-        }), Map.of(), null, true);
+        }), Map.of(), null, true).nulls(c.nulls);
     }
 
-    /** The share of values at or below ({@code inclusive}) or below {@code v}, by the 21 quantiles. */
+    /**
+     * The share of values at or below ({@code inclusive}) or below {@code v}, by the 21 quantiles.
+     * Where several quantiles equal {@code v} (a value many rows share), at or below counts to the
+     * last of them and below to the first.
+     */
     static double below(double[] q, double v, boolean inclusive) {
         int n = q.length - 1;
         if (n <= 0) {
-            return v >= q[0] ? 1 : 0;
+            return inclusive ? (v >= q[0] ? 1 : 0) : (v > q[0] ? 1 : 0);
         }
         if (v < q[0] || (!inclusive && v == q[0])) {
             return 0;
@@ -843,17 +964,30 @@ final class QualityPredictor {
         if (v > q[n] || (inclusive && v == q[n])) {
             return 1;
         }
+        int first = -1;
+        int last = -1;
+        for (int i = 0; i <= n; i++) {
+            if (q[i] == v) {
+                if (first < 0) {
+                    first = i;
+                }
+                last = i;
+            }
+        }
+        if (first >= 0) {
+            return (double) (inclusive ? last : first) / n;
+        }
         for (int i = 0; i < n; i++) {
-            if (v <= q[i + 1]) {
+            if (v < q[i + 1]) {
                 double span = q[i + 1] - q[i];
-                double within = span <= 0 ? (inclusive ? 1 : 0) : (v - q[i]) / span;
+                double within = span <= 0 ? 0 : (v - q[i]) / span;
                 return (i + within) / n;
             }
         }
         return 1;
     }
 
-    private static Col refCol(ExprView v, Est in) {
+    static Col refCol(ExprView v, Est in) {
         return v instanceof ExprView.Ref r ? in.col(r.column()) : null;
     }
 
@@ -914,7 +1048,8 @@ final class QualityPredictor {
         for (String w : wanted) {
             Double share = c.top.get(w);
             if (share == null) {
-                if (!complete) {
+                // A number or time may be written another way (10 and 10.00): no match there is no answer.
+                if (!complete || !c.text()) {
                     return null;
                 }
             } else {
@@ -961,6 +1096,9 @@ final class QualityPredictor {
         } catch (PatternSyntaxException e) {
             return null;
         }
+        if (literalLettersOrDigits(regex)) {
+            return null;
+        }
         double listed = 0;
         double matched = 0;
         for (Map.Entry<String, Double> e : c.patterns.entrySet()) {
@@ -979,17 +1117,46 @@ final class QualityPredictor {
         return Math.min(1, matched / listed);
     }
 
-    /** Whether a value of this shape would match: A and a as letters, 9 as the digit 1; null when it cannot tell. */
+    /** Stand-ins tried for each shape symbol (capital, small letter, digit): all must agree. */
+    static final char[][] STAND_INS = {{'A', 'a', '0'}, {'Z', 'z', '9'}, {'M', 'm', '5'}, {'A', 'z', '9'}};
+
+    /**
+     * Whether a value of this shape would match, trying several letters and digits for each symbol;
+     * null when it cannot tell: the stand-ins disagree (the pattern cares which letter or digit), or
+     * the shape was cut.
+     */
     static Boolean matchesShape(Pattern p, String shape) {
         if (shape.endsWith(ValueShape.CUT)) {
             return null;
         }
-        StringBuilder b = new StringBuilder(shape.length());
-        for (int i = 0; i < shape.length(); i++) {
-            char ch = shape.charAt(i);
-            b.append(ch == '9' ? '1' : ch);
+        Boolean answer = null;
+        for (char[] with : STAND_INS) {
+            StringBuilder b = new StringBuilder(shape.length());
+            for (int i = 0; i < shape.length(); i++) {
+                char ch = shape.charAt(i);
+                b.append(ch == 'A' ? with[0] : ch == 'a' ? with[1] : ch == '9' ? with[2] : ch);
+            }
+            Boolean found = Regexes.find(p, b.toString());
+            if (found == null || (answer != null && !answer.equals(found))) {
+                return null;
+            }
+            answer = found;
         }
-        return Regexes.find(p, b.toString());
+        return answer;
+    }
+
+    /**
+     * Whether a pattern names particular letters or digits ({@code ^GB\\d+}), outside character classes
+     * and escapes: a value shape cannot tell which letters a value has, so such a pattern is not judged
+     * on shapes.
+     */
+    static boolean literalLettersOrDigits(String regex) {
+        String r = regex.replaceAll("\\\\[pP]\\{[^}]*\\}", "")
+            .replaceAll("\\\\.", "")
+            .replaceAll("\\[(?:\\\\.|[^\\]])*\\]", "")
+            .replaceAll("\\{\\d*,?\\d*\\}", "")
+            .replaceAll("\\(\\?[a-zA-Z:!=<>-]*", "(");
+        return r.matches("(?s).*[A-Za-z0-9].*");
     }
 
     private static Col keepShapes(Col x, Pattern p, boolean matching) {
@@ -1735,7 +1902,8 @@ final class QualityPredictor {
             Col out = c == null ? Col.unknown(g, "text") : c.copy();
             out.changed = true;
             if (c != null && c.nulls != null) {
-                out.nulls = c.nulls > 0 && e.rows != null ? 1 / e.rows : 0.0;
+                // One group for the empty values: a share of the groups only when their number is known.
+                out.nulls = c.nulls == 0 ? 0.0 : e.rows != null ? 1 / e.rows : null;
                 out.blanks = out.blanks == null ? null : Math.min(out.blanks, e.rows == null ? 1 : 1 / e.rows);
             }
             out.top = null;

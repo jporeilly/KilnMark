@@ -54,7 +54,14 @@ details.
   of those sources passed to the gateway for its own check; no call is made when no source allows
   it. The model's additions are checked (step types the server has, settings they take, columns it
   was shown that reach that point, the step's own check and output schema) and dropped otherwise.
-  An absent, refused, slow or failing model leaves the rule-based suggestions, and says why.
+  An absent, refused, slow or failing model leaves the rule-based suggestions, and says why. A
+  suggestion reading another asset is shown to the model only when that asset's source allows it.
+  The model is asked when the panel opens and on Ask again (at most 6 times a minute per person);
+  edits re-run only the rule-based suggestions. A suggestion that removes rows says how many.
+- **Values stay with those who may see them.** Prediction for a request uses a column's most common
+  values and spread only when the caller may see data, and for a column marked sensitive only for an
+  admin (through `Sights`, checked by `SightsUseTest`); otherwise those estimates are unknown, so a
+  viewer cannot probe values through predicted row counts.
 - **Canvas.** Predicted scores on each write and gate (debounced, labelled "(estimate)", in each
   step's accessible name and settings drawer); a lazily loaded **Suggestions** panel whose **Add**
   inserts the steps with `insertSteps` (text edits only, one undo step). The run page shows

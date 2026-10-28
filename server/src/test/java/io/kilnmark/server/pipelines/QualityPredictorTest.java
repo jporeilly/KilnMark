@@ -501,4 +501,108 @@ class QualityPredictorTest {
         assertEquals("9999-99-99", QualityPredictor.formatShape("yyyy-MM-dd"));
         assertNull(QualityPredictor.formatShape("d MMM yyyy"));
     }
+
+    // ---- review fixes ----
+
+    @Test
+    void valuesAreWithheldFromCallersWhoMayNotSeeThem() {
+        ProfileFacts all = people().facts.get(PEOPLE);
+        P probe = new P().read("people", PEOPLE, PEOPLE_COLUMNS)
+            .step("uk", "filter", Map.of("condition", "country in ('GB', 'IE')"), "people")
+            .step("low", "filter", Map.of("condition", "id <= 250"), "people")
+            .write("a", "uk").write("b", "low");
+        // A role that may not see data: neither most common values nor the spread are used.
+        Fake viewer = people();
+        viewer.facts.put(PEOPLE, PredictionCatalogue.withheld(all, false, Set.of(), false));
+        QualityPredictor.Result v = predict(viewer, probe);
+        assertNull(rows(v, "uk", "out"), "membership of a value cannot be probed");
+        assertNull(rows(v, "low", "out"), "quantiles cannot be probed with a bound");
+        assertTrue(v.output("a").unknown().toString().contains("how many rows uk keeps"));
+        // A steward: a column marked sensitive is withheld, the rest is used.
+        Fake steward = people();
+        steward.facts.put(PEOPLE, PredictionCatalogue.withheld(all, true, Set.of("country"), false));
+        QualityPredictor.Result st = predict(steward, probe);
+        assertNull(rows(st, "uk", "out"));
+        assertEquals(Math.round(1000 * 249.0 / 999), rows(st, "low", "out"));
+        // An admin sees all.
+        assertEquals(PredictionCatalogue.withheld(all, true, Set.of("country"), true), all);
+        assertEquals(900L, rows(predict(people(), probe), "uk", "out"));
+    }
+
+    @Test
+    void quantileTiesCountEveryEqualValue() {
+        double[] q = new double[21];
+        for (int i = 11; i <= 20; i++) {
+            q[i] = i - 10;
+        }
+        assertEquals(0.5, QualityPredictor.below(q, 0, true), 1e-9, "x <= 0 holds for the first eleven quantiles");
+        assertEquals(0.0, QualityPredictor.below(q, 0, false), 1e-9);
+        assertEquals(0.55, QualityPredictor.below(q, 1, true), 1e-9);
+        assertEquals(0.55, QualityPredictor.below(q, 1, false), 1e-9, "between the 50% quantile (0) and the 55% one (1)");
+    }
+
+    static Fake scored() {
+        Fake f = people();
+        f.facts.put(ORDERS, facts(ORDERS, 1000, List.of(),
+            field("score", "float64", number(1000, 200, 800, linear(0, 100)), Set.of()),
+            field("n", "int64", top(number(1000, 0, 3, linear(10, 12)), Map.of("10", 500L, "11", 300L, "12", 200L)),
+                Set.of())));
+        return f;
+    }
+
+    @Test
+    void notLeavesOutTheRowsWhereTheTestIsNull() {
+        QualityPredictor.Result r = predict(scored(), new P().read("orders", ORDERS, List.of(col("score", "float64"),
+                col("n", "int64")))
+            .step("low", "filter", Map.of("condition", "not (score > 50)"), "orders")
+            .step("filled", "filter", Map.of("condition", "not (score is null)"), "orders")
+            .write("a", "low").write("b", "filled"));
+        assertEquals(400L, rows(r, "low", "out"), "80% filled, half of them at most 50; the 20% empty are not kept");
+        assertEquals(600L, rows(r, "low", "rejected"));
+        assertEquals(800L, rows(r, "filled", "out"));
+    }
+
+    @Test
+    void boundsOnOneColumnMakeARangeAndOtherConditionsSayTheyAreTakenAsIndependent() {
+        QualityPredictor.Result r = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
+            .step("band", "filter", Map.of("condition", "id > 100 and id <= 300"), "people")
+            .step("both", "filter", Map.of("condition", "id <= 500 and email is not null"), "people")
+            .write("a", "band").write("b", "both"));
+        assertEquals(200L, rows(r, "band", "out"), "one range on id, not two shares multiplied");
+        assertFalse(r.output("a").assumptions().toString().contains("independent"), r.output("a").assumptions().toString());
+        assertTrue(r.output("b").assumptions().toString().contains("both: conditions joined with and or or are taken "
+            + "as independent"), r.output("b").assumptions().toString());
+    }
+
+    @Test
+    void aPatternNamingLettersOrDigitsIsNotJudgedOnShapes() {
+        QualityPredictor.Col country = QualityPredictor.fromFacts(people().facts.get(PEOPLE).field("country"), "text");
+        assertNull(QualityPredictor.shapeShare(country, "^GB\\d*$"), "GB is two particular letters");
+        assertNull(QualityPredictor.shapeShare(country, "^[A-M]+$"), "it depends on which letters");
+        assertEquals(1.0, QualityPredictor.shapeShare(country, "^[A-Z]{2}$"), 1e-9);
+        assertTrue(QualityPredictor.literalLettersOrDigits("^GB\\d+"));
+        assertFalse(QualityPredictor.literalLettersOrDigits("^[A-Z]{2}\\d[A-Z]? \\d[A-Z]{2}$"));
+    }
+
+    @Test
+    void aNumberWrittenAnotherWayIsUnknownNotZero() {
+        QualityPredictor.Result r = predict(scored(), new P().read("orders", ORDERS, List.of(col("score", "float64"),
+                col("n", "int64")))
+            .step("ten", "filter", Map.of("condition", "n = 10"), "orders")
+            .step("odd", "filter", Map.of("condition", "n = 10.50"), "orders")
+            .write("a", "ten").write("b", "odd"));
+        assertEquals(500L, rows(r, "ten", "out"));
+        assertNull(rows(r, "odd", "out"), "no match among the common values of a number column is no answer");
+    }
+
+    @Test
+    void anAggregatesEmptyGroupStaysUnknownWhenItsRowsAre() {
+        Fake f = people();
+        f.facts.put(ORDERS, new ProfileFacts(1, ORDERS, Instant.now(), null, null, false, List.of(),
+            List.of(field("score", "float64", number(1000, 200, 800, linear(0, 100)), Set.of()))));
+        QualityPredictor.Result r = predict(f, new P().read("orders", ORDERS, List.of(col("score", "float64")))
+            .step("by", "aggregate", Map.of("group_by", List.of("score")), "orders").write("a", "by"));
+        assertNull(rows(r, "by", "out"));
+        assertFalse(r.output("a").dimensions().containsKey("completeness"), r.output("a").dimensions().toString());
+    }
 }

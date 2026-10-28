@@ -127,11 +127,16 @@ describe("words for predictions", () => {
       { dimension: "consistency", measured: null, predicted: 0.9, gap: null },
     ]);
     expect(gapWords(measured, predicted)).toBe(
-      "Measured 10 points below the estimate; the widest gap is in completeness (−25 points). Check the metadata of what this step reads, or the steps before it.",
+      "Measured 25 points below the estimate; the widest gap is in completeness (−25 points). Check the metadata of what this step reads, or the steps before it.",
     );
-    expect(gapWords({ ...measured, overall: 0.905, dimensions: {} }, { ...predicted, dimensions: {} })).toBe(
+    expect(gapWords({ ...measured, dimensions: { completeness: 0.9 } }, { ...predicted, dimensions: { completeness: 0.91 } })).toBe(
       "Measured as predicted: the catalogue's metadata matched the rows.",
     );
+    // Only the dimensions both have count: a dimension only measured makes no gap.
+    expect(gapWords({ overall: 0.5, dimensions: { completeness: 0.9, validity: 0.1 }, reasons: [] }, { overall: 0.9, dimensions: { completeness: 0.9 }, reasons: [] })).toBe(
+      "Measured as predicted: the catalogue's metadata matched the rows.",
+    );
+    expect(gapWords({ ...measured, dimensions: { validity: 0.9 } }, { ...predicted, dimensions: { completeness: 0.9 } })).toBeNull();
     expect(gapWords(null, predicted)).toBeNull();
   });
 });
@@ -183,6 +188,23 @@ describe("adding a suggestion through the YAML", () => {
       ),
     );
     expect(gate).toContain("    on_fail: quarantine\n    asset_rules: false\n    rules: [{type: not_null, field: email}]\n");
+  });
+
+  test("keys and values with colons, hashes and line breaks read back exactly", () => {
+    const columns = { "a: b": "x || ' # not a comment'", "c#d": "concat(first, ': ', last)", e: "line one\nline two" };
+    const text = ok(
+      insertSteps(PIPELINE, CAT, [{ id: "odd", type: "compute", settings: { columns }, inputs: { in: "people" } }], {
+        before: "out",
+        port: "in",
+        from: "people",
+        through: "odd",
+      }),
+    );
+    const g = readGraph(text, CAT);
+    expect(g.ok).toBe(true);
+    const step = g.ok ? g.graph.steps.find((s) => s.id === "odd") : undefined;
+    expect(step?.settings.columns).toEqual(columns);
+    expect(g.ok && g.graph.steps.find((s) => s.id === "out")?.inputs).toEqual([{ port: null, from: "odd", fromPort: "out" }]);
   });
 
   test("refused when the pipeline has changed since the suggestion was made", () => {

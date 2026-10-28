@@ -384,18 +384,24 @@ On the canvas, each write and gate shows **Predicted 91% (estimate)** a moment a
 editing; select it to see the score per dimension, what a gate is expected to do with each rule,
 and what the estimate could not tell or had to assume. A read step that has not been scanned has
 no profile, so what follows it is **unknown**: scan its source first. Kilnmark never fills a gap
-with a guess; a dimension it cannot judge has no score.
+with a guess; a dimension it cannot judge has no score. The badge says how many things the estimate
+could not tell; the step's settings list them.
+
+The estimate uses a column's values (its most common values and its spread) only when you may see
+them, as the Quality pages decide: not at all for viewers, and for a column marked sensitive only
+for admins. Otherwise what depends on them, such as how many rows `salary <= 50000` keeps, is
+unknown, so the estimate never gives the values away.
 
 How each step carries the estimate:
 
 | Step | Rule |
 | --- | --- |
 | `read` | The asset's latest profile; with `row_limit`, the first rows are taken to be like the rest |
-| `filter`, `route` | `is [not] null` drops the known share of empty values; `=`, `<>`, `in` use the column's most common values when they account for every value; `<`, `>`, `between` use its quantiles; `regex_match` tests each value shape; `and` and `or` combine the shares as if independent. Anything else keeps an unknown share of rows. The columns not tested are taken to be spread the same in the rows kept |
+| `filter`, `route` | `is [not] null` drops the known share of empty values; `=`, `<>`, `in` use the column's most common values when they account for every value (for a number or time, a value not among them is unknown, since it may be written another way); `<`, `>`, `between` use its quantiles, and bounds on one column joined with `and` make one range; `regex_match` tests each value shape with several letters and digits, and is unknown when they disagree or the pattern names particular letters or digits; `not` leaves out the rows where its test is empty, as SQL does; other conditions joined with `and` and `or` are combined as if independent, which the estimate says. Anything else keeps an unknown share of rows. The columns not tested are taken to be spread the same in the rows kept |
 | `compute` | A copied column keeps its profile; `trim` removes padding, `lower`/`upper` change case, `coalesce(x, 'v')` fills the empty values, `parse_date` empties the values in other shapes, `format_date` writes one shape. Arithmetic and joined text are empty when any part is. Other expressions are unknown |
 | `select` | Kept and renamed columns keep their profile; a cast keeps its empty values |
 | `lookup` | Rows with no match are the main key's empty values plus the share of its distinct values missing from the lookup side, from the stored relationship or the two columns' sketches. `keep` leaves those rows with empty lookup columns; `drop` and `rejected` take them out. With no relationship or sketches, unknown |
-| `aggregate` | One row per distinct value of a single group column; each group is unique. Several group columns: the row count is unknown |
+| `aggregate` | One row per distinct value of a single group column; each group is unique. Several group columns, or an input whose rows are unknown: the row count is unknown |
 | `union` | Rows add up; each column's shares are weighted by its inputs' rows, a column an input lacks is empty there. Uniqueness is not predicted |
 | `dedupe` | One row per distinct key value; the key becomes unique. Whole rows: unchanged when a column is already unique |
 | `limit` | At most its rows, taken to be like the rest |
@@ -419,8 +425,10 @@ with its predicted effect (an estimate), such as "Predicted 89% → 94% (+5 poin
   measure this, so the suggestion says how many rows it leaves out);
 - set aside, with a quarantining gate, rows outside a column's accepted patterns, or without a key.
 
-Choose **Add** to insert a suggestion's steps before the write: the YAML changes only where the steps
-go, and one **Undo** takes it out again. Suggestions are for stewards and admins.
+A suggestion that takes rows out (a dedupe, a gate, a lookup that drops rows with no match) also says
+how many fewer rows reach the write, since fewer rows can score higher. Choose **Add** to insert a
+suggestion's steps before the write: the YAML changes only where the steps go, and one **Undo** takes
+it out again. Suggestions are for stewards and admins.
 
 When an admin sets a model for **Pipeline suggestions** under **AI models**, it ranks and explains
 the suggestions and may add its own. It sees metadata only (asset and column names, kinds, shares
@@ -428,8 +436,11 @@ and value shapes, never a value from the data) and only of sources whose AI rule
 see them: a source set to `none` is never shown, and one set to `local_only` only to a local
 model. What it suggests is checked before it is shown: only step types this server has, settings
 those steps take, and columns that reach that point; anything else is left out, and the panel says
-how many. Without a model, or when it is refused, slow or fails, the suggestions are Kilnmark's own
-and the panel says why. Turn **Ask the AI model too** off to skip it.
+how many. A step that would read another table is only shown to the model when that table's source allows it.
+The model is asked when the panel opens and when you choose **Ask again**, at most six times a minute
+for each person; after an edit or an **Add**, only Kilnmark's own suggestions are worked out again.
+Without a model, or when it is refused, slow or fails, the suggestions are Kilnmark's own and the
+panel says why. Turn **Ask the AI model too** off to skip it.
 
 ## Checking as you type
 

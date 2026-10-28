@@ -212,19 +212,64 @@ public class PipelineService {
      * and the rows on each port, estimated from the catalogue's metadata about what it reads. Never
      * reads a source.
      */
-    public PredictionViews.Prediction predict(String yaml) {
+    public PredictionViews.Prediction predict(String yaml, Sights sights) {
         checkSize(yaml);
         PipelineCompilerPort.Compilation c = compiler.check(yaml, steps);
-        QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, PipelineExecution.reads(c));
-        return PredictionViews.of(new QualityPredictor(predictions.open()).predict(plan), c.valid());
+        PredictionCatalogue.Remembering catalogue = predictions.open(sights);
+        QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
+        return PredictionViews.of(new QualityPredictor(catalogue).predict(plan), c.valid());
+    }
+
+    /**
+     * The assets read, by step, before a run resolves them: as the settings name them, or, when the
+     * catalogue has nothing under that name and the path is a file's, under the path as the catalogue
+     * escapes it ({@code #} and {@code %}), as a run's read step finds it.
+     */
+    static Map<String, String> designReads(PipelineCompilerPort.Compilation c, QualityPredictor.Catalogue catalogue) {
+        Map<String, String> out = new LinkedHashMap<>(PipelineExecution.reads(c));
+        for (Map.Entry<String, String> r : out.entrySet()) {
+            Map<String, Object> config = c.configs().getOrDefault(r.getKey(), Map.of());
+            String source = PipelineSources.text(config, "source");
+            String asset = PipelineSources.text(config, "asset");
+            if (asset == null || catalogue.facts(r.getValue()) != null) {
+                continue;
+            }
+            String escaped = PipelineSources.urn(source, ReadStepFactory.escapedFilePath(asset));
+            if (escaped != null && !escaped.equals(r.getValue()) && catalogue.facts(escaped) != null) {
+                r.setValue(escaped);
+            }
+        }
+        return out;
+    }
+
+    /** Most calls to the suggestions model per person in {@link #MODEL_WINDOW}. */
+    static final int MODEL_CALLS = 6;
+    static final java.time.Duration MODEL_WINDOW = java.time.Duration.ofMinutes(1);
+    private final Map<String, java.util.ArrayDeque<Long>> modelCalls = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Whether {@code caller} may ask the suggestions model now; counts the call when so. */
+    boolean mayAskModel(String caller) {
+        long now = System.currentTimeMillis();
+        java.util.ArrayDeque<Long> calls = modelCalls.computeIfAbsent(caller == null ? "" : caller,
+            k -> new java.util.ArrayDeque<>());
+        synchronized (calls) {
+            while (!calls.isEmpty() && calls.peekFirst() < now - MODEL_WINDOW.toMillis()) {
+                calls.pollFirst();
+            }
+            if (calls.size() >= MODEL_CALLS) {
+                return false;
+            }
+            calls.addLast(now);
+            return true;
+        }
     }
 
     /** The predicted quality of a saved version, as {@link #predict} works it out now. */
-    public PredictionViews.Prediction predictVersion(String name, int n) {
+    public PredictionViews.Prediction predictVersion(String name, int n, Sights sights) {
         find(name);
         PipelineStore.Version v = store.version(name, n).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
             name + " has no version " + n));
-        return predict(v.yaml());
+        return predict(v.yaml(), sights);
     }
 
     /**
@@ -233,11 +278,12 @@ public class PipelineService {
      * it, from metadata its sources' AI rules let it see. The model being off or failing never fails
      * the request: the suggestions are then Kilnmark's own, and {@code ai} says why.
      */
-    public PredictionViews.Advice suggest(String yaml, boolean useAi, String caller) {
+    public PredictionViews.Advice suggest(String yaml, boolean useAi, String caller, Sights sights) {
         checkSize(yaml);
         PipelineCompilerPort.Compilation c = compiler.check(yaml, steps);
-        QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, PipelineExecution.reads(c));
-        PipelineAdvisor advisor = new PipelineAdvisor(predictions.open(), steps, json);
+        PredictionCatalogue.Remembering catalogue = predictions.open(sights);
+        QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
+        PipelineAdvisor advisor = new PipelineAdvisor(catalogue, steps, json);
         PipelineAdvisor.Model model = null;
         PipelineAdvisor.AiStatus status;
         io.kilnmark.server.ai.AiFeature feature = io.kilnmark.server.ai.AiFeature.PIPELINE_SUGGESTIONS;
@@ -247,6 +293,9 @@ public class PipelineService {
         } else if (profile.isEmpty()) {
             status = new PipelineAdvisor.AiStatus("off", "No AI model is set for pipeline suggestions, so they are "
                 + "Kilnmark's own. An admin can choose one under AI models.", null);
+        } else if (!mayAskModel(caller)) {
+            status = new PipelineAdvisor.AiStatus("not_asked", "The model has been asked " + MODEL_CALLS + " times in "
+                + "the last minute, so these are Kilnmark's own. Ask again in a minute.", profile.get().name());
         } else {
             io.kilnmark.server.ai.ModelProfile p = profile.get();
             status = null;
@@ -720,6 +769,8 @@ public class PipelineService {
         }
         RunContext context = new RunContext(run.pipeline(), id, run.requestedBy(), role(run.requestedRole()));
         List<String> held = new ArrayList<>();
+        List<RunQuality.StepQuality> predicted = new ArrayList<>();
+        boolean measuredSaved = false;
         PipelineCompilerPort.Compilation c = null;
         boolean ran = false;
         try {
@@ -765,7 +816,7 @@ public class PipelineService {
             }
             // What the catalogue predicts for each write and gate, stored before a row moves, so the run
             // shows its estimate beside what it measures (docs/design/data-quality.md section 8).
-            List<RunQuality.StepQuality> predicted = predictRun(c, context);
+            predicted.addAll(predictRun(c, context));
             saveQuality(id, predicted, context);
             ran = true;
             PipelineExecution.Outcome o = execution.run(runner, c.graph(), writes, context,
@@ -818,6 +869,7 @@ public class PipelineService {
             putScore(q, "score", score);
             putScore(q, "threshold", threshold);
             saveQuality(id, measured, context);
+            measuredSaved = true;
             store.finishRun(id, o.status(), o.error(), result.toString());
             RunQuality.StepQuality lowest = RunQuality.lowestOutputStep(measured);
             finished(run.pipeline(), id, o.status(), score, threshold, lowest == null ? null : lowest.step());
@@ -827,6 +879,9 @@ public class PipelineService {
             if (!ran && c != null && c.graph() != null) {
                 PipelineExecution.closeSteps(c.graph());
             }
+            if (!measuredSaved && !predicted.isEmpty()) {
+                saveQuality(id, RunQuality.withPredicted(List.of(), predicted, "failed"), context);
+            }
             store.finishRun(id, "failed", "The worker running this pipeline was stopped before it started writing. "
                 + "Run it again.", null);
             finished(run.pipeline(), id, "failed");
@@ -835,6 +890,10 @@ public class PipelineService {
             LOG.errorf("Run %d of pipeline %s failed: %s", id, run.pipeline(), context.scrub(String.valueOf(e)));
             if (!ran && c != null && c.graph() != null) {
                 PipelineExecution.closeSteps(c.graph()); // created, never handed to the runner
+            }
+            if (!measuredSaved && !predicted.isEmpty()) {
+                // The predictions stay; they must not say the run has just started.
+                saveQuality(id, RunQuality.withPredicted(List.of(), predicted, "failed"), context);
             }
             store.finishRun(id, "failed", context.scrub("The run failed: " + e.getMessage()), null);
             finished(run.pipeline(), id, "failed");

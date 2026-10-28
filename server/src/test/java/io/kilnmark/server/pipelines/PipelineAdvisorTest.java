@@ -65,7 +65,7 @@ class PipelineAdvisorTest {
 
             @Override
             public String refusal(Records.Source source) {
-                return EgressPolicy.decide(local, "test-model", true, source.name(), EgressPolicy.SourceRule.of(source));
+                return io.kilnmark.server.ai.EgressRules.decide(local, "test-model", true, source.name(), EgressPolicy.SourceRule.of(source));
             }
 
             @Override
@@ -254,5 +254,35 @@ class PipelineAdvisorTest {
         assertEquals("d.M.yyyy", PipelineAdvisor.datePattern("9.9.9999"));
         assertNull(PipelineAdvisor.datePattern("99/99/99"), "which part is the year is not known");
         assertNull(PipelineAdvisor.datePattern("9999-99/99"));
+    }
+
+    @Test
+    void aCandidateReadingFromARefusedSourceIsNotShownToTheModel() {
+        QualityPredictorTest.Fake f = catalogue();
+        String hidden = "urn:kilnmark:hr:ref.secret_codes";
+        f.links.put(QualityPredictorTest.PEOPLE, List.of(new QualityPredictor.Link("country", hidden, "code", 0.1,
+            "declared", "accepted")));
+        f.facts.put(hidden, QualityPredictorTest.facts(hidden, 2, List.of("code"), QualityPredictorTest.field("code",
+            "text", QualityPredictorTest.text(2, 0, 0, 2, Map.of("AA", 2L), Map.of()), Set.of())));
+        f.orphans.put(QualityPredictorTest.PEOPLE + ".country>" + hidden + ".code", 0.1);
+        Recording client = new Recording();
+        PipelineAdvisor.Advice a = new PipelineAdvisor(f, factories(sources()), JSON)
+            .advise(plan(), model(client, false), off(), egress("allowed", "none"));
+        assertTrue(a.suggestions().stream().anyMatch(s -> s.kind().equals("repair_orphans")),
+            "the person still sees it: " + a.suggestions());
+        String sent = client.calls.get(0).user();
+        assertFalse(sent.contains("secret_codes") || sent.contains("orphans-out-country"), sent);
+    }
+
+    @Test
+    void aSuggestionThatDropsRowsSaysHowMany() {
+        PipelineAdvisor.Advice a = new PipelineAdvisor(catalogue(), factories(sources()), JSON)
+            .advise(plan(), null, off(), egress("allowed", "allowed"));
+        PipelineAdvisor.Suggestion dedupe = a.suggestions().stream().filter(s -> s.kind().equals("dedupe"))
+            .findFirst().orElseThrow();
+        assertTrue(dedupe.effect().note().contains("fewer rows reach pay"), dedupe.effect().note());
+        PipelineAdvisor.Suggestion missing = a.suggestions().stream().filter(s -> s.kind().equals("quarantine_missing"))
+            .findFirst().orElseThrow();
+        assertTrue(missing.effect().note().contains("500 → 450"), missing.effect().note());
     }
 }

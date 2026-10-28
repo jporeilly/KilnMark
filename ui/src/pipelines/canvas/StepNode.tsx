@@ -160,9 +160,9 @@ function StepBox({ data, selected }: NodeProps<StepNodeType>) {
           {predictedText && (
             <span
               className={`cv-badge cv-predicted-badge cv-quality-${predictedTone(predicted?.overall)}`}
-              title={predicted?.unknown.length ? `Not known: ${predicted.unknown.slice(0, 3).join("; ")}` : undefined}
             >
               {predictedText}
+              {predicted?.unknown.length ? ` · ${predicted.unknown.length} not known` : ""}
             </span>
           )}
         </div>
