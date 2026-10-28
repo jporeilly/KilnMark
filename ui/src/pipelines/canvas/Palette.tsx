@@ -4,8 +4,8 @@ import {
   IconBox,
   IconChevronDown,
   IconChevronRight,
-  IconDatabaseExport,
-  IconDatabaseImport,
+  IconDatabase,
+  IconDeviceFloppy,
   IconFilter,
   IconHistory,
   IconLayoutSidebarLeftCollapse,
@@ -25,8 +25,8 @@ export const CATEGORIES = ["Read", "Write", "Filter and route", "Transform", "Co
 export const RECENT = "Recently used";
 
 const ICONS: Record<string, typeof IconBox> = {
-  Read: IconDatabaseImport,
-  Write: IconDatabaseExport,
+  Read: IconDatabase,
+  Write: IconDeviceFloppy,
   "Filter and route": IconFilter,
   Transform: IconMathFunction,
   Combine: IconArrowsJoin,
