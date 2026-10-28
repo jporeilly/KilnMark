@@ -1,0 +1,44 @@
+# Demo 1: a quality gate that sets bad rows aside (lab only, never shipped).
+# Needs the lab's postgres and s3 demo sources, imported from lab/sources.csv and scanned.
+# About 5% of lab customers have no email or no date of birth: they go to the quarantine file,
+# the rest to the clean one. Change on_fail to stop and run again to see a gate stop a run.
+kilnmark: pipeline/v1
+name: demo-customers-clean
+description: Lab customers, tidied and checked on the way to the warehouse; failing rows set aside.
+
+steps:
+  - id: customers
+    type: read
+    source: lab-db
+    asset: crm.customers
+
+  - id: tidy
+    type: compute
+    input: customers
+    columns:
+      email: "lower(trim(email))"
+      full_name: "trim(first_name) || ' ' || trim(last_name)"
+
+  - id: check
+    type: gate
+    input: tidy
+    on_fail: quarantine        # stop or warn are the other choices
+    rules:
+      - {name: has an email, type: not_null, field: email}
+      - {name: has a date of birth, type: not_null, field: date_of_birth}
+      - {name: known segment, type: allowed_values, field: segment, values: [Retail, Premier, Business, Student]}
+    max_failing_share: 0.2     # stop the run if more than 20% of rows fail a rule
+
+  - id: clean
+    type: write
+    input: check
+    source: lab-warehouse
+    path: demo/customers_clean.parquet
+    mode: replace
+
+  - id: aside
+    type: write
+    input: check.quarantine
+    source: lab-warehouse
+    path: demo/customers_quarantine.csv
+    mode: replace
