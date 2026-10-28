@@ -69,6 +69,12 @@ final class Compiler {
         }
     }
 
+    // Built once: formatting a number needs a lot of stack, and these are thrown at the deepest point.
+    private static final String TOO_MANY_PARTS = "the expression has more than "
+        + String.format(Locale.UK, "%,d", MAX_NODES) + " parts";
+    private static final String TOO_DEEP = "the expression has more than "
+        + String.format(Locale.UK, "%,d", MAX_NODE_DEPTH) + " operations inside each other";
+
     private final Scope scope;
     private final AggregateHook hook;
     private int depth;
@@ -81,12 +87,10 @@ final class Compiler {
 
     Ev compile(Node n) throws ExprException {
         if (++nodes > MAX_NODES) {
-            throw new ExprException("the expression has more than " + String.format(Locale.UK, "%,d", MAX_NODES)
-                + " parts", n.pos(), "split it over several columns");
+            throw new ExprException(TOO_MANY_PARTS, n.pos(), "split it over several columns");
         }
         if (++depth > MAX_NODE_DEPTH) {
-            throw new ExprException("the expression has more than " + String.format(Locale.UK, "%,d", MAX_NODE_DEPTH)
-                + " operations inside each other", n.pos(), "split it over several columns");
+            throw new ExprException(TOO_DEEP, n.pos(), "split it over several columns");
         }
         try {
             return switch (n) {
