@@ -16,6 +16,24 @@ export const KINDS = [
 export const kindWord = (kind: string | null | undefined) =>
   kind === "source" ? "Source" : kind === "sink" ? "Sink" : kind === "gate" ? "Gate" : kind === "transform" ? "Transform" : "Step";
 
+/** A target that names a file rather than a table: it has a folder or a file extension. */
+const FILE_LIKE = /[/\\]|\.(csv|tsv|txt|json|jsonl|ndjson|parquet|avro|orc|xlsx?|xml)$/i;
+
+/**
+ * The words after the kind in a step's header. A write says what it writes to, from its own
+ * settings, rather than the type's "Write to a table or file" (which a step's width cuts to "Write
+ * to a table…" even for a file): "Write to a file" with `path` or a file-like `target`, "Write to a
+ * table" with `table` or another `target`. Other steps keep their type's label.
+ */
+export function stepLabel(step: Pick<GraphStep, "type" | "settings">, label: string): string {
+  if (step.type !== "write") return label;
+  const s = step.settings;
+  if (s.path != null) return "Write to a file";
+  if (s.table != null) return "Write to a table";
+  if (typeof s.target === "string" && s.target !== "") return FILE_LIKE.test(s.target) ? "Write to a file" : "Write to a table";
+  return label;
+}
+
 const text = (v: Value | undefined): string => {
   if (v == null) return "";
   if (Array.isArray(v)) return v.map(text).join(", ");
