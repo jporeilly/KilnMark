@@ -56,7 +56,7 @@ public class PipelineStore {
     }
 
     /**
-     * A step's measured quality in a run (migration V14). The JSON columns are text here:
+     * A step's measured quality in a run (migration V15). The JSON columns are text here:
      * {@code measuredDimensions} and {@code predictedDimensions} {"dimension": score}, {@code measuredReasons}
      * a list of words, {@code gate} a gate's outcome. {@code predicted} is null until design-time
      * scores exist.

@@ -3,7 +3,7 @@
 -- (an output) and each gate step of a run, its measured score per dimension and overall, and for a
 -- gate what it decided and each rule's result. "predicted" sits beside "measured" for the scores
 -- worked out at design time from the inputs' metadata, which a later change fills; it is null until
--- then. Refers only to V1 (install_info) and V12 (pipeline_run).
+-- then. Refers only to V1 (install_info) and V12 (pipeline_run); V15, as V14 is the Oracle change's.
 
 SET search_path = kilnmark, public;
 
@@ -28,5 +28,5 @@ CREATE TABLE pipeline_step_quality (
     PRIMARY KEY (run_id, step_id)
 );
 
-INSERT INTO install_info (key, value) VALUES ('schema_pipeline_quality', '14')
+INSERT INTO install_info (key, value) VALUES ('schema_pipeline_quality', '15')
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();

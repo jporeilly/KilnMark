@@ -46,7 +46,7 @@ details.
   it as a list of rules and writes one rule a line. Validation needs the graph for one check: a
   gate whose rows come from several reads must name one with `rules_from`, and a note says when a
   gate has nothing to check.
-- **Measured quality per run** (migration V14, `pipeline_step_quality`): each write's score per
+- **Measured quality per run** (migration V15, `pipeline_step_quality`): each write's score per
   dimension and overall, from the profile its writer made while writing (Measures and Scores, as an
   asset is scored, without history), and each gate's score from its rules' results with its
   decision, row counts and each rule's result. `GET /api/v1/pipeline-runs/{id}` adds `quality`
