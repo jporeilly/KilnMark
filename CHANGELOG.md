@@ -5,6 +5,8 @@ details.
 
 ## Unreleased
 
+## 0.0.7 (28 October 2026)
+
 ### What's new
 
 - **Any database with a JDBC driver.** For databases without a connector of their own, such as
@@ -33,6 +35,8 @@ details.
 
 ### Details
 
+- **Canvas icons.** Read steps and the Read folder show a database, write steps and the Write folder
+  a save icon; the two database icons they had differed only by a small arrow.
 - **Generic JDBC connector** (kind `jdbc`; docs/design/connectors.md, "Generic JDBC"; docs/guide/drivers.md,
   "Databases without a connector of their own"; docs/guide/writing-data.md, "Generic JDBC"). Settings
   `driver` (CHOICE of the registered drivers), `url` (TEXT; must start as the driver's URL prefix and
