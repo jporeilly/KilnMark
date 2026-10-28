@@ -10,6 +10,7 @@
 #   .\lab\lab.ps1 logs <name>              the last lines of its containers' logs
 #   .\lab\lab.ps1 sources                  where lab\sources.csv is, and how to import it
 #   .\lab\lab.ps1 driver oracle [-Force]   download Oracle's JDBC driver (its licence is shown first)
+#   .\lab\lab.ps1 pipelines                add the demo pipelines in lab\pipelines to a running Kilnmark
 #
 # Names may also be given with commas: .\lab\lab.ps1 start postgres,sqlserver
 # Uses podman if it is on the PATH, otherwise docker, as build.ps1 does. Needs no administrator
@@ -344,8 +345,41 @@ function Invoke-Driver([string[]]$Given) {
     }
 }
 
+# Adds each demo pipeline in lab\pipelines to a running Kilnmark through its API. Needs an admin or
+# steward token in $env:KILNMARK_ADMIN_TOKEN (or $env:KILNMARK_TOKEN); $env:KILNMARK_URL defaults
+# to http://localhost:8780. A pipeline that is already there is left as it is.
+function Invoke-Pipelines {
+    $url = if ($env:KILNMARK_URL) { $env:KILNMARK_URL.TrimEnd('/') } else { 'http://localhost:8780' }
+    $token = if ($env:KILNMARK_TOKEN) { $env:KILNMARK_TOKEN } else { $env:KILNMARK_ADMIN_TOKEN }
+    if (-not $token) { Fail 'set $env:KILNMARK_ADMIN_TOKEN (or $env:KILNMARK_TOKEN) to an admin or steward token first.' }
+    $files = Get-ChildItem -Path (Join-Path -Path $LabDir -ChildPath 'pipelines') -Filter '*.yaml' | Sort-Object Name
+    foreach ($f in $files) {
+        $yaml = [System.IO.File]::ReadAllText($f.FullName)
+        $nameLine = ($yaml -split "`r?`n") | Where-Object { $_ -match '^name:' } | Select-Object -First 1
+        $name = ($nameLine -replace '^name:\s*', '').Trim()
+        $body = @{ name = $name; yaml = $yaml; message = 'Added by lab\lab.ps1 pipelines' } | ConvertTo-Json -Compress
+        $code = 0
+        try {
+            $r = Invoke-WebRequest -UseBasicParsing -Method Post -Uri "$url/api/v1/pipelines" `
+                -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json; charset=utf-8' `
+                -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
+            $code = [int]$r.StatusCode
+        } catch {
+            if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } else { $code = 0 }
+        }
+        switch ($code) {
+            201 { Write-Host "Added    $($f.Name)" }
+            409 { Write-Host "Already there: $($f.Name) (left as it is)" }
+            { @(401, 403) -contains $_ } { Fail "Kilnmark refused the token ($code): it needs the steward or admin role." }
+            0 { Fail "could not reach Kilnmark at $($url): is it running?" }
+            default { Fail "Kilnmark answered $code for $($f.Name)." }
+        }
+    }
+    Write-Host "Open Pipelines in Kilnmark ($url) to see them."
+}
+
 function Show-Usage {
-    Get-Content -Path $PSCommandPath -TotalCount 16 | ForEach-Object { $_ -replace '^# ?', '' }
+    Get-Content -Path $PSCommandPath -TotalCount 17 | ForEach-Object { $_ -replace '^# ?', '' }
     Write-Output ''
     Write-Output "Demo sources: $(Get-SourceNames)"
 }
@@ -359,6 +393,7 @@ switch ($Command) {
     'logs' { Invoke-Logs $Names }
     'sources' { Invoke-Sources }
     'driver' { Invoke-Driver $Names }
+    'pipelines' { Invoke-Pipelines }
     { @('help', '-h', '--help', '-?') -contains $_ } { Show-Usage }
     default {
         Show-Usage

@@ -1,0 +1,54 @@
+# Demo 2: join, summarise and route (lab only, never shipped).
+# Needs the lab's postgres and s3 demo sources, imported from lab/sources.csv and scanned.
+# Totals 100,000 lab transactions per customer, adds each customer's name and segment, and writes
+# every customer to one file and the big spenders to a second.
+kilnmark: pipeline/v1
+name: demo-customer-spend
+description: Spend per lab customer, with name and segment, and the big spenders on their own.
+
+steps:
+  - id: transactions
+    type: read
+    source: lab-db
+    asset: billing.transactions
+
+  - id: customers
+    type: read
+    source: lab-db
+    asset: crm.customers
+
+  - id: spend
+    type: aggregate
+    input: transactions
+    group_by: [customer_id]
+    values:
+      total_spent: "sum(amount)"
+      transactions: "count(*)"
+      last_seen: "max(txn_at)"
+
+  - id: named
+    type: lookup
+    inputs: {main: spend, lookup: customers}
+    on: {customer_id: customer_id}
+    keep: [first_name, last_name, segment]
+    unmatched: rejected
+
+  - id: by_size
+    type: route
+    input: named
+    routes:
+      big: "total_spent >= 12000"
+
+  - id: everyone
+    type: write
+    input: named
+    source: lab-warehouse
+    path: demo/customer_spend.parquet
+    mode: replace
+
+  - id: big_spenders
+    type: write
+    input: by_size.big
+    source: lab-warehouse
+    path: demo/big_spenders.csv
+    mode: replace

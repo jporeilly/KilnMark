@@ -10,6 +10,115 @@ guides) names it or depends on it: `./gradlew release` checks this
 ([ADR 0024](../docs/adr/0024-the-lab-is-not-the-product.md)). Lab walkthroughs belong here or in
 [docs/development.md](../docs/development.md), never in `docs/guide`.
 
+## A demo from start to finish
+
+About 30 minutes the first time, most of it waiting for images to download. The commands are for
+Windows PowerShell; on Linux and macOS use `./lab/lab.sh` with the same arguments, and `export`
+instead of `$env:`.
+
+1. **Start Kilnmark and the demo sources.** In the repository root:
+
+   ```
+   .\build.ps1 -Lab postgres,s3,mariadb,mail
+   ```
+
+   This builds Kilnmark, starts it on http://localhost:8780 and starts four demo sources: the
+   PostgreSQL CRM and billing database, the S3 server with the `lab-raw` and `lab-warehouse`
+   buckets, the MariaDB shop and Mailpit. If Kilnmark is already built, `podman compose up -d`
+   then `.\lab\lab.ps1 start postgres s3 mariadb mail` does the same. `.\lab\lab.ps1 list` shows
+   what is running.
+
+2. **Sign in.** Use your admin token, or read the first one from the server (it lasts 24 hours;
+   see "Sign in" in [docs/development.md](../docs/development.md)):
+
+   ```
+   podman compose exec kilnmark cat /var/lib/kilnmark/admin-token
+   ```
+
+   Keep it in `$env:KILNMARK_ADMIN_TOKEN` for step 5.
+
+3. **Register the demo sources and scan them.** **Sources > Import sources from a file**, choose
+   `lab\sources.csv`, tick **Rewrite host names for this server**, **Test each connection** and
+   **Queue a scan**, and press **Import** (more in [Register the lab in one go](#register-the-lab-in-one-go)).
+   SQL Server and Oracle show a failed connection test because they are not started; that is
+   expected. Wait until **Sources** shows the scans of `lab-db`, `lab-bucket` and `lab-mariadb` as
+   finished, a minute or two.
+
+4. **Show what discovery found.** [What discovery should find](#what-discovery-should-find-the-answer-key)
+   is the answer key. Good stops:
+   - **Browse > lab-db > crm.customers**: personal data found in the columns (email, phone, date
+     of birth, NI number), each column's profile, and its quality score.
+   - **Relationships**: the join from `billing.transactions` to `crm.customers` that no foreign
+     key declares, proposed with its confidence; accept it.
+   - **Quality** on `crm.customers`: **Recommended from the profile** lists rules the data already
+     obeys; add a not-null rule on `email` and run it to see the 1% or so of customers with no email.
+   - **Search** (Ctrl+K): type `email` to find every email column in the lab, in both databases,
+     the CSV export and the bucket.
+
+5. **Add the demo pipelines.** With the token from step 2:
+
+   ```
+   .\lab\lab.ps1 pipelines
+   ```
+
+   **Pipelines** now lists `demo-customers-clean`, `demo-customer-spend` and `demo-supplier-feed`
+   (see [Demo pipelines](#demo-pipelines)). To add one by hand instead, choose **New pipeline**, open the
+   **YAML** tab and paste the file.
+
+6. **Run the quality gate.** Open `demo-customers-clean`. On the **Canvas** tab, it reads
+   `crm.customers`, tidies the emails, checks every row at the gate **check**, and writes the rows
+   that pass to `demo/customers_clean.parquet` and the rest to `demo/customers_quarantine.csv`, both
+   in the `lab-warehouse` bucket. Select **check** to show its rules in the settings panel. Choose
+   **Run now**. When the run finishes, about 4,750 customers have passed and about 250 are
+   quarantined (no email or no date of birth), and each write shows its measured quality: high for
+   the clean file, low for the quarantine. **Runs > Run 1** says the same in a table, with each
+   rule's result.
+
+7. **Stop a run at the gate.** Select **check**, set **When rows fail** (`on_fail`) to **stop**, save
+   with the message "Stop on bad rows", and run again. (Kilnmark notes that `aside` gets no rows from
+   a stop gate; that is expected here.) The run fails, naming the rule and its counts, and neither
+   file is written: the two files from the first run stay as they were.
+   With email set up (step 9), a **Pipeline run failed** email arrives too. Set it back to
+   **quarantine** afterwards.
+
+8. **The other two pipelines.**
+   - `demo-customer-spend` adds up 100,000 transactions per customer (aggregate: 2,500 customers
+     have transactions, 40 each), adds each customer's name and segment (lookup), and sends the big
+     spenders, £12,000 or more, to a file of their own (route).
+   - `demo-supplier-feed` reads the MariaDB shop's supplier price feed, which has no primary key and
+     three SKUs twice, and quarantines the repeats: the first row of each SKU passes.
+
+   After any run, **Browse > lab-warehouse** lists the files the pipelines wrote, with where each came
+   from.
+
+9. **Email alerts (optional).** Follow [Try email notifications](#try-email-notifications), then
+   under **Settings > Notifications** choose **Pipeline run failed**, and repeat step 7. Mailpit at http://localhost:8025 shows the email.
+
+10. **Reset for the next demo.** Empty the warehouse bucket (see
+    [Somewhere for pipelines to write](#somewhere-for-pipelines-to-write)), then
+    `.\lab\lab.ps1 stop all`. The demo sources keep their data; `.\lab\lab.ps1 reset <name>` loads it
+    again from scratch.
+
+## Demo pipelines
+
+`lab/pipelines` holds pipelines made for the lab. `.\lab\lab.ps1 pipelines` (or `./lab/lab.sh
+pipelines`) adds them all to a running Kilnmark through its API. It needs an admin or steward
+token in `KILNMARK_ADMIN_TOKEN` (or `KILNMARK_TOKEN`), and `KILNMARK_URL` when Kilnmark is not
+on http://localhost:8780. A pipeline that is already there is left as it is, so changes you make
+in Kilnmark are kept. The bash script needs `python3`.
+
+| File | Pipeline | Demo sources | What it shows |
+| --- | --- | --- | --- |
+| `customers-clean.yaml` | `demo-customers-clean` | `postgres`, `s3` | A quality gate setting failing rows aside (`on_fail: quarantine`), measured quality per output; change it to `stop` to see a gate stop a run |
+| `customer-spend.yaml` | `demo-customer-spend` | `postgres`, `s3` | Aggregate, lookup and route, two reads feeding one pipeline, Parquet and CSV output |
+| `supplier-feed.yaml` | `demo-supplier-feed` | `mariadb`, `s3` | A gate on another database: `unique` quarantining repeated keys in a table with no primary key |
+
+All three read sources that `lab/sources.csv` registers and write only to the `lab-warehouse`
+bucket, under `demo/`. They need the sources scanned first, so that Kilnmark knows their columns.
+`LabPipelinesTest` (server tests) checks each file against the lab's columns, so a change to the
+steps that would break a demo fails the build. Add a demo by putting a file here whose `name`
+starts with `demo-`.
+
 ## Start just what you need
 
 Start Kilnmark first (`podman compose up -d` in the repository root: the lab joins its network),
@@ -31,6 +140,7 @@ then only the demo sources you want:
 | `logs <name>` | The last 100 lines of its containers' logs |
 | `sources` | Where `lab/sources.csv` is, and how to import it |
 | `driver oracle` | Downloads Oracle's JDBC driver after showing its licence, checks it and copies it into a running Kilnmark (see [Oracle](#oracle)) |
+| `pipelines` | Adds the demo pipelines in `lab/pipelines` to a running Kilnmark (see [Demo pipelines](#demo-pipelines)) |
 
 Demo sources: `postgres`, `s3`, `sqlserver`, `mariadb`, `oracle`, `mail` and `files` (nothing to start: Kilnmark reads the
 share from disk). An unknown name lists the right ones. The scripts use Podman if it is on the

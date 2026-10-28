@@ -1,0 +1,35 @@
+# Demo 3: a gate on another database (lab only, never shipped).
+# Needs the lab's mariadb and s3 demo sources, imported from lab/sources.csv and scanned.
+# The supplier feed has no primary key and three SKUs twice: the gate sends the repeats, and any
+# price at or below zero, to quarantine.
+kilnmark: pipeline/v1
+name: demo-supplier-feed
+description: The lab shop's supplier price feed, with repeated SKUs set aside.
+
+steps:
+  - id: feed
+    type: read
+    source: lab-mariadb
+    asset: stock.supplier_feed
+
+  - id: check
+    type: gate
+    input: feed
+    on_fail: quarantine
+    rules:
+      - {name: one row per SKU, type: unique, field: sku}
+      - {name: positive price, type: in_range, field: cost_price, min: 0.01}
+
+  - id: prices
+    type: write
+    input: check
+    source: lab-warehouse
+    path: demo/supplier_prices.csv
+    mode: replace
+
+  - id: repeats
+    type: write
+    input: check.quarantine
+    source: lab-warehouse
+    path: demo/supplier_repeats.csv
+    mode: replace
