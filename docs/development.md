@@ -363,7 +363,10 @@ podman compose up -d                          # Kilnmark on http://localhost:878
 ```
 
 Each demo source is a compose profile (`podman compose -f lab/compose.yaml --profile all up -d`
-starts them all); `lab/README.md` lists them, with `list`, `stop`, `reset` and `logs`.
+starts them all); `lab/README.md` lists them, with `list`, `stop`, `reset` and `logs`. For a whole
+demo, from starting the lab to running a pipeline with a quality gate, follow "A demo from start to
+finish" in `lab/README.md`; `lab.sh pipelines` (or `lab.ps1 pipelines`) adds the demo pipelines in
+`lab/pipelines`.
 
 Open http://localhost:8780, sign in, go to **Sources**, and add the lab. Kilnmark reaches it by service
 name, the same under Podman and Docker:

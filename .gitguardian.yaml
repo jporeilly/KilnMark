@@ -1,0 +1,12 @@
+# Secret scanning: paths whose passwords are synthetic by design.
+#
+# Test code and the reference lab (lab/, never shipped: see docs/adr/0024) start throwaway
+# databases with fixed, made-up passwords. Product code, containers/ and config/ are still
+# scanned. Read by ggshield; the GitGuardian GitHub check also needs the same paths as filepath
+# exclusions in the workspace settings (Settings > Secrets detection > Filepath exclusions).
+version: 2
+secret:
+  ignored_paths:
+    - "**/src/test/**"
+    - "lab/**"
+    - "tests/**"
