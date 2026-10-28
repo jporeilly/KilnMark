@@ -701,14 +701,73 @@ asset's previous profile.
   step reading from itself, loops, a single-input port fed twice, and the same edge twice (two
   ports of one step may both feed a port that takes many). References split at the last dot, as
   `PortRef.parse` does.
-- Later: data previews at a step. Each write's and gate's predicted score shows on the canvas
-  (step 3, built).
+- Data previews at a step (built, below). Each write's and gate's predicted score shows on the
+  canvas (step 3, built).
+
+### Preview at a step (decisions)
+
+The first rows leaving one output of one step, for the pipeline as it stands on the canvas, saved
+or not (`POST /api/v1/pipelines/preview` {yaml, step, port?, rows?}; for a saved version
+`POST .../{name}/versions/{n}/preview`). `StepPreview` holds the engine-facing parts and
+`PipelinePreviews` the server's.
+
+- **What runs.** The YAML is read, then cut down to the chosen step and every step whose rows reach
+  it (by the inputs the steps name), in the order written, and that `PipelineDefinition` is compiled
+  (`KilnPipelineCompiler.compile(definition, …)`). Problems elsewhere in the pipeline do not stop a
+  preview; problems in the part that runs do (400). The chosen output (`out`, or the step's first,
+  unless `port` names another) feeds an in-memory collector (id `Preview`: a capital letter, so never
+  one of the pipeline's ids) that keeps the first N rows as text, as a source's preview writes values,
+  and then finishes, so "A step that ends early" (section 1) stops the steps before it. Other output
+  ports of those steps have nothing connected, and their rows are dropped.
+- **Nothing is written.** Only `read`, `filter`, `compute`, `select`, `lookup`, `aggregate`, `union`,
+  `dedupe`, `route`, `limit` and `gate` may run in a preview: an allow-list, so a step type added
+  later is refused until it is known to have no side effects. A write is never upstream (it has no
+  outputs); previewing one is refused, and so is any other step type, before anything is created. A
+  gate's quarantine targets are writes downstream of it and never run; a preview records nothing
+  (its metadata events are dropped, no run or step row is stored).
+- **Ending early with unconnected ports.** Building this showed that a step whose only connected
+  output had finished kept reading when it wrote only to unconnected ports (a filter previewed at
+  `rejected`), since only a write to a finished reader told it. `KilnGraphRunner` now checks after
+  each `process` call: when every connected output has been let go, the step ends early as it would
+  on a refused write.
+- **Where and how long.** On the API process, synchronously: the caller waits for rows, a preview is
+  bounded (rows, time, memory) like a source's preview, and the worker queue's latency would make it
+  slow to use. A watch thread interrupts the request thread after
+  `kilnmark.pipelines.preview-timeout` (30 seconds) or when the HTTP connection closes, and the
+  runner stops every step before it returns; the interrupt is then cleared. The preview's graph runs
+  in a `KilnGraphRunner` of its own inside `preview-memory-limit-mb` (256 MB) with the run's row set
+  capacity, and its stall timeout is the preview's time limit. Each person runs one preview at a time
+  and at most `previews-per-minute` (6) a minute; `preview-concurrency` (4) previews run at once in a
+  process (429 otherwise). Steps that read all their rows before passing any on (an aggregate, a
+  lookup's lookup side) are named in the answer, and in the message when the time runs out.
+- **Same rules as previewing the sources.** Steward or admin (`@RolesAllowed`), with the existing
+  error format. The steps are created inside a `RunContext` naming the caller and their role, so
+  reads resolve their saved sources, secrets and allowed hosts as a run's do, and messages have the
+  secrets blanked out.
+- **Masking.** For all but admins, the columns marked sensitive of every asset read (under the URN as
+  written, as the catalogue escapes a file's path, and as the connector resolved it, through the
+  request's `Sights`) are followed through the steps by name, ignoring case: `compute` marks a
+  column made from a hidden one (by the columns its expression names; one that cannot be read counts
+  as naming all) and clears one replaced by a value made from visible columns only; `select` follows
+  renames; `aggregate` marks group columns and values made from hidden ones; `lookup` and `union` take
+  every side's; the others pass them on. Values of the hidden columns leaving the step are replaced
+  by `••••` (nulls stay null), as in a source's preview, and named in `masked`. A step that chooses
+  or divides rows by a hidden column (a filter's or route's condition, a dedupe's key, or whole rows,
+  a lookup's keys) or a gate with `on_fail: quarantine` on rows with hidden columns makes the preview
+  refused (403) for all but admins, since the rows shown would give the values away even masked. A
+  failure's message, which may quote values, is shown only when nothing read has columns marked
+  sensitive or the caller is an admin, as for a run's errors ("Only admins can see why").
+- **UI.** A step's context menu on the canvas (right-click, or Shift+F10 or the menu key on a
+  focused step; a right-click does not select the step first, so the drawer does not open under the
+  pointer) with Preview rows, Settings, Connect to…, Duplicate and Remove; a Preview tab in the
+  step's drawer, wider while it is open, with the output and rows, Stop, and the rows in
+  `PreviewTable`. A preview made before the YAML changed says it is out of date.
 
 ## 7. Next
 
 - **Step 2, the canvas:** drag steps from the catalogue, connect ports, a settings panel built
-  from each step's settings schema, YAML side by side kept in sync, data previews at any step,
-  keyboard operation.
+  from each step's settings schema, YAML side by side kept in sync, data previews at any step
+  (done; "Preview at a step" above), keyboard operation.
 - **Step 3, quality:** the gate step and measured scores per run and output, with the
   pipeline's `quality.min_score` and `pipeline_low_quality` (done; docs/guide/pipelines.md,
   "Quality gates"); predicted scores beside the measured ones and suggestions (done;

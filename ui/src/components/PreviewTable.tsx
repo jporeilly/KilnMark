@@ -6,7 +6,7 @@ import { formatNumber, type Preview } from "../api";
  * the asset and how many rows, its own sideways scroll, and nulls written as "null" in a style of
  * their own (text, not colour alone).
  */
-export function PreviewTable({ preview }: { preview: Preview }) {
+export function PreviewTable({ preview, hint = "Read live from the source and not kept." }: { preview: Preview; hint?: string }) {
   const id = useId();
   return (
     <div className="preview">
@@ -50,7 +50,7 @@ export function PreviewTable({ preview }: { preview: Preview }) {
           </tbody>
         </table>
       </div>
-      <p className="hint">Read live from the source and not kept.</p>
+      <p className="hint">{hint}</p>
     </div>
   );
 }

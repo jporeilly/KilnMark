@@ -29,6 +29,7 @@ import {
   IconZoomOut,
 } from "@tabler/icons-react";
 import {
+  allows,
   api,
   formatNumber,
   pipelinesApi,
@@ -69,6 +70,10 @@ import {
 } from "./model";
 import { Palette, rememberUsed } from "./Palette";
 import { SettingsPanel } from "./SettingsPanel";
+import { StepMenu, type StepMenuItem } from "./StepMenu";
+import { StepPreviewPanel, type PreviewAsk, type PreviewResult } from "./StepPreviewPanel";
+import { TabPanel, Tabs, useTabsId } from "../../components/ui";
+import { useRole } from "../../components/role";
 import { StepNode, badgeRows, runWords, type StepNodeType, type StepRunInfo } from "./StepNode";
 import "./canvas.css";
 
@@ -134,6 +139,7 @@ const SHORTCUTS: [string, string][] = [
   ["A", "Add a step: open the step list and go to its search"],
   ["Arrow keys in the step list", "Move through the folders and steps; Right opens a folder, Left closes it; Enter adds the step"],
   ["Enter", "Go to the step's settings"],
+  ["Shift+F10 or the menu key", "Open the step's menu: preview its rows, open its settings, connect, duplicate or remove it"],
   ["Delete or Backspace", "Remove the step (or a connection selected with the mouse)"],
   ["Ctrl+D", "Duplicate the step"],
   ["Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y", "Undo, redo"],
@@ -159,6 +165,16 @@ function Canvas(props: CanvasProps) {
   const [connectFor, setConnectFor] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
+  // The step's context menu, the drawer's tab, and previews at a step.
+  const [menu, setMenu] = useState<{ step: string; x: number; y: number } | null>(null);
+  const [drawerTab, setDrawerTab] = useState<"settings" | "preview">("settings");
+  const [previewAsk, setPreviewAsk] = useState<PreviewAsk | null>(null);
+  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
+  const role = useRole();
+  const drawerTabs = useTabsId();
+  // A right-click (or Ctrl+click on a Mac) focuses the step without selecting it, so the drawer does
+  // not open under the pointer before the menu does.
+  const menuPress = useRef(false);
   const wrap = useRef<HTMLDivElement>(null);
   const toolbar = useRef<HTMLDivElement>(null);
   // The latest text, also for changes made before React has drawn the last one.
@@ -845,6 +861,12 @@ function Canvas(props: CanvasProps) {
       return;
     }
     if (!id) return;
+    if (k === "ContextMenu" || (k === "F10" && ev.shiftKey)) {
+      done();
+      const r = nodeEl?.getBoundingClientRect();
+      setMenu({ step: id, x: (r?.left ?? 0) + 16, y: (r?.top ?? 0) + 28 });
+      return;
+    }
     if (mod && (k === "d" || k === "D")) {
       done();
       duplicate(id);
@@ -888,6 +910,53 @@ function Canvas(props: CanvasProps) {
   };
 
   const selectedStep = graph?.steps.find((s) => s.id === selected) ?? null;
+  const kindOf = (id: string) => {
+    const t = graph?.steps.find((s) => s.id === id)?.type;
+    return t ? (catalogue.get(t)?.kind ?? null) : null;
+  };
+  const previewStep = (id: string) => {
+    flush();
+    setSuggestOpen(false);
+    onSelect(id);
+    setDrawerTab("preview");
+    setPreviewAsk((a) => ({ step: id, n: (a?.n ?? 0) + 1 }));
+  };
+  const menuItems = (id: string): StepMenuItem[] => {
+    const writes = kindOf(id) === "sink";
+    const steward = allows(role, "steward");
+    const items: StepMenuItem[] = [
+      {
+        id: "preview",
+        label: "Preview rows",
+        onSelect: () => previewStep(id),
+        disabled: writes || !steward || broken,
+        note: writes
+          ? "A write passes no rows on"
+          : !steward
+            ? "For stewards and admins"
+            : broken
+              ? "Fix the YAML first"
+              : undefined,
+      },
+      {
+        id: "settings",
+        label: "Settings",
+        onSelect: () => {
+          onSelect(id);
+          setDrawerTab("settings");
+          window.setTimeout(() => wrap.current?.querySelector<HTMLElement>(".cv-drawer input, .cv-drawer select, .cv-drawer textarea")?.focus(), 30);
+        },
+      },
+    ];
+    if (!readOnly) {
+      items.push(
+        { id: "connect", label: "Connect to…", onSelect: () => openConnect(id) },
+        { id: "duplicate", label: "Duplicate", onSelect: () => duplicate(id) },
+        { id: "remove", label: "Remove", onSelect: () => remove(id) },
+      );
+    }
+    return items;
+  };
   const offers = connectFor && graph ? possibleConnections(graph, connectFor, catalogue) : [];
 
   return (
@@ -990,7 +1059,14 @@ function Canvas(props: CanvasProps) {
             }
           }}
           onDrop={onDrop}
+          onPointerDownCapture={(e) => {
+            menuPress.current = e.button === 2 || (e.button === 0 && e.ctrlKey && !e.metaKey);
+          }}
+          onPointerUpCapture={() => {
+            menuPress.current = false;
+          }}
           onFocus={(e) => {
+            if (menuPress.current) return;
             const el = (e.target as HTMLElement).closest?.(".react-flow__node") as HTMLElement | null;
             const id = el?.dataset.id;
             if (id && quietFocus.current === id) {
@@ -1018,6 +1094,12 @@ function Canvas(props: CanvasProps) {
             onPaneClick={() => {
               setSelectedEdge(null);
               onSelect(null);
+            }}
+            onNodeContextMenu={(e, n) => {
+              e.preventDefault();
+              menuPress.current = false;
+              setSelectedEdge(null);
+              setMenu({ step: n.id, x: e.clientX, y: e.clientY });
             }}
             onNodeDragStop={(_, __, moved) => {
               if (readOnly) return;
@@ -1075,7 +1157,7 @@ function Canvas(props: CanvasProps) {
         )}
         {selectedStep && !suggestOpen && (
           <aside
-            className="cv-drawer"
+            className={`cv-drawer${drawerTab === "preview" ? " is-wide" : ""}`}
             aria-labelledby="cv-panel-h"
             onBlur={(e) => {
               if (!e.currentTarget.contains(e.relatedTarget as Node | null)) flush();
@@ -1101,6 +1183,33 @@ function Canvas(props: CanvasProps) {
                 <IconX size={16} stroke={2} aria-hidden="true" />
               </button>
             </div>
+            <Tabs
+              idBase={drawerTabs}
+              label={`Step ${selectedStep.id}`}
+              selected={drawerTab}
+              onSelect={(t) => {
+                flush();
+                setDrawerTab(t as "settings" | "preview");
+              }}
+              tabs={[
+                { id: "settings", label: "Settings" },
+                { id: "preview", label: "Preview" },
+              ]}
+            />
+            <TabPanel idBase={drawerTabs} selected={drawerTab}>
+            {drawerTab === "preview" ? (
+              <StepPreviewPanel
+                key={selectedStep.id}
+                yaml={yaml}
+                step={selectedStep.id}
+                outputs={portsOf(selectedStep, catalogue).outputs}
+                kind={kindOf(selectedStep.id)}
+                role={role}
+                ask={previewAsk}
+                last={previewResult}
+                onResult={setPreviewResult}
+              />
+            ) : (
             <SettingsPanel
               key={selectedStep.id}
               step={selectedStep}
@@ -1120,6 +1229,8 @@ function Canvas(props: CanvasProps) {
               onDelete={() => remove(selectedStep.id)}
               onDuplicate={() => duplicate(selectedStep.id)}
             />
+            )}
+            </TabPanel>
           </aside>
         )}
       </div>
@@ -1138,6 +1249,22 @@ function Canvas(props: CanvasProps) {
         Drag from an output port (right) to an input port (left) to connect steps, or use Connect to…. Press ? for keyboard
         shortcuts.
       </p>
+
+      {menu && graph?.steps.some((s) => s.id === menu.step) && (
+        <StepMenu
+          step={menu.step}
+          at={{ x: menu.x, y: menu.y }}
+          items={menuItems(menu.step)}
+          onClose={(back) => {
+            const id = menu.step;
+            setMenu(null);
+            if (back) {
+              quietFocus.current = id;
+              focusNode(id);
+            }
+          }}
+        />
+      )}
 
       <dialog
         ref={connectDialog}

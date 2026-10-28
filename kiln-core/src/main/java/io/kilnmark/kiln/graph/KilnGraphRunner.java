@@ -430,6 +430,11 @@ public final class KilnGraphRunner implements GraphRunner {
                     if (Thread.currentThread().isInterrupted()) {
                         throw new InterruptedException();
                     }
+                    if (!n.stoppedByEngine && nobodyReads(n)) {
+                        // Every step reading it has finished, but it only wrote to ports with nothing
+                        // connected since, so no write told it: it ends early, as a write would have.
+                        throw new EveryReaderFinished();
+                    }
                 }
                 boolean early = n.inputs.values().stream().flatMap(List::stream).anyMatch(r -> !r.rowSet.atEnd());
                 releaseInputs(n);
@@ -437,11 +442,12 @@ public final class KilnGraphRunner implements GraphRunner {
                 n.outcome = !ended ? RunResult.Outcome.STOPPED
                     : early ? RunResult.Outcome.ENDED_EARLY : RunResult.Outcome.FINISHED;
             } catch (Throwable t) {
-                boolean seen = t instanceof RowSet.UpstreamFailedException || t instanceof RowSet.CancelledException;
+                boolean cancelled = t instanceof RowSet.CancelledException || t instanceof EveryReaderFinished;
+                boolean seen = t instanceof RowSet.UpstreamFailedException || cancelled;
                 if (!seen && !n.stoppedByEngine) {
                     recordError(n, describe(n, t), false);
                 }
-                if (t instanceof RowSet.CancelledException && !failed.get()) {
+                if (cancelled && !failed.get()) {
                     // every step reading this one has finished and nothing failed: end early too
                     releaseInputs(n);
                     n.outcome = finishOutputs(n) ? RunResult.Outcome.ENDED_EARLY : RunResult.Outcome.STOPPED;
@@ -459,6 +465,19 @@ public final class KilnGraphRunner implements GraphRunner {
                     }
                 }
             }
+        }
+
+        /** Whether the step has outputs and every one of them has been let go by the steps reading it. */
+        private static boolean nobodyReads(Node n) {
+            if (n.outputs.isEmpty()) {
+                return false;
+            }
+            for (Port p : n.outputs.values()) {
+                if (!p.rowSet.isCancelled()) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private String describe(Node n, Throwable t) {
@@ -980,6 +999,16 @@ public final class KilnGraphRunner implements GraphRunner {
         public Schema inputSchema(String port, int index) {
             Schema s = node.graphStep.inputSchemas().get(port + "[" + index + "]");
             return s != null || index != 0 ? s : node.graphStep.inputSchemas().get(port);
+        }
+    }
+
+    /** A step's readers have all finished while it wrote only to ports with nothing connected. */
+    private static final class EveryReaderFinished extends RuntimeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        EveryReaderFinished() {
+            super("every step reading it has finished", null, false, false);
         }
     }
 }

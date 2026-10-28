@@ -1326,6 +1326,26 @@ export const pipelinesApi = {
   cancel: (id: number) => call<PipelineRun>(`/api/v1/pipeline-runs/${id}/cancel`, { method: "POST" }),
   /** The step catalogue with settings schemas, from which the canvas builds its palette and settings panels. */
   steps: () => call<StepType[]>("/api/v1/steps"),
+  /**
+   * The first rows leaving one output of one step of the YAML as it stands (saved or not). Only the
+   * step and the steps before it run; nothing is written. Stewards and admins.
+   */
+  preview: (p: { yaml: string; step: string; port?: string | null; rows?: number }, signal?: AbortSignal) =>
+    call<StepPreview>("/api/v1/pipelines/preview", { method: "POST", body: JSON.stringify(p), signal }),
+};
+
+/**
+ * A preview at a step: shaped as a source's preview (asset is "step.port"), plus whether these are
+ * all the step's rows, how long it took, the columns whose values are hidden (made from columns
+ * marked sensitive) and, in words, the steps before it that read all their rows first.
+ */
+export type StepPreview = Preview & {
+  step: string;
+  port: string;
+  complete: boolean;
+  millis: number;
+  masked: string[];
+  waits: string[];
 };
 
 // ---- Notifications (docs/guide/notifications.md): the in-app feed, each person's choices, and email for admins.
