@@ -5,18 +5,6 @@ details.
 
 ## Unreleased
 
-### Details
-
-- **A demo from start to finish** (development): `lab/README.md` walks through a whole demo, from
-  starting Kilnmark and the demo sources to discovery and pipelines with a quality gate that sets rows
-  aside and then stops a run. Three demo pipelines in `lab/pipelines`: customers cleaned through a
-  gate (PostgreSQL), spend per customer with aggregate, lookup and route, and a MariaDB supplier feed
-  whose repeated SKUs are quarantined. `lab.sh pipelines` and `lab.ps1 pipelines` add them to a
-  running Kilnmark through its API, and `LabPipelinesTest` checks them against the lab's columns so
-  a change to the steps cannot break them unnoticed. Nothing of this ships.
-
-## 0.0.6 (28 October 2026)
-
 ### What's new
 
 - **Predicted quality before a pipeline runs.** While you edit a pipeline, each write and quality
@@ -32,42 +20,6 @@ details.
   takes it out. With an AI model set for **Pipeline suggestions**, it ranks and explains them and
   adds its own, seeing only names, types, shares and value shapes of sources whose AI rule allows
   it, never values; what it suggests is checked before you see it.
-- **Quality gates in pipelines.** Add a **Quality gate** step (in the Quality folder) to check rows
-  against quality rules as they pass, with no second read of the data: the rules of the table or
-  file the pipeline read, and any you write on the step. When rows fail, the gate can stop the run
-  so that the writes after it do not commit, send the failing rows to a separate **quarantine**
-  output while the rest carry on, or just warn. A limit on the share of failing rows, or on the score, stops the run
-  when too much is wrong.
-- **Every run measures the quality of what it writes.** After a run, each write and each gate shows
-  its quality score on the canvas, beside its rows, and the run's page lists the score per
-  dimension and each gate's rules. Give a pipeline a quality threshold (`quality: min_score`) and
-  its followers are told when a run writes data that scores below it.
-- **Build pipelines on a canvas.** A pipeline's page has a **Canvas** tab beside the YAML: drag
-  steps from a list of folders (Read, Write, Filter and route, Transform, Combine and more, with
-  your recently used steps first), connect their ports, and change each step's settings in a panel that offers
-  your sources, tables and columns, with problems shown on the step and setting they are about.
-  The canvas and the YAML are the same pipeline, so a change in one shows in the other. After a
-  run, each step shows its rows and how it ended. Everything works from the keyboard too.
-- **MySQL and MariaDB.** Add MySQL (8.0.19 and later) or MariaDB (10.6 and later) as a source by
-  host, port and database: Kilnmark discovers and profiles their databases, reads their tables in
-  pipelines and writes to them in every mode. MySQL's own types are understood: `UNSIGNED`
-  numbers, `ENUM`, `SET`, `JSON`, `YEAR`, and `TINYINT(1)` read as true or false. The driver is
-  included, so there is nothing to install. Writes never change data silently: an upsert that could
-  overwrite another row through a second unique index, a time with more fractions of a second than
-  its column keeps, or a replace that a hidden foreign key would break stops with a plain message.
-- **Oracle.** Add Oracle Database (19c and later) as a source by host, port and service name:
-  Kilnmark discovers and profiles its schemas, reads its tables in pipelines and writes to them in
-  every mode, without ever rounding a number or turning empty text into null behind your back.
-  Oracle's driver cannot ship with Kilnmark, so an admin installs it once, under **Settings**,
-  **Drivers**.
-- **Settings, Drivers.** Where admins install the drivers some databases need that Kilnmark may not
-  ship: accept the licence and Kilnmark downloads the exact version it was tested with and checks
-  it, or, on a server without internet access, shows which file to copy where. Until then those
-  connectors say **Needs its driver**.
-- **Every connection setting has the right control.** On and off settings, such as trusting a
-  test server's certificate, are switches; settings with a fixed set of values, such as SQL
-  Server's read isolation, are lists; and saving says plainly when a value is the wrong kind,
-  for example "true or false, not 'yes'".
 
 ### Details
 
@@ -107,6 +59,57 @@ details.
   step's accessible name and settings drawer); a lazily loaded **Suggestions** panel whose **Add**
   inserts the steps with `insertSteps` (text edits only, one undo step). The run page shows
   measured beside predicted per dimension with the gap.
+
+- **A demo from start to finish** (development): `lab/README.md` walks through a whole demo, from
+  starting Kilnmark and the demo sources to discovery and pipelines with a quality gate that sets rows
+  aside and then stops a run. Three demo pipelines in `lab/pipelines`: customers cleaned through a
+  gate (PostgreSQL), spend per customer with aggregate, lookup and route, and a MariaDB supplier feed
+  whose repeated SKUs are quarantined. `lab.sh pipelines` and `lab.ps1 pipelines` add them to a
+  running Kilnmark through its API, and `LabPipelinesTest` checks them against the lab's columns so
+  a change to the steps cannot break them unnoticed. Nothing of this ships.
+
+## 0.0.6 (28 October 2026)
+
+### What's new
+
+- **Quality gates in pipelines.** Add a **Quality gate** step (in the Quality folder) to check rows
+  against quality rules as they pass, with no second read of the data: the rules of the table or
+  file the pipeline read, and any you write on the step. When rows fail, the gate can stop the run
+  so that the writes after it do not commit, send the failing rows to a separate **quarantine**
+  output while the rest carry on, or just warn. A limit on the share of failing rows, or on the score, stops the run
+  when too much is wrong.
+- **Every run measures the quality of what it writes.** After a run, each write and each gate shows
+  its quality score on the canvas, beside its rows, and the run's page lists the score per
+  dimension and each gate's rules. Give a pipeline a quality threshold (`quality: min_score`) and
+  its followers are told when a run writes data that scores below it.
+- **Build pipelines on a canvas.** A pipeline's page has a **Canvas** tab beside the YAML: drag
+  steps from a list of folders (Read, Write, Filter and route, Transform, Combine and more, with
+  your recently used steps first), connect their ports, and change each step's settings in a panel that offers
+  your sources, tables and columns, with problems shown on the step and setting they are about.
+  The canvas and the YAML are the same pipeline, so a change in one shows in the other. After a
+  run, each step shows its rows and how it ended. Everything works from the keyboard too.
+- **MySQL and MariaDB.** Add MySQL (8.0.19 and later) or MariaDB (10.6 and later) as a source by
+  host, port and database: Kilnmark discovers and profiles their databases, reads their tables in
+  pipelines and writes to them in every mode. MySQL's own types are understood: `UNSIGNED`
+  numbers, `ENUM`, `SET`, `JSON`, `YEAR`, and `TINYINT(1)` read as true or false. The driver is
+  included, so there is nothing to install. Writes never change data silently: an upsert that could
+  overwrite another row through a second unique index, a time with more fractions of a second than
+  its column keeps, or a replace that a hidden foreign key would break stops with a plain message.
+- **Oracle.** Add Oracle Database (19c and later) as a source by host, port and service name:
+  Kilnmark discovers and profiles its schemas, reads its tables in pipelines and writes to them in
+  every mode, without ever rounding a number or turning empty text into null behind your back.
+  Oracle's driver cannot ship with Kilnmark, so an admin installs it once, under **Settings**,
+  **Drivers**.
+- **Settings, Drivers.** Where admins install the drivers some databases need that Kilnmark may not
+  ship: accept the licence and Kilnmark downloads the exact version it was tested with and checks
+  it, or, on a server without internet access, shows which file to copy where. Until then those
+  connectors say **Needs its driver**.
+- **Every connection setting has the right control.** On and off settings, such as trusting a
+  test server's certificate, are switches; settings with a fixed set of values, such as SQL
+  Server's read isolation, are lists; and saving says plainly when a value is the wrong kind,
+  for example "true or false, not 'yes'".
+
+### Details
 
 - **Quality gate step** (`type: gate`, docs/guide/pipelines.md, "Quality gates";
   docs/design/data-quality.md sections 7 and 8). Ports `in`, `out` and `quarantine`. Settings:
