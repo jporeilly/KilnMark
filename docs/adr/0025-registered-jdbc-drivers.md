@@ -6,7 +6,7 @@ Status: Accepted (28 October 2026)
 
 The generic JDBC connector uses drivers the customer brings, which Kilnmark cannot pin in advance.
 An **admin registers** each one: picks or uploads a jar in the drivers folder, names its driver
-class and URL prefix, and Kilnmark records the jar's SHA-256, who and when. The driver then loads
+class, its URL prefix and the driver properties sources may set (an allow-list), and Kilnmark records the jar's SHA-256, who and when. The driver then loads
 only while the jar has that checksum, isolated exactly like a pinned driver (a verified private
 copy, its own class loader over the platform loader, never `DriverManager`). Removing a
 registration is admin-only and refused while sources use it. Every registration and removal is
@@ -24,8 +24,10 @@ a source; and since a JDBC URL can switch on driver features Kilnmark cannot vet
 ## Threat model (short)
 
 A swapped jar fails the checksum. A malicious driver is not contained by a class loader: trust is
-the admin's, recorded in the audit log. A hostile URL or property is limited by refusing the
-properties Kilnmark can name and by keeping generic sources admin-only. Nothing is fetched from the
+the admin's, recorded in the append-only audit log. A hostile URL or property is limited by the
+allow-list (every setting in the URL, in any of the syntaxes drivers use, must be on it; a URL that
+cannot be read is refused), by refusing secrets and server files whatever the list, by reading
+host-naming settings into the allowed-hosts check, and by keeping generic sources admin-only. Nothing is fetched from the
 network on the driver's behalf.
 
 ## Consequences

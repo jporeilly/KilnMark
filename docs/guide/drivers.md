@@ -65,12 +65,16 @@ through **Generic JDBC**.
 
 Open **Settings**, **JDBC drivers**.
 
-1. Put the driver's jar in the drivers folder (above), or use **Upload to the drivers folder**
-   (up to 10 MB unless your administrator raised the server's upload limit; larger jars are copied
-   in by hand). A file of the same name is never replaced.
+1. Put the driver's jar in the drivers folder (above), or use **Upload to the drivers folder**,
+   up to the size the page shows (the server's upload limit, 10 MB unless your administrator raised
+   it). Larger jars, such as Snowflake's, are copied into the drivers folder by hand. A file of the
+   same name is never replaced.
 2. Under **Register a driver**, choose the jar, then give the driver a **name** (what sources
-   choose, such as `db2`), its **driver class** and how its **URLs start**. **Fill in for a known
-   database** suggests both for common drivers; check them against the driver's documentation.
+   choose, such as `db2`), its **driver class**, how its **URLs start**, and the **properties sources
+   may set**, such as `currentSchema, sslConnection`. **Fill in for a known database** suggests them
+   for common drivers; check them against the driver's documentation. A source may use only the
+   properties listed here, in its URL or as driver properties: list none that reads files, runs
+   scripts or names another server. Passwords, keys and tokens can never be listed.
 3. Tick that the jar comes from the database's vendor or another source you trust, and press
    **Register driver**.
 
@@ -93,8 +97,9 @@ In **Sources**, **Add a connection**, choose **Generic JDBC**:
   example `jdbc:db2://db.example.com:50000/SALES`. Never put the password in it.
 - **User name** and **password**: the password is stored encrypted, as for every source.
 - **Driver properties** (optional): further settings as `name=value`, separated by semicolons, such
-  as `sslConnection=true; currentSchema=SALES`. Properties that read files on the server, load
-  classes, change time limits or name another host are refused.
+  as `sslConnection=true; currentSchema=SALES`. Here and in the URL, only the properties the driver
+  was registered with are accepted, and never a password, key or token. A URL whose settings
+  Kilnmark cannot read (quotes, spaces, encoded characters) is refused; write values plainly.
 - **Schemas**: which to scan; leave empty for all. Databases that have only catalogues list those.
 - **Read only**: on by default. Kilnmark then asks the driver for read-only connections, and
   pipelines cannot write to the source.

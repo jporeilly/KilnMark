@@ -12,6 +12,8 @@ CREATE TABLE driver_registration (
     sha256        text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
     driver_class  text NOT NULL CHECK (length(driver_class) BETWEEN 1 AND 300),
     url_prefix    text NOT NULL CHECK (url_prefix ~ '^jdbc:' AND length(url_prefix) <= 100),
+    -- the driver properties sources may set, lower case: an allow-list the admin gives
+    allowed_properties text[] NOT NULL DEFAULT '{}' CHECK (cardinality(allowed_properties) <= 200),
     registered_by text NOT NULL CHECK (length(registered_by) BETWEEN 1 AND 300),
     registered_at timestamptz NOT NULL DEFAULT now()
 );
@@ -24,8 +26,24 @@ CREATE TABLE driver_registration_log (
     sha256        text NOT NULL,
     driver_class  text NOT NULL,
     url_prefix    text NOT NULL,
+    allowed_properties text[] NOT NULL DEFAULT '{}',
     done_by       text NOT NULL CHECK (length(done_by) BETWEEN 1 AND 300),
     done_at       timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX driver_registration_log_name ON driver_registration_log (name, done_at);
+
+-- The log is kept for good: rows are only ever added.
+CREATE FUNCTION driver_registration_log_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'driver_registration_log is append-only: % is not allowed', TG_OP;
+END;
+$$;
+
+CREATE TRIGGER driver_registration_log_no_change
+    BEFORE UPDATE OR DELETE ON driver_registration_log
+    FOR EACH ROW EXECUTE FUNCTION driver_registration_log_append_only();
+
+CREATE TRIGGER driver_registration_log_no_truncate
+    BEFORE TRUNCATE ON driver_registration_log
+    FOR EACH STATEMENT EXECUTE FUNCTION driver_registration_log_append_only();

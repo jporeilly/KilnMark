@@ -18,13 +18,13 @@ const STATE: Record<string, { tone: Tone; label: string }> = {
 };
 
 /** Common drivers' class names and URL starts, offered as suggestions only: the admin decides. */
-const KNOWN: { label: string; driverClass: string; urlPrefix: string }[] = [
-  { label: "IBM Db2", driverClass: "com.ibm.db2.jcc.DB2Driver", urlPrefix: "jdbc:db2://" },
-  { label: "Teradata", driverClass: "com.teradata.jdbc.TeraDriver", urlPrefix: "jdbc:teradata://" },
-  { label: "Snowflake", driverClass: "net.snowflake.client.jdbc.SnowflakeDriver", urlPrefix: "jdbc:snowflake://" },
-  { label: "Sybase (jConnect)", driverClass: "com.sybase.jdbc4.jdbc.SybDriver", urlPrefix: "jdbc:sybase:Tds:" },
-  { label: "Informix", driverClass: "com.informix.jdbc.IfxDriver", urlPrefix: "jdbc:informix-sqli://" },
-  { label: "H2", driverClass: "org.h2.Driver", urlPrefix: "jdbc:h2:" },
+const KNOWN: { label: string; driverClass: string; urlPrefix: string; properties: string }[] = [
+  { label: "IBM Db2", driverClass: "com.ibm.db2.jcc.DB2Driver", urlPrefix: "jdbc:db2://", properties: "currentSchema, sslConnection" },
+  { label: "Teradata", driverClass: "com.teradata.jdbc.TeraDriver", urlPrefix: "jdbc:teradata://", properties: "DATABASE, CHARSET, TMODE, ENCRYPTDATA" },
+  { label: "Snowflake", driverClass: "net.snowflake.client.jdbc.SnowflakeDriver", urlPrefix: "jdbc:snowflake://", properties: "db, schema, warehouse, role" },
+  { label: "Sybase (jConnect)", driverClass: "com.sybase.jdbc4.jdbc.SybDriver", urlPrefix: "jdbc:sybase:Tds:", properties: "CHARSET" },
+  { label: "Informix", driverClass: "com.informix.jdbc.IfxDriver", urlPrefix: "jdbc:informix-sqli://", properties: "INFORMIXSERVER, DB_LOCALE" },
+  { label: "H2", driverClass: "org.h2.Driver", urlPrefix: "jdbc:h2:", properties: "MODE, SCHEMA" },
 ];
 
 const size = (bytes: number) =>
@@ -101,7 +101,7 @@ export function JdbcDriversPage() {
                   <th scope="col">Name</th>
                   <th scope="col">State</th>
                   <th scope="col">Jar and class</th>
-                  <th scope="col">URLs start with</th>
+                  <th scope="col">URLs and properties</th>
                   <th scope="col">Registered</th>
                   <th scope="col">Used by</th>
                   <th scope="col">
@@ -126,7 +126,12 @@ export function JdbcDriversPage() {
                           SHA-256 <span className="mono" title={d.sha256}>{d.sha256.slice(0, 16)}…</span>
                         </div>
                       </td>
-                      <td className="mono small">{d.urlPrefix}</td>
+                      <td className="mono small">
+                        {d.urlPrefix}
+                        <div className="muted">
+                          {d.allowedProperties.length ? `Properties: ${d.allowedProperties.join(", ")}` : "No properties"}
+                        </div>
+                      </td>
                       <td className="small">
                         {formatTime(d.registeredAt)}
                         <div className="muted">by {d.registeredBy}</div>
@@ -206,6 +211,7 @@ function RegisterDriver({
   const [name, setName] = useState("");
   const [driverClass, setDriverClass] = useState("");
   const [urlPrefix, setUrlPrefix] = useState("");
+  const [allowed, setAllowed] = useState("");
   const [vouch, setVouch] = useState(false);
   const [busy, setBusy] = useState<"" | "upload" | "register">("");
   const [problem, setProblem] = useState<string | null>(null);
@@ -222,6 +228,10 @@ function RegisterDriver({
     const file = upload.current?.files?.[0];
     if (!file) {
       fail(new Error("Choose a jar to upload first."));
+      return;
+    }
+    if (folder && file.size > folder.maxUploadBytes) {
+      fail(new Error(`${file.name} is ${size(file.size)}, more than this server accepts as an upload (${size(folder.maxUploadBytes)}). Copy it into the drivers folder ${folder.folder} on the server instead, then choose it above.`));
       return;
     }
     setBusy("upload");
@@ -244,6 +254,7 @@ function RegisterDriver({
     if (!k) return;
     setDriverClass(k.driverClass);
     setUrlPrefix(k.urlPrefix);
+    setAllowed(k.properties);
     if (!name) setName(k.label.split(" ")[0].toLowerCase().replace(/[^a-z0-9]/g, ""));
   };
 
@@ -256,11 +267,18 @@ function RegisterDriver({
     setBusy("register");
     setProblem(null);
     try {
-      const r = await api.registerDriver({ name: name.trim(), fileName, driverClass: driverClass.trim(), urlPrefix: urlPrefix.trim() });
+      const r = await api.registerDriver({
+        name: name.trim(),
+        fileName,
+        driverClass: driverClass.trim(),
+        urlPrefix: urlPrefix.trim(),
+        allowedProperties: allowed,
+      });
       onDone(`Registered ${r.name}. Its checksum is recorded: if the jar changes, it is not used until registered again.`);
       setName("");
       setDriverClass("");
       setUrlPrefix("");
+      setAllowed("");
       setFileName("");
       setVouch(false);
       onChange();
@@ -312,8 +330,8 @@ function RegisterDriver({
               </Button>
             </div>
             <p id="reg-upload-hint" className="hint">
-              Up to the server's upload limit (10 MB unless your administrator raised it). Larger drivers go in the folder
-              by hand. A file of the same name is never replaced.
+              Up to {folder ? size(folder.maxUploadBytes) : "the server's upload limit"}, what this server accepts as an
+              upload. Larger drivers are copied into the drivers folder by hand. A file of the same name is never replaced.
             </p>
           </div>
         </fieldset>
@@ -351,6 +369,16 @@ function RegisterDriver({
               maxLength={300} autoComplete="off" spellCheck={false} className="mono" aria-describedby="reg-class-hint" />
             <p id="reg-class-hint" className="hint">
               The class that implements java.sql.Driver, from the driver's documentation. Kilnmark loads it to check.
+            </p>
+          </div>
+          <div className="field">
+            <label htmlFor="reg-allowed">Properties sources may set</label>
+            <textarea id="reg-allowed" value={allowed} onChange={(e) => setAllowed(e.target.value)} rows={2}
+              spellCheck={false} className="mono" aria-describedby="reg-allowed-hint" />
+            <p id="reg-allowed-hint" className="hint">
+              The driver's properties a source may give, in its URL or as driver properties, separated by commas, for
+              example currentSchema, sslConnection. Any other is refused. Leave out anything that reads files, runs
+              scripts or names another server; passwords, keys and tokens are never allowed.
             </p>
           </div>
         </fieldset>

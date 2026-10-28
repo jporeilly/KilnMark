@@ -459,8 +459,13 @@ public final class DriverFolder implements JdbcDrivers {
             if (total == 0) {
                 throw new IOException(fileName + " is empty; nothing was saved");
             }
-            // without REPLACE_EXISTING: a file put there meanwhile is never overwritten
-            Files.move(part, target);
+            // A new link to the written file fails if the name is taken, in one step, so a file put there
+            // meanwhile is never overwritten; where links are not supported, a move that never replaces.
+            try {
+                Files.createLink(target, part);
+            } catch (UnsupportedOperationException e) {
+                Files.move(part, target);
+            }
             return HexFormat.of().formatHex(md.digest());
         } finally {
             Files.deleteIfExists(part);
@@ -486,7 +491,7 @@ public final class DriverFolder implements JdbcDrivers {
         if (a.size() > MAX_BYTES) {
             throw new IOException(fileName + " is larger than 200 MB, so it is not a JDBC driver");
         }
-        byte[] bytes = Files.readAllBytes(file);
+        byte[] bytes = readBounded(file, fileName);
         String sha = sha256(bytes);
         java.sql.Driver d = loadRegistered(fileName, sha, driverClass, bytes);
         return new Inspected(fileName, sha, bytes.length, d.getMajorVersion(), d.getMinorVersion());
@@ -557,7 +562,7 @@ public final class DriverFolder implements JdbcDrivers {
                     return d;
                 }
             }
-            bytes = Files.readAllBytes(file);
+            bytes = readBounded(file, r.fileName());
         } catch (NoSuchFileException e) {
             throw new SQLException("The JDBC driver " + r.name() + " (" + r.fileName() + ") is not in the drivers "
                 + "folder any more. An admin puts it back, unchanged, or registers another under Settings, JDBC "
@@ -601,7 +606,8 @@ public final class DriverFolder implements JdbcDrivers {
                     new URL[] {copy.toUri().toURL()}, ClassLoader.getPlatformClassLoader());
                 Class<?> c;
                 try {
-                    c = Class.forName(driverClass, true, loader);
+                    // not initialised yet: no code of the jar runs before it is known to be a driver
+                    c = Class.forName(driverClass, false, loader);
                 } catch (ClassNotFoundException e) {
                     throw new SQLException(fileName + " holds no class " + driverClass + ". Check the driver's class "
                         + "name in its documentation", "08001", e);
@@ -610,12 +616,27 @@ public final class DriverFolder implements JdbcDrivers {
                     throw new SQLException(driverClass + " in " + fileName + " is not a JDBC driver (it does not "
                         + "implement java.sql.Driver)", "08001");
                 }
+                c = Class.forName(driverClass, true, loader);
                 d = (java.sql.Driver) c.getDeclaredConstructor().newInstance();
             } catch (IOException | ReflectiveOperationException | LinkageError e) {
                 throw new SQLException("Cannot load " + driverClass + " from " + fileName + ": " + e, "08001", e);
             }
             registeredLoaded.put(key, d);
             return d;
+        }
+    }
+
+    /**
+     * A registered jar's bytes, read without following a link and never more than {@link #MAX_BYTES}:
+     * a file that grows past the limit while it is read is refused.
+     */
+    private static byte[] readBounded(Path file, String fileName) throws IOException {
+        try (InputStream in = Files.newInputStream(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            byte[] bytes = in.readNBytes((int) MAX_BYTES + 1);
+            if (bytes.length > MAX_BYTES) {
+                throw new IOException(fileName + " is larger than 200 MB, so it is not a JDBC driver");
+            }
+            return bytes;
         }
     }
 

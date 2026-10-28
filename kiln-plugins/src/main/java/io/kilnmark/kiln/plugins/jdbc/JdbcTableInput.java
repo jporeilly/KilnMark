@@ -63,6 +63,14 @@ public final class JdbcTableInput implements Step {
         }
 
         /**
+         * Whether a driver that refuses {@code setReadOnly} or {@code setAutoCommit(false)} is still read
+         * (generic JDBC: drivers that do not offer them); false by default, so the read fails.
+         */
+        default boolean tolerant() {
+            return false;
+        }
+
+        /**
          * The query to run on {@code connection}, from the step's {@code sql}: the same by default.
          * A database whose identifiers are quoted as its driver says builds it here.
          */
@@ -158,8 +166,15 @@ public final class JdbcTableInput implements Step {
         }
         try {
             connection = reading.open(context.settings());
-            connection.setReadOnly(true);
-            connection.setAutoCommit(false); // PostgreSQL streams with a cursor only inside a transaction
+            try {
+                connection.setReadOnly(true);
+                connection.setAutoCommit(false); // PostgreSQL streams with a cursor only inside a transaction
+            } catch (SQLException | RuntimeException e) {
+                if (!reading.tolerant()) {
+                    throw e;
+                }
+                // advice the driver does not take: the read is a SELECT either way
+            }
             if (context.settings().containsKey(ISOLATION)) {
                 connection.setTransactionIsolation(Integer.parseInt(context.setting(ISOLATION)));
             }
@@ -272,7 +287,11 @@ public final class JdbcTableInput implements Step {
             if (rows != null) rows.close();
             if (statement != null) statement.close();
             if (connection != null) {
-                connection.rollback();
+                try {
+                    connection.rollback();
+                } catch (SQLException e) {
+                    // in auto-commit (a driver that would not leave it): nothing to roll back
+                }
                 connection.close();
             }
         } catch (SQLException e) {

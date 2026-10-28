@@ -18,11 +18,15 @@ import java.util.regex.Pattern;
  * @param driverClass  the {@link java.sql.Driver} class in the jar
  * @param urlPrefix    how the JDBC URLs this driver takes start, such as {@code jdbc:db2://}; a
  *                     source's URL must start with it
+ * @param allowedProperties the driver properties sources may set, in the URL or as
+ *                     {@code properties}, lower case: an allow-list the admin gives, since Kilnmark
+ *                     cannot know which of a driver's properties read files, run scripts or reach
+ *                     other hosts. Empty: none
  * @param registeredBy who registered it
  * @param registeredAt when
  */
 public record RegisteredDriver(String name, String fileName, String sha256, String driverClass, String urlPrefix,
-                               String registeredBy, Instant registeredAt) {
+                               List<String> allowedProperties, String registeredBy, Instant registeredAt) {
 
     private static final Pattern NAME = Pattern.compile("[a-z0-9][a-z0-9_-]{0,39}");
     private static final Pattern FILE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._+-]{0,195}\\.jar");
@@ -30,9 +34,14 @@ public record RegisteredDriver(String name, String fileName, String sha256, Stri
         "(?:[A-Za-z_$][A-Za-z0-9_$]*\\.)*[A-Za-z_$][A-Za-z0-9_$]*");
     private static final Pattern PREFIX = Pattern.compile("jdbc:[A-Za-z][A-Za-z0-9+._-]*:[A-Za-z0-9:/@+._-]*");
     private static final Pattern SHA = Pattern.compile("[0-9a-f]{64}");
+    private static final Pattern PROPERTY = Pattern.compile("[a-z0-9][a-z0-9._-]{0,99}");
+    /** Names that hold a secret: never allowed, as settings and URLs are stored and shown as plain text. */
+    private static final Pattern SECRET = Pattern.compile(".*(pass|pwd|secret|token|key|credential).*");
 
     public RegisteredDriver {
+        allowedProperties = allowedProperties == null ? List.of() : List.copyOf(allowedProperties);
         List<String> problems = problems(name, fileName, driverClass, urlPrefix);
+        problems.addAll(propertyProblems(allowedProperties));
         if (sha256 == null || !SHA.matcher(sha256).matches()) {
             problems.add("sha256: 64 lower-case hex digits");
         }
@@ -60,6 +69,63 @@ public record RegisteredDriver(String name, String fileName, String sha256, Stri
             out.add("urlPrefix: how this driver's URLs start, such as jdbc:db2:// or jdbc:teradata://");
         }
         return out;
+    }
+
+    /**
+     * A list of property names as an admin types it (commas, spaces or new lines between them), lower
+     * case, each once, sorted.
+     */
+    public static List<String> propertyList(String typed) {
+        if (typed == null || typed.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(typed.split("[,;\\s]+")).map(String::strip).filter(s -> !s.isEmpty())
+            .map(s -> s.toLowerCase(java.util.Locale.ROOT)).distinct().sorted().toList();
+    }
+
+    /** The problems with an allow-list of property names; empty when every name may be allowed. */
+    public static List<String> propertyProblems(List<String> names) {
+        List<String> out = new ArrayList<>();
+        if (names == null) {
+            return out;
+        }
+        if (names.size() > 200) {
+            out.add("allowedProperties: at most 200 names");
+        }
+        for (String n : names) {
+            if (n == null || !PROPERTY.matcher(n).matches()) {
+                out.add("allowedProperties: a property's name is letters, digits, . _ and -, not '" + n + "'");
+            } else if (isSecretName(n) || n.equals("user")) {
+                out.add("allowedProperties: " + n + " holds a user name or secret; sources give those in their own "
+                    + "fields, which keep the secret encrypted");
+            } else if (readsServerFiles(n)) {
+                out.add("allowedProperties: " + n + " names a file, folder, class or key store on the Kilnmark "
+                    + "server, which no source may set");
+            }
+        }
+        return out;
+    }
+
+    /** Whether a property's name says it holds a secret (pass, pwd, secret, token, key, credential), ignoring case. */
+    public static boolean isSecretName(String name) {
+        return name != null && SECRET.matcher(name.toLowerCase(java.util.Locale.ROOT)).matches();
+    }
+
+    /**
+     * Whether a property's name says it reads or writes the server's files or loads code (ends in
+     * file, path, dir, directory, factory, class or classname; a trust or key store; javax.net), so no
+     * allow-list may hold it.
+     */
+    public static boolean readsServerFiles(String name) {
+        String n = name.toLowerCase(java.util.Locale.ROOT);
+        return n.endsWith("file") || n.endsWith("path") || n.endsWith("dir") || n.endsWith("directory")
+            || n.endsWith("factory") || n.endsWith("class") || n.endsWith("classname") || n.contains("truststore")
+            || n.contains("keystore") || n.startsWith("javax.") || n.endsWith("tns_admin");
+    }
+
+    /** Whether sources may set the property {@code name} (ignoring case) with this driver. */
+    public boolean allows(String name) {
+        return name != null && allowedProperties.contains(name.toLowerCase(java.util.Locale.ROOT));
     }
 
     /** Whether a JDBC URL starts as this driver's do (the scheme ignoring case, as drivers compare it). */

@@ -92,8 +92,12 @@ class RegisteredDriversApiTest {
     }
 
     private Map<String, String> registration(String driverClass) {
-        return Map.of("name", name, "fileName", fileName, "driverClass", driverClass, "urlPrefix", "jdbc:acme:");
+        return Map.of("name", name, "fileName", fileName, "driverClass", driverClass, "urlPrefix", "jdbc:acme:",
+            "allowedProperties", "currentSchema, sslConnection");
     }
+
+    @jakarta.inject.Inject
+    io.kilnmark.server.Db db;
 
     @Test
     void registeringRecordsTheChecksumAndOnlyAdminsMayDoIt() throws Exception {
@@ -121,10 +125,16 @@ class RegisteredDriversApiTest {
         admin().contentType(ContentType.JSON).body(Map.of("name", "Bad Name", "fileName", "../x.jar",
             "driverClass", "x", "urlPrefix", "http:")).post("/api/v1/drivers/registered").then().statusCode(400)
             .body("error", containsString("name: ")).body("error", containsString("fileName: "));
+        admin().contentType(ContentType.JSON).body(Map.of("name", name, "fileName", fileName, "driverClass",
+            "acme.AcmeDriver", "urlPrefix", "jdbc:acme:", "allowedProperties", "currentSchema, sslPassword, traceFile"))
+            .post("/api/v1/drivers/registered").then().statusCode(400)
+            .body("error", containsString("sslpassword holds a user name or secret"))
+            .body("error", containsString("tracefile names a file"));
 
         String sha = admin().contentType(ContentType.JSON).body(registration("acme.AcmeDriver"))
             .post("/api/v1/drivers/registered").then().statusCode(201)
             .body("state", equalTo("ready")).body("registeredBy", not(equalTo(null)))
+            .body("allowedProperties", equalTo(List.of("currentschema", "sslconnection")))
             .extract().jsonPath().getString("sha256");
         assertEquals(io.kilnmark.kiln.connect.DriverFolder.sha256(jar), sha);
         admin().contentType(ContentType.JSON).body(registration("acme.AcmeDriver"))
@@ -152,6 +162,16 @@ class RegisteredDriversApiTest {
         Tokens.as(steward).contentType(ContentType.JSON).body(Map.of("settings", Map.of("driver", name, "url",
             "jdbc:acme:sales", "description", "Synthetic sales"))).put("/api/v1/sources/" + sourceName).then()
             .statusCode(200);
+        // drafts of the saved source: as it is, a steward may check it; changed, only an admin
+        Tokens.as(steward).contentType(ContentType.JSON).body(Map.of("source", sourceName, "settings",
+            Map.of("driver", name, "url", "jdbc:acme:sales", "description", "Synthetic sales")))
+            .post("/api/v1/drafts/test").then().statusCode(200);
+        Tokens.as(steward).contentType(ContentType.JSON).body(Map.of("source", sourceName, "settings",
+            Map.of("driver", name, "url", "jdbc:acme:sales;currentSchema=HR")))
+            .post("/api/v1/drafts/test").then().statusCode(403).body("error", containsString("Only admins can change the url"));
+        admin().contentType(ContentType.JSON).body(Map.of("name", "x", "kind", "jdbc", "settings",
+            Map.of("driver", name, "url", "jdbc:acme:sales;INIT=RUNSCRIPT"))).post("/api/v1/sources").then()
+            .statusCode(400).body("error", containsString("not registered to take the property INIT"));
 
         // a driver in use cannot be removed
         admin().delete("/api/v1/drivers/registered/" + name).then().statusCode(409)
@@ -177,6 +197,15 @@ class RegisteredDriversApiTest {
         List<String> actions = admin().get("/api/v1/drivers/registered/history").then().statusCode(200).extract()
             .jsonPath().getList("findAll { it.name == '" + name + "' }.action");
         assertEquals(List.of("removed", "registered"), actions, "newest first, kept for good");
+        for (String change : List.of("UPDATE kilnmark.driver_registration_log SET done_by = 'someone else'",
+            "DELETE FROM kilnmark.driver_registration_log", "TRUNCATE kilnmark.driver_registration_log")) {
+            Exception e = org.junit.jupiter.api.Assertions.assertThrows(Exception.class, () -> db.tx(c -> {
+                try (java.sql.Statement st = c.createStatement()) {
+                    return st.executeUpdate(change);
+                }
+            }), change);
+            assertTrue(e.getMessage().contains("append-only"), e.getMessage());
+        }
         assertTrue(Files.exists(file), "removing a registration leaves the jar");
     }
 }

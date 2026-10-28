@@ -14,16 +14,23 @@ details.
   previews and reads them in pipelines with their types (decimals never rounded; unknown types as
   text, with a note), and, when the source is not read-only, appends to tables or creates them.
   Kilnmark records the driver's checksum, who registered it and when, and stops using it if the
-  file changes. Replace and upsert are not offered for these sources, as no database-neutral way
+  file changes. The admin also lists the driver settings sources may use; any other in a URL is
+  refused. Replace and upsert are not offered for these sources, as no database-neutral way
   makes them safe.
+
 ### Details
 
 - **Generic JDBC connector** (kind `jdbc`; docs/design/connectors.md, "Generic JDBC"; docs/guide/drivers.md,
   "Databases without a connector of their own"; docs/guide/writing-data.md, "Generic JDBC"). Settings
-  `driver` (CHOICE of the registered drivers), `url` (TEXT; must start as the driver's URL prefix,
-  hold no password or refused property, and pass the driver's `acceptsURL`), `username`, password as
-  the secret, `properties` (`name=value; ...`, refused when they name files, paths, classes,
-  factories, time limits, other hosts or credentials), `schemas`, `read_only` (default true).
+  `driver` (CHOICE of the registered drivers), `url` (TEXT; must start as the driver's URL prefix and
+  pass the driver's `acceptsURL`; every `key=value` in it, after `; ? & : / ,` or inside `( )`, must be
+  on the driver's allow-list, and a URL with an `=` Kilnmark cannot place, quotes, braces,
+  back-slashes, spaces or percent-encoding is refused, `JdbcUrlSettings`), `username`, password as the
+  secret, `properties` (`name=value; ...`, on the allow-list too), `schemas`, `read_only` (default
+  true). Names that hold secrets (`pass`, `pwd`, `secret`, `token`, `key`, `credential`) or the user
+  name are refused in the URL and the properties whatever the allow-list, and the URL is never quoted
+  in messages. `hosts()` also reads host-naming settings (failover partners, `*servername`,
+  `alternate*`, values that are URLs), so `kilnmark.sources.allowed-hosts` applies to them.
   `Connector.adminOnly()` (new): only admins add such sources, change their connector settings or
   check unsaved ones (`SourceService.adminOnlyKind`, 403). Catalogue from `DatabaseMetaData` with
   fallbacks (schemas, else catalogues, else one `default` container; nulls), types by
@@ -36,15 +43,27 @@ details.
   from `DatabaseMetaData`); new `WriteSql` hooks `existsByMetadata`, `requiredByMetadata`,
   `targetColumnsByMetadata`, `createProblem`, `checksCreatedTable` (a created table is described
   again and every value checked against it) and `dropCreatedOnFailure` (where DDL commits). The
-  other writers are unchanged. `replace` and `upsert` are refused with a message.
+  other writers are unchanged. `replace` and `upsert` are refused with a message. Text is checked
+  against `CHAR_OCTET_LENGTH` in UTF-8 bytes where the driver reports it. Every database write now
+  refuses a driver that stays in auto-commit or offers no transactions. A table a failed create made
+  is dropped only where table definitions commit by themselves and only while it is empty. The
+  generic reader goes on when a driver refuses `setReadOnly` or `setAutoCommit(false)`. A target
+  schema must be one the driver lists; without an identifier quote only plain names are read. Times
+  kept to more than six digits of a second say in the column's description that the rest is cut.
 - **Registered JDBC drivers** (docs/design/drivers.md, "Registered drivers"; ADR 0025). Settings ›
   JDBC drivers and `GET/POST /api/v1/drivers/registered`, `DELETE /api/v1/drivers/registered/{name}`,
   `GET /api/v1/drivers/registered/history`, `GET /api/v1/drivers/files`,
   `POST /api/v1/drivers/files/{fileName}` (octet-stream; never replaces a file), all admin-only.
-  Registering loads the class from a private copy and records the jar's SHA-256
-  (`driver_registration`, migration V16); `DriverFolder.driver(RegisteredDriver)` loads only while
+  Registering takes the driver's allowed properties (never secrets, files, folders, classes, key
+  stores), loads the class from a private copy without running its initialisers until it is known to
+  implement `java.sql.Driver`, refuses a jar with a pinned driver's checksum under any name, and records
+  the jar's SHA-256 (`driver_registration`, migration V16); `DriverFolder.driver(RegisteredDriver)` loads only while
   the checksum matches, in its own class loader, never through `DriverManager`. Removal is refused
-  while sources use the driver; `driver_registration_log` keeps every registration and removal.
+  while sources use the driver (checked and removed in one transaction, sources locked);
+  `driver_registration_log` keeps every registration and removal, append-only (a trigger refuses
+  UPDATE, DELETE and TRUNCATE). Uploads are limited by the server's request limit
+  (`quarkus.http.limits.max-body-size`, 10 MB by default), which the page shows; larger jars are copied
+  into the folder. Jars are read without following links and never beyond 200 MB.
   Nothing is downloaded for registered drivers. The pinned path is unchanged.
 - **H2 for tests only** (`com.h2database:h2` 2.5.252, MPL 2.0 or EPL 1.0): `testRuntimeOnly` in
   `kiln-plugins`, registered through the drivers folder by the generic JDBC tests.

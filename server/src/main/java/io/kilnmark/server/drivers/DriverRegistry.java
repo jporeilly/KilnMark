@@ -43,7 +43,8 @@ public class DriverRegistry {
 
     /** A registration as the admin screen shows it, with whether its jar is there and unchanged. */
     public record Item(String name, String fileName, String sha256, String driverClass, String urlPrefix,
-                       String registeredBy, Instant registeredAt, String state, String message, List<String> usedBy) {
+                       List<String> allowedProperties, String registeredBy, Instant registeredAt, String state,
+                       String message, List<String> usedBy) {
     }
 
     /** A jar in the drivers folder, for picking one to register. */
@@ -56,11 +57,15 @@ public class DriverRegistry {
 
     /** One registration or removal, for the audit trail. */
     public record LogEntry(String action, String name, String fileName, String sha256, String driverClass,
-                           String urlPrefix, String by, Instant at) {
+                           String urlPrefix, List<String> allowedProperties, String by, Instant at) {
     }
 
-    /** What an admin sends to register a driver. */
-    public record Registration(String name, String fileName, String driverClass, String urlPrefix) {
+    /**
+     * What an admin sends to register a driver. {@code allowedProperties}: the driver properties
+     * sources may set (in the URL or as properties), names separated by commas, spaces or new lines.
+     */
+    public record Registration(String name, String fileName, String driverClass, String urlPrefix,
+                               String allowedProperties) {
     }
 
     /** A request refused, with what to say and the kind of refusal. */
@@ -83,18 +88,26 @@ public class DriverRegistry {
         }
     }
 
-    /** The largest upload: the server's request limit decides first (10 MB unless raised). */
-    public static final long MAX_UPLOAD_BYTES = DriverFolder.MAX_BYTES;
-
     private final DriverFolder folder;
     private final Connectors connectors;
     private final Db db;
+    /** The largest upload that can arrive: the server's request limit, at most a driver's 200 MB. */
+    private final long maxUploadBytes;
     private volatile boolean loaded;
 
-    public DriverRegistry(DriverFolder folder, Connectors connectors, Db db) {
+    public DriverRegistry(DriverFolder folder, Connectors connectors, Db db,
+                          @org.eclipse.microprofile.config.inject.ConfigProperty(
+                              name = "quarkus.http.limits.max-body-size", defaultValue = "10240K")
+                          io.quarkus.runtime.configuration.MemorySize maxBody) {
         this.folder = folder;
         this.connectors = connectors;
         this.db = db;
+        this.maxUploadBytes = Math.min(DriverFolder.MAX_BYTES, maxBody.asLongValue());
+    }
+
+    /** The largest jar the page can upload; larger ones are copied into the drivers folder by hand. */
+    public long maxUploadBytes() {
+        return maxUploadBytes;
     }
 
     /** At start: the registrations into the drivers folder, so sources can connect at once. */
@@ -112,12 +125,13 @@ public class DriverRegistry {
         List<RegisteredDriver> all = db.tx(c -> {
             List<RegisteredDriver> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("SELECT name, file_name, sha256, driver_class, url_prefix, "
-                + "registered_by, registered_at FROM kilnmark.driver_registration ORDER BY name");
+                + "allowed_properties, registered_by, registered_at FROM kilnmark.driver_registration ORDER BY name");
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     try {
                         out.add(new RegisteredDriver(rs.getString(1), rs.getString(2), rs.getString(3),
-                            rs.getString(4), rs.getString(5), rs.getString(6), rs.getTimestamp(7).toInstant()));
+                            rs.getString(4), rs.getString(5), strings(rs, 6), rs.getString(7),
+                            rs.getTimestamp(8).toInstant()));
                     } catch (IllegalArgumentException e) {
                         LOG.warnf("The registered JDBC driver %s is not valid and is not used: %s", rs.getString(1),
                             e.getMessage());
@@ -144,8 +158,9 @@ public class DriverRegistry {
 
     private Item item(RegisteredDriver r) {
         DriverFolder.Status s = folder.status(r);
-        return new Item(r.name(), r.fileName(), r.sha256(), r.driverClass(), r.urlPrefix(), r.registeredBy(),
-            r.registeredAt(), s.state().name().toLowerCase(Locale.ROOT), s.message(), sourcesUsing(r.name()));
+        return new Item(r.name(), r.fileName(), r.sha256(), r.driverClass(), r.urlPrefix(), r.allowedProperties(),
+            r.registeredBy(), r.registeredAt(), s.state().name().toLowerCase(Locale.ROOT), s.message(),
+            sourcesUsing(r.name()));
     }
 
     /** The jars in the drivers folder, with what each is registered as, and whether a connector pins it. */
@@ -163,7 +178,7 @@ public class DriverRegistry {
                 .map(RegisteredDriver::name).findFirst().orElse(null);
             out.add(new FolderFile(f.fileName(), f.size(), f.modified(), as, pinned.contains(f.fileName())));
         }
-        return new Folder(folder.dir().toString(), out, MAX_UPLOAD_BYTES);
+        return new Folder(folder.dir().toString(), out, maxUploadBytes);
     }
 
     /**
@@ -180,7 +195,8 @@ public class DriverRegistry {
             String sha = folder.upload(fileName, in);
             LOG.infof("JDBC driver file %s (SHA-256 %s) uploaded to the drivers folder by %s", fileName, sha, caller);
         } catch (FileAlreadyExistsException e) {
-            throw new Refused(Refused.Reason.CONFLICT, e.getFile() == null ? e.getMessage() : e.getFile());
+            throw new Refused(Refused.Reason.CONFLICT, fileName + " is already in the drivers folder: register that "
+                + "file, or give the new one another name");
         } catch (IOException e) {
             throw new Refused(Refused.Reason.INVALID, e.getMessage());
         }
@@ -202,7 +218,9 @@ public class DriverRegistry {
         String fileName = strip(body.fileName());
         String driverClass = strip(body.driverClass());
         String urlPrefix = strip(body.urlPrefix());
+        List<String> allowed = RegisteredDriver.propertyList(body.allowedProperties());
         List<String> problems = RegisteredDriver.problems(name, fileName, driverClass, urlPrefix);
+        problems.addAll(RegisteredDriver.propertyProblems(allowed));
         if (!problems.isEmpty()) {
             throw new Refused(Refused.Reason.INVALID, String.join("; ", problems));
         }
@@ -225,27 +243,37 @@ public class DriverRegistry {
         } catch (IOException | SQLException e) {
             throw new Refused(Refused.Reason.INVALID, e.getMessage());
         }
+        for (Connector c : connectors.all()) {
+            // a pinned driver under another file name is still the pinned driver
+            if (c.driver() != null && c.driver().sha256().equals(inspected.sha256())) {
+                throw new Refused(Refused.Reason.INVALID, "fileName: " + fileName + " is " + c.driver().fileName()
+                    + ", the driver the " + c.displayName() + " connector pins; it is installed under Settings, "
+                    + "Drivers, not registered");
+            }
+        }
         Instant now = Instant.now();
-        RegisteredDriver r = new RegisteredDriver(name, fileName, inspected.sha256(), driverClass, urlPrefix, caller,
-            now);
+        RegisteredDriver r = new RegisteredDriver(name, fileName, inspected.sha256(), driverClass, urlPrefix, allowed,
+            caller, now);
         db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.driver_registration (name, file_name, "
-                + "sha256, driver_class, url_prefix, registered_by, registered_at) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
+                + "sha256, driver_class, url_prefix, allowed_properties, registered_by, registered_at) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
                 ps.setString(1, name);
                 ps.setString(2, fileName);
                 ps.setString(3, r.sha256());
                 ps.setString(4, driverClass);
                 ps.setString(5, urlPrefix);
-                ps.setString(6, caller);
-                ps.setTimestamp(7, Timestamp.from(now));
+                ps.setArray(6, c.createArrayOf("text", allowed.toArray()));
+                ps.setString(7, caller);
+                ps.setTimestamp(8, Timestamp.from(now));
                 ps.executeUpdate();
             }
             log(c, "registered", r, caller, now);
             return null;
         });
         folder.register(r);
-        LOG.infof("JDBC driver %s registered by %s: %s, %s, SHA-256 %s, URLs starting %s", name, caller, fileName,
-            driverClass, r.sha256(), urlPrefix);
+        LOG.infof("JDBC driver %s registered by %s: %s, %s, SHA-256 %s, URLs starting %s, properties allowed: %s", name,
+            caller, fileName, driverClass, r.sha256(), urlPrefix, allowed.isEmpty() ? "none" : String.join(", ", allowed));
         return item(r);
     }
 
@@ -257,21 +285,29 @@ public class DriverRegistry {
         ensureLoaded();
         RegisteredDriver r = folder.registration(name).orElseThrow(() -> new Refused(Refused.Reason.NOT_FOUND,
             "No JDBC driver called " + name + " is registered"));
-        List<String> using = sourcesUsing(name);
-        if (!using.isEmpty()) {
-            throw new Refused(Refused.Reason.CONFLICT, "The driver " + name + " is used by " + String.join(", ", using)
-                + ". Point " + (using.size() == 1 ? "that source" : "those sources") + " at another driver, or delete "
-                + (using.size() == 1 ? "it" : "them") + ", first");
-        }
         Instant now = Instant.now();
-        db.tx(c -> {
+        // the check and the removal in one transaction, with sources locked against changes meanwhile, so a
+        // source cannot start using the driver between them
+        List<String> using = db.tx(c -> {
+            try (java.sql.Statement st = c.createStatement()) {
+                st.execute("LOCK TABLE kilnmark.data_source IN SHARE MODE");
+            }
+            List<String> users = sourcesUsing(c, name);
+            if (!users.isEmpty()) {
+                return users;
+            }
             try (PreparedStatement ps = c.prepareStatement("DELETE FROM kilnmark.driver_registration WHERE name = ?")) {
                 ps.setString(1, name);
                 ps.executeUpdate();
             }
             log(c, "removed", r, caller, now);
-            return null;
+            return List.of();
         });
+        if (!using.isEmpty()) {
+            throw new Refused(Refused.Reason.CONFLICT, "The driver " + name + " is used by " + String.join(", ", using)
+                + ". Point " + (using.size() == 1 ? "that source" : "those sources") + " at another driver, or delete "
+                + (using.size() == 1 ? "it" : "them") + ", first");
+        }
         folder.unregister(name);
         LOG.infof("JDBC driver %s (%s) removed by %s", name, r.fileName(), caller);
     }
@@ -281,13 +317,14 @@ public class DriverRegistry {
         return db.tx(c -> {
             List<LogEntry> out = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("SELECT action, name, file_name, sha256, driver_class, "
-                + "url_prefix, done_by, done_at FROM kilnmark.driver_registration_log ORDER BY done_at DESC, id DESC "
-                + "LIMIT ?")) {
+                + "url_prefix, allowed_properties, done_by, done_at FROM kilnmark.driver_registration_log "
+                + "ORDER BY done_at DESC, id DESC LIMIT ?")) {
                 ps.setInt(1, Math.max(1, Math.min(limit, 500)));
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         out.add(new LogEntry(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4),
-                            rs.getString(5), rs.getString(6), rs.getString(7), rs.getTimestamp(8).toInstant()));
+                            rs.getString(5), rs.getString(6), strings(rs, 7), rs.getString(8),
+                            rs.getTimestamp(9).toInstant()));
                     }
                 }
             }
@@ -298,34 +335,43 @@ public class DriverRegistry {
     private static void log(java.sql.Connection c, String action, RegisteredDriver r, String caller, Instant at)
         throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.driver_registration_log (action, name, "
-            + "file_name, sha256, driver_class, url_prefix, done_by, done_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+            + "file_name, sha256, driver_class, url_prefix, allowed_properties, done_by, done_at) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
             ps.setString(1, action);
             ps.setString(2, r.name());
             ps.setString(3, r.fileName());
             ps.setString(4, r.sha256());
             ps.setString(5, r.driverClass());
             ps.setString(6, r.urlPrefix());
-            ps.setString(7, caller);
-            ps.setTimestamp(8, Timestamp.from(at));
+            ps.setArray(7, c.createArrayOf("text", r.allowedProperties().toArray()));
+            ps.setString(8, caller);
+            ps.setTimestamp(9, Timestamp.from(at));
             ps.executeUpdate();
         }
     }
 
+    private static List<String> strings(ResultSet rs, int column) throws SQLException {
+        java.sql.Array a = rs.getArray(column);
+        return a == null ? List.of() : List.of((String[]) a.getArray());
+    }
+
     /** The sources of kind {@code jdbc} using the driver, by name. */
     private List<String> sourcesUsing(String name) {
-        return db.tx(c -> {
-            List<String> out = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement("SELECT name FROM kilnmark.data_source WHERE kind = 'jdbc' "
-                + "AND settings ->> 'driver' = ? ORDER BY name")) {
-                ps.setString(1, name);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        out.add(rs.getString(1));
-                    }
+        return db.tx(c -> sourcesUsing(c, name));
+    }
+
+    private static List<String> sourcesUsing(java.sql.Connection c, String name) throws SQLException {
+        List<String> out = new ArrayList<>();
+        try (PreparedStatement ps = c.prepareStatement("SELECT name FROM kilnmark.data_source WHERE kind = 'jdbc' "
+            + "AND settings ->> 'driver' = ? ORDER BY name")) {
+            ps.setString(1, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(rs.getString(1));
                 }
             }
-            return out;
-        });
+        }
+        return out;
     }
 
     private static String strip(String s) {

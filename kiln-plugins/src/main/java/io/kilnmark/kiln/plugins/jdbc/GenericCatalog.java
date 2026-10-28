@@ -86,6 +86,11 @@ final class GenericCatalog {
     private GenericCatalog() {
     }
 
+    /** A name that needs no quoting: letters, digits and _, not starting with a digit. */
+    static boolean plainName(String name) {
+        return name != null && name.matches("[A-Za-z_][A-Za-z0-9_]*");
+    }
+
     static boolean isSystem(String name) {
         return name != null && SYSTEM.contains(name.toLowerCase(Locale.ROOT));
     }

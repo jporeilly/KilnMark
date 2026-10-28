@@ -60,6 +60,9 @@ final class H2Drivers {
         return Path.of(Class.forName(DRIVER_CLASS).getProtectionDomain().getCodeSource().getLocation().toURI());
     }
 
+    /** The H2 settings the tests' sources use, allowed at registration. */
+    static final java.util.List<String> ALLOWED = java.util.List.of("db_close_delay", "mode", "schema");
+
     /** A fresh drivers folder holding the H2 jar, registered with URL prefix {@code prefix}. */
     static H2 registered(String prefix) throws Exception {
         Path dir = Files.createDirectories(Files.createTempDirectory("kilnmark-jdbc-test").resolve("drivers"));
@@ -68,7 +71,7 @@ final class H2Drivers {
         Files.copy(jar, dir.resolve(fileName));
         DriverFolder folder = new DriverFolder(dir);
         DriverFolder.Inspected i = folder.inspect(fileName, DRIVER_CLASS);
-        RegisteredDriver r = new RegisteredDriver("h2", fileName, i.sha256(), DRIVER_CLASS, prefix, "admin@example.com",
+        RegisteredDriver r = new RegisteredDriver("h2", fileName, i.sha256(), DRIVER_CLASS, prefix, ALLOWED, "admin@example.com",
             Instant.parse("2026-10-28T09:00:00Z"));
         folder.register(r);
         GenericJdbcConnector connector = (GenericJdbcConnector) new GenericJdbcConnector()

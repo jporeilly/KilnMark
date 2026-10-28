@@ -250,10 +250,13 @@ with **`append`** and **`create`** only, and only when its **Read only** setting
 - Every value is checked against the column it goes to, also in a table the step just created: a
   decimal that would need rounding, text or bytes longer than the column, more digits of a second
   than the column keeps, or a number outside a `TINYINT` or unsigned column stops the write, naming
-  the row. A column whose size the driver does not say, or whose type Kilnmark does not know, stops
+  the row. Where the driver says how many bytes a text column holds, the text's length in UTF-8 bytes
+  is checked too, as some databases cut longer text silently. A column whose size the driver does not say, or whose type Kilnmark does not know, stops
   an append before any row is sent.
 - On databases where creating a table commits by itself, the new table can be seen, empty or partly
-  filled, until the write ends; if the write fails, Kilnmark drops it again.
+  filled, until the write ends; if the write fails, Kilnmark drops it again, unless `commit_every`
+  already committed rows or someone else has written to it.
+- A driver that cannot write in a transaction is refused, since a failed write could not be undone.
 - The login needs `INSERT` on the table, and for `create` the right to create tables in the schema.
   Kilnmark cannot check rights the same way on every database, so a missing right shows as the
   database's own refusal.

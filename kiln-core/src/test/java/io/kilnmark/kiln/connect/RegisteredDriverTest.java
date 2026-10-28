@@ -91,7 +91,7 @@ class RegisteredDriverTest {
     private RegisteredDriver registered(DriverFolder folder, String file) throws Exception {
         DriverFolder.Inspected i = folder.inspect(file, "acme.AcmeDriver");
         RegisteredDriver r = new RegisteredDriver("acme", file, i.sha256(), "acme.AcmeDriver", "jdbc:acme:",
-            "admin@example.com", Instant.parse("2026-10-28T10:00:00Z"));
+            List.of("currentschema"), "admin@example.com", Instant.parse("2026-10-28T10:00:00Z"));
         folder.register(r);
         return r;
     }
@@ -185,6 +185,16 @@ class RegisteredDriverTest {
     }
 
     @Test
+    void aLinkInTheFolderIsNeverFollowed() throws Exception {
+        DriverFolder folder = new DriverFolder(dir);
+        Path elsewhere = root.resolve("elsewhere.jar");
+        Files.write(elsewhere, driverJar);
+        Files.createSymbolicLink(dir.resolve("linked.jar"), elsewhere);
+        assertThrows(IOException.class, () -> folder.inspect("linked.jar", "acme.AcmeDriver"));
+        assertEquals(List.of(), folder.jars(), "a link is not offered for registering");
+    }
+
+    @Test
     void uploadsNeverReplaceAFileAndStayWithinTheLimit() throws Exception {
         DriverFolder folder = new DriverFolder(dir);
         String sha = folder.upload("acme-4.2.jar", new ByteArrayInputStream(driverJar));
@@ -203,9 +213,18 @@ class RegisteredDriverTest {
             "jdbc:db2://"));
         assertEquals(4, RegisteredDriver.problems("DB 2", "../x.jar", "not a class", "http://x").size());
         assertThrows(IllegalArgumentException.class, () -> new RegisteredDriver("db2", "jcc.jar", "ABC",
-            "com.ibm.db2.jcc.DB2Driver", "jdbc:db2://", "a", Instant.EPOCH));
+            "com.ibm.db2.jcc.DB2Driver", "jdbc:db2://", List.of(), "a", Instant.EPOCH));
         RegisteredDriver r = new RegisteredDriver("td", "terajdbc.jar", "a".repeat(64), "com.teradata.jdbc.TeraDriver",
-            "jdbc:teradata://", "a", Instant.EPOCH);
+            "jdbc:teradata://", RegisteredDriver.propertyList("DATABASE, charset\nTMODE"), "a", Instant.EPOCH);
+        assertEquals(List.of("charset", "database", "tmode"), r.allowedProperties());
+        assertTrue(r.allows("CHARSET"));
+        assertFalse(r.allows("logdata"));
+        for (String secret : List.of("password", "sslPassword", "pwd", "apiKey", "token", "private_key_file_pwd",
+            "user")) {
+            assertEquals(1, RegisteredDriver.propertyProblems(RegisteredDriver.propertyList(secret)).size(), secret);
+        }
+        assertThrows(IllegalArgumentException.class, () -> new RegisteredDriver("td", "terajdbc.jar", "a".repeat(64),
+            "com.teradata.jdbc.TeraDriver", "jdbc:teradata://", List.of("logon password"), "a", Instant.EPOCH));
         assertTrue(r.takes("jdbc:teradata://db.example.com/DATABASE=sales"));
         assertTrue(r.takes("JDBC:Teradata://db.example.com"), "the scheme ignores case");
         assertFalse(r.takes("jdbc:db2://db.example.com:50000/sales"));

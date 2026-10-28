@@ -61,13 +61,6 @@ public class GenericJdbcConnector extends JdbcConnector {
     /** A driver property's name: letters, digits, {@code . _ -}. */
     private static final Pattern PROPERTY_NAME = Pattern.compile("[A-Za-z][A-Za-z0-9._-]{0,99}");
 
-    /**
-     * Driver properties that would point the driver at another host or port than the URL's, which
-     * the allowed-hosts check reads: refused, so the address is always the URL's.
-     */
-    private static final Set<String> ADDRESS_NAMES = Set.of("host", "hostname", "servername", "server", "port",
-        "portnumber", "address", "url", "dburl", "account");
-
     private final JdbcDrivers drivers;
 
     public GenericJdbcConnector() {
@@ -143,8 +136,8 @@ public class GenericJdbcConnector extends JdbcConnector {
             Setting.text("username", "User name", false, "A read-only account is enough for scanning; pipelines that "
                 + "write to this source need a login with write rights"),
             Setting.text("properties", "Driver properties", false, "Further settings for the driver, as name=value "
-                + "separated by semicolons, for example sslConnection=true; currentSchema=SALES. Properties that "
-                + "read files, load classes, change time limits or name another host are refused"),
+                + "separated by semicolons, for example sslConnection=true; currentSchema=SALES. Only the properties "
+                + "the driver was registered to take, in the URL or here; never a password, key or token"),
             new Setting("schemas", "Schemas", false, "Leave empty to scan every schema, or choose them from a list "
                 + "(catalogues, for databases that have no schemas)", true),
             Setting.bool("read_only", "Read only", true, "On (the default), Kilnmark asks the driver for read-only "
@@ -172,8 +165,9 @@ public class GenericJdbcConnector extends JdbcConnector {
     }
 
     /**
-     * The driver, the URL (with the driver's prefix, no password, no refused property, and accepted
-     * by the driver itself), the properties, and {@code read_only}.
+     * The driver, the URL (with the driver's prefix, readable settings each on the driver's
+     * allow-list, no secret, and accepted by the driver itself), the properties (on the allow-list
+     * too), and {@code read_only}.
      */
     @Override
     protected List<String> validateAddress(SourceConfig source) {
@@ -188,32 +182,25 @@ public class GenericJdbcConnector extends JdbcConnector {
                 problems.add("driver: " + JdbcDrivers.notRegistered(name));
             }
         }
+        Properties extra = null;
+        try {
+            extra = properties(source.setting("properties"));
+        } catch (IllegalArgumentException e) {
+            problems.add(e.getMessage());
+        }
         String url = source.setting("url");
         if (url == null || !url.regionMatches(true, 0, "jdbc:", 0, 5)) {
             problems.add("url: a JDBC URL, starting jdbc:, for example " + (driver == null ? exampleUrl()
                 : driver.urlPrefix() + "..."));
-        } else if (url.length() > 2000 || url.chars().anyMatch(c -> c < 0x20 || c == 0x7f)) {
-            problems.add("url: at most 2,000 characters, on one line");
+        } else if (url.length() > 2000) {
+            problems.add("url: at most 2,000 characters");
         } else if (driver != null && !driver.takes(url)) {
             problems.add("url: the driver " + driver.name() + " takes URLs starting " + driver.urlPrefix()
                 + ", and this one does not");
-        } else if (PASSWORD_IN_URL.matcher(url).find()) {
-            problems.add("url: take the password out of the URL and enter it as the source's password instead; "
-                + "the URL is stored and shown as plain text, the password is encrypted");
         } else {
-            String denied = null;
-            for (var e : urlProperties(url).entrySet()) {
-                denied = deniedProperty(e.getKey(), e.getValue());
-                if (denied == null && ADDRESS_NAMES.contains(normalName(e.getKey()))) {
-                    denied = "url: the property " + e.getKey() + " names another host or port than the URL's own. "
-                        + "Write the address in the URL itself";
-                }
-                if (denied != null) {
-                    break;
-                }
-            }
-            if (denied != null) {
-                problems.add(denied);
+            String refused = refusal(driver, url, extra);
+            if (refused != null) {
+                problems.add(refused);
             } else if (driver != null) {
                 try {
                     if (!drivers.driver(driver).acceptsURL(url)) {
@@ -223,14 +210,10 @@ public class GenericJdbcConnector extends JdbcConnector {
                 } catch (SQLException e) {
                     problems.add("driver: " + e.getMessage());
                 } catch (RuntimeException | LinkageError e) {
-                    problems.add("url: the driver " + driver.name() + " could not read this URL: " + e);
+                    problems.add("url: the driver " + driver.name() + " could not read this URL ("
+                        + e.getClass().getSimpleName() + ")");
                 }
             }
-        }
-        try {
-            properties(source.setting("properties"));
-        } catch (IllegalArgumentException e) {
-            problems.add(e.getMessage());
         }
         String readOnly = source.setting("read_only");
         if (readOnly != null && !readOnly.equalsIgnoreCase("true") && !readOnly.equalsIgnoreCase("false")) {
@@ -239,13 +222,61 @@ public class GenericJdbcConnector extends JdbcConnector {
         return problems;
     }
 
-    /** A password in a URL: {@code ;password=}, {@code ?password=} or {@code &password=}, or {@code :pass@} before a host. */
-    private static final Pattern PASSWORD_IN_URL = Pattern.compile("[;?&:/]\\s*password\\s*=|//[^/@;?]*:[^/@;?]*@",
-        Pattern.CASE_INSENSITIVE);
+    /** A user name and password before a host: {@code //user:secret@host}. */
+    private static final Pattern CREDENTIALS_IN_URL = Pattern.compile("//[^/@;?]*:[^/@;?]*@");
+
+    /**
+     * Why a URL and properties may not go to driver {@code r}, starting with the setting at fault, or
+     * null when they may: every setting in the URL ({@link JdbcUrlSettings}) and every property must be
+     * on the driver's allow-list, none may carry a secret or a user name (they would be stored and
+     * shown as plain text), and a URL Kilnmark cannot read is refused. With no registration, only the
+     * secrets are checked. Never quotes the URL.
+     */
+    static String refusal(RegisteredDriver r, String url, Properties extra) {
+        if (url != null) {
+            if (CREDENTIALS_IN_URL.matcher(url).find()) {
+                return "url: take the user name and password out of the URL; give them in their own fields, where "
+                    + "the password is encrypted";
+            }
+            JdbcUrlSettings.Parsed parsed = JdbcUrlSettings.parse(url);
+            if (parsed.problem() != null) {
+                return "url: " + parsed.problem();
+            }
+            for (JdbcUrlSettings.Pair pair : parsed.pairs()) {
+                String why = refusedName(r, pair.key(), "url", "in the URL");
+                if (why != null) {
+                    return why;
+                }
+            }
+        }
+        if (extra != null) {
+            for (String key : extra.stringPropertyNames()) {
+                String why = refusedName(r, key, "properties", "as a property");
+                if (why != null) {
+                    return why;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String refusedName(RegisteredDriver r, String key, String setting, String where) {
+        String n = key.toLowerCase(Locale.ROOT);
+        if (n.equals("user") || RegisteredDriver.isSecretName(n)) {
+            return setting + ": " + key + " " + where + " would hold a user name or secret, which is stored and shown "
+                + "as plain text. Give the user name and password in their own fields; the password is encrypted";
+        }
+        if (r != null && !r.allows(n)) {
+            return setting + ": the driver " + r.name() + " is not registered to take the property " + key + ". An "
+                + "admin adds it to the driver's allowed properties under Settings, JDBC drivers, once they know it "
+                + "is safe";
+        }
+        return null;
+    }
 
     /**
      * The {@code properties} setting as driver properties: {@code name=value} pairs separated by
-     * semicolons or new lines.
+     * semicolons or new lines. Which names are allowed is the driver's allow-list ({@link #refusal}).
      *
      * @throws IllegalArgumentException starting {@code properties:}, naming what is wrong
      */
@@ -262,7 +293,7 @@ public class GenericJdbcConnector extends JdbcConnector {
             int eq = pair.indexOf('=');
             if (eq <= 0) {
                 throw new IllegalArgumentException("properties: name=value pairs separated by semicolons, such as "
-                    + "sslConnection=true; not '" + pair + "'");
+                    + "sslConnection=true");
             }
             String name = pair.substring(0, eq).strip();
             String value = pair.substring(eq + 1).strip();
@@ -270,20 +301,10 @@ public class GenericJdbcConnector extends JdbcConnector {
                 throw new IllegalArgumentException("properties: a property's name is letters, digits, . _ and -, not '"
                     + name + "'");
             }
-            String n = normalName(name);
-            if (n.equals("user") || n.equals("password")) {
-                throw new IllegalArgumentException("properties: give the " + (n.equals("user") ? "user name" : "password")
-                    + " in its own field, not as a property");
+            if (value.chars().anyMatch(c -> c < 0x20 || c == 0x7f)) {
+                throw new IllegalArgumentException("properties: the value of " + name + " holds a control character");
             }
-            String denied = deniedProperty(name, value);
-            if (denied != null) {
-                throw new IllegalArgumentException("properties" + denied.substring(denied.indexOf(':')));
-            }
-            if (ADDRESS_NAMES.contains(n)) {
-                throw new IllegalArgumentException("properties: " + name + " names another host or port than the "
-                    + "URL's own. Write the address in the URL itself");
-            }
-            if (p.containsKey(name)) {
+            if (p.stringPropertyNames().stream().anyMatch(k -> k.equalsIgnoreCase(name))) {
                 throw new IllegalArgumentException("properties: " + name + " is given twice");
             }
             p.setProperty(name, value);
@@ -307,11 +328,34 @@ public class GenericJdbcConnector extends JdbcConnector {
         return Set.of("driver", "url", "username", "properties");
     }
 
-    /** The URL's hosts; when Kilnmark cannot read one from it, a placeholder no allow-list holds. */
+    /**
+     * Every host the driver could reach: the URL's, those its settings and properties name (failover
+     * partners, server names, alternate servers, any value that is itself a URL), so the allowed-hosts
+     * rule applies to all of them. When no host can be read from the URL, a placeholder no allow-list
+     * holds.
+     */
     @Override
     public List<String> hosts(SourceConfig source) {
-        List<String> hosts = new ArrayList<>(UrlHosts.hosts(source.setting("url")));
-        return hosts.isEmpty() ? List.of(UNREADABLE_HOST) : hosts;
+        String url = source.setting("url");
+        List<String> hosts = new ArrayList<>(UrlHosts.hosts(url));
+        JdbcUrlSettings.Parsed parsed = JdbcUrlSettings.parse(url);
+        // a URL whose settings cannot be read could name hosts that cannot be seen: an allow-list refuses it
+        boolean fromUrl = !hosts.isEmpty() && parsed.problem() == null;
+        Map<String, String> settings = new java.util.LinkedHashMap<>();
+        parsed.pairs().forEach(pair -> settings.put(pair.key() + "#" + settings.size(), pair.value()));
+        driverSettings(source).forEach((k, v) -> settings.put(k + "#" + settings.size(), String.valueOf(v)));
+        settings.forEach((key, value) -> {
+            String k = key.substring(0, key.lastIndexOf('#'));
+            List<String> found = new ArrayList<>(UrlHosts.hosts(value));
+            if (found.isEmpty() && JdbcUrlSettings.namesHost(k)) {
+                found = JdbcUrlSettings.hostsIn(value);
+            }
+            found.stream().filter(h -> !hosts.contains(h)).forEach(hosts::add);
+        });
+        if (!fromUrl) {
+            hosts.add(0, UNREADABLE_HOST);
+        }
+        return hosts;
     }
 
     /** A URL is the driver's own business: no host, port and database form. */
@@ -341,9 +385,16 @@ public class GenericJdbcConnector extends JdbcConnector {
         if (!r.takes(url)) {
             throw new SQLException("The driver " + r.name() + " takes URLs starting " + r.urlPrefix(), "08001");
         }
+        Properties settings = new Properties();
+        p.stringPropertyNames().stream().filter(k -> !k.equals("user") && !k.equals("password"))
+            .forEach(k -> settings.setProperty(k, p.getProperty(k)));
+        String refused = refusal(r, url, settings);
+        if (refused != null) {
+            throw new SQLException(refused, "08001");
+        }
         Connection c = drivers.driver(r).connect(url, p);
         if (c == null) {
-            throw new SQLException("The driver " + r.name() + " does not accept the address " + url, "08001");
+            throw new SQLException("The driver " + r.name() + " does not accept this source's URL", "08001");
         }
         return c;
     }
@@ -499,12 +550,23 @@ public class GenericJdbcConnector extends JdbcConnector {
         }
 
         @Override
+        public boolean tolerant() {
+            return true;
+        }
+
+        @Override
         public String query(Connection connection, String sql, Map<String, String> settings) throws SQLException {
             String table = settings.get(READ_TABLE);
             if (table == null) {
                 return sql;
             }
-            return "SELECT * FROM " + GenericCatalog.shape(connection).qualified(settings.get(READ_CONTAINER), table);
+            GenericCatalog.Shape shape = GenericCatalog.shape(connection);
+            String container = settings.get(READ_CONTAINER);
+            if (shape.quote().isEmpty() && !(GenericCatalog.plainName(table) && GenericCatalog.plainName(container))) {
+                throw new SQLException("This database's driver offers no way to quote names, so only plain names "
+                    + "(letters, digits and _) can be read", "42000");
+            }
+            return "SELECT * FROM " + shape.qualified(container, table);
         }
     }
 
@@ -623,7 +685,14 @@ public class GenericJdbcConnector extends JdbcConnector {
      * differing in case; the same for an existing table; a new table's name as written.
      */
     static TableName resolve(Connection c, GenericCatalog.Shape shape, TableName t) throws SQLException {
-        String container = GenericCatalog.resolve(t.schema(), GenericCatalog.containers(c, shape));
+        List<String> containers = GenericCatalog.containers(c, shape);
+        String container = GenericCatalog.resolve(t.schema(), containers);
+        if (!containers.contains(container)) {
+            // never a name the database has not reported: with no identifier quote, it would go into SQL as written
+            throw new SQLException("There is no " + (shape.level() == GenericCatalog.Level.CATALOG ? "catalogue " : "schema ")
+                + t.schema() + " in this database (the driver lists " + String.join(", ", containers.stream()
+                .filter(x -> !GenericCatalog.isSystem(x)).limit(10).toList()) + ")", "42000");
+        }
         List<String> tables = GenericCatalog.tables(c, shape, container).stream().map(x -> x[0]).toList();
         return new TableName(container, GenericCatalog.resolve(t.table(), tables));
     }

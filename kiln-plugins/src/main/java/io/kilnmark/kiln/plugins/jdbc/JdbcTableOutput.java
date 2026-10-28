@@ -155,6 +155,11 @@ final class JdbcTableOutput implements Step {
             connection = connector.connectForWrite(source, bulk);
             sql.prepareSession(connection);
             connection.setAutoCommit(false);
+            if (connection.getAutoCommit() || !connection.getMetaData().supportsTransactions()) {
+                // every row would be committed as it is sent: a failure would leave part of the write
+                throw new StepException("Cannot write to " + source.name() + ": its driver does not offer "
+                    + "transactions, so a failed write could not be undone and part of it would stay");
+            }
             Boolean known = sql.existsByMetadata(connection, target);
             exists = known != null ? known : queryBoolean(sql.exists(target));
             if (mode.equals("create") && exists) {
@@ -640,10 +645,18 @@ final class JdbcTableOutput implements Step {
                 // the connection is closed below; the server rolls back an unfinished transaction
             }
             if (newName == null && created && committedRows == 0 && sql.dropCreatedOnFailure()) {
-                // DDL that commits by itself: the table this step created outlived the rollback
+                // DDL that commits by itself: the table this step created outlived the rollback. Dropped
+                // only while it is empty, so rows another writer put there meanwhile are never lost.
                 try (Statement s = connection.createStatement()) {
-                    s.execute(sql.drop(loadInto));
+                    boolean empty;
+                    try (ResultSet rs = s.executeQuery("SELECT COUNT(*) FROM " + sql.table(loadInto))) {
+                        empty = rs.next() && rs.getLong(1) == 0;
+                    }
                     connection.commit();
+                    if (empty) {
+                        s.execute(sql.drop(loadInto));
+                        connection.commit();
+                    }
                 } catch (SQLException | RuntimeException e) {
                     // left for an administrator: the write's error names the table
                 }

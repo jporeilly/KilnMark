@@ -85,6 +85,11 @@ final class GenericWriteSql extends WriteSql {
      * type is unknown. Filled by {@link #targetColumnsByMetadata}; one step writes one table.
      */
     private final Map<String, String> unchecked = new HashMap<>();
+    /**
+     * The most bytes a text column holds, where the driver reports it ({@code CHAR_OCTET_LENGTH}),
+     * by column name: columns sized in bytes (Sybase, Teradata's LATIN) cut longer text silently.
+     */
+    private final Map<String, Integer> octets = new HashMap<>();
     private final SqlDialect dialect;
 
     private GenericWriteSql(GenericCatalog.Shape shape, Map<Integer, List<TypeInfo>> types, int maxColumnName,
@@ -440,6 +445,20 @@ final class GenericWriteSql extends WriteSql {
         return out;
     }
 
+    /** For tests: a column's size in bytes as a driver sizing text in bytes reports it. */
+    void octetsForTest(String column, int bytes) {
+        octets.put(column, bytes);
+    }
+
+    private static Integer optionalInt(ResultSet rs, String column) {
+        try {
+            int v = rs.getInt(column);
+            return rs.wasNull() ? null : v;
+        } catch (SQLException | RuntimeException e) {
+            return null; // older drivers do not have it
+        }
+    }
+
     private static String optional(ResultSet rs, String column) {
         try {
             return rs.getString(column);
@@ -457,6 +476,7 @@ final class GenericWriteSql extends WriteSql {
     @Override
     List<WritePlan.TargetColumn> targetColumnsByMetadata(Connection c, TableName t) throws SQLException {
         unchecked.clear();
+        octets.clear();
         List<WritePlan.TargetColumn> out = new ArrayList<>();
         DatabaseMetaData md = c.getMetaData();
         try (ResultSet rs = md.getColumns(shape.catalogArg(t.schema()), schemaArg(md, t.schema()),
@@ -472,6 +492,12 @@ final class GenericWriteSql extends WriteSql {
                 boolean sizeKnown = !rs.wasNull() && size > 0;
                 int digits = rs.getInt("DECIMAL_DIGITS");
                 boolean digitsKnown = !rs.wasNull() && digits >= 0;
+                if (code == Types.CHAR || code == Types.VARCHAR || code == Types.NCHAR || code == Types.NVARCHAR) {
+                    Integer bytes = optionalInt(rs, "CHAR_OCTET_LENGTH");
+                    if (bytes != null && bytes > 0) {
+                        octets.put(name, bytes);
+                    }
+                }
                 out.add(target(name, code, typeName == null ? GenericTypes.jdbcName(code) : typeName, size, sizeKnown,
                     digits, digitsKnown));
             }
@@ -538,6 +564,16 @@ final class GenericWriteSql extends WriteSql {
             return null;
         }
         String type = t.typeName() == null ? "" : t.typeName().toUpperCase(Locale.ROOT);
+        Integer maxBytes = octets.get(t.name());
+        // too many characters is said as such by the length check that follows; bytes are checked otherwise
+        if (v instanceof String text && maxBytes != null && !(t.maxLength() > 0 && length(text) > t.maxLength())) {
+            int bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            if (bytes > maxBytes) {
+                return "the value is " + bytes + " bytes long in UTF-8, but the column holds at most " + maxBytes
+                    + " bytes, and longer text could be cut. Shorten the values with a compute step, or ask for the "
+                    + "column to be widened";
+            }
+        }
         if (v instanceof byte[] bytes && t.kind() == Kind.BINARY && t.precision() > 0 && bytes.length > t.precision()) {
             return "it is " + bytes.length + " bytes long, but the column holds at most " + t.precision();
         }

@@ -134,11 +134,11 @@ final class GenericTypes {
         String shown = typeName == null || typeName.isBlank() ? jdbcName(jdbcType) : typeName;
         boolean timestamp = name.startsWith("TIMESTAMP") || name.startsWith("DATETIME");
         if (name.contains("WITH LOCAL TIME ZONE") || name.equals("TIMESTAMP_LTZ") || name.equals("TIMESTAMPLTZ")) {
-            return of(Kind.TIMESTAMP_TZ, Read.TIMESTAMP_TZ);
+            return micros(of(Kind.TIMESTAMP_TZ, Read.TIMESTAMP_TZ), shown, scale);
         }
         if (jdbcType == Types.TIMESTAMP_WITH_TIMEZONE || timestamp && name.contains("WITH TIME ZONE")
             || name.equals("TIMESTAMPTZ") || name.equals("TIMESTAMP_TZ") || name.equals("DATETIMEOFFSET")) {
-            return of(Kind.TIMESTAMP_TZ, Read.TIMESTAMP_TZ);
+            return micros(of(Kind.TIMESTAMP_TZ, Read.TIMESTAMP_TZ), shown, scale);
         }
         if (jdbcType == Types.TIME_WITH_TIMEZONE || !timestamp && name.startsWith("TIME") && name.contains("WITH TIME ZONE")
             || name.equals("TIMETZ")) {
@@ -186,14 +186,23 @@ final class GenericTypes {
                     + ", which no fixed decimal holds without rounding");
             }
             case Types.DATE -> of(Kind.DATE, Read.DATE);
-            case Types.TIME -> of(Kind.TIME, Read.TIME);
-            case Types.TIMESTAMP -> of(Kind.TIMESTAMP, Read.TIMESTAMP);
+            case Types.TIME -> micros(of(Kind.TIME, Read.TIME), shown, scale);
+            case Types.TIMESTAMP -> micros(of(Kind.TIMESTAMP, Read.TIMESTAMP), shown, scale);
             case Types.CHAR, Types.VARCHAR, Types.LONGVARCHAR, Types.NCHAR, Types.NVARCHAR, Types.LONGNVARCHAR,
                  Types.CLOB, Types.NCLOB, Types.SQLXML, Types.ROWID -> of(Kind.TEXT, Read.TEXT);
             case Types.BINARY, Types.VARBINARY, Types.LONGVARBINARY, Types.BLOB -> of(Kind.BINARY, Read.BINARY);
             default -> new Mapped(Kind.TEXT, 0, 0, Read.TEXT, "Read as text: Kilnmark has no type for " + shown
                 + " (JDBC " + jdbcName(jdbcType) + "), so values are kept as the driver writes them");
         };
+    }
+
+    /**
+     * A time or timestamp keeping more than six digits of a second (Db2's {@code TIMESTAMP(12)},
+     * nanoseconds): the engine keeps microseconds, so the column says that the rest is cut when read.
+     */
+    private static Mapped micros(Mapped m, String shown, int scale) {
+        return scale <= 6 ? m : new Mapped(m.kind(), m.precision(), m.scale(), m.read(), shown + " keeps " + scale
+            + " digits of a second; Kilnmark keeps six (microseconds), so the rest are cut when read");
     }
 
     /** Column {@code i} (1-based) of a result, mapped and ready to copy. */
@@ -403,7 +412,9 @@ final class GenericTypes {
         }
 
         private static java.time.Instant legacyInstant(ResultSet rs, int col) throws SQLException {
-            java.sql.Timestamp t = rs.getTimestamp(col);
+            // in UTC, never the JVM's own time zone
+            java.sql.Timestamp t = rs.getTimestamp(col, java.util.Calendar.getInstance(
+                java.util.TimeZone.getTimeZone(ZoneOffset.UTC)));
             return t == null ? null : t.toInstant();
         }
     }

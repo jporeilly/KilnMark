@@ -110,14 +110,17 @@ class GenericJdbcConnectorTest {
         assertTrue(problems("jdbc:db2://db.example.com:50000/SALES").contains(
             "url: the driver h2 takes URLs starting jdbc:h2:, and this one does not"));
         assertTrue(problems("https://db.example.com").get(0).startsWith("url: a JDBC URL, starting jdbc:"));
-        assertTrue(problems(h2.url() + ";PASSWORD=secret").get(0).startsWith("url: take the password out"));
+        assertTrue(problems(h2.url() + ";PASSWORD=secret").get(0).contains("would hold a user name or secret"));
         assertTrue(problems("jdbc:h2:tcp://kilnmark:secret@db.example.com/x").get(0)
-            .startsWith("url: take the password out"));
-        assertTrue(problems(h2.url() + ";socketFactory=x.Y").get(0).contains("makes the database driver use this "
-            + "server's own identity, files or code"));
-        assertTrue(problems(h2.url() + ";connectTimeout=1").get(0).contains("time limits"));
-        assertTrue(problems(h2.url() + ";serverName=elsewhere").get(0).contains("another host"));
-        assertTrue(problems("jdbc:h2:mem:x\nother").get(0).contains("on one line"));
+            .startsWith("url: take the user name and password out"));
+        assertTrue(problems(h2.url() + ";socketFactory=x.Y").get(0).contains("not registered to take the property "
+            + "socketFactory"));
+        assertTrue(problems(h2.url() + ";INIT=RUNSCRIPT").get(0).contains("not registered to take the property INIT"));
+        assertTrue(problems(h2.url() + ";INIT=RUNSCRIPT FROM 'http://files.example.com/x.sql'").get(0)
+            .contains("cannot read the settings in this URL"));
+        assertTrue(problems("jdbc:h2:mem:x\nother").get(0).contains("a space or control character"));
+        assertTrue(problems(h2.url() + ";MODE=DB2").isEmpty(), "an allowed property");
+        assertFalse(problems(h2.url() + ";INIT=x").get(0).contains(h2.url()), "the URL is never echoed");
 
         // registered with a prefix the driver itself does not take: the driver's own answer counts
         H2Drivers.H2 odd = H2Drivers.registered("jdbc:hx:");
@@ -130,14 +133,88 @@ class GenericJdbcConnectorTest {
         return h2.connector().validate(h2.source("p", Map.of("url", url)));
     }
 
+    /** A driver registered for any URL, allowing a few properties, to check URL syntaxes of every kind. */
+    private static final io.kilnmark.kiln.connect.RegisteredDriver ANY = new io.kilnmark.kiln.connect.RegisteredDriver(
+        "any", "any.jar", "a".repeat(64), "x.Driver", "jdbc:any:", List.of("currentschema", "database", "charset",
+        "clientreroutealternateservername", "failoverpartner", "sslconnection"), "admin", Instant.EPOCH);
+
+    private static String refusal(String url) {
+        return GenericJdbcConnector.refusal(ANY, url, null);
+    }
+
+    @Test
+    void everySettingInAUrlMustBeOnTheDriversAllowList() {
+        String[][] refused = {
+            {"jdbc:h2:mem:x;INIT=RUNSCRIPT", "property INIT"},
+            {"jdbc:h2:mem:x;INIT=RUNSCRIPT FROM 'http://files.example.com/x.sql'", "cannot read the settings"},
+            {"jdbc:mysql://db.example.com/shop?autoDeserialize=true", "property autoDeserialize"},
+            {"jdbc:mysql://db.example.com/shop?useSSL=true&allowLoadLocalInfile=true", "property useSSL"},
+            {"jdbc:mysql://db.example.com/shop?currentSchema=a&queryInterceptors=x.Y", "property queryInterceptors"},
+            {"jdbc:derby:sales;restoreFrom=/srv/backup/sales", "property restoreFrom"},
+            {"jdbc:sqlserver://db.example.com;databaseName=x", "property databaseName"},
+            {"jdbc:db2://db.example.com:50000/SALES:traceFile=/tmp/db2.trc;", "property traceFile"},
+            {"jdbc:db2://db.example.com:50000/SALES:currentSchema=S;traceDirectory=/tmp;", "property traceDirectory"},
+            {"jdbc:mysql://address=(host=elsewhere.example.com)(port=3306)/shop", "property address"},
+            {"jdbc:mysql://db.example.com/shop?currentSchema=a&(host=x)", "property host"},
+            {"jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=elsewhere)))", "property DESCRIPTION"},
+            {"jdbc:x://db.example.com/sales?javax.net.ssl.trustStore=/etc/x", "property javax.net.ssl.trustStore"},
+            {"jdbc:x://db.example.com/sales;oracle.net.tns_admin=/etc", "property oracle.net.tns_admin"},
+            {"jdbc:teradata://db.example.com/DATABASE=x,CHARSET=UTF8,LOGMECH=LDAP", "property LOGMECH"},
+            {"jdbc:x://db.example.com/a+b=c", "cannot tell which setting the = at character 28"},
+            {"jdbc:x://db.example.com/sales?a%3Db", "the character %"},
+            {"jdbc:x://db.example.com/sales;currentSchema={x}", "the character {"},
+            {"jdbc:x://db.example.com/sales?pwd=x", "user name or secret"},
+            {"jdbc:x://db.example.com/sales?sslpassword=x", "user name or secret"},
+            {"jdbc:x://db.example.com/sales?token=x", "user name or secret"},
+            {"jdbc:snowflake://acct.example.com/?private_key_file_pwd=x", "user name or secret"},
+            {"jdbc:x://db.example.com/sales;passwd=x", "user name or secret"},
+            {"jdbc:x://db.example.com/sales;user=x", "user name or secret"},
+        };
+        for (String[] r : refused) {
+            String why = refusal(r[0]);
+            assertTrue(why != null && why.contains(r[1]), r[0] + " gave " + why);
+            assertFalse(why.contains("db.example.com"), "never echoes the URL: " + why);
+        }
+        for (String ok : List.of("jdbc:db2://db.example.com:50000/SALES:currentSchema=S;sslConnection=true;",
+            "jdbc:teradata://db.example.com/DATABASE=x,CHARSET=UTF8", "jdbc:h2:mem:x",
+            "jdbc:sqlserver://db.example.com;failoverPartner=standby.example.com",
+            "jdbc:db2://[2001:db8::1]:50000/SALES")) {
+            assertNull(refusal(ok), ok);
+        }
+        java.util.Properties secret = new java.util.Properties();
+        secret.setProperty("sslPassword", "x");
+        assertTrue(GenericJdbcConnector.refusal(ANY, null, secret).startsWith("properties: sslPassword as a property "
+            + "would hold a user name or secret"));
+        java.util.Properties key = new java.util.Properties();
+        key.setProperty("apiKey", "x");
+        assertTrue(GenericJdbcConnector.refusal(ANY, null, key).contains("would hold a user name or secret"));
+        java.util.Properties other = new java.util.Properties();
+        other.setProperty("loginTimeout", "1");
+        assertTrue(GenericJdbcConnector.refusal(ANY, null, other).contains("property loginTimeout"));
+        // and what an admin may never allow, as it names the server's files or a key store
+        for (String n : List.of("javax.net.ssl.truststore", "oracle.net.tns_admin", "tracedirectory", "tracefile",
+            "sslfactory", "socketfactoryclass", "keystorelocation")) {
+            assertFalse(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(List.of(n)).isEmpty(), n);
+        }
+    }
+
+    @Test
+    void hostsInSettingsAreCheckedLikeTheUrls() {
+        assertEquals(List.of("db.example.com", "standby.example.com"), h2.connector().hosts(h2.source("p",
+            Map.of("url", "jdbc:sqlserver://db.example.com;failoverPartner=standby.example.com"))));
+        assertEquals(List.of("db.example.com", "alt1.example.com", "alt2.example.com"), h2.connector().hosts(
+            h2.source("p", Map.of("url", "jdbc:db2://db.example.com:50000/SALES:clientRerouteAlternateServerName="
+                + "alt1.example.com,alt2.example.com;clientRerouteAlternatePortNumber=50000,50000;"))));
+        assertEquals(List.of(GenericJdbcConnector.UNREADABLE_HOST, "other.example.com"), h2.connector().hosts(
+            h2.source("p", Map.of("properties", "serverName=other.example.com"))));
+    }
+
     @Test
     void extraPropertiesAreCheckedAndGoWithEveryConnection() {
         assertEquals("SALES", GenericJdbcConnector.properties("SCHEMA=SALES; MODE=DB2").getProperty("SCHEMA"));
         assertEquals(2, GenericJdbcConnector.properties("a=1\nb=2;").size());
         for (String[] bad : new String[][] {
-            {"noequals", "name=value pairs"}, {"password=x", "in its own field"}, {"user=x", "in its own field"},
-            {"traceFile=/tmp/x", "files or code"}, {"loginTimeout=1", "time limits"}, {"host=other", "another host"},
-            {"a=1;a=2", "given twice"}, {"9bad=1", "letters, digits"}}) {
+            {"noequals", "name=value pairs"}, {"a=1;A=2", "given twice"}, {"9bad=1", "letters, digits"}}) {
             IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                 () -> GenericJdbcConnector.properties(bad[0]), bad[0]);
             assertTrue(e.getMessage().startsWith("properties: ") && e.getMessage().contains(bad[1]), e.getMessage());
@@ -145,6 +222,10 @@ class GenericJdbcConnectorTest {
         SourceConfig s = h2.source("p", Map.of("properties", "SCHEMA=CRM"));
         assertEquals(List.of(), h2.connector().validate(s));
         assertEquals("CRM", h2.connector().driverSettings(s).getProperty("SCHEMA"));
+        assertTrue(h2.connector().validate(h2.source("p", Map.of("properties", "TRACE_LEVEL_FILE=3"))).get(0)
+            .contains("not registered to take the property TRACE_LEVEL_FILE"));
+        assertTrue(h2.connector().validate(h2.source("p", Map.of("properties", "sslPassword=x"))).get(0)
+            .contains("would hold a user name or secret"));
         assertTrue(h2.connector().validate(h2.source("p", Map.of("read_only", "maybe")))
             .contains("read_only: true or false, not 'maybe'"));
     }
@@ -429,6 +510,65 @@ class GenericJdbcConnectorTest {
         RunResult again = write(writer, options("SALES.ORDERS", "create", Map.of()), s, rows.subList(0, 1),
             Rows.events());
         assertTrue(again.error().contains("already exists"), again.error());
+    }
+
+    @Test
+    void createWithCommitEveryKeepsTheRowsAlreadyCommitted() throws Exception {
+        Schema s = new Schema(List.of(field("customer_id", Rows.INT64), field("note", Rows.TEXT)));
+        List<Object[]> rows = new ArrayList<>();
+        for (int i = 0; i < 9; i++) {
+            rows.add(new Object[] {(long) i, i == 7 ? "far too long for it" : "ok"});
+        }
+        RunResult r = write(writer, options("SALES.partly", "create", Map.of("text_length", 5, "commit_every", 3)), s,
+            rows, Rows.events());
+        assertFalse(r.succeeded());
+        assertTrue(r.error().contains("6 rows were already committed, because commit_every is set"), r.error());
+        assertEquals(List.of(List.of(6L)), query("SELECT COUNT(*) FROM sales.\"partly\""),
+            "H2 commits the CREATE; with rows committed, the table is kept");
+    }
+
+    @Test
+    void aFailedAppendNeverDropsTheTable() throws Exception {
+        h2.sql("CREATE TABLE sales.kept (customer_id BIGINT, note VARCHAR(3))");
+        Schema s = new Schema(List.of(field("customer_id", Rows.INT64), field("note", Rows.TEXT)));
+        RunResult r = write(writer, options("SALES.KEPT", "append", Map.of()), s,
+            Rows.list(new Object[] {1L, "ok"}, new Object[] {2L, "too long"}), Rows.events());
+        assertFalse(r.succeeded());
+        assertEquals(List.of(List.of(0L)), query("SELECT COUNT(*) FROM sales.kept"), "rolled back, and still there");
+    }
+
+    @Test
+    void multiByteTextIsCheckedAgainstAColumnsSizeInBytes() throws Exception {
+        h2.sql("CREATE TABLE sales.codes (code VARCHAR(5))");
+        long octets;
+        try (Connection c = h2.connect(); ResultSet rs = c.getMetaData().getColumns(null, "SALES", "CODES", "CODE")) {
+            assertTrue(rs.next());
+            octets = rs.getLong("CHAR_OCTET_LENGTH");
+        }
+        Schema s = new Schema(List.of(field("code", Rows.TEXT)));
+        String text = "é".repeat(5); // five characters, ten bytes in UTF-8
+        RunResult r = write(writer, options("SALES.CODES", "append", Map.of()), s, Rows.list(new Object[] {text}),
+            Rows.events());
+        if (octets > 0 && octets < 10) {
+            assertFalse(r.succeeded(), "a column of " + octets + " bytes");
+            assertTrue(r.error().contains("is 10 bytes long in UTF-8, but the column holds at most " + octets
+                + " bytes"), r.error());
+        } else {
+            assertTrue(r.succeeded(), "H2 reports " + octets + " bytes: " + r.error());
+        }
+        WritePlan.TargetColumn sized = new WritePlan.TargetColumn("code", "VARCHAR", Kind.TEXT, 5, 0, 5);
+        GenericWriteSql sql = sqlWithOctets("code", 5);
+        assertTrue(sql.targetValueProblem(sized, text).contains("10 bytes long in UTF-8, but the column holds at most 5"));
+        assertNull(sql.targetValueProblem(sized, "abcde"));
+    }
+
+    /** A GenericWriteSql that has described a VARCHAR column of {@code bytes} bytes, as Sybase or Teradata report one. */
+    private GenericWriteSql sqlWithOctets(String column, int bytes) throws Exception {
+        try (Connection c = h2.connect()) {
+            GenericWriteSql sql = GenericWriteSql.of(c, GenericCatalog.shape(c));
+            sql.octetsForTest(column, bytes);
+            return sql;
+        }
     }
 
     @Test

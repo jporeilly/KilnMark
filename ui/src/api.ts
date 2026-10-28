@@ -423,6 +423,8 @@ export type RegisteredDriverItem = {
   sha256: string;
   driverClass: string;
   urlPrefix: string;
+  /** The driver properties sources may set, lower case. */
+  allowedProperties: string[];
   registeredBy: string;
   registeredAt: string;
   /** ready, or missing (the jar is gone), mismatch (the jar changed) or unreadable: then it is not used. */
@@ -442,6 +444,7 @@ export type DriverFolderFile = {
   pinned: boolean;
 };
 
+/** maxUploadBytes: the largest jar this server accepts as an upload; larger ones go in the folder by hand. */
 export type DriverFolderListing = { folder: string; files: DriverFolderFile[]; maxUploadBytes: number };
 
 /** One registration or removal, for the audit trail. */
@@ -452,11 +455,19 @@ export type DriverLogEntry = {
   sha256: string;
   driverClass: string;
   urlPrefix: string;
+  allowedProperties: string[];
   by: string;
   at: string;
 };
 
-export type DriverRegistration = { name: string; fileName: string; driverClass: string; urlPrefix: string };
+export type DriverRegistration = {
+  name: string;
+  fileName: string;
+  driverClass: string;
+  urlPrefix: string;
+  /** Property names sources may set, separated by commas or spaces. */
+  allowedProperties: string;
+};
 
 export const api = {
   me: () => call<Me>("/api/v1/me"),
