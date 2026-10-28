@@ -84,8 +84,47 @@ tasks.register<Sync>("assembleRelease") {
 // checkProductOnly: fails if the release depends on, names or bundles the reference lab.
 apply(from = "gradle/product-only.gradle.kts")
 
+// checkNoCustomerDrivers: drivers Kilnmark may not ship (Oracle's, under the Oracle Free Use Terms
+// and Conditions) are installed by the customer (ADR 0007, docs/design/drivers.md). They are test
+// dependencies only; this fails the release if one ever reaches its folder, whatever the jar is called.
+val customerDrivers = listOf("ojdbc", "com.oracle.database", "oracle.jdbc")
+tasks.register("checkNoCustomerDrivers") {
+    group = "verification"
+    description = "Fails if the release folder holds a driver the customer must install (Oracle's)."
+    dependsOn("assembleRelease")
+    val release = distDir.dir("release")
+    doLast {
+        val found = release.asFile.walkTopDown().filter { f ->
+            f.isFile && customerDrivers.any { f.name.lowercase().contains(it) }
+        }.toList()
+        // a driver's classes, or a jar named like one, inside a jar, or a jar in a jar (fat jars), to any depth
+        fun holdsDriver(input: java.io.InputStream, depth: Int): Boolean {
+            val zip = java.util.zip.ZipInputStream(input)
+            while (true) {
+                val e = zip.nextEntry ?: return false
+                val file = e.name.substringAfterLast('/').lowercase()
+                if (e.name.startsWith("oracle/jdbc/") || (file.endsWith(".jar") && customerDrivers.any { file.contains(it) })) {
+                    return true
+                }
+                // the nested stream is read from this entry only, and must not close the outer one
+                if (depth < 8 && file.endsWith(".jar") && holdsDriver(zip, depth + 1)) {
+                    return true
+                }
+            }
+        }
+        val inside = release.asFile.walkTopDown().filter { it.isFile && it.name.endsWith(".jar") }.filter { jar ->
+            jar.inputStream().buffered().use { holdsDriver(it, 0) }
+        }.toList()
+        if (found.isNotEmpty() || inside.isNotEmpty()) {
+            throw GradleException("The release holds a driver Kilnmark may not ship (customers install it): "
+                + (found + inside).distinct().joinToString(", "))
+        }
+        println("checkNoCustomerDrivers: no customer-installed driver in the release")
+    }
+}
+
 tasks.register("release") {
     group = "distribution"
     description = "Assembles a release folder in dist/release, and checks it holds the product only."
-    dependsOn("assembleRelease", "checkProductOnly")
+    dependsOn("assembleRelease", "checkProductOnly", "checkNoCustomerDrivers")
 }

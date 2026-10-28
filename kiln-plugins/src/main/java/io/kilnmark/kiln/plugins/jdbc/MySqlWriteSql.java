@@ -232,6 +232,9 @@ final class MySqlWriteSql extends WriteSql {
      */
     @Override
     String targetValueProblem(WritePlan.TargetColumn t, Object v) {
+        if (t == null) {
+            return null; // a column the step created holds what it was made for
+        }
         if (t.typeName().equals("year") && v instanceof Long y && (y < 1901 || y > 2155)) {
             return "the year " + y + " is outside what a YEAR column holds (1901 to 2155)";
         }

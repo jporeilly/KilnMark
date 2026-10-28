@@ -17,6 +17,7 @@ EXPOSE 8780
 # host.docker.internal (the machine running it) count as local model hosts by default.
 ENV KILNMARK_ROLES=api,scheduler,worker \
     KILNMARK_SECRET_KEY_FILE=/var/lib/kilnmark/secret.key \
+    KILNMARK_DRIVERS_DIR=/var/lib/kilnmark/drivers \
     KILNMARK_IN_CONTAINER=true
 # The key that encrypts stored source passwords; keep this volume, and back it up apart from the database.
 VOLUME /var/lib/kilnmark

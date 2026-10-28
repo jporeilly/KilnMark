@@ -53,7 +53,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
     volumes:
-      - keys:/var/lib/kilnmark     # the key for stored source passwords: back it up apart from pgdata
+      - keys:/var/lib/kilnmark     # the key for stored source passwords, and drivers/ (Settings > Drivers): back it up apart from pgdata
       # A folder to scan, read-only; by default the reference lab's file share. In Kilnmark,
       # add a source of kind files with path /srv/files. Point KILNMARK_FILES_DIR at your own folder.
       - ${KILNMARK_FILES_DIR:-./lab/files/share}:/srv/files:ro,Z

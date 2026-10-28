@@ -33,6 +33,7 @@ const RelationshipsPage = page(() => import("./browse/RelationshipsPage"), "Rela
 const NotificationsPage = page(() => import("./pages/NotificationsPage"), "NotificationsPage");
 const EmailSettingsPage = page(() => import("./pages/EmailSettingsPage"), "EmailSettingsPage");
 const SentEmailsPage = page(() => import("./pages/SentEmailsPage"), "SentEmailsPage");
+const DriversPage = page(() => import("./pages/DriversPage"), "DriversPage");
 import { Icon } from "./components/icons";
 import { Card, EmptyState, PageHeader } from "./components/ui";
 import { NotificationBell } from "./notifications/NotificationBell";
@@ -350,6 +351,12 @@ function Shell({ me }: { me: Me }) {
               route.page === "email" ? <EmailSettingsPage /> : <SentEmailsPage />
             ) : (
               <NotAllowed title="Email">Only admins can set up email. Choose your own notifications under Settings, Notifications.</NotAllowed>
+            ))}
+          {route.page === "drivers" &&
+            (allows(me.role, "admin") ? (
+              <DriversPage />
+            ) : (
+              <NotAllowed title="Drivers">Only admins can install drivers. Ask an admin to install the one your source needs.</NotAllowed>
             ))}
           {route.page === "tokens" &&
             (allows(me.role, "admin") ? (

@@ -12,6 +12,8 @@ export type Route =
   | { page: "notifications"; confirm: string | null }
   | { page: "email" }
   | { page: "email-log" }
+  // Drivers the customer installs, for admins
+  | { page: "drivers" }
   | { page: "rules"; urn: string }
   | { page: "issues" }
   | { page: "signout" }
@@ -49,6 +51,7 @@ export function parse(hash: string): Route {
   if (path === "/settings/notifications") return { page: "notifications", confirm: params.get("confirm") };
   if (path === "/settings/email") return { page: "email" };
   if (path === "/settings/email/sent") return { page: "email-log" };
+  if (path === "/settings/drivers") return { page: "drivers" };
   if (path === "/quality/rules") return { page: "rules", urn: params.get("urn") ?? "" };
   if (path === "/quality/issues") return { page: "issues" };
   if (path === "/sign-out") return { page: "signout" };
@@ -98,6 +101,7 @@ export const href = {
   notifications: () => "#/settings/notifications",
   email: () => "#/settings/email",
   emailLog: () => "#/settings/email/sent",
+  drivers: () => "#/settings/drivers",
   rules: (urn?: string) => (urn ? `#/quality/rules?urn=${encodeURIComponent(urn)}` : "#/quality/rules"),
   issues: () => "#/quality/issues",
   signOut: () => "#/sign-out",

@@ -14,6 +14,8 @@ import { Icon } from "./icons";
 import { commonSwitch, settingKind } from "./settingKinds";
 import { SideSheet, Switch } from "./ui";
 import { useRole } from "./role";
+import { needsDriver } from "./ConnectorGallery";
+import { href } from "../router";
 
 const STEPS = ["Connect", "Test", "Choose what to scan", "Save"] as const;
 /** The stepper's short labels, so it stays on one line. */
@@ -402,6 +404,18 @@ export function ConnectionPanel({
       {error && (
         <p role="alert" className="error">
           {error}
+        </p>
+      )}
+      {needsDriver(connector) && (
+        <p className="km-callout km-callout--info">
+          <strong>{connector.displayName} needs its driver.</strong> Kilnmark cannot ship it because of its licence.{" "}
+          {role === "admin" ? (
+            <>
+              Install it under <a href={href.drivers()}>Settings, Drivers</a>, then test the connection.
+            </>
+          ) : (
+            <>Ask an admin to install it under Settings, Drivers; until then the connection test says so.</>
+          )}
         </p>
       )}
       <h3 ref={heading} tabIndex={-1} className="step-heading">

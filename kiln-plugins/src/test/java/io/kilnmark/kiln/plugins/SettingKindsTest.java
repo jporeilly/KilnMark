@@ -56,6 +56,18 @@ class SettingKindsTest {
     }
 
     @Test
+    void oracle() {
+        Map<String, String> expected = new LinkedHashMap<>();
+        expected.put("host", "TEXT");
+        expected.put("port", "NUMBER=1521");
+        expected.put("service_name", "TEXT");
+        expected.put("username", "TEXT");
+        expected.put("encryption", "CHOICE=accepted");
+        expected.put("schemas", "TEXT");
+        assertEquals(expected, kinds("oracle"));
+    }
+
+    @Test
     void filesAndBuckets() {
         Map<String, String> documents = Map.of("keep_text", "BOOLEAN=true", "read_text_on_demand", "BOOLEAN=false");
         Map<String, String> reading = Map.of("encoding", "TEXT", "delimiter", "TEXT", "header", "BOOLEAN=true");

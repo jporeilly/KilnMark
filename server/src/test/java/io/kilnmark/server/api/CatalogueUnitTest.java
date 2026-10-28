@@ -35,7 +35,7 @@ class CatalogueUnitTest {
         assertFalse(c.showPlanned());
         assertTrue(c.categories().stream().allMatch(x -> x.planned().isEmpty()));
         // Test-only connectors (kind test-...) are registered on the test class path; leave them out.
-        assertEquals(6, c.categories().stream().flatMap(x -> x.connectors().stream())
+        assertEquals(7, c.categories().stream().flatMap(x -> x.connectors().stream())
             .filter(x -> !x.kind().startsWith("test-")).count());
         Views.ConnectorCatalogue shown = new CatalogResource(null, null, Connectors.load(), config(true)).catalogue();
         assertTrue(shown.categories().stream().mapToInt(x -> x.planned().size()).sum() > 30);
@@ -43,7 +43,7 @@ class CatalogueUnitTest {
 
     @Test
     void everyBuiltConnectorClaimsOnlyWhatItCanDoToday() {
-        Set<String> writable = Set.of("postgresql", "sqlserver", "mysql", "mariadb", "files", "s3");
+        Set<String> writable = Set.of("postgresql", "sqlserver", "mysql", "mariadb", "oracle", "files", "s3");
         for (Connector c : Connectors.load().all()) {
             if (c.kind().startsWith("test-")) {
                 continue; // test-only connectors (the pipeline tests' writer) are not shipped
@@ -52,7 +52,11 @@ class CatalogueUnitTest {
                 ? Set.of(Connector.Capability.DISCOVER, Connector.Capability.READ, Connector.Capability.WRITE)
                 : Set.of(Connector.Capability.DISCOVER, Connector.Capability.READ);
             assertEquals(today, c.capabilities(), c.kind());
-            assertEquals(null, c.driver(), c.kind() + " needs nothing installed");
+            if (c.kind().equals("oracle")) {
+                assertEquals(false, c.driver().bundleable(), "Oracle's driver is the customer's to install");
+            } else {
+                assertEquals(null, c.driver(), c.kind() + " needs nothing installed");
+            }
         }
         Connector files = Connectors.load().get("files").orElseThrow();
         assertEquals(List.of("csv", "tsv", "json", "jsonl", "parquet", "excel", "documents"), files.formats());

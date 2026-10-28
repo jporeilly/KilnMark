@@ -10,6 +10,7 @@
 #   ./lab/lab.sh reset <name...>|all [--yes]   drop the data and load it again (asks first)
 #   ./lab/lab.sh logs <name>              the last lines of its containers' logs
 #   ./lab/lab.sh sources                  where lab/sources.csv is, and how to import it
+#   ./lab/lab.sh driver oracle [--yes]    download Oracle's JDBC driver (its licence is shown first)
 #
 # Uses podman if it is on the PATH, otherwise docker. Needs no administrator rights. Works with
 # the bash 3.2 that macOS ships.
@@ -29,10 +30,17 @@ SOURCES='postgres|lab-postgres|||5433|lab-db|PostgreSQL 18: database lab (crm, b
 s3|lab-s3|||9000|lab-bucket|S3-compatible storage (VersityGW): bucket lab-raw
 sqlserver|lab-sqlserver|lab-sqlserver-init|lab-sqlserver-data|14330|lab-sqlserver|SQL Server 2022: database labdb (sales, hr, ops)
 mariadb|lab-mariadb||lab-mariadb-data|3307|lab-mariadb|MariaDB 11.4: databases shop and stock (orders, inventory)
+oracle|lab-oracle||lab-oracle-data|1522|lab-oracle|Oracle Database Free 23ai: schemas FLEET and FREIGHT (needs its driver)
 mail|lab-mailpit|||8025|-|Mailpit: catches the emails Kilnmark sends (SMTP 1025), read them at http://localhost:8025
 files||||-|lab-share|File share lab/files/share, read from disk (mounted at /srv/files)'
 
 SQLSERVER_LICENCE='https://go.microsoft.com/fwlink/?linkid=857698'
+
+# Oracle's JDBC driver, which Kilnmark does not ship: the version and checksum OracleConnector pins.
+ORACLE_DRIVER_FILE='ojdbc11-23.26.3.0.0.jar'
+ORACLE_DRIVER_URL='https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc11/23.26.3.0.0/ojdbc11-23.26.3.0.0.jar'
+ORACLE_DRIVER_SHA256='764cc3f88454d1be117e155d01ed617467b984c9c68f13090dd6083799d2bb8c'
+ORACLE_LICENCE='https://www.oracle.com/downloads/licenses/oracle-free-license.html'
 
 die() { echo "lab: $*" >&2; exit 1; }
 
@@ -199,6 +207,10 @@ EOF
         if [ "$n" = "sqlserver" ]; then
             echo "sqlserver: the first start takes a minute or two after the download; watch it with: $0 logs sqlserver"
         fi
+        if [ "$n" = "oracle" ]; then
+            echo "oracle: the first start creates the database and loads the data, a few minutes; watch it with: $0 logs oracle"
+            echo "oracle: Kilnmark needs Oracle's JDBC driver: Settings > Drivers, or $0 driver oracle"
+        fi
     done
 }
 
@@ -298,8 +310,58 @@ Only the demo sources you have started will connect; import again whenever you l
 EOF
 }
 
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+# Downloads Oracle's JDBC driver into lab/drivers after showing its licence, checks it, and copies it
+# into a running Kilnmark container's drivers folder. Kilnmark itself can do the same from
+# Settings > Drivers; this is for a server that cannot reach Maven Central, or a quicker set-up.
+cmd_driver() {
+    local yes=0 name="" a file answer id
+    for a in "$@"; do
+        case "$a" in
+            --yes|-y|--force) yes=1 ;;
+            *) name=$a ;;
+        esac
+    done
+    [ "$name" = "oracle" ] || die "name the driver to download: $0 driver oracle"
+    echo "Oracle's JDBC driver ($ORACLE_DRIVER_FILE) is under the Oracle Free Use Terms and Conditions,"
+    echo "which you accept by downloading it: $ORACLE_LICENCE"
+    echo "Kilnmark does not ship it; this downloads it for your own development and testing."
+    if [ "$yes" -ne 1 ]; then
+        if [ ! -t 0 ]; then
+            die "not asking without a terminal: add --yes to accept the licence and go ahead."
+        fi
+        printf 'Type yes to accept the licence and download it: '
+        read -r answer || answer=
+        [ "$answer" = "yes" ] || { echo "Nothing downloaded."; exit 1; }
+    fi
+    mkdir -p "$LAB_DIR/drivers"
+    file="$LAB_DIR/drivers/$ORACLE_DRIVER_FILE"
+    if [ ! -f "$file" ] || [ "$(sha256_of "$file")" != "$ORACLE_DRIVER_SHA256" ]; then
+        curl -fsSL -o "$file.part" "$ORACLE_DRIVER_URL" || { rm -f "$file.part"; die "the download failed."; }
+        if [ "$(sha256_of "$file.part")" != "$ORACLE_DRIVER_SHA256" ]; then
+            rm -f "$file.part"
+            die "the download is not the expected file (its SHA-256 differs), so it was not kept."
+        fi
+        mv "$file.part" "$file"
+    fi
+    echo "Saved and checked: $file"
+    id=$("$ENGINE" ps -q --filter "label=com.docker.compose.service=kilnmark" 2>/dev/null | head -n 1)
+    if [ -n "$id" ]; then
+        "$ENGINE" exec "$id" mkdir -p /var/lib/kilnmark/drivers \
+            && "$ENGINE" cp "$file" "$id:/var/lib/kilnmark/drivers/$ORACLE_DRIVER_FILE" \
+            && echo "Copied into the running Kilnmark's drivers folder; Settings > Drivers now says Installed." \
+            || die "could not copy it into the Kilnmark container: copy it to /var/lib/kilnmark/drivers yourself."
+    else
+        echo "Kilnmark is not running in a container here: put the file in its drivers folder"
+        echo "(kilnmark.drivers.dir, by default ~/.kilnmark/drivers)."
+    fi
+}
+
 usage() {
-    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
     echo
     echo "Demo sources: $(source_names | tr '\n' ' ')"
 }
@@ -314,6 +376,7 @@ case "$command" in
     reset) cmd_reset "$@" ;;
     logs) cmd_logs "$@" ;;
     sources) cmd_sources ;;
+    driver) cmd_driver "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; echo >&2; die "unknown command '$command'." ;;
 esac

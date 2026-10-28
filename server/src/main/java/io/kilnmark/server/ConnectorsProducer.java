@@ -5,6 +5,7 @@ import java.util.Map;
 
 import io.kilnmark.kiln.connect.ConnectorContext;
 import io.kilnmark.kiln.connect.Connectors;
+import io.kilnmark.kiln.connect.DriverFolder;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 
@@ -18,11 +19,27 @@ public class ConnectorsProducer {
 
     @Produces
     @ApplicationScoped
-    Connectors connectors(KilnmarkConfig config) {
-        return Connectors.load(context(config));
+    Connectors connectors(KilnmarkConfig config, DriverFolder drivers) {
+        return Connectors.load(context(config, drivers));
+    }
+
+    /** The drivers folder ({@code kilnmark.drivers.dir}): connectors load customer-installed drivers from it. */
+    @Produces
+    @ApplicationScoped
+    DriverFolder drivers(KilnmarkConfig config) {
+        java.nio.file.Path dir = config.drivers().dir().map(java.nio.file.Path::of)
+            .orElse(java.nio.file.Path.of(System.getProperty("user.home"), ".kilnmark", "drivers"));
+        DriverFolder folder = new DriverFolder(dir);
+        // the folder, so an admin can put a driver straight in; and last run's loaded copies cleared
+        folder.prepare();
+        return folder;
     }
 
     static ConnectorContext context(KilnmarkConfig config) {
+        return context(config, null);
+    }
+
+    static ConnectorContext context(KilnmarkConfig config, DriverFolder drivers) {
         Map<String, String> s = new HashMap<>();
         config.files().roots().ifPresent(r -> s.put("kilnmark.files.roots", String.join(",", r)));
         s.put("kilnmark.files.parquet-threads", Integer.toString(config.files().parquetThreads()));
@@ -39,6 +56,6 @@ public class ConnectorsProducer {
         s.put("kilnmark.documents.threads", Integer.toString(d.threads()));
         s.put("kilnmark.documents.chunk-characters", Integer.toString(d.chunkCharacters()));
         s.put("kilnmark.documents.chunk-overlap", Integer.toString(d.chunkOverlap()));
-        return new ConnectorContext(s);
+        return new ConnectorContext(s, drivers);
     }
 }

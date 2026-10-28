@@ -596,11 +596,38 @@ public abstract class JdbcConnector implements Connector {
 
     /**
      * Opens a connection to {@code source} with driver properties {@code p} (user name, password,
-     * timeouts, write settings). By default {@link DriverManager} with {@link #jdbcUrl}; override to
+     * timeouts, write settings). By default {@link #connectUrl} with {@link #jdbcUrl}; override to
      * add settings of the database's own or to set up the session.
      */
     protected Connection open(SourceConfig source, Properties p) throws SQLException {
-        return DriverManager.getConnection(jdbcUrl(source), p);
+        return connectUrl(jdbcUrl(source), p);
+    }
+
+    /**
+     * The drivers the customer installed, for a connector whose driver Kilnmark does not ship
+     * ({@link #driver()}); none by default. Such a connector returns what its
+     * {@link #withContext} received.
+     */
+    protected io.kilnmark.kiln.connect.JdbcDrivers drivers() {
+        return io.kilnmark.kiln.connect.JdbcDrivers.NONE;
+    }
+
+    /**
+     * A connection to {@code url}: through the customer's driver when this connector needs one
+     * ({@link #driver()}), loaded on its own from the drivers folder and used directly; otherwise
+     * through {@link DriverManager}, which finds the drivers Kilnmark ships.
+     */
+    protected Connection connectUrl(String url, Properties p) throws SQLException {
+        Driver spec = driver();
+        if (spec == null) {
+            return DriverManager.getConnection(url, p);
+        }
+        java.sql.Driver d = drivers().driver(spec);
+        Connection c = d.connect(url, p);
+        if (c == null) {
+            throw new SQLException("The " + spec.coordinates() + " driver does not accept the address " + url, "08001");
+        }
+        return c;
     }
 
     /** The step that reads a table; {@link JdbcTableInput}'s defaults unless a database reads differently. */
@@ -753,7 +780,11 @@ public abstract class JdbcConnector implements Connector {
      */
     @Override
     public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
-        WriteSql sql = writeSql();
+        return writer(source, write, writeSql());
+    }
+
+    /** {@link #writer(SourceConfig, WriteOptions)} with {@code sql}, for databases whose SQL depends on the write or the server. */
+    io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write, WriteSql sql) throws ConnectorException {
         if (sql == null) {
             throw new ConnectorException(displayName() + " sources cannot be written to yet");
         }

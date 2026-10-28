@@ -31,7 +31,7 @@ the wave says when.
 | PostgreSQL ✓ | D R W | built (W in round 3) |
 | SQL Server ✓ | D R W | built (W in round 3) |
 | MySQL and MariaDB ✓ | D R W | built (wave 1; driver bundled) |
-| Oracle | D R W | 1 |
+| Oracle ✓ | D R W | built (wave 1; the customer installs the driver) |
 | Generic JDBC (any driver the customer supplies) | D R W | 1 |
 | IBM Db2 | D R W | 2 |
 | SQLite | D R W | 2 |
@@ -42,8 +42,10 @@ the wave says when.
 | SAP HANA | D R W | 3 |
 | Teradata | D R W | 3 |
 
-Drivers whose licences we cannot bundle (Oracle's, MySQL's GPL driver) are supplied by the
-customer: drop the jar into the drivers folder and the connector finds it. MySQL and MariaDB need
+Drivers whose licences we cannot bundle (Oracle's) are supplied by the customer: an admin
+accepts the licence under Settings › Drivers and the server downloads the pinned version, or the
+admin drops the jar into the drivers folder (see [Drivers](#drivers)). MySQL's GPL driver is not
+used at all. MySQL and MariaDB need
 neither: both are read through MariaDB Connector/J (LGPL 2.1), which ships unmodified as its own
 jar ([ADR 0007](../adr/0007-dependency-policy.md)). ADR 0007's
 licence rules stay intact.
@@ -180,42 +182,44 @@ stays visible. The panel guides the person through four steps, each of which can
 4. **Save:** save only, or save and scan now. Common settings (display name, description, AI
    rule) are set here.
 
-If the connector needs a driver that is not installed, the panel starts with the driver step.
+If the connector needs a driver that is not installed, the panel says so first, with a link to
+Settings › Drivers for admins.
 
 ## Drivers
 
 Some database drivers cannot ship with Kilnmark because their licences do not allow it
-(Oracle's), or are copyleft (MySQL Connector/J is GPL). Kilnmark helps the customer install
-these themselves:
+(Oracle's), or are copyleft (MySQL Connector/J is GPL; MySQL and MariaDB use the LGPL MariaDB
+Connector/J instead, which ships). The customer installs the first kind, as
+[drivers.md](drivers.md) describes ([ADR 0007](../adr/0007-dependency-policy.md)). Built so far:
 
 - **Each connector declares its driver:** Maven coordinates, a pinned version, its SHA-256, the
-  licence name and link, and whether Kilnmark may bundle it. Bundled drivers (PostgreSQL, SQL
-  Server, and any others whose licence allows) need nothing.
-- **Download (admin, online servers):** the panel shows the driver's licence and asks the admin
-  to accept it on the organisation's behalf. The server then downloads that exact version from
-  Maven Central, or from the organisation's own Maven mirror if configured, and refuses the
-  file unless the checksum matches. It never downloads from an address typed by a person. The
-  acceptance is recorded: who, when, which licence and version.
-- **Upload (admin, offline servers):** the admin uploads the jar fetched elsewhere. Kilnmark
-  checks it against the pinned checksum when the version is known. Otherwise it shows the file's
-  checksum and the driver class it found, and asks the admin to confirm. A **generic JDBC**
-  connection takes any uploaded driver plus its class name.
-- **Where drivers live:** a `drivers` volume, one folder per driver and version. Each driver loads
-  in its own class loader, so two versions cannot clash and a driver cannot replace Kilnmark's
-  own classes. Workers in other processes pick up new drivers without a restart.
-- **Managing them:** a Drivers page lists installed drivers, versions, checksums, licences, who
-  added each and which sources use it. It offers updates to newer pinned versions, and removes
-  a driver only when no source uses it.
-- **Security:** a driver is code running inside the server, so only admins add drivers, every
-  change is audited, and checksums are always shown. The offline install bundle can include
-  every driver whose licence allows redistribution.
+  licence name and link, whether Kilnmark may bundle it, and the driver class. Bundled drivers
+  (PostgreSQL, SQL Server, MariaDB Connector/J) need nothing.
+- **Download (admin, online servers):** Settings › Drivers shows the driver's licence and asks
+  the admin to accept it on the organisation's behalf. The server then downloads that exact
+  version from Maven Central, or from the organisation's own Maven mirror if configured, and
+  refuses the file unless the checksum matches. It never downloads from an address typed by a
+  person. The acceptance is recorded: who, when, which licence and version.
+- **Offline servers:** the page names the file, its checksum and the drivers folder; the admin
+  copies the file in. Only the pinned checksum is accepted.
+- **Where drivers live:** the drivers folder (`kilnmark.drivers.dir`), inside the server's data
+  volume in the container. Each driver loads from a verified private copy in its own class loader,
+  which sees only the JDK, so a driver cannot replace Kilnmark's own classes; nothing else in the
+  folder is read. A driver copied in while the server runs is used at once.
+- **In the gallery:** a connector whose driver is missing says "Needs its driver", with a link
+  to Settings › Drivers.
+
+Still to come, with generic JDBC: uploading a jar of the customer's choice with its class name
+(its checksum shown for the admin to confirm), updates to newer pinned versions, which sources use
+which driver, and an audit of changes. The offline install bundle can include every driver whose
+licence allows redistribution.
 
 ## Waves
 
 - **Round 2:** categories, capabilities and the gallery for the connectors that exist; Excel and
   documents from stream C.
 - **Wave 1 (with round 3 pipelines, which add W):**
-  - databases: MySQL and MariaDB (built), Oracle, generic JDBC with customer-supplied drivers;
+  - databases: MySQL and MariaDB (built), Oracle (built), generic JDBC with customer-supplied drivers;
   - file locations: SMB, SFTP and FTP, Azure Blob and ADLS;
   - formats: XML, fixed width, Avro, compressed files;
   - REST;

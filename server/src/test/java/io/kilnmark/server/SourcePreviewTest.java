@@ -183,7 +183,7 @@ class SourcePreviewTest {
         assertEquals(List.of("databases", "nosql", "files", "streaming", "applications", "lakehouse"),
             c.getList("categories.id"));
         // Test-only connectors (kind test-...) are registered on the test class path; leave them out.
-        assertEquals(List.of("mariadb", "mysql", "postgresql", "sqlserver"),
+        assertEquals(List.of("mariadb", "mysql", "oracle", "postgresql", "sqlserver"),
             c.<String>getList("categories[0].connectors.kind").stream()
             .filter(k -> !k.startsWith("test-")).toList());
         String pg = "categories[0].connectors.find { it.kind == 'postgresql' }";
@@ -196,8 +196,8 @@ class SourcePreviewTest {
         assertEquals(List.of("files", "s3"), c.getList("categories[2].connectors.kind"));
         assertTrue(c.getList("categories[2].connectors[0].formats").contains("parquet"));
         assertEquals("object storage", c.getString("categories[2].connectors[1].family"));
-        assertTrue(c.getList("categories[0].planned.name").contains("Oracle"));
-        assertEquals("1", c.getString("categories[0].planned.find { it.name == 'Oracle' }.wave"));
+        assertTrue(c.getList("categories[0].planned.name").contains("Generic JDBC"));
+        assertEquals("1", c.getString("categories[0].planned.find { it.name == 'Generic JDBC' }.wave"));
         assertTrue(c.getList("categories[3].connectors").isEmpty(), "nothing built for streaming yet");
         Tokens.as(viewer).get("/api/v1/connectors").then().statusCode(200)
             .body("find { it.kind == 's3' }.category", equalTo("files"))

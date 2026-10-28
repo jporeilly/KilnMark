@@ -55,7 +55,7 @@ public final class SqlRules {
             case NOT_NULL -> {
                 String cond = c + " IS NULL";
                 if (p.path("blankIsMissing").asBoolean(false) && TEXT_KINDS.equals(kind)) {
-                    cond = "(" + cond + " OR LTRIM(RTRIM(" + c + ")) = '')";
+                    cond = "(" + cond + " OR " + d.blank(c) + ")";
                 }
                 yield counting(from, cond);
             }
