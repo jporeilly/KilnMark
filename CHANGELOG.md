@@ -5,6 +5,8 @@ details.
 
 ## Unreleased
 
+## 0.0.6 (28 October 2026)
+
 ### What's new
 
 - **Quality gates in pipelines.** Add a **Quality gate** step (in the Quality folder) to check rows
