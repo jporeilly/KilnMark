@@ -537,7 +537,8 @@ public class PipelineService {
         List<PipelineViews.StepRunView> stepViews = store.stepRuns(id).stream().map(s -> new PipelineViews.StepRunView(
             s.stepId(), s.type(), s.position(), s.rowsIn(), s.rowsOut(), tree(s.portRows()), s.peakMemory(),
             s.durationMs(), s.error() == null || withheld == null ? s.error() : "This step failed. " + withheld,
-            s.outcome(), s.startedAt(), s.firstRowAt(), s.lastRowAt(), s.finishedAt())).toList();
+            s.outcome(), s.startedAt(), s.firstRowAt(), s.lastRowAt(), s.finishedAt(), s.waitingForRowsMs(),
+            s.heldUpMs())).toList();
         JsonNode result = tree(r.result());
         List<PipelineViews.WrittenAsset> written = new ArrayList<>();
         List<String> read = new ArrayList<>();
@@ -559,7 +560,7 @@ public class PipelineService {
             .map(l -> new PipelineViews.LineageLink(l.stepId(), l.inputUrn(), l.outputUrn())).toList();
         List<PipelineViews.StepQualityView> quality = store.quality(id).stream().map(this::qualityView).toList();
         return new PipelineViews.RunDetail(summary(r, sights), stepViews, written, read, lineage, notes, quality,
-            tree(store.progress(id)));
+            tree(store.progress(id)), tree(store.progressSeries(id)));
     }
 
     /** Events per page of a run's log, at most. */
@@ -585,18 +586,62 @@ public class PipelineService {
         return new PipelineViews.RunEvents(out, more ? out.getLast().seq() : null);
     }
 
-    /** The whole of a run's log, with the same filters and rules as {@link #events}. */
-    public List<PipelineViews.RunEvent> allEvents(long id, String step, String level, Sights sights) {
-        List<PipelineViews.RunEvent> out = new ArrayList<>();
-        int after = 0;
-        while (true) {
-            PipelineViews.RunEvents page = events(id, step, level, after, MAX_EVENTS_PAGE, sights);
-            out.addAll(page.events());
-            if (page.next() == null) {
-                return out;
-            }
-            after = page.next();
+    /**
+     * The whole of a run's log, with the same filters and rules as {@link #events}, handed to
+     * {@code each} a page at a time as it is read. Who may read the details is decided first, so the
+     * reading can go on after the request's own work (a streamed download).
+     *
+     * @return the reader, which throws nothing but what {@code each} throws
+     */
+    public LogReader allEvents(long id, String step, String level, Sights sights) {
+        PipelineStore.Run r = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline run " + id));
+        if (level != null && !level.isBlank() && !List.of("info", "warn", "error").contains(level)) {
+            throw new IllegalArgumentException("level: info, warn or error");
         }
+        String min = level == null || level.isBlank() ? null : level;
+        String which = step == null || step.isBlank() ? null : step;
+        String withheld = withheld(r, sights);
+        return each -> {
+            int after = 0;
+            while (true) {
+                List<PipelineStore.Event> rows = store.events(id, which, min, after, MAX_EVENTS_PAGE);
+                for (PipelineStore.Event e : rows) {
+                    each.accept(event(e, withheld));
+                }
+                if (rows.size() < MAX_EVENTS_PAGE) {
+                    return;
+                }
+                after = rows.getLast().seq();
+            }
+        };
+    }
+
+    /** Reads a run's log, handing each event to a consumer that may fail with an I/O error. */
+    @FunctionalInterface
+    public interface LogReader {
+        void read(EventSink each) throws java.io.IOException;
+    }
+
+    /** Takes one event of a run's log. */
+    @FunctionalInterface
+    public interface EventSink {
+        void accept(PipelineViews.RunEvent e) throws java.io.IOException;
+    }
+
+    /** A query number: a whole number at least 0, or {@code fallback} when not given; else a 400. */
+    public static int count(String value, String name, int fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            int n = Integer.parseInt(value.strip());
+            if (n >= 0) {
+                return n;
+            }
+        } catch (NumberFormatException e) {
+            // said below
+        }
+        throw new IllegalArgumentException(name + ": a whole number, 0 or more");
     }
 
     /** One event as a line of the downloaded log: time, level, step, words and detail (or why it is held back). */
@@ -931,7 +976,7 @@ public class PipelineService {
                 log.gate(sq.step(), sq.gate());
             }
             for (JsonNode n : notes) {
-                log.server(null, "warn", "run_note", n.path("text").asText(), n.hasNonNull("detail")
+                log.server(null, n.path("level").asText("warn"), "run_note", n.path("text").asText(), n.hasNonNull("detail")
                     ? n.get("detail").asText() : null);
             }
             ended(log, o.status(), o.error());
@@ -986,7 +1031,7 @@ public class PipelineService {
             case "cancelled" -> log.server(null, "warn", "run_ended", "The run was cancelled", null);
             default -> log.server(null, "error", "run_ended", "The run failed", error);
         }
-        log.flush();
+        log.finish();
     }
 
     /**
@@ -1227,6 +1272,12 @@ public class PipelineService {
         }
     }
 
+    /** A note that only informs (what an append did): the run's log shows it as information, not a warning. */
+    private static void infoNote(ArrayNode notes, String text, String detail) {
+        note(notes, text, detail);
+        ((ObjectNode) notes.get(notes.size() - 1)).put("level", "info");
+    }
+
     /**
      * Catalogues one write from what its writer reported (docs/design/pipelines.md, section 5, "What
      * a write reports"). A write that leaves the asset holding exactly what was written (a table
@@ -1249,7 +1300,7 @@ public class PipelineService {
             graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), known.kind(), known.container(), known.name(),
                 known.description(), known.primaryKey()), known.fields().stream().map(f -> new Records.Field(f.name(),
                 f.position(), f.sourceType(), f.kind(), f.nullable(), f.description())).toList());
-            note(notes, w.step() + ": the " + w.mode() + " added " + (rows == null ? "rows" : rows + " rows") + " to "
+            infoNote(notes, w.step() + ": the " + w.mode() + " added " + (rows == null ? "rows" : rows + " rows") + " to "
                 + w.target() + "; its columns, row count and profile stay as its last scan found them. Scan "
                 + w.source() + " to refresh them", null);
             return;
@@ -1274,7 +1325,7 @@ public class PipelineService {
         graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), kind, container, name, description, key),
             fields);
         if (appended) {
-            note(notes, w.step() + ": the " + w.mode() + " added rows to " + w.target() + ", which Kilnmark had not "
+            infoNote(notes, w.step() + ": the " + w.mode() + " added rows to " + w.target() + ", which Kilnmark had not "
                 + "catalogued; scan " + w.source() + " for its row count and profile", null);
             return;
         }

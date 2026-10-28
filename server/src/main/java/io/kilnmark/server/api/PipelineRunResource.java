@@ -67,9 +67,10 @@ public class PipelineRunResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "404", description = "No such run")})
     public PipelineViews.RunEvents events(@PathParam("id") long id, @QueryParam("step") String step,
-                                          @QueryParam("level") String level, @QueryParam("after") Integer after,
-                                          @QueryParam("limit") Integer limit) {
-        return pipelines.events(id, step, level, after == null ? 0 : after, limit == null ? 200 : limit, sights);
+                                          @QueryParam("level") String level, @QueryParam("after") String after,
+                                          @QueryParam("limit") String limit) {
+        return pipelines.events(id, step, level, PipelineService.count(after, "after", 0),
+            PipelineService.count(limit, "limit", 200), sights);
     }
 
     @GET
@@ -77,7 +78,7 @@ public class PipelineRunResource {
     @Produces({MediaType.TEXT_PLAIN, "application/x-ndjson"})
     @Operation(summary = "Download a pipeline run's log", description = "The whole log, with the same filters and "
         + "rules as the log itself, as text (format=text, the default: one line an event) or as NDJSON "
-        + "(format=ndjson: one JSON object a line). Role: viewer.")
+        + "(format=ndjson: one JSON object a line), streamed as it is read. Role: viewer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The log as a file"),
         @APIResponse(responseCode = "400", description = "An unknown level or format"),
@@ -89,20 +90,17 @@ public class PipelineRunResource {
         if (format != null && !ndjson && !"text".equals(format)) {
             throw new IllegalArgumentException("format: text or ndjson");
         }
-        java.util.List<PipelineViews.RunEvent> events = pipelines.allEvents(id, step, level, sights);
-        StringBuilder out = new StringBuilder();
-        for (PipelineViews.RunEvent e : events) {
-            if (ndjson) {
-                try {
-                    out.append(json.writeValueAsString(e)).append('\n');
-                } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
-                    throw new IllegalStateException(ex);
-                }
-            } else {
-                out.append(PipelineService.logLine(e)).append('\n');
-            }
-        }
-        return Response.ok(out.toString(), ndjson ? "application/x-ndjson; charset=utf-8" : "text/plain; charset=utf-8")
+        PipelineService.LogReader log = pipelines.allEvents(id, step, level, sights); // 404 and 400 before streaming
+        jakarta.ws.rs.core.StreamingOutput body = out -> {
+            java.io.Writer w = new java.io.BufferedWriter(new java.io.OutputStreamWriter(out,
+                java.nio.charset.StandardCharsets.UTF_8));
+            log.read(e -> {
+                w.write(ndjson ? json.writeValueAsString(e) : PipelineService.logLine(e));
+                w.write('\n');
+            });
+            w.flush();
+        };
+        return Response.ok(body, ndjson ? "application/x-ndjson; charset=utf-8" : "text/plain; charset=utf-8")
             .header("Content-Disposition", "attachment; filename=\"pipeline-run-" + id + "-log."
                 + (ndjson ? "ndjson" : "txt") + "\"")
             .build();

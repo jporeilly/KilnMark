@@ -45,6 +45,10 @@ public final class RowSet {
     private volatile long lastPut;
     private volatile long firstTaken;
     private volatile long lastTaken;
+    // Time the writer spent waiting for room, and the reader waiting for a batch, in nanoseconds.
+    // Each has one writer (the writing or the reading thread), so a plain volatile add is enough.
+    private volatile long putWaitNanos;
+    private volatile long takeWaitNanos;
 
     public RowSet(String name, int capacity) {
         if (capacity < 1) {
@@ -86,6 +90,27 @@ public final class RowSet {
     /** When the reader was last given a batch with rows, as {@link System#nanoTime()}; 0 for none. */
     public long lastTakenNanos() {
         return lastTaken;
+    }
+
+    /**
+     * Nanoseconds the writer has spent waiting for room ({@link #put}, {@link #finish}): the step
+     * writing here held up by the step reading. Counted as it goes, at most 100 ms behind.
+     */
+    public long putWaitNanos() {
+        return putWaitNanos;
+    }
+
+    /**
+     * Nanoseconds the reader has spent waiting for a batch ({@link #take}, a timed {@link #poll},
+     * {@link #takeAny}): the step reading here waiting for rows. Counted as it goes, at most 100 ms behind.
+     */
+    public long takeWaitNanos() {
+        return takeWaitNanos;
+    }
+
+    /** How full the row set is now, from 0 (empty) to 1 (full, or its writer waiting for room). */
+    public double fill() {
+        return writerWaiting() ? 1.0 : Math.min(1.0, queue.size() / (double) capacity);
     }
 
     public String name() {
@@ -132,21 +157,26 @@ public final class RowSet {
             batch.close();
             throw new CancelledException("the next step stopped reading " + name);
         }
-        try {
-            while (!queue.offer(batch, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
-                if (writerWaitingSince == 0) {
-                    writerWaitingSince = System.nanoTime();
+        if (!queue.offer(batch)) { // full: wait, counting the time
+            long last = System.nanoTime();
+            writerWaitingSince = last;
+            try {
+                while (!queue.offer(batch, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+                    long now = System.nanoTime();
+                    putWaitNanos += now - last;
+                    last = now;
+                    if (cancelled) {
+                        batch.close();
+                        throw new CancelledException("the next step stopped reading " + name);
+                    }
                 }
-                if (cancelled) {
-                    batch.close();
-                    throw new CancelledException("the next step stopped reading " + name);
-                }
+            } catch (InterruptedException e) {
+                batch.close(); // it never reached the queue
+                throw e;
+            } finally {
+                putWaitNanos += System.nanoTime() - last;
+                writerWaitingSince = 0;
             }
-        } catch (InterruptedException e) {
-            batch.close(); // it never reached the queue
-            throw e;
-        } finally {
-            writerWaitingSince = 0;
         }
         moves.incrementAndGet();
         if (count > 0) {
@@ -163,14 +193,19 @@ public final class RowSet {
 
     /** No more batches; waits for room for the end, unless the next step has stopped. */
     public void finish() throws InterruptedException {
-        try {
-            while (!cancelled && !queue.offer(END, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
-                if (writerWaitingSince == 0) {
-                    writerWaitingSince = System.nanoTime();
+        if (!cancelled && !queue.offer(END)) {
+            long last = System.nanoTime();
+            writerWaitingSince = last;
+            try {
+                while (!cancelled && !queue.offer(END, POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+                    long now = System.nanoTime();
+                    putWaitNanos += now - last;
+                    last = now;
                 }
+            } finally {
+                putWaitNanos += System.nanoTime() - last;
+                writerWaitingSince = 0;
             }
-        } finally {
-            writerWaitingSince = 0;
         }
         moves.incrementAndGet();
     }
@@ -201,10 +236,16 @@ public final class RowSet {
     public VectorSchemaRoot take(BufferAllocator into) throws InterruptedException, StepException {
         Object o = queue.poll();
         if (o == null) {
-            readerWaitingSince = System.nanoTime();
+            long last = System.nanoTime();
+            readerWaitingSince = last;
             try {
-                o = queue.take();
+                while ((o = queue.poll(POLL_MILLIS, TimeUnit.MILLISECONDS)) == null) {
+                    long now = System.nanoTime();
+                    takeWaitNanos += now - last;
+                    last = now;
+                }
             } finally {
+                takeWaitNanos += System.nanoTime() - last;
                 readerWaitingSince = 0;
             }
         }
@@ -230,7 +271,13 @@ public final class RowSet {
      * @throws UpstreamFailedException if the step before this one failed
      */
     public boolean discard(long timeout, TimeUnit unit) throws InterruptedException, StepException {
-        Object o = next(timeout, unit, true);
+        long waited = takeWaitNanos;
+        Object o;
+        try {
+            o = next(timeout, unit, true);
+        } finally {
+            takeWaitNanos = waited; // the engine dropping rows is not the step waiting for them
+        }
         if (o == null) {
             return !ended;
         }
@@ -254,14 +301,17 @@ public final class RowSet {
         }
         Object o = queue.poll();
         if (o == null && timeout > 0) {
-            if (!mark) {
-                return queue.poll(timeout, unit);
+            long since = System.nanoTime();
+            if (mark) {
+                readerWaitingSince = since;
             }
-            readerWaitingSince = System.nanoTime();
             try {
                 o = queue.poll(timeout, unit);
             } finally {
-                readerWaitingSince = 0;
+                takeWaitNanos += System.nanoTime() - since;
+                if (mark) {
+                    readerWaitingSince = 0;
+                }
             }
         }
         return o;

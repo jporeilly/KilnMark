@@ -191,7 +191,7 @@ class PipelineExecutionTest {
         List<RunResult.StepResult> steps = new java.util.ArrayList<>();
         for (String s : List.of("customers", "emails", "out", "odd")) {
             steps.add(new RunResult.StepResult(s, "t", 0, 0, null, 0, Map.of(), Map.of(), RunResult.Outcome.FINISHED,
-                t, t.plusMillis(20), t.plusMillis(900), t.plusMillis(1250)));
+                t, t.plusMillis(20), t.plusMillis(900), t.plusMillis(1250), 300_000_000L, 150_000_000L));
         }
         runner.answer = new RunResult("customer-copy", RunResult.Status.SUCCEEDED, t, t.plusSeconds(2), steps, null);
         PipelineExecution.Outcome o = new PipelineExecution(JSON).run(runner, c.graph(), PipelineExecution.writes(c),
@@ -202,5 +202,7 @@ class PipelineExecutionTest {
         assertEquals(t.plusMillis(20), out.firstRowAt());
         assertEquals(t.plusMillis(900), out.lastRowAt());
         assertEquals(t.plusMillis(1250), out.finishedAt());
+        assertEquals(300L, out.waitingForRowsMs());
+        assertEquals(150L, out.heldUpMs());
     }
 }

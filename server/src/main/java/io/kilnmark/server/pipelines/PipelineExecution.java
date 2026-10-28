@@ -347,7 +347,8 @@ final class PipelineExecution {
                 ports.toString(), r == null ? null : peak, took == null ? null : took.toMillis(), context.scrub(error),
                 r == null ? null : r.outcome().name().toLowerCase(java.util.Locale.ROOT),
                 r == null ? null : r.startedAt(), r == null ? null : r.firstRowAt(), r == null ? null : r.lastRowAt(),
-                r == null ? null : r.finishedAt()));
+                r == null ? null : r.finishedAt(), took == null ? null : r.waitingForRowsNanos() / 1_000_000,
+                took == null ? null : r.heldUpNanos() / 1_000_000));
         }
         return out;
     }

@@ -38,9 +38,13 @@ public record RunProgress(Instant at, List<StepProgress> steps, List<EdgeProgres
      *
      * @param rowsPerSecond rows it handled per second since the snapshot before (rows out, or rows
      *                      in for a step with no output); 0 when nothing moved
+     * @param waitingForRowsNanos time so far it waited for rows on its inputs
+     * @param heldUpNanos   time so far it waited for room on its outputs (held up by the next step)
+     * @param outputFill    how full its fullest output queue is now, 0 to 1 (0 for a step with no output)
      */
     public record StepProgress(String name, State state, long rowsIn, long rowsOut, double rowsPerSecond,
-                               Instant startedAt, Instant firstRowAt, Instant lastRowAt, Instant finishedAt) {
+                               Instant startedAt, Instant firstRowAt, Instant lastRowAt, Instant finishedAt,
+                               long waitingForRowsNanos, long heldUpNanos, double outputFill) {
     }
 
     /**
@@ -51,9 +55,10 @@ public record RunProgress(Instant at, List<StepProgress> steps, List<EdgeProgres
      * @param capacity batches it holds before the writer waits
      * @param full     whether it is full now (or its writer is waiting for room)
      * @param empty    whether nothing waits on it now (or its reader is waiting for a batch)
+     * @param fill     batches waiting over capacity, 0 to 1 (1 also while its writer waits for room)
      */
     public record EdgeProgress(String fromStep, String fromPort, String toStep, String toPort, long rows, int queued,
-                               int capacity, boolean full, boolean empty) {
+                               int capacity, boolean full, boolean empty, double fill) {
     }
 
     /** The step called {@code name}, or null. */

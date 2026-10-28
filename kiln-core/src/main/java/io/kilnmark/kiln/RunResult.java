@@ -47,11 +47,14 @@ public record RunResult(String pipeline, Status status, Instant startedAt, Insta
      * @param lastRowAt     when it handed on its last row; for a step with no output (a sink), when its
      *                      last row arrived. Null when no row went
      * @param finishedAt    when it ended, its resources closed; null if it never started
+     * @param waitingForRowsNanos time it spent waiting for a batch on its inputs
+     * @param heldUpNanos   time it spent waiting for room on its outputs: held up by the steps after it
+     *                      (back-pressure; a copy for several readers counts against the step writing)
      */
     public record StepResult(String name, String type, long rowsOut, long peakMemoryBytes, String error,
                              long rowsIn, Map<String, Long> rowsInByPort, Map<String, Long> rowsOutByPort,
                              Outcome outcome, Instant startedAt, Instant firstRowAt, Instant lastRowAt,
-                             Instant finishedAt) {
+                             Instant finishedAt, long waitingForRowsNanos, long heldUpNanos) {
 
         public StepResult {
             rowsInByPort = copy(rowsInByPort);
@@ -64,7 +67,17 @@ public record RunResult(String pipeline, Status status, Instant startedAt, Insta
                           long rowsIn, Map<String, Long> rowsInByPort, Map<String, Long> rowsOutByPort,
                           Outcome outcome) {
             this(name, type, rowsOut, peakMemoryBytes, error, rowsIn, rowsInByPort, rowsOutByPort, outcome, null, null,
-                null, null);
+                null, null, 0, 0);
+        }
+
+        /**
+         * Time it spent working: from its start to its end, less the time it waited for rows and was
+         * held up by the steps after it; null when it was not timed.
+         */
+        public Duration working() {
+            Duration d = duration();
+            return d == null ? null
+                : Duration.ofNanos(Math.max(0, d.toNanos() - waitingForRowsNanos - heldUpNanos));
         }
 
         /** How long the step ran, from its start to its end; null when it was not timed. */

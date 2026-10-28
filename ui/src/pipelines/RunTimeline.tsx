@@ -14,6 +14,7 @@ import {
   slowestStep,
   ticks,
   timeline,
+  type Clock,
   type TimelineRow,
 } from "./timeline";
 
@@ -93,9 +94,9 @@ function Bar({ r, span, critical }: { r: TimelineRow; span: number; critical: bo
  * While the run goes it is drawn from the latest progress, and the step holding the run back says
  * Slowest. The same in a table for screen readers and anyone who prefers one.
  */
-export function RunTimeline({ detail, now }: { detail: PipelineRunDetail; now?: number }) {
+export function RunTimeline({ detail, clock }: { detail: PipelineRunDetail; clock?: Clock }) {
   const [showPath, setShowPath] = useState(true);
-  const t = timeline(detail, now);
+  const t = timeline(detail, clock);
   if (!t) {
     const unfinished = detail.run.status === "queued" || detail.run.status === "running";
     return (
@@ -203,7 +204,10 @@ export function RunTimeline({ detail, now }: { detail: PipelineRunDetail; now?: 
                   ))}
                   <Bar r={r} span={t.span} critical={onPath.has(r.step)} />
                   {mark && (
-                    <span className="pl-tl-mark" style={{ left: pct(r.end ?? t.span, t.span) }}>
+                    <span
+                      className={`pl-tl-mark${(r.end ?? t.span) / t.span < 0.35 ? " is-after" : ""}`}
+                      style={{ left: pct(r.end ?? t.span, t.span) }}
+                    >
                       <StatusChip tone={mark.tone} kind="quality-mark">
                         {mark.text}
                       </StatusChip>

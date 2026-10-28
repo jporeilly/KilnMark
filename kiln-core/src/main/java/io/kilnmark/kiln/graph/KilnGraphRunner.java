@@ -275,27 +275,29 @@ public final class KilnGraphRunner implements GraphRunner {
                     teller = new Teller(graph.name());
                 }
                 try {
-                    watch();
-                } catch (InterruptedException e) {
-                    stopAll();
-                    joinAll();
+                    try {
+                        watch();
+                    } catch (InterruptedException e) {
+                        stopAll();
+                        joinAll();
+                        for (Node n : nodes) {
+                            n.closeAllocators(true);
+                        }
+                        throw e;
+                    }
                     for (Node n : nodes) {
-                        n.closeAllocators(true);
+                        n.peak = n.allocator.getPeakMemoryAllocation();
+                        String leak = n.closeAllocators(n.stoppedByEngine);
+                        if (leak != null) {
+                            recordError(n, "Step " + n.id() + " did not free all its memory: " + leak, true);
+                        } else if (n.quietLeak != null) {
+                            note(RunListener.Level.WARN, n, "Step " + n.id() + " was stopped and did not free all "
+                                + "its memory: " + n.quietLeak);
+                        }
                     }
-                    finishTelling();
-                    throw e;
+                } finally {
+                    finishTelling(); // whatever ended the run, the listener hears the rest
                 }
-                for (Node n : nodes) {
-                    n.peak = n.allocator.getPeakMemoryAllocation();
-                    String leak = n.closeAllocators(n.stoppedByEngine);
-                    if (leak != null) {
-                        recordError(n, "Step " + n.id() + " did not free all its memory: " + leak, true);
-                    } else if (n.quietLeak != null) {
-                        note(RunListener.Level.WARN, n, "Step " + n.id() + " was stopped and did not free all its "
-                            + "memory: " + n.quietLeak);
-                    }
-                }
-                finishTelling();
             } finally {
                 try {
                     root.close();
@@ -451,7 +453,7 @@ public final class KilnGraphRunner implements GraphRunner {
 
         private void note(RunListener.Level level, Node n, String text) {
             if (listener != RunListener.NONE) {
-                notes.add(new Note(level, n == null ? null : n.id(), text));
+                notes.add(new Note(level, n == null ? null : n.id(), text, System.nanoTime()));
             }
         }
 
@@ -482,7 +484,8 @@ public final class KilnGraphRunner implements GraphRunner {
                     Instant when = at(out);
                     teller.tell(() -> listener.firstRowOut(id, when));
                 }
-                if ((n.told & TOLD_ENDED) == 0 && n.finishedNanos != 0) {
+                // Ended once its thread has, and anything copying its rows (whose failure is the step's).
+                if ((n.told & TOLD_ENDED) == 0 && n.finishedNanos != 0 && (last || teesDone(n))) {
                     n.told |= TOLD_ENDED;
                     long lastOut = lastOut(n);
                     if (lastOut != 0) {
@@ -491,13 +494,21 @@ public final class KilnGraphRunner implements GraphRunner {
                     }
                     Instant when = at(n.finishedNanos);
                     RunResult.Outcome outcome = outcome(n);
+                    n.toldOutcome = outcome;
+                    teller.tell(() -> listener.stepEnded(id, outcome, when));
+                } else if (last && n.toldOutcome != null && n.toldOutcome != outcome(n)) {
+                    // Found once every step had ended (memory it did not free): say so again.
+                    Instant when = at(n.finishedNanos);
+                    RunResult.Outcome outcome = outcome(n);
+                    n.toldOutcome = outcome;
                     teller.tell(() -> listener.stepEnded(id, outcome, when));
                 }
             }
             Note note;
             while ((note = notes.poll()) != null) {
                 Note told = note;
-                teller.tell(() -> listener.note(told.level(), told.step(), told.text()));
+                Instant when = at(told.nanos());
+                teller.tell(() -> listener.note(told.level(), told.step(), told.text(), when));
             }
             long now = System.nanoTime();
             if (last || lastProgress == 0 || now - lastProgress >= progressEvery.toNanos()) {
@@ -531,9 +542,16 @@ public final class KilnGraphRunner implements GraphRunner {
                 }
                 long out = 0;
                 boolean outputFull = false;
+                double fill = 0;
                 for (Port p : n.outputs.values()) {
                     out += p.rowSet.rows();
                     outputFull |= full(p.rowSet);
+                    fill = Math.max(fill, p.rowSet.fill());
+                    if (p.copies != null) { // the copies waiting for each reader count against this step
+                        for (Reader r : p.readers) {
+                            fill = Math.max(fill, r.rowSet.fill());
+                        }
+                    }
                 }
                 long rows = n.outputs.isEmpty() ? in : out;
                 double rate = seconds <= 0 ? 0 : Math.max(0, rows - handled[n.index]) / seconds;
@@ -547,7 +565,7 @@ public final class KilnGraphRunner implements GraphRunner {
                     mostFull = fullInputs;
                 }
                 steps.add(new RunProgress.StepProgress(n.id(), state, in, out, rate, at(n.startedNanos),
-                    at(firstRow(n)), at(lastRow(n)), at(n.finishedNanos)));
+                    at(firstRow(n)), at(lastRow(n)), at(n.finishedNanos), waitIn(n), waitOut(n), fill));
             }
             List<RunProgress.EdgeProgress> edges = new ArrayList<>(readers.size());
             for (Reader r : readers) {
@@ -555,7 +573,7 @@ public final class KilnGraphRunner implements GraphRunner {
                 int queued = rs.queued();
                 edges.add(new RunProgress.EdgeProgress(r.edge.from().step(), r.edge.from().port(), r.edge.to().step(),
                     r.edge.to().port(), rs.rows(), queued, rs.capacity(), full(rs),
-                    queued == 0 || rs.readerWaiting()));
+                    queued == 0 || rs.readerWaiting(), rs.fill()));
             }
             return new RunProgress(at(now), steps, edges, slowest);
         }
@@ -573,6 +591,7 @@ public final class KilnGraphRunner implements GraphRunner {
                 observe(true);
             } finally {
                 teller.finish();
+                teller = null;
             }
         }
 
@@ -597,7 +616,8 @@ public final class KilnGraphRunner implements GraphRunner {
                 }
                 RunResult.Outcome outcome = n.outcome != null ? n.outcome : RunResult.Outcome.STOPPED; // never started
                 steps.add(new RunResult.StepResult(n.id(), n.step().type(), rowsOut, n.peak, n.error, rowsIn, in, out,
-                    outcome, at(n.startedNanos), at(firstRow(n)), at(lastRow(n)), at(n.finishedNanos)));
+                    outcome, at(n.startedNanos), at(firstRow(n)), at(lastRow(n)), at(n.finishedNanos), waitIn(n),
+                    waitOut(n)));
                 if (n.error != null && (first == null || n.errorOrder < first.errorOrder)) {
                     first = n;
                 }
@@ -612,7 +632,7 @@ public final class KilnGraphRunner implements GraphRunner {
             boolean ownFailure = first != null && first.errorOrder < Integer.MAX_VALUE - nodes.size();
             String error = ownFailure ? first.error : runError != null ? runError : first == null ? null : first.error;
             return new RunResult(graph.name(), error == null ? RunResult.Status.SUCCEEDED : RunResult.Status.FAILED,
-                started, Instant.now(), steps, edges, error);
+                started, at(System.nanoTime()), steps, edges, error);
         }
 
         // ---- a step ----
@@ -992,7 +1012,38 @@ public final class KilnGraphRunner implements GraphRunner {
     }
 
     /** A note for the listener. */
-    private record Note(RunListener.Level level, String step, String text) {
+    private record Note(RunListener.Level level, String step, String text, long nanos) {
+    }
+
+    /** Whether every thread copying the step's rows to several readers has ended. */
+    private static boolean teesDone(Node n) {
+        for (Port p : n.outputs.values()) {
+            Thread t = p.teeThread;
+            if (t != null && t.isAlive()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Time the step has waited for rows on its inputs. */
+    private static long waitIn(Node n) {
+        long t = 0;
+        for (List<Reader> rs : n.inputs.values()) {
+            for (Reader r : rs) {
+                t += r.rowSet.takeWaitNanos();
+            }
+        }
+        return t;
+    }
+
+    /** Time the step has waited for room on what it writes to: held up by the steps after it. */
+    private static long waitOut(Node n) {
+        long t = 0;
+        for (Port p : n.outputs.values()) {
+            t += p.rowSet.putWaitNanos();
+        }
+        return t;
     }
 
     /**
@@ -1100,8 +1151,9 @@ public final class KilnGraphRunner implements GraphRunner {
         /** System.nanoTime() when its thread started and when it ended; 0 until then. */
         volatile long startedNanos;
         volatile long finishedNanos;
-        /** What the listener has heard of it (TOLD_*); the watching thread's only. */
+        /** What the listener has heard of it (TOLD_*), and the outcome it was told; the watching thread's only. */
         int told;
+        RunResult.Outcome toldOutcome;
         /** Memory a stopped step did not free, logged rather than reported. */
         String quietLeak;
 

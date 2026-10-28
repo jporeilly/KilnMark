@@ -128,30 +128,44 @@ Added while building the engine (round 3, step 1):
 
 - **Timing.** Each `StepResult` has `startedAt`, `firstRowAt` (its first row in; for a step with
   no input, its first row out), `lastRowAt` (its last row out; for a step with no output, its last
-  row in) and `finishedAt`, and `duration()`. The nine-argument constructor remains (no times).
-  `RowSet` records, as `System.nanoTime()`, the first and last batch with rows handed over
-  (`firstPutNanos`, `lastPutNanos`) and taken (`firstTakenNanos`, `lastTakenNanos`): plain
-  volatile writes per batch, no allocation. It also tells `capacity()` and `queued()`.
+  row in) and `finishedAt`, and `duration()`; the run's `finishedAt` is on the same monotonic clock.
+  The nine-argument constructor remains (no times). `RowSet` records, as `System.nanoTime()`, the
+  first and last batch with rows handed over (`firstPutNanos`, `lastPutNanos`) and taken
+  (`firstTakenNanos`, `lastTakenNanos`): plain volatile writes per batch, no allocation. It also
+  tells `capacity()`, `queued()` and `fill()` (0 to 1; 1 while its writer waits).
+- **Where the time went.** `RowSet` adds up the time its writer waits for room (`putWaitNanos`) and
+  its reader waits for a batch (`takeWaitNanos`), only when it has to wait (an `offer` or `poll`
+  that succeeds at once costs nothing more) and as it goes, at most 100 ms behind; each has one
+  writing thread. `StepResult.waitingForRowsNanos` is the sum over the step's inputs (what it reads
+  from: a copy, behind a tee), `heldUpNanos` over what it writes to (so a tee's waiting counts
+  against the producer, whose row set fills); `working()` is the rest of its duration. Rows the
+  engine drops for a finished reader are not its waiting. `takeAny` counts its wait against the
+  row set it waited on.
 - **Listening.** `GraphRunner.run(graph, metadata, listener)` (a default method that ignores the
   listener; `KilnGraphRunner` implements it, and `run(graph, metadata)` uses `RunListener.NONE`).
-  A `RunListener` hears `stepStarted`, `firstRowIn`, `firstRowOut`, `lastRowOut` (once the step has
-  ended) and `stepEnded(outcome)`, each with when it happened; `progress(RunProgress)` every
-  `progressEvery` (2 seconds unless set in the new four-argument constructor) and once at the end;
-  and `note(level, step, text)` for a step's failure, a stall (error) and memory a step did not
-  free (warning). The text may quote the data.
+  A `RunListener` hears `stepStarted`, `firstRowIn`, `firstRowOut`, `lastRowOut` and
+  `stepEnded(outcome)`, each with when it happened. A step is ended once its thread and any tee
+  copying its rows have (a tee's failure is the step's); if memory it did not free is found once
+  every step has ended, `stepEnded` is called again with the corrected outcome.
+  `progress(RunProgress)` every `progressEvery` (2 seconds unless set in the four-argument
+  constructor) and once at the end; and `note(level, step, text, at)` (defaulting to the
+  three-argument form) for a step's failure, a stall (error) and memory a step did not free
+  (warning), with when the engine noticed it. The text may quote the data.
 - **Never in the way.** Steps only record times. The thread watching the run turns them into
   calls at each of its ticks (at most a second apart) and queues them for the listener's own
   virtual thread, which calls it in order and drops anything it throws. Past 4,096 calls waiting,
-  a slow listener misses some (logged). At the end the run waits up to 10 seconds for the listener
-  to hear the rest, then goes on without it. With no listener nothing is queued or built.
+  a slow listener misses some (logged). However the run ends (an exception included), the run
+  then waits up to 10 seconds for the listener to hear the rest and goes on without it. With no
+  listener nothing is queued or built.
 - **Progress.** `RunProgress(at, steps, edges, slowest)`: each step's state (not started,
   waiting for its first row, running, ended), rows in and out, rows a second since the snapshot
-  before and its times; each edge's rows, batches queued, capacity, and whether it is full (or
-  its writer waits) or empty (or its reader waits). `slowest` is a running step whose input
-  queues are full while none of its output queues is: it cannot keep up with what it is given and
-  what comes after it can. With several, the one with the most full inputs, then the first in the
-  graph's order; null when none (a slow source shows as empty queues everywhere, not as a
-  slowest step).
+  before, its times, its waits so far and how full its fullest output queue is (`outputFill`,
+  copies behind a tee included); each edge's rows, batches queued, capacity, `fill`, and whether
+  it is full (or its writer waits) or empty (or its reader waits). `slowest` is a running step
+  whose input queues are full while none of its output queues is: it cannot keep up with what it
+  is given and what comes after it can. With several, the one with the most full inputs, then the
+  first in the graph's order; null when none (a slow source shows as empty queues everywhere, not
+  as a slowest step).
 
 ### Writing a step for graphs
 
@@ -659,31 +673,48 @@ asset's previous profile.
   views of data values are, on the assets the run recorded as it started (`pipeline_run.assets`,
   with read assets under the URNs their read steps catalogue them by).
 - **Seeing inside a run (V19).** The worker gives the engine a `RunLog` listener. Step times go
-  to `pipeline_step_run` (`started_at`, `first_row_at`, `last_row_at`, `finished_at`, and
-  `duration_ms`, now filled). Each progress snapshot goes to `pipeline_run.progress` (JSON: counts,
-  states and times, never values; `progress_at`), written at most every two seconds and once at
-  the end, through the database because the API may run in another container. The log is
-  `pipeline_run_event` (run, seq, at, step or null, level info, warn or error, kind, text, detail),
-  written in batches with each snapshot and at the end: the run starting and ending, each step
-  starting, its first row in and out, its last row out and how it ended, the engine's notes, each
-  gate's verdict (`gate_verdict`: "Gate check quarantined 229 rows"; the failing rules with their
-  counts, and a stop reason, are the detail, as a rule's words can hold values) and the run's own
-  notes. At most 10,000 events a run, then one `log_truncated`; deleted with the
-  run. An event's `text` is always the server's words ("Step check reported an error"); anything
-  an engine says is its `detail`, with the run's secrets blanked out, and is held back exactly as
-  the run's error is (below). Storing the log or progress never fails a run: a database error is
-  logged and the run goes on.
-- **On the run page** (worked out in the browser from the step times and the last snapshot's
-  edges): tiles for wall-clock time, most steps at once, the longest step and the critical path,
-  and each step's share of the run. The critical path walks back from the step that finished
-  last, at each step through the input step whose last row out came latest (else whose end
-  came latest), to a step with no input; its share is its first start to its last end over the
-  run's whole time (setup and cataloguing included). It is marked with a dashed outline and a
-  toggle; a gate's bar ends with its decision and a write's with its measured score.
-- **API.** The run view adds each step's times and `progress`. `GET
+  to `pipeline_step_run` (`started_at`, `first_row_at`, `last_row_at`, `finished_at`,
+  `waiting_for_rows_ms`, `held_up_ms`, and `duration_ms`, now filled). Each progress snapshot goes
+  to `pipeline_run.progress` (JSON: counts, states, fills and times, never values; `progress_at`),
+  written at most every two seconds and once more when the worker has finished with the run, with
+  `workerStartedAt` and `workerFinishedAt`; and the snapshots over the run to
+  `pipeline_run.progress_series` (each step's rows a second and output fill per point, at most 900
+  points: when it fills, every other point goes and later ones are kept half as often). All of it
+  goes through the database because the API may run in another container. **One clock:** every
+  time the run page draws counts from `workerStartedAt`, on the worker's clock, never the
+  database's (`pipeline_run.started_at`) or the browser's; a live run's "now" is its last
+  snapshot's `at` plus the time since the page fetched it. The log is `pipeline_run_event` (run,
+  seq, at, step or null, level info, warn or error, kind, text, detail), written in batches with
+  each snapshot and at the end: the run starting and ending, each step starting, its first row in
+  and out, its last row out and how it ended, the engine's notes (stamped with when the engine
+  noticed them), a gate starting to set rows aside (`gate_quarantining`, from the first rows on its
+  `quarantine` port), each gate's verdict (`gate_verdict`: "Gate check quarantined 229 rows (email
+  format: 229)": rule names and counts, as the run's quality section shows everyone; a rule's
+  message and a stop reason are the detail, as they can hold values) and the run's own notes, as
+  information or warnings as each is. At most 10,000 events a run, then one `log_truncated`;
+  deleted with the run. An event's `text` is always the server's words ("Step check reported an
+  error"); anything an engine says is its `detail`, with the run's secrets and any NUL character
+  removed, and is held back exactly as the run's error is (below). Storing the log or progress
+  never fails or holds up a run: each statement is given up after 5 seconds (`setQueryTimeout`, so
+  a stuck connection is cancelled), a batch of events the database refuses is tried event by event,
+  and what still fails is logged as a warning. The page reads the log again from the start when the
+  run ends, so events written late, after its last live look, are not missed.
+- **On the run page.** Tiles for wall-clock time, most steps at once, the longest step and what
+  limited the run. **Where each step spent its time**: per step, its time split into working,
+  waiting for rows and held up by the next step (a 100% bar, each part its own pattern, with a
+  table). **What limited the run** is, among the steps others were held up by (held up for at least
+  5% of their time, through the last snapshot's edges), the one working the largest share of its
+  time; when nothing was held up, the source working most ("limited by reading its source").
+  **Rows per second through the run**: a line per step from the series, with a band under it for
+  its output queue's fill (Held up), the run's warnings, errors and gates starting to quarantine
+  marked on the time axis, each point readable by pointer or keyboard, and a table. Each step's
+  share of the run is in the steps table. The Gantt chart (with its critical path) is kept in the
+  code for flows, not shown on pipeline runs.
+- **API.** The run view adds each step's times and waits, `progress` and `progressSeries`. `GET
   /api/v1/pipeline-runs/{id}/events?step=&level=&after=&limit=` pages the log (`level` is the least
   serious shown; `next` is the `after` of the next page; at most 1,000 a page) and
-  `.../events/download?format=text|ndjson` gives all of it, with the same filters, as a file. Both
+  `.../events/download?format=text|ndjson` streams all of it, with the same filters, as a file
+  (`after` and `limit` that are not whole numbers, 0 or more, are a 400). Both
   follow the run's own role and Sights rules: a held-back detail is null, with `withheld` saying
   why.
 - **Cancelling.** A queued run is cancelled at once and its job taken off the queue; a running one

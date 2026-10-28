@@ -136,7 +136,10 @@ public final class RunContext {
         return source == null || target == null ? fallback : writes.getOrDefault(source + "\u0000" + target, fallback);
     }
 
-    /** {@code message} with every secret this run resolved blanked out. */
+    /**
+     * {@code message} with every secret this run resolved blanked out, and any NUL character dropped
+     * (the database cannot store one in text).
+     */
     public String scrub(String message) {
         if (message == null) {
             return null;
@@ -147,6 +150,6 @@ public final class RunContext {
                 out = out.replace(s, "********");
             }
         }
-        return out;
+        return out.indexOf('\u0000') < 0 ? out : out.replace("\u0000", "");
     }
 }

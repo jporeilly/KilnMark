@@ -24,10 +24,11 @@ import { dimensionRows, ESTIMATE, gapWords, pointsWords } from "./prediction";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { formatBytes, formatDuration, RunStatus, runTime } from "./RunStatus";
-import { RunTimeline } from "./RunTimeline";
+import { RunTimeSpent } from "./RunTimeSpent";
+import { RunRates } from "./RunRates";
 import { RunLogPanel } from "./RunLogPanel";
 import { rateWords } from "./live";
-import { shareWords } from "./timeline";
+import { runOrigin, shareWords } from "./timeline";
 import "./pipelines.css";
 
 const LIVE_STATE: Record<string, string> = {
@@ -252,6 +253,8 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
   const [notice, setNotice] = useState("");
   // Counts each look at the run, so the log can fetch what happened since.
   const [tick, setTick] = useState(0);
+  // When the run was last fetched, by the browser's clock: a live run's "now" is its last snapshot plus the time since.
+  const [fetchedAt, setFetchedAt] = useState(0);
   const last = useRef<string | null>(null);
 
   const load = useCallback(() => {
@@ -263,6 +266,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
         }
         last.current = d.run.status;
         setDetail(d);
+        setFetchedAt(Date.now());
         setTick((n) => n + 1);
         setError(null);
       })
@@ -302,7 +306,11 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
     );
   }
   const r = detail.run;
-  const runMs = r.startedAt && r.finishedAt ? Math.max(1, Date.parse(r.finishedAt) - Date.parse(r.startedAt)) : null;
+  // The run's time on the worker's clock (when it started and finished with the run), as the charts use.
+  const origin = runOrigin(detail);
+  const workerEnd = detail.progress?.workerFinishedAt ? Date.parse(detail.progress.workerFinishedAt) : null;
+  const runMs = origin != null && workerEnd != null ? Math.max(1, workerEnd - origin) : null;
+  const clock = { fetchedAt };
   const live = unfinished && detail.steps.length === 0 ? (detail.progress?.steps ?? []) : [];
   const stepNames = detail.steps.length > 0 ? detail.steps.map((s) => s.step) : (detail.progress?.steps.map((s) => s.step) ?? []);
   return (
@@ -375,9 +383,14 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
         )}
       </section>
 
-      <section aria-labelledby="timeline-h" className="panel">
-        <h2 id="timeline-h">Timeline</h2>
-        <RunTimeline detail={detail} />
+      <section aria-labelledby="spent-h" className="panel">
+        <h2 id="spent-h">Where each step spent its time</h2>
+        <RunTimeSpent detail={detail} clock={clock} />
+      </section>
+
+      <section aria-labelledby="rates-h" className="panel">
+        <h2 id="rates-h">Rows per second through the run</h2>
+        <RunRates detail={detail} clock={clock} tick={tick} />
       </section>
 
       <section aria-labelledby="steps-h" className="panel">
@@ -489,7 +502,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
 
       <section aria-labelledby="log-h" className="panel">
         <h2 id="log-h">Log</h2>
-        <RunLogPanel runId={r.id} steps={stepNames} startedAt={r.startedAt} tick={tick} />
+        <RunLogPanel runId={r.id} steps={stepNames} origin={origin} tick={tick} final={!unfinished} />
       </section>
 
       {(detail.quality?.length ?? 0) > 0 && (

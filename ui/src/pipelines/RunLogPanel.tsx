@@ -33,13 +33,17 @@ function save(text: string, name: string, type: string) {
 export function RunLogPanel({
   runId,
   steps,
-  startedAt,
+  origin,
   tick,
+  final,
 }: {
   runId: number;
   steps: string[];
-  startedAt: string | null;
+  /** The run's origin on the worker's clock (ms), the same as the charts'; null to show clock times. */
+  origin: number | null;
   tick: number;
+  /** The run has ended: the log is read again from the start, so late writes are not missed. */
+  final: boolean;
 }) {
   const [step, setStep] = useState("");
   const [level, setLevel] = useState<PipelineRunEventLevel>("info");
@@ -50,6 +54,8 @@ export function RunLogPanel({
   const filters = useRef({ step, level });
   filters.current = { step, level };
   const lastSeq = useRef(0);
+  // Each change of filter starts a new generation; answers for an older one are dropped.
+  const generation = useRef(0);
 
   const filter = useCallback(
     () => ({
@@ -59,9 +65,11 @@ export function RunLogPanel({
     [],
   );
 
-  // The first page, again whenever a filter changes.
+  // The first page, again whenever a filter changes, and once more when the run ends.
   useEffect(() => {
     let live = true;
+    generation.current++;
+    lastSeq.current = 0;
     setEvents(null);
     pipelinesApi
       .events(runId, { ...filter(), limit: PAGE })
@@ -76,18 +84,21 @@ export function RunLogPanel({
     return () => {
       live = false;
     };
-  }, [runId, step, level, filter]);
+  }, [runId, step, level, filter, final]);
 
   // While the run goes: what has happened since, unless more pages are still to be shown.
   useEffect(() => {
-    if (tick === 0 || events == null || next != null) return;
+    if (tick === 0 || final || events == null || next != null) return;
     let live = true;
+    const mine = generation.current;
+    const after = lastSeq.current;
     pipelinesApi
-      .events(runId, { ...filter(), after: lastSeq.current, limit: PAGE })
+      .events(runId, { ...filter(), after, limit: PAGE })
       .then((page) => {
-        if (!live || page.events.length === 0) return;
-        setEvents((old) => [...(old ?? []), ...page.events.filter((e) => e.seq > lastSeq.current)]);
+        if (!live || mine !== generation.current || page.events.length === 0) return;
+        const fresh = page.events.filter((e) => e.seq > after);
         lastSeq.current = page.events.at(-1)!.seq;
+        setEvents((old) => [...(old ?? []), ...fresh]);
         setNext(page.next);
       })
       .catch(() => {});
@@ -100,11 +111,13 @@ export function RunLogPanel({
   const more = () => {
     if (next == null) return;
     setBusy(true);
+    const mine = generation.current;
     pipelinesApi
       .events(runId, { ...filter(), after: next, limit: PAGE })
       .then((page) => {
-        setEvents((old) => [...(old ?? []), ...page.events]);
+        if (mine !== generation.current) return;
         lastSeq.current = page.events.at(-1)?.seq ?? lastSeq.current;
+        setEvents((old) => [...(old ?? []), ...page.events]);
         setNext(page.next);
       })
       .catch((e: Error) => setError(e.message))
@@ -126,7 +139,6 @@ export function RunLogPanel({
       .finally(() => setBusy(false));
   };
 
-  const origin = startedAt ? Date.parse(startedAt) : null;
   return (
     <div className="pl-log">
       <div className="pl-log-tools">

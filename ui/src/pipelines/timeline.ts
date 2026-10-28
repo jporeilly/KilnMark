@@ -27,21 +27,55 @@ export type Timeline = { span: number; rows: TimelineRow[]; live: boolean };
 const ms = (iso: string | null | undefined) => (iso ? Date.parse(iso) : null);
 
 /**
- * The timeline of a run: null when nothing was timed (a run from before steps were timed, or one
- * still queued). `now` is the time to draw a running step's bar to.
+ * When a run is read: `now` (the browser's clock) and when the run was fetched, so a live run's "now"
+ * is its last snapshot's time plus the time since, on the worker's clock.
  */
-export function timeline(detail: PipelineRunDetail, now: number = Date.now()): Timeline | null {
+export type Clock = { now?: number; fetchedAt?: number };
+
+/**
+ * The run's origin on the worker's clock: when the worker started on it, else its earliest step's
+ * start. Every time on the run page counts from here, so the database's and the browser's clocks
+ * are never mixed with the worker's. Null when nothing was timed.
+ */
+export function runOrigin(detail: PipelineRunDetail): number | null {
+  const started = ms(detail.progress?.workerStartedAt);
+  if (started != null) return started;
+  const starts = [
+    ...detail.steps.map((s) => ms(s.startedAt)),
+    ...(detail.progress?.steps ?? []).map((s) => ms(s.startedAt)),
+  ].filter((t): t is number => t != null);
+  return starts.length ? Math.min(...starts) : null;
+}
+
+/**
+ * Where "now" is for a run on the worker's clock, in ms from its origin: for a live run, its last
+ * snapshot's time plus the time since it was fetched; for a finished one, when the worker finished
+ * with it (else its last step's end). Null when not known.
+ */
+export function runNow(detail: PipelineRunDetail, origin: number, clock: Clock = {}): number | null {
+  const now = clock.now ?? Date.now();
+  const unfinished = detail.run.status === "queued" || detail.run.status === "running";
+  const at = ms(detail.progress?.at);
+  if (unfinished) return at == null ? null : Math.max(0, at - origin + Math.max(0, now - (clock.fetchedAt ?? now)));
+  const done = ms(detail.progress?.workerFinishedAt);
+  if (done != null) return Math.max(0, done - origin);
+  const ends = detail.steps.map((s) => ms(s.finishedAt)).filter((t): t is number => t != null);
+  return ends.length ? Math.max(0, Math.max(...ends) - origin) : null;
+}
+
+/**
+ * The timeline of a run: null when nothing was timed (a run from before steps were timed, or one
+ * still queued). Times are on the worker's clock, from {@link runOrigin}.
+ */
+export function timeline(detail: PipelineRunDetail, clock: Clock = {}): Timeline | null {
   const run = detail.run;
   const unfinished = run.status === "queued" || run.status === "running";
   const timed = detail.steps.some((s) => s.startedAt != null);
   const progress: PipelineRunProgress | null | undefined = detail.progress;
   const live = !timed && unfinished && progress != null && progress.steps.length > 0;
   if (!timed && !live) return null;
-  const origin =
-    ms(run.startedAt) ??
-    Math.min(
-      ...(timed ? detail.steps.map((s) => ms(s.startedAt) ?? Infinity) : progress!.steps.map((s) => ms(s.startedAt) ?? Infinity)),
-    );
+  const origin = runOrigin(detail);
+  if (origin == null) return null;
   const at = (iso: string | null | undefined) => {
     const t = ms(iso);
     return t == null ? null : Math.max(0, t - origin);
@@ -73,9 +107,8 @@ export function timeline(detail: PipelineRunDetail, now: number = Date.now()): T
       slowest: progress!.slowest === s.step,
     }));
   }
-  const ended = ms(run.finishedAt);
   const last = Math.max(0, ...rows.flatMap((r) => [r.start ?? 0, r.firstRow ?? 0, r.lastRow ?? 0, r.end ?? 0]));
-  const until = unfinished ? Math.max(last, now - origin) : ended != null ? Math.max(last, ended - origin) : last;
+  const until = Math.max(last, runNow(detail, origin, clock) ?? 0);
   return { span: Math.max(1, until), rows, live };
 }
 

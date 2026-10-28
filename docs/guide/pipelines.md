@@ -515,33 +515,42 @@ status changes.
 - **Summary:** the status, the version that ran, who asked, when it started and finished, how long
   it took and how many rows its writes received. A failed run says why, naming the step where the
   failure started.
-- **Timeline:** one bar per step, from when it started to when it ended, on one time axis, so you
-  can see which steps worked at the same time and which took longest. The light, hatched part of a
-  bar is the step waiting for its first row (a `read` waiting for its query, say); the solid part
-  is rows moving. Ticks mark its first and last row. While the run goes the bars grow, and the step
-  holding the run back says Slowest. **Show the timeline as a table** gives the same times in
-  words, counted from the start of the run.
-
-  Above the chart, four tiles: the run's **wall-clock time**, the **most steps at once**, the
-  **longest step** (while the run goes, the slowest step now) and the **critical path**: the chain
-  of steps that set how long the run took, such as "customers → tidy → check → clean, 98% of the
-  run" (from its first step's start to its last step's end, out of the whole run, which also
-  includes starting up and cataloguing what was written). Kilnmark finds it by starting at the step
-  that finished last and following, at each step, the input whose last rows arrived last. Its bars
-  have a dashed outline and its step names are underlined; **Show the critical path** turns this
-  off. A gate's bar ends with what it decided (Passed, Quarantined 229, Stopped the run), and a
-  write's with the quality measured of what it wrote (Quality 99% (Good)), in words and the same
-  colours as elsewhere.
+- **The run at a glance:** four tiles: its **wall-clock time**, the **most steps at once**, the
+  **longest step** (while it runs, the slowest step now) and **what limited this run**. Every time
+  on the page counts from when the worker started on the run, by the worker's own clock.
+- **Where each step spent its time:** one bar per step, its whole time from start to end split into
+  **Working** (solid), **Waiting for rows** (light hatching: the steps before it had nothing for it)
+  and **Held up by the next step** (amber cross-hatching: the step after it was not keeping up, so
+  there was no room to hand rows on; this is back-pressure). At the right, how much of its time it
+  was working and what it did: a gate's verdict (Passed, Quarantined 229, Stopped the run), a
+  write's measured quality (Quality 99% (Good)), else its rows. Above the bars one line says **what
+  limited this run**: of the steps that others were held up by, the one working the largest share
+  of its time, such as "What limited this run: check, working 90% of the time". When nothing was
+  held up it says the run was limited by reading its source. Speed that step up (a simpler rule, a
+  smaller lookup, a faster target) and the run gets faster; speeding up the others does little.
+  **Show where each step spent its time as a table** gives the same in words. While the run goes
+  this is drawn from its latest progress.
+- **Rows per second through the run:** a line per step of the rows it handled each second, from
+  the snapshots taken every two seconds, with its peak at the right. Under it, an amber band shows
+  how full its output queue was (**Held up**: the taller and stronger, the fuller; full means the
+  step was waiting for the next one), and the words "output queue full 78% of the time". Numbered
+  marks on the time axis show the run's warnings and errors, and a gate starting to set rows aside,
+  listed under the chart. Point at a line, or focus it and use the arrow keys, to read the time,
+  rows a second and how full the queue was at that point. **Show rows a second as a table** gives
+  each step's peak, average and how often its output queue was full.
 - **Steps:** for each step, how it ended (Finished; Ended early, as a `limit` does once it has its
   rows; Stopped by the engine, because another step failed or the run was stopped; or Failed), the
   rows that came in and went out, with the count on each port when a step has several (for
   example, a filter's `out` and `rejected`), the most memory it held, how long it took and its
-  share of the run's time, and its error if it failed. A write that was stopped wrote nothing, unless it used `commit_every`. While
-  the run goes, the table shows each step's rows so far and rows a second instead.
+  share of the run's time, and its error if it failed. A write that was stopped wrote nothing, unless
+  it used `commit_every`. While the run goes, the table shows each step's rows so far and rows a
+  second instead.
 - **Log:** what happened, in order: the run starting, each step starting, its first row in and
-  out, its last row out and how it ended, each gate's verdict ("Gate check quarantined 229 rows",
-  with the rules that failed and their counts as its detail), warnings and errors, and the run's
-  notes. Choose a step,
+  out, its last row out and how it ended, a gate starting to set rows aside and its verdict ("Gate
+  check quarantined 229 rows (email format: 229)", the rules that failed and their counts; a rule's
+  own message, which can quote the data, is its detail), warnings and errors, and the run's notes.
+  The log is read again from the start when the run ends, so nothing written at the last moment is
+  missed. Choose a step,
   or **Warnings and errors** or **Errors only**, to narrow it, and **Download as text** (or
   **NDJSON**, one JSON object a line) to save it with the same choices. Where the engine's own
   message could quote values from your data, it shows only to those who may see why the run

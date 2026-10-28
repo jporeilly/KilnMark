@@ -1244,6 +1244,9 @@ export type PipelineStepRun = {
   firstRowAt?: string | null;
   lastRowAt?: string | null;
   finishedAt?: string | null;
+  /** Time it waited for rows on its inputs, and for room on its outputs (held up by the next step); the rest is working. */
+  waitingForRowsMs?: number | null;
+  heldUpMs?: number | null;
 };
 /** One step while a run goes: its rows so far and its rate since the snapshot before. */
 export type PipelineStepProgress = {
@@ -1256,6 +1259,10 @@ export type PipelineStepProgress = {
   firstRowAt: string | null;
   lastRowAt: string | null;
   finishedAt: string | null;
+  /** So far: time it waited for rows, and was held up by the next step; how full its fullest output queue is now (0 to 1). */
+  waitingForRowsMs?: number;
+  heldUpMs?: number;
+  outputFill?: number;
 };
 /** One connection while a run goes: rows so far, and whether its queue is full or empty now. */
 export type PipelineEdgeProgress = {
@@ -1268,6 +1275,8 @@ export type PipelineEdgeProgress = {
   capacity: number;
   full: boolean;
   empty: boolean;
+  /** Batches waiting over capacity, 0 to 1. */
+  fill?: number;
 };
 /**
  * Where a run's rows are, as the worker last wrote it (every two seconds while it runs). `slowest`
@@ -1275,6 +1284,9 @@ export type PipelineEdgeProgress = {
  */
 export type PipelineRunProgress = {
   at: string;
+  /** When the worker started on the run, and finished with it: every time on the run page counts from the worker's clock. */
+  workerStartedAt?: string;
+  workerFinishedAt?: string | null;
   slowest: string | null;
   steps: PipelineStepProgress[];
   edges: PipelineEdgeProgress[];
@@ -1362,7 +1374,10 @@ export type PipelineRunDetail = {
   quality?: PipelineStepQuality[];
   /** Where the rows are, while the run goes (and the last snapshot once it has ended); missing from older servers. */
   progress?: PipelineRunProgress | null;
+  /** The snapshots over the run: t is ms from workerStartedAt; r each step's rows/s, q its output queue's fill (0 to 1). */
+  progressSeries?: PipelineProgressSeries | null;
 };
+export type PipelineProgressSeries = { steps: string[]; stride: number; points: { t: number; r: number[]; q: number[] }[] };
 export type StepTypeSetting = {
   key: string;
   label: string;

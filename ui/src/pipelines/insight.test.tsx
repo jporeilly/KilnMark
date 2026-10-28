@@ -3,7 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { PipelineRun, PipelineRunDetail, PipelineRunProgress, PipelineStepRun } from "../api";
 import { badgeRows, runWords, stepChips } from "./canvas/StepNode";
 import { liveEdgeRows, liveSteps, rateWords } from "./live";
-import { RunTimeline as RunTimeline, qualityMark } from "./RunTimeline";
+import { RunTimeline, qualityMark } from "./RunTimeline";
+import { RunTimeSpent, limitWords } from "./RunTimeSpent";
+import { RunRates } from "./RunRates";
+import { rates, nearest, ratePath } from "./rates";
+import { limiting, shares, timeSpent } from "./timeSpent";
 import {
   criticalPath,
   offsetWords,
@@ -72,11 +76,13 @@ const detail = (over: Partial<PipelineRunDetail> = {}): PipelineRunDetail => ({
   read: [],
   lineage: [],
   notes: [],
+  progress: { at: at(4000), workerStartedAt: at(0), workerFinishedAt: at(4000), slowest: null, steps: [], edges: [] },
   ...over,
 });
 
 const progress: PipelineRunProgress = {
   at: at(2000),
+  workerStartedAt: at(0),
   slowest: "tidy",
   steps: [
     {
@@ -175,7 +181,7 @@ describe("a run's timeline", () => {
         steps: [],
         progress,
       }),
-      T0 + 2500,
+      { now: T0 + 2500, fetchedAt: T0 + 2000 },
     )!;
     expect(t.live).toBe(true);
     expect(t.span).toBe(2500);
@@ -193,7 +199,7 @@ describe("a run's timeline", () => {
           steps: [],
           progress,
         })}
-        now={T0 + 2500}
+        clock={{ now: T0 + 2500, fetchedAt: T0 + 2000 }}
       />,
     );
     expect(html).toContain('role="img"');
@@ -294,7 +300,16 @@ describe("the critical path and the run at a glance", () => {
       empty: true,
     }));
   const withEdges = (pairs: [string, string][]) =>
-    detail({ progress: { at: at(4000), slowest: null, steps: [], edges: edges(pairs) } });
+    detail({
+      progress: {
+        at: at(4000),
+        workerStartedAt: at(0),
+        workerFinishedAt: at(4000),
+        slowest: null,
+        steps: [],
+        edges: edges(pairs),
+      },
+    });
 
   test("walks back from the step that ended last through the input whose rows arrived last", () => {
     const d = detail({
@@ -306,6 +321,8 @@ describe("the critical path and the run at a glance", () => {
       ],
       progress: {
         at: at(4000),
+        workerStartedAt: at(0),
+        workerFinishedAt: at(4000),
         slowest: null,
         steps: [],
         edges: edges([
@@ -328,7 +345,10 @@ describe("the critical path and the run at a glance", () => {
 
   test("none while the run goes, or without its connections", () => {
     expect(criticalPath(timeline(detail())!, [])).toBeNull();
-    const live = timeline(detail({ run: run({ status: "running", finishedAt: null }), steps: [], progress }), T0 + 2500)!;
+    const live = timeline(detail({ run: run({ status: "running", finishedAt: null }), steps: [], progress }), {
+      now: T0 + 2500,
+      fetchedAt: T0 + 2000,
+    })!;
     expect(criticalPath(live, progress.edges)).toBeNull();
     expect(slowestStep(live)?.step).toBe("tidy");
   });
@@ -381,5 +401,159 @@ describe("the critical path and the run at a glance", () => {
     expect(html).toContain(">Quality 99% (Good)<");
     expect(qualityMark(d.quality[0])).toEqual({ text: "Quarantined 229", tone: "orange" });
     expect(qualityMark(undefined)).toBeNull();
+  });
+});
+
+describe("where each step spent its time, and what limited the run", () => {
+  const chain = (over: Partial<PipelineRunDetail> = {}) =>
+    detail({
+      steps: [
+        { ...step("read", 0, 300, 3800, 3900), waitingForRowsMs: 0, heldUpMs: 2600 },
+        { ...step("check", 10, 320, 3850, 3900), waitingForRowsMs: 100, heldUpMs: 0 },
+        { ...step("write", 20, 330, 3880, 3920), waitingForRowsMs: 3100, heldUpMs: 0 },
+      ],
+      progress: {
+        at: at(4000),
+        workerStartedAt: at(0),
+        workerFinishedAt: at(4000),
+        slowest: null,
+        steps: [],
+        edges: [
+          {
+            from: "read",
+            fromPort: "out",
+            to: "check",
+            toPort: "in",
+            rows: 1,
+            queued: 0,
+            capacity: 4,
+            full: false,
+            empty: true,
+            fill: 0,
+          },
+          {
+            from: "check",
+            fromPort: "out",
+            to: "write",
+            toPort: "in",
+            rows: 1,
+            queued: 0,
+            capacity: 4,
+            full: false,
+            empty: true,
+            fill: 0,
+          },
+        ],
+      },
+      ...over,
+    });
+
+  test("each step's time is working, waiting for rows and held up, adding up to all of it", () => {
+    const s = timeSpent(chain())!;
+    const read = s.rows.find((r) => r.step === "read")!;
+    expect(read.active).toBe(3900);
+    expect(shares(read).heldUp).toBeCloseTo(2600 / 3900, 5);
+    const sum = shares(read).working + shares(read).waiting + shares(read).heldUp;
+    expect(sum).toBeCloseTo(1, 5);
+    expect(s.limit).toEqual({ step: "check", working: expect.closeTo(3790 / 3890, 5), bySource: false });
+    expect(limitWords(s.limit, false)).toBe("What limited this run: check, working 97% of the time.");
+  });
+
+  test("with nothing held up, the run was limited by reading its source", () => {
+    const rows = [
+      { step: "read", active: 1000, working: 950, waiting: 0, heldUp: 50 - 50, running: false, source: true },
+      { step: "write", active: 1000, working: 100, waiting: 900, heldUp: 0, running: false, source: false },
+    ];
+    const l = limiting(rows, [{ from: "read", to: "write" }]);
+    expect(l).toEqual({ step: "read", working: 0.95, bySource: true });
+    expect(limitWords(l, false)).toBe(
+      "Nothing was held up: this run was limited by reading its source, read (working 95% of the time).",
+    );
+  });
+
+  test("older runs without waits show nothing; drawn with tiles, patterns in words and a table", () => {
+    expect(timeSpent(detail())).toBeNull();
+    const html = renderToStaticMarkup(<RunTimeSpent detail={chain()} />);
+    expect(html).toContain("What limited this run: check, working 97% of the time.");
+    expect(html).toContain("read: working 33%, waiting for rows 0%, held up by the next step 67%");
+    expect(html).toContain("Limited the run");
+    expect(html).toContain("Show where each step spent its time as a table");
+    expect(html).toContain("Wall-clock time");
+    expect(html).not.toContain("Critical path");
+  });
+
+  test("live: from the progress, to its snapshot plus the time since it was fetched", () => {
+    const live = detail({
+      run: run({ status: "running", finishedAt: null }),
+      steps: [],
+      progress: {
+        ...progress,
+        steps: progress.steps.map((p) => ({ ...p, waitingForRowsMs: 100, heldUpMs: p.step === "customers" ? 1500 : 0 })),
+      },
+    });
+    const s = timeSpent(live, { now: T0 + 2500, fetchedAt: T0 + 2000 })!;
+    expect(s.live).toBe(true);
+    expect(s.rows.find((r) => r.step === "customers")!.active).toBe(2490);
+    expect(s.limit?.step).toBe("tidy");
+  });
+});
+
+describe("rows a second through the run", () => {
+  const series = {
+    steps: ["read", "check"],
+    stride: 1,
+    points: [
+      { t: 1000, r: [100, 80], q: [0.25, 0] },
+      { t: 2000, r: [300, 90], q: [1, 0] },
+      { t: 3000, r: [0, 85], q: [1, 0] },
+    ],
+  };
+  const d = () =>
+    detail({
+      progressSeries: series,
+      progress: {
+        at: at(4000),
+        workerStartedAt: at(0),
+        workerFinishedAt: at(4000),
+        slowest: null,
+        steps: [],
+        edges: [
+          {
+            from: "read",
+            fromPort: "out",
+            to: "check",
+            toPort: "in",
+            rows: 1,
+            queued: 0,
+            capacity: 4,
+            full: false,
+            empty: true,
+            fill: 0,
+          },
+        ],
+      },
+    });
+
+  test("a line per step with its peak, average and how often its output queue was full", () => {
+    const r = rates(d())!;
+    expect(r.span).toBe(4000);
+    const read = r.lines[0];
+    expect(read.peak).toBe(300);
+    expect(read.average).toBe(200);
+    expect(read.fullShare).toBeCloseTo(2 / 3, 5);
+    expect(read.hasOutput).toBe(true);
+    expect(r.lines[1].hasOutput).toBe(false);
+    expect(nearest(read.points, 2400)).toBe(1);
+    expect(ratePath(read.points, 4000, 300, 1000, 36)).toBe("M250.0,23.7 L500.0,-1.0 L750.0,35.0".replace("-1.0", "1.0"));
+    expect(rates(detail())).toBeNull();
+  });
+
+  test("drawn with a Held up band, its words and a table", () => {
+    const html = renderToStaticMarkup(<RunRates detail={d()} tick={0} />);
+    expect(html).toContain("peak 300 rows/s");
+    expect(html).toContain("output queue full 67% of the time");
+    expect(html).toContain("Held up: how full its output queue was");
+    expect(html).toContain('class="is-full"');
+    expect(html).toContain("Show rows a second as a table");
   });
 });

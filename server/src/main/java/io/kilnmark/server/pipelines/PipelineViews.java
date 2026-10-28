@@ -77,11 +77,14 @@ public final class PipelineViews {
      * ended: finished, ended_early (a limit had its rows, or nothing read on), stopped (by the
      * engine, after another step failed or the run was stopped) or failed; null if not recorded.
      * The times: when it started, had its first row (in; out for a source), handed on its last row
-     * (out; in for a sink) and ended; null for a step that never started, and for older runs.
+     * (out; in for a sink) and ended, on the worker's clock; null for a step that never started, and
+     * for older runs. {@code waitingForRowsMs} and {@code heldUpMs}: the time it waited for rows on
+     * its inputs, and for room on its outputs (held up by the steps after it); the rest is working.
      */
     public record StepRunView(String step, String type, int position, Long rowsIn, Long rowsOut, JsonNode ports,
                               Long peakMemory, Long durationMs, String error, String outcome, Instant startedAt,
-                              Instant firstRowAt, Instant lastRowAt, Instant finishedAt) {
+                              Instant firstRowAt, Instant lastRowAt, Instant finishedAt, Long waitingForRowsMs,
+                              Long heldUpMs) {
     }
 
     /** What a write step wrote, and whether it is now in the catalogue. */
@@ -99,11 +102,14 @@ public final class PipelineViews {
      * running, ended), rowsIn, rowsOut, rowsPerSecond, startedAt, firstRowAt, lastRowAt, finishedAt}],
      * edges: [{from, fromPort, to, toPort, rows, queued, capacity, full, empty}]}. {@code slowest} is
      * the step holding the run back: its input queues are full while its output queues are not.
-     * Counts, states and times only.
+     * Counts, states and times only, on the worker's clock ({@code workerStartedAt}, and
+     * {@code workerFinishedAt} once it has finished). {@code progressSeries}: the snapshots over the
+     * run, {steps: [step], stride, points: [{t (ms from workerStartedAt), r: [rows/s per step], q: [fill
+     * of its fullest output queue, 0 to 1]}]}, at most 900 points; or null.
      */
     public record RunDetail(RunSummary run, List<StepRunView> steps, List<WrittenAsset> written, List<String> read,
                             List<LineageLink> lineage, List<String> notes, List<StepQualityView> quality,
-                            JsonNode progress) {
+                            JsonNode progress, JsonNode progressSeries) {
     }
 
     /**
@@ -111,7 +117,7 @@ public final class PipelineViews {
      * message, which may quote values from the data, and is null with {@code withheld} saying why
      * when the caller may not read it. {@code level} is info, warn or error; {@code kind} one of
      * run_started, step_started, first_row_in, first_row_out, last_row_out, step_ended, engine_note,
-     * gate_verdict, run_note, run_ended, log_truncated.
+     * gate_quarantining, gate_verdict, run_note, run_ended, log_truncated.
      */
     public record RunEvent(int seq, Instant at, String step, String level, String kind, String text, String detail,
                            String withheld) {

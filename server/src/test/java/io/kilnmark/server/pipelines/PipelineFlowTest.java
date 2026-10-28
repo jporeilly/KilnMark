@@ -261,7 +261,12 @@ class PipelineFlowTest {
                 assertTrue(run.getString(at + time) != null, step + " " + time + ": " + run.prettify());
             }
             assertTrue(run.getLong(at + "durationMs") >= 0, run.prettify());
+            assertTrue(run.getLong(at + "waitingForRowsMs") >= 0 && run.getLong(at + "heldUpMs") >= 0, run.prettify());
         }
+        assertTrue(run.getString("progress.workerStartedAt") != null && run.getString("progress.workerFinishedAt") != null,
+            run.prettify());
+        assertEquals(List.of("people", "out"), run.getList("progressSeries.steps"), run.prettify());
+        assertTrue(run.getList("progressSeries.points").size() >= 1, run.prettify());
         assertEquals(2500L, run.getLong("progress.steps.find { it.step == 'out' }.rowsIn"), run.prettify());
         assertEquals("ended", run.getString("progress.steps.find { it.step == 'out' }.state"));
         assertEquals(2500L, run.getLong("progress.edges[0].rows"));
@@ -277,6 +282,10 @@ class PipelineFlowTest {
         as(viewer).queryParam("level", "warn").get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
             .statusCode(200).body("events.size()", equalTo(0));
         as(viewer).queryParam("level", "loud").get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
+            .statusCode(400);
+        as(viewer).queryParam("after", "soon").get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
+            .statusCode(400);
+        as(viewer).queryParam("limit", "-3").get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
             .statusCode(400);
         JsonPath first = as(viewer).queryParam("limit", 2).get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
             .statusCode(200).body("events.size()", equalTo(2)).extract().jsonPath();
@@ -655,9 +664,8 @@ class PipelineFlowTest {
         // The verdict is in the run's log; the failing rules, with their counts, are its detail.
         JsonPath verdict = as(Tokens.ADMIN).queryParam("step", "check").get("/api/v1/pipeline-runs/" + id + "/events")
             .then().statusCode(200).extract().jsonPath();
-        assertTrue(verdict.getList("events.text").contains("Gate check quarantined 500 rows"), verdict.prettify());
-        assertTrue(verdict.getString("events.find { it.kind == 'gate_verdict' }.detail").contains("early ids: 500"),
-            verdict.prettify());
+        assertTrue(verdict.getString("events.find { it.kind == 'gate_verdict' }.text")
+            .startsWith("Gate check quarantined 500 rows (early ids: "), verdict.prettify());
         assertEquals(0.9, run.getDouble("quality.find { it.step == 'check' }.measured.overall"), 1e-6, all);
         assertEquals(0.8, run.getDouble("quality.find { it.step == 'check' }.measured.dimensions.accuracy"), 1e-6,
             all);

@@ -9,11 +9,12 @@ import io.kilnmark.kiln.RunResult;
  * step starting, its first row in and out, its last row out and how it ended; a {@link RunProgress}
  * snapshot every few seconds; and the engine's notes.
  *
- * <p>Every method is called on the thread that called {@link GraphRunner#run}, never on a step's
- * thread, so a slow listener never holds a step back; it delays only the next call. Calls for one
- * step come in the order above, with the time each thing happened (which may be up to a second
- * before the call). Anything a method throws is caught and dropped: a listener can never fail or
- * stop a run. Every method does nothing unless overridden.
+ * <p>Every method is called on the listener's own virtual thread, one call at a time and in order,
+ * never on a step's thread or the thread that called {@link GraphRunner#run}, so a slow listener
+ * never holds a step back. Calls for one step come in the order above, with the time each thing
+ * happened (which may be up to a second before the call). Anything a method throws is caught and
+ * dropped; a listener still busy ten seconds after the run's steps have ended misses the rest. A
+ * listener can never fail or stop a run. Every method does nothing unless overridden.
  */
 public interface RunListener {
 
@@ -40,7 +41,11 @@ public interface RunListener {
     default void lastRowOut(String step, Instant at) {
     }
 
-    /** The step ended, its resources closed. */
+    /**
+     * The step ended, its resources closed, and anything copying its rows to several steps has
+     * finished too. Called once more, with the same time, if the run later finds its outcome was
+     * otherwise (memory it did not free, found once every step has ended).
+     */
     default void stepEnded(String step, RunResult.Outcome outcome, Instant at) {
     }
 
@@ -54,5 +59,10 @@ public interface RunListener {
      * step's error often does).
      */
     default void note(Level level, String step, String text) {
+    }
+
+    /** {@link #note(Level, String, String)}, with when the engine noticed it. */
+    default void note(Level level, String step, String text, Instant at) {
+        note(level, step, text);
     }
 }

@@ -75,7 +75,8 @@ class RunListenerTest {
         }
 
         @Override
-        public void note(Level level, String step, String text) {
+        public void note(Level level, String step, String text, Instant at) {
+            assertNotNull(at);
             notes.add(level + " " + step + ": " + text);
         }
 
@@ -187,6 +188,28 @@ class RunListenerTest {
         assertEquals(5_000, sink2.rows.get());
         // the run waits for a hanging listener at most LISTENER_GRACE, then goes on
         assertTrue(Duration.ofNanos(System.nanoTime() - t0).compareTo(KilnGraphRunner.LISTENER_GRACE.plusSeconds(5)) < 0);
+    }
+
+    @Test
+    @Timeout(30)
+    void eachStepsTimeIsSplitIntoWorkingWaitingAndHeldUp() throws Exception {
+        Heard heard = new Heard();
+        RunResult r = new KilnGraphRunner(64L << 20, 2, Duration.ofSeconds(30), Duration.ofMillis(40))
+            .run(line(new Generate(40, 10), new Pass(15, -1), new Collect()), e -> { }, heard);
+        assertTrue(r.succeeded(), r.error());
+        RunResult.StepResult gen = r.step("gen");
+        RunResult.StepResult pass = r.step("pass");
+        RunResult.StepResult sink = r.step("sink");
+        long passMillis = pass.duration().toMillis();
+        // The source is held up by the slow step; the sink waits for its rows; the slow step works.
+        assertTrue(gen.heldUpNanos() > gen.duration().toNanos() / 2, gen.toString());
+        assertEquals(0, gen.waitingForRowsNanos());
+        assertTrue(sink.waitingForRowsNanos() > sink.duration().toNanos() / 2, sink.toString());
+        assertEquals(0, sink.heldUpNanos());
+        assertTrue(pass.working().toMillis() > passMillis / 2, pass + " " + passMillis);
+        assertTrue(heard.snapshots.stream().anyMatch(p -> p.step("gen").heldUpNanos() > 0
+            && p.step("gen").outputFill() > 0.5), "running totals and queue fill in the snapshots");
+        assertTrue(heard.snapshots.stream().anyMatch(p -> p.edges().getFirst().fill() == 1.0));
     }
 
     @Test
