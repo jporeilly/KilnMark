@@ -5,6 +5,18 @@ details.
 
 ## Unreleased
 
+### Details
+
+- **A demo from start to finish** (development): `lab/README.md` walks through a whole demo, from
+  starting Kilnmark and the demo sources to discovery and pipelines with a quality gate that sets rows
+  aside and then stops a run. Three demo pipelines in `lab/pipelines`: customers cleaned through a
+  gate (PostgreSQL), spend per customer with aggregate, lookup and route, and a MariaDB supplier feed
+  whose repeated SKUs are quarantined. `lab.sh pipelines` and `lab.ps1 pipelines` add them to a
+  running Kilnmark through its API, and `LabPipelinesTest` checks them against the lab's columns so
+  a change to the steps cannot break them unnoticed. Nothing of this ships.
+
+## 0.0.6 (28 October 2026)
+
 ### What's new
 
 - **Any database with a JDBC driver.** For databases without a connector of their own, such as
