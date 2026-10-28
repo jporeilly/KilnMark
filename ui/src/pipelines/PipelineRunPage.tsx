@@ -27,6 +27,7 @@ import { formatBytes, formatDuration, RunStatus, runTime } from "./RunStatus";
 import { RunTimeline } from "./RunTimeline";
 import { RunLogPanel } from "./RunLogPanel";
 import { rateWords } from "./live";
+import { shareWords } from "./timeline";
 import "./pipelines.css";
 
 const LIVE_STATE: Record<string, string> = {
@@ -301,6 +302,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
     );
   }
   const r = detail.run;
+  const runMs = r.startedAt && r.finishedAt ? Math.max(1, Date.parse(r.finishedAt) - Date.parse(r.startedAt)) : null;
   const live = unfinished && detail.steps.length === 0 ? (detail.progress?.steps ?? []) : [];
   const stepNames = detail.steps.length > 0 ? detail.steps.map((s) => s.step) : (detail.progress?.steps.map((s) => s.step) ?? []);
   return (
@@ -431,6 +433,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
                   <th scope="col">Rows out</th>
                   <th scope="col">Peak memory</th>
                   <th scope="col">Time</th>
+                  <th scope="col">Share of the run</th>
                   <th scope="col">Error</th>
                 </tr>
               </thead>
@@ -474,6 +477,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
                     </td>
                     <td>{formatBytes(s.peakMemory)}</td>
                     <td>{formatDuration(s.durationMs)}</td>
+                    <td>{runMs && s.durationMs != null ? shareWords(Math.min(1, s.durationMs / runMs)) : "–"}</td>
                     <td className={s.error ? "pl-bad" : undefined}>{s.error ?? "–"}</td>
                   </tr>
                 ))}

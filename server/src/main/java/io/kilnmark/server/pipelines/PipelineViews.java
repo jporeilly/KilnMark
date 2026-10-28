@@ -111,7 +111,7 @@ public final class PipelineViews {
      * message, which may quote values from the data, and is null with {@code withheld} saying why
      * when the caller may not read it. {@code level} is info, warn or error; {@code kind} one of
      * run_started, step_started, first_row_in, first_row_out, last_row_out, step_ended, engine_note,
-     * run_note, run_ended, log_truncated.
+     * gate_verdict, run_note, run_ended, log_truncated.
      */
     public record RunEvent(int seq, Instant at, String step, String level, String kind, String text, String detail,
                            String withheld) {

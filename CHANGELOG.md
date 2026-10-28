@@ -29,7 +29,12 @@ details.
   alternative), its Time column, live rows and rates while it runs, and a **Log** to filter and
   download; while a run goes the canvas shows each step's rows so far and rows a second ("19,814
   out · 8,351 rows/s") and marks the step holding it back Slowest, in words and with an orange
-  edge.
+  edge. Above the timeline, tiles for wall-clock time, most steps at once, the longest step and
+  the **critical path** ("customers → tidy → check → clean, 98% of the run"; walked back from the
+  step that ended last through the input whose rows arrived last), marked with a dashed outline
+  and a toggle; each step's share of the run in the tables; a gate's verdict and a write's measured
+  quality at the end of its bar; and each gate's verdict in the log (`gate_verdict`, its failing
+  rules as the held-back detail).
 - **Canvas chips after a run** (`StepNode` `stepChips`, `components/ui/StatusChip`). Each kind of
   chip has its own look and words, so none depends on colour: rows and outcome in a neutral chip
   with a rows icon ("5,000 rows out · Finished"; Ended early, Stopped and Failed in a chip of their

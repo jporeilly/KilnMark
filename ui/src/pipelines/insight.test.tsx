@@ -3,8 +3,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { PipelineRun, PipelineRunDetail, PipelineRunProgress, PipelineStepRun } from "../api";
 import { badgeRows, runWords, stepChips } from "./canvas/StepNode";
 import { liveEdgeRows, liveSteps, rateWords } from "./live";
-import { RunTimeline } from "./RunTimeline";
-import { offsetWords, rowWords, ticks, timeline } from "./timeline";
+import { RunTimeline as RunTimeline, qualityMark } from "./RunTimeline";
+import {
+  criticalPath,
+  offsetWords,
+  peakConcurrent,
+  rowWords,
+  shareOfRun,
+  shareWords,
+  slowestStep,
+  ticks,
+  timeline,
+} from "./timeline";
 
 const T0 = Date.parse("2026-10-28T10:00:00Z");
 const at = (ms: number) => new Date(T0 + ms).toISOString();
@@ -267,5 +277,109 @@ describe("live figures while a run goes", () => {
       predicted: false,
       gate: false,
     });
+  });
+});
+
+describe("the critical path and the run at a glance", () => {
+  const edges = (pairs: [string, string][]) =>
+    pairs.map(([from, to]) => ({
+      from,
+      fromPort: "out",
+      to,
+      toPort: "in",
+      rows: 1,
+      queued: 0,
+      capacity: 4,
+      full: false,
+      empty: true,
+    }));
+  const withEdges = (pairs: [string, string][]) =>
+    detail({ progress: { at: at(4000), slowest: null, steps: [], edges: edges(pairs) } });
+
+  test("walks back from the step that ended last through the input whose rows arrived last", () => {
+    const d = detail({
+      steps: [
+        step("customers", 10, 400, 2900, 3000),
+        step("tidy", 12, 420, 2950, 3010),
+        step("aside", 14, 430, 3600, 3610),
+        step("clean", 15, 450, 3900, 3950),
+      ],
+      progress: {
+        at: at(4000),
+        slowest: null,
+        steps: [],
+        edges: edges([
+          ["customers", "tidy"],
+          ["customers", "aside"],
+          ["tidy", "clean"],
+          ["aside", "clean"],
+        ]),
+      },
+    });
+    const t = timeline(d)!;
+    const p = criticalPath(t, d.progress!.edges)!;
+    expect(p.steps).toEqual(["customers", "aside", "clean"]);
+    expect(p.share).toBeCloseTo(0.985, 3);
+    expect(shareWords(0.82)).toBe("82%");
+    expect(peakConcurrent(t)).toBe(4);
+    expect(slowestStep(t)?.step).toBe("clean");
+    expect(shareOfRun(t.rows[0], t.span)).toBeCloseTo(0.7475, 3);
+  });
+
+  test("none while the run goes, or without its connections", () => {
+    expect(criticalPath(timeline(detail())!, [])).toBeNull();
+    const live = timeline(detail({ run: run({ status: "running", finishedAt: null }), steps: [], progress }), T0 + 2500)!;
+    expect(criticalPath(live, progress.edges)).toBeNull();
+    expect(slowestStep(live)?.step).toBe("tidy");
+  });
+
+  test("tiles, the path highlighted with a toggle, and quality markers in words", () => {
+    const d = withEdges([
+      ["customers", "tidy"],
+      ["tidy", "clean"],
+    ]);
+    d.quality = [
+      {
+        step: "tidy",
+        role: "gate",
+        asset: null,
+        measured: null,
+        predicted: null,
+        note: null,
+        gate: {
+          onFail: "quarantine",
+          decision: "quarantined",
+          asset: null,
+          rowsIn: 5000,
+          rowsPassed: 4771,
+          rowsFailing: 229,
+          rowsQuarantined: 229,
+          minScore: null,
+          maxFailingShare: null,
+          stopReason: null,
+          rules: [],
+        },
+      },
+      {
+        step: "clean",
+        role: "output",
+        asset: null,
+        measured: { overall: 0.99, dimensions: {}, reasons: [] },
+        predicted: null,
+        note: null,
+        gate: null,
+      },
+    ];
+    const html = renderToStaticMarkup(<RunTimeline detail={d} />);
+    expect(html).toContain("Wall-clock time");
+    expect(html).toContain("Most steps at once");
+    expect(html).toContain("customers → tidy → clean, 99% of the run");
+    expect(html).toContain("Show the critical path");
+    expect((html.match(/pl-tl-row is-critical/g) ?? []).length).toBe(3);
+    expect(html).toContain("the critical path is customers, tidy, clean");
+    expect(html).toContain(">Quarantined 229<");
+    expect(html).toContain(">Quality 99% (Good)<");
+    expect(qualityMark(d.quality[0])).toEqual({ text: "Quarantined 229", tone: "orange" });
+    expect(qualityMark(undefined)).toBeNull();
   });
 });

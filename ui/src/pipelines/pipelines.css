@@ -726,3 +726,48 @@ main:has(.pl-wide) {
 .pl-log-event > .km-chip {
   justify-self: start;
 }
+
+/* The timeline's tiles, the critical path (a dashed outline and stripes, not colour alone) and the
+   quality marker at the end of a gate's or a write's bar. */
+.pl-tl-tiles {
+  margin-bottom: 16px;
+}
+
+.pl-tl-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.pl-tl-bar.is-critical {
+  outline: 2px dashed var(--km-ink-strong);
+  outline-offset: 1px;
+  background-image: repeating-linear-gradient(90deg, transparent 0 10px, rgb(255 255 255 / 0.35) 10px 12px);
+}
+
+.pl-tl-row.is-critical .pl-tl-step {
+  font-weight: 700;
+  text-decoration: underline dashed;
+  text-underline-offset: 3px;
+}
+
+.pl-tl-key .pl-tl-key-critical {
+  border: 2px dashed var(--km-ink-strong);
+  background: var(--km-accent-fill);
+}
+
+.pl-tl-mark {
+  position: absolute;
+  top: 1px;
+  transform: translateX(-100%);
+  padding-right: 2px;
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.pl-tl-mark .km-chip {
+  font-size: var(--km-text-xs);
+  line-height: 1.4;
+  padding-block: 0;
+}

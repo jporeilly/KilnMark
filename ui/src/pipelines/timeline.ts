@@ -112,3 +112,71 @@ export function rowWords(r: TimelineRow): string {
   const words = parts.join(", ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
+
+/** An edge between steps, as a run's progress lists them. */
+export type TimelineEdge = { from: string; to: string };
+
+/**
+ * The critical path: the chain of steps whose waits set the run's length. From the step that
+ * finished last, walk back through the input whose rows arrived last (the step feeding it whose
+ * last row out came latest, else whose end came latest), to a step with no input. `share` is the
+ * part of the run (start to end, setup and cataloguing included) that the chain spans, from its
+ * first step's start to its last step's end. Null while the run goes, or without times or edges.
+ */
+export function criticalPath(t: Timeline, edges: TimelineEdge[]): { steps: string[]; share: number } | null {
+  if (t.live || edges.length === 0) return null;
+  const byId = new Map(t.rows.map((r) => [r.step, r]));
+  const ended = t.rows.filter((r) => r.end != null && r.start != null);
+  if (ended.length === 0) return null;
+  let at = ended.reduce((a, b) => (b.end! > a.end! ? b : a));
+  const path = [at];
+  const seen = new Set([at.step]);
+  for (;;) {
+    const feeding = edges
+      .filter((e) => e.to === at.step && !seen.has(e.from))
+      .map((e) => byId.get(e.from))
+      .filter((r): r is TimelineRow => r != null && r.start != null);
+    if (feeding.length === 0) break;
+    const key = (r: TimelineRow) => r.lastRow ?? r.end ?? -1;
+    at = feeding.reduce((a, b) => (key(b) > key(a) ? b : a));
+    seen.add(at.step);
+    path.unshift(at);
+  }
+  const share = (path.at(-1)!.end! - path[0].start!) / t.span;
+  return { steps: path.map((r) => r.step), share: Math.max(0, Math.min(1, share)) };
+}
+
+/** The most steps at work at once (each from its start to its end, or to now while it runs). */
+export function peakConcurrent(t: Timeline): number {
+  const marks: [number, number][] = [];
+  for (const r of t.rows) {
+    if (r.start == null) continue;
+    marks.push([r.start, 1], [r.end ?? t.span, -1]);
+  }
+  // Ends before starts at the same moment: a step starting as another ends does not overlap it.
+  marks.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let now = 0;
+  let peak = 0;
+  for (const [, d] of marks) {
+    now += d;
+    peak = Math.max(peak, now);
+  }
+  return peak;
+}
+
+/** Each step's part of the run's time, from its start to its end (or to now): 0 to 1, or null. */
+export function shareOfRun(r: TimelineRow, span: number): number | null {
+  if (r.start == null) return null;
+  return Math.max(0, Math.min(1, ((r.end ?? span) - r.start) / span));
+}
+
+/** The step that took longest, start to end; while the run goes, the one holding it back. */
+export function slowestStep(t: Timeline): TimelineRow | null {
+  const now = t.rows.find((r) => r.slowest);
+  if (t.live) return now ?? null;
+  const timed = t.rows.filter((r) => r.start != null && r.end != null);
+  return timed.length ? timed.reduce((a, b) => (b.end! - b.start! > a.end! - a.start! ? b : a)) : null;
+}
+
+/** A share in words: "82%". */
+export const shareWords = (x: number) => `${Math.round(x * 100)}%`;

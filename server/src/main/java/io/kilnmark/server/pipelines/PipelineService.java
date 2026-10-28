@@ -927,6 +927,9 @@ public class PipelineService {
             putScore(q, "threshold", threshold);
             saveQuality(id, measured, context);
             measuredSaved = true;
+            for (RunQuality.StepQuality sq : measured) {
+                log.gate(sq.step(), sq.gate());
+            }
             for (JsonNode n : notes) {
                 log.server(null, "warn", "run_note", n.path("text").asText(), n.hasNonNull("detail")
                     ? n.get("detail").asText() : null);

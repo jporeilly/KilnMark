@@ -652,6 +652,12 @@ class PipelineFlowTest {
             all);
         assertEquals(List.of("pass", "fail"), run.getList("quality.find { it.step == 'check' }.gate.rules.status"),
             all);
+        // The verdict is in the run's log; the failing rules, with their counts, are its detail.
+        JsonPath verdict = as(Tokens.ADMIN).queryParam("step", "check").get("/api/v1/pipeline-runs/" + id + "/events")
+            .then().statusCode(200).extract().jsonPath();
+        assertTrue(verdict.getList("events.text").contains("Gate check quarantined 500 rows"), verdict.prettify());
+        assertTrue(verdict.getString("events.find { it.kind == 'gate_verdict' }.detail").contains("early ids: 500"),
+            verdict.prettify());
         assertEquals(0.9, run.getDouble("quality.find { it.step == 'check' }.measured.overall"), 1e-6, all);
         assertEquals(0.8, run.getDouble("quality.find { it.step == 'check' }.measured.dimensions.accuracy"), 1e-6,
             all);

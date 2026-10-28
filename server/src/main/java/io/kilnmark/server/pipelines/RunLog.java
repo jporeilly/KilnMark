@@ -122,6 +122,48 @@ final class RunLog implements RunListener {
 
     // ---- what the server says ----
 
+    /**
+     * A gate's verdict, once the run has measured it: "Gate check quarantined 229 rows". The rules
+     * that failed, with their counts, and the gate's stop reason are the detail: a rule's words can
+     * hold values, so they are held back as the engine's are.
+     */
+    void gate(String step, QualityGate.Outcome g) {
+        if (g == null) {
+            return;
+        }
+        String rows = String.format(Locale.UK, "%,d", g.rowsFailing());
+        String text;
+        String level;
+        switch (g.decision()) {
+            case "passed" -> {
+                level = "info";
+                text = "Gate " + step + " passed all " + String.format(Locale.UK, "%,d", g.rowsIn()) + " rows";
+            }
+            case "quarantined" -> {
+                level = "warn";
+                text = "Gate " + step + " quarantined " + String.format(Locale.UK, "%,d", g.rowsQuarantined()) + " rows";
+            }
+            case "stopped" -> {
+                level = "error";
+                text = "Gate " + step + " stopped the run";
+            }
+            default -> {
+                level = "warn";
+                text = "Gate " + step + " let " + rows + " failing rows through with a warning";
+            }
+        }
+        List<String> why = new ArrayList<>();
+        for (QualityGate.RuleOutcome r : g.rules()) {
+            if (r.failing() > 0) {
+                why.add(r.name() + ": " + String.format(Locale.UK, "%,d", r.failing()));
+            }
+        }
+        if (g.stopReason() != null) {
+            why.add(g.stopReason());
+        }
+        server(step, level, "gate_verdict", text, why.isEmpty() ? null : String.join("; ", why));
+    }
+
     /** An event of the server's own: {@code text} its words, {@code detail} anything quoting the engine or data. */
     void server(String step, String level, String kind, String text, String detail) {
         add(Instant.now(), step, level, kind, text, detail == null ? null : context.scrub(detail));

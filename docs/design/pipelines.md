@@ -665,12 +665,21 @@ asset's previous profile.
   the end, through the database because the API may run in another container. The log is
   `pipeline_run_event` (run, seq, at, step or null, level info, warn or error, kind, text, detail),
   written in batches with each snapshot and at the end: the run starting and ending, each step
-  starting, its first row in and out, its last row out and how it ended, the engine's notes and
-  the run's own notes. At most 10,000 events a run, then one `log_truncated`; deleted with the
+  starting, its first row in and out, its last row out and how it ended, the engine's notes, each
+  gate's verdict (`gate_verdict`: "Gate check quarantined 229 rows"; the failing rules with their
+  counts, and a stop reason, are the detail, as a rule's words can hold values) and the run's own
+  notes. At most 10,000 events a run, then one `log_truncated`; deleted with the
   run. An event's `text` is always the server's words ("Step check reported an error"); anything
   an engine says is its `detail`, with the run's secrets blanked out, and is held back exactly as
   the run's error is (below). Storing the log or progress never fails a run: a database error is
   logged and the run goes on.
+- **On the run page** (worked out in the browser from the step times and the last snapshot's
+  edges): tiles for wall-clock time, most steps at once, the longest step and the critical path,
+  and each step's share of the run. The critical path walks back from the step that finished
+  last, at each step through the input step whose last row out came latest (else whose end
+  came latest), to a step with no input; its share is its first start to its last end over the
+  run's whole time (setup and cataloguing included). It is marked with a dashed outline and a
+  toggle; a gate's bar ends with its decision and a write's with its measured score.
 - **API.** The run view adds each step's times and `progress`. `GET
   /api/v1/pipeline-runs/{id}/events?step=&level=&after=&limit=` pages the log (`level` is the least
   serious shown; `next` is the `after` of the next page; at most 1,000 a page) and

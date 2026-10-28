@@ -79,6 +79,31 @@ class RunLogTest {
     }
 
     @Test
+    void aGatesVerdictIsInTheLogWithItsReasonsAsTheDetail() {
+        Kept store = new Kept();
+        RunLog log = new RunLog(store, 7, context(), JSON);
+        QualityGate.RuleOutcome email = new QualityGate.RuleOutcome("email format", "pattern", "email", "validity",
+            "inline", "fail", 229, 5000, "'ann@' is not an email");
+        QualityGate.RuleOutcome ok = new QualityGate.RuleOutcome("id present", "not_null", "id", "completeness",
+            "inline", "pass", 0, 5000, null);
+        log.gate("check", new QualityGate.Outcome("quarantine", "quarantined", null, 5000, 4771, 229, 229, 0.95,
+            java.util.Map.of(), List.of(), List.of(email, ok), null, null, null));
+        log.gate("strict", new QualityGate.Outcome("stop", "stopped", null, 10, 0, 10, 0, 0.0, java.util.Map.of(),
+            List.of(), List.of(), null, null, "10 of 10 rows failed"));
+        log.gate("none", null);
+        log.flush();
+        assertEquals(2, store.events.size());
+        PipelineStore.Event q = store.events.get(0);
+        assertEquals("gate_verdict", q.kind());
+        assertEquals("warn", q.level());
+        assertEquals("Gate check quarantined 229 rows", q.text());
+        assertEquals("email format: 229", q.detail());
+        assertEquals("error", store.events.get(1).level());
+        assertEquals("Gate strict stopped the run", store.events.get(1).text());
+        assertEquals("10 of 10 rows failed", store.events.get(1).detail());
+    }
+
+    @Test
     void theLogStopsAtTenThousandEventsAndSaysSo() {
         Kept store = new Kept();
         RunLog log = new RunLog(store, 7, context(), JSON);
