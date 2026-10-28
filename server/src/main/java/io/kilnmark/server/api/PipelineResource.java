@@ -39,6 +39,10 @@ public class PipelineResource {
     private final PipelineService pipelines;
     private final SecurityIdentity identity;
 
+    /** Previews at a step: the first rows leaving one step, read live and never kept. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.pipelines.PipelinePreviews previews;
+
     /** Who is looking: a failed run's messages may quote values from the data (see PipelineService). */
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
@@ -133,6 +137,64 @@ public class PipelineResource {
             throw new IllegalArgumentException("Send {\"yaml\": \"...\"}");
         }
         return pipelines.suggest(body.yaml(), !Boolean.FALSE.equals(body.ai()), who(), sights);
+    }
+
+    @POST
+    @Path("preview")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @Operation(summary = "Preview a step", description = "The first rows leaving one output of one step of pipeline "
+        + "YAML as it stands, saved or not: its columns with their kinds, the rows (100 by default, at most 1,000), "
+        + "how long it took and, when a step before it reads all its rows first (an aggregate, a lookup's lookup "
+        + "side), that in words. Only the step and the steps upstream of it run, and nothing is written: a preview "
+        + "needing a write, or a step that could change anything, is refused. Read live and never kept. For all but "
+        + "admins, columns marked sensitive may only pass through unchanged and are masked; a preview in which any "
+        + "step looks at their values (an expression, a key, a cast or a gate's rule) is refused. At most 30 "
+        + "seconds and 50 steps; one preview per person at a time, six a minute. Role: steward.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The rows"),
+        @APIResponse(responseCode = "400", description = "No YAML or step, YAML over the size limit or with problems "
+            + "in the part that would run, an unknown step or port, rows out of range, or a step that cannot run in "
+            + "a preview"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not a steward, or a step would look at the values of a "
+            + "column marked sensitive"),
+        @APIResponse(responseCode = "422", description = "The preview ran but could not give rows: a step failed, "
+            + "it took too long, or a source could not be reached"),
+        @APIResponse(responseCode = "429", description = "A preview of yours is running, or too many previews")})
+    public Response preview(PipelineViews.PreviewRequest body,
+                            @jakarta.ws.rs.core.Context io.vertx.core.http.HttpServerRequest request) {
+        if (body == null) {
+            throw new IllegalArgumentException("Send {\"yaml\": \"...\", \"step\": \"...\"}");
+        }
+        return noStore(previews.preview(body.yaml(), body.step(), body.port(), body.rows(), who(), role(), sights,
+            abandoned(request)));
+    }
+
+    @POST
+    @Path("{name}/versions/{n}/preview")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @Operation(summary = "Preview a step of a version", description = "As POST /api/v1/pipelines/preview, for a saved "
+        + "version: send step, and port and rows if wanted. Role: steward.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The rows"),
+        @APIResponse(responseCode = "400", description = "No step, an unknown step or port, rows out of range, or a "
+            + "step that cannot run in a preview"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not a steward, or a step would look at the values of a "
+            + "column marked sensitive"),
+        @APIResponse(responseCode = "404", description = "No such pipeline or version"),
+        @APIResponse(responseCode = "422", description = "The preview ran but could not give rows"),
+        @APIResponse(responseCode = "429", description = "A preview of yours is running, or too many previews")})
+    public Response previewVersion(@PathParam("name") String name, @PathParam("n") int n,
+                                   PipelineViews.PreviewRequest body,
+                                   @jakarta.ws.rs.core.Context io.vertx.core.http.HttpServerRequest request) {
+        if (body == null) {
+            throw new IllegalArgumentException("Send {\"step\": \"...\"}");
+        }
+        return noStore(previews.previewVersion(name, n, body.step(), body.port(), body.rows(), who(), role(), sights,
+            abandoned(request)));
     }
 
     @GET
@@ -271,6 +333,23 @@ public class PipelineResource {
         @APIResponse(responseCode = "404", description = "No such pipeline")})
     public List<PipelineViews.RunSummary> runs(@PathParam("name") String name, @QueryParam("limit") Integer limit) {
         return pipelines.runs(name, limit == null ? 20 : limit, sights);
+    }
+
+    /** A preview as a response no browser or proxy keeps: the rows are the sources' data. */
+    private static Response noStore(PipelineViews.StepPreviewView preview) {
+        jakarta.ws.rs.core.CacheControl none = new jakarta.ws.rs.core.CacheControl();
+        none.setNoStore(true);
+        none.setNoCache(true);
+        return Response.ok(preview).cacheControl(none).build();
+    }
+
+    /** Whether the caller has gone: the connection carrying this request was closed. */
+    private static java.util.function.BooleanSupplier abandoned(io.vertx.core.http.HttpServerRequest request) {
+        return () -> request != null && request.response().closed();
+    }
+
+    private AccessRole role() {
+        return identity.hasRole(AccessRole.ADMIN_ROLE) ? AccessRole.ADMIN : AccessRole.STEWARD;
     }
 
     private static jakarta.ws.rs.core.EntityTag etag(PipelineViews.PipelineDetail d) {

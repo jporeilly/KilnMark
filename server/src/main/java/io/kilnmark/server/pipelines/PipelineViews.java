@@ -29,6 +29,34 @@ public final class PipelineViews {
     public record RunRequest(Integer version) {
     }
 
+    /**
+     * {@code POST /api/v1/pipelines/preview}: the pipeline as it stands (saved or not), the step to
+     * preview, which of its outputs ({@code out}, or its first, when left out) and how many rows
+     * (100 when left out, at most 1,000). {@code yaml} is not read for a saved version's preview.
+     */
+    public record PreviewRequest(String yaml, String step, String port, Integer rows) {
+    }
+
+    // ---- previews ----
+
+    /** A column of a preview: its name and the engine's kind of value; {@code sourceType} is always null here. */
+    public record PreviewColumn(String name, String kind, String sourceType) {
+    }
+
+    /**
+     * The first rows leaving one output of one step. Shaped as a source's preview ({@code asset},
+     * {@code columns}, {@code rows}, {@code rowCount}, {@code truncated}, {@code details}) plus:
+     * {@code complete}, true when the step gave fewer rows than asked for (these are all of them);
+     * {@code millis}, how long the preview took; {@code masked}, the columns whose values are
+     * hidden from the caller; {@code waits}, steps that read all their rows (or one side) before
+     * passing any on, in words.
+     */
+    public record StepPreviewView(String step, String port, String asset, List<PreviewColumn> columns,
+                                  List<List<String>> rows, int rowCount, boolean truncated,
+                                  java.util.Map<String, String> details, boolean complete, long millis,
+                                  List<String> masked, List<String> waits) {
+    }
+
     // ---- responses ----
 
     /**

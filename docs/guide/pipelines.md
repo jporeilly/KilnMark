@@ -144,6 +144,42 @@ the steps after it keep up, so it is the one to look at first (a slow query in a
 **Run now** runs the saved version. If you have changes that are not saved, Kilnmark says so first
 and asks you to confirm; save them to run them.
 
+### Preview a step
+
+To see the rows leaving a step before you run anything, right-click it (Ctrl+click on a Mac) and
+choose **Preview rows**,
+or select it and open the **Preview** tab beside its settings. From the keyboard, press Shift+F10
+(or the menu key) on a step for the same menu. For a step with more than one output, such as a
+quality gate's **out** and **quarantine** or a filter's **out** and **rejected**, choose the
+**Output**; choose how many **Rows** to see (100 unless you choose another number, at most 1,000).
+
+The preview runs the pipeline as it is on the canvas, saved or not, but only the step and the steps
+before it. Nothing is written: writes never run in a preview, and a gate's quarantined rows go
+nowhere. It shows the columns with their kinds, the rows, and how long it took. Each step before it
+stops as soon as the preview has its rows, so a preview of a large table is quick, unless a step
+before it has to read all its rows first: an aggregate, or a lookup's lookup side. The preview then
+says so, and a preview stops after 30 seconds. To try such a pipeline out, set a **Row limit** on
+the read step for a while.
+
+Previews follow the same rules as previewing a source:
+
+- They are for stewards and admins. Each person runs one preview at a time and up to six a minute,
+  and a server runs two at once. A preview runs at most 50 steps, 10 of them reads; a step that holds
+  rows (an aggregate, a dedupe, a lookup or a union) is given a share of the preview's memory,
+  whatever its own `memory_limit_mb` says.
+- Sources are reached as a run reaches them, with their saved credentials and the allowed hosts.
+- Columns marked sensitive can pass through a preview, kept, renamed or carried along, and are
+  masked (••••) for everyone but admins. But no step before the one you preview may look at their
+  values: a calculation or condition that uses one, a cast, a group, dedupe or lookup key on one,
+  or a quality gate with a rule on one. For everyone but admins such a preview is refused, and
+  says which step and column, because the rows shown, a value worked out from it, or even whether
+  the preview works, could give the values away. Preview the step before it, or ask an admin.
+- When a step fails, its message may quote values from the rows; if anything read has columns
+  marked sensitive, only admins see it, as with a run's errors.
+
+The rows are read when you ask and not kept. After you change the pipeline, the preview says it is
+out of date; choose **Preview again**.
+
 ### Using the keyboard
 
 Everything on the canvas can be done without a mouse. Press Tab to move from step to step (each
@@ -160,6 +196,7 @@ list:
 | Arrow keys in the step list | Up and down through the folders and steps; Right opens a folder, Left closes it; Enter adds the step. On the rail, Right opens a folder's steps beside it |
 | C | **Connect to…**: a list of the steps this step can send rows to or read rows from |
 | Enter | Go to the step's settings |
+| Shift+F10 or the menu key | The step's menu: **Preview rows**, **Settings**, **Connect to…**, **Duplicate**, **Remove** |
 | Delete or Backspace | Remove the step (or a connection you clicked) |
 | Ctrl+D | Duplicate the step |
 | Ctrl+Z; Ctrl+Shift+Z or Ctrl+Y | Undo; redo |

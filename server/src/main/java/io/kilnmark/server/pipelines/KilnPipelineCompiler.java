@@ -34,6 +34,14 @@ final class KilnPipelineCompiler implements PipelineCompilerPort {
         return map(new PipelineCompiler(factories).compile(yaml), factories, true);
     }
 
+    /**
+     * Checks a pipeline built in code (a preview's cut-down pipeline) and, with {@code create},
+     * creates its steps as {@link #compile} does: called inside {@link RunContext#run} then.
+     */
+    static Compilation compile(PipelineDefinition definition, StepFactories factories, boolean create) {
+        return map(new PipelineCompiler(factories).compile(definition), factories, create);
+    }
+
     private static Compilation map(Compiled c, StepFactories factories, boolean create) {
         List<PipelineCompilerPort.Problem> problems = new ArrayList<>(c.problems().stream()
             .map(KilnPipelineCompiler::problem).toList());

@@ -87,6 +87,10 @@ public final class KilnGraphRunner implements GraphRunner {
     private final int rowSetCapacity;
     private final Duration stallTimeout;
     private final Duration progressEvery;
+    /** How long a stopped run waits for its steps' threads; null waits until they end. */
+    private final Duration stopWait;
+    /** Threads a stopped run stopped waiting for (see {@link #threadsLeftRunning()}). */
+    private final java.util.List<Thread> leftRunning = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /**
      * @param memoryLimitBytes Arrow memory the whole run may hold at once
@@ -114,6 +118,18 @@ public final class KilnGraphRunner implements GraphRunner {
      * @param progressEvery    how often a {@link RunListener} hears where the rows are
      */
     public KilnGraphRunner(long memoryLimitBytes, int rowSetCapacity, Duration stallTimeout, Duration progressEvery) {
+        this(memoryLimitBytes, rowSetCapacity, stallTimeout, progressEvery, null);
+    }
+
+    /**
+     * As {@link #KilnGraphRunner(long, int, Duration, Duration)}, with {@code stopWait}: how long a
+     * run stopped by interruption waits for its steps' threads before {@link #run} throws anyway
+     * (null: until they end). A step stuck where an interrupt cannot reach it (a blocking call that
+     * ignores it) is then left to end on its own, with a warning naming it, and listed by
+     * {@link #threadsLeftRunning()}; its memory is released as it can be.
+     */
+    public KilnGraphRunner(long memoryLimitBytes, int rowSetCapacity, Duration stallTimeout, Duration progressEvery,
+                           Duration stopWait) {
         if (progressEvery == null || progressEvery.isNegative() || progressEvery.isZero()) {
             throw new IllegalArgumentException("progressEvery must be positive");
         }
@@ -127,6 +143,15 @@ public final class KilnGraphRunner implements GraphRunner {
         this.memoryLimitBytes = memoryLimitBytes;
         this.rowSetCapacity = rowSetCapacity;
         this.stallTimeout = stallTimeout;
+        this.stopWait = stopWait == null || stopWait.isNegative() ? null : stopWait;
+    }
+
+    /**
+     * The steps' threads still running when a run stopped by interruption gave up waiting for them
+     * ({@code stopWait}), so a caller can wait for them, or count them, itself. Empty otherwise.
+     */
+    public java.util.List<Thread> threadsLeftRunning() {
+        return java.util.List.copyOf(leftRunning);
     }
 
     /**
@@ -647,6 +672,11 @@ public final class KilnGraphRunner implements GraphRunner {
                     if (Thread.currentThread().isInterrupted()) {
                         throw new InterruptedException();
                     }
+                    if (!n.stoppedByEngine && nobodyReads(n)) {
+                        // Every step reading it has finished, but it only wrote to ports with nothing
+                        // connected since, so no write told it: it ends early, as a write would have.
+                        throw new EveryReaderFinished();
+                    }
                 }
                 boolean early = n.inputs.values().stream().flatMap(List::stream).anyMatch(r -> !r.rowSet.atEnd());
                 releaseInputs(n);
@@ -654,11 +684,12 @@ public final class KilnGraphRunner implements GraphRunner {
                 n.outcome = !ended ? RunResult.Outcome.STOPPED
                     : early ? RunResult.Outcome.ENDED_EARLY : RunResult.Outcome.FINISHED;
             } catch (Throwable t) {
-                boolean seen = t instanceof RowSet.UpstreamFailedException || t instanceof RowSet.CancelledException;
+                boolean cancelled = t instanceof RowSet.CancelledException || t instanceof EveryReaderFinished;
+                boolean seen = t instanceof RowSet.UpstreamFailedException || cancelled;
                 if (!seen && !n.stoppedByEngine) {
                     recordError(n, describe(n, t), false);
                 }
-                if (t instanceof RowSet.CancelledException && !failed.get()) {
+                if (cancelled && !failed.get()) {
                     // every step reading this one has finished and nothing failed: end early too
                     releaseInputs(n);
                     n.outcome = finishOutputs(n) ? RunResult.Outcome.ENDED_EARLY : RunResult.Outcome.STOPPED;
@@ -677,6 +708,19 @@ public final class KilnGraphRunner implements GraphRunner {
                 }
                 n.finishedNanos = System.nanoTime();
             }
+        }
+
+        /** Whether the step has outputs and every one of them has been let go by the steps reading it. */
+        private static boolean nobodyReads(Node n) {
+            if (n.outputs.isEmpty()) {
+                return false;
+            }
+            for (Port p : n.outputs.values()) {
+                if (!p.rowSet.isCancelled()) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private String describe(Node n, Throwable t) {
@@ -935,10 +979,22 @@ public final class KilnGraphRunner implements GraphRunner {
          */
         private void joinAll() {
             boolean interrupted = false;
+            long deadline = stopWait == null ? 0 : System.nanoTime() + stopWait.toNanos();
             Thread t;
             while ((t = threads.peek()) != null) {
                 try {
-                    t.join();
+                    if (stopWait == null) {
+                        t.join();
+                    } else {
+                        long left = deadline - System.nanoTime();
+                        if (left <= 0 || !t.join(Duration.ofNanos(left))) {
+                            threads.stream().filter(Thread::isAlive).forEach(leftRunning::add);
+                            LOG.log(System.Logger.Level.WARNING, "Run {0}: stopped, but these steps had not ended "
+                                + "after {1}; left to end on their own: {2}", graph.name(), stopWait,
+                                threads.stream().filter(Thread::isAlive).map(Thread::getName).toList());
+                            break;
+                        }
+                    }
                     threads.poll();
                 } catch (InterruptedException again) {
                     interrupted = true;
@@ -1371,6 +1427,16 @@ public final class KilnGraphRunner implements GraphRunner {
         public Schema inputSchema(String port, int index) {
             Schema s = node.graphStep.inputSchemas().get(port + "[" + index + "]");
             return s != null || index != 0 ? s : node.graphStep.inputSchemas().get(port);
+        }
+    }
+
+    /** A step's readers have all finished while it wrote only to ports with nothing connected. */
+    private static final class EveryReaderFinished extends RuntimeException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        EveryReaderFinished() {
+            super("every step reading it has finished", null, false, false);
         }
     }
 }

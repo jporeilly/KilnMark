@@ -32,7 +32,7 @@ class SightsUseTest {
         + "|errorDetail\\(\\)|store\\.sample\\(|store\\.drift\\(|store\\.results\\(|store\\.measures\\("
         + "|quality\\.preview\\(|connector\\.preview\\(|texts\\.page|documents\\.chunks\\(|Masking\\.profile\\("
         + "|hybrid\\.search\\(|ask\\.ask\\(|StandardFormats\\.(odcs|openLineage)\\("
-        + "|pipelines\\.(predict|predictVersion|suggest)\\(");
+        + "|pipelines\\.(predict|predictVersion|suggest)\\(|previews\\.(preview|previewVersion)\\(");
     /** Working masking out apart from {@link Sights}. */
     static final Pattern OWN_MASKING = Pattern.compile("(store|quality)\\.sensitive\\("
         + "|new (io\\.kilnmark\\.server\\.quality\\.)?Masking\\.Sight\\(");

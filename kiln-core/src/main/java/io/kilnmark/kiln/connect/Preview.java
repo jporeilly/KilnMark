@@ -142,7 +142,7 @@ public record Preview(List<Column> columns, List<List<String>> rows, boolean tru
     }
 
     /** The length of a string in UTF-8, without encoding it. */
-    static long utf8Length(String s) {
+    public static long utf8Length(String s) {
         long n = 0;
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
@@ -161,7 +161,7 @@ public record Preview(List<Column> columns, List<List<String>> rows, boolean tru
     }
 
     /** A value as people read it: text cut at {@value #MAX_VALUE} characters, bytes as hex with their length. */
-    static String text(Object value) {
+    public static String text(Object value) {
         if (value == null) {
             return null;
         }

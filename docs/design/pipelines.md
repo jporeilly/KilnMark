@@ -799,14 +799,98 @@ asset's previous profile.
   step reading from itself, loops, a single-input port fed twice, and the same edge twice (two
   ports of one step may both feed a port that takes many). References split at the last dot, as
   `PortRef.parse` does.
-- Later: data previews at a step. Each write's and gate's predicted score shows on the canvas
-  (step 3, built).
+- Data previews at a step (built, below). Each write's and gate's predicted score shows on the
+  canvas (step 3, built).
+
+### Preview at a step (decisions)
+
+The first rows leaving one output of one step, for the pipeline as it stands on the canvas, saved
+or not (`POST /api/v1/pipelines/preview` {yaml, step, port?, rows?}; for a saved version
+`POST .../{name}/versions/{n}/preview`). `StepPreview` holds the engine-facing parts and
+`PipelinePreviews` the server's.
+
+- **What runs.** The YAML is read, then cut down to the chosen step and every step whose rows reach
+  it (by the inputs the steps name), in the order written, and that `PipelineDefinition` is compiled
+  (`KilnPipelineCompiler.compile(definition, …)`). Problems elsewhere in the pipeline do not stop a
+  preview; problems in the part that runs do (400). The chosen output (`out`, or the step's first,
+  unless `port` names another) feeds an in-memory collector (id `Preview`: a capital letter, so never
+  one of the pipeline's ids) that keeps the first N rows as text, as a source's preview writes values,
+  and then finishes, so "A step that ends early" (section 1) stops the steps before it. Other output
+  ports of those steps have nothing connected, and their rows are dropped.
+- **Nothing is written.** Only `read`, `filter`, `compute`, `select`, `lookup`, `aggregate`, `union`,
+  `dedupe`, `route`, `limit` and `gate` may run in a preview: an allow-list, so a step type added
+  later is refused until it is known to have no side effects. A write is never upstream (it has no
+  outputs); previewing one is refused, and so is any other step type, before anything is created. A
+  gate's quarantine targets are writes downstream of it and never run; a preview records nothing
+  (its metadata events are dropped, no run or step row is stored).
+- **Ending early with unconnected ports.** Building this showed that a step whose only connected
+  output had finished kept reading when it wrote only to unconnected ports (a filter previewed at
+  `rejected`), since only a write to a finished reader told it. `KilnGraphRunner` now checks after
+  each `process` call: when every connected output has been let go, the step ends early as it would
+  on a refused write.
+- **Steps without a type** in the part that runs are refused plainly before anything is checked.
+- **Where and how long.** On the API process, synchronously: the caller waits for rows, a preview is
+  bounded (rows, time, memory, steps) like a source's preview, and the worker queue's latency would
+  make it slow to use. Who may start one is checked before any work: one preview per person at a
+  time, `previews-per-minute` (6) per person (not used up when the next check refuses), and
+  `preview-concurrency` (2) at once in a process (429 otherwise). Then the plan: at most
+  `preview-max-steps` (50) steps and `preview-max-reads` (10) read steps, and each step holding rows
+  in its own state (aggregate, dedupe, lookup, union; that state is Java heap counted against its
+  `memory_limit_mb`, which YAML may set very high) has its limit set to its share of
+  `preview-memory-limit-mb` (256), whatever was written (a lower whole number is kept; a decimal,
+  text or anything larger becomes the share). The steps are created and run on a thread of their own, and the
+  request waits for them at most `preview-timeout` (30 seconds), or until its HTTP connection
+  closes: it then interrupts that thread, waits two seconds' grace, and answers 422 whatever the
+  steps are doing. The preview's `KilnGraphRunner` (its own Arrow memory limit, the run's row set
+  capacity, the time limit as its stall timeout) waits at most five seconds for its steps to stop
+  (`KilnGraphRunner`'s `stopWait`; a step stuck where an interrupt cannot reach it is left to end
+  on its own, with a warning naming it, and reported by `threadsLeftRunning()`). A preview answered
+  while still stopping, or whose steps the engine stopped waiting for, keeps its two slots until
+  every one of its threads has ended, is logged when it ends and counted (`PipelinePreviews.stillStopping`), so stuck
+  previews can fill the slots but never the process. Two at once, each up to 256 MB of Arrow memory,
+  sit beside a run's own 1,024 MB when one process has both roles. Steps that read all their rows
+  before passing any on (an aggregate, a lookup's lookup side) are named in the answer, and in the
+  message when the time runs out.
+- **Same rules as previewing the sources.** Steward or admin (`@RolesAllowed`), with the existing
+  error format. The steps are created inside a `RunContext` naming the caller and their role, so
+  reads resolve their saved sources, secrets and allowed hosts as a run's do, and messages have the
+  secrets blanked out.
+- **Columns marked sensitive: through, never inside.** For all but admins the rule is general:
+  a column marked sensitive may pass through a preview untouched (kept, dropped, reordered,
+  renamed, unioned, limited, carried by a lookup), and is masked where it leaves; no step upstream
+  may look inside one. A preview is refused (403, "Only an admin can preview this: step … chooses
+  rows by email, which is marked sensitive …") when any step names one in an expression (compute,
+  filter, route, aggregate values, including casts and function calls), groups, deduplicates or
+  matches by one (aggregate `group_by`, dedupe `key`, or whole rows when it has none, lookup `on`),
+  changes its type (`select`'s `cast`, or a union converting it between its inputs' types: the inputs
+  must agree on its kind, a decimal may come from one input only, and inputs whose columns are not
+  known count as disagreeing) or checks it with a rule (a gate, whatever its `on_fail`, with its own
+  rules or the asset's; a rule's columns are found as `RowChecks` finds them, `unique` by its
+  `fields`, and a rule whose columns are not known counts as checking every column). Masking a value is not enough there: the rows kept, a computed value
+  and even whether the preview succeeds or fails can each tell it (a gate with `max_failing_share: 0`
+  checking `name` against `^Ada$` on one row answers yes or no). The marks are read through the
+  request's `Sights`, for every URN an asset read may be catalogued under (as written, as the
+  catalogue escapes a file's path, and as the connector resolved it), before anything connects and
+  again once the steps exist. Columns are followed by name ignoring case, and a column once hidden
+  stays hidden: a computed column sharing its name in any case (`NAME: "'x'"` beside `name`) is
+  masked as well, so nothing can un-hide one. Values are masked (`••••`, nulls stay null, as in a
+  source's preview) inside the collector as rows are taken, so no hidden value is held and the size
+  cap counts what is shown. A failure's message, which may quote values, is shown only when nothing
+  read has columns marked sensitive or the caller is an admin, as for a run's errors ("Only admins
+  can see why").
+- **UI.** A step's context menu on the canvas (right-click, Ctrl+click on a Mac, or Shift+F10 or
+  the menu key on a focused step; a right-click does not select the step first, so the drawer does
+  not open under the pointer) with Preview rows, Settings, Connect to…, Duplicate and Remove; a Preview tab in the
+  step's drawer, wider while it is open, with the output and rows, Stop, and the rows in
+  `PreviewTable`. A preview made before the YAML changed says it is out of date. The menu's Preview
+  runs once: the canvas clears its ask when the tab has acted on it, so switching tabs or steps does
+  not run it again.
 
 ## 7. Next
 
 - **Step 2, the canvas:** drag steps from the catalogue, connect ports, a settings panel built
-  from each step's settings schema, YAML side by side kept in sync, data previews at any step,
-  keyboard operation.
+  from each step's settings schema, YAML side by side kept in sync, data previews at any step
+  (done; "Preview at a step" above), keyboard operation.
 - **Step 3, quality:** the gate step and measured scores per run and output, with the
   pipeline's `quality.min_score` and `pipeline_low_quality` (done; docs/guide/pipelines.md,
   "Quality gates"); predicted scores beside the measured ones and suggestions (done;

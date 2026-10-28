@@ -372,6 +372,33 @@ public interface KilnmarkConfig {
          */
         @WithDefault("30s")
         Duration waitForTarget();
+
+        /** Arrow memory one preview at a step may hold at once, across its steps: less than a run. */
+        @WithDefault("256")
+        long previewMemoryLimitMb();
+
+        /** How long one preview at a step may take before it is stopped. */
+        @WithDefault("30s")
+        Duration previewTimeout();
+
+        /** Previews at a step one person may start in any minute. */
+        @WithDefault("6")
+        int previewsPerMinute();
+
+        /**
+         * Previews at a step running at the same time in this process (each person runs one at a time).
+         * Each may hold {@code preview-memory-limit-mb} of Arrow memory beside the runs' own.
+         */
+        @WithDefault("2")
+        int previewConcurrency();
+
+        /** The most steps one preview at a step may run. */
+        @WithDefault("50")
+        int previewMaxSteps();
+
+        /** The most read steps one preview at a step may run. */
+        @WithDefault("10")
+        int previewMaxReads();
     }
 
     interface Scan {

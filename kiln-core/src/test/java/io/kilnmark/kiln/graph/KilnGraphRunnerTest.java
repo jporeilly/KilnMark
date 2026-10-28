@@ -261,6 +261,100 @@ class KilnGraphRunnerTest {
     }
 
     @Test
+    void aStepWritingOnlyToAnUnconnectedPortEndsWhenItsReadersHaveFinished() throws Exception {
+        // The first batch goes to "first", which a collector reads and then stops; every batch after
+        // goes to "rest", which nothing reads. No write tells the step its reader has gone, yet it
+        // must end early rather than read its whole input.
+        Generate gen = new Generate(100_000, 10);
+        Step firstOnly = new Step() {
+            private boolean sent;
+
+            @Override
+            public String type() {
+                return "first-only";
+            }
+
+            @Override
+            public void init(StepContext context) {
+            }
+
+            @Override
+            public boolean process(StepContext context) throws StepException {
+                try {
+                    VectorSchemaRoot b = context.input().take(context.allocator());
+                    if (b == null) {
+                        return false;
+                    }
+                    context.emit(sent ? "rest" : "first", b);
+                    sent = true;
+                    return true;
+                } catch (InterruptedException e) {
+                    throw Toys.interrupted(e);
+                }
+            }
+        };
+        Collect head = new Collect();
+        head.limit = 1;
+        RunResult r = new G().step("gen", gen).step("split", firstOnly).step("head", head)
+            .edge("gen", "split").edge("split.first", "head").run(64L << 20, 2);
+        assertTrue(r.succeeded(), r.error());
+        assertEquals(10, head.rows.get());
+        assertEquals(RunResult.Outcome.ENDED_EARLY, r.step("split").outcome());
+        assertTrue(gen.sent.get() < 1_000, "sent " + gen.sent.get());
+    }
+
+    @Test
+    void aStoppedRunWaitsOnlySoLongForAStepThatIgnoresInterrupts() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch inside = new CountDownLatch(1);
+        Step stuck = new Step() {
+            @Override
+            public String type() {
+                return "stuck";
+            }
+
+            @Override
+            public void init(StepContext context) {
+            }
+
+            @Override
+            public boolean process(StepContext context) {
+                inside.countDown();
+                while (true) {
+                    try {
+                        release.await();
+                        return false;
+                    } catch (InterruptedException ignored) {
+                        // an interrupt does not reach it
+                    }
+                }
+            }
+        };
+        PipelineGraph g = new PipelineGraph("stuck", List.of(new GraphStep("s", stuck, Map.of())), List.of());
+        AtomicReference<Object> outcome = new AtomicReference<>();
+        Thread caller = Thread.ofVirtual().start(() -> {
+            try {
+                outcome.set(new KilnGraphRunner(64L << 20, 2, Duration.ofSeconds(30), KilnGraphRunner.DEFAULT_PROGRESS_EVERY,
+                    Duration.ofMillis(300))
+                    .run(g, e -> { }));
+            } catch (InterruptedException e) {
+                outcome.set(e);
+            }
+        });
+        try {
+            assertTrue(inside.await(10, TimeUnit.SECONDS));
+            long started = System.nanoTime();
+            caller.interrupt();
+            caller.join(Duration.ofSeconds(10));
+            assertFalse(caller.isAlive(), "run returned though its step had not ended");
+            assertInstanceOf(InterruptedException.class, outcome.get());
+            assertTrue(System.nanoTime() - started < Duration.ofSeconds(5).toNanos());
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
     void aStepWithTwoOutputsGoesOnWhenOneReaderStopsEarly() throws Exception {
         Collect evens = new Collect();
         evens.limit = 1;
