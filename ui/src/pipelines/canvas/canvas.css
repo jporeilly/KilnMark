@@ -519,61 +519,60 @@
   border-color: var(--km-accent);
 }
 
+/*
+ * The chips under a step (StepNode's stepChips): a row per kind, each row one chip high, so a
+ * step's height is known before it is drawn (layout.ts nodeHeight: BADGE_ROW per row). Rows and
+ * outcome are neutral, measured quality is solid and toned by score, predicted quality is a dashed
+ * violet outline (an estimate, in the AI hue, never a traffic light), and a gate's counts are text.
+ */
 .cv-node-foot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 10px 8px;
+  display: grid;
+  gap: 4px;
+  padding: 0 10px 6px;
 }
 
-.cv-badge {
+.cv-node-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  min-height: 20px;
+}
+
+.cv-node .cv-node-chip {
+  gap: 4px;
+  height: 20px;
+  max-width: 100%;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 18px;
+  box-sizing: border-box;
+}
+
+.cv-node-chip-icon {
+  flex: none;
+}
+
+.cv-node-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-node-gate {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 1px 8px;
-  border-radius: var(--km-radius-pill);
+  max-width: 100%;
+  height: 20px;
   font-size: 11px;
   font-weight: 600;
-  background: var(--km-tint-slate-bg);
-  color: var(--km-tint-slate-fg);
+  color: var(--km-ink-soft);
 }
 
-.cv-badge-bad,
-.cv-run-failed {
-  background: var(--km-tint-red-bg);
-  color: var(--km-tint-red-fg);
-}
-
-.cv-run-finished {
-  background: var(--km-tint-green-bg);
-  color: var(--km-tint-green-fg);
-}
-
-.cv-run-ended_early,
-.cv-run-stopped {
-  background: var(--km-tint-amber-bg);
-  color: var(--km-tint-amber-fg);
-}
-
-.cv-quality-good {
-  background: var(--km-tint-green-bg);
-  color: var(--km-tint-green-fg);
-}
-
-.cv-quality-fair {
-  background: var(--km-tint-amber-bg);
-  color: var(--km-tint-amber-fg);
-}
-
-.cv-quality-poor,
-.cv-quality-stopped {
-  background: var(--km-tint-red-bg);
-  color: var(--km-tint-red-fg);
-}
-
-.cv-quality-none {
-  background: var(--km-tint-slate-bg);
-  color: var(--km-tint-slate-fg);
+.cv-node-gate.is-stopped {
+  color: var(--km-ink);
 }
 
 .cv-quality-dims,
@@ -950,11 +949,14 @@ button.cv-danger {
   .cv-flow .cv-handle {
     border-color: CanvasText;
   }
-}
 
-/* Predicted quality: an estimate, so its badge has a dashed outline beside the measured one. */
-.cv-predicted-badge {
-  border: 1px dashed currentColor;
+  .cv-node .km-chip {
+    border: 1px solid CanvasText;
+  }
+
+  .cv-node .km-chip--outline {
+    border-style: dashed;
+  }
 }
 
 .cv-tool.is-on {

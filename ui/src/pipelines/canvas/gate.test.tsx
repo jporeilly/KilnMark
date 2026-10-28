@@ -217,8 +217,9 @@ describe("measured quality in words", () => {
       </ReactFlowProvider>,
     );
     expect(out).toContain("1,000 rows out · Finished");
-    expect(out).toContain('class="cv-badge cv-quality cv-quality-fair"');
-    expect(out).toContain("Quality 90% (Fair) · 900 passed · 100 quarantined");
+    expect(out).toMatch(/class="km-chip km-chip--warn cv-node-chip cv-quality"[^>]*data-kind="measured"/);
+    expect(out).toContain("Quality 90% (Fair)");
+    expect(out).toMatch(/data-kind="gate"[^>]*>.*900 passed · 100 quarantined/);
     expect(out).toMatch(/cv-port-out">quarantine/);
   });
 });

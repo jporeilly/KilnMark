@@ -124,6 +124,16 @@ Poor), and a gate what it did with the rows, such as "900 passed · 100 quaranti
 [Predicted quality](#predicted-quality)). The steps table under the canvas, and the step's settings panel
 with its score per dimension and each rule's result, say the same in words.
 
+Each kind has its own look, and its own words, so none depends on colour: the rows (and
+"Finished") in a grey chip with a rows icon, with Ended early, Stopped or Failed in a chip of its
+own; the measured score in a solid chip with a gauge icon, green, amber or red as its word says;
+the prediction in a violet chip with a dashed edge and a sparkles icon, **Predicted ≈ 97%**, as it
+is an estimate; and a gate's counts as plain text. Each is on a line of its own.
+
+The canvas makes room for these lines and for the connections' labels: where a layout saved before
+the run is too tight, it moves steps apart on the screen only, and the YAML's `layout:` stays as it
+was. **Auto-layout** saves a layout with room for them, and moving a step saves where it is shown.
+
 **Run now** runs the saved version. If you have changes that are not saved, Kilnmark says so first
 and asks you to confirm; save them to run them.
 
@@ -380,12 +390,12 @@ results. No data is read. The estimate is carried through the steps, each with i
 each write is then scored with the same measures a run uses for what it wrote, so the prediction
 and the measurement compare directly.
 
-On the canvas, each write and gate shows **Predicted 91% (estimate)** a moment after you stop
+On the canvas, each write and gate shows **Predicted ≈ 91%**, in a violet chip with a dashed edge (an estimate), a moment after you stop
 editing; select it to see the score per dimension, what a gate is expected to do with each rule,
 and what the estimate could not tell or had to assume. A read step that has not been scanned has
 no profile, so what follows it is **unknown**: scan its source first. Kilnmark never fills a gap
-with a guess; a dimension it cannot judge has no score. The badge says how many things the estimate
-could not tell; the step's settings list them.
+with a guess; a dimension it cannot judge has no score. The chip says how many things the estimate
+could not tell ("1 unknown"); the step's settings list them.
 
 The estimate uses a column's values (its most common values and its spread) only when you may see
 them, as the Quality pages decide: not at all for viewers, and for a column marked sensitive only

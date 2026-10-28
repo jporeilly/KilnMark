@@ -42,8 +42,8 @@ import { useColourScheme } from "../../theme/appearance";
 import { columnsText } from "../outline";
 import { stepQualityWords } from "../quality";
 import { predictedWords, predictionApi, predictionsByStep, type Prediction, type Suggestion } from "../prediction";
-import { kindWord, problemsByStep, stepSummary } from "./insight";
-import { autoLayout, placed, spotAfter } from "./layout";
+import { kindWord, problemsByStep, stepLabel, stepSummary } from "./insight";
+import { autoLayout, makeRoom, nodeHeight, placed, spotAfter, type EdgeLabel, type LayoutSizes } from "./layout";
 import {
   addStep,
   catalogueOf,
@@ -69,7 +69,7 @@ import {
 } from "./model";
 import { Palette, rememberUsed } from "./Palette";
 import { SettingsPanel } from "./SettingsPanel";
-import { StepNode, runWords, type StepNodeType, type StepRunInfo } from "./StepNode";
+import { StepNode, badgeRows, runWords, type StepNodeType, type StepRunInfo } from "./StepNode";
 import "./canvas.css";
 
 export type CanvasRun = {
@@ -194,7 +194,6 @@ function Canvas(props: CanvasProps) {
   const graph = read.ok ? read.graph : (props.memory.lastGood ?? null);
   const broken = !read.ok;
   const readOnly = lockedByPage || broken || types == null;
-  const positions = useMemo(() => (graph ? placed(graph, catalogue) : {}), [graph, catalogue]);
   // An empty canvas opens the step list; otherwise it waits in the rail. (A saved pipeline is empty
   // text until it has loaded, which is not an empty canvas.)
   const stepCount = graph?.steps.length ?? -1;
@@ -231,6 +230,48 @@ function Canvas(props: CanvasProps) {
   }, [yaml, canPredict]);
   // An unreadable YAML shows the last pipeline that could be read, without estimates for it.
   const predicted = useMemo(() => predictionsByStep(read.ok ? prediction : null), [prediction, read.ok]);
+
+  // ---- where the steps go: their real heights and the connections' labels ----
+
+  // Each step's height as drawn by React Flow, once it has been; until then (and while it grows
+  // after a run) the height worked out from its ports and rows of chips, whichever is larger.
+  const [drawnHeights, setDrawnHeights] = useState<Record<string, number>>({});
+  const heights = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const s of graph?.steps ?? []) {
+      const rows = badgeRows({
+        problems: problems.get(s.id)?.length ?? 0,
+        run: runSteps.get(s.id) ?? null,
+        quality: runQuality.get(s.id) ?? null,
+        predicted: predicted.get(s.id) ?? null,
+      });
+      out[s.id] = Math.max(nodeHeight(portsOf(s, catalogue), rows), drawnHeights[s.id] ?? 0);
+    }
+    return out;
+  }, [graph, catalogue, problems, runSteps, runQuality, predicted, drawnHeights]);
+  const edgeLabels = useMemo(() => {
+    const out = new Map<string, string>();
+    if (!graph) return out;
+    const rows = new Map(run?.steps.map((s) => [s.step, s]) ?? []);
+    for (const e of graph.edges) {
+      const plain = e.fromPort === "out" && e.toPort === "in";
+      const counted = rows.get(e.from)?.ports?.out?.[e.fromPort] ?? (e.fromPort === "out" ? rows.get(e.from)?.rowsOut : null);
+      const parts = [plain ? "" : e.toPort === "in" || e.toPort === "main" ? e.fromPort : `${e.fromPort} → ${e.toPort}`];
+      if (run && counted != null) parts.push(`${formatNumber(counted)} rows`);
+      out.set(edgeId(e), parts.filter(Boolean).join(" · "));
+    }
+    return out;
+  }, [graph, run]);
+  const sizes = useMemo<LayoutSizes>(() => {
+    const labels: EdgeLabel[] = (graph?.edges ?? []).map((e) => ({ from: e.from, to: e.to, text: edgeLabels.get(edgeId(e)) ?? "" }));
+    return { heights, labels };
+  }, [graph, heights, edgeLabels]);
+  // Where each step is placed: its saved position (what the YAML's layout says), else laid out.
+  const positions = useMemo(() => (graph ? placed(graph, catalogue, sizes) : {}), [graph, catalogue, sizes]);
+  // Where it is shown: moved apart in the view only where its badges or a connection's label would
+  // not fit between saved positions (a layout saved before a run). The YAML is not changed until a
+  // step is moved or Auto-layout is chosen.
+  const shown = useMemo(() => makeRoom(positions, heights, sizes.labels), [positions, heights, sizes]);
   // Choosing a step shows its settings in place of the suggestions.
   const lastSelected = useRef(selected);
   useEffect(() => {
@@ -357,7 +398,7 @@ function Canvas(props: CanvasProps) {
     const outs = sel ? portsOf(sel, catalogue).outputs : [];
     const t = catalogue.get(type);
     const after = sel && outs.length > 0 && t && t.inputs.length > 0 ? { step: sel.id, port: outs.includes("out") ? "out" : outs[0] } : null;
-    const spot = at ?? spotAfter(positions, sel?.id ?? null);
+    const spot = at ?? spotAfter(shown, sel?.id ?? null);
     const c = addStep(yamlRef.current, type, catalogue, after, spot);
     const id = "id" in c ? c.id! : null;
     const label = id
@@ -435,7 +476,7 @@ function Canvas(props: CanvasProps) {
     flush();
     const from = positions[sg.placement.from.split(".")[0]];
     const to = positions[sg.placement.before];
-    const base = from && to ? { x: (from.x + to.x) / 2, y: Math.max(from.y, to.y) + 170 } : spotAfter(positions, null);
+    const base = from && to ? { x: (from.x + to.x) / 2, y: Math.max(from.y, to.y) + 170 } : spotAfter(shown, null);
     const spots = Object.fromEntries(sg.steps.map((n, i) => [n.id, { x: base.x + i * 250, y: base.y }]));
     const c = insertSteps(yamlRef.current, catalogue, sg.steps, sg.placement);
     if ("error" in c) return c.error;
@@ -447,7 +488,7 @@ function Canvas(props: CanvasProps) {
   const layOut = () => {
     if (readOnly || !graph) return;
     flush();
-    apply(setPositions(yamlRef.current, autoLayout(graph, catalogue)), "Laid the steps out again, left to right.");
+    apply(setPositions(yamlRef.current, autoLayout(graph, catalogue, sizes)), "Laid the steps out again, left to right.");
     window.setTimeout(() => readable(), 50);
   };
 
@@ -469,7 +510,7 @@ function Canvas(props: CanvasProps) {
       return {
         id: s.id,
         type: "step",
-        position: positions[s.id] ?? { x: 0, y: 0 },
+        position: shown[s.id] ?? { x: 0, y: 0 },
         selected: s.id === selected,
         data: {
           step: s,
@@ -486,7 +527,7 @@ function Canvas(props: CanvasProps) {
           connectable: !readOnly,
         },
         ariaLabel: [
-          `Step ${s.id}, ${kindWord(t?.kind)}: ${t?.label ?? s.type ?? "no type"}`,
+          `Step ${s.id}, ${kindWord(t?.kind)}: ${stepLabel(s, t?.label ?? s.type ?? "no type")}`,
           summary,
           s.inputs.length ? `reads from ${s.inputs.map((l) => refText(l.from, l.fromPort)).join(" and ")}` : "",
           n ? `${n} ${n === 1 ? "problem" : "problems"}` : "",
@@ -503,7 +544,7 @@ function Canvas(props: CanvasProps) {
         domAttributes: { "aria-describedby": `cv-cols-${s.id} cv-node-help` },
       };
     });
-  }, [graph, catalogue, check, problems, runSteps, runQuality, predicted, positions, selected, readOnly]);
+  }, [graph, catalogue, check, problems, runSteps, runQuality, predicted, shown, selected, readOnly]);
 
   const [nodes, setNodes] = useState<StepNodeType[]>(derived);
   useEffect(() => {
@@ -518,21 +559,20 @@ function Canvas(props: CanvasProps) {
   const onNodesChange = useCallback((changes: NodeChange<StepNodeType>[]) => {
     // Selection is the page's; React Flow's own select and remove changes are not applied.
     setNodes((ns) => applyNodeChanges(changes.filter((c) => c.type !== "select" && c.type !== "remove"), ns));
+    // Each step's drawn height, for making room (only when it changes by more than a pixel).
+    const drawn = changes.flatMap((c) => (c.type === "dimensions" && c.dimensions ? [[c.id, Math.ceil(c.dimensions.height)] as const] : []));
+    if (drawn.length)
+      setDrawnHeights((old) => (drawn.some(([id, h]) => Math.abs((old[id] ?? 0) - h) > 1) ? { ...old, ...Object.fromEntries(drawn) } : old));
   }, []);
 
   const edges = useMemo<Edge[]>(() => {
     if (!graph) return [];
     const ids = new Set(graph.steps.map((s) => s.id));
-    const rows = new Map(run?.steps.map((s) => [s.step, s]) ?? []);
     return graph.edges
       .filter((e) => ids.has(e.from) && ids.has(e.to))
       .map((e) => {
         const id = edgeId(e);
-        const plain = e.fromPort === "out" && e.toPort === "in";
-        const counted = rows.get(e.from)?.ports?.out?.[e.fromPort] ?? (e.fromPort === "out" ? rows.get(e.from)?.rowsOut : null);
-        const parts = [plain ? "" : e.toPort === "in" || e.toPort === "main" ? e.fromPort : `${e.fromPort} → ${e.toPort}`];
-        if (run && counted != null) parts.push(`${formatNumber(counted)} rows`);
-        const label = parts.filter(Boolean).join(" · ");
+        const label = edgeLabels.get(id) ?? "";
         return {
           id,
           source: e.from,
@@ -541,6 +581,8 @@ function Canvas(props: CanvasProps) {
           targetHandle: `in:${e.toPort}`,
           type: "smoothstep",
           label: label || undefined,
+          labelBgPadding: [6, 3] as [number, number],
+          labelBgBorderRadius: 4,
           selected: id === selectedEdge,
           className: `cv-edge${e.fromPort === "out" ? "" : " cv-edge-other"}${id === selectedEdge ? " is-selected" : ""}`,
           markerEnd: { type: MarkerType.ArrowClosed, color: "var(--km-ink-soft)" },
@@ -548,7 +590,7 @@ function Canvas(props: CanvasProps) {
           data: e,
         };
       });
-  }, [graph, run, selectedEdge]);
+  }, [graph, edgeLabels, selectedEdge]);
 
   /** Shows the nodes' bounds in the visible area at `zoom` (at most 1), centred. */
   const frame = useCallback(
@@ -661,7 +703,7 @@ function Canvas(props: CanvasProps) {
 
   const neighbour = (id: string, key: string): string | null => {
     if (!graph) return null;
-    const here = positions[id];
+    const here = shown[id];
     if (key === "ArrowRight") return graph.edges.find((e) => e.from === id)?.to ?? null;
     if (key === "ArrowLeft") return graph.edges.find((e) => e.to === id)?.from ?? null;
     // Up and down: the nearest step above or below, preferring the same column.
@@ -669,7 +711,7 @@ function Canvas(props: CanvasProps) {
     let best: string | null = null;
     let score = Infinity;
     for (const s of graph.steps) {
-      const p = positions[s.id];
+      const p = shown[s.id];
       if (s.id === id || !p || !here) continue;
       const dy = p.y - here.y;
       if (down ? dy <= 0 : dy >= 0) continue;
@@ -822,7 +864,8 @@ function Canvas(props: CanvasProps) {
     if (k.startsWith("Arrow")) {
       done();
       if (ev.shiftKey && !readOnly) {
-        const p = positions[id];
+        // From where it is shown, so it moves from where it is seen.
+        const p = shown[id];
         if (!p) return;
         const step = 20;
         const to = { x: p.x + (k === "ArrowRight" ? step : k === "ArrowLeft" ? -step : 0), y: p.y + (k === "ArrowDown" ? step : k === "ArrowUp" ? -step : 0) };

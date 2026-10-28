@@ -5,23 +5,35 @@ export type Tone = "good" | "warn" | "bad" | "info" | "neutral" | "orange" | "vi
 
 /**
  * A pill with a tinted background and dark text: run and rule status, severity, roles. `dot` adds
- * a small dot before the text; `upper` is the small uppercase label used for severity.
+ * a small dot before the text; `upper` is the small uppercase label used for severity; `outline`
+ * adds a dashed edge in the text colour, for something that is an estimate rather than measured.
+ * `className` and `kind` (a data-kind attribute) let a page style and find its own chips.
  */
 export function StatusChip({
   tone = "neutral",
   dot = false,
   upper = false,
+  outline = false,
+  className,
+  kind,
   children,
   title,
 }: {
   tone?: Tone;
   dot?: boolean;
   upper?: boolean;
+  outline?: boolean;
+  className?: string;
+  kind?: string;
   children: ReactNode;
   title?: string;
 }) {
   return (
-    <span className={`km-chip km-chip--${tone}${upper ? " km-chip--upper" : ""}`} title={title}>
+    <span
+      className={`km-chip km-chip--${tone}${upper ? " km-chip--upper" : ""}${outline ? " km-chip--outline" : ""}${className ? ` ${className}` : ""}`}
+      title={title}
+      data-kind={kind}
+    >
       {dot && <span className="km-chip-dot" aria-hidden="true" />}
       {children}
     </span>
