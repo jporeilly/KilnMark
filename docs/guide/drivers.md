@@ -41,6 +41,14 @@ podman compose cp ojdbc11-23.26.3.0.0.jar kilnmark:/var/lib/kilnmark/drivers/
 (`docker compose cp` with Docker.) Running the server without containers, the folder is
 `kilnmark.drivers.dir`, by default `~/.kilnmark/drivers` for the user running Kilnmark.
 
+## After an upgrade
+
+When an upgrade of Kilnmark moves to a newer version of a driver, the installed file is no longer
+used: the driver shows as **Missing** again, and sources needing it cannot connect until an admin
+accepts its licence again under **Settings**, **Drivers** (or copies the new file into the drivers
+folder). The release notes say when this happens, and the server's log names the old file at
+start. The old file can then be deleted.
+
 ## If it says Wrong file
 
 Kilnmark only uses the exact file it was tested with. A file of the right name with other

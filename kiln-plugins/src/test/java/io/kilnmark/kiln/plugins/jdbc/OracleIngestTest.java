@@ -116,7 +116,9 @@ class OracleIngestTest {
                 TIMESTAMP '2024-01-01 10:00:00.123456', TIMESTAMP '2024-06-01 14:00:00.5 +02:00',
                 TIMESTAMP '2024-06-01 12:00:00 +00:00', INTERVAL '2 03:04:05.5' DAY TO SECOND, TRUE, 'héllo ✓', 'abc',
                 N'één', 'a long body', HEXTORAW('CAFE'), HEXTORAW('00FF00FF'), '{"lines": [1, 2]}')""",
-            "INSERT INTO kt_sales.orders (order_id, customer_id, plain) VALUES (2, 2, 0.000017)",
+            // FLOAT(63) keeps 19 digits; the instant is in the hour New York repeats when summer time ends
+            "INSERT INTO kt_sales.orders (order_id, customer_id, plain, approx, seen) VALUES (2, 2, 0.000017, "
+                + "0.1234567890123456789, TIMESTAMP '2024-11-03 05:30:00.25 +00:00')",
             "CREATE VIEW kt_sales.big_orders AS SELECT order_id, price FROM kt_sales.orders WHERE price > 100",
             """
             CREATE TABLE kt_logistics.shipments (
@@ -159,7 +161,8 @@ class OracleIngestTest {
         assertTrue(e.getMessage().contains("needs its driver, com.oracle.database.jdbc:ojdbc11 23.26.3.0.0")
             && e.getMessage().contains("Settings, Drivers"), e.getMessage());
 
-        DriverFolder wrong = new DriverFolder(Files.createTempDirectory("kt-wrong"));
+        DriverFolder wrong = new DriverFolder(Files.createTempDirectory("kt-wrong").resolve("drivers"));
+        wrong.prepare();
         Files.writeString(wrong.file(OracleConnector.DRIVER), "not the driver");
         OracleConnector tampered = (OracleConnector) new OracleConnector()
             .withContext(new ConnectorContext(Map.of(), wrong));
@@ -196,7 +199,7 @@ class OracleIngestTest {
         Map<String, String> kinds = Map.ofEntries(Map.entry("ORDER_ID", "int64"), Map.entry("SMALL", "int16"),
             Map.entry("WHOLE", "int32"), Map.entry("WIDE", "decimal"), Map.entry("PRICE", "decimal"),
             Map.entry("HUNDREDS", "decimal"), Map.entry("TINY_FRAC", "decimal"), Map.entry("PLAIN", "text"),
-            Map.entry("STAR", "decimal"), Map.entry("APPROX", "float64"), Map.entry("RATIO", "float32"),
+            Map.entry("STAR", "decimal"), Map.entry("APPROX", "text"), Map.entry("RATIO", "float32"),
             Map.entry("SCORE", "float64"), Map.entry("DUE", "timestamp"), Map.entry("PLACED", "timestamp"),
             Map.entry("CHANGED", "timestamp_tz"), Map.entry("SEEN", "timestamp_tz"), Map.entry("WAITED", "text"),
             Map.entry("FLAG", "boolean"), Map.entry("NOTE", "text"), Map.entry("CODE", "text"),
@@ -245,7 +248,7 @@ class OracleIngestTest {
         assertEquals(0, new BigDecimal("0.00012").compareTo((BigDecimal) v.apply("TINY_FRAC")));
         assertEquals("1234.5", v.apply("PLAIN"), "a NUMBER without precision is its exact digits");
         assertEquals(0, new BigDecimal("42").compareTo((BigDecimal) v.apply("STAR")));
-        assertEquals(1.5, v.apply("APPROX"));
+        assertEquals("1.5", v.apply("APPROX"), "FLOAT(63) read exactly, as text");
         assertEquals(2.5f, v.apply("RATIO"));
         assertEquals(3.25, v.apply("SCORE"));
         assertEquals(LocalDateTime.of(2024, 2, 29, 10, 11, 12), v.apply("DUE"), "a DATE keeps its time of day");
@@ -263,6 +266,9 @@ class OracleIngestTest {
         assertArrayEquals(new byte[] {0, (byte) 0xFF, 0, (byte) 0xFF}, (byte[]) v.apply("RAW_ID"));
         assertTrue(((String) v.apply("DOC")).contains("\"lines\""), (String) v.apply("DOC"));
         assertEquals("0.000017", back.rows.get(1).get(at.get("PLAIN")));
+        assertEquals("0.1234567890123456789", back.rows.get(1).get(at.get("APPROX")), "every digit FLOAT(63) keeps");
+        assertEquals(Instant.parse("2024-11-03T05:30:00.250Z"), back.rows.get(1).get(at.get("SEEN")),
+            "the same instant whatever the JVM's time zone (oracleTest runs in America/New_York)");
         assertNull(back.rows.get(1).get(at.get("DUE")));
     }
 

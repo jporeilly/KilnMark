@@ -29,12 +29,10 @@ public class ConnectorsProducer {
     DriverFolder drivers(KilnmarkConfig config) {
         java.nio.file.Path dir = config.drivers().dir().map(java.nio.file.Path::of)
             .orElse(java.nio.file.Path.of(System.getProperty("user.home"), ".kilnmark", "drivers"));
-        try {
-            java.nio.file.Files.createDirectories(dir); // so an admin can put a driver straight in
-        } catch (java.io.IOException | RuntimeException e) {
-            // read-only or not allowed: drivers then show as missing, with the folder named
-        }
-        return new DriverFolder(dir);
+        DriverFolder folder = new DriverFolder(dir);
+        // the folder, so an admin can put a driver straight in; and last run's loaded copies cleared
+        folder.prepare();
+        return folder;
     }
 
     static ConnectorContext context(KilnmarkConfig config) {

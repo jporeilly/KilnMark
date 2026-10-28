@@ -50,11 +50,16 @@ import io.kilnmark.kiln.plugins.jdbc.JdbcColumn.Kind;
  *   <li>{@code NUMBER} without precision holds up to 38 significant digits at any scale, which no
  *       fixed decimal type can: read as text, the exact digits ({@code 1234.5}, {@code 0.000017}).
  *       Declare the precision to read it as a number.</li>
- *   <li>{@code FLOAT(b)} and {@code BINARY_DOUBLE} as float64, {@code BINARY_FLOAT} as float32.</li>
+ *   <li>{@code FLOAT(b)} (and {@code DOUBLE PRECISION} and {@code REAL}, which are FLOAT) is a
+ *       decimal NUMBER of up to b bits of precision at any scale: read as text holding its exact
+ *       digits, like a NUMBER without precision; a float64 would lose digits. {@code BINARY_DOUBLE}
+ *       as float64, {@code BINARY_FLOAT} as float32.</li>
  *   <li>{@code DATE} (which keeps a time of day) and {@code TIMESTAMP(n)} as timestamp, wall-clock
- *       as stored; {@code TIMESTAMP WITH TIME ZONE} and {@code WITH LOCAL TIME ZONE} as
- *       timestamp_tz (sessions use time zone {@code +00:00}). Read as {@code java.time} values,
- *       never through {@code java.sql} types, which would apply Kilnmark's own time zone.</li>
+ *       as stored; {@code TIMESTAMP WITH TIME ZONE} as timestamp_tz. {@code WITH LOCAL TIME ZONE}
+ *       is timestamp_tz too, selected as {@code CAST(… AS TIMESTAMP(9) WITH TIME ZONE)} (in the
+ *       session's time zone, {@code +00:00}) so the driver never applies the JVM's own time zone.
+ *       Read as {@code java.time} values, never through {@code java.sql} types, which would apply
+ *       Kilnmark's own time zone.</li>
  *   <li>{@code BOOLEAN} (23ai) as boolean.</li>
  *   <li>{@code VARCHAR2}, {@code NVARCHAR2}, {@code CHAR}, {@code NCHAR}, {@code CLOB},
  *       {@code NCLOB}, {@code LONG}, {@code ROWID}, intervals, {@code JSON}, {@code XMLTYPE}
@@ -80,8 +85,8 @@ final class OracleTypes {
     }
 
     /** How a value is read. */
-    enum Read { BOOLEAN, INT16, INT32, INT64, DECIMAL, NUMBER_TEXT, FLOAT32, FLOAT64, TIMESTAMP, TIMESTAMP_TZ,
-        TIMESTAMP_LTZ, TEXT, BINARY, NULL }
+    enum Read { BOOLEAN, INT16, INT32, INT64, DECIMAL, NUMBER_TEXT, FLOAT32, FLOAT64, TIMESTAMP, TIMESTAMP_TZ, TEXT,
+        BINARY, NULL }
 
     /** What a type becomes. */
     record Mapped(Kind kind, int precision, int scale, Read read) {
@@ -144,12 +149,15 @@ final class OracleTypes {
     static Mapped map(Type t) {
         return switch (t.name()) {
             case "NUMBER" -> number(t.precision(), t.scale());
-            case "FLOAT", "BINARY_DOUBLE", "DOUBLE PRECISION", "REAL" -> new Mapped(Kind.FLOAT64, 0, 0, Read.FLOAT64);
+            // a decimal NUMBER of b bits at any scale: exact digits, as text
+            case "FLOAT", "DOUBLE PRECISION", "REAL" -> new Mapped(Kind.TEXT, 0, 0, Read.NUMBER_TEXT);
+            case "BINARY_DOUBLE" -> new Mapped(Kind.FLOAT64, 0, 0, Read.FLOAT64);
             case "BINARY_FLOAT" -> new Mapped(Kind.FLOAT32, 0, 0, Read.FLOAT32);
             case "DATE", "TIMESTAMP" -> new Mapped(Kind.TIMESTAMP, 0, 0, Read.TIMESTAMP);
             case "TIMESTAMP WITH TIME ZONE" -> new Mapped(Kind.TIMESTAMP_TZ, 0, 0, Read.TIMESTAMP_TZ);
-            // shown in the session's time zone, which is +00:00
-            case "TIMESTAMP WITH LOCAL TIME ZONE" -> new Mapped(Kind.TIMESTAMP_TZ, 0, 0, Read.TIMESTAMP_LTZ);
+            // selected through a cast to TIMESTAMP WITH TIME ZONE (OracleConnector.selectSql); read as
+            // such when it is not
+            case "TIMESTAMP WITH LOCAL TIME ZONE" -> new Mapped(Kind.TIMESTAMP_TZ, 0, 0, Read.TIMESTAMP_TZ);
             case "BOOLEAN" -> new Mapped(Kind.BOOLEAN, 0, 0, Read.BOOLEAN);
             case "RAW", "LONG RAW", "BLOB" -> new Mapped(Kind.BINARY, 0, 0, Read.BINARY);
             case "BFILE" -> new Mapped(Kind.TEXT, 0, 0, Read.NULL);
@@ -245,10 +253,6 @@ final class OracleTypes {
                     if (t == null) vector.setNull(row);
                     else ((TimeStampMicroTZVector) vector).setSafe(row,
                         micros(t.withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime()));
-                }
-                case TIMESTAMP_LTZ -> {
-                    LocalDateTime t = rs.getObject(col, LocalDateTime.class);
-                    if (t == null) vector.setNull(row); else ((TimeStampMicroTZVector) vector).setSafe(row, micros(t));
                 }
                 case TEXT -> {
                     String v;

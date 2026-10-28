@@ -97,9 +97,21 @@ abstract class WriteSql {
         return null;
     }
 
-    /** Why the converted value {@code v} cannot go into {@code t}, or null (a YEAR column's range). */
+    /**
+     * Why the converted value {@code v} cannot go into {@code t}, or null (a YEAR column's range, a
+     * character the column's character set lacks); {@code t} is null for a column of a table the
+     * step creates.
+     */
     String targetValueProblem(WritePlan.TargetColumn t, Object v) {
         return null;
+    }
+
+    /**
+     * Whether the database stores empty text (and empty bytes) as null (Oracle), so an empty key
+     * column could never match a row and upsert refuses it whatever else the step allows.
+     */
+    boolean emptyMeansNull() {
+        return false;
     }
 
     /** The column type a table created from the input gets. */
@@ -262,6 +274,16 @@ abstract class WriteSql {
      */
     void bind(PreparedStatement ps, int i, Kind kind, Object v, boolean bulk) throws SQLException {
         bind(ps, i, kind, v);
+    }
+
+    /**
+     * As {@link #bind(PreparedStatement, int, Kind, Object, boolean)}, knowing the table's column it
+     * goes to ({@code into}; null for a table the step creates): Oracle binds national character
+     * columns' text as such.
+     */
+    void bind(PreparedStatement ps, int i, Kind kind, Object v, boolean bulk, WritePlan.TargetColumn into)
+        throws SQLException {
+        bind(ps, i, kind, v, bulk);
     }
 
     /** Binds a value of {@code kind} (null allowed) as parameter {@code i}. */

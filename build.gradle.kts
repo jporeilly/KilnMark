@@ -97,10 +97,23 @@ tasks.register("checkNoCustomerDrivers") {
         val found = release.asFile.walkTopDown().filter { f ->
             f.isFile && customerDrivers.any { f.name.lowercase().contains(it) }
         }.toList()
-        val inside = release.asFile.walkTopDown().filter { it.isFile && it.name.endsWith(".jar") }.filter { jar ->
-            java.util.zip.ZipFile(jar).use { z ->
-                z.entries().asSequence().any { e -> e.name.startsWith("oracle/jdbc/") }
+        // a driver's classes, or a jar named like one, inside a jar, or a jar in a jar (fat jars), to any depth
+        fun holdsDriver(input: java.io.InputStream, depth: Int): Boolean {
+            val zip = java.util.zip.ZipInputStream(input)
+            while (true) {
+                val e = zip.nextEntry ?: return false
+                val file = e.name.substringAfterLast('/').lowercase()
+                if (e.name.startsWith("oracle/jdbc/") || (file.endsWith(".jar") && customerDrivers.any { file.contains(it) })) {
+                    return true
+                }
+                // the nested stream is read from this entry only, and must not close the outer one
+                if (depth < 8 && file.endsWith(".jar") && holdsDriver(zip, depth + 1)) {
+                    return true
+                }
             }
+        }
+        val inside = release.asFile.walkTopDown().filter { it.isFile && it.name.endsWith(".jar") }.filter { jar ->
+            jar.inputStream().buffered().use { holdsDriver(it, 0) }
         }.toList()
         if (found.isNotEmpty() || inside.isNotEmpty()) {
             throw GradleException("The release holds a driver Kilnmark may not ship (customers install it): "

@@ -214,11 +214,19 @@ drivers"). Tables are written as above, with these differences:
   partitioned or temporary table, a table with triggers or a materialized view log, and a table
   other tables' foreign keys refer to. With virtual private database policies it needs
   `allow_dropping_row_security: true`.
-- **Empty text.** Oracle stores empty text as null, so a write with empty text stops and names the
-  row, unless you set `empty_text_as_null: true`.
+- **Empty text.** Oracle stores empty text (and an empty value in a `RAW` or `BLOB` column) as
+  null, so a write with one stops and names the row, unless you set `empty_text_as_null: true`. An
+  upsert key column can never be empty, whatever that setting says: as null it would match no
+  row.
+- **Character sets.** On a database whose character set is not Unicode (such as `WE8MSWIN1252`),
+  Oracle would store a character it lacks as `?`. Kilnmark refuses such a row and names the
+  character instead; `NVARCHAR2` and `NCLOB` columns use the national character set, which usually
+  holds everything. Columns sized in bytes (`VARCHAR2(20 BYTE)`) are checked in bytes.
 - **Nothing is rounded.** Besides decimals, a timestamp with more digits of a second than the
   column keeps (a `DATE` keeps whole seconds) stops the write, as does a decimal with more than 38
-  significant digits. A time of day is written as text, `09:30:00.5`, since Oracle has no time of
+  significant digits, more digits than a `FLOAT(b)` column keeps, or outside the range of a
+  `NUMBER`. Floating-point input does not go into a `FLOAT(b)` column, which is a decimal type: cast
+  it to a decimal first. A time of day is written as text, `09:30:00.5`, since Oracle has no time of
   day type.
 - **The login.** Writing to the login's own schema needs `CREATE TABLE` and a quota on its
   tablespace; writing to another schema needs `CREATE ANY TABLE`, `INSERT ANY TABLE`,

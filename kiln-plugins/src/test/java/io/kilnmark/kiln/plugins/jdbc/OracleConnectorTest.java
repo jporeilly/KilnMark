@@ -93,7 +93,10 @@ class OracleConnectorTest {
         assertEquals(List.of(Kind.DECIMAL, 5, 5), List.of(tiny.kind(), tiny.precision(), tiny.scale()));
         assertEquals(Kind.TEXT, OracleTypes.map(OracleTypes.fromCatalog("NUMBER", null, null)).kind());
         assertEquals(Kind.DECIMAL, OracleTypes.map(OracleTypes.fromCatalog("NUMBER", null, 0)).kind());
-        assertEquals(Kind.FLOAT64, OracleTypes.map(OracleTypes.fromCatalog("FLOAT", 126, null)).kind());
+        assertEquals(Kind.TEXT, OracleTypes.map(OracleTypes.fromCatalog("FLOAT", 126, null)).kind(),
+            "a decimal NUMBER at any scale: exact digits, as text");
+        assertEquals(OracleTypes.Read.NUMBER_TEXT, OracleTypes.map(OracleTypes.fromCatalog("FLOAT", 63, null)).read());
+        assertEquals(Kind.FLOAT64, OracleTypes.map(OracleTypes.fromCatalog("BINARY_DOUBLE", null, null)).kind());
         assertEquals(Kind.TIMESTAMP, OracleTypes.map(OracleTypes.fromCatalog("DATE", null, null)).kind());
         assertEquals(Kind.TIMESTAMP_TZ, OracleTypes.map(OracleTypes.fromCatalog("TIMESTAMP(6) WITH LOCAL TIME ZONE",
             null, 6)).kind());
@@ -121,9 +124,9 @@ class OracleConnectorTest {
         assertTrue(strict.valueProblem(Kind.DECIMAL, new BigDecimal("1234567890123456789012345678901234567890"))
             .contains("more than 38 significant digits"));
         assertNull(strict.valueProblem(Kind.DECIMAL, new BigDecimal("12345678901234567890123456789012345678e5")));
-        assertEquals(0, strict.fractionDigits(OracleConnector.target("D", "DATE", null, null, null)));
-        assertEquals(3, strict.fractionDigits(OracleConnector.target("T", "TIMESTAMP", null, 3, null)));
-        assertEquals(-1, strict.fractionDigits(OracleConnector.target("N", "NUMBER", 10, 2, null)));
+        assertEquals(0, strict.fractionDigits(OracleConnector.target("D", "DATE", null, null, null, false, null)));
+        assertEquals(3, strict.fractionDigits(OracleConnector.target("T", "TIMESTAMP", null, 3, null, false, null)));
+        assertEquals(-1, strict.fractionDigits(OracleConnector.target("N", "NUMBER", 10, 2, null, false, null)));
         assertEquals("BOOLEAN", strict.columnType(new io.kilnmark.kiln.plugins.write.WriteColumn("b", Kind.BOOLEAN, 0, 0,
             null), 0));
         assertEquals("NUMBER(1)", new OracleWriteSql(false, false).columnType(
@@ -159,5 +162,84 @@ class OracleConnectorTest {
         assertEquals(List.of("SET TRANSACTION READ ONLY"), d.readOnly());
         assertEquals("SELECT * FROM \"S\".\"T\" FETCH FIRST 10 ROWS ONLY", ORACLE.selectSql("S", "T", 10));
         assertEquals("SAMPLE (2.5) SEED (7)", ORACLE.tableSampleClause("2.5"));
+    }
+
+    @Test
+    void textMustFitTheDatabasesCharacterSetCharacterByCharacter() {
+        OracleWriteSql latin = new OracleWriteSql(true, false, "WE8MSWIN1252", "AL16UTF16");
+        assertNull(latin.targetValueProblem(null, "héllo, €5"), "all in windows-1252");
+        String refused = latin.targetValueProblem(null, "Łódź");
+        assertTrue(refused.contains("the character 'Ł' (U+0141) cannot be stored in the database's character set "
+            + "WE8MSWIN1252") && refused.contains("Oracle would store a ? instead"), refused);
+        assertTrue(refused.contains("NVARCHAR2 or NCLOB column, whose character set (AL16UTF16) holds it"), refused);
+        WritePlan.TargetColumn varchar = OracleConnector.target("NOTE", "VARCHAR2", null, null, 50, false, 50);
+        assertTrue(latin.targetValueProblem(varchar, "✓").contains("U+2713"));
+        WritePlan.TargetColumn nvarchar = OracleConnector.target("NNOTE", "NVARCHAR2", null, null, 20, false, 40);
+        assertNull(latin.targetValueProblem(nvarchar, "Łódź ✓"), "national columns use the national character set");
+        WritePlan.TargetColumn json = OracleConnector.target("DOC", "JSON", null, null, null, false, null);
+        assertNull(latin.targetValueProblem(json, "{\"a\": \"Ł\"}"), "JSON is not kept in the character set");
+
+        OracleWriteSql unicode = new OracleWriteSql(true, false, "AL32UTF8", "AL16UTF16");
+        assertNull(unicode.targetValueProblem(null, "Łódź ✓ 😀"));
+        OracleWriteSql unknown = new OracleWriteSql(true, false, "XX8SOMETHING", "AL16UTF16");
+        String guess = unknown.targetValueProblem(null, "é");
+        assertTrue(guess.contains("which Kilnmark does not know, so it writes plain ASCII only"), guess);
+        assertNull(unknown.targetValueProblem(null, "plain"));
+        OracleWriteSql bothLatin = new OracleWriteSql(true, false, "WE8ISO8859P1", "WE8ISO8859P1");
+        String noNational = bothLatin.targetValueProblem(nvarchar, "€");
+        assertTrue(noNational.contains("WE8ISO8859P1") && !noNational.contains("NVARCHAR2 or NCLOB"), noNational);
+    }
+
+    @Test
+    void columnsSizedInBytesAreCheckedInBytesOfTheirCharacterSet() {
+        OracleWriteSql unicode = new OracleWriteSql(true, false);
+        WritePlan.TargetColumn bytes10 = OracleConnector.target("CODE", "VARCHAR2", null, null, 10, true, 10);
+        assertEquals(0, bytes10.maxLength(), "sized in bytes: no character limit");
+        assertEquals(10, bytes10.precision());
+        assertNull(unicode.targetValueProblem(bytes10, "ééééé"), "10 bytes in UTF-8");
+        String tooMany = unicode.targetValueProblem(bytes10, "éééééé");
+        assertTrue(tooMany.contains("takes 12 bytes in the character set AL32UTF8, but the column holds at most 10 "
+            + "bytes"), tooMany);
+        // sized in characters, but never more than DATA_LENGTH bytes (4,000 with MAX_STRING_SIZE=STANDARD)
+        WritePlan.TargetColumn chars = OracleConnector.target("BODY", "VARCHAR2", null, null, 4000, false, 4000);
+        assertEquals(4000, chars.maxLength());
+        assertTrue(unicode.targetValueProblem(chars, "€".repeat(1400)).contains("takes 4200 bytes"));
+        OracleWriteSql latin = new OracleWriteSql(true, false, "WE8MSWIN1252", "AL16UTF16");
+        assertNull(latin.targetValueProblem(bytes10, "éééééééééé"), "one byte each in windows-1252");
+        WritePlan.TargetColumn nchar = OracleConnector.target("N", "NVARCHAR2", null, null, 3, false, 6);
+        assertTrue(latin.targetValueProblem(nchar, "😀😀").contains("8 bytes in the character set AL16UTF16"));
+        assertEquals(6, OracleCharset.of("UTF8").bytes("😀"), "Oracle's UTF8 is CESU-8");
+        assertEquals(4, OracleCharset.of("AL32UTF8").bytes("😀"));
+        WritePlan.TargetColumn clob = OracleConnector.target("C", "CLOB", null, null, null, false, 4000);
+        assertNull(unicode.targetValueProblem(clob, "é".repeat(5000)), "a CLOB has no such limit");
+    }
+
+    @Test
+    void emptyBytesNumbersOutOfRangeAndFloatDigitsAreRefused() {
+        OracleWriteSql strict = new OracleWriteSql(true, false);
+        OracleWriteSql lenient = new OracleWriteSql(true, true);
+        assertTrue(strict.valueProblem(Kind.BINARY, new byte[0]).contains("which Oracle stores as null"));
+        assertNull(lenient.valueProblem(Kind.BINARY, new byte[0]));
+        assertNull(strict.valueProblem(Kind.BINARY, new byte[] {1}));
+        assertTrue(strict.emptyMeansNull(), "so upsert refuses an empty key whatever empty_text_as_null says");
+
+        assertNull(strict.valueProblem(Kind.DECIMAL, new BigDecimal("9.99E+125")));
+        assertNull(strict.valueProblem(Kind.DECIMAL, new BigDecimal("1E-130")));
+        assertNull(strict.valueProblem(Kind.DECIMAL, BigDecimal.ZERO));
+        assertTrue(strict.valueProblem(Kind.DECIMAL, new BigDecimal("1E+126")).contains("outside what an Oracle "
+            + "NUMBER holds"));
+        assertTrue(strict.valueProblem(Kind.DECIMAL, new BigDecimal("-1E-131")).contains("outside"));
+
+        assertEquals(38, OracleConnector.floatDigits(126));
+        assertEquals(19, OracleConnector.floatDigits(63));
+        assertEquals(1, OracleConnector.floatDigits(1));
+        WritePlan.TargetColumn float63 = OracleConnector.target("F", "FLOAT", 63, null, null, false, 22);
+        assertEquals(Kind.DECIMAL, float63.kind());
+        assertTrue(float63.unconstrainedDecimal(), "no fixed scale");
+        assertEquals(19, float63.scale());
+        assertNull(strict.targetValueProblem(float63, new BigDecimal("0.1234567890123456789")));
+        assertNull(strict.targetValueProblem(float63, new BigDecimal("12345678901234567890000")), "19 digits");
+        String rounded = strict.targetValueProblem(float63, new BigDecimal("0.12345678901234567891"));
+        assertTrue(rounded.contains("has 20 significant digits, but the FLOAT column keeps 19"), rounded);
     }
 }

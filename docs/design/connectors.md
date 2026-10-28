@@ -324,6 +324,10 @@ files or another host. `encryption` is `accepted` (the default: native encryptio
 asks), `required` (native encryption and checksums always) or `tls` (TCPS, the certificate checked
 against the server's Java trust store and its name against the host). Sessions use time zone
 `+00:00`, ISO date formats and `.` as the decimal point, so dates in rules compare as written.
+The driver's `oracle.net.tns_admin` is an empty private folder, so no `ojdbc.properties` or
+`tnsnames.ora` of the environment's choosing feeds it. `required` and `tls` are not tested against a
+real listener (the CI database offers neither TCPS nor required native encryption): the
+properties are set as Oracle documents them, and only `accepted` is exercised end to end.
 
 **Catalogue** from the `ALL_*` views (`OracleCatalog`), so a login sees what it is granted: users
 as schemas (Oracle's own, `ORACLE_MAINTAINED`, are left out of a scan of every schema), tables and
@@ -335,8 +339,12 @@ finds the upper-case user.
 **Types** (`OracleTypes`), never rounded: `NUMBER(p)` by size (int16, int32, int64, decimal beyond
 18 digits); `NUMBER(p,s)` as decimal, a negative scale as decimal(p−s,0); `NUMBER` without
 precision as text holding its exact digits (it can hold 38 digits at any scale, which no fixed
-decimal type can); `FLOAT`, `BINARY_DOUBLE` as float64 and `BINARY_FLOAT` as float32; `DATE` (which
-keeps a time) and `TIMESTAMP` as timestamp; `TIMESTAMP WITH [LOCAL] TIME ZONE` as timestamp_tz;
+decimal type can); `FLOAT(b)` (with `DOUBLE PRECISION` and `REAL`, which are FLOAT) as text too,
+since it is a decimal NUMBER of up to 38 digits at any scale; `BINARY_DOUBLE` as float64 and
+`BINARY_FLOAT` as float32; `DATE` (which keeps a time) and `TIMESTAMP` as timestamp;
+`TIMESTAMP WITH TIME ZONE` as timestamp_tz, and `WITH LOCAL TIME ZONE` too, selected as
+`CAST(… AS TIMESTAMP(9) WITH TIME ZONE)` so the driver never applies the JVM's time zone (the
+integration tests run in `America/New_York` to prove it);
 `BOOLEAN` as boolean; character types, `CLOB`, intervals, `ROWID`, `JSON`, `XMLTYPE` (through
 `XMLSERIALIZE`) and object types as text; `RAW` and `BLOB` as binary; `BFILE` as null. Reads use
 `FETCH FIRST n ROWS ONLY` and, for sampling, `SAMPLE (p) SEED (7)`.
@@ -348,8 +356,16 @@ back if any step fails. Oracle cannot rename two tables at once, so for that ins
 not find the table. Grants are repeated on the new table (`keep_grants`). Upsert is one `MERGE` a
 row and needs a unique key. Plain lower-case names are created in upper case, as Oracle stores
 unquoted names. Nothing changes silently: decimals are never rounded (also past 38 significant
-digits), a value with more digits of a second than a `DATE` or `TIMESTAMP(n)` keeps is refused,
-and empty text, which Oracle stores as null, is refused unless `empty_text_as_null` is true.
+digits, or a `FLOAT(b)` column's ceil(b × 0.30103), or outside a NUMBER's range of 1E-130 to
+1E126), a value with more digits of a second than a `DATE` or `TIMESTAMP(n)` keeps is refused, and
+empty text and empty bytes, which Oracle stores as null, are refused unless `empty_text_as_null`
+is true, and in an upsert key always. Text is checked against the column's character set
+(`NLS_CHARACTERSET`, or `NLS_NCHAR_CHARACTERSET` for NVARCHAR2, NCHAR and NCLOB, which are bound
+with `setNString`): on a database that is not Unicode, a character the set lacks would be stored as
+`?`, so the row is refused, naming the character; a set Kilnmark does not know is taken to hold
+ASCII only. Text columns are checked against their size in bytes (`DATA_LENGTH`, in the column's
+character set; `CHAR_USED` = `B` columns in bytes only), which also holds the 4,000-byte limit of
+`MAX_STRING_SIZE=STANDARD`.
 Rights are checked from `SESSION_PRIVS`, `ALL_TAB_PRIVS`, `ALL_COL_PRIVS` and `ROLE_TAB_PRIVS`
 before a row is written. Replace refuses views, materialized views, partitioned and temporary
 tables, tables with triggers or materialized view logs, and tables other tables' foreign keys

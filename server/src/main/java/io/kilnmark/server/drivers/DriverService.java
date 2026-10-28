@@ -17,12 +17,16 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
+import org.jboss.logging.Logger;
+
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.connect.DriverFolder;
 import io.kilnmark.server.Db;
 import io.kilnmark.server.KilnmarkConfig;
+import io.quarkus.runtime.StartupEvent;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.enterprise.event.Observes;
 
 /**
  * Drivers Kilnmark cannot ship, which the customer installs (docs/design/drivers.md). Each
@@ -47,10 +51,27 @@ public class DriverService {
         @java.io.Serial
         private static final long serialVersionUID = 1L;
 
-        DownloadFailed(String message, Throwable cause) {
+        /** Why nothing was installed. */
+        public enum Reason {
+            /** This server does not download drivers ({@code kilnmark.drivers.download=false}). */
+            DOWNLOADS_OFF,
+            /** The download failed or did not give the expected file. */
+            DOWNLOAD_FAILED
+        }
+
+        private final Reason reason;
+
+        DownloadFailed(Reason reason, String message, Throwable cause) {
             super(message, cause);
+            this.reason = reason;
+        }
+
+        public Reason reason() {
+            return reason;
         }
     }
+
+    private static final Logger LOG = Logger.getLogger(DriverService.class);
 
     private final Connectors connectors;
     private final DriverFolder folder;
@@ -64,10 +85,54 @@ public class DriverService {
         this.db = db;
     }
 
-    /** The drivers the server's connectors need, each once, in the order of their connectors. */
-    public List<Item> list() {
+    /**
+     * At start: a driver whose pinned version changed with an upgrade is not installed any more
+     * (its file name holds the version), and its licence must be accepted again. Say so in the log,
+     * naming the file left behind, so an admin knows why Oracle sources stopped connecting.
+     */
+    void onStart(@Observes StartupEvent event) {
+        for (Item i : listWithoutLicences()) {
+            if (!i.state().equals("missing")) {
+                continue;
+            }
+            List<String> older = olderFiles(i);
+            if (!older.isEmpty()) {
+                LOG.warnf("This version of Kilnmark uses %s %s, but the drivers folder %s holds %s: the driver was "
+                    + "updated, so the installed one is no longer used, and sources needing it (%s) cannot connect "
+                    + "until an admin accepts its licence again under Settings, Drivers, or puts %s in that folder",
+                    i.coordinates(), i.version(), i.folder(), String.join(", ", older), String.join(", ", i.usedBy()),
+                    i.fileName());
+            }
+        }
+    }
+
+    /** Other versions of {@code i}'s driver in the folder, by file name. */
+    private List<String> olderFiles(Item i) {
+        try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.list(folder.dir())) {
+            return files.map(f -> f.getFileName().toString())
+                .filter(n -> n.startsWith(i.id() + "-") && n.endsWith(".jar") && !n.equals(i.fileName()))
+                .sorted().toList();
+        } catch (java.io.IOException | RuntimeException e) {
+            return List.of();
+        }
+    }
+
+    /** {@link #list()} without reading who accepted the licences, for use before the database is needed. */
+    private List<Item> listWithoutLicences() {
         Map<String, Connector.Driver> drivers = new LinkedHashMap<>();
         Map<String, List<String>> usedBy = new LinkedHashMap<>();
+        collect(drivers, usedBy);
+        List<Item> out = new ArrayList<>();
+        drivers.forEach((key, d) -> {
+            DriverFolder.Status st = folder.status(d);
+            out.add(new Item(d.artifact(), d.coordinates(), d.version(), d.fileName(), d.licence(), d.licenceUrl(),
+                List.copyOf(usedBy.get(key)), st.state().name().toLowerCase(Locale.ROOT), st.message(),
+                folder.dir().toString(), d.sha256(), downloadUrl(d), config.download(), null, null));
+        });
+        return out;
+    }
+
+    private void collect(Map<String, Connector.Driver> drivers, Map<String, List<String>> usedBy) {
         for (Connector c : connectors.all()) {
             Connector.Driver d = c.driver();
             if (d == null || d.bundleable()) {
@@ -77,6 +142,13 @@ public class DriverService {
             drivers.putIfAbsent(key, d);
             usedBy.computeIfAbsent(key, k -> new ArrayList<>()).add(c.displayName());
         }
+    }
+
+    /** The drivers the server's connectors need, each once, in the order of their connectors. */
+    public List<Item> list() {
+        Map<String, Connector.Driver> drivers = new LinkedHashMap<>();
+        Map<String, List<String>> usedBy = new LinkedHashMap<>();
+        collect(drivers, usedBy);
         List<Item> out = new ArrayList<>();
         drivers.forEach((key, d) -> out.add(item(d, usedBy.get(key))));
         return out;
@@ -153,7 +225,8 @@ public class DriverService {
         });
         if (!folder.status(d).ready()) {
             if (!config.download()) {
-                throw new DownloadFailed("The licence is accepted. This server does not download drivers "
+                throw new DownloadFailed(DownloadFailed.Reason.DOWNLOADS_OFF,
+                    "The licence is accepted. This server does not download drivers "
                     + "(kilnmark.drivers.download is false): put " + d.fileName() + " in " + folder.dir()
                     + ", unchanged, from " + downloadUrl(d), null);
             }
@@ -173,17 +246,20 @@ public class DriverService {
             HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             try (InputStream in = response.body()) {
                 if (response.statusCode() != 200) {
-                    throw new DownloadFailed("Could not download " + d.fileName() + ": " + url + " answered "
+                    throw new DownloadFailed(DownloadFailed.Reason.DOWNLOAD_FAILED,
+                        "Could not download " + d.fileName() + ": " + url + " answered "
                         + response.statusCode() + "." + instead, null);
                 }
                 folder.install(d, in);
             }
         } catch (IOException e) {
-            throw new DownloadFailed("Could not download " + d.fileName() + " from " + url + ": " + e.getMessage() + "."
+            throw new DownloadFailed(DownloadFailed.Reason.DOWNLOAD_FAILED,
+                "Could not download " + d.fileName() + " from " + url + ": " + e.getMessage() + "."
                 + instead, e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new DownloadFailed("The download of " + d.fileName() + " was interrupted." + instead, e);
+            throw new DownloadFailed(DownloadFailed.Reason.DOWNLOAD_FAILED,
+                "The download of " + d.fileName() + " was interrupted." + instead, e);
         }
     }
 }

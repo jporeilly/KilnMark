@@ -50,7 +50,7 @@ public class DriverResource {
             return drivers.accept(id, Callers.of(identity))
                 .orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No connector needs a driver called " + id));
         } catch (DriverService.DownloadFailed e) {
-            throw ApiError.of(e.getMessage().startsWith("The licence is accepted. This server does not download")
+            throw ApiError.of(e.reason() == DriverService.DownloadFailed.Reason.DOWNLOADS_OFF
                 ? Response.Status.CONFLICT : Response.Status.BAD_GATEWAY, e.getMessage());
         }
     }

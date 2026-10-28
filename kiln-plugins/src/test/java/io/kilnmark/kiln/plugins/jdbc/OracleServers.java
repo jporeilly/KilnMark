@@ -103,7 +103,7 @@ final class OracleServers {
         try {
             Path jar = Path.of(Class.forName(OracleConnector.DRIVER.driverClass()).getProtectionDomain().getCodeSource()
                 .getLocation().toURI());
-            Path dir = Files.createTempDirectory("kilnmark-test-drivers");
+            Path dir = Files.createDirectories(Files.createTempDirectory("kilnmark-test").resolve("drivers"));
             Files.copy(jar, dir.resolve(OracleConnector.DRIVER.fileName()));
             return new DriverFolder(dir);
         } catch (IOException e) {

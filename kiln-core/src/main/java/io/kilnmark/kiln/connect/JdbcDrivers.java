@@ -17,6 +17,15 @@ public interface JdbcDrivers {
      */
     java.sql.Driver driver(Connector.Driver spec) throws SQLException;
 
+    /**
+     * An empty folder only this server's user can write, for drivers that would otherwise read
+     * settings from a folder the environment chooses (Oracle's {@code TNS_ADMIN}); null (the
+     * default) when there is none.
+     */
+    default java.nio.file.Path emptyFolder() {
+        return null;
+    }
+
     /** No drivers installed. */
     JdbcDrivers NONE = spec -> {
         throw new SQLException(missing(spec, null), "08001");

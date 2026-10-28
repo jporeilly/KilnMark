@@ -27,8 +27,12 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>Only the file a connector's driver names is ever read, and only when its SHA-256 is the one
  *       the connector pins: anything else in the folder is ignored, and a file with another
  *       checksum is refused with a message saying so.</li>
- *   <li>The verified bytes are copied to a private folder only this server's user can read, and
- *       loaded from there, so the file cannot be swapped between the check and the load.</li>
+ *   <li>The verified bytes are copied to a private folder only this server's user can read, beside
+ *       the drivers folder ({@code drivers.loaded}, emptied when the server starts:
+ *       {@link #prepare()}), and loaded from there, so the file cannot be swapped between the check
+ *       and the load. Once loaded, a driver is used again without reading its file while the file's
+ *       size and modification time stay the same; replacing the file only changes what the next
+ *       load reads, never what is loaded.</li>
  *   <li>Each driver gets a class loader of its own whose parent is the platform class loader: it
  *       sees the JDK (java.sql and the like), never Kilnmark's classes or other drivers, and nothing
  *       of it is on Kilnmark's class path. Connections are made through its {@link java.sql.Driver}
@@ -69,7 +73,7 @@ public final class DriverFolder implements JdbcDrivers {
     private final Path dir;
     private final Map<String, java.sql.Driver> loaded = new ConcurrentHashMap<>();
     private final Map<Path, Known> checksums = new ConcurrentHashMap<>();
-    private volatile Path privateCopies;
+    private final Path privateCopies;
 
     /** A file's checksum as last read, valid while its size and modification time stay the same. */
     private record Known(long size, long modified, String sha256) {
@@ -77,6 +81,62 @@ public final class DriverFolder implements JdbcDrivers {
 
     public DriverFolder(Path dir) {
         this.dir = dir.toAbsolutePath().normalize();
+        Path parent = this.dir.getParent();
+        String name = this.dir.getFileName() == null ? "drivers" : this.dir.getFileName().toString();
+        this.privateCopies = (parent == null ? this.dir : parent).resolve(name + ".loaded");
+    }
+
+    /**
+     * Creates the drivers folder, and empties the private folder loaded copies go to (left over
+     * from the last run), so it holds only this run's copies. Called when the server starts;
+     * failures are left for the first load to report.
+     */
+    public void prepare() {
+        try {
+            Files.createDirectories(dir);
+        } catch (IOException | RuntimeException e) {
+            // read-only or not allowed: drivers then show as missing, with the folder named
+        }
+        try {
+            if (Files.isSymbolicLink(privateCopies)) {
+                Files.delete(privateCopies);
+            }
+            if (Files.isDirectory(privateCopies)) {
+                try (java.util.stream.Stream<Path> walk = Files.walk(privateCopies)) {
+                    for (Path p : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                        if (!p.equals(privateCopies)) {
+                            Files.deleteIfExists(p);
+                        }
+                    }
+                }
+            }
+            privateCopies();
+        } catch (IOException | RuntimeException e) {
+            // reported by the first load that needs the folder
+        }
+    }
+
+    /** The private folder loaded copies go to: {@code drivers.loaded} beside the drivers folder. */
+    public Path privateFolder() {
+        return privateCopies;
+    }
+
+    /**
+     * An empty folder only this server's user can write ({@code drivers.loaded/empty}), for drivers
+     * that would read settings from a folder the environment chooses (Oracle's {@code TNS_ADMIN}
+     * and its {@code ojdbc.properties}); null when it cannot be made.
+     */
+    @Override
+    public Path emptyFolder() {
+        try {
+            Path empty = privateCopies().resolve("empty");
+            if (!Files.isDirectory(empty, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                createPrivate(empty);
+            }
+            return empty;
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
     }
 
     /** The folder. */
@@ -136,12 +196,26 @@ public final class DriverFolder implements JdbcDrivers {
         }
         Path file = file(spec);
         byte[] bytes;
+        long size;
+        long modified;
         try {
-            if (!Files.isRegularFile(file)) {
+            java.nio.file.attribute.BasicFileAttributes a = Files.readAttributes(file,
+                java.nio.file.attribute.BasicFileAttributes.class);
+            if (!a.isRegularFile()) {
                 throw new SQLException(JdbcDrivers.missing(spec, null), "08001");
             }
-            if (Files.size(file) > MAX_BYTES) {
+            size = a.size();
+            modified = a.lastModifiedTime().toMillis();
+            if (size > MAX_BYTES) {
                 throw new SQLException(tooLarge(spec, file), "08001");
+            }
+            // unchanged since it was verified and loaded: the loaded driver, without reading the file again
+            Known k = checksums.get(file);
+            if (k != null && k.size() == size && k.modified() == modified && k.sha256().equals(spec.sha256())) {
+                java.sql.Driver d = loaded.get(k.sha256());
+                if (d != null) {
+                    return d;
+                }
             }
             bytes = Files.readAllBytes(file);
         } catch (NoSuchFileException e) {
@@ -151,6 +225,7 @@ public final class DriverFolder implements JdbcDrivers {
                 + e.getMessage(), "08001", e);
         }
         String sha = sha256(bytes);
+        checksums.put(file, new Known(size, modified, sha));
         if (!sha.equals(spec.sha256())) {
             throw new SQLException(mismatch(spec, file, sha), "08001");
         }
@@ -193,23 +268,33 @@ public final class DriverFolder implements JdbcDrivers {
         }
     }
 
-    private Path privateCopies() throws IOException {
-        Path p = privateCopies;
-        if (p == null) {
-            synchronized (this) {
-                p = privateCopies;
-                if (p == null) {
-                    try {
-                        p = Files.createTempDirectory("kilnmark-drivers",
-                            PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
-                    } catch (UnsupportedOperationException e) {
-                        p = Files.createTempDirectory("kilnmark-drivers"); // not POSIX (Windows): the user's own temp folder
-                    }
-                    privateCopies = p;
-                }
-            }
+    /** The private folder, made (owner only) when it is not there. */
+    private synchronized Path privateCopies() throws IOException {
+        if (Files.isSymbolicLink(privateCopies)) {
+            throw new IOException(privateCopies + " is a link, not a folder: remove it");
         }
-        return p;
+        if (!Files.isDirectory(privateCopies)) {
+            createPrivate(privateCopies);
+        }
+        return privateCopies;
+    }
+
+    /** A folder only this server's user may use (where permissions are POSIX ones). */
+    private static void createPrivate(Path folder) throws IOException {
+        try {
+            Files.createDirectories(folder.getParent());
+            Files.createDirectory(folder,
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        } catch (UnsupportedOperationException e) {
+            Files.createDirectories(folder); // not POSIX (Windows): the folder's inherited permissions
+        } catch (java.nio.file.FileAlreadyExistsException e) {
+            // made meanwhile
+        }
+        try {
+            Files.setPosixFilePermissions(folder, PosixFilePermissions.fromString("rwx------"));
+        } catch (UnsupportedOperationException e) {
+            // not POSIX
+        }
     }
 
     /**

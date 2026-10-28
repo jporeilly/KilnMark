@@ -78,21 +78,31 @@ details.
 - **Oracle connector** (kind `oracle`): settings `host`, `port`, `service_name`, `username`,
   `encryption` (`accepted`, `required` or `tls`) and `schemas`, with kinds declared; the address is
   always built, never given. Catalogue from the `ALL_*` views, keys across schemas, `NUM_ROWS` as
-  the estimate, `SAMPLE` for sampling. `NUMBER` without precision reads as text holding its exact
-  digits; `DATE` as a timestamp. Writes: `create`, `append`, `upsert` (`MERGE`) and `replace` (one
-  PL/SQL block that puts the names back on failure), refusing empty text (unless
-  `empty_text_as_null`), decimals past 38 digits and timestamps with more digits of a second than
-  the column keeps. Tests against Oracle Database Free in CI's heavy-databases job, in their own
-  Gradle run (`./gradlew :kiln-plugins:oracleTest`).
+  the estimate, `SAMPLE` for sampling. `NUMBER` without precision and `FLOAT(b)` read as text
+  holding their exact digits; `DATE` as a timestamp; `TIMESTAMP WITH LOCAL TIME ZONE` through a
+  cast to `TIMESTAMP WITH TIME ZONE`, whatever the JVM's time zone. Writes: `create`, `append`,
+  `upsert` (`MERGE`) and `replace` (one PL/SQL block that puts the names back on failure),
+  refusing empty text and bytes (unless `empty_text_as_null`; in an upsert key always), decimals
+  past 38 digits, a `FLOAT(b)` column's digits or a NUMBER's range, timestamps with more digits of a
+  second than the column keeps, characters the column's character set lacks (on databases that are
+  not Unicode; national columns bound with `setNString`), and text over a column's size in bytes.
+  The driver's `TNS_ADMIN` is an empty private folder. Tests against Oracle Database Free in CI's
+  heavy-databases job, in their own Gradle run (`./gradlew :kiln-plugins:oracleTest`, in
+  `America/New_York` time); `encryption` `required` and `tls` are not tested against a listener.
 - **Drivers the customer installs** (ADR 0007, docs/design/drivers.md): connectors declare their
   driver (coordinates, pinned version, SHA-256, licence, driver class); the drivers folder
   (`kilnmark.drivers.dir`, `/var/lib/kilnmark/drivers` in the image) loads only verified jars, from
-  a private copy, each in a class loader that sees only the JDK. `GET /api/v1/drivers` and
+  a private copy in `drivers.loaded` beside it (emptied at start), each in a class loader that sees
+  only the JDK, and uses a loaded driver again without re-reading its file while the file's size and
+  modification time are unchanged. `GET /api/v1/drivers` and
   `POST /api/v1/drivers/{id}/accept` (admins) record who accepted the licence and download from
   `kilnmark.drivers.maven-url`; `kilnmark.drivers.download=false` for servers without internet
   access. `GET /api/v1/connectors` adds each connector's `driver` state. Oracle's driver is a
   test-only dependency, and `./gradlew release` fails if one reaches the release folder
-  (`checkNoCustomerDrivers`). Database migration V14 adds `driver_licence`.
+  (`checkNoCustomerDrivers`, which also looks inside jars nested in jars). Database migration V14
+  adds `driver_licence`. **Upgrades:** when a release pins a newer driver version, the installed
+  file is no longer used; the driver shows as missing, an admin accepts the licence again, and the
+  server logs a warning at start naming the old file. Release notes will say when this happens.
 - **Lab: Oracle** (development). `lab-oracle` (Oracle Database Free 23ai, profiles `oracle` and
   `all`) on host port 1522, service `FREEPDB1`, with a synthetic parcel carrier in schemas `FLEET`
   and `FREIGHT` and planted quality problems (null emails, out-of-range and backwards dates,

@@ -34,7 +34,15 @@ class DriverFolderTest {
     private static byte[] otherJar;
 
     @TempDir
+    Path root;
+
+    /** The drivers folder, inside the test's folder, so the private copies beside it are too. */
     Path dir;
+
+    @org.junit.jupiter.api.BeforeEach
+    void folder() throws IOException {
+        dir = Files.createDirectories(root.resolve("drivers"));
+    }
 
     @BeforeAll
     static void compile(@TempDir Path work) throws IOException {
@@ -144,6 +152,50 @@ class DriverFolderTest {
         // not reachable through DriverManager from Kilnmark's own class loader
         assertThrows(SQLException.class, () -> java.sql.DriverManager.getDriver("jdbc:fake:x"));
         assertSame(d, folder.driver(spec), "loaded once while the file is unchanged");
+    }
+
+    @Test
+    void aLoadedDriverIsUsedAgainWithoutReadingItsFileWhileTheFileIsUnchanged() throws Exception {
+        DriverFolder folder = new DriverFolder(dir);
+        Connector.Driver spec = spec(driverJar);
+        Path file = folder.file(spec);
+        Files.write(file, driverJar);
+        java.sql.Driver d = folder.driver(spec);
+        java.nio.file.attribute.FileTime modified = Files.getLastModifiedTime(file);
+
+        // same size and modification time: not read again (these bytes would fail the checksum)
+        byte[] garbage = new byte[driverJar.length];
+        Files.write(file, garbage);
+        Files.setLastModifiedTime(file, modified);
+        assertSame(d, folder.driver(spec), "the loaded driver, from its verified private copy");
+
+        // a new modification time: read and checked again, and refused
+        Files.setLastModifiedTime(file, java.nio.file.attribute.FileTime.fromMillis(modified.toMillis() + 5000));
+        SQLException e = assertThrows(SQLException.class, () -> folder.driver(spec));
+        assertTrue(e.getMessage().contains("is not the driver Kilnmark expects"), e.getMessage());
+    }
+
+    @Test
+    void loadedCopiesLiveInOnePrivateFolderBesideTheDriversFolderClearedAtStart() throws Exception {
+        DriverFolder folder = new DriverFolder(dir);
+        Connector.Driver spec = spec(driverJar);
+        Files.write(folder.file(spec), driverJar);
+        folder.driver(spec);
+        Path copies = folder.privateFolder();
+        assertEquals(root.resolve("drivers.loaded"), copies);
+        assertTrue(Files.exists(copies.resolve(spec.sha256() + ".jar")), listing(copies).toString());
+        if (copies.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+            assertEquals("rwx------", java.nio.file.attribute.PosixFilePermissions.toString(
+                Files.getPosixFilePermissions(copies)));
+        }
+        Path empty = folder.emptyFolder();
+        assertEquals(copies.resolve("empty"), empty);
+        assertEquals(List.of(), listing(empty), "nothing for a driver to read settings from");
+
+        Files.writeString(copies.resolve("left-over.jar"), "from the last run");
+        new DriverFolder(dir).prepare();
+        assertEquals(List.of(), listing(copies), "emptied when the server starts");
+        assertTrue(Files.isDirectory(copies));
     }
 
     @Test

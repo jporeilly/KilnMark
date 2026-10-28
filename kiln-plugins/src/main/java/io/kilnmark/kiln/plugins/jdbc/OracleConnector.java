@@ -42,7 +42,9 @@ import io.kilnmark.kiln.plugins.write.WriteSettings;
  * against this server's Java trust store and its name against the host) and {@code schemas}. No
  * driver property and no address in Oracle's own syntax can be given by people: the connector
  * builds the address and sets every property, so a source cannot point the driver at local files
- * (wallets, {@code tnsnames.ora}) or another host.
+ * (wallets, {@code tnsnames.ora}) or another host; the driver's {@code TNS_ADMIN} is an empty
+ * private folder ({@link JdbcDrivers#emptyFolder()}), so no {@code ojdbc.properties} of the
+ * environment's choosing feeds it either.
  *
  * <p>Each user is a schema; the catalogue comes from the {@code ALL_*} views ({@link OracleCatalog}),
  * types are mapped in {@link OracleTypes}, and writes go through {@link OracleWriteSql}. Sessions
@@ -287,6 +289,11 @@ public class OracleConnector extends JdbcConnector {
         Properties p = new Properties();
         p.putAll(given);
         p.setProperty("oracle.jdbc.timezoneAsRegion", "false");
+        java.nio.file.Path empty = drivers.emptyFolder();
+        if (empty != null) {
+            // where the driver would look for ojdbc.properties and tnsnames.ora: an empty folder of ours
+            p.setProperty("oracle.net.tns_admin", empty.toString());
+        }
         p.setProperty("v$session.program", "Kilnmark");
         if (encryption.equals("required")) {
             p.setProperty("oracle.net.encryption_client", "REQUIRED");
@@ -409,7 +416,11 @@ public class OracleConnector extends JdbcConnector {
         return select("*", schema, table, rowLimit);
     }
 
-    /** XMLTYPE columns through {@code XMLSERIALIZE}, as text; BFILE columns (files outside the database) as null. */
+    /**
+     * XMLTYPE columns through {@code XMLSERIALIZE}, as text; BFILE columns (files outside the
+     * database) as null; TIMESTAMP WITH LOCAL TIME ZONE as TIMESTAMP WITH TIME ZONE, so the value
+     * arrives with its offset and never depends on the JVM's time zone.
+     */
     @Override
     protected String selectSql(AssetInfo asset, long rowLimit) {
         String schema = asset.hints().get("schema");
@@ -431,6 +442,9 @@ public class OracleConnector extends JdbcConnector {
         }
         if (type.equals("BFILE")) {
             return "CAST(NULL AS VARCHAR2(1))";
+        }
+        if (type.equals("TIMESTAMP WITH LOCAL TIME ZONE")) {
+            return "CAST(" + quote(f.name()) + " AS TIMESTAMP(9) WITH TIME ZONE)";
         }
         return null;
     }
@@ -495,8 +509,8 @@ public class OracleConnector extends JdbcConnector {
     }
 
     /**
-     * Writes with SQL for this server (BOOLEAN columns on 23ai and later) and this step
-     * ({@code empty_text_as_null}), to the table as the catalogue names it.
+     * Writes with SQL for this server (BOOLEAN columns on 23ai and later, its character sets) and
+     * this step ({@code empty_text_as_null}), to the table as the catalogue names it.
      */
     @Override
     public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
@@ -504,15 +518,31 @@ public class OracleConnector extends JdbcConnector {
         boolean emptyAsNull = new WriteSettings(write.options()).bool("empty_text_as_null", false);
         TableName target;
         boolean booleans;
+        Map<String, String> charsets;
         try (Connection c = connect(source)) {
             target = write.target() == null || write.target().isBlank() ? null : resolve(c, TableName.parse(write.target()));
             booleans = c.getMetaData().getDatabaseMajorVersion() >= 23;
+            charsets = charsets(c);
         } catch (SQLException e) {
             throw new ConnectorException("Cannot write to " + source.name() + ": " + explain(e), e);
         }
         WriteOptions resolved = target == null ? write : new WriteOptions(target.toString(), write.mode(), write.key(),
             write.format(), write.options(), write.assetUrn(), write.profiling());
-        return writer(source, resolved, new OracleWriteSql(booleans, emptyAsNull));
+        return writer(source, resolved, new OracleWriteSql(booleans, emptyAsNull,
+            charsets.getOrDefault("NLS_CHARACTERSET", "AL32UTF8"),
+            charsets.getOrDefault("NLS_NCHAR_CHARACTERSET", "AL16UTF16")));
+    }
+
+    /** The database's character set and national character set, from {@code NLS_DATABASE_PARAMETERS}. */
+    static Map<String, String> charsets(Connection c) throws SQLException {
+        Map<String, String> out = new HashMap<>();
+        try (Statement s = c.createStatement(); ResultSet rs = s.executeQuery("SELECT PARAMETER, VALUE FROM "
+            + "NLS_DATABASE_PARAMETERS WHERE PARAMETER IN ('NLS_CHARACTERSET', 'NLS_NCHAR_CHARACTERSET')")) {
+            while (rs.next()) {
+                out.put(rs.getString(1), rs.getString(2));
+            }
+        }
+        return out;
     }
 
     /**
@@ -541,14 +571,16 @@ public class OracleConnector extends JdbcConnector {
     /**
      * The table's columns from {@code ALL_TAB_COLUMNS}, which a login sees with any privilege on the
      * table, so one that may only insert can still append; a timestamp's scale is its digits of a
-     * second ({@code DATE}: none).
+     * second ({@code DATE}: none); a text column's precision is its size in bytes
+     * ({@code DATA_LENGTH}, at most 4,000 unless {@code MAX_STRING_SIZE} is {@code EXTENDED}).
      */
     @Override
     List<WritePlan.TargetColumn> targetColumns(Connection connection, SourceConfig source, TableName table)
         throws SQLException {
         List<WritePlan.TargetColumn> out = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement("SELECT COLUMN_NAME, DATA_TYPE, DATA_PRECISION, "
-            + "DATA_SCALE, CHAR_LENGTH FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? ORDER BY COLUMN_ID")) {
+            + "DATA_SCALE, CHAR_LENGTH, CHAR_USED, DATA_LENGTH FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? "
+            + "ORDER BY COLUMN_ID")) {
             ps.setString(1, table.schema());
             ps.setString(2, table.table());
             try (ResultSet rs = ps.executeQuery()) {
@@ -557,15 +589,23 @@ public class OracleConnector extends JdbcConnector {
                     String base = OracleTypes.baseName(dataType);
                     Integer precision = OracleCatalog.intOrNull(rs, 3);
                     Integer scale = OracleCatalog.intOrNull(rs, 4);
-                    out.add(target(rs.getString(1), base, precision, scale, OracleCatalog.intOrNull(rs, 5)));
+                    out.add(target(rs.getString(1), base, precision, scale, OracleCatalog.intOrNull(rs, 5),
+                        "B".equals(rs.getString(6)), OracleCatalog.intOrNull(rs, 7)));
                 }
             }
         }
         return out.isEmpty() ? null : out;
     }
 
-    /** One column as a writer matches its input to it. */
-    static WritePlan.TargetColumn target(String name, String base, Integer precision, Integer scale, Integer chars) {
+    /**
+     * One column as a writer matches its input to it.
+     *
+     * @param chars     {@code CHAR_LENGTH}: a text column's length in characters
+     * @param byteSized {@code CHAR_USED} is {@code B}: the column is sized in bytes
+     * @param bytes     {@code DATA_LENGTH}: its size in bytes
+     */
+    static WritePlan.TargetColumn target(String name, String base, Integer precision, Integer scale, Integer chars,
+                                         boolean byteSized, Integer bytes) {
         JdbcColumn.Kind kind;
         int p = 0;
         int s = 0;
@@ -576,7 +616,13 @@ public class OracleConnector extends JdbcConnector {
                 p = precision == null ? (scale == null ? 0 : 38) : precision;
                 s = scale == null ? 0 : scale;
             }
-            case "FLOAT", "BINARY_DOUBLE" -> kind = JdbcColumn.Kind.FLOAT64;
+            // a decimal NUMBER of b bits: any scale, ceil(b × 0.30103) significant digits (the scale
+            // carries them; OracleWriteSql.targetValueProblem checks each value)
+            case "FLOAT" -> {
+                kind = JdbcColumn.Kind.DECIMAL;
+                s = floatDigits(precision == null ? 126 : precision);
+            }
+            case "BINARY_DOUBLE" -> kind = JdbcColumn.Kind.FLOAT64;
             case "BINARY_FLOAT" -> kind = JdbcColumn.Kind.FLOAT32;
             case "DATE" -> kind = JdbcColumn.Kind.TIMESTAMP; // scale 0: whole seconds
             case "TIMESTAMP" -> {
@@ -591,12 +637,19 @@ public class OracleConnector extends JdbcConnector {
             case "RAW", "LONG RAW", "BLOB" -> kind = JdbcColumn.Kind.BINARY;
             case "VARCHAR2", "NVARCHAR2", "CHAR", "NCHAR" -> {
                 kind = JdbcColumn.Kind.TEXT;
-                maxLength = chars == null ? 0 : chars;
-                p = maxLength;
+                // sized in characters: checked in characters, and in bytes (DATA_LENGTH); sized in
+                // bytes: in bytes only
+                maxLength = byteSized || chars == null ? 0 : chars;
+                p = bytes == null ? 0 : bytes;
             }
             default -> kind = JdbcColumn.Kind.TEXT; // CLOB, LONG, JSON, intervals, ... take text
         }
         return new WritePlan.TargetColumn(name, base, kind, p, s, maxLength);
+    }
+
+    /** The significant decimal digits a FLOAT of {@code bits} binary digits keeps: ceil(bits × 0.30103). */
+    static int floatDigits(int bits) {
+        return (int) Math.ceil(bits * 0.30103);
     }
 
     // ------------------------------------------------------------------ messages

@@ -118,5 +118,8 @@ tasks.register<Test>("oracleTest") {
     testClassesDirs = main.output.classesDirs
     classpath = main.runtimeClasspath
     useJUnitPlatform { includeTags(*oracle.toTypedArray()) }
+    // Not UTC, so a value read through the JVM's own time zone shows up as a failure: nothing Kilnmark
+    // reads or writes may depend on the zone the server runs in.
+    jvmArgs("-Duser.timezone=America/New_York")
     mustRunAfter("heavyTest")
 }

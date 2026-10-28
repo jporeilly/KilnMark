@@ -316,4 +316,40 @@ class OracleWriteTest {
         Rows.Collected back = read("KT_BILLING.INSTANTS");
         assertEquals(at, back.rows.get(0).get(1));
     }
+
+    @Test
+    void anEmptyUpsertKeyIsRefusedEvenWhenEmptyTextMayBeNull() throws Exception {
+        db.sql("CREATE TABLE kt_billing.codes (code VARCHAR2(10) PRIMARY KEY, label VARCHAR2(20))");
+        Schema s = new Schema(List.of(field("code", Rows.TEXT), field("label", Rows.TEXT)));
+        RunResult r = write(source, options("kt_billing.codes", "upsert", List.of("code"),
+            Map.of("empty_text_as_null", true)), s, Rows.list(new Object[] {"", "x"}), 4, -1);
+        assertTrue(r.error().contains("Row 1 has an empty value in the key column CODE"), r.error());
+        assertEquals(List.of(List.of(0L)), query("SELECT COUNT(*) FROM kt_billing.codes"));
+    }
+
+    @Test
+    void sizesInBytesFloatDigitsEmptyBytesAndNationalTextAreKept() throws Exception {
+        db.sql("CREATE TABLE kt_billing.sized (id NUMBER(5), code VARCHAR2(4 BYTE), approx FLOAT(63), raw_id RAW(4), "
+            + "nnote NVARCHAR2(10))");
+        Schema s = new Schema(List.of(field("id", Rows.INT64), field("code", Rows.TEXT),
+            field("approx", Rows.decimal(25, 22)), field("raw_id", Rows.BINARY), field("nnote", Rows.TEXT)));
+        RunResult ok = write(source, options("kt_billing.sized", "append", List.of(), Map.of()), s,
+            Rows.list(new Object[] {1L, "éé", new BigDecimal("0.1234567890123456789000"), new byte[] {1, 2},
+                "Łódź ✓"}), 4, -1);
+        assertTrue(ok.succeeded(), ok.error());
+        assertEquals(List.of(List.of("éé", "Łódź ✓")), query("SELECT code, nnote FROM kt_billing.sized"),
+            "national text bound as such");
+
+        RunResult bytes = write(source, options("kt_billing.sized", "append", List.of(), Map.of()), s,
+            Rows.list(new Object[] {2L, "ééé", null, null, null}), 4, -1);
+        assertTrue(bytes.error().contains("Row 1, column CODE: the value takes 6 bytes in the character set "
+            + "AL32UTF8, but the column holds at most 4 bytes"), bytes.error());
+        RunResult digits = write(source, options("kt_billing.sized", "append", List.of(), Map.of()), s,
+            Rows.list(new Object[] {3L, null, new BigDecimal("0.1234567890123456789100"), null, null}), 4, -1);
+        assertTrue(digits.error().contains("has 20 significant digits, but the FLOAT column keeps 19"), digits.error());
+        RunResult empty = write(source, options("kt_billing.sized", "append", List.of(), Map.of()), s,
+            Rows.list(new Object[] {4L, null, null, new byte[0], null}), 4, -1);
+        assertTrue(empty.error().contains("it is empty (no bytes), which Oracle stores as null"), empty.error());
+        assertEquals(List.of(List.of(1L)), query("SELECT COUNT(*) FROM kt_billing.sized"));
+    }
 }

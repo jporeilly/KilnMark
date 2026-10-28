@@ -28,17 +28,26 @@ no class of the driver is on Kilnmark's class path, at compile time or run time.
 `DriverFolder` (in `kiln-core`) is the folder `kilnmark.drivers.dir` names: by default
 `~/.kilnmark/drivers`, and `/var/lib/kilnmark/drivers` in the server's image, inside its data
 volume (`keys` in both compose files), so a driver survives upgrades. One file per driver, named
-as Maven Central names it (`ojdbc11-23.26.3.0.0.jar`). The server creates the folder at start.
+as Maven Central names it (`ojdbc11-23.26.3.0.0.jar`). The server creates the folder at start
+(`DriverFolder.prepare()`).
 
 - Only the file a connector's driver names is read, and only if its SHA-256 is the pinned one.
   Any other file in the folder is ignored; a file of the right name with another checksum is
   refused, and the message says so.
-- The verified bytes are copied to a private temporary folder (owner-only permissions) and loaded
-  from that copy, so the file cannot be swapped between the check and the load.
+- The verified bytes are copied to a private folder beside the drivers folder (`drivers.loaded`,
+  owner-only permissions, emptied at every start) and loaded from that copy, so the file cannot be
+  swapped between the check and the load. Nothing in the system's temporary folder is used, so no
+  temporary-file cleaner can remove a loaded driver's jar.
+- `drivers.loaded/empty` is an empty folder of the same kind, which the Oracle connector gives
+  its driver as `oracle.net.tns_admin`: the driver would otherwise read `ojdbc.properties` (and
+  `tnsnames.ora`) from a `TNS_ADMIN` the environment chooses.
 - Each driver gets a `URLClassLoader` of its own whose parent is the platform class loader: it sees
   the JDK, never Kilnmark's classes or other drivers.
 - A driver is looked up each time a connection is made, so one installed while the server runs is
-  used at once; it is loaded once per checksum.
+  used at once; it is loaded once per checksum. Once loaded, it is used again without reading or
+  hashing its file while the file's size and modification time are unchanged; a change in either
+  reads and checks the file again. Changing the file never changes what is loaded: that is the
+  verified private copy.
 
 States, as `GET /api/v1/connectors` gives them in each connector's `driver`: `bundled` (it ships),
 `ready`, `missing`, `mismatch` (another file of that name) and `unreadable`.
@@ -59,6 +68,16 @@ Settings › Drivers (admins only; `GET /api/v1/drivers`, `POST /api/v1/drivers/
    put instead.
 3. **Offline** (`kilnmark.drivers.download=false`): the page names the file, its Maven Central
    address, its checksum and the folder to put it in. Copying it there is enough; no restart.
+
+`POST /api/v1/drivers/{id}/accept` answers 409 when this server does not download drivers and 502
+when the download did not install the driver (`DriverService.DownloadFailed.Reason`), each with
+what to do.
+
+**Upgrades that change the pinned version.** The file name holds the version, so after an upgrade
+that pins a newer driver the installed file is no longer the one wanted: the driver shows as
+missing, its connectors cannot connect, and an admin accepts the (new version's) licence again,
+or puts the new file in the folder. The server logs a warning at start naming the file left
+behind and the connectors affected; release notes say when a driver's version changes.
 
 In the gallery, a connector whose driver is not installed says **Needs its driver**, with a link
 to Settings › Drivers; its connection panel says the same. Connecting before the driver is there

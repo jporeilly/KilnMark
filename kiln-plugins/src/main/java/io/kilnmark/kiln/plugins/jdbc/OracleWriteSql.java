@@ -30,9 +30,14 @@ import io.kilnmark.kiln.plugins.write.WriteColumn;
  * table by that name. Upsert is one {@code MERGE} a row. Values are bound as parameters.
  *
  * <p>Nothing is changed silently: a decimal is never rounded (also beyond Oracle's 38 significant
- * digits, which it would round), a timestamp keeps its digits of a second or is refused, and empty
- * text, which Oracle stores as null, is refused unless the step allows it
- * ({@code empty_text_as_null}).
+ * digits, which it would round, or a {@code FLOAT(b)} column's digits) nor taken outside a NUMBER's
+ * range; a timestamp keeps its digits of a second or is refused; empty text and empty bytes, which
+ * Oracle stores as null, are refused unless the step allows it ({@code empty_text_as_null}), and in
+ * an upsert key always. Text must fit the column's character set, character by character: on a
+ * database whose character set is not Unicode ({@code WE8MSWIN1252}, say) a character it lacks
+ * would be stored as {@code ?}, so the row is refused, naming it. Columns sized in bytes are checked
+ * in bytes of their character set. NVARCHAR2, NCHAR and NCLOB columns take their values as national
+ * character data ({@code setNString}), in the national character set.
  *
  * <p>Grants belong to the table, so replace repeats the old table's grants on the new one (unless
  * {@code keep_grants} is false). A table belongs to its schema's user: there is no owner to hand
@@ -52,17 +57,42 @@ final class OracleWriteSql extends WriteSql {
     /** Oracle keeps at most 38 significant digits in a NUMBER. */
     static final int MAX_DIGITS = 38;
 
+    /** A NUMBER's adjusted exponent ranges from -130 to 125: 1E-130 up to, not including, 1E126. */
+    static final int MIN_EXPONENT = -130;
+    static final int MAX_EXPONENT = 125;
+
     private final boolean booleans;
     private final boolean emptyAsNull;
+    private final OracleCharset charset;
+    private final OracleCharset nationalCharset;
+
+    /** On a Unicode database ({@code AL32UTF8}, national {@code AL16UTF16}). */
+    OracleWriteSql(boolean booleans, boolean emptyAsNull) {
+        this(booleans, emptyAsNull, "AL32UTF8", "AL16UTF16");
+    }
 
     /**
-     * @param booleans    whether the server has a BOOLEAN type (23ai and later); before it,
-     *                    true or false columns are created as NUMBER(1)
-     * @param emptyAsNull whether empty text may be written, as the null Oracle makes of it
+     * @param booleans        whether the server has a BOOLEAN type (23ai and later); before it,
+     *                        true or false columns are created as NUMBER(1)
+     * @param emptyAsNull     whether empty text may be written, as the null Oracle makes of it
+     * @param charset         the database's character set ({@code NLS_CHARACTERSET})
+     * @param nationalCharset its national character set ({@code NLS_NCHAR_CHARACTERSET})
      */
-    OracleWriteSql(boolean booleans, boolean emptyAsNull) {
+    OracleWriteSql(boolean booleans, boolean emptyAsNull, String charset, String nationalCharset) {
         this.booleans = booleans;
         this.emptyAsNull = emptyAsNull;
+        this.charset = OracleCharset.of(charset);
+        this.nationalCharset = OracleCharset.of(nationalCharset);
+    }
+
+    /** NVARCHAR2, NCHAR and NCLOB: national character data, in the national character set. */
+    static boolean national(String typeName) {
+        return typeName.equals("NVARCHAR2") || typeName.equals("NCHAR") || typeName.equals("NCLOB");
+    }
+
+    /** Columns that keep text in a character set (not JSON, intervals or other types that parse it). */
+    private static boolean characterColumn(String typeName) {
+        return national(typeName) || Set.of("VARCHAR2", "CHAR", "CLOB", "LONG", "VARCHAR").contains(typeName);
     }
 
     /** {@code orders} as {@code ORDERS}, as Oracle stores a name written without quotes; any other name as written. */
@@ -382,6 +412,22 @@ final class OracleWriteSql extends WriteSql {
         }
     }
 
+    /** Text for an NVARCHAR2, NCHAR or NCLOB column as national character data; anything else as {@link #bind}. */
+    @Override
+    void bind(PreparedStatement ps, int i, Kind kind, Object v, boolean bulk, WritePlan.TargetColumn into)
+        throws SQLException {
+        if (into != null && national(into.typeName()) && v instanceof String s) {
+            // past 4,000 bytes of national characters only an NCLOB holds it
+            if (s.length() > 2000) {
+                ps.setNClob(i, new java.io.StringReader(s), s.length());
+            } else {
+                ps.setNString(i, s);
+            }
+            return;
+        }
+        bind(ps, i, kind, v, bulk);
+    }
+
     /**
      * True or false as 1 or 0 (into NUMBER(1), and into BOOLEAN, which takes numbers); a time of day
      * as text ({@code 09:30:00.000000}), as the step's own columns keep it; a timestamp with a zone
@@ -403,9 +449,15 @@ final class OracleWriteSql extends WriteSql {
         }
     }
 
+    /** Oracle stores empty text and empty bytes as null. */
+    @Override
+    boolean emptyMeansNull() {
+        return true;
+    }
+
     /**
-     * Empty text (Oracle makes it null) unless allowed; a decimal with more significant digits
-     * than Oracle keeps (it would round it).
+     * Empty text or bytes (Oracle makes them null) unless allowed; a decimal with more significant
+     * digits than Oracle keeps (it would round it), or outside a NUMBER's range.
      */
     @Override
     String valueProblem(Kind kind, Object v) {
@@ -413,9 +465,55 @@ final class OracleWriteSql extends WriteSql {
             return "it is empty text, which Oracle stores as null. Set empty_text_as_null: true to write it as "
                 + "null, or turn it into another value with a compute step";
         }
-        if (v instanceof BigDecimal d && d.stripTrailingZeros().precision() > MAX_DIGITS) {
-            return "the value " + d.toPlainString() + " has more than " + MAX_DIGITS + " significant digits, which Oracle "
-                + "would round, and it is never rounded";
+        if (v instanceof byte[] b && b.length == 0 && !emptyAsNull) {
+            return "it is empty (no bytes), which Oracle stores as null. Set empty_text_as_null: true to write it as "
+                + "null, or turn it into another value with a compute step";
+        }
+        if (v instanceof BigDecimal d && d.signum() != 0) {
+            BigDecimal exact = d.stripTrailingZeros();
+            if (exact.precision() > MAX_DIGITS) {
+                return "the value " + d.toPlainString() + " has more than " + MAX_DIGITS + " significant digits, which "
+                    + "Oracle would round, and it is never rounded";
+            }
+            int exponent = exact.precision() - exact.scale() - 1;
+            if (exponent < MIN_EXPONENT || exponent > MAX_EXPONENT) {
+                return "the value " + exact.toString() + " is outside what an Oracle NUMBER holds (from 1E-130 up to, "
+                    + "not including, 1E126 either side of zero)";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Per column of the table written to ({@code t} null for a column the step creates, which is
+     * VARCHAR2 or CLOB in the database's character set): text must be storable in the column's
+     * character set, and within a column's size in bytes; a FLOAT(b) column keeps
+     * ceil(b × 0.30103) significant digits, so a value with more is refused rather than rounded.
+     */
+    @Override
+    String targetValueProblem(WritePlan.TargetColumn t, Object v) {
+        if (v instanceof String s && (t == null || characterColumn(t.typeName()))) {
+            OracleCharset cs = t != null && national(t.typeName()) ? nationalCharset : charset;
+            String unstorable = cs.unstorable(s);
+            if (unstorable != null) {
+                return unstorable + (cs == charset && nationalCharset.unicode() ? ". Write it to an NVARCHAR2 or NCLOB "
+                    + "column, whose character set (" + nationalCharset.name() + ") holds it, or replace the character "
+                    + "with a compute step" : ". Replace the character with a compute step");
+            }
+            if (t != null && t.precision() > 0 && !t.typeName().endsWith("CLOB") && !t.typeName().equals("LONG")) {
+                long bytes = cs.bytes(s);
+                if (bytes > t.precision()) {
+                    return "the value takes " + bytes + " bytes in the character set " + cs.name() + ", but the column "
+                        + "holds at most " + t.precision() + " bytes. Shorten the values with a compute step, or ask for "
+                        + "the column to be widened";
+                }
+            }
+        }
+        if (v instanceof BigDecimal d && t != null && t.typeName().equals("FLOAT") && t.scale() > 0
+            && d.signum() != 0 && d.stripTrailingZeros().precision() > t.scale()) {
+            return "the value " + d.toPlainString() + " has " + d.stripTrailingZeros().precision() + " significant "
+                + "digits, but the FLOAT column keeps " + t.scale() + ", so Oracle would round it, and it is never "
+                + "rounded";
         }
         return null;
     }
