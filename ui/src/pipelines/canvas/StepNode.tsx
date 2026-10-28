@@ -8,8 +8,8 @@ import {
   IconBox,
   IconColumns,
   IconCopyOff,
-  IconDatabaseExport,
-  IconDatabaseImport,
+  IconDatabase,
+  IconDeviceFloppy,
   IconFilter,
   IconListNumbers,
   IconMathFunction,
@@ -40,8 +40,8 @@ export type StepData = {
 export type StepNodeType = Node<StepData, "step">;
 
 const ICONS: Record<string, typeof IconBox> = {
-  read: IconDatabaseImport,
-  write: IconDatabaseExport,
+  read: IconDatabase,
+  write: IconDeviceFloppy,
   filter: IconFilter,
   compute: IconMathFunction,
   select: IconColumns,
