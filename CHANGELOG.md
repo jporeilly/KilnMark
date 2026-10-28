@@ -42,6 +42,10 @@ details.
 - **The lab's S3 moves to port 9020** (development), from 9000, which other S3 servers such as MinIO
   commonly take. `lab/sources.csv`, the lab scripts and the guides say 9020; import `lab/sources.csv`
   again to update `lab-bucket` and `lab-warehouse`.
+- **Models that think before answering pass Test.** Local models such as gemma4, qwen3 and
+  deepseek-r1 spend part of their reply on reasoning. **Test** allowed only 20 tokens, so they ran out
+  before answering and Test said "The model answered with nothing". Test now allows 1,024 tokens, and
+  Ask's search planning 1,500 (from 300).
 
 ## 0.0.7 (28 October 2026)
 

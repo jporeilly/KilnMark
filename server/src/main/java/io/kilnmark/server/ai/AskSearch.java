@@ -69,7 +69,7 @@ public class AskSearch {
             String text;
             try {
                 text = gateway.chatWith(p, AiFeature.SEARCH_NL.id(), null,
-                    new ModelClient.ChatCall(system, user, QueryPlan.SCHEMA, 300), caller, () -> false,
+                    new ModelClient.ChatCall(system, user, QueryPlan.SCHEMA, 1500), caller, () -> false,
                     AiGateway.Budget.INTERACTIVE).answer().text();
             } catch (AiException e) {
                 // The reason, with the model's address or reply, is in the usage records for admins.

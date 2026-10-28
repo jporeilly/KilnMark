@@ -167,6 +167,12 @@ public class AiResource {
         return Response.noContent().build();
     }
 
+    /**
+     * Room for the test's answer. The answer is a few tokens, but models that think first
+     * (gemma4, qwen3, deepseek-r1) spend their reasoning from the same allowance.
+     */
+    private static final int TEST_TOKENS = 1024;
+
     /** Sends a tiny request to the model and says, in plain words, whether it works. */
     @POST
     @Path("profiles/{name}/test")
@@ -186,12 +192,13 @@ public class AiResource {
             AiGateway.Result<ModelClient.ChatAnswer> r = gateway.chatWith(p, "test", null, new ModelClient.ChatCall(
                 "You are a connection test. Answer with the JSON object {\"ok\": true} and nothing else.",
                 "Are you there?", "{\"type\": \"object\", \"properties\": {\"ok\": {\"type\": \"boolean\"}}, "
-                    + "\"required\": [\"ok\"], \"additionalProperties\": false}", 20), caller, () -> false,
+                    + "\"required\": [\"ok\"], \"additionalProperties\": false}", TEST_TOKENS), caller, () -> false,
                 AiGateway.Budget.BACKGROUND);
             String text = r.answer().text() == null ? "" : r.answer().text();
             if (text.isBlank()) {
                 return new AiViews.TestResult(false, "The model answered with nothing. Check the model name, and that "
-                    + "the server has finished loading it.", r.latencyMs(), null);
+                    + "the server has finished loading it. A model that thinks before it answers may have used "
+                    + "its whole reply on thinking.", r.latencyMs(), null);
             }
             boolean json = text.contains("{") && text.contains("ok");
             return new AiViews.TestResult(true, "Model " + p.model() + " answered in " + seconds(r.latencyMs()) + "."
