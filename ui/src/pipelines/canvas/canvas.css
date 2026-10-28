@@ -305,6 +305,11 @@
   border-radius: 6px;
 }
 
+/* Clear of the settings drawer when it is open. */
+.cv-stage.has-drawer .react-flow__minimap {
+  right: min(340px, 38%);
+}
+
 .cv-flow .react-flow__minimap .cv-mini-source {
   stroke: var(--km-tint-blue-fg);
 }

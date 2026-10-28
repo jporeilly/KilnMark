@@ -446,10 +446,11 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
           </div>
         )}
       </div>
-      {/* Below the buttons, so they do not move as it comes and goes. */}
-      {contentDirty && !isNew && !viewing && steward && (
+      {/* Below the buttons, with its line kept, so nothing moves as it comes and goes (a click
+          that starts as the text changes would otherwise miss its button). */}
+      {!isNew && !viewing && steward && (
         <p id="pl-run-hint" className="small muted pl-run-hint">
-          Run now runs the saved version {detail?.latestVersion}, not your unsaved changes.
+          {contentDirty ? `Run now runs the saved version ${detail?.latestVersion}, not your unsaved changes.` : ""}
         </p>
       )}
       {confirmRun && (

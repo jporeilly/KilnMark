@@ -493,9 +493,11 @@ function Canvas(props: CanvasProps) {
         );
         return;
       }
-      // Too big to read whole: its first steps at the smallest readable size.
+      // Too big to read whole: its first steps at the smallest readable size, centred on them.
       const z = MIN_READABLE;
-      const y = b.height * z < area.height - 2 * pad ? (area.height - b.height * z) / 2 - b.y * z : pad - b.y * z;
+      const first = all.filter((n) => n.position.x < b.x + (area.width - 2 * pad) / z);
+      const fb = getNodesBounds(first.length ? first : all);
+      const y = fb.height * z < area.height - 2 * pad ? (area.height - fb.height * z) / 2 - fb.y * z : pad - fb.y * z;
       void flow.setViewport({ x: area.left + pad - b.x * z, y, zoom: z }, opts);
     },
     [flow, duration, visibleArea],
@@ -914,7 +916,7 @@ function Canvas(props: CanvasProps) {
             <MiniMap
               pannable
               zoomable
-              position="bottom-left"
+              position="bottom-right"
               ariaLabel="Overview of the pipeline: drag to move the view"
               nodeBorderRadius={6}
               nodeStrokeWidth={2}
