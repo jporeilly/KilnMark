@@ -253,8 +253,8 @@ describe("predictions on the canvas", () => {
         />
       </ReactFlowProvider>,
     );
-    expect(html).toContain("Predicted 91% (estimate)");
-    expect(html).toContain("cv-predicted-badge cv-quality-fair");
+    expect(html).toContain('Predicted ≈ 91%<span class="visually-hidden"> (estimate)</span>');
+    expect(html).toContain("km-chip km-chip--violet km-chip--outline cv-node-chip cv-predicted-badge");
   });
 
   test("the settings drawer says what the estimate could not tell", () => {

@@ -5,7 +5,34 @@ details.
 
 ## Unreleased
 
+### What's new
+
+- **Clearer steps after a run.** On the canvas, a step's rows, its measured quality and its
+  predicted quality now each look different, and steps no longer overlap or hide the connections'
+  row counts once a run's results are shown.
+
 ### Details
+
+- **Canvas chips after a run** (`StepNode` `stepChips`, `components/ui/StatusChip`). Each kind of
+  chip has its own look and words, so none depends on colour: rows and outcome in a neutral chip
+  with a rows icon ("5,000 rows out · Finished"; Ended early, Stopped and Failed in a chip of their
+  own, toned `warn` or `bad`); measured quality in a solid chip with a gauge icon, toned by its word
+  (`--km-tint-green/amber/red-*`), "Quality 99% (Good)"; predicted quality in a dashed outline chip
+  in the AI violet (`--km-tint-violet-bg`/`-fg`, the new `StatusChip` `outline`, `.km-chip--outline`)
+  with a sparkles icon, "Predicted ≈ 100%", "(estimate)" for screen readers and in its title, and
+  "1 unknown" for what it could not tell; a gate's counts as plain text, "4,771 passed · 229
+  quarantined". One row per kind, each 20px high, so a step's height is known before it is drawn.
+- **Canvas spacing for run results** (`layout.ts`). `nodeHeight` counts the rows of chips a step
+  shows (problems and run, measured, predicted, gate counts), and the canvas uses the larger of that
+  and the height React Flow measured. Auto-layout (dagre) gets each step's real height and spaces the
+  columns for the widest connection label. A layout saved before a run is moved apart in the view
+  only (`makeRoom`: steps move right where a connection's label does not fit between columns, then
+  down where they would overlap or come closer than 36px in a column); the YAML's `layout:` is
+  unchanged until a step is moved or Auto-layout is chosen. Connection labels have a padded
+  background.
+- **A write's header says file or table**: "Sink · Write to a file" with `path` or a file-like
+  `target` (a folder or a file extension), "Sink · Write to a table" with `table` or another
+  `target`, instead of the type's "Write to a table or file" cut to "Write to a table…".
 
 - **Quieter Windows builds** (development): `build.ps1` and `lab.ps1` no longer show podman's
   "Executing external compose provider" notice, or the harmless message that the shared network is
