@@ -33,6 +33,8 @@ param(
 $ErrorActionPreference = 'Continue'
 
 $LabDir = $PSScriptRoot
+# Podman's notice that it runs an external compose provider is noise here.
+$env:PODMAN_COMPOSE_WARNING_LOGS = 'false'
 $RepoRoot = Split-Path -Path $LabDir -Parent
 $ComposeFile = 'lab/compose.yaml'   # relative to the repository root, as build.ps1 uses it
 $Project = 'lab'                    # compose project name: containers and volumes are lab_... / lab-...
@@ -168,6 +170,22 @@ function Invoke-List {
     }
 }
 
+# What is listening on a port: a container publishing it, else the Windows process; $null if free.
+function Get-PortHolder([int]$Port) {
+    $rows = @(& $Engine ps --format '{{.Names}}|{{.Ports}}' 2>$null)
+    foreach ($row in $rows) {
+        if ("$row" -match "[:\]]$Port->") { return "the container $(("$row" -split '\|')[0])" }
+    }
+    try {
+        $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop | Select-Object -First 1
+        $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+        $name = if ($proc) { $proc.ProcessName } else { 'a process' }
+        return "$name (process id $($conn.OwningProcess))"
+    } catch {
+        return $null
+    }
+}
+
 function Invoke-Start([string[]]$Given) {
     $selected = @(Resolve-Sources $Given)
     $profileArgs = @()
@@ -178,6 +196,12 @@ function Invoke-Start([string[]]$Given) {
         }
         if ($src.Name -eq 'sqlserver') {
             Write-Host "sqlserver: starting it accepts Microsoft's SQL Server Developer licence terms: $SqlServerLicence"
+        }
+        if ("$($src.Port)" -match '^\d+$' -and -not (Test-Running $src.Services[0])) {
+            $holder = Get-PortHolder ([int]$src.Port)
+            if ($holder) {
+                Fail "$($src.Name): port $($src.Port) is already in use by $holder. Stop that, then start $($src.Name) again (see 'Port already in use' in lab/README.md)."
+            }
         }
         $profileArgs += @('--profile', $src.Name)
     }

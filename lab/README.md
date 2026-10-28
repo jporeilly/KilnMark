@@ -150,6 +150,20 @@ something fails. `.\build.ps1 -Lab` starts every demo source after a build, and
 
 These are development scripts: they live in `lab/` and are never shipped with Kilnmark.
 
+### Port already in use
+
+Each demo source publishes a fixed port on this machine (the table below). `start` checks it first
+and stops with the name of whatever already holds it, for example `s3: port 9000 is already in use
+by the container minio`: another container or program is listening there. Stop that one, then start
+the demo source again. To see for yourself:
+
+```
+podman ps --format "{{.Names}}  {{.Ports}}"                       # a container publishing it
+Get-NetTCPConnection -LocalPort 9000 -State Listen |
+  ForEach-Object { Get-Process -Id $_.OwningProcess }             # Windows: the program
+lsof -nP -iTCP:9000 -sTCP:LISTEN                                  # Linux and macOS
+```
+
 ## Start and stop
 
 Each demo source is a compose profile, so compose can do the same without the scripts:
