@@ -2680,6 +2680,11 @@ a.km-stat--link:hover {
   font-size: var(--km-text-xs);
   font-weight: 600;
 }
+/* Below a connector's card when its driver still has to be installed (Settings › Drivers). */
+.card-driver-link {
+  display: inline-block;
+  margin-top: 0.25rem;
+}
 
 .card-formats {
   flex-basis: 100%;

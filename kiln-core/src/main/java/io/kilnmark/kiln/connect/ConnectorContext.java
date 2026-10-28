@@ -8,14 +8,21 @@ import java.util.Map;
  * Server-wide settings for connectors, set by whoever runs Kilnmark (the server's configuration),
  * never by the people who add sources: for example the folders the {@code files} connector may
  * read. Keys are the server's configuration names, such as {@code kilnmark.files.roots}.
+ * {@code drivers} gives connectors the drivers the customer installed ({@link Connector#driver()}).
  */
-public record ConnectorContext(Map<String, String> settings) {
+public record ConnectorContext(Map<String, String> settings, JdbcDrivers drivers) {
 
     /** No server-wide settings: connectors that need them stay at their safest defaults. */
     public static final ConnectorContext EMPTY = new ConnectorContext(Map.of());
 
     public ConnectorContext {
         settings = Map.copyOf(settings == null ? Map.of() : settings);
+        drivers = drivers == null ? JdbcDrivers.NONE : drivers;
+    }
+
+    /** Settings only: no driver is installed. */
+    public ConnectorContext(Map<String, String> settings) {
+        this(settings, JdbcDrivers.NONE);
     }
 
     /** A setting, or null when absent or blank. */

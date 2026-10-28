@@ -48,3 +48,29 @@ still not allowed: another LGPL library needs its own decision. Kilnmark never c
 driver's code and does not copy any of it; it calls its public API (including
 `setLocalInfileInputStream`, to bulk-load from memory). The driver's optional dependencies
 (Waffle, the AWS SDK, Bouncy Castle, SLF4J) are not shipped.
+
+## Drivers we cannot bundle are supplied by the customer (added 28 October 2026)
+
+Some databases' JDBC drivers have licences that do not let Kilnmark ship them. Oracle's
+(`com.oracle.database.jdbc:ojdbc11`) is under the Oracle Free Use Terms and Conditions: it may be
+redistributed unmodified only if the end users are charged no fees for using it, which a product
+sold beyond its free tier cannot promise. So these drivers are never in a release: the customer
+installs them, and the connector loads them from the **drivers folder**
+(`kilnmark.drivers.dir`; in the container, `/var/lib/kilnmark/drivers` in the data volume),
+as [docs/design/drivers.md](../design/drivers.md) describes:
+
+- Each connector that needs one declares it: Maven coordinates, a pinned version, the jar's
+  SHA-256, the licence and its link, and the driver class.
+- An admin accepts the licence under **Settings › Drivers**, on the organisation's behalf; the
+  acceptance is recorded, and the server downloads that exact version from Maven Central (or the
+  organisation's mirror, `kilnmark.drivers.maven-url`) and keeps it only if the checksum matches.
+  A server without internet access (`kilnmark.drivers.download=false`) says which file to put in
+  the folder.
+- The verified jar is loaded in a class loader of its own, which sees only the JDK; nothing else
+  in the folder is ever read. The connector uses only the standard JDBC interfaces.
+- The driver is a test-only dependency of the build. `./gradlew release` checks that no such
+  driver reaches the release folder (`checkNoCustomerDrivers`), and `checkLicense` never sees it.
+
+This is not an exception to the licence rules above: nothing under these licences ships. A driver
+whose licence allows bundling (`bundleable` in its declaration) still goes through `checkLicense`
+like any other dependency.

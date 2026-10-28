@@ -28,7 +28,6 @@ final class PlannedConnectors {
     }
 
     static final List<Views.PlannedConnector> ALL = List.of(
-        p("oracle", "Ora", "Oracle", "databases", "relational", "DRW", "1"),
         p("jdbc", null, "Generic JDBC", "databases", "relational", "DRW", "1"),
         p("db2", "Db2", "IBM Db2", "databases", "relational", "DRW", "2"),
         p("sqlite", "SL", "SQLite", "databases", "relational", "DRW", "2"),

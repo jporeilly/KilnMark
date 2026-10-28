@@ -9,6 +9,7 @@
 #   .\lab\lab.ps1 reset <name...>|all [-Force]   drop the data and load it again (asks first)
 #   .\lab\lab.ps1 logs <name>              the last lines of its containers' logs
 #   .\lab\lab.ps1 sources                  where lab\sources.csv is, and how to import it
+#   .\lab\lab.ps1 driver oracle [-Force]   download Oracle's JDBC driver (its licence is shown first)
 #
 # Names may also be given with commas: .\lab\lab.ps1 start postgres,sqlserver
 # Uses podman if it is on the PATH, otherwise docker, as build.ps1 does. Needs no administrator
@@ -36,6 +37,11 @@ $ComposeFile = 'lab/compose.yaml'   # relative to the repository root, as build.
 $Project = 'lab'                    # compose project name: containers and volumes are lab_... / lab-...
 $Network = 'kilnmark'               # created by Kilnmark's own compose.yaml
 $SqlServerLicence = 'https://go.microsoft.com/fwlink/?linkid=857698'
+# Oracle's JDBC driver, which Kilnmark does not ship: the version and checksum OracleConnector pins.
+$OracleDriverFile = 'ojdbc11-23.26.3.0.0.jar'
+$OracleDriverUrl = 'https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc11/23.26.3.0.0/ojdbc11-23.26.3.0.0.jar'
+$OracleDriverSha256 = '764cc3f88454d1be117e155d01ed617467b984c9c68f13090dd6083799d2bb8c'
+$OracleLicence = 'https://www.oracle.com/downloads/licenses/oracle-free-license.html'
 
 # The demo sources. Name is also the compose profile. A source with no services (files) needs
 # nothing running. Keep this table the same as the one in lab.sh.
@@ -49,6 +55,8 @@ $Sources = @(
         Port = '14330'; Source = 'lab-sqlserver'; What = 'SQL Server 2022: database labdb (sales, hr, ops)' }
     [pscustomobject]@{ Name = 'mariadb'; Services = @('lab-mariadb'); OneShot = @(); Volumes = @('lab-mariadb-data')
         Port = '3307'; Source = 'lab-mariadb'; What = 'MariaDB 11.4: databases shop and stock (orders, inventory)' }
+    [pscustomobject]@{ Name = 'oracle'; Services = @('lab-oracle'); OneShot = @(); Volumes = @('lab-oracle-data')
+        Port = '1522'; Source = 'lab-oracle'; What = 'Oracle Database Free 23ai: schemas FLEET and FREIGHT (needs its driver)' }
     [pscustomobject]@{ Name = 'mail'; Services = @('lab-mailpit'); OneShot = @(); Volumes = @()
         Port = '8025'; Source = '-'; What = "Mailpit: catches the emails Kilnmark sends (SMTP 1025), read them at http://localhost:8025" }
     [pscustomobject]@{ Name = 'files'; Services = @(); OneShot = @(); Volumes = @()
@@ -182,6 +190,10 @@ function Invoke-Start([string[]]$Given) {
         Pop-Location
     }
     if ($code -ne 0) { Fail 'starting failed: see the messages above.' }
+    if (@($selected | Where-Object { $_.Name -eq 'oracle' }).Count -gt 0) {
+        Write-Host "oracle: the first start creates the database and loads the data, a few minutes; watch it with: .\lab\lab.ps1 logs oracle"
+        Write-Host "oracle: Kilnmark needs Oracle's JDBC driver: Settings > Drivers, or .\lab\lab.ps1 driver oracle"
+    }
     if (@($selected | Where-Object { $_.Name -eq 'sqlserver' }).Count -gt 0) {
         Write-Host "sqlserver: the first start takes a minute or two after the download; watch it with: .\lab\lab.ps1 logs sqlserver"
     }
@@ -280,8 +292,60 @@ function Invoke-Sources {
     Write-Output 'Only the demo sources you have started will connect; import again whenever you like.'
 }
 
+# Downloads Oracle's JDBC driver into lab\drivers after showing its licence, checks it, and copies it
+# into a running Kilnmark container's drivers folder. Kilnmark itself can do the same from
+# Settings > Drivers; this is for a server that cannot reach Maven Central, or a quicker set-up.
+function Invoke-Driver([string[]]$Given) {
+    $rest = @($Given | Where-Object { @('--yes', '-y', '--force') -notcontains $_ })
+    $yes = $Force.IsPresent -or ($rest.Count -lt @($Given).Count)
+    if ($rest.Count -ne 1 -or $rest[0] -ne 'oracle') { Fail 'name the driver to download: .\lab\lab.ps1 driver oracle' 2 }
+    Write-Host "Oracle's JDBC driver ($OracleDriverFile) is under the Oracle Free Use Terms and Conditions,"
+    Write-Host "which you accept by downloading it: $OracleLicence"
+    Write-Host "Kilnmark does not ship it; this downloads it for your own development and testing."
+    if (-not $yes) {
+        try {
+            $answer = Read-Host -Prompt 'Type yes to accept the licence and download it' -ErrorAction Stop
+        } catch {
+            Fail 'could not ask: add -Force to accept the licence and go ahead.'
+        }
+        if ($answer -ne 'yes') {
+            Write-Host 'Nothing downloaded.'
+            exit 1
+        }
+    }
+    $dir = Join-Path -Path $LabDir -ChildPath 'drivers'
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $file = Join-Path -Path $dir -ChildPath $OracleDriverFile
+    $ok = (Test-Path -Path $file) -and ((Get-FileHash -Path $file -Algorithm SHA256).Hash.ToLowerInvariant() -eq $OracleDriverSha256)
+    if (-not $ok) {
+        $part = "$file.part"
+        try {
+            Invoke-WebRequest -Uri $OracleDriverUrl -OutFile $part -UseBasicParsing -ErrorAction Stop
+        } catch {
+            Remove-Item -Path $part -ErrorAction SilentlyContinue
+            Fail "the download failed: $($_.Exception.Message)"
+        }
+        if ((Get-FileHash -Path $part -Algorithm SHA256).Hash.ToLowerInvariant() -ne $OracleDriverSha256) {
+            Remove-Item -Path $part -ErrorAction SilentlyContinue
+            Fail 'the download is not the expected file (its SHA-256 differs), so it was not kept.'
+        }
+        Move-Item -Path $part -Destination $file -Force
+    }
+    Write-Host "Saved and checked: $file"
+    $id = @(& $Engine ps -q --filter 'label=com.docker.compose.service=kilnmark' 2>$null) | Select-Object -First 1
+    if ($id) {
+        & $Engine exec $id mkdir -p /var/lib/kilnmark/drivers | Out-Null
+        & $Engine cp $file "$($id):/var/lib/kilnmark/drivers/$OracleDriverFile"
+        if ($LASTEXITCODE -ne 0) { Fail 'could not copy it into the Kilnmark container: copy it to /var/lib/kilnmark/drivers yourself.' }
+        Write-Host "Copied into the running Kilnmark's drivers folder; Settings > Drivers now says Installed."
+    } else {
+        Write-Host 'Kilnmark is not running in a container here: put the file in its drivers folder'
+        Write-Host '(kilnmark.drivers.dir, by default ~/.kilnmark/drivers).'
+    }
+}
+
 function Show-Usage {
-    Get-Content -Path $PSCommandPath -TotalCount 15 | ForEach-Object { $_ -replace '^# ?', '' }
+    Get-Content -Path $PSCommandPath -TotalCount 16 | ForEach-Object { $_ -replace '^# ?', '' }
     Write-Output ''
     Write-Output "Demo sources: $(Get-SourceNames)"
 }
@@ -294,6 +358,7 @@ switch ($Command) {
     'reset' { Invoke-Reset $Names }
     'logs' { Invoke-Logs $Names }
     'sources' { Invoke-Sources }
+    'driver' { Invoke-Driver $Names }
     { @('help', '-h', '--help', '-?') -contains $_ } { Show-Usage }
     default {
         Show-Usage

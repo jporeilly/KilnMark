@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { Capability, Connector, ConnectorCatalogue, PlannedConnector } from "../api";
 import { ConnectorTile, plannedTileProps, tileProps } from "./ConnectorTile";
+import { href } from "../router";
 import { Icon } from "./icons";
 
 const CAPABILITY: Record<Capability, string> = {
@@ -172,6 +173,7 @@ export function ConnectorGallery({
                           <span className="card-text">
                             <span className="card-name">{c.name}</span>
                             <span className="card-family">{c.family}</span>
+                            {needsDriver(c.connector) && <span className="planned-label">Needs its driver</span>}
                           </span>
                           <Badges caps={c.capabilities} formats={c.connector.formats} />
                         </button>
@@ -194,6 +196,11 @@ export function ConnectorGallery({
                           <Badges caps={c.capabilities} formats={[]} />
                         </button>
                       )}
+                      {c.built && needsDriver(c.connector) && (
+                        <a className="small card-driver-link" href={href.drivers()}>
+                          Install the {c.name} driver<span className="visually-hidden"> (admins, Settings › Drivers)</span>
+                        </a>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -206,6 +213,11 @@ export function ConnectorGallery({
       </div>
     </div>
   );
+}
+
+/** Whether a connector's driver, which Kilnmark cannot ship, still has to be installed. */
+export function needsDriver(c: Connector) {
+  return c.driver !== undefined && c.driver !== "bundled" && c.driver !== "ready";
 }
 
 function Badges({ caps, formats }: { caps: Capability[]; formats: string[] }) {

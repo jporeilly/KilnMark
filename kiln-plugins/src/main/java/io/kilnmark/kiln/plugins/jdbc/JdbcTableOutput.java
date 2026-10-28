@@ -419,7 +419,9 @@ final class JdbcTableOutput implements Step {
                 for (String g : grants) {
                     execute(new WriteSql.Sql(g));
                 }
-                bindings = WritePlan.identity(input, textLength);
+                bindings = WritePlan.identity(input, textLength).stream()
+                    .map(b -> new Binding(b.index(), b.input(), sql.storedName(b.target()), b.kind(), b.maxLength(),
+                        b.key(), b.precision(), b.scale())).toList();
                 writtenTypes = input.stream().map(c -> sql.columnType(c, textLength)).toList();
             }
             default -> {
@@ -540,7 +542,7 @@ final class JdbcTableOutput implements Step {
         List<WriteSql.Sql> steps = exists ? sql.swap(target, newName, oldName)
             : List.of(sql.rename(loadInto, target.table()));
         for (int i = 0; i < steps.size(); i++) {
-            if (exists && !sql.transactionalDdl() && i == steps.size() - 1) {
+            if (exists && !sql.transactionalDdl() && steps.size() > 1 && i == steps.size() - 1) {
                 // The new table is in place and committed; the old one goes last, by itself.
                 try {
                     execute(steps.get(i));
@@ -672,6 +674,13 @@ final class JdbcTableOutput implements Step {
             }
             return null;
         }
+        if (binding.key() && sql.emptyMeansNull()
+            && (v instanceof String text && text.isEmpty() || v instanceof byte[] bytes && bytes.length == 0)) {
+            // whatever empty_text_as_null says: as null, the key would match no row and add one each time
+            throw new StepException("Row " + rowNumber + " has an empty value in the key column " + binding.target()
+                + ", which the database stores as null, so it could never match a row; upsert needs every key "
+                + "column filled");
+        }
         String problem = sql.valueProblem(binding.kind(), v);
         if (problem != null) {
             throw new StepException("Row " + rowNumber + ", column " + binding.target() + ": " + problem);
@@ -701,7 +710,7 @@ final class JdbcTableOutput implements Step {
             }
         }
         TargetColumn into = targets.get(binding.target());
-        String misfit = into == null ? null : sql.targetValueProblem(into, v);
+        String misfit = sql.targetValueProblem(into, v);
         if (misfit != null) {
             throw new StepException("Row " + rowNumber + ", column " + binding.target() + ": " + misfit);
         }
@@ -881,7 +890,8 @@ final class JdbcTableOutput implements Step {
             for (int row = 0; row < n; row++) {
                 for (int c = 0; c < bindings.size(); c++) {
                     Binding binding = bindings.get(c);
-                    sql.bind(ps, c + 1, binding.kind(), value(binding, batch, row, before + row + 1), bulk);
+                    sql.bind(ps, c + 1, binding.kind(), value(binding, batch, row, before + row + 1), bulk,
+                        targets.get(binding.target()));
                 }
                 ps.addBatch();
                 if (++pending >= batchSize) {

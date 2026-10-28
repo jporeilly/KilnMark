@@ -155,6 +155,8 @@ export type Connector = {
   /** Whether host, port and database fields can build its address. */
   addressFields: boolean;
   driverBundled: boolean;
+  /** bundled, ready (installed by an admin), or missing, mismatch or unreadable: then it needs its driver. */
+  driver?: "bundled" | "ready" | "missing" | "mismatch" | "unreadable";
 };
 /** id is the kind it is expected to have, so a branding manifest can name it. */
 export type PlannedConnector = {
@@ -394,6 +396,26 @@ async function checkToken(token: string): Promise<Me> {
   return body as Me;
 }
 
+/** A driver Kilnmark cannot ship, as Settings › Drivers shows it (admins only). */
+export type DriverItem = {
+  id: string;
+  coordinates: string;
+  version: string;
+  fileName: string;
+  licence: string;
+  licenceUrl: string;
+  usedBy: string[];
+  state: "ready" | "missing" | "mismatch" | "unreadable";
+  message: string | null;
+  folder: string;
+  sha256: string;
+  downloadUrl: string;
+  /** Whether this server downloads drivers itself; otherwise an admin puts the file in the folder. */
+  download: boolean;
+  acceptedBy: string | null;
+  acceptedAt: string | null;
+};
+
 export const api = {
   me: () => call<Me>("/api/v1/me"),
   signIn: async (token: string) => {
@@ -408,6 +430,8 @@ export const api = {
   info: () => call<{ product: string; version: string; roles: string[] }>("/api/v1/info"),
   sources: () => call<Source[]>("/api/v1/sources"),
   connectors: () => call<Connector[]>("/api/v1/connectors"),
+  drivers: () => call<DriverItem[]>("/api/v1/drivers"),
+  acceptDriver: (id: string) => call<DriverItem>(`/api/v1/drivers/${encodeURIComponent(id)}/accept`, { method: "POST" }),
   /**
    * Public: the sign-in page shows the organisation's name and logo. Sent without the token, so a
    * stale one in this tab can never sign anyone out from here.

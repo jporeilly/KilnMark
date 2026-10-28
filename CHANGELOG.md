@@ -20,6 +20,15 @@ details.
   included, so there is nothing to install. Writes never change data silently: an upsert that could
   overwrite another row through a second unique index, a time with more fractions of a second than
   its column keeps, or a replace that a hidden foreign key would break stops with a plain message.
+- **Oracle.** Add Oracle Database (19c and later) as a source by host, port and service name:
+  Kilnmark discovers and profiles its schemas, reads its tables in pipelines and writes to them in
+  every mode, without ever rounding a number or turning empty text into null behind your back.
+  Oracle's driver cannot ship with Kilnmark, so an admin installs it once, under **Settings**,
+  **Drivers**.
+- **Settings, Drivers.** Where admins install the drivers some databases need that Kilnmark may not
+  ship: accept the licence and Kilnmark downloads the exact version it was tested with and checks
+  it, or, on a server without internet access, shows which file to copy where. Until then those
+  connectors say **Needs its driver**.
 - **Every connection setting has the right control.** On and off settings, such as trusting a
   test server's certificate, are switches; settings with a fixed set of values, such as SQL
   Server's read isolation, are lists; and saving says plainly when a value is the wrong kind,
@@ -66,6 +75,41 @@ details.
   `time(p)` too); `TIME` takes only times and text; `YEAR` takes 1901 to 2155. `LOAD DATA` checks
   `@@warning_count`. On servers with `lower_case_table_names` set, targets are written and recorded
   in lower case.
+- **Oracle connector** (kind `oracle`): settings `host`, `port`, `service_name`, `username`,
+  `encryption` (`accepted`, `required` or `tls`) and `schemas`, with kinds declared; the address is
+  always built, never given. Catalogue from the `ALL_*` views, keys across schemas, `NUM_ROWS` as
+  the estimate, `SAMPLE` for sampling. `NUMBER` without precision and `FLOAT(b)` read as text
+  holding their exact digits; `DATE` as a timestamp; `TIMESTAMP WITH LOCAL TIME ZONE` through a
+  cast to `TIMESTAMP WITH TIME ZONE`, whatever the JVM's time zone. Writes: `create`, `append`,
+  `upsert` (`MERGE`) and `replace` (one PL/SQL block that puts the names back on failure),
+  refusing empty text and bytes (unless `empty_text_as_null`; in an upsert key always), decimals
+  past 38 digits, a `FLOAT(b)` column's digits or a NUMBER's range, timestamps with more digits of a
+  second than the column keeps, characters the column's character set lacks (on databases that are
+  not Unicode; national columns bound with `setNString`), and text over a column's size in bytes.
+  The driver's `TNS_ADMIN` is an empty private folder. Tests against Oracle Database Free in CI's
+  heavy-databases job, in their own Gradle run (`./gradlew :kiln-plugins:oracleTest`, in
+  `America/New_York` time); `encryption` `required` and `tls` are not tested against a listener.
+- **Drivers the customer installs** (ADR 0007, docs/design/drivers.md): connectors declare their
+  driver (coordinates, pinned version, SHA-256, licence, driver class); the drivers folder
+  (`kilnmark.drivers.dir`, `/var/lib/kilnmark/drivers` in the image) loads only verified jars, from
+  a private copy in `drivers.loaded` beside it (emptied at start), each in a class loader that sees
+  only the JDK, and uses a loaded driver again without re-reading its file while the file's size and
+  modification time are unchanged. `GET /api/v1/drivers` and
+  `POST /api/v1/drivers/{id}/accept` (admins) record who accepted the licence and download from
+  `kilnmark.drivers.maven-url`; `kilnmark.drivers.download=false` for servers without internet
+  access. `GET /api/v1/connectors` adds each connector's `driver` state. Oracle's driver is a
+  test-only dependency, and `./gradlew release` fails if one reaches the release folder
+  (`checkNoCustomerDrivers`, which also looks inside jars nested in jars). Database migration V14
+  adds `driver_licence`. **Upgrades:** when a release pins a newer driver version, the installed
+  file is no longer used; the driver shows as missing, an admin accepts the licence again, and the
+  server logs a warning at start naming the old file. Release notes will say when this happens.
+- **Lab: Oracle** (development). `lab-oracle` (Oracle Database Free 23ai, profiles `oracle` and
+  `all`) on host port 1522, service `FREEPDB1`, with a synthetic parcel carrier in schemas `FLEET`
+  and `FREIGHT` and planted quality problems (null emails, out-of-range and backwards dates,
+  negative weights, duplicate tracking numbers in a table without a key, three postcode formats, a
+  `NUMBER` without precision), an empty `WAREHOUSE` schema for pipeline writes, a `lab-oracle` row
+  in `lab/sources.csv`, `oracle` in `lab.ps1` and `lab.sh`, and `lab.sh driver oracle`, which
+  downloads Oracle's driver after showing its licence. CI loads the seed and checks the answer key.
 - **Lab: MariaDB** (development). `lab-mariadb` (MariaDB 11.4.12, profiles `mariadb` and `all`) on
   host port 3307, with synthetic shop orders and inventory in databases `shop` and `stock` and
   planted quality problems (null emails, zero dates, out-of-range dates, a negative stock level,
