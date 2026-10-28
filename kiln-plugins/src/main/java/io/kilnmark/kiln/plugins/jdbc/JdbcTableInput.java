@@ -61,6 +61,22 @@ public final class JdbcTableInput implements Step {
         default ColumnReader column(ResultSetMetaData md, int i, Map<String, String> settings) throws SQLException {
             return JdbcColumn.of(md, i);
         }
+
+        /**
+         * Whether a driver that refuses {@code setReadOnly} or {@code setAutoCommit(false)} is still read
+         * (generic JDBC: drivers that do not offer them); false by default, so the read fails.
+         */
+        default boolean tolerant() {
+            return false;
+        }
+
+        /**
+         * The query to run on {@code connection}, from the step's {@code sql}: the same by default.
+         * A database whose identifiers are quoted as its driver says builds it here.
+         */
+        default String query(Connection connection, String sql, Map<String, String> settings) throws SQLException {
+            return sql;
+        }
     }
 
     /** How one column of a result becomes one Arrow column. */
@@ -108,6 +124,11 @@ public final class JdbcTableInput implements Step {
     public static final String SAMPLE_QUERY = "sample-query";
     /** Placeholder for the percentage in {@link #SAMPLE_QUERY}. */
     public static final String PERCENT = "{percent}";
+    /**
+     * Setting: the most rows the driver returns ({@link Statement#setMaxRows}), for databases whose
+     * SQL has no portable row limit; the query then reads the whole table.
+     */
+    public static final String MAX_ROWS = "max-rows";
 
     private String samplePercent;
     private long estimatedRows = -1;
@@ -145,8 +166,15 @@ public final class JdbcTableInput implements Step {
         }
         try {
             connection = reading.open(context.settings());
-            connection.setReadOnly(true);
-            connection.setAutoCommit(false); // PostgreSQL streams with a cursor only inside a transaction
+            try {
+                connection.setReadOnly(true);
+                connection.setAutoCommit(false); // PostgreSQL streams with a cursor only inside a transaction
+            } catch (SQLException | RuntimeException e) {
+                if (!reading.tolerant()) {
+                    throw e;
+                }
+                // advice the driver does not take: the read is a SELECT either way
+            }
             if (context.settings().containsKey(ISOLATION)) {
                 connection.setTransactionIsolation(Integer.parseInt(context.setting(ISOLATION)));
             }
@@ -154,7 +182,14 @@ public final class JdbcTableInput implements Step {
             if (context.settings().containsKey(SAMPLE_ABOVE)) {
                 sql = sampled(context, sql);
             }
-            statement.setFetchSize(batchSize);
+            sql = reading.query(connection, sql, context.settings());
+            int fetch = batchSize;
+            if (context.settings().containsKey(MAX_ROWS)) {
+                int max = (int) Math.min(Integer.MAX_VALUE, Long.parseLong(context.setting(MAX_ROWS)));
+                statement.setMaxRows(max);
+                fetch = Math.min(fetch, Math.max(1, max)); // JDBC: the fetch size may not exceed the row limit
+            }
+            statement.setFetchSize(fetch);
             rows = statement.executeQuery(sql);
             ResultSetMetaData md = rows.getMetaData();
             columns = new ArrayList<>(md.getColumnCount());
@@ -252,7 +287,11 @@ public final class JdbcTableInput implements Step {
             if (rows != null) rows.close();
             if (statement != null) statement.close();
             if (connection != null) {
-                connection.rollback();
+                try {
+                    connection.rollback();
+                } catch (SQLException e) {
+                    // in auto-commit (a driver that would not leave it): nothing to roll back
+                }
                 connection.close();
             }
         } catch (SQLException e) {

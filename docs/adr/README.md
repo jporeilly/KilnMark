@@ -27,3 +27,4 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0017](0017-documents.md) | Documents: Tika's parsers, POI's streaming reader for sheets, text in chunks | Accepted |
 | [0020](0020-quality-standard-formats.md) | Data quality in open formats: OpenLineage facets and ODCS 3.1 | Accepted |
 | [0024](0024-the-lab-is-not-the-product.md) | The reference lab is for development and tests only, never shipped, and a release check enforces it | Accepted |
+| [0025](0025-registered-jdbc-drivers.md) | Registered JDBC drivers: the admin vouches, Kilnmark checks the checksum | Accepted |

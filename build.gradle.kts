@@ -88,14 +88,19 @@ apply(from = "gradle/product-only.gradle.kts")
 // and Conditions) are installed by the customer (ADR 0007, docs/design/drivers.md). They are test
 // dependencies only; this fails the release if one ever reaches its folder, whatever the jar is called.
 val customerDrivers = listOf("ojdbc", "com.oracle.database", "oracle.jdbc")
+// Test-only drivers the generic JDBC connector's tests register (H2): never shipped either. Matched
+// by jar name prefix and by their classes, since "h2" alone is in too many other names.
+val testDriverJars = listOf("h2-", "com.h2database.h2-")
+val testDriverClasses = listOf("org/h2/")
 tasks.register("checkNoCustomerDrivers") {
     group = "verification"
-    description = "Fails if the release folder holds a driver the customer must install (Oracle's)."
+    description = "Fails if the release folder holds a driver the customer must install (Oracle's), or a test-only one (H2)."
     dependsOn("assembleRelease")
     val release = distDir.dir("release")
     doLast {
         val found = release.asFile.walkTopDown().filter { f ->
-            f.isFile && customerDrivers.any { f.name.lowercase().contains(it) }
+            f.isFile && (customerDrivers.any { f.name.lowercase().contains(it) }
+                || f.name.endsWith(".jar") && testDriverJars.any { f.name.lowercase().startsWith(it) })
         }.toList()
         // a driver's classes, or a jar named like one, inside a jar, or a jar in a jar (fat jars), to any depth
         fun holdsDriver(input: java.io.InputStream, depth: Int): Boolean {
@@ -103,7 +108,9 @@ tasks.register("checkNoCustomerDrivers") {
             while (true) {
                 val e = zip.nextEntry ?: return false
                 val file = e.name.substringAfterLast('/').lowercase()
-                if (e.name.startsWith("oracle/jdbc/") || (file.endsWith(".jar") && customerDrivers.any { file.contains(it) })) {
+                if (e.name.startsWith("oracle/jdbc/") || testDriverClasses.any { e.name.startsWith(it) }
+                    || (file.endsWith(".jar") && (customerDrivers.any { file.contains(it) }
+                        || testDriverJars.any { file.startsWith(it) }))) {
                     return true
                 }
                 // the nested stream is read from this entry only, and must not close the outer one

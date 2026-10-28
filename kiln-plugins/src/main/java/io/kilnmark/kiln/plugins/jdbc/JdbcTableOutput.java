@@ -155,7 +155,13 @@ final class JdbcTableOutput implements Step {
             connection = connector.connectForWrite(source, bulk);
             sql.prepareSession(connection);
             connection.setAutoCommit(false);
-            exists = queryBoolean(sql.exists(target));
+            if (connection.getAutoCommit() || !connection.getMetaData().supportsTransactions()) {
+                // every row would be committed as it is sent: a failure would leave part of the write
+                throw new StepException("Cannot write to " + source.name() + ": its driver does not offer "
+                    + "transactions, so a failed write could not be undone and part of it would stay");
+            }
+            Boolean known = sql.existsByMetadata(connection, target);
+            exists = known != null ? known : queryBoolean(sql.exists(target));
             if (mode.equals("create") && exists) {
                 throw new StepException(target + " already exists in " + source.name() + ": use mode append to add "
                     + "rows to it, replace to replace it, or upsert to update rows by key");
@@ -168,9 +174,13 @@ final class JdbcTableOutput implements Step {
             if (mode.equals("append") || mode.equals("upsert")) {
                 targetColumns = connector.targetColumns(connection, source, target);
                 if (targetColumns == null) {
+                    targetColumns = sql.targetColumnsByMetadata(connection, target);
+                }
+                if (targetColumns == null) {
                     targetColumns = readTargetColumns();
                 }
-                required = readNames(sql.requiredColumns(target));
+                Set<String> requiredKnown = sql.requiredByMetadata(connection, target);
+                required = requiredKnown != null ? requiredKnown : readNames(sql.requiredColumns(target));
                 if (mode.equals("upsert")) {
                     checkKey();
                 }
@@ -414,6 +424,10 @@ final class JdbcTableOutput implements Step {
                 checkNames();
                 // replace always fills a new table and renames it at the end, so the target is never half-filled
                 loadInto = newName != null ? new TableName(target.schema(), newName) : target;
+                String cannot = sql.createProblem(input, textLength);
+                if (cannot != null) {
+                    throw new StepException("Cannot create " + target + ": " + cannot);
+                }
                 execute(new WriteSql.Sql(sql.createTable(loadInto, input, textLength)));
                 created = true;
                 for (String g : grants) {
@@ -423,6 +437,9 @@ final class JdbcTableOutput implements Step {
                     .map(b -> new Binding(b.index(), b.input(), sql.storedName(b.target()), b.kind(), b.maxLength(),
                         b.key(), b.precision(), b.scale())).toList();
                 writtenTypes = input.stream().map(c -> sql.columnType(c, textLength)).toList();
+                if (sql.checksCreatedTable()) {
+                    checkAsCreated();
+                }
             }
             default -> {
                 WritePlan.Plan plan = WritePlan.plan(input, targetColumns, required, key);
@@ -461,6 +478,42 @@ final class JdbcTableOutput implements Step {
         } else {
             loader = new BatchLoader(sql.insert(loadInto, names));
         }
+    }
+
+    /**
+     * The table just created, as the database describes it: each value is then checked against the
+     * columns it actually made, as for an append ({@link WriteSql#checksCreatedTable()}).
+     */
+    private void checkAsCreated() throws SQLException, StepException {
+        List<TargetColumn> made = connector.targetColumns(connection, source, loadInto);
+        if (made == null) {
+            made = sql.targetColumnsByMetadata(connection, loadInto);
+        }
+        if (made == null) {
+            made = readTargetColumns();
+        }
+        made.forEach(t -> targets.put(t.name(), t));
+        List<Binding> checked = new ArrayList<>(bindings.size());
+        for (Binding b : bindings) {
+            TargetColumn t = targets.get(b.target());
+            if (t == null) {
+                throw new StepException("Created " + target + ", but the database does not describe its column "
+                    + b.target() + ", so its values cannot be checked before they are written");
+            }
+            String misfit = sql.targetMisfit(b.input(), t);
+            if (misfit != null) {
+                throw new StepException("Cannot create " + target + ": " + misfit);
+            }
+            int digits = sql.fractionDigits(t);
+            if (digits >= 0 && digits < 9) {
+                fractionDigits.put(t.name(), digits);
+            }
+            boolean declared = t.kind() == Kind.DECIMAL && !t.unconstrainedDecimal();
+            checked.add(new Binding(b.index(), b.input(), b.target(), b.kind(), t.maxLength(), b.key(),
+                declared ? t.precision() : 0, declared ? t.scale() : 0));
+        }
+        bindings = checked;
+        writtenTypes = bindings.stream().map(b -> targets.get(b.target()).described()).toList();
     }
 
     /** Column names become identifiers: each must be there, fit, and appear once. */
@@ -590,6 +643,23 @@ final class JdbcTableOutput implements Step {
                 connection.rollback();
             } catch (SQLException | RuntimeException e) {
                 // the connection is closed below; the server rolls back an unfinished transaction
+            }
+            if (newName == null && created && committedRows == 0 && sql.dropCreatedOnFailure()) {
+                // DDL that commits by itself: the table this step created outlived the rollback. Dropped
+                // only while it is empty, so rows another writer put there meanwhile are never lost.
+                try (Statement s = connection.createStatement()) {
+                    boolean empty;
+                    try (ResultSet rs = s.executeQuery("SELECT COUNT(*) FROM " + sql.table(loadInto))) {
+                        empty = rs.next() && rs.getLong(1) == 0;
+                    }
+                    connection.commit();
+                    if (empty) {
+                        s.execute(sql.drop(loadInto));
+                        connection.commit();
+                    }
+                } catch (SQLException | RuntimeException e) {
+                    // left for an administrator: the write's error names the table
+                }
             }
             if (newName != null && created && (committedRows > 0 || !sql.transactionalDdl())) {
                 // replace with commit_every, or DDL that committed by itself: the new table outlived the rollback

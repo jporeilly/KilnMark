@@ -32,7 +32,7 @@ the wave says when.
 | SQL Server ✓ | D R W | built (W in round 3) |
 | MySQL and MariaDB ✓ | D R W | built (wave 1; driver bundled) |
 | Oracle ✓ | D R W | built (wave 1; the customer installs the driver) |
-| Generic JDBC (any driver the customer supplies) | D R W | 1 |
+| Generic JDBC ✓ (any driver an admin registers) | D R W | built (wave 1; append and create only) |
 | IBM Db2 | D R W | 2 |
 | SQLite | D R W | 2 |
 | Snowflake | D R W | 2 |
@@ -209,17 +209,21 @@ Connector/J instead, which ships). The customer installs the first kind, as
 - **In the gallery:** a connector whose driver is missing says "Needs its driver", with a link
   to Settings › Drivers.
 
-Still to come, with generic JDBC: uploading a jar of the customer's choice with its class name
-(its checksum shown for the admin to confirm), updates to newer pinned versions, which sources use
-which driver, and an audit of changes. The offline install bundle can include every driver whose
-licence allows redistribution.
+- **Registered drivers (generic JDBC):** an admin uploads a jar or picks one in the drivers folder
+  under Settings › JDBC drivers, names its class and URL prefix, and Kilnmark records its SHA-256,
+  who and when; it loads only while the checksum matches, isolated like a pinned driver. The page
+  shows which sources use each driver and an audit of registrations and removals; a driver in use
+  cannot be removed. Nothing is downloaded for these ([drivers.md](drivers.md#registered-drivers)).
+
+Still to come: updates to newer pinned versions, and an offline install bundle with every driver
+whose licence allows redistribution.
 
 ## Waves
 
 - **Round 2:** categories, capabilities and the gallery for the connectors that exist; Excel and
   documents from stream C.
 - **Wave 1 (with round 3 pipelines, which add W):**
-  - databases: MySQL and MariaDB (built), Oracle (built), generic JDBC with customer-supplied drivers;
+  - databases: MySQL and MariaDB (built), Oracle (built), generic JDBC with drivers an admin registers (built);
   - file locations: SMB, SFTP and FTP, Azure Blob and ADLS;
   - formats: XML, fixed width, Avro, compressed files;
   - REST;

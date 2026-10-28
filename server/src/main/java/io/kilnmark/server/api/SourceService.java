@@ -233,6 +233,35 @@ public class SourceService {
         return form;
     }
 
+    /**
+     * Refuses (403) someone other than an admin a source of a kind only admins set up
+     * ({@link Connector#adminOnly()}, such as generic JDBC, whose URL goes to a driver Kilnmark has
+     * not vetted): a new one, or a change to the connector's own settings of a saved one. Stewards
+     * may still check a saved source as it is.
+     */
+    static void adminOnlyKind(Connector connector, Records.Source existing, Map<String, String> settings,
+                              boolean admin) {
+        if (admin || !connector.adminOnly()) {
+            return;
+        }
+        if (existing != null) {
+            List<String> changed = new ArrayList<>();
+            for (Connector.Setting s : connector.settings()) {
+                if (!same(existing.settings().get(s.key()), settings.get(s.key()))) {
+                    changed.add(s.key());
+                }
+            }
+            if (changed.isEmpty()) {
+                return;
+            }
+            throw ApiError.of(Response.Status.FORBIDDEN, "Only admins can change the " + String.join(", ", changed)
+                + " of " + connector.displayName() + " sources: they go to a driver Kilnmark cannot vet. You can still "
+                + "change the description and display name, and test, scan and preview the source as it is.");
+        }
+        throw ApiError.of(Response.Status.FORBIDDEN, "Only admins can set up " + connector.displayName() + " sources "
+            + "or check unsaved ones: their URL goes to a driver Kilnmark cannot vet. Ask an admin.");
+    }
+
     /** Settings that never decide where a source's data is: changing them never moves a pipeline's writes. */
     private static final java.util.Set<String> NOT_WHERE = java.util.Set.of(AssetFilter.INCLUDE, AssetFilter.EXCLUDE,
         CommonSettings.ALLOW_WRITING);

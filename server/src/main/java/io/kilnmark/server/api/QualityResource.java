@@ -742,7 +742,8 @@ public class QualityResource {
 
     private RuleDraft.Context context(Records.AssetDetail a) {
         Records.Source s = graph.source(a.source()).orElseThrow();
-        boolean sql = connectors.get(s.kind()).map(c -> c instanceof JdbcConnector).orElse(false);
+        boolean sql = connectors.get(s.kind()).map(c -> c instanceof JdbcConnector j && j.runsRulesInDatabase())
+            .orElse(false);
         Map<String, String> fields = new LinkedHashMap<>();
         a.fields().forEach(f -> fields.put(f.name(), f.kind()));
         List<String> allow = quality.settings().webhookAllowList().orElse(List.of());

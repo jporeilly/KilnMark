@@ -374,6 +374,102 @@ refer to; one the login cannot see stops the drop, and the names are put back.
 Its tests run against Oracle Database Free (`gvenzl/oracle-free`, pinned) in CI's heavy-databases
 job, in a Gradle run of their own (`./gradlew :kiln-plugins:oracleTest`).
 
+### Generic JDBC
+
+Kind `jdbc`, any database with a JDBC driver Kilnmark has no connector of its own for (Db2,
+Teradata, Snowflake, Sybase, Informix, H2), through a driver an admin registered
+([drivers.md](drivers.md#registered-drivers), [ADR 0025](../adr/0025-registered-jdbc-drivers.md)).
+`GenericJdbcConnector`, `GenericCatalog`, `GenericTypes`, `GenericWriteSql`.
+
+**Settings:** `driver` (CHOICE of the registered drivers, read each time the form asks; free text
+when none is registered, with a hint to register one), `url` (TEXT: must start `jdbc:`, start as
+the registration's URL prefix, and be accepted by the driver's own `acceptsURL`), `username`, the
+password as the source's secret (SecretBox, like every connector), `properties` (TEXT, `name=value`
+separated by `;` or new lines; passed with every connection, never written into the URL), `schemas`
+and `read_only` (BOOLEAN, default true).
+
+Every setting in the URL (`JdbcUrlSettings`: `key=value` after `;`, `?`, `&`, `:`, `/` or `,`, or
+inside `( )`) and every property must be on the driver's **allow-list**, given at registration; a
+URL holding an `=` no such setting accounts for, or quotes, braces, back-slashes, spaces or
+percent-encoding, is refused. Secrets (pass, pwd, secret, token, key, credential) and the user name
+are refused in both whatever the list, and the URL is never quoted in a message. The same check runs
+again when a connection is opened. `Connector.adminOnly()` is true: only admins add such a source,
+change these settings or check an unsaved one. `hosts` gives the URL's hosts and those its settings
+and properties name (failover partners, `*servername`, `alternate*`, values that are URLs), or a
+placeholder no allow-list holds when the URL's host or settings cannot be read.
+
+**Catalogue** from `DatabaseMetaData`: containers are the schemas of the connection's catalogue,
+or its catalogues when the driver reports no schemas, or one container `default` (`GenericCatalog.Level`).
+Table types are those `getTableTypes` lists that are tables or views (not system tables, aliases,
+synonyms, temporary tables); when it lists none, every row is read and the same test applied. Nulls
+fall back: a missing type is a table, a missing position the driver's order, an unknown nullability
+allows nulls, a missing size or scale counts as none, primary keys a driver cannot give are left
+out. Foreign keys (`getImportedKeys`) are read where tables sit in schemas. Well-known system
+schemas (SQL standard, Db2, Teradata, Derby, Sybase, Informix) are skipped in a scan of everything.
+
+**Types** (`GenericTypes`), the same from the catalogue and from a result, as `JdbcColumn` maps
+them for the dedicated connectors, and never rounded:
+
+| JDBC type (or type name) | Engine type | Note |
+| --- | --- | --- |
+| `BIT` (one bit), `BOOLEAN` | boolean | `BIT(n)` with several bits: text, with a note |
+| `TINYINT`, `SMALLINT` | int16 | `SMALLINT UNSIGNED` int32 |
+| `INTEGER` | int32 | `INTEGER UNSIGNED` int64 |
+| `BIGINT` | int64 | `BIGINT UNSIGNED` decimal(20,0) |
+| `REAL` | float32 | |
+| `FLOAT`, `DOUBLE` | float64 | |
+| `DECIMAL`, `NUMERIC` with precision 1 to 38 and scale 0 to precision | decimal(p,s) | read as `BigDecimal`, never a double; a value wider than declared stops the read |
+| `DECIMAL`, `NUMERIC` otherwise (no precision, more than 38 digits, negative scale) | text, exact digits | note on the column |
+| `DATE` | date | |
+| `TIME` | time | `TIME WITH TIME ZONE`: text, with a note |
+| `TIMESTAMP` | timestamp (wall clock) | |
+| `TIMESTAMP WITH TIME ZONE` (or a name saying so, `TIMESTAMPTZ`, `TIMESTAMP_TZ`, `DATETIMEOFFSET`), `WITH LOCAL TIME ZONE`, `TIMESTAMP_LTZ` | timestamp_tz (UTC) | |
+| `CHAR`, `VARCHAR`, `LONGVARCHAR`, `N…` variants, `CLOB`, `NCLOB`, `SQLXML`, `ROWID` | text | |
+| `BINARY`, `VARBINARY`, `LONGVARBINARY`, `BLOB` | binary | |
+| anything else: `OTHER` (JSON, intervals), `ARRAY`, `STRUCT`, `JAVA_OBJECT`, vendor codes | text, as the driver writes it | note naming the type |
+
+Values are read as `java.time` types; a driver that refuses them is read through the `java.sql`
+types from then on (zoned values with a UTC calendar, never the JVM's zone). Times kept to more than
+six digits of a second (Db2's `TIMESTAMP(12)`) are read to the microsecond, and the column's
+description says the rest is cut.
+
+**Reading** is `SELECT *` from the table, its name quoted as `getIdentifierQuoteString` says and
+built once connected; previews use `Statement.setMaxRows` (no SQL row limit works everywhere).
+A driver that refuses `setReadOnly` or `setAutoCommit(false)` is read anyway. Without an identifier
+quote, only plain names (letters, digits, `_`) are read. Tables are never sampled. Profiling and
+preview work as for the other JDBC sources. Data quality
+rules are checked on the rows read, not as SQL in the database (`JdbcConnector.runsRulesInDatabase()`
+is false), so no vendor SQL is guessed.
+
+**Writes** (`GenericWriteSql`, through `JdbcTableOutput`) are `append` and `create` only, with
+batches of one prepared `INSERT` binding every value, and only when `read_only` is off (and the
+source allows writing). `checkWrite` checks without connecting: settings, `read_only`, the mode, no
+key, no format, the table's name. `writeOptions` is `commit_every`, `batch_size`, `text_length` and
+the profiling settings. Everything else comes from `DatabaseMetaData`: whether the table exists,
+its columns (`COLUMN_SIZE`, `DECIMAL_DIGITS`) and which need a value, the column types a create
+uses (`getTypeInfo`; a kind with no type, such as a timestamp with time zone on a database without
+one, refuses the create; time types ask for six digits of a second where the type keeps them), name
+lengths and quoting. A created table is described again once made, so every value is checked
+against the columns the database actually made, as for an append: decimals never rounded, text and
+bytes never cut (text also in UTF-8 bytes against `CHAR_OCTET_LENGTH` where the driver reports it,
+for columns sized in bytes; a driver that reports the character length there, as H2 does, makes this
+stricter than it needs to be), fractions of a second the column does not keep, `TINYINT` and
+unsigned ranges. A column whose size the driver does not report, or of a type Kilnmark does not know,
+is refused before a row is written. The target schema must be one the driver lists. A driver that
+stays in auto-commit or offers no transactions is refused (for every database writer). Where table
+definitions commit by themselves (`dataDefinitionCausesTransactionCommit`), a failed create drops the
+table again, but only when no rows were committed (`commit_every`) and the table is empty, so rows
+another writer put there are never lost; until the write ends, the new table is visible to others. The `ROW_COUNT` event carries `profiled`,
+`profile_error` and `write_warning` as for every writer (`WriteReport`).
+
+`replace` is refused: swapping a table in safely needs renaming, grants and transactional table
+definitions, which no SQL does the same way everywhere. `upsert` is refused: an update-or-insert
+without races needs `MERGE` or its like with the right locking, which differs between databases.
+Both say so, and point at append, create or a dedicated connector.
+
+Its tests (`GenericJdbcConnectorTest`) register H2 through the drivers folder and run in the
+ordinary build.
+
 ## Files and object storage
 
 Two connectors share `io.kilnmark.kiln.plugins.files`: `files` (a folder the server can read:

@@ -123,6 +123,8 @@ public class SourceResource {
         // Who may change where a writable source points is decided before the form is checked, so a
         // steward is told no (403) rather than asked to re-enter the password for a change they may not make.
         SourceService.whereUnchangedOrAdmin(existing, SourceService.settings(form.settings()), admin);
+        SourceService.adminOnlyKind(sources.connector(existing.kind()), existing,
+            SourceService.settings(form.settings()), admin);
         SourceService.Draft d = sources.draft(form, existing, true);
         sources.readingUnchangedOrAdmin(existing, d.config().settings(), "change how this source is read");
         byte[] secret = d.replaceSecret() && d.newSecret() != null ? secrets.seal(d.newSecret()) : null;
