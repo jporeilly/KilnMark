@@ -87,11 +87,14 @@ public class SourceResource {
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Response add(NewSource body) {
         if (body == null || body.name() == null) {
             throw new IllegalArgumentException("Send the source as JSON with at least a name");
         }
+        // Admin-only connectors (a generic JDBC source's driver settings) stay with admins.
+        SourceService.adminOnlyKind(sources.connector(body.kind()), null,
+            body.settings() == null ? Map.of() : body.settings(), identity.hasRole(AccessRole.ADMIN_ROLE));
         SourceService.Draft d = sources.draft(new SourceForm(body.name(), body.kind(), body.settings(),
             body.password(), null, null, body.displayName()), null, true);
         if (store.source(d.config().name()).isPresent()) {
@@ -117,9 +120,10 @@ public class SourceResource {
         if (body == null || body.settings() == null) {
             throw new IllegalArgumentException("Send the source as JSON with all its settings");
         }
-        // allow_writing: only admins may change it; a steward's form that leaves it out keeps it.
+        // allow_writing: designers and admins may change it; a steward's form that leaves it out keeps it.
         boolean admin = identity.hasRole(AccessRole.ADMIN_ROLE);
-        SourceForm form = SourceService.writingAsAllowed(body, existing, admin);
+        boolean designer = identity.hasRole(AccessRole.DESIGNER_ROLE);
+        SourceForm form = SourceService.writingAsAllowed(body, existing, designer);
         // Who may change where a writable source points is decided before the form is checked, so a
         // steward is told no (403) rather than asked to re-enter the password for a change they may not make.
         SourceService.whereUnchangedOrAdmin(existing, SourceService.settings(form.settings()), admin);

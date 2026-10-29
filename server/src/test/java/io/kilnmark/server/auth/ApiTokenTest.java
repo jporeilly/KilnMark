@@ -319,5 +319,8 @@ class ApiTokenTest {
         assertThrows(IllegalArgumentException.class, () -> AccessRole.parse("root"));
         assertThrows(IllegalArgumentException.class, () -> AccessRole.parse(null));
         assertEquals(java.util.Set.of("viewer", "steward"), AccessRole.STEWARD.grants());
+        assertEquals(java.util.Set.of("viewer", "steward", "designer"), AccessRole.DESIGNER.grants());
+        assertEquals(AccessRole.DESIGNER, AccessRole.parse(" Designer "));
+        assertEquals(java.util.Set.of("viewer", "steward", "designer", "admin"), AccessRole.ADMIN.grants());
     }
 }

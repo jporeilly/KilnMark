@@ -64,7 +64,7 @@ public class PipelineResource {
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Add a pipeline", description = "Saves a new pipeline with its YAML as version 1. Names are a "
         + "small letter followed by small letters, digits and dashes, at most 63 characters, and cannot change. A "
         + "pipeline with problems is saved as a draft (valid false) and cannot run until they are fixed. The ETag is "
@@ -121,7 +121,7 @@ public class PipelineResource {
     @POST
     @Path("suggest")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Suggest improvements", description = "Steps that would raise the predicted quality of a "
         + "write, each with its predicted effect (an estimate) and where it goes. Kilnmark's own come from the "
         + "metadata with no model; when a model is set for pipeline suggestions and ai is not false, it ranks, "
@@ -142,7 +142,7 @@ public class PipelineResource {
     @POST
     @Path("preview")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Preview a step", description = "The first rows leaving one output of one step of pipeline "
         + "YAML as it stands, saved or not: its columns with their kinds, the rows (100 by default, at most 1,000), "
         + "how long it took and, when a step before it reads all its rows first (an aggregate, a lookup's lookup "
@@ -174,7 +174,7 @@ public class PipelineResource {
     @POST
     @Path("{name}/versions/{n}/preview")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Preview a step of a version", description = "As POST /api/v1/pipelines/preview, for a saved "
         + "version: send step, and port and rows if wanted. Role: steward.")
     @APIResponses({
@@ -213,7 +213,7 @@ public class PipelineResource {
     @PUT
     @Path("{name}")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Save a new version", description = "Saves the YAML as the pipeline's next version, with a "
         + "message saying what changed; earlier versions stay as they were. With If-Match set to the latest version "
         + "as you read it (the ETag), the save is refused (409) when someone has saved another since. Role: steward.")
@@ -234,7 +234,7 @@ public class PipelineResource {
 
     @DELETE
     @Path("{name}")
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Delete a pipeline", description = "Deletes the pipeline with its versions and runs. What its "
         + "runs wrote, and the lineage they recorded, stay in the catalogue. Refused while a run is queued or running. "
         + "Role: steward.")
@@ -318,7 +318,8 @@ public class PipelineResource {
         @APIResponse(responseCode = "404", description = "No such pipeline or version"),
         @APIResponse(responseCode = "409", description = "The version has problems that stop it running")})
     public Response run(@PathParam("name") String name, PipelineViews.RunRequest body) {
-        AccessRole role = identity.hasRole(AccessRole.ADMIN_ROLE) ? AccessRole.ADMIN : AccessRole.STEWARD;
+        AccessRole role = identity.hasRole(AccessRole.ADMIN_ROLE) ? AccessRole.ADMIN
+            : identity.hasRole(AccessRole.DESIGNER_ROLE) ? AccessRole.DESIGNER : AccessRole.STEWARD;
         PipelineViews.RunSummary run = pipelines.queueRun(name, body == null ? null : body.version(), who(), role);
         return Response.accepted(run).location(URI.create("/api/v1/pipeline-runs/" + run.id())).build();
     }
@@ -349,7 +350,8 @@ public class PipelineResource {
     }
 
     private AccessRole role() {
-        return identity.hasRole(AccessRole.ADMIN_ROLE) ? AccessRole.ADMIN : AccessRole.STEWARD;
+        return identity.hasRole(AccessRole.ADMIN_ROLE) ? AccessRole.ADMIN
+            : identity.hasRole(AccessRole.DESIGNER_ROLE) ? AccessRole.DESIGNER : AccessRole.STEWARD;
     }
 
     private static jakarta.ws.rs.core.EntityTag etag(PipelineViews.PipelineDetail d) {

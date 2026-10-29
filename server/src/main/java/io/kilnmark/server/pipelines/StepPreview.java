@@ -434,7 +434,7 @@ final class StepPreview {
             }
             default -> {
                 if (any.any()) {
-                    throw new Refused("Only an admin can preview this: step " + id + " (" + clip(t) + ") may use "
+                    throw new Refused("Only a designer or an admin can preview this: step " + id + " (" + clip(t) + ") may use "
                         + "columns marked sensitive.");
                 }
                 return Hidden.NONE;
@@ -462,7 +462,7 @@ final class StepPreview {
             PipelineCompilerPort.StepOutline from = steps.get(e.fromStep());
             List<PipelineCompilerPort.Column> cols = from == null ? null : from.columns().get(e.fromPort());
             if (cols == null) {
-                throw new Refused("Only an admin can preview this: step " + id + " (union) combines rows whose "
+                throw new Refused("Only a designer or an admin can preview this: step " + id + " (union) combines rows whose "
                     + "columns are not known before the preview runs, and it may convert columns marked sensitive, "
                     + "which could give their values away.");
             }
@@ -477,7 +477,7 @@ final class StepPreview {
             boolean differ = kinds.stream().distinct().count() > 1;
             boolean decimals = kinds.contains("decimal") && kinds.size() > 1;
             if (differ || decimals) {
-                throw new Refused("Only an admin can preview this: step " + id + " (union) converts " + name
+                throw new Refused("Only a designer or an admin can preview this: step " + id + " (union) converts " + name
                     + ", which is marked sensitive, between its inputs' types (" + String.join(", ", kinds)
                     + "), and a conversion can fail on a value, which could give it away.");
             }
@@ -493,7 +493,7 @@ final class StepPreview {
             return;
         }
         String which = in.first(columns);
-        throw new Refused("Only an admin can preview this: step " + id + " (" + type + ") " + doing + " "
+        throw new Refused("Only a designer or an admin can preview this: step " + id + " (" + type + ") " + doing + " "
             + (which == null ? "columns that may include one marked sensitive" : which + ", which is marked sensitive")
             + ". In a preview, columns marked sensitive can only pass through unchanged; anything that looks at "
             + "their values (a condition, a calculation, a key, a rule) could give them away, even by whether the "

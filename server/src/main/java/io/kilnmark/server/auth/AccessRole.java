@@ -5,15 +5,20 @@ import java.util.Set;
 
 /**
  * What a caller may do. Each role includes the ones below it: a steward can do everything a
- * viewer can, and an admin everything a steward can. Resources name the least role they need in
+ * viewer can, a designer everything a steward can, and an admin everything a designer can. Resources name the least role they need in
  * {@code @RolesAllowed}, using the constants here.
  */
 public enum AccessRole {
     /** Reads the catalogue: search, assets, sources, runs and connectors. */
     VIEWER,
-    /** Also edits, tests and deletes sources, and starts scans. */
+    /** Also runs pipelines, and starts scans. Stewards cannot edit pipelines. */
     STEWARD,
-    /** Also adds and imports sources and manages API tokens. */
+    /**
+     * Also builds and edits pipelines, previews steps, adds sources, turns on writing, writes custom
+     * SQL rules and sees values of columns marked sensitive.
+     */
+    DESIGNER,
+    /** Also the Settings pages, API tokens and the admin-only settings of sources. */
     ADMIN;
 
     /** Security role names, as used in {@code @RolesAllowed}. */
@@ -21,9 +26,11 @@ public enum AccessRole {
     /** See {@link #VIEWER_ROLE}. */
     public static final String STEWARD_ROLE = "steward";
     /** See {@link #VIEWER_ROLE}. */
+    public static final String DESIGNER_ROLE = "designer";
+    /** See {@link #VIEWER_ROLE}. */
     public static final String ADMIN_ROLE = "admin";
 
-    /** The name stored with a token and shown in the API: {@code viewer}, {@code steward} or {@code admin}. */
+    /** The name stored with a token and shown in the API: {@code viewer}, {@code steward}, {@code designer} or {@code admin}. */
     public String id() {
         return name().toLowerCase(Locale.ROOT);
     }
@@ -33,11 +40,12 @@ public enum AccessRole {
         return switch (this) {
             case VIEWER -> Set.of(VIEWER_ROLE);
             case STEWARD -> Set.of(VIEWER_ROLE, STEWARD_ROLE);
-            case ADMIN -> Set.of(VIEWER_ROLE, STEWARD_ROLE, ADMIN_ROLE);
+            case DESIGNER -> Set.of(VIEWER_ROLE, STEWARD_ROLE, DESIGNER_ROLE);
+            case ADMIN -> Set.of(VIEWER_ROLE, STEWARD_ROLE, DESIGNER_ROLE, ADMIN_ROLE);
         };
     }
 
-    /** Reads {@code viewer}, {@code steward} or {@code admin}, in any case. */
+    /** Reads {@code viewer}, {@code steward}, {@code designer} or {@code admin}, in any case. */
     public static AccessRole parse(String text) {
         if (text != null) {
             for (AccessRole r : values()) {
@@ -46,6 +54,6 @@ public enum AccessRole {
                 }
             }
         }
-        throw new IllegalArgumentException("role: use viewer, steward or admin");
+        throw new IllegalArgumentException("role: use viewer, steward, designer or admin");
     }
 }

@@ -4,7 +4,7 @@
  * the app returns to the sign-in page.
  */
 
-export type AccessRole = "viewer" | "steward" | "admin";
+export type AccessRole = "viewer" | "steward" | "designer" | "admin";
 
 /** Who is signed in. signInRequired is false when the server runs with sign-in turned off. */
 export type Me = {
@@ -37,9 +37,9 @@ export type CreatedToken = {
   token: string;
 };
 
-const RANK: Record<AccessRole, number> = { viewer: 0, steward: 1, admin: 2 };
+const RANK: Record<AccessRole, number> = { viewer: 0, steward: 1, designer: 2, admin: 3 };
 
-/** True if `role` includes `needed`: an admin can do what a steward can, and a steward what a viewer can. */
+/** True if `role` includes `needed`: an admin can do what a designer can, a designer what a steward can, and a steward what a viewer can. */
 export const allows = (role: AccessRole | undefined, needed: AccessRole) => role != null && RANK[role] >= RANK[needed];
 
 const TOKEN_KEY = "kilnmark.token";

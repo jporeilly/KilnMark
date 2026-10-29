@@ -10,6 +10,7 @@ import "./pipelines.css";
 export function PipelinesPage({ role }: { role: AccessRole }) {
   useTitle("Pipelines");
   const steward = allows(role, "steward");
+  const designer = allows(role, "designer");
   const [pipelines, setPipelines] = useState<PipelineSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
@@ -151,7 +152,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
           </div>
         )}
       </section>
-      {!steward && <p className="hint">Your role ({role}) can read pipelines and their runs. Stewards edit and run them.</p>}
+      {!steward && <p className="hint">Your role ({role}) can read pipelines and their runs. Stewards run them; designers build and edit them.</p>}
     </>
   );
 }

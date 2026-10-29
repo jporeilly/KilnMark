@@ -152,10 +152,10 @@ class PipelinePreviewApiTest {
         assertEquals(List.of("1", Masking.MASK), masked.getList("rows[0]"));
         // Nothing upstream may look inside it: a calculation or a condition on it is refused.
         as(steward).body(Map.of("yaml", YAML, "step", "tidy")).post("/api/v1/pipelines/preview").then()
-            .statusCode(403).body("error", startsWith("Only an admin can preview this: step tidy (compute) works out "
+            .statusCode(403).body("error", startsWith("Only a designer or an admin can preview this: step tidy (compute) works out "
                 + "a value from name"));
         as(steward).body(Map.of("yaml", YAML, "step", "named")).post("/api/v1/pipelines/preview").then()
-            .statusCode(403).body("error", startsWith("Only an admin can preview this: step named (filter) chooses "
+            .statusCode(403).body("error", startsWith("Only a designer or an admin can preview this: step named (filter) chooses "
                 + "rows by name"));
 
         JsonPath open = as(Tokens.ADMIN).body(Map.of("yaml", YAML, "step", "tidy", "rows", 3))

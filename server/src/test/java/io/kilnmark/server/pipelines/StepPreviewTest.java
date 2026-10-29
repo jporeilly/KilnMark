@@ -352,7 +352,7 @@ class StepPreviewTest {
         WebApplicationException e = assertThrows(WebApplicationException.class, () -> previews().preview(byName, "ps",
             null, 5, "jo", AccessRole.STEWARD, viewer(false, "name"), () -> false));
         assertEquals(403, status(e));
-        assertTrue(error(e).startsWith("Only an admin can preview this: step ps (filter) chooses rows by name, which "
+        assertTrue(error(e).startsWith("Only a designer or an admin can preview this: step ps (filter) chooses rows by name, which "
             + "is marked sensitive"), error(e));
         assertEquals(5, previews().preview(byName, "ps", null, 5, "ann", AccessRole.ADMIN, viewer(true, "name"),
             () -> false).rowCount());
@@ -387,7 +387,7 @@ class StepPreviewTest {
             WebApplicationException r = assertThrows(WebApplicationException.class, () -> previews().preview(y, "x",
                 null, 5, "jo", AccessRole.STEWARD, viewer(false, "name"), () -> false), step);
             assertEquals(403, status(r), step);
-            assertTrue(error(r).startsWith("Only an admin can preview this: step x ("), error(r));
+            assertTrue(error(r).startsWith("Only a designer or an admin can preview this: step x ("), error(r));
         }
     }
 

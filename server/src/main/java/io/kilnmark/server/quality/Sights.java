@@ -24,7 +24,7 @@ public class Sights {
     /** The least role that may see data values. */
     public static final String DATA_ROLE = AccessRole.STEWARD_ROLE;
     /** The least role that may see values of columns marked sensitive. */
-    public static final String UNMASK_ROLE = AccessRole.ADMIN_ROLE;
+    public static final String UNMASK_ROLE = AccessRole.DESIGNER_ROLE;
 
     @Inject
     SecurityIdentity identity;

@@ -317,7 +317,7 @@ public final class WriteStepFactory implements StepFactory {
         RunContext run = RunContext.current().orElseThrow(() -> new StepException(
             "A write step is set up only when its pipeline runs"));
         if (run.role() == null || run.role() == AccessRole.VIEWER) {
-            throw new StepException("Only stewards and admins can run pipelines that write; this run was asked for "
+            throw new StepException("Only stewards, designers and admins can run pipelines that write; this run was asked for "
                 + "by a viewer");
         }
         String source = PipelineSources.text(config, "source");
