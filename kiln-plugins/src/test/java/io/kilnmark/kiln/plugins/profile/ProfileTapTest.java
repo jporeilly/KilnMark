@@ -42,7 +42,7 @@ class ProfileTapTest {
             f("u32", new ArrowType.Int(32, false)), f("d256", new ArrowType.Decimal(40, 2, 256)),
             f("large", ArrowType.LargeUtf8.INSTANCE), f("tiny", new ArrowType.Int(8, true)),
             f("empty", ArrowType.Utf8.INSTANCE), f("ms", new ArrowType.Timestamp(TimeUnit.MILLISECOND, null))));
-        ProfileStep tap = ProfileStep.tap("t", Map.of("asset-urn", "urn:kilnmark:x:t"));
+        ProfileNode tap = ProfileNode.tap("t", Map.of("asset-urn", "urn:kilnmark:x:t"));
         try (RootAllocator a = new RootAllocator(); VectorSchemaRoot b = VectorSchemaRoot.create(schema, a)) {
             b.allocateNew();
             for (int i = 0; i < 4; i++) {

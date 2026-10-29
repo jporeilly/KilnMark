@@ -11,27 +11,27 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import io.kilnmark.kiln.flow.FlowEngine.Kind;
-import io.kilnmark.kiln.flow.FlowEngine.Path;
+import io.kilnmark.kiln.flow.FlowEngine.Connection;
 import io.kilnmark.kiln.flow.FlowEngine.State;
 
 class FlowEngineTest {
 
-    private static Path p(String from, String to, Kind kind) {
-        return new Path(from, to, kind, null);
+    private static Connection p(String from, String to, Kind kind) {
+        return new Connection(from, to, kind, null);
     }
 
-    private static Path below(String from, String to, double limit) {
-        return new Path(from, to, Kind.CONDITION,
+    private static Connection below(String from, String to, double limit) {
+        return new Connection(from, to, Kind.CONDITION,
             v -> v.apply(from + ".share") instanceof Number n ? n.doubleValue() < limit : null);
     }
 
-    private static Path atLeast(String from, String to, double limit) {
-        return new Path(from, to, Kind.CONDITION,
+    private static Connection atLeast(String from, String to, double limit) {
+        return new Connection(from, to, Kind.CONDITION,
             v -> v.apply(from + ".share") instanceof Number n ? n.doubleValue() >= limit : null);
     }
 
     @Test
-    void successPathsRunInOrder() {
+    void successConnectionsRunInOrder() {
         FlowEngine e = new FlowEngine(List.of("a", "b", "c"),
             List.of(p("a", "b", Kind.SUCCESS), p("b", "c", Kind.SUCCESS)), Map.of());
         assertEquals(List.of("a"), e.ready());
@@ -46,31 +46,31 @@ class FlowEngineTest {
     }
 
     @Test
-    void stepsWithNothingBeforeThemStartTogether() {
+    void nodesWithNothingBeforeThemStartTogether() {
         FlowEngine e = new FlowEngine(List.of("a", "b", "c"),
             List.of(p("a", "c", Kind.SUCCESS), p("b", "c", Kind.SUCCESS)), Map.of());
         assertEquals(List.of("a", "b"), e.ready());
         e.finish("a", State.SUCCEEDED, Map.of());
-        assertTrue(e.ready().isEmpty(), "c waits for b's path to settle");
+        assertTrue(e.ready().isEmpty(), "c waits for b's connection to settle");
         e.finish("b", State.SUCCEEDED, Map.of());
         assertEquals(List.of("c"), e.ready());
     }
 
     @Test
-    void aFailureWithNoPathFailsTheFlowAndSkipsWhatFollows() {
+    void aFailureWithNoConnectionFailsTheFlowAndSkipsWhatFollows() {
         FlowEngine e = new FlowEngine(List.of("a", "b", "c"),
             List.of(p("a", "b", Kind.SUCCESS), p("b", "c", Kind.SUCCESS)), Map.of());
         e.ready();
         e.finish("a", State.FAILED, Map.of());
         assertTrue(e.ready().isEmpty());
         assertEquals(State.SKIPPED, e.state("b"));
-        assertEquals(State.SKIPPED, e.state("c"), "a skipped step settles its paths as not taken");
+        assertEquals(State.SKIPPED, e.state("c"), "a skipped node settles its connections as not taken");
         assertTrue(e.done());
         assertEquals(FlowEngine.Outcome.FAILED, e.outcome());
     }
 
     @Test
-    void aFailurePathHandlesTheFailure() {
+    void aFailureConnectionHandlesTheFailure() {
         FlowEngine e = new FlowEngine(List.of("a", "b", "tell"),
             List.of(p("a", "b", Kind.SUCCESS), p("a", "tell", Kind.FAILURE)), Map.of());
         e.ready();
@@ -93,38 +93,38 @@ class FlowEngineTest {
 
     @Test
     void aConditionNeedsSuccessAndATrueAnswer() {
-        List<String> steps = List.of("clean", "spend", "tell");
-        List<Path> paths = List.of(below("clean", "spend", 0.02), p("clean", "tell", Kind.FAILURE),
+        List<String> nodes = List.of("clean", "spend", "tell");
+        List<Connection> connections = List.of(below("clean", "spend", 0.02), p("clean", "tell", Kind.FAILURE),
             atLeast("clean", "tell", 0.02));
 
-        FlowEngine low = new FlowEngine(steps, paths, Map.of());
+        FlowEngine low = new FlowEngine(nodes, connections, Map.of());
         low.ready();
         low.finish("clean", State.SUCCEEDED, Map.of("share", 0.01));
         assertEquals(List.of("spend"), low.ready());
         assertEquals(State.SKIPPED, low.state("tell"));
 
-        FlowEngine high = new FlowEngine(steps, paths, Map.of());
+        FlowEngine high = new FlowEngine(nodes, connections, Map.of());
         high.ready();
         high.finish("clean", State.SUCCEEDED, Map.of("share", 0.05));
         assertEquals(List.of("tell"), high.ready());
         assertEquals(State.SKIPPED, high.state("spend"));
 
-        FlowEngine unknown = new FlowEngine(steps, paths, Map.of());
+        FlowEngine unknown = new FlowEngine(nodes, connections, Map.of());
         unknown.ready();
         unknown.finish("clean", State.SUCCEEDED, Map.of());
-        assertTrue(unknown.ready().isEmpty(), "an unknown answer takes neither path");
+        assertTrue(unknown.ready().isEmpty(), "an unknown answer takes neither connection");
         assertEquals(State.SKIPPED, unknown.state("spend"));
         assertEquals(State.SKIPPED, unknown.state("tell"));
 
-        FlowEngine failed = new FlowEngine(steps, paths, Map.of());
+        FlowEngine failed = new FlowEngine(nodes, connections, Map.of());
         failed.ready();
         failed.finish("clean", State.FAILED, Map.of("share", 0.0));
-        assertEquals(List.of("tell"), failed.ready(), "only the failure path is taken, never a condition");
+        assertEquals(List.of("tell"), failed.ready(), "only the failure connection is taken, never a condition");
     }
 
     @Test
     void conditionsReadParametersAndStatus() {
-        Path p = new Path("a", "b", Kind.CONDITION,
+        Connection p = new Connection("a", "b", Kind.CONDITION,
             v -> "EMEA".equals(v.apply("region")) && "succeeded".equals(v.apply("a.status")));
         FlowEngine e = new FlowEngine(List.of("a", "b"), List.of(p), Map.of("region", "EMEA"));
         e.ready();
@@ -172,7 +172,7 @@ class FlowEngineTest {
     }
 
     @Test
-    void aStepCancelledByHandCancelsTheFlowUnlessAStopStepDecided() {
+    void aNodeCancelledByHandCancelsTheFlowUnlessAStopNodeDecided() {
         FlowEngine byHand = new FlowEngine(List.of("a", "b"), List.of(p("a", "b", Kind.SUCCESS)), Map.of());
         byHand.ready();
         byHand.finish("a", State.CANCELLED, Map.of());
@@ -180,7 +180,7 @@ class FlowEngineTest {
         assertEquals(State.SKIPPED, byHand.state("b"));
         assertEquals(FlowEngine.Outcome.CANCELLED, byHand.outcome());
 
-        // The steps a stop step cancels do not make the flow cancelled: the stop decides.
+        // The nodes a stop node cancels do not make the flow cancelled: the stop decides.
         FlowEngine stopped = new FlowEngine(List.of("slow", "stop"), List.of(), Map.of());
         stopped.ready();
         stopped.halt(true, "Enough");
@@ -194,11 +194,11 @@ class FlowEngineTest {
         explicit.cancel();
         explicit.finish("stop", State.SUCCEEDED, Map.of());
         explicit.finish("slow", State.CANCELLED, Map.of());
-        assertEquals(FlowEngine.Outcome.CANCELLED, explicit.outcome(), "a person's cancel outranks a stop step");
+        assertEquals(FlowEngine.Outcome.CANCELLED, explicit.outcome(), "a person's cancel outranks a stop node");
     }
 
     @Test
-    void nullsAreLeftOutOfWhatAStepReports() {
+    void nullsAreLeftOutOfWhatANodeReports() {
         FlowEngine e = new FlowEngine(List.of("a"), List.of(), Map.of());
         e.ready();
         java.util.HashMap<String, Object> reported = new java.util.HashMap<>();

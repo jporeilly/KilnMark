@@ -3,7 +3,7 @@ package io.kilnmark.kiln.yaml;
 import java.util.Collection;
 import java.util.Locale;
 
-/** "Did you mean …?" for mistyped keys, step types and step ids. */
+/** "Did you mean …?" for mistyped keys, node types and node ids. */
 final class Suggest {
 
     private Suggest() {

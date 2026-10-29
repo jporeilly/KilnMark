@@ -72,7 +72,7 @@ public class OracleConnector extends JdbcConnector {
     /** A service name: letters, digits and {@code . _ - $ #}, as Oracle Net allows them. */
     private static final Pattern SERVICE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._$#-]{0,127}");
 
-    /** Settings the reader step receives besides the URL, user and password. */
+    /** Settings the reader node receives besides the URL, user and password. */
     static final String READ_ENCRYPTION = "oracle-encryption";
 
     private final JdbcDrivers drivers;
@@ -330,7 +330,7 @@ public class OracleConnector extends JdbcConnector {
         return new JdbcTableInput(new Reading(this));
     }
 
-    /** How the reader step connects (through the customer's driver) and maps columns. */
+    /** How the reader node connects (through the customer's driver) and maps columns. */
     private record Reading(OracleConnector connector) implements JdbcTableInput.Reading {
 
         @Override
@@ -469,7 +469,7 @@ public class OracleConnector extends JdbcConnector {
 
     // ------------------------------------------------------------------ writing
 
-    /** For the capabilities: the actual SQL depends on the server and the step ({@link #writer}). */
+    /** For the capabilities: the actual SQL depends on the server and the node ({@link #writer}). */
     @Override
     WriteSql writeSql() {
         return new OracleWriteSql(false, false);
@@ -510,10 +510,10 @@ public class OracleConnector extends JdbcConnector {
 
     /**
      * Writes with SQL for this server (BOOLEAN columns on 23ai and later, its character sets) and
-     * this step ({@code empty_text_as_null}), to the table as the catalogue names it.
+     * this node ({@code empty_text_as_null}), to the table as the catalogue names it.
      */
     @Override
-    public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+    public io.kilnmark.kiln.Node writer(SourceConfig source, WriteOptions write) throws ConnectorException {
         checkValid(source);
         boolean emptyAsNull = new WriteSettings(write.options()).bool("empty_text_as_null", false);
         TableName target;

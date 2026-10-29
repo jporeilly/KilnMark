@@ -32,7 +32,7 @@ import io.kilnmark.kiln.plugins.write.WriteColumn;
  * <p>Nothing is changed silently: a decimal is never rounded (also beyond Oracle's 38 significant
  * digits, which it would round, or a {@code FLOAT(b)} column's digits) nor taken outside a NUMBER's
  * range; a timestamp keeps its digits of a second or is refused; empty text and empty bytes, which
- * Oracle stores as null, are refused unless the step allows it ({@code empty_text_as_null}), and in
+ * Oracle stores as null, are refused unless the node allows it ({@code empty_text_as_null}), and in
  * an upsert key always. Text must fit the column's character set, character by character: on a
  * database whose character set is not Unicode ({@code WE8MSWIN1252}, say) a character it lacks
  * would be stored as {@code ?}, so the row is refused, naming it. Columns sized in bytes are checked
@@ -430,7 +430,7 @@ final class OracleWriteSql extends WriteSql {
 
     /**
      * True or false as 1 or 0 (into NUMBER(1), and into BOOLEAN, which takes numbers); a time of day
-     * as text ({@code 09:30:00.000000}), as the step's own columns keep it; a timestamp with a zone
+     * as text ({@code 09:30:00.000000}), as the node's own columns keep it; a timestamp with a zone
      * in UTC.
      */
     @Override
@@ -463,11 +463,11 @@ final class OracleWriteSql extends WriteSql {
     String valueProblem(Kind kind, Object v) {
         if (v instanceof String s && s.isEmpty() && !emptyAsNull) {
             return "it is empty text, which Oracle stores as null. Set empty_text_as_null: true to write it as "
-                + "null, or turn it into another value with a compute step";
+                + "null, or turn it into another value with a compute node";
         }
         if (v instanceof byte[] b && b.length == 0 && !emptyAsNull) {
             return "it is empty (no bytes), which Oracle stores as null. Set empty_text_as_null: true to write it as "
-                + "null, or turn it into another value with a compute step";
+                + "null, or turn it into another value with a compute node";
         }
         if (v instanceof BigDecimal d && d.signum() != 0) {
             BigDecimal exact = d.stripTrailingZeros();
@@ -485,7 +485,7 @@ final class OracleWriteSql extends WriteSql {
     }
 
     /**
-     * Per column of the table written to ({@code t} null for a column the step creates, which is
+     * Per column of the table written to ({@code t} null for a column the node creates, which is
      * VARCHAR2 or CLOB in the database's character set): text must be storable in the column's
      * character set, and within a column's size in bytes; a FLOAT(b) column keeps
      * ceil(b × 0.30103) significant digits, so a value with more is refused rather than rounded.
@@ -498,13 +498,13 @@ final class OracleWriteSql extends WriteSql {
             if (unstorable != null) {
                 return unstorable + (cs == charset && nationalCharset.unicode() ? ". Write it to an NVARCHAR2 or NCLOB "
                     + "column, whose character set (" + nationalCharset.name() + ") holds it, or replace the character "
-                    + "with a compute step" : ". Replace the character with a compute step");
+                    + "with a compute node" : ". Replace the character with a compute node");
             }
             if (t != null && t.precision() > 0 && !t.typeName().endsWith("CLOB") && !t.typeName().equals("LONG")) {
                 long bytes = cs.bytes(s);
                 if (bytes > t.precision()) {
                     return "the value takes " + bytes + " bytes in the character set " + cs.name() + ", but the column "
-                        + "holds at most " + t.precision() + " bytes. Shorten the values with a compute step, or ask for "
+                        + "holds at most " + t.precision() + " bytes. Shorten the values with a compute node, or ask for "
                         + "the column to be widened";
                 }
             }

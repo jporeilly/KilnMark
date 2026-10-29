@@ -23,14 +23,14 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.CatalogInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.connect.SourceConfig;
-import io.kilnmark.kiln.plugins.profile.ProfileStep;
+import io.kilnmark.kiln.plugins.profile.ProfileNode;
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.SecretBox;
 import io.kilnmark.server.jobs.JobQueue;
@@ -231,7 +231,7 @@ public class ScanService {
                         RunResult r = documents.handles(a)
                             ? documents.read(connector, config, a, urn, source.id(), runId, stop)
                             : profile(connector, config, a, urn, runId, stop, source);
-                        rows.addAndGet(r.steps().get(0).rowsOut());
+                        rows.addAndGet(r.nodes().get(0).rowsOut());
                         if (!r.succeeded()) {
                             failed.incrementAndGet();
                             problems.add(a.path() + ": " + r.error());
@@ -306,13 +306,13 @@ public class ScanService {
     private RunResult profile(Connector connector, SourceConfig config, AssetInfo a, String urn, long runId,
                               BooleanSupplier stop, Records.Source source) throws InterruptedException {
         long limit = a.bounded() ? this.config.scan().viewRowLimit() : 0;
-        StepSpec read = connector.reader(config, a, new Connector.ReadOptions(urn, limit, 8192));
+        NodeSpec read = connector.reader(config, a, new Connector.ReadOptions(urn, limit, 8192));
         Map<String, String> profiling = new java.util.HashMap<>(quality.profileSettings(source, connector, a, urn));
         profiling.put("asset-urn", urn);
         // Relationships: keep the distinct-value sketch of key-like fields only.
-        profiling.put(ProfileStep.SKETCH_FIELDS, RelationshipService.sketchFields(a));
+        profiling.put(ProfileNode.SKETCH_FIELDS, RelationshipService.sketchFields(a));
         Pipeline p = new Pipeline("scan-" + runId + "-" + a.path(), List.of(
-            read, new StepSpec("profile", new ProfileStep(), profiling)));
+            read, new NodeSpec("profile", new ProfileNode(), profiling)));
         return new Runner(this.config.scan().memoryLimitMb() << 20, 4).run(p, event -> {
             record(event, runId, stop);
             quality.observe(event, runId, source);
@@ -328,7 +328,7 @@ public class ScanService {
     }
 
     /**
-     * Stores a row count or column profile an engine step reported, under run {@code runId}: the
+     * Stores a row count or column profile an engine node reported, under run {@code runId}: the
      * scan's own path, also used by pipelines to record what their writes wrote. The asset must
      * already be recorded ({@code saveAsset}).
      */

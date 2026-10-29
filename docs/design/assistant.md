@@ -17,7 +17,7 @@ may see it and which models may read it.
 | --- | --- | --- | --- | --- |
 | `docs` | The user guides and the changelog that ship with this build | Every signed-in user | Any model allowed by the server-wide rule | First |
 | `catalogue` | Sources, assets, fields, profiles, quality scores, rule results and drift, through the existing search and quality APIs | As the API allows for the user's role | Per source, by its `ai_egress` setting, as everywhere else | Second |
-| `pipelines` | Pipelines, their runs and versions | As the API allows | Per source of each step | With round 3 pipelines |
+| `pipelines` | Pipelines, their runs and versions | As the API allows | Per source of each node | With round 3 pipelines |
 
 The documentation holds no customer data, so it only needs the server-wide rule
 (`kilnmark.ai.hosted-models` and the admin setting). The question itself is the user's own text

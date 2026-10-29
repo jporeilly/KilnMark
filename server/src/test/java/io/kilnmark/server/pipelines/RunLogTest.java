@@ -66,13 +66,13 @@ class RunLogTest {
         }
 
         @Override
-        public void addPoint(long runId, String steps, int st, PipelineStore.Point p) {
+        public void addPoint(long runId, String nodes, int st, PipelineStore.Point p) {
             points.put(p.t(), p);
             stride = st;
         }
 
         @Override
-        public void replacePoints(long runId, String steps, int st, List<PipelineStore.Point> all) {
+        public void replacePoints(long runId, String nodes, int st, List<PipelineStore.Point> all) {
             points.clear();
             all.forEach(p -> points.put(p.t(), p));
             stride = st;
@@ -90,18 +90,18 @@ class RunLogTest {
         Kept store = new Kept();
         RunLog log = new RunLog(store, 7, context(), JSON);
         Instant t = Instant.parse("2026-10-28T10:00:00Z");
-        log.stepStarted("read", t);
+        log.nodeStarted("read", t);
         log.firstRowOut("read", t);
-        log.stepEnded("write", RunResult.Outcome.FAILED, t);
+        log.nodeEnded("write", RunResult.Outcome.FAILED, t);
         log.note(RunListener.Level.ERROR, "write", "login hunter22 refused the value 'Ann'");
         log.flush();
         assertEquals(List.of(1, 2, 3, 4), store.events.stream().map(PipelineStore.Event::seq).toList());
-        assertEquals("Step read started", store.events.get(0).text());
+        assertEquals("Node read started", store.events.get(0).text());
         assertEquals("error", store.events.get(2).level());
-        assertEquals("Step write failed", store.events.get(2).text());
+        assertEquals("Node write failed", store.events.get(2).text());
         PipelineStore.Event note = store.events.get(3);
         assertEquals("engine_note", note.kind());
-        assertEquals("Step write reported an error", note.text());
+        assertEquals("Node write reported an error", note.text());
         assertFalse(note.text().contains("Ann"), "the words are the server's own");
         assertEquals("login ******** refused the value 'Ann'", note.detail());
     }
@@ -137,7 +137,7 @@ class RunLogTest {
         Kept store = new Kept();
         RunLog log = new RunLog(store, 7, context(), JSON);
         for (int i = 0; i < RunLog.MAX_EVENTS + 50; i++) {
-            log.stepStarted("s" + i, Instant.now());
+            log.nodeStarted("s" + i, Instant.now());
         }
         log.flush();
         assertEquals(RunLog.MAX_EVENTS + 1, store.events.size());
@@ -152,7 +152,7 @@ class RunLogTest {
         Kept store = new Kept();
         store.broken = true;
         RunLog log = new RunLog(store, 7, context(), JSON);
-        log.stepStarted("read", Instant.now());
+        log.nodeStarted("read", Instant.now());
         log.progress(new RunProgress(Instant.now(), List.of(), List.of(), null));
         log.finish();
         log.flush();
@@ -165,9 +165,9 @@ class RunLogTest {
         RunLog log = new RunLog(store, 7, context(), JSON);
         Instant t = Instant.parse("2026-10-28T10:00:00Z");
         RunProgress running = new RunProgress(t, List.of(
-            new RunProgress.StepProgress("read", RunProgress.State.RUNNING, 0, 900, 450.04, t, t, t, null, 0,
+            new RunProgress.NodeProgress("read", RunProgress.State.RUNNING, 0, 900, 450.04, t, t, t, null, 0,
                 1_500_000_000L, 1.0),
-            new RunProgress.StepProgress("write", RunProgress.State.RUNNING, 800, 0, 400, t, t, t, null, 20_000_000L, 0,
+            new RunProgress.NodeProgress("write", RunProgress.State.RUNNING, 800, 0, 400, t, t, t, null, 20_000_000L, 0,
                 0)),
             List.of(new RunProgress.EdgeProgress("read", "out", "write", "in", 800, 4, 4, true, false, 1.0)), "write");
         log.progress(running);
@@ -175,20 +175,20 @@ class RunLogTest {
         assertEquals(1, store.progress.size());
         JsonNode p = JSON.readTree(store.progress.getFirst());
         assertEquals("write", p.path("slowest").asText());
-        assertEquals("running", p.path("steps").get(0).path("state").asText());
-        assertEquals(450.0, p.path("steps").get(0).path("rowsPerSecond").asDouble());
-        assertTrue(p.path("steps").get(0).path("finishedAt").isNull());
+        assertEquals("running", p.path("nodes").get(0).path("state").asText());
+        assertEquals(450.0, p.path("nodes").get(0).path("rowsPerSecond").asDouble());
+        assertTrue(p.path("nodes").get(0).path("finishedAt").isNull());
         assertTrue(p.path("edges").get(0).path("full").asBoolean());
         assertEquals(1.0, p.path("edges").get(0).path("fill").asDouble());
-        assertEquals(1500, p.path("steps").get(0).path("heldUpMs").asLong());
-        assertEquals(20, p.path("steps").get(1).path("waitingForRowsMs").asLong());
-        assertEquals(1.0, p.path("steps").get(0).path("outputFill").asDouble());
+        assertEquals(1500, p.path("nodes").get(0).path("heldUpMs").asLong());
+        assertEquals(20, p.path("nodes").get(1).path("waitingForRowsMs").asLong());
+        assertEquals(1.0, p.path("nodes").get(0).path("outputFill").asDouble());
         assertEquals(log.workerStarted().toString(), p.path("workerStartedAt").asText(), "one clock: the worker's");
         PipelineStore.Point first = store.points.firstEntry().getValue();
         assertEquals("[450.0,400.0]", first.rates());
         assertEquals("[1.0,0.0]", first.fills());
         RunProgress ended = new RunProgress(t, List.of(
-            new RunProgress.StepProgress("read", RunProgress.State.ENDED, 0, 900, 0, t, t, t, t, 0, 0, 0)), List.of(),
+            new RunProgress.NodeProgress("read", RunProgress.State.ENDED, 0, 900, 0, t, t, t, t, 0, 0, 0)), List.of(),
             null);
         log.progress(ended); // the last one is always written
         assertEquals(2, store.progress.size());
@@ -201,14 +201,14 @@ class RunLogTest {
     }
 
     @Test
-    void aStepFoundNotToHaveFreedItsMemoryIsSaidAgainInWords() {
+    void aNodeFoundNotToHaveFreedItsMemoryIsSaidAgainInWords() {
         Kept store = new Kept();
         RunLog log = new RunLog(store, 7, context(), JSON);
         Instant t = Instant.now();
-        log.stepEnded("write", RunResult.Outcome.FINISHED, t);
-        log.stepEnded("write", RunResult.Outcome.FAILED, t);
+        log.nodeEnded("write", RunResult.Outcome.FINISHED, t);
+        log.nodeEnded("write", RunResult.Outcome.FAILED, t);
         log.flush();
-        assertEquals(List.of("Step write finished", "Step write counted as failed: it did not free all its memory"),
+        assertEquals(List.of("Node write finished", "Node write counted as failed: it did not free all its memory"),
             store.events.stream().map(PipelineStore.Event::text).toList());
     }
 
@@ -236,8 +236,8 @@ class RunLogTest {
             long rows = i > 10 ? 5 : 0;
             double rate = i == 3_333 ? 9_999 : 5; // one spike
             log.progress(new RunProgress(t.plusMillis((i + 1) * 2_000L), List.of(
-                new RunProgress.StepProgress("check", RunProgress.State.RUNNING, 10, 10, rate, t, t, t, null, 0, 0, 0.5),
-                new RunProgress.StepProgress("tidy", RunProgress.State.RUNNING, 10, 10, 5, t, t, t, null, 0, 0, 0)),
+                new RunProgress.NodeProgress("check", RunProgress.State.RUNNING, 10, 10, rate, t, t, t, null, 0, 0, 0.5),
+                new RunProgress.NodeProgress("tidy", RunProgress.State.RUNNING, 10, 10, 5, t, t, t, null, 0, 0, 0)),
                 List.of(new RunProgress.EdgeProgress("check", "quarantine", "aside", "in", rows, 0, 4, false, true, 0),
                     new RunProgress.EdgeProgress("tidy", "rejected", "aside", "in", rows, 0, 4, false, true, 0)),
                 null));

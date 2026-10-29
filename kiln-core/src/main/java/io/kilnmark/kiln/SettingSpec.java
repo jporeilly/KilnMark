@@ -4,13 +4,13 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * One setting of a step type, as the canvas shows it in the step's settings panel and validation
+ * One setting of a node type, as the canvas shows it in the node's settings panel and validation
  * checks it (docs/design/pipelines.md).
  *
  * @param key          the YAML key
  * @param label        what people read
  * @param kind         the kind of value, which decides the control the canvas uses
- * @param required     whether the step cannot run without it
+ * @param required     whether the node cannot run without it
  * @param defaultValue the value used when it is left out, or null
  * @param help         one sentence on what it does
  * @param choices      the allowed values for {@link Kind#CHOICE}, else empty
@@ -48,7 +48,7 @@ public record SettingSpec(String key, String label, Kind kind, boolean required,
         ASSET,
         /**
          * Quality rules written in the pipeline: a list of mappings, each with a {@code type} and
-         * the rule's own settings (for the gate step). The step's factory checks each rule.
+         * the rule's own settings (for the gate node). The node's factory checks each rule.
          */
         RULES
     }

@@ -60,7 +60,7 @@ class RunQualityTest {
 
     @Test
     void anOutputIsScoredFromItsWritersProfile() {
-        RunQuality.StepQuality q = RunQuality.output(write("replace"), events(1000, 100), RunQualityTest::profileJson,
+        RunQuality.NodeQuality q = RunQuality.output(write("replace"), events(1000, 100), RunQualityTest::profileJson,
             JSON);
         assertEquals("output", q.role());
         assertEquals(URN, q.asset());
@@ -76,16 +76,16 @@ class RunQualityTest {
 
     @Test
     void anOutputWithNothingToScoreSaysWhy() {
-        RunQuality.StepQuality appended = RunQuality.output(write("append"), List.of(new MetadataEvent(URN,
+        RunQuality.NodeQuality appended = RunQuality.output(write("append"), List.of(new MetadataEvent(URN,
             MetadataEvent.Kind.ROW_COUNT, Map.of("rows", "5", "appended", "true", "written", "true"), Instant.now())),
             RunQualityTest::profileJson, JSON);
         assertNull(appended.measured());
         assertTrue(appended.note().startsWith("The append added rows to what was there"), appended.note());
-        RunQuality.StepQuality broken = RunQuality.output(write("replace"), List.of(new MetadataEvent(URN,
+        RunQuality.NodeQuality broken = RunQuality.output(write("replace"), List.of(new MetadataEvent(URN,
             MetadataEvent.Kind.ROW_COUNT, Map.of("rows", "5", WriteReport.PROFILED, "false"), Instant.now())),
             RunQualityTest::profileJson, JSON);
         assertEquals("What it wrote could not be profiled, so it has no score", broken.note());
-        RunQuality.StepQuality off = RunQuality.output(write("create"), List.of(new MetadataEvent(URN,
+        RunQuality.NodeQuality off = RunQuality.output(write("create"), List.of(new MetadataEvent(URN,
             MetadataEvent.Kind.ROW_COUNT, Map.of("rows", "5"), Instant.now())), RunQualityTest::profileJson, JSON);
         assertTrue(off.note().contains("profile_output: false"), off.note());
         assertTrue(RunQuality.output(write("create"), List.of(), RunQualityTest::profileJson, JSON).note()
@@ -94,17 +94,17 @@ class RunQualityTest {
 
     @Test
     void theRunsScoreIsItsLowestOutput() {
-        RunQuality.StepQuality a = new RunQuality.StepQuality("a", "output", "u", new RunQuality.Score(0.97, Map.of(),
+        RunQuality.NodeQuality a = new RunQuality.NodeQuality("a", "output", "u", new RunQuality.Score(0.97, Map.of(),
             List.of()), null, null, null);
-        RunQuality.StepQuality b = new RunQuality.StepQuality("b", "output", "u", new RunQuality.Score(0.91, Map.of(),
+        RunQuality.NodeQuality b = new RunQuality.NodeQuality("b", "output", "u", new RunQuality.Score(0.91, Map.of(),
             List.of()), null, null, null);
-        RunQuality.StepQuality gate = new RunQuality.StepQuality("g", "gate", "u", new RunQuality.Score(0.5, Map.of(),
+        RunQuality.NodeQuality gate = new RunQuality.NodeQuality("g", "gate", "u", new RunQuality.Score(0.5, Map.of(),
             List.of()), null, null, null);
-        RunQuality.StepQuality none = new RunQuality.StepQuality("n", "output", "u", null, null, "appended", null);
+        RunQuality.NodeQuality none = new RunQuality.NodeQuality("n", "output", "u", null, null, "appended", null);
         assertEquals(0.91, RunQuality.lowestOutput(List.of(a, b, gate, none)));
-        assertEquals("b", RunQuality.lowestOutputStep(List.of(a, b, gate, none)).step());
+        assertEquals("b", RunQuality.lowestOutputNode(List.of(a, b, gate, none)).node());
         assertNull(RunQuality.lowestOutput(List.of(gate, none)), "gates are not outputs");
-        assertNull(RunQuality.lowestOutputStep(List.of()));
+        assertNull(RunQuality.lowestOutputNode(List.of()));
     }
 
     @Test
@@ -112,7 +112,7 @@ class RunQualityTest {
         QualityGate.Outcome o = new QualityGate.Outcome("quarantine", "quarantined", null, 10, 8, 2, 2, 0.8,
             Map.of("completeness", 0.8), List.of("Completeness 80%"), List.of(new QualityGate.RuleOutcome("e", "not_null",
                 "email", "completeness", "inline", "fail", 2, 10, null)), null, null, null);
-        RunQuality.StepQuality q = RunQuality.gate("check", o);
+        RunQuality.NodeQuality q = RunQuality.gate("check", o);
         assertEquals(0.8, q.measured().overall());
         assertEquals(o, q.gate());
         QualityGate.Outcome empty = new QualityGate.Outcome("stop", "passed", null, 10, 10, 0, 0, null, Map.of(),

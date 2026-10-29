@@ -26,17 +26,17 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.CatalogInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.RelationshipInfo;
 import io.kilnmark.kiln.connect.SourceConfig;
-import io.kilnmark.kiln.plugins.profile.ProfileStep;
+import io.kilnmark.kiln.plugins.profile.ProfileNode;
 import io.kilnmark.kiln.plugins.write.Rows;
 
 /**
@@ -335,10 +335,10 @@ abstract class MySqlFamilyIngestTest {
 
     @Test
     void aReadStoppedEarlyEndsAtOnce() throws Exception {
-        StepSpec reader = db.connector().reader(source, assets.get("kt_shop.many"),
+        NodeSpec reader = db.connector().reader(source, assets.get("kt_shop.many"),
             new Connector.ReadOptions(URN, 0, 1024));
         RunResult r = new Runner(64L << 20, 2).run(new Pipeline("stop", List.of(reader,
-            new StepSpec("give-up", new GiveUpAfterOneBatch(), Map.of()))), e -> { });
+            new NodeSpec("give-up", new GiveUpAfterOneBatch(), Map.of()))), e -> { });
         assertEquals(RunResult.Status.FAILED, r.status());
         assertTrue(r.error().contains("gave up"), r.error());
         assertTrue(r.duration().compareTo(Duration.ofSeconds(10)) < 0, "took " + r.duration());
@@ -391,8 +391,8 @@ abstract class MySqlFamilyIngestTest {
 
     private Rows.Collected collect(SourceConfig from, AssetInfo asset) throws Exception {
         Rows.Collected c = new Rows.Collected();
-        StepSpec reader = db.connector().reader(from, asset, new Connector.ReadOptions(URN, 0, 1000));
-        RunResult r = Rows.run(reader, new StepSpec("collect", Rows.collector(c), Map.of()), Rows.events());
+        NodeSpec reader = db.connector().reader(from, asset, new Connector.ReadOptions(URN, 0, 1000));
+        RunResult r = Rows.run(reader, new NodeSpec("collect", Rows.collector(c), Map.of()), Rows.events());
         assertTrue(r.succeeded(), r.error());
         return c;
     }
@@ -406,9 +406,9 @@ abstract class MySqlFamilyIngestTest {
 
     private RunResult run(SourceConfig from, AssetInfo asset, long rowLimit, List<MetadataEvent> events)
         throws InterruptedException {
-        StepSpec reader = db.connector().reader(from, asset, new Connector.ReadOptions(URN, rowLimit, 4096));
+        NodeSpec reader = db.connector().reader(from, asset, new Connector.ReadOptions(URN, rowLimit, 4096));
         Pipeline p = new Pipeline("ingest", List.of(reader,
-            new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", URN))));
+            new NodeSpec("profile", new ProfileNode(), Map.of("asset-urn", URN))));
         return new Runner(128L << 20, 2).run(p, events::add);
     }
 
@@ -416,8 +416,8 @@ abstract class MySqlFamilyIngestTest {
         return events.stream().filter(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT).findFirst().orElseThrow();
     }
 
-    /** A step that takes one batch and fails, as a profiler or sink might part way through a table. */
-    private static final class GiveUpAfterOneBatch implements Step {
+    /** A node that takes one batch and fails, as a profiler or sink might part way through a table. */
+    private static final class GiveUpAfterOneBatch implements Node {
 
         @Override
         public String type() {
@@ -425,17 +425,17 @@ abstract class MySqlFamilyIngestTest {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
             // nothing to prepare
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             try (VectorSchemaRoot batch = context.input().take(context.allocator())) {
-                throw new StepException("gave up after " + (batch == null ? 0 : batch.getRowCount()) + " rows");
+                throw new NodeException("gave up after " + (batch == null ? 0 : batch.getRowCount()) + " rows");
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StepException("Interrupted", e);
+                throw new NodeException("Interrupted", e);
             }
         }
     }

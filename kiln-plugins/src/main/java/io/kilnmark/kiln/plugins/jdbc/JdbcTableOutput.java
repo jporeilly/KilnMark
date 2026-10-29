@@ -19,9 +19,9 @@ import java.util.Set;
 
 import org.apache.arrow.vector.VectorSchemaRoot;
 
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.jdbc.JdbcColumn.Kind;
@@ -54,10 +54,10 @@ import io.kilnmark.kiln.plugins.write.WriteSettings;
  *
  * <p>Rows go to PostgreSQL by {@code COPY} for create, append and replace, and as batches of
  * prepared statements for upsert; to SQL Server as batches of prepared statements, through the
- * driver's bulk copy for tables this step creates. Nothing is reported until the commit; see
+ * driver's bulk copy for tables this node creates. Nothing is reported until the commit; see
  * {@link WriteReport}.
  */
-final class JdbcTableOutput implements Step {
+final class JdbcTableOutput implements Node {
 
     static final String TYPE = "jdbc-table-output";
 
@@ -101,7 +101,7 @@ final class JdbcTableOutput implements Step {
     private long sinceCommit;
     private long committedRows;
     private boolean committed;
-    /** Whether this step created {@link #loadInto}. */
+    /** Whether this node created {@link #loadInto}. */
     private boolean created;
     /** Timestamp and time columns of the table that keep fewer than nine digits of a second, by name. */
     private final Map<String, Integer> fractionDigits = new HashMap<>();
@@ -145,11 +145,11 @@ final class JdbcTableOutput implements Step {
     }
 
     @Override
-    public void init(StepContext context) throws StepException {
+    public void init(NodeContext context) throws NodeException {
         try {
-            report = new WriteReport(context.stepName(), assetUrn, settings, profiling, wholeTable());
+            report = new WriteReport(context.nodeName(), assetUrn, settings, profiling, wholeTable());
         } catch (ConnectorException e) {
-            throw new StepException("Step " + context.stepName() + ": " + e.getMessage(), e);
+            throw new NodeException("Node " + context.nodeName() + ": " + e.getMessage(), e);
         }
         try {
             connection = connector.connectForWrite(source, bulk);
@@ -157,17 +157,17 @@ final class JdbcTableOutput implements Step {
             connection.setAutoCommit(false);
             if (connection.getAutoCommit() || !connection.getMetaData().supportsTransactions()) {
                 // every row would be committed as it is sent: a failure would leave part of the write
-                throw new StepException("Cannot write to " + source.name() + ": its driver does not offer "
+                throw new NodeException("Cannot write to " + source.name() + ": its driver does not offer "
                     + "transactions, so a failed write could not be undone and part of it would stay");
             }
             Boolean known = sql.existsByMetadata(connection, target);
             exists = known != null ? known : queryBoolean(sql.exists(target));
             if (mode.equals("create") && exists) {
-                throw new StepException(target + " already exists in " + source.name() + ": use mode append to add "
+                throw new NodeException(target + " already exists in " + source.name() + ": use mode append to add "
                     + "rows to it, replace to replace it, or upsert to update rows by key");
             }
             if ((mode.equals("append") || mode.equals("upsert")) && !exists) {
-                throw new StepException(target + " does not exist in " + source.name() + ": create it first with "
+                throw new NodeException(target + " does not exist in " + source.name() + ": create it first with "
                     + "mode create (or replace), or check the schema and table names (they are case-sensitive)");
             }
             checkPrivileges();
@@ -200,7 +200,7 @@ final class JdbcTableOutput implements Step {
                 }
             }
         } catch (SQLException e) {
-            throw new StepException(explain(e, 0), e);
+            throw new NodeException(explain(e, 0), e);
         }
     }
 
@@ -208,7 +208,7 @@ final class JdbcTableOutput implements Step {
      * Replace drops the old table: refuse, before anything is written, when that would break
      * something or silently change who may see what.
      */
-    private void checkReplaceable() throws SQLException, StepException {
+    private void checkReplaceable() throws SQLException, NodeException {
         Set<String> found = new java.util.LinkedHashSet<>(readNames(sql.blockers(target)));
         WriteSql.Sql hidden = sql.hiddenBlockers(target);
         if (hidden != null) {
@@ -222,27 +222,27 @@ final class JdbcTableOutput implements Step {
         List<String> blocking = new ArrayList<>(found);
         if (!blocking.isEmpty()) {
             java.util.Collections.sort(blocking);
-            throw new StepException("Cannot replace " + target + ": " + String.join("; ", blocking) + ". Replace "
+            throw new NodeException("Cannot replace " + target + ": " + String.join("; ", blocking) + ". Replace "
                 + "drops the old table and puts a new one in its place, which would break that or be refused. Change "
                 + "or drop it first, or empty the table yourself and use mode append");
         }
         if (queryBoolean(sql.rowSecurity(target)) && !allowDroppingRowSecurity) {
-            throw new StepException("Cannot replace " + target + ": it has row-level security, which the new table "
+            throw new NodeException("Cannot replace " + target + ": it has row-level security, which the new table "
                 + "would not have, while its grants would be repeated, so rows the policies hide would become visible "
                 + "to those grants. Set allow_dropping_row_security: true if that is intended (and add the policies "
                 + "again afterwards), or empty the table yourself and use mode append");
         }
     }
 
-    private void checkPrivileges() throws SQLException, StepException {
+    private void checkPrivileges() throws SQLException, NodeException {
         for (WriteSql.Check check : sql.privileges(mode, target, exists)) {
             Boolean allowed = queryNullableBoolean(check.query());
             if (allowed == null) {
                 if (check.missing() != null) {
-                    throw new StepException("Cannot write to " + target + ": " + check.missing());
+                    throw new NodeException("Cannot write to " + target + ": " + check.missing());
                 }
             } else if (!allowed) {
-                throw new StepException(denied(null));
+                throw new NodeException(denied(null));
             }
         }
     }
@@ -255,7 +255,7 @@ final class JdbcTableOutput implements Step {
             + "grant " + sql.needs(mode, target, exists) + (e == null ? "" : " (" + e.getMessage() + ")");
     }
 
-    private void checkKey() throws SQLException, StepException {
+    private void checkKey() throws SQLException, NodeException {
         List<String> missing = new ArrayList<>();
         List<String> keyColumns = new ArrayList<>();
         for (String k : key) {
@@ -268,7 +268,7 @@ final class JdbcTableOutput implements Step {
             }
         }
         if (!missing.isEmpty()) {
-            throw new StepException("Cannot upsert into " + target + ": it has no column " + String.join(", ", missing)
+            throw new NodeException("Cannot upsert into " + target + ": it has no column " + String.join(", ", missing)
                 + " to use as the key");
         }
         WriteSql.Sql unique = sql.uniqueKeys(target);
@@ -282,7 +282,7 @@ final class JdbcTableOutput implements Step {
             }
         }
         if (!indexes.containsValue(new HashSet<>(keyColumns))) {
-            throw new StepException("Cannot upsert into " + target + " by (" + String.join(", ", keyColumns)
+            throw new NodeException("Cannot upsert into " + target + " by (" + String.join(", ", keyColumns)
                 + "): " + sql.keyIndexAdvice(target, keyColumns));
         }
         checkOtherUniqueKeys(keyColumns);
@@ -293,7 +293,7 @@ final class JdbcTableOutput implements Step {
      * without every key column could match another row than the key's, which would be overwritten:
      * refused, naming the index, unless {@code allow_other_unique_keys} is true.
      */
-    private void checkOtherUniqueKeys(List<String> keyColumns) throws SQLException, StepException {
+    private void checkOtherUniqueKeys(List<String> keyColumns) throws SQLException, NodeException {
         WriteSql.Sql all = sql.allUniqueKeys(target);
         if (all == null || allowOtherUniqueKeys) {
             return;
@@ -313,7 +313,7 @@ final class JdbcTableOutput implements Step {
             }
         });
         if (!others.isEmpty()) {
-            throw new StepException("Cannot upsert into " + target + " by (" + String.join(", ", keyColumns) + "): the "
+            throw new NodeException("Cannot upsert into " + target + " by (" + String.join(", ", keyColumns) + "): the "
                 + "unique " + (others.size() == 1 ? "index " : "indexes ") + String.join(", ", others) + " "
                 + (others.size() == 1 ? "does" : "do") + " not hold every key column, and a row matching "
                 + (others.size() == 1 ? "it" : "one of them") + " would be updated instead of inserted, even when its "
@@ -381,13 +381,13 @@ final class JdbcTableOutput implements Step {
     }
 
     @Override
-    public boolean process(StepContext context) throws StepException {
+    public boolean process(NodeContext context) throws NodeException {
         VectorSchemaRoot batch;
         try {
             batch = context.input().take(context.allocator());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StepException("Interrupted", e);
+            throw new NodeException("Interrupted", e);
         }
         if (batch == null) {
             finish(context);
@@ -407,9 +407,9 @@ final class JdbcTableOutput implements Step {
                 sinceCommit = 0;
             }
         } catch (SQLException e) {
-            throw new StepException(explain(e, report.rows()), e);
-        } catch (StepException e) {
-            throw committedRows > 0 ? new StepException(e.getMessage() + committedNote(), e) : e;
+            throw new NodeException(explain(e, report.rows()), e);
+        } catch (NodeException e) {
+            throw committedRows > 0 ? new NodeException(e.getMessage() + committedNote(), e) : e;
         } finally {
             batch.close();
         }
@@ -417,7 +417,7 @@ final class JdbcTableOutput implements Step {
     }
 
     /** On the first batch: creates the table (create, replace) or matches the input to it (append, upsert). */
-    private void start(VectorSchemaRoot batch) throws SQLException, StepException {
+    private void start(VectorSchemaRoot batch) throws SQLException, NodeException {
         input = WriteColumn.of(batch.getSchema());
         switch (mode) {
             case "create", "replace" -> {
@@ -426,7 +426,7 @@ final class JdbcTableOutput implements Step {
                 loadInto = newName != null ? new TableName(target.schema(), newName) : target;
                 String cannot = sql.createProblem(input, textLength);
                 if (cannot != null) {
-                    throw new StepException("Cannot create " + target + ": " + cannot);
+                    throw new NodeException("Cannot create " + target + ": " + cannot);
                 }
                 execute(new WriteSql.Sql(sql.createTable(loadInto, input, textLength)));
                 created = true;
@@ -452,7 +452,7 @@ final class JdbcTableOutput implements Step {
                     }
                 }
                 if (!problems.isEmpty()) {
-                    throw new StepException(WritePlan.message(mode, target, problems));
+                    throw new NodeException(WritePlan.message(mode, target, problems));
                 }
                 loadInto = target;
                 bindings = plan.bindings();
@@ -484,7 +484,7 @@ final class JdbcTableOutput implements Step {
      * The table just created, as the database describes it: each value is then checked against the
      * columns it actually made, as for an append ({@link WriteSql#checksCreatedTable()}).
      */
-    private void checkAsCreated() throws SQLException, StepException {
+    private void checkAsCreated() throws SQLException, NodeException {
         List<TargetColumn> made = connector.targetColumns(connection, source, loadInto);
         if (made == null) {
             made = sql.targetColumnsByMetadata(connection, loadInto);
@@ -497,12 +497,12 @@ final class JdbcTableOutput implements Step {
         for (Binding b : bindings) {
             TargetColumn t = targets.get(b.target());
             if (t == null) {
-                throw new StepException("Created " + target + ", but the database does not describe its column "
+                throw new NodeException("Created " + target + ", but the database does not describe its column "
                     + b.target() + ", so its values cannot be checked before they are written");
             }
             String misfit = sql.targetMisfit(b.input(), t);
             if (misfit != null) {
-                throw new StepException("Cannot create " + target + ": " + misfit);
+                throw new NodeException("Cannot create " + target + ": " + misfit);
             }
             int digits = sql.fractionDigits(t);
             if (digits >= 0 && digits < 9) {
@@ -517,7 +517,7 @@ final class JdbcTableOutput implements Step {
     }
 
     /** Column names become identifiers: each must be there, fit, and appear once. */
-    private void checkNames() throws StepException {
+    private void checkNames() throws NodeException {
         List<String> problems = new ArrayList<>();
         String tooLong = sql.identifierProblem(loadIntoName());
         if (tooLong != null) {
@@ -540,8 +540,8 @@ final class JdbcTableOutput implements Step {
             }
         }
         if (!problems.isEmpty()) {
-            throw new StepException("Cannot create " + target + ": " + String.join("; ", problems)
-                + ". Rename columns with a select step first");
+            throw new NodeException("Cannot create " + target + ": " + String.join("; ", problems)
+                + ". Rename columns with a select node first");
         }
     }
 
@@ -549,12 +549,12 @@ final class JdbcTableOutput implements Step {
         return target.table();
     }
 
-    private void finish(StepContext context) throws StepException {
+    private void finish(NodeContext context) throws NodeException {
         try {
             if (bindings == null) {
                 if (mode.equals("create") || mode.equals("replace")) {
-                    throw new StepException("Nothing arrived to write to " + target
-                        + ": the step before sent no columns, so there is no table to create");
+                    throw new NodeException("Nothing arrived to write to " + target
+                        + ": the node before sent no columns, so there is no table to create");
                 }
                 connection.commit();
                 committed = true;
@@ -567,7 +567,7 @@ final class JdbcTableOutput implements Step {
             connection.commit();
             committed = true;
         } catch (SQLException e) {
-            throw new StepException(explain(e, report.rows()), e);
+            throw new NodeException(explain(e, report.rows()), e);
         }
         Map<String, String> details = new LinkedHashMap<>();
         details.put("target", target.toString());
@@ -583,7 +583,7 @@ final class JdbcTableOutput implements Step {
      * over, the owner's rights on it), then the new table takes the target's name, waiting at most
      * {@code lock_timeout} for readers of the old table.
      */
-    private void swapIn() throws SQLException, StepException {
+    private void swapIn() throws SQLException, NodeException {
         for (String s : sql.lockTimeout(lockTimeoutMillis)) {
             execute(new WriteSql.Sql(s));
         }
@@ -592,18 +592,18 @@ final class JdbcTableOutput implements Step {
                 : sql.grantOwnerRights(loadInto, oldOwner)));
         }
         String oldName = "kiln_old_" + WriteSql.hexName();
-        List<WriteSql.Sql> steps = exists ? sql.swap(target, newName, oldName)
+        List<WriteSql.Sql> nodes = exists ? sql.swap(target, newName, oldName)
             : List.of(sql.rename(loadInto, target.table()));
-        for (int i = 0; i < steps.size(); i++) {
-            if (exists && !sql.transactionalDdl() && steps.size() > 1 && i == steps.size() - 1) {
+        for (int i = 0; i < nodes.size(); i++) {
+            if (exists && !sql.transactionalDdl() && nodes.size() > 1 && i == nodes.size() - 1) {
                 // The new table is in place and committed; the old one goes last, by itself.
                 try {
-                    execute(steps.get(i));
+                    execute(nodes.get(i));
                 } catch (SQLException e) {
                     oldTableKept(oldName, e);
                 }
             } else {
-                execute(steps.get(i));
+                execute(nodes.get(i));
             }
         }
     }
@@ -615,11 +615,11 @@ final class JdbcTableOutput implements Step {
      * back, so the key refers to the table it did, and the replace fails, the new table dropped with
      * the run. Any other failure leaves the old table for an administrator, with a warning on the run.
      */
-    private void oldTableKept(String oldName, SQLException e) throws SQLException, StepException {
+    private void oldTableKept(String oldName, SQLException e) throws SQLException, NodeException {
         WriteSql.Sql back = sql.swapBack(target, newName, oldName);
         if (sql.foreignKeyRefused(e) && back != null) {
             execute(back);
-            throw new StepException("Cannot replace " + target + ": a foreign key on another table refers to it, on a "
+            throw new NodeException("Cannot replace " + target + ": a foreign key on another table refers to it, on a "
                 + "table this login has no rights on, so it could not be seen before writing. Replace drops the old "
                 + "table, which that key refuses, so " + target + " is unchanged and the new rows were not kept. Ask "
                 + "a database administrator to drop or change that foreign key, or empty the table yourself and use "
@@ -645,7 +645,7 @@ final class JdbcTableOutput implements Step {
                 // the connection is closed below; the server rolls back an unfinished transaction
             }
             if (newName == null && created && committedRows == 0 && sql.dropCreatedOnFailure()) {
-                // DDL that commits by itself: the table this step created outlived the rollback. Dropped
+                // DDL that commits by itself: the table this node created outlived the rollback. Dropped
                 // only while it is empty, so rows another writer put there meanwhile are never lost.
                 try (Statement s = connection.createStatement()) {
                     boolean empty;
@@ -734,12 +734,12 @@ final class JdbcTableOutput implements Step {
     }
 
     /** The value of {@code binding} in {@code row}, converted, with the checks a database would fail on less plainly. */
-    private Object value(Binding binding, VectorSchemaRoot batch, int row, long rowNumber) throws StepException {
+    private Object value(Binding binding, VectorSchemaRoot batch, int row, long rowNumber) throws NodeException {
         Object v = WritePlan.convert(binding.input().value(batch.getVector(binding.index()), row),
             binding.input().kind(), binding.kind());
         if (v == null) {
             if (binding.key()) {
-                throw new StepException("Row " + rowNumber + " has no value in the key column " + binding.target()
+                throw new NodeException("Row " + rowNumber + " has no value in the key column " + binding.target()
                     + "; upsert needs every key column filled");
             }
             return null;
@@ -747,21 +747,21 @@ final class JdbcTableOutput implements Step {
         if (binding.key() && sql.emptyMeansNull()
             && (v instanceof String text && text.isEmpty() || v instanceof byte[] bytes && bytes.length == 0)) {
             // whatever empty_text_as_null says: as null, the key would match no row and add one each time
-            throw new StepException("Row " + rowNumber + " has an empty value in the key column " + binding.target()
+            throw new NodeException("Row " + rowNumber + " has an empty value in the key column " + binding.target()
                 + ", which the database stores as null, so it could never match a row; upsert needs every key "
                 + "column filled");
         }
         String problem = sql.valueProblem(binding.kind(), v);
         if (problem != null) {
-            throw new StepException("Row " + rowNumber + ", column " + binding.target() + ": " + problem);
+            throw new NodeException("Row " + rowNumber + ", column " + binding.target() + ": " + problem);
         }
         if (v instanceof java.math.BigDecimal d && binding.precision() > 0) {
             java.math.BigDecimal exact = WritePlan.fitDecimal(d, binding.precision(), binding.scale());
             if (exact == null) {
-                throw new StepException("Row " + rowNumber + ": the value " + d.toPlainString() + " in column "
+                throw new NodeException("Row " + rowNumber + ": the value " + d.toPlainString() + " in column "
                     + binding.target() + " " + WritePlan.decimalProblem(d, binding.precision(), binding.scale())
                     + " (decimal(" + binding.precision() + "," + binding.scale() + ")), and is never rounded. Round "
-                    + "or filter it with a compute step, or ask for the column to be widened");
+                    + "or filter it with a compute node, or ask for the column to be widened");
             }
             return exact;
         }
@@ -774,21 +774,21 @@ final class JdbcTableOutput implements Step {
                 default -> 0;
             };
             if (nanos % (int) Math.pow(10, 9 - digits) != 0) {
-                throw new StepException("Row " + rowNumber + ": the value " + v + " in column " + binding.target()
+                throw new NodeException("Row " + rowNumber + ": the value " + v + " in column " + binding.target()
                     + " has more digits of a second than the column keeps (" + digits + "), and is never rounded. "
-                    + "Truncate it with a compute step, or ask for the column to keep more");
+                    + "Truncate it with a compute node, or ask for the column to keep more");
             }
         }
         TargetColumn into = targets.get(binding.target());
         String misfit = sql.targetValueProblem(into, v);
         if (misfit != null) {
-            throw new StepException("Row " + rowNumber + ", column " + binding.target() + ": " + misfit);
+            throw new NodeException("Row " + rowNumber + ", column " + binding.target() + ": " + misfit);
         }
         if (v instanceof String s) {
             if (binding.maxLength() > 0 && sql.length(s) > binding.maxLength()) {
-                throw new StepException("Row " + rowNumber + ": the value in column " + binding.target() + " is "
+                throw new NodeException("Row " + rowNumber + ": the value in column " + binding.target() + " is "
                     + sql.length(s) + " characters long, but the column holds at most " + binding.maxLength()
-                    + ". Shorten the values with a compute step, or ask for the column to be widened");
+                    + ". Shorten the values with a compute node, or ask for the column to be widened");
             }
         }
         return v;
@@ -800,7 +800,7 @@ final class JdbcTableOutput implements Step {
     private interface Loader {
 
         /** Sends a batch; {@code before} rows were sent before it. */
-        void write(VectorSchemaRoot batch, long before) throws SQLException, StepException;
+        void write(VectorSchemaRoot batch, long before) throws SQLException, NodeException;
 
         /** Sends what is buffered, so a commit includes it. */
         void flush() throws SQLException;
@@ -820,7 +820,7 @@ final class JdbcTableOutput implements Step {
         }
 
         @Override
-        public void write(VectorSchemaRoot batch, long before) throws SQLException, StepException {
+        public void write(VectorSchemaRoot batch, long before) throws SQLException, NodeException {
             int n = batch.getRowCount();
             if (n == 0) {
                 return;
@@ -866,7 +866,7 @@ final class JdbcTableOutput implements Step {
     }
 
     /**
-     * MySQL's {@code LOAD DATA LOCAL INFILE}, for tables this step created: the rows are sent from
+     * MySQL's {@code LOAD DATA LOCAL INFILE}, for tables this node created: the rows are sent from
      * memory as the statement's data ({@code setLocalInfileInputStream}), never from a file, in
      * loads of {@code batch_size} rows. With LOCAL the server turns bad values into warnings rather
      * than errors, so a load that warns, or loads another number of rows than were sent, fails.
@@ -884,7 +884,7 @@ final class JdbcTableOutput implements Step {
         }
 
         @Override
-        public void write(VectorSchemaRoot batch, long before) throws SQLException, StepException {
+        public void write(VectorSchemaRoot batch, long before) throws SQLException, NodeException {
             int n = batch.getRowCount();
             for (int row = 0; row < n; row++) {
                 for (int c = 0; c < bindings.size(); c++) {
@@ -952,7 +952,7 @@ final class JdbcTableOutput implements Step {
         }
 
         @Override
-        public void write(VectorSchemaRoot batch, long before) throws SQLException, StepException {
+        public void write(VectorSchemaRoot batch, long before) throws SQLException, NodeException {
             if (ps == null) {
                 ps = connection.prepareStatement(statement);
             }

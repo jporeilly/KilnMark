@@ -4,9 +4,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.SourceConfig;
@@ -54,19 +54,19 @@ final class StuckConnector implements Connector {
     }
 
     @Override
-    public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
-        return new StepSpec("stuck", new Step() {
+    public NodeSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
+        return new NodeSpec("stuck", new Node() {
             @Override
             public String type() {
                 return "stuck-read";
             }
 
             @Override
-            public void init(StepContext context) {
+            public void init(NodeContext context) {
             }
 
             @Override
-            public boolean process(StepContext context) {
+            public boolean process(NodeContext context) {
                 CountDownLatch until = release;
                 while (true) {
                     try {

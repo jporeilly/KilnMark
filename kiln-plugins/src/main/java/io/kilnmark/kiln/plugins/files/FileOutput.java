@@ -6,9 +6,9 @@ import java.util.Map;
 
 import org.apache.arrow.vector.VectorSchemaRoot;
 
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.plugins.write.WriteColumn;
@@ -23,7 +23,7 @@ import io.kilnmark.kiln.plugins.write.WriteSettings;
  * What was written is profiled in the same pass and reported once the file is in place
  * ({@link WriteReport}).
  */
-final class FileOutput implements Step {
+final class FileOutput implements Node {
 
     static final String TYPE = "file-output";
 
@@ -49,7 +49,7 @@ final class FileOutput implements Step {
      * @param storePath where the store puts the file (with an S3 source's prefix)
      * @param target    the checked target and format, as the pipeline gave them
      * @param overwrite whether an existing file may be replaced
-     * @param delimiter the CSV delimiter setting (the step's, else the source's), or null for a comma
+     * @param delimiter the CSV delimiter setting (the node's, else the source's), or null for a comma
      * @param reading   how the source reads text files, to record a CSV file's columns as a scan will
      */
     FileOutput(FileStore.Opener opener, String storePath, FileTarget target, boolean overwrite, WriteSettings settings,
@@ -73,28 +73,28 @@ final class FileOutput implements Step {
     }
 
     @Override
-    public void init(StepContext context) throws StepException {
+    public void init(NodeContext context) throws NodeException {
         try {
-            report = new WriteReport(context.stepName(), assetUrn, settings, profiling, true);
+            report = new WriteReport(context.nodeName(), assetUrn, settings, profiling, true);
         } catch (ConnectorException e) {
-            throw new StepException("Step " + context.stepName() + ": " + e.getMessage(), e);
+            throw new NodeException("Node " + context.nodeName() + ": " + e.getMessage(), e);
         }
         try {
             store = opener.open();
             upload = store.create(storePath, overwrite);
         } catch (IOException | RuntimeException e) {
-            throw new StepException("Cannot write " + target.path() + ": " + message(e), e);
+            throw new NodeException("Cannot write " + target.path() + ": " + message(e), e);
         }
     }
 
     @Override
-    public boolean process(StepContext context) throws StepException {
+    public boolean process(NodeContext context) throws NodeException {
         VectorSchemaRoot batch;
         try {
             batch = context.input().take(context.allocator());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StepException("Interrupted", e);
+            throw new NodeException("Interrupted", e);
         }
         if (batch == null) {
             finish(context);
@@ -110,7 +110,7 @@ final class FileOutput implements Step {
             report.accept(batch);
             encoder.write(batch);
         } catch (IOException | RuntimeException e) {
-            throw new StepException("Writing " + target.path() + " failed after " + report.rows() + " rows: "
+            throw new NodeException("Writing " + target.path() + " failed after " + report.rows() + " rows: "
                 + message(e), e);
         } finally {
             batch.close();
@@ -118,17 +118,17 @@ final class FileOutput implements Step {
         return true;
     }
 
-    private void finish(StepContext context) throws StepException {
+    private void finish(NodeContext context) throws NodeException {
         if (encoder == null) {
-            throw new StepException("Nothing arrived to write to " + target.path()
-                + ": the step before sent no columns");
+            throw new NodeException("Nothing arrived to write to " + target.path()
+                + ": the node before sent no columns");
         }
         try {
             encoder.finish();
             upload.commit();
             committed = true;
         } catch (IOException | RuntimeException e) {
-            throw new StepException("Cannot finish " + target.path() + ": " + message(e), e);
+            throw new NodeException("Cannot finish " + target.path() + ": " + message(e), e);
         }
         List<String> kinds = List.of();
         List<String> types = encoder.types();

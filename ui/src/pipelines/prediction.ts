@@ -27,7 +27,7 @@ export type PredictedGate = {
   rules: PredictedRule[];
 };
 export type PredictedQuality = {
-  step: string;
+  node: string;
   role: "output" | "gate";
   asset: string | null;
   /** Null when nothing could be predicted. */
@@ -42,10 +42,10 @@ export type PredictedQuality = {
 export type Prediction = {
   estimate: true;
   valid: boolean;
-  steps: { step: string; type: string | null; rows: Record<string, number | null> }[];
+  nodes: { node: string; type: string | null; rows: Record<string, number | null> }[];
   outputs: PredictedQuality[];
 };
-export type SuggestedStep = { id: string; type: string; settings: Record<string, unknown>; inputs: Record<string, string> };
+export type SuggestedNode = { id: string; type: string; settings: Record<string, unknown>; inputs: Record<string, string> };
 export type Placement = { before: string; port: string; from: string; through: string };
 export type Effect = {
   output: string;
@@ -63,7 +63,7 @@ export type Suggestion = {
   title: string;
   why: string;
   source: "rules" | "ai";
-  steps: SuggestedStep[];
+  nodes: SuggestedNode[];
   placement: Placement;
   effect: Effect | null;
 };
@@ -145,7 +145,7 @@ export function gapWords(measured: QualityScore | null | undefined, predicted: Q
   const lead = points === 0 ? "Measured overall as predicted" : `Measured ${points} ${points === 1 ? "point" : "points"} ${side} the estimate`;
   const where =
     widest && Math.abs(Math.round(widest.gap! * 100)) > 2
-      ? `; the widest gap is in ${dimensionWord(widest.dimension).toLowerCase()} (${pointsWords(widest.gap!)}). Check the metadata of what this step reads, or the steps before it.`
+      ? `; the widest gap is in ${dimensionWord(widest.dimension).toLowerCase()} (${pointsWords(widest.gap!)}). Check the metadata of what this node reads, or the nodes before it.`
       : ".";
   return lead + where;
 }
@@ -153,9 +153,9 @@ export function gapWords(measured: QualityScore | null | undefined, predicted: Q
 /** The tone a predicted score takes; the words say the same. */
 export const predictedTone = (score: number | null | undefined) => (score == null ? "none" : rating(score).tone);
 
-/** Per step id, the predicted quality of each write and gate. */
-export const predictionsByStep = (p: Prediction | null): Map<string, PredictedQuality> =>
-  new Map((p?.outputs ?? []).map((o) => [o.step, o]));
+/** Per node id, the predicted quality of each write and gate. */
+export const predictionsByNode = (p: Prediction | null): Map<string, PredictedQuality> =>
+  new Map((p?.outputs ?? []).map((o) => [o.node, o]));
 
 /** "1,234 rows (estimate)", or "rows unknown". */
 export const rowsWords = (n: number | null | undefined) =>

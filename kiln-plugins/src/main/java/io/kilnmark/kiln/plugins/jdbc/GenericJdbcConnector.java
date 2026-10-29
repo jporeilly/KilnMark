@@ -14,7 +14,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import io.kilnmark.kiln.SettingSpec;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetFilter;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
@@ -50,7 +50,7 @@ public class GenericJdbcConnector extends JdbcConnector {
 
     static final String KIND = "jdbc";
 
-    /** Settings the reader step receives besides the URL, user and password. */
+    /** Settings the reader node receives besides the URL, user and password. */
     static final String READ_DRIVER = "jdbc-driver";
     static final String READ_CONTAINER = "jdbc-container";
     static final String READ_TABLE = "jdbc-table";
@@ -503,7 +503,7 @@ public class GenericJdbcConnector extends JdbcConnector {
      * limit works everywhere. Large tables are read in full, never sampled.
      */
     @Override
-    public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
+    public NodeSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
         Map<String, String> s = new HashMap<>();
         s.put("url", jdbcUrl(source));
         if (source.setting("username") != null) {
@@ -526,7 +526,7 @@ public class GenericJdbcConnector extends JdbcConnector {
             s.put(JdbcTableInput.MAX_ROWS, Long.toString(read.rowLimit()));
         }
         s.put("batch-size", Integer.toString(read.batchSize()));
-        return new StepSpec("read", tableInput(), s);
+        return new NodeSpec("read", tableInput(), s);
     }
 
     @Override
@@ -534,7 +534,7 @@ public class GenericJdbcConnector extends JdbcConnector {
         return new JdbcTableInput(new Reading(this));
     }
 
-    /** How the reader step connects (through the registered driver), names the table and maps columns. */
+    /** How the reader node connects (through the registered driver), names the table and maps columns. */
     private record Reading(GenericJdbcConnector connector) implements JdbcTableInput.Reading {
 
         @Override
@@ -572,7 +572,7 @@ public class GenericJdbcConnector extends JdbcConnector {
 
     // ------------------------------------------------------------------ writing
 
-    /** For capabilities and write settings: the SQL itself is read from the driver when a step writes. */
+    /** For capabilities and write settings: the SQL itself is read from the driver when a node writes. */
     @Override
     WriteSql writeSql() {
         return GenericWriteSql.PLACEHOLDER;
@@ -641,11 +641,11 @@ public class GenericJdbcConnector extends JdbcConnector {
     }
 
     /**
-     * A step appending to a table or creating one ({@link JdbcTableOutput}) with SQL read from the
+     * A node appending to a table or creating one ({@link JdbcTableOutput}) with SQL read from the
      * driver ({@link GenericWriteSql}), to the table as the catalogue spells it.
      */
     @Override
-    public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+    public io.kilnmark.kiln.Node writer(SourceConfig source, WriteOptions write) throws ConnectorException {
         checkValid(source);
         List<String> problems = writeProblems(source, write);
         if (!problems.isEmpty()) {
@@ -697,7 +697,7 @@ public class GenericJdbcConnector extends JdbcConnector {
         return new TableName(container, GenericCatalog.resolve(t.table(), tables));
     }
 
-    /** Not used: the step's {@link GenericWriteSql} describes the table from the driver's metadata. */
+    /** Not used: the node's {@link GenericWriteSql} describes the table from the driver's metadata. */
     @Override
     List<WritePlan.TargetColumn> targetColumns(Connection connection, SourceConfig source, TableName table) {
         return null;

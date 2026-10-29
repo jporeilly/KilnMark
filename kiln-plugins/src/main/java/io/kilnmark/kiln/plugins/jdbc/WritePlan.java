@@ -270,7 +270,7 @@ final class WritePlan {
     /** The problems as one message, for an append or upsert to {@code table}. */
     static String message(String mode, TableName table, List<String> problems) {
         return "Cannot " + mode.toLowerCase(Locale.ROOT) + " to " + table + ": its columns do not match the input: "
-            + String.join("; ", problems) + ". Rename or cast columns with a select step first, or write to a new "
+            + String.join("; ", problems) + ". Rename or cast columns with a select node first, or write to a new "
             + "table with mode create";
     }
 }

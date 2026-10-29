@@ -40,7 +40,7 @@ class PipelineRulesTest {
 
     @Test
     void theLineOfATopLevelKey() {
-        String yaml = "kilnmark: pipeline/v1\n# a comment\nname: x\nsteps: []\n";
+        String yaml = "kilnmark: pipeline/v1\n# a comment\nname: x\nnodes: []\n";
         assertEquals(3, PipelineService.lineOf(yaml, "name"));
         assertEquals(1, PipelineService.lineOf(yaml, "kilnmark"));
         assertEquals(0, PipelineService.lineOf(yaml, "description"));

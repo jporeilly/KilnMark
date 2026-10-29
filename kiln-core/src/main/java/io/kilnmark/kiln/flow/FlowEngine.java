@@ -8,31 +8,31 @@ import java.util.Objects;
 import java.util.function.Function;
 
 /**
- * Decides which steps of a flow run next (docs/design/flows.md, "How a flow runs"). It holds no
+ * Decides which nodes of a flow run next (docs/design/flows.md, "How a flow runs"). It holds no
  * threads and touches no database: whoever runs the flow asks {@link #ready()} what to start, runs
- * those steps, and reports each with {@link #finish}.
+ * those nodes, and reports each with {@link #finish}.
  *
- * <p>A step with no path into it starts at once. A step with paths into it waits until every one
- * is settled (the step it comes from has ended or been skipped), then starts if at least one path
- * is taken, and is skipped if none is; a skipped step settles its own paths as not taken, so a
- * whole branch can be skipped. A path is taken when the step it leaves ended the way the path asks:
+ * <p>A node with no connection into it starts at once. A node with connections into it waits until every one
+ * is settled (the node it comes from has ended or been skipped), then starts if at least one connection
+ * is taken, and is skipped if none is; a skipped node settles its own connections as not taken, so a
+ * whole branch can be skipped. A connection is taken when the node it leaves ended the way the connection asks:
  * {@code success}, {@code failure}, {@code always} (succeeded or failed), or a condition, which
- * needs the step to have succeeded and the condition to be true.
+ * needs the node to have succeeded and the condition to be true.
  */
 public final class FlowEngine {
 
-    /** Where a step is. */
+    /** Where a node is. */
     public enum State { PENDING, RUNNING, SUCCEEDED, FAILED, CANCELLED, SKIPPED }
 
-    /** What makes a path taken. */
+    /** What makes a connection taken. */
     public enum Kind { SUCCESS, FAILURE, ALWAYS, CONDITION }
 
     /**
-     * A path between two steps. {@code condition} is read only for {@link Kind#CONDITION}; it gets
+     * A connection between two nodes. {@code condition} is read only for {@link Kind#CONDITION}; it gets
      * the value called a name (see {@link #value}) and answers true, false or null for unknown.
      */
-    public record Path(String from, String to, Kind kind, Condition condition) {
-        public Path {
+    public record Connection(String from, String to, Kind kind, Condition condition) {
+        public Connection {
             Objects.requireNonNull(from, "from");
             Objects.requireNonNull(to, "to");
             Objects.requireNonNull(kind, "kind");
@@ -51,50 +51,50 @@ public final class FlowEngine {
     /** How a flow ended. */
     public enum Outcome { SUCCEEDED, FAILED, CANCELLED }
 
-    private final List<String> steps;
-    private final List<Path> paths;
+    private final List<String> nodes;
+    private final List<Connection> connections;
     private final Map<String, Object> parameters;
     private final Map<String, State> states = new LinkedHashMap<>();
     private final Map<String, Map<String, Object>> results = new LinkedHashMap<>();
     private boolean cancelled;      // a person asked the flow to stop
-    private boolean stepCancelled;  // a step ended cancelled
+    private boolean nodeCancelled;  // a node ended cancelled
     private boolean haltedFailed;
     private String haltMessage;
 
     /**
-     * @param steps      the step ids
-     * @param paths      the paths between them; none may name a step that is not in {@code steps}
-     * @param parameters the flow's parameters by name
+     * @param nodes       the node ids
+     * @param connections the connections between them; none may name a node that is not in {@code nodes}
+     * @param parameters  the flow's parameters by name
      */
-    public FlowEngine(List<String> steps, List<Path> paths, Map<String, Object> parameters) {
-        this.steps = List.copyOf(steps);
-        this.paths = List.copyOf(paths);
+    public FlowEngine(List<String> nodes, List<Connection> connections, Map<String, Object> parameters) {
+        this.nodes = List.copyOf(nodes);
+        this.connections = List.copyOf(connections);
         this.parameters = parameters == null ? Map.of() : Map.copyOf(parameters);
-        for (String s : this.steps) {
+        for (String s : this.nodes) {
             states.put(s, State.PENDING);
         }
-        for (Path p : this.paths) {
+        for (Connection p : this.connections) {
             if (!states.containsKey(p.from()) || !states.containsKey(p.to())) {
-                throw new IllegalArgumentException("Path " + p.from() + " -> " + p.to() + " names a step that is not in the flow");
+                throw new IllegalArgumentException("Connection " + p.from() + " -> " + p.to() + " names a node that is not in the flow");
             }
         }
     }
 
-    public State state(String step) {
-        State s = states.get(step);
+    public State state(String node) {
+        State s = states.get(node);
         if (s == null) {
-            throw new IllegalArgumentException("No step called " + step);
+            throw new IllegalArgumentException("No node called " + node);
         }
         return s;
     }
 
-    /** What a finished step reported, by field name; empty before it ends. */
-    public Map<String, Object> results(String step) {
-        return results.getOrDefault(step, Map.of());
+    /** What a finished node reported, by field name; empty before it ends. */
+    public Map<String, Object> results(String node) {
+        return results.getOrDefault(node, Map.of());
     }
 
     /**
-     * The value a condition reads: a parameter by its name, or {@code step.field} of a step that
+     * The value a condition reads: a parameter by its name, or {@code node.field} of a node that
      * has ended (its {@code status} is always there); null when unknown.
      */
     public Object value(String name) {
@@ -105,21 +105,21 @@ public final class FlowEngine {
         if (dot < 0) {
             return null;
         }
-        String step = name.substring(0, dot);
+        String node = name.substring(0, dot);
         String field = name.substring(dot + 1);
-        State s = states.get(step);
+        State s = states.get(node);
         if (s == null || s == State.PENDING || s == State.RUNNING || s == State.SKIPPED) {
             return null;
         }
         if (field.equals("status")) {
             return s.name().toLowerCase();
         }
-        return results.getOrDefault(step, Map.of()).get(field);
+        return results.getOrDefault(node, Map.of()).get(field);
     }
 
     /**
-     * Marks as running, and returns, every step that can start now, after skipping the steps whose
-     * paths are all settled and none taken. Call it again after each {@link #finish}.
+     * Marks as running, and returns, every node that can start now, after skipping the nodes whose
+     * connections are all settled and none taken. Call it again after each {@link #finish}.
      */
     public List<String> ready() {
         List<String> started = new ArrayList<>();
@@ -129,19 +129,19 @@ public final class FlowEngine {
         boolean changed = true;
         while (changed) {
             changed = false;
-            for (String step : steps) {
-                if (states.get(step) != State.PENDING) {
+            for (String node : nodes) {
+                if (states.get(node) != State.PENDING) {
                     continue;
                 }
-                List<Path> into = paths.stream().filter(p -> p.to().equals(step)).toList();
+                List<Connection> into = connections.stream().filter(p -> p.to().equals(node)).toList();
                 if (!into.isEmpty() && !into.stream().allMatch(this::settled)) {
                     continue;
                 }
                 if (into.isEmpty() || into.stream().anyMatch(this::taken)) {
-                    states.put(step, State.RUNNING);
-                    started.add(step);
+                    states.put(node, State.RUNNING);
+                    started.add(node);
                 } else {
-                    states.put(step, State.SKIPPED);
+                    states.put(node, State.SKIPPED);
                 }
                 changed = true;
             }
@@ -150,22 +150,22 @@ public final class FlowEngine {
     }
 
     /**
-     * Records how a running step ended.
+     * Records how a running node ended.
      *
      * @param outcome SUCCEEDED, FAILED or CANCELLED
      * @param values  what it reported, by field name (numbers, text, booleans; null for unknown)
      */
-    public void finish(String step, State outcome, Map<String, Object> values) {
-        if (state(step) != State.RUNNING) {
-            throw new IllegalStateException("Step " + step + " is " + state(step) + ", not running");
+    public void finish(String node, State outcome, Map<String, Object> values) {
+        if (state(node) != State.RUNNING) {
+            throw new IllegalStateException("Node " + node + " is " + state(node) + ", not running");
         }
         if (outcome != State.SUCCEEDED && outcome != State.FAILED && outcome != State.CANCELLED) {
-            throw new IllegalArgumentException("A step ends as succeeded, failed or cancelled, not " + outcome);
+            throw new IllegalArgumentException("A node ends as succeeded, failed or cancelled, not " + outcome);
         }
-        states.put(step, outcome);
-        results.put(step, values == null ? Map.of() : Map.copyOf(withoutNulls(values)));
+        states.put(node, outcome);
+        results.put(node, values == null ? Map.of() : Map.copyOf(withoutNulls(values)));
         if (outcome == State.CANCELLED) {
-            stepCancelled = true;
+            nodeCancelled = true;
         }
     }
 
@@ -186,7 +186,7 @@ public final class FlowEngine {
     }
 
     /**
-     * A {@code stop} step ran: nothing more starts, and what has not started is skipped. Steps still
+     * A {@code stop} node ran: nothing more starts, and what has not started is skipped. Nodes still
      * running are left to the caller to cancel.
      *
      * @param failed whether the flow counts as failed
@@ -203,12 +203,12 @@ public final class FlowEngine {
         states.replaceAll((k, v) -> v == State.PENDING ? State.SKIPPED : v);
     }
 
-    /** Whether the flow was stopped by a {@code stop} step. */
+    /** Whether the flow was stopped by a {@code stop} node. */
     public boolean halted() {
         return haltMessage != null;
     }
 
-    /** The message of the {@code stop} step that ended the flow, or null. */
+    /** The message of the {@code stop} node that ended the flow, or null. */
     public String haltMessage() {
         return haltMessage;
     }
@@ -218,25 +218,25 @@ public final class FlowEngine {
         return states.values().stream().noneMatch(s -> s == State.PENDING || s == State.RUNNING);
     }
 
-    /** The steps that are running. */
+    /** The nodes that are running. */
     public List<String> running() {
-        return steps.stream().filter(s -> states.get(s) == State.RUNNING).toList();
+        return nodes.stream().filter(s -> states.get(s) == State.RUNNING).toList();
     }
 
     /**
-     * Whether a failed step's failure was dealt with: a path leaves it that takes a failure
+     * Whether a failed node's failure was dealt with: a connection leaves it that takes a failure
      * ({@code failure} or {@code always}).
      */
-    public boolean handled(String step) {
-        return states.get(step) == State.FAILED
-            && paths.stream().anyMatch(p -> p.from().equals(step)
+    public boolean handled(String node) {
+        return states.get(node) == State.FAILED
+            && connections.stream().anyMatch(p -> p.from().equals(node)
             && (p.kind() == Kind.FAILURE || p.kind() == Kind.ALWAYS));
     }
 
     /**
      * How the flow ended, once {@link #done}: cancelled if asked to stop; otherwise as a {@code stop}
-     * step that ran said; otherwise cancelled if a step was cancelled, failed if a step failed with no
-     * path to deal with it, and succeeded if none.
+     * node that ran said; otherwise cancelled if a node was cancelled, failed if a node failed with no
+     * connection to deal with it, and succeeded if none.
      */
     public Outcome outcome() {
         if (!done()) {
@@ -246,13 +246,13 @@ public final class FlowEngine {
             return Outcome.CANCELLED;
         }
         if (haltMessage != null) {
-            // The steps a stop step cancelled do not make the flow cancelled: the stop decides.
+            // The nodes a stop node cancelled do not make the flow cancelled: the stop decides.
             return haltedFailed ? Outcome.FAILED : Outcome.SUCCEEDED;
         }
-        if (stepCancelled) {
+        if (nodeCancelled) {
             return Outcome.CANCELLED;
         }
-        for (String s : steps) {
+        for (String s : nodes) {
             if (states.get(s) == State.FAILED && !handled(s)) {
                 return Outcome.FAILED;
             }
@@ -260,13 +260,13 @@ public final class FlowEngine {
         return Outcome.SUCCEEDED;
     }
 
-    /** Whether a path is settled: the step it leaves has ended or been skipped. */
-    private boolean settled(Path p) {
+    /** Whether a connection is settled: the node it leaves has ended or been skipped. */
+    private boolean settled(Connection p) {
         State s = states.get(p.from());
         return s != State.PENDING && s != State.RUNNING;
     }
 
-    private boolean taken(Path p) {
+    private boolean taken(Connection p) {
         State s = states.get(p.from());
         return switch (p.kind()) {
             case SUCCESS -> s == State.SUCCEEDED;

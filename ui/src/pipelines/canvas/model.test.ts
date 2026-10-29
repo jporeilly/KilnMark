@@ -1,17 +1,17 @@
 import { describe, expect, test } from "vitest";
-import type { StepType } from "../../api";
+import type { NodeType } from "../../api";
 import {
-  addStep,
+  addNode,
   catalogueOf,
   connect,
   connectProblem,
   disconnect,
-  duplicateStep,
+  duplicateNode,
   freshId,
   possibleConnections,
   readGraph,
-  removeStep,
-  renameStep,
+  removeNode,
+  renameNode,
   setPositions,
   setSetting,
   parseRef,
@@ -21,7 +21,7 @@ import {
 } from "./model";
 import { emptyYaml as emptyPipeline, withoutLayout } from "../template";
 
-const t = (type: string, kind: string, inputs: string[], outputs: string[], many: string[] = []): StepType => ({
+const t = (type: string, kind: string, inputs: string[], outputs: string[], many: string[] = []): NodeType => ({
   type,
   kind,
   label: type,
@@ -44,7 +44,7 @@ const CAT = catalogueOf([
 const BILLING = `kilnmark: pipeline/v1
 name: customer-billing
 description: Monthly spend per customer, with orphan transactions set aside.
-steps:
+nodes:
   # Two reads from the same source.
   - id: customers
     type: read
@@ -97,14 +97,23 @@ const graph = (text: string): Graph => {
   if (!r.ok) throw new Error(r.error);
   return r.graph;
 };
-/** Every step's id, type, settings and inputs: what a change must keep. */
-const meaning = (g: Graph) => g.steps.map((s) => ({ id: s.id, type: s.type, settings: s.settings, inputs: s.inputs }));
+/** Every node's id, type, settings and inputs: what a change must keep. */
+const meaning = (g: Graph) => g.nodes.map((s) => ({ id: s.id, type: s.type, settings: s.settings, inputs: s.inputs }));
 
 describe("reading the graph", () => {
-  test("steps, settings, ports and edges", () => {
+  test("a pipeline saved with the old steps key reads the same, and the canvas writes nodes:", () => {
+    const old = BILLING.replace(/^nodes:/m, "steps:");
+    expect(graph(old).nodes.map((s) => s.id)).toEqual(graph(BILLING).nodes.map((s) => s.id));
+    const text = ok(addNode(old, "filter", CAT, { node: "tidy" }));
+    expect(graph(text).nodes.map((s) => s.id)).toContain("filter");
+    expect(text).toMatch(/^nodes:/m);
+    expect(text).not.toMatch(/^steps:/m);
+  });
+
+  test("nodes, settings, ports and edges", () => {
     const g = graph(BILLING);
     expect(g.name).toBe("customer-billing");
-    expect(g.steps.map((s) => s.id)).toEqual(["customers", "transactions", "tidy", "joined", "orphans", "out"]);
+    expect(g.nodes.map((s) => s.id)).toEqual(["customers", "transactions", "tidy", "joined", "orphans", "out"]);
     expect(g.edges).toEqual([
       { from: "customers", fromPort: "out", to: "tidy", toPort: "in" },
       { from: "transactions", fromPort: "out", to: "joined", toPort: "main" },
@@ -112,7 +121,7 @@ describe("reading the graph", () => {
       { from: "joined", fromPort: "rejected", to: "orphans", toPort: "in" },
       { from: "joined", fromPort: "out", to: "out", toPort: "in" },
     ]);
-    const tidy = g.steps.find((s) => s.id === "tidy")!;
+    const tidy = g.nodes.find((s) => s.id === "tidy")!;
     expect(tidy.settings.columns).toEqual({ full_name: "trim(first_name) || ' ' || trim(last_name)", email: "lower(trim(email))" });
     expect(tidy.line).toBe(16);
     expect(tidy.keyLines.columns).toBe(19);
@@ -120,14 +129,14 @@ describe("reading the graph", () => {
 
   test("text keeps what was written", () => {
     const g = graph(BILLING);
-    expect(g.steps.find((s) => s.id === "transactions")!.texts.asset).toBe("2024.10");
-    expect(g.steps.find((s) => s.id === "orphans")!.texts.code).toBe("007");
+    expect(g.nodes.find((s) => s.id === "transactions")!.texts.asset).toBe("2024.10");
+    expect(g.nodes.find((s) => s.id === "orphans")!.texts.code).toBe("007");
   });
 
   test("a union lists its inputs; route adds a port per route", () => {
     const g = graph(`kilnmark: pipeline/v1
 name: x
-steps:
+nodes:
   - { id: a, type: read }
   - { id: b, type: read }
   - { id: all, type: union, input: [a, b] }
@@ -142,10 +151,10 @@ steps:
   });
 
   test("YAML that cannot be read is not a graph, with its line", () => {
-    const r = readGraph("kilnmark: pipeline/v1\nname: x\nsteps:\n  - id: a\n   type: read\n", CAT);
+    const r = readGraph("kilnmark: pipeline/v1\nname: x\nnodes:\n  - id: a\n   type: read\n", CAT);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.line).toBeGreaterThan(0);
-    const dup = readGraph("kilnmark: pipeline/v1\nname: x\nname: y\nsteps: []\n", CAT);
+    const dup = readGraph("kilnmark: pipeline/v1\nname: x\nname: y\nnodes: []\n", CAT);
     expect(dup.ok).toBe(false);
   });
 
@@ -158,14 +167,14 @@ steps:
 describe("round trips keep every setting and comment", () => {
   const settingsBefore = meaning(graph(BILLING));
 
-  test("moving steps changes only the layout block", () => {
+  test("moving nodes changes only the layout block", () => {
     const text = ok(setPositions(BILLING, { customers: { x: 10.4, y: 20.6 }, out: { x: 500, y: 90 }, ghost: { x: 0, y: 0 } }));
     expect(meaning(graph(text))).toEqual(settingsBefore);
     expect(graph(text).positions).toEqual({ customers: { x: 10, y: 21 }, out: { x: 500, y: 90 } });
     expect(text).toContain("# Two reads from the same source.");
     expect(text).toContain("# rows with no customer go to the 'rejected' port");
     expect(text).toContain("# create | append | replace | upsert (with key)");
-    expect(text).toContain("# Where the canvas draws each step. Kilnmark ignores this when it runs the pipeline.");
+    expect(text).toContain("# Where the canvas draws each node. Kilnmark ignores this when it runs the pipeline.");
     expect(text).toContain('asset: "2024.10"');
     expect(text).toContain("code: 007");
     // Moving again replaces the positions in place.
@@ -173,19 +182,19 @@ describe("round trips keep every setting and comment", () => {
     expect(again.match(/customers: \{/g)?.length).toBe(1);
   });
 
-  test("adding then removing a step gives back the same pipeline", () => {
-    const added = addStep(BILLING, "filter", CAT, { step: "tidy" });
+  test("adding then removing a node gives back the same pipeline", () => {
+    const added = addNode(BILLING, "filter", CAT, { node: "tidy" });
     const text = ok(added);
     expect("id" in added && added.id).toBe("filter");
     const g = graph(text);
     expect(g.edges).toContainEqual({ from: "tidy", fromPort: "out", to: "filter", toPort: "in" });
-    expect(g.steps.map((s) => s.id).indexOf("filter")).toBe(3);
-    const back = ok(removeStep(text, "filter", CAT));
+    expect(g.nodes.map((s) => s.id).indexOf("filter")).toBe(3);
+    const back = ok(removeNode(text, "filter", CAT));
     expect(meaning(graph(back))).toEqual(settingsBefore);
   });
 
   test("connecting and disconnecting keeps the other settings", () => {
-    const text = ok(addStep(BILLING, "union", CAT));
+    const text = ok(addNode(BILLING, "union", CAT));
     const one = ok(connect(text, { from: "customers", fromPort: "out", to: "union", toPort: "in" }, CAT));
     const two = ok(connect(one, { from: "joined", fromPort: "rejected", to: "union", toPort: "in" }, CAT));
     expect(two).toContain("input: [customers, joined.rejected]");
@@ -197,28 +206,28 @@ describe("round trips keep every setting and comment", () => {
 
   test("renaming follows every input and the layout", () => {
     const placed = ok(setPositions(BILLING, { joined: { x: 1, y: 1 } }));
-    const text = ok(renameStep(placed, "joined", "matched"));
+    const text = ok(renameNode(placed, "joined", "matched"));
     const g = graph(text);
     expect(g.edges.filter((e) => e.from === "matched").map((e) => `${e.fromPort}->${e.to}`)).toEqual(["rejected->orphans", "out->out"]);
     expect(g.positions.matched).toEqual({ x: 1, y: 1 });
-    expect(g.steps.find((s) => s.id === "matched")!.settings).toEqual(settingsBefore.find((s) => s.id === "joined")!.settings);
-    expect("error" in renameStep(text, "tidy", "Bad Id")).toBe(true);
-    expect("error" in renameStep(text, "tidy", "out")).toBe(true);
+    expect(g.nodes.find((s) => s.id === "matched")!.settings).toEqual(settingsBefore.find((s) => s.id === "joined")!.settings);
+    expect("error" in renameNode(text, "tidy", "Bad Id")).toBe(true);
+    expect("error" in renameNode(text, "tidy", "out")).toBe(true);
   });
 
   test("a duplicate copies settings and inputs", () => {
-    const c = duplicateStep(BILLING, "tidy");
+    const c = duplicateNode(BILLING, "tidy");
     const g = graph(ok(c));
     expect("id" in c && c.id).toBe("tidy-copy");
-    const copy = g.steps.find((s) => s.id === "tidy-copy")!;
-    expect(copy.settings).toEqual(g.steps.find((s) => s.id === "tidy")!.settings);
+    const copy = g.nodes.find((s) => s.id === "tidy-copy")!;
+    expect(copy.settings).toEqual(g.nodes.find((s) => s.id === "tidy")!.settings);
     expect(copy.inputs).toEqual([{ port: null, from: "customers", fromPort: "out" }]);
   });
 
   test("settings: set, change and remove, by kind", () => {
     let text = ok(setSetting(BILLING, "tidy", "columns", { full_name: "first_name || last_name", n: "1" }, "expressions"));
     expect(text).toContain('full_name: "first_name || last_name"');
-    expect(graph(text).steps.find((s) => s.id === "tidy")!.settings.columns).toEqual({ full_name: "first_name || last_name", n: "1" });
+    expect(graph(text).nodes.find((s) => s.id === "tidy")!.settings.columns).toEqual({ full_name: "first_name || last_name", n: "1" });
     text = ok(setSetting(text, "out", "mode", "append", "choice"));
     expect(text).toMatch(/mode: append {14}# create \| append \| replace \| upsert \(with key\)/);
     text = ok(setSetting(text, "out", "key", ["customer_id", "month"], "columns"));
@@ -226,14 +235,14 @@ describe("round trips keep every setting and comment", () => {
     text = ok(setSetting(text, "out", "commit_every", 5000, "number"));
     text = ok(setSetting(text, "out", "keep_grants", false, "boolean"));
     text = ok(setSetting(text, "out", "label", "007", "text"));
-    const out = graph(text).steps.find((s) => s.id === "out")!;
+    const out = graph(text).nodes.find((s) => s.id === "out")!;
     expect(out.settings).toMatchObject({ mode: "append", key: ["customer_id", "month"], commit_every: 5000, keep_grants: false, label: "007" });
     text = ok(setSetting(text, "out", "key", [], "columns"));
     text = ok(setSetting(text, "out", "label", undefined));
-    expect(graph(text).steps.find((s) => s.id === "out")!.settings).not.toHaveProperty("key");
-    expect(graph(text).steps.find((s) => s.id === "out")!.settings).not.toHaveProperty("label");
-    // The settings the canvas does not know, and the other steps, are untouched.
-    const joined = graph(text).steps.find((s) => s.id === "joined")!;
+    expect(graph(text).nodes.find((s) => s.id === "out")!.settings).not.toHaveProperty("key");
+    expect(graph(text).nodes.find((s) => s.id === "out")!.settings).not.toHaveProperty("label");
+    // The settings the canvas does not know, and the other nodes, are untouched.
+    const joined = graph(text).nodes.find((s) => s.id === "joined")!;
     expect(joined.settings.future_setting).toEqual({ nested: [1, 2, { deep: "yes" }] });
     expect(meaning(graph(text)).filter((s) => s.id !== "tidy" && s.id !== "out")).toEqual(
       settingsBefore.filter((s) => s.id !== "tidy" && s.id !== "out"),
@@ -242,16 +251,16 @@ describe("round trips keep every setting and comment", () => {
 
   test("every change round-trips: what is read again is what was written", () => {
     let text = BILLING;
-    const steps: ((x: string) => Change)[] = [
-      (x) => addStep(x, "filter", CAT, { step: "tidy" }),
+    const nodes: ((x: string) => Change)[] = [
+      (x) => addNode(x, "filter", CAT, { node: "tidy" }),
       (x) => setSetting(x, "filter", "condition", "status = 'active'", "expression"),
       (x) => disconnect(x, { from: "tidy", fromPort: "out", to: "joined", toPort: "lookup" }, CAT),
       (x) => connect(x, { from: "filter", fromPort: "out", to: "joined", toPort: "lookup" }, CAT),
       (x) => setPositions(x, { filter: { x: 300, y: 40 } }),
-      (x) => duplicateStep(x, "out"),
-      (x) => removeStep(x, "out-copy", CAT),
+      (x) => duplicateNode(x, "out"),
+      (x) => removeNode(x, "out-copy", CAT),
     ];
-    for (const s of steps) {
+    for (const s of nodes) {
       text = ok(s(text));
       const g = graph(text);
       expect(graph(ok(setPositions(text, g.positions)))).toEqual(g);
@@ -261,7 +270,7 @@ describe("round trips keep every setting and comment", () => {
     expect(text).toContain(`condition: "status = 'active'"`);
     expect(text).toContain("inputs: {main: transactions, lookup: filter}");
     for (const s of settingsBefore) {
-      expect(g.steps.find((x) => x.id === s.id)!.settings).toEqual(s.settings);
+      expect(g.nodes.find((x) => x.id === s.id)!.settings).toEqual(s.settings);
     }
   });
 });
@@ -276,9 +285,9 @@ describe("connections", () => {
     expect(why("transactions", "out", "tidy", "in")).toMatch(/already reads from customers.*union/);
     expect(why("out", "out", "tidy", "in")).toMatch(/no output called out/);
     expect(why("customers", "out", "joined", "side")).toMatch(/no input called side/);
-    const text = ok(addStep(BILLING, "filter", CAT));
+    const text = ok(addNode(BILLING, "filter", CAT));
     const looped = ok(connect(text, { from: "joined", fromPort: "out", to: "filter", toPort: "in" }, CAT));
-    const c = connect(ok(addStep(looped, "union", CAT)), { from: "filter", fromPort: "out", to: "union", toPort: "in" }, CAT);
+    const c = connect(ok(addNode(looped, "union", CAT)), { from: "filter", fromPort: "out", to: "union", toPort: "in" }, CAT);
     const withUnion = ok(c);
     const toLoop = connect(withUnion, { from: "union", fromPort: "out", to: "filter", toPort: "in" }, CAT);
     expect("error" in toLoop && toLoop.error).toMatch(/already reads from joined/);
@@ -289,7 +298,7 @@ describe("connections", () => {
   test("loops are refused", () => {
     const text = `kilnmark: pipeline/v1
 name: x
-steps:
+nodes:
   - { id: a, type: read }
   - { id: u, type: union, input: [a] }
   - { id: f, type: filter, input: u }
@@ -299,9 +308,9 @@ steps:
   });
 
   test("a union takes many inputs, written as a list", () => {
-    let text = ok(addStep(emptyPipeline("x"), "read", CAT));
-    text = ok(addStep(text, "read", CAT));
-    text = ok(addStep(text, "union", CAT));
+    let text = ok(addNode(emptyPipeline("x"), "read", CAT));
+    text = ok(addNode(text, "read", CAT));
+    text = ok(addNode(text, "union", CAT));
     text = ok(connect(text, { from: "read", fromPort: "out", to: "union", toPort: "in" }, CAT));
     text = ok(connect(text, { from: "read-2", fromPort: "out", to: "union", toPort: "in" }, CAT));
     expect(text).toContain("input: [read, read-2]");
@@ -310,9 +319,9 @@ steps:
   });
 
   test("the Connect to menu offers only what is allowed", () => {
-    const g = graph(ok(addStep(BILLING, "filter", CAT)));
+    const g = graph(ok(addNode(BILLING, "filter", CAT)));
     const offers = possibleConnections(g, "filter", CAT).map((e) => `${e.from}.${e.fromPort}->${e.to}.${e.toPort}`);
-    // Into its free input from any step's output; out of it into no port, since every input is fed.
+    // Into its free input from any node's output; out of it into no port, since every input is fed.
     expect(offers).toEqual(expect.arrayContaining(["customers.out->filter.in", "joined.rejected->filter.in"]));
     expect(offers.every((o) => o.endsWith("->filter.in"))).toBe(true);
     expect(offers).not.toContain("out.out->filter.in");
@@ -320,14 +329,14 @@ steps:
 });
 
 describe("new pipelines", () => {
-  test("an empty canvas grows one step at a time", () => {
+  test("an empty canvas grows one node at a time", () => {
     let text = emptyPipeline("my-pipeline");
-    expect(graph(text).steps).toEqual([]);
-    text = ok(addStep(text, "read", CAT, null, { x: 0, y: 0 }));
-    text = ok(addStep(text, "filter", CAT, { step: "read" }));
-    text = ok(addStep(text, "compute", CAT, { step: "filter" }));
-    text = ok(addStep(text, "write", CAT, { step: "compute" }));
-    expect(text).toMatch(/^steps:\n {2}- id: read\n {4}type: read\n\n {2}- id: filter\n {4}type: filter\n {4}input: read\n/m);
+    expect(graph(text).nodes).toEqual([]);
+    text = ok(addNode(text, "read", CAT, null, { x: 0, y: 0 }));
+    text = ok(addNode(text, "filter", CAT, { node: "read" }));
+    text = ok(addNode(text, "compute", CAT, { node: "filter" }));
+    text = ok(addNode(text, "write", CAT, { node: "compute" }));
+    expect(text).toMatch(/^nodes:\n {2}- id: read\n {4}type: read\n\n {2}- id: filter\n {4}type: filter\n {4}input: read\n/m);
     expect(graph(text).edges.map((e) => `${e.from}->${e.to}`)).toEqual(["read->filter", "filter->compute", "compute->write"]);
   });
 
@@ -344,7 +353,7 @@ name: tricky
 description: >
   Folded description
   over two lines.
-steps:
+nodes:
 - id: src            # unindented sequence
   type: read
   source: 'sales-db'
@@ -377,7 +386,7 @@ function changed(a: string, b: string) {
 }
 
 describe("only what changes is rewritten", () => {
-  test("moving a step rewrites its position and nothing else", () => {
+  test("moving a node rewrites its position and nothing else", () => {
     const out = ok(setPositions(TRICKY, { src: { x: 5, y: 6 } }));
     expect(changed(TRICKY, out)).toEqual({ added: ["  src: { x: 5, y: 6 }"], removed: ["  src: { x: 10, y: 20 }"] });
   });
@@ -393,30 +402,30 @@ describe("only what changes is rewritten", () => {
   });
 
   test("renaming changes the id, the inputs naming it and its position", () => {
-    const out = ok(renameStep(TRICKY, "f", "g"));
+    const out = ok(renameNode(TRICKY, "f", "g"));
     expect(changed(TRICKY, out)).toEqual({
       added: ["- id: g", '- { id: c, type: compute, input: g.rejected, columns: { a: "x || \':\' || y" } }'],
       removed: ["- id: f", '- { id: c, type: compute, input: f.rejected, columns: { a: "x || \':\' || y" } }'],
     });
   });
 
-  test("adding, removing and duplicating leave the other steps alone", () => {
-    const added = ok(addStep(TRICKY, "compute", CAT, { step: "f" }, { x: 1, y: 1 }));
+  test("adding, removing and duplicating leave the other nodes alone", () => {
+    const added = ok(addNode(TRICKY, "compute", CAT, { node: "f" }, { x: 1, y: 1 }));
     expect(changed(TRICKY, added)).toEqual({ added: ["- id: compute", "  type: compute", "  input: f", "  compute: {x: 1, y: 1}"], removed: [] });
-    const removed = ok(removeStep(TRICKY, "w", CAT));
+    const removed = ok(removeNode(TRICKY, "w", CAT));
     expect(changed(TRICKY, removed).added).toEqual([]);
     expect(changed(TRICKY, removed).removed).toEqual(["- id: w", "  type: write", "  input: c", "  mode: replace              # create | append", "  w: {x: 300, y: 20}"]);
-    const dup = ok(duplicateStep(TRICKY, "w"));
+    const dup = ok(duplicateNode(TRICKY, "w"));
     expect(changed(TRICKY, dup).removed).toEqual([]);
-    expect(graph(dup).steps.find((x) => x.id === "w-copy")!.settings).toEqual({ mode: "replace" });
+    expect(graph(dup).nodes.find((x) => x.id === "w-copy")!.settings).toEqual({ mode: "replace" });
   });
 
   test("line endings and a byte order mark are kept", () => {
-    const crlf = "kilnmark: pipeline/v1\r\nname: x\r\nsteps:\r\n  - id: a\r\n    type: read   # c\r\n";
+    const crlf = "kilnmark: pipeline/v1\r\nname: x\r\nnodes:\r\n  - id: a\r\n    type: read   # c\r\n";
     const out = ok(setPositions(crlf, { a: { x: 1, y: 1 } }));
     expect(out.startsWith(crlf)).toBe(true);
     expect(out.slice(crlf.length).replace(/\r\n/g, "")).not.toContain("\n");
-    const bom = "\ufeffkilnmark: pipeline/v1\nname: x\nsteps:\n  - id: a\n    type: read\n";
+    const bom = "\ufeffkilnmark: pipeline/v1\nname: x\nnodes:\n  - id: a\n    type: read\n";
     expect(ok(setPositions(bom, { a: { x: 1, y: 1 } })).startsWith(bom)).toBe(true);
   });
 
@@ -435,24 +444,24 @@ describe("only what changes is rewritten", () => {
 
 describe("the canvas follows the compiler's rules", () => {
   test("a stale position never becomes a second key", () => {
-    const stale = "kilnmark: pipeline/v1\nname: s\nsteps:\n  - { id: a, type: read }\nlayout:\n  a: {x: 1, y: 1}\n  c: {x: 3, y: 3}\n";
-    const out = ok(renameStep(stale, "a", "c"));
+    const stale = "kilnmark: pipeline/v1\nname: s\nnodes:\n  - { id: a, type: read }\nlayout:\n  a: {x: 1, y: 1}\n  c: {x: 3, y: 3}\n";
+    const out = ok(renameNode(stale, "a", "c"));
     expect(out.match(/^ {2}c: /gm)?.length).toBe(1);
     expect(graph(out).positions).toEqual({ c: { x: 1, y: 1 } });
-    const fresh = ok(addStep(stale.replace("c: {x: 3", "read: {x: 3"), "read", CAT));
+    const fresh = ok(addNode(stale.replace("c: {x: 3", "read: {x: 3"), "read", CAT));
     expect(fresh).not.toMatch(/read: \{x: 3/);
   });
 
-  test("a step with both input and inputs is refused, not rewritten", () => {
-    const both = "kilnmark: pipeline/v1\nname: b\nsteps:\n  - { id: a, type: read }\n  - { id: e, type: write, input: a, inputs: { in: a } }\n";
+  test("a node with both input and inputs is refused, not rewritten", () => {
+    const both = "kilnmark: pipeline/v1\nname: b\nnodes:\n  - { id: a, type: read }\n  - { id: e, type: write, input: a, inputs: { in: a } }\n";
     const c = disconnect(both, { from: "a", fromPort: "out", to: "e", toPort: "in" }, CAT);
     expect("error" in c && c.error).toMatch(/both input and inputs/);
-    const r = removeStep(both, "a", CAT);
+    const r = removeNode(both, "a", CAT);
     expect("error" in r && r.error).toMatch(/both input and inputs/);
   });
 
-  test("two ports of one step may both feed a union; the same edge twice may not", () => {
-    let text = ok(addStep(BILLING, "union", CAT));
+  test("two ports of one node may both feed a union; the same edge twice may not", () => {
+    let text = ok(addNode(BILLING, "union", CAT));
     text = ok(connect(text, { from: "joined", fromPort: "out", to: "union", toPort: "in" }, CAT));
     text = ok(connect(text, { from: "joined", fromPort: "rejected", to: "union", toPort: "in" }, CAT));
     expect(text).toContain("input: [joined, joined.rejected]");

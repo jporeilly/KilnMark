@@ -27,9 +27,9 @@ import io.kilnmark.kiln.plugins.write.WriteSettings;
 /**
  * The SQL a MySQL or MariaDB writer runs. Their CREATE, RENAME and DROP commit by themselves, so a
  * created or replacing table is filled under a temporary name ({@code kiln_new_…}) and given its
- * name at the end with {@code RENAME TABLE}, which renames several tables in one atomic step; a
+ * name at the end with {@code RENAME TABLE}, which renames several tables in one atomic node; a
  * failure drops it again. Values are bound as parameters (dates and times as text, so the driver
- * never applies Kilnmark's time zone) or, for tables the step created, streamed to
+ * never applies Kilnmark's time zone) or, for tables the node created, streamed to
  * {@code LOAD DATA LOCAL INFILE}. Sessions run in strict mode with time zone {@code +00:00}.
  *
  * <p>Table grants in MySQL belong to the table's name ({@code mysql.tables_priv}), not to the
@@ -233,7 +233,7 @@ final class MySqlWriteSql extends WriteSql {
     @Override
     String targetValueProblem(WritePlan.TargetColumn t, Object v) {
         if (t == null) {
-            return null; // a column the step created holds what it was made for
+            return null; // a column the node created holds what it was made for
         }
         if (t.typeName().equals("year") && v instanceof Long y && (y < 1901 || y > 2155)) {
             return "the year " + y + " is outside what a YEAR column holds (1901 to 2155)";
@@ -244,7 +244,7 @@ final class MySqlWriteSql extends WriteSql {
                 String fraction = text.substring(dot + 1).strip().replaceAll("0+$", "");
                 if (fraction.length() > t.scale()) {
                     return "the value " + text + " has more digits of a second than the column keeps (" + t.scale()
-                        + "), and is never rounded. Truncate it with a compute step, or ask for the column to keep more";
+                        + "), and is never rounded. Truncate it with a compute node, or ask for the column to keep more";
                 }
             }
         }
@@ -517,7 +517,7 @@ final class MySqlWriteSql extends WriteSql {
         return 16_383;
     }
 
-    /** {@code LOAD DATA LOCAL INFILE} for tables the step creates, unless {@code bulk_load} is false. */
+    /** {@code LOAD DATA LOCAL INFILE} for tables the node creates, unless {@code bulk_load} is false. */
     @Override
     boolean bulk(String mode, WriteSettings settings) throws ConnectorException {
         return (mode.equals("create") || mode.equals("replace")) && settings.bool("bulk_load", true);

@@ -20,9 +20,9 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
 import io.kilnmark.kiln.MetadataEvent;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
 
 /**
  * Reads one CSV, TSV, JSON, JSON lines or Parquet file into Arrow batches, streaming it.
@@ -36,11 +36,11 @@ import io.kilnmark.kiln.StepException;
  * <p>CSV and JSON are read with the column kinds the catalogue inferred; if the header has changed
  * since, or no columns were given, they are inferred again from the start of the file. A value that
  * does not parse as its column's kind is read as null and counted, never a failure. When it
- * finishes the step emits {@code ROW_COUNT} with {@code rows}, {@code complete} (false when the
+ * finishes the node emits {@code ROW_COUNT} with {@code rows}, {@code complete} (false when the
  * row limit cut the read short), {@code unparsed} (values read as null because they did not parse)
  * and, for JSON lines, {@code skipped} (lines that were not valid JSON).
  */
-public final class FileInput implements Step {
+public final class FileInput implements Node {
 
     public static final String TYPE = "file-input";
 
@@ -59,7 +59,7 @@ public final class FileInput implements Step {
     private boolean done;
 
     /**
-     * @param opener  opens the folder or bucket the file is in, when the step starts
+     * @param opener  opens the folder or bucket the file is in, when the node starts
      * @param columns the columns the catalogue found; may be empty
      */
     public FileInput(FileStore.Opener opener, List<FileColumn> columns) {
@@ -73,7 +73,7 @@ public final class FileInput implements Step {
     }
 
     @Override
-    public void init(StepContext context) throws StepException {
+    public void init(NodeContext context) throws NodeException {
         String path = context.setting("path");
         FileFormat format = FileFormat.byId(context.setting("format", FileFormat.of(path).id()));
         batchSize = Integer.parseInt(context.setting("batch-size", "8192"));
@@ -87,13 +87,13 @@ public final class FileInput implements Step {
                 case CSV, TSV -> csv(context, path, format);
                 case JSON, JSON_LINES -> json(context, path, format);
                 case PARQUET -> parquet(path, size);
-                case DOCUMENT -> throw new StepException(path + " is a document, not a data file: it is recorded, "
+                case DOCUMENT -> throw new NodeException(path + " is a document, not a data file: it is recorded, "
                     + "not read");
             };
         } catch (IOException | RuntimeException e) {
-            throw new StepException("Cannot read " + (label == null ? path : label) + ": " + e.getMessage(), e);
+            throw new NodeException("Cannot read " + (label == null ? path : label) + ": " + e.getMessage(), e);
         } catch (StackOverflowError e) {
-            throw new StepException("Cannot read " + (label == null ? path : label)
+            throw new NodeException("Cannot read " + (label == null ? path : label)
                 + ": its structure is nested too deeply to read", e);
         }
         List<Field> fields = new ArrayList<>(columns.size());
@@ -104,7 +104,7 @@ public final class FileInput implements Step {
     }
 
     /** The encoding given by the {@code encoding} setting, else detected from the file's first bytes. */
-    private Charset charset(StepContext context, String path) throws IOException {
+    private Charset charset(NodeContext context, String path) throws IOException {
         String name = context.settings().get("encoding");
         if (name != null && !name.isBlank()) {
             return Charset.forName(name.strip());
@@ -113,7 +113,7 @@ public final class FileInput implements Step {
         return FileInspector.encoding(head, head.length >= FileInspector.SAMPLE_BYTES, null);
     }
 
-    private Rows csv(StepContext context, String path, FileFormat format) throws IOException {
+    private Rows csv(NodeContext context, String path, FileFormat format) throws IOException {
         char delimiter = Csv.Dialect.parse(context.settings().get("delimiter"), format == FileFormat.TSV ? '\t' : ',');
         char quote = Csv.Dialect.parse(context.settings().get("quote"), '"');
         boolean sepLine = Boolean.parseBoolean(context.settings().get("sep-line"));
@@ -156,7 +156,7 @@ public final class FileInput implements Step {
     }
 
     /** A file whose first row is data: columns are column_1, column_2, ... and nothing is skipped but sep=. */
-    private Rows noHeader(StepContext context, String path, FileFormat format, char delimiter, char quote,
+    private Rows noHeader(NodeContext context, String path, FileFormat format, char delimiter, char quote,
                           boolean sepLine, Charset charset) throws IOException {
         if (columns.isEmpty()) {
             byte[] head = store.head(path, FileInspector.SAMPLE_BYTES);
@@ -177,7 +177,7 @@ public final class FileInput implements Step {
         }
     }
 
-    private Rows json(StepContext context, String path, FileFormat format) throws IOException {
+    private Rows json(NodeContext context, String path, FileFormat format) throws IOException {
         Charset charset = charset(context, path);
         if (catalogued.isEmpty()) {
             byte[] head = store.head(path, FileInspector.SAMPLE_BYTES);
@@ -227,7 +227,7 @@ public final class FileInput implements Step {
     }
 
     @Override
-    public boolean process(StepContext context) throws StepException {
+    public boolean process(NodeContext context) throws NodeException {
         VectorSchemaRoot batch = VectorSchemaRoot.create(schema, context.allocator());
         boolean limitReached = false;
         try {
@@ -253,7 +253,7 @@ public final class FileInput implements Step {
             read += n;
         } catch (IOException | RuntimeException e) {
             batch.close();
-            throw new StepException("Reading " + label + " failed after " + read + " rows" + rows.where() + ": "
+            throw new NodeException("Reading " + label + " failed after " + read + " rows" + rows.where() + ": "
                 + e.getMessage(), e);
         }
         try {
@@ -264,7 +264,7 @@ public final class FileInput implements Step {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StepException("Interrupted", e);
+            throw new NodeException("Interrupted", e);
         }
         if (limitReached) {
             boolean more;
@@ -283,7 +283,7 @@ public final class FileInput implements Step {
         return true;
     }
 
-    private void finish(StepContext context, boolean complete) {
+    private void finish(NodeContext context, boolean complete) {
         Map<String, String> attributes = new HashMap<>();
         attributes.put("rows", Long.toString(read));
         attributes.put("complete", Boolean.toString(complete));

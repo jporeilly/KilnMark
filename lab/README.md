@@ -116,7 +116,7 @@ in Kilnmark are kept. The bash script needs `python3`.
 All three read sources that `lab/sources.csv` registers and write only to the `lab-warehouse`
 bucket, under `demo/`. They need the sources scanned first, so that Kilnmark knows their columns.
 `LabPipelinesTest` (server tests) checks each file against the lab's columns, so a change to the
-steps that would break a demo fails the build. Add a demo by putting a file here whose `name`
+nodes that would break a demo fails the build. Add a demo by putting a file here whose `name`
 starts with `demo-`.
 
 ## Start just what you need

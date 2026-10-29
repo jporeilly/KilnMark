@@ -1,6 +1,6 @@
 /**
- * Rows a second through a run: each step's rate at each progress snapshot, and how full its output
- * queue was (back-pressure: the next step not keeping up), on the worker's clock from the run's
+ * Rows a second through a run: each node's rate at each progress snapshot, and how full its output
+ * queue was (back-pressure: the next node not keeping up), on the worker's clock from the run's
  * origin. Pure functions, unit tested.
  */
 import type { PipelineProgressSeries, PipelineRunDetail } from "../api";
@@ -9,12 +9,12 @@ import { runNow, runOrigin, type Clock } from "./timeline";
 export type RatePoint = { t: number; rate: number; fill: number };
 
 export type RateLine = {
-  step: string;
+  node: string;
   points: RatePoint[];
   peak: number;
-  /** The mean of the rates while the step was moving rows (points with a rate above 0). */
+  /** The mean of the rates while the node was moving rows (points with a rate above 0). */
   average: number;
-  /** It writes to a queue another step reads: its fill is shown. */
+  /** It writes to a queue another node reads: its fill is shown. */
   hasOutput: boolean;
   /** The share of the snapshots in which its output queue was full (fill of 95% or more). */
   fullShare: number;
@@ -30,15 +30,15 @@ export function rates(detail: PipelineRunDetail, series: PipelineProgressSeries 
   const origin = runOrigin(detail);
   if (!series || series.points.length === 0 || origin == null) return null;
   const outputs = new Set((detail.progress?.edges ?? []).map((e) => e.from));
-  const lines = series.steps.map((step, i) => {
+  const lines = series.nodes.map((node, i) => {
     const points = series.points.map((p) => ({ t: p.t, rate: p.r[i] ?? 0, fill: p.q[i] ?? 0 }));
     const moving = points.filter((p) => p.rate > 0);
     return {
-      step,
+      node,
       points,
       peak: Math.max(0, ...points.map((p) => p.rate)),
       average: moving.length ? moving.reduce((a, p) => a + p.rate, 0) / moving.length : 0,
-      hasOutput: outputs.has(step) || points.some((p) => p.fill > 0),
+      hasOutput: outputs.has(node) || points.some((p) => p.fill > 0),
       fullShare: points.length ? points.filter((p) => p.fill >= FULL).length / points.length : 0,
     };
   });

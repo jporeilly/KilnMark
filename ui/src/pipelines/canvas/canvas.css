@@ -10,12 +10,12 @@
   margin: 0;
 }
 
-/* The stage: the step list (rail, and the docked list when open), the canvas, and the drawers over it. */
+/* The stage: the node list (rail, and the docked list when open), the canvas, and the drawers over it. */
 .cv-stage {
   position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  /* One row the stage's height, so a long step list scrolls inside it rather than stretching it. */
+  /* One row the stage's height, so a long node list scrolls inside it rather than stretching it. */
   grid-template-rows: minmax(0, 1fr);
   gap: 8px;
   height: max(480px, calc(100vh - var(--km-topbar-h) - 150px));
@@ -26,7 +26,7 @@
   font-size: var(--km-text-md);
 }
 
-/* ---- the step list: icon rail and, docked beside it, the tree ---- */
+/* ---- the node list: icon rail and, docked beside it, the tree ---- */
 
 .cv-palette {
   position: relative;
@@ -421,7 +421,7 @@
   margin: 0;
 }
 
-/* ---- a step ---- */
+/* ---- a node ---- */
 
 .cv-node {
   width: 212px;
@@ -449,7 +449,7 @@
   border-color: var(--km-accent);
 }
 
-/* While a run goes: the step holding it back has a thicker edge in the orange of its "Slowest" chip
+/* While a run goes: the node holding it back has a thicker edge in the orange of its "Slowest" chip
    (the chip says it in words). */
 .cv-node.is-slowest {
   box-shadow: 0 0 0 3px var(--km-tint-orange-bg), var(--km-shadow-card);
@@ -533,8 +533,8 @@
 }
 
 /*
- * The chips under a step (StepNode's stepChips): a row per kind, each row one chip high, so a
- * step's height is known before it is drawn (layout.ts nodeHeight: BADGE_ROW per row). Rows and
+ * The chips under a node (NodeCard's nodeChips): a row per kind, each row one chip high, so a
+ * node's height is known before it is drawn (layout.ts nodeHeight: BADGE_ROW per row). Rows and
  * outcome are neutral, measured quality is solid and toned by score, predicted quality is a dashed
  * violet outline (an estimate, in the AI hue, never a traffic light), and a gate's counts are text.
  */
@@ -617,7 +617,7 @@
 
 /* ---- the settings panel ---- */
 
-/* The selected step's settings: a drawer over the right of the canvas. */
+/* The selected node's settings: a drawer over the right of the canvas. */
 .cv-drawer {
   position: absolute;
   top: 0;
@@ -750,7 +750,7 @@
 }
 
 .cv-field-problems,
-.cv-step-problems {
+.cv-node-problems {
   margin: 0;
   padding: 6px 8px 6px 22px;
   border-left: 4px solid var(--km-bad);
@@ -1049,7 +1049,7 @@ button.cv-danger {
   font-weight: 600;
 }
 
-/* ---- a step's context menu, and the drawer's Preview tab ---- */
+/* ---- a node's context menu, and the drawer's Preview tab ---- */
 
 .cv-menu {
   position: fixed;

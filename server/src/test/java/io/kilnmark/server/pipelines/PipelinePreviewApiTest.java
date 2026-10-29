@@ -38,7 +38,7 @@ class PipelinePreviewApiTest {
     static final String YAML = """
         kilnmark: pipeline/v1
         name: preview-people
-        steps:
+        nodes:
           - id: people
             type: read
             source: preview-src
@@ -80,9 +80,9 @@ class PipelinePreviewApiTest {
             "settings", Map.of("rows", "100000"), "password", "preview-secret-55")).post("/api/v1/sources").then()
             .statusCode(201);
 
-        JsonPath p = as(steward).body(Map.of("yaml", YAML, "step", "tidy", "rows", 7)).post("/api/v1/pipelines/preview")
+        JsonPath p = as(steward).body(Map.of("yaml", YAML, "node", "tidy", "rows", 7)).post("/api/v1/pipelines/preview")
             .then().statusCode(200).header("Cache-Control", containsString("no-store")).extract().jsonPath();
-        assertEquals("tidy", p.getString("step"));
+        assertEquals("tidy", p.getString("node"));
         assertEquals("out", p.getString("port"));
         assertEquals(7, p.getInt("rowCount"));
         assertEquals(List.of("id", "name", "shout"), p.getList("columns.name"));
@@ -96,21 +96,21 @@ class PipelinePreviewApiTest {
     @Test
     @Order(2)
     void viewersAndStrangersGetTheUsualErrors() {
-        as(viewer).body(Map.of("yaml", YAML, "step", "tidy")).post("/api/v1/pipelines/preview").then().statusCode(403);
-        given().contentType(ContentType.JSON).body(Map.of("yaml", YAML, "step", "tidy"))
+        as(viewer).body(Map.of("yaml", YAML, "node", "tidy")).post("/api/v1/pipelines/preview").then().statusCode(403);
+        given().contentType(ContentType.JSON).body(Map.of("yaml", YAML, "node", "tidy"))
             .post("/api/v1/pipelines/preview").then().statusCode(401);
     }
 
     @Test
     @Order(3)
     void writesAndBadRequestsAreRefusedPlainly() {
-        as(steward).body(Map.of("yaml", YAML, "step", "out")).post("/api/v1/pipelines/preview").then().statusCode(400)
+        as(steward).body(Map.of("yaml", YAML, "node", "out")).post("/api/v1/pipelines/preview").then().statusCode(400)
             .body("error", containsString("writes rows"));
-        as(steward).body(Map.of("yaml", YAML, "step", "nowhere")).post("/api/v1/pipelines/preview").then()
-            .statusCode(400).body("error", startsWith("step: there is no step called 'nowhere'"));
-        as(steward).body(Map.of("yaml", YAML, "step", "tidy", "rows", 5000)).post("/api/v1/pipelines/preview").then()
+        as(steward).body(Map.of("yaml", YAML, "node", "nowhere")).post("/api/v1/pipelines/preview").then()
+            .statusCode(400).body("error", startsWith("node: there is no node called 'nowhere'"));
+        as(steward).body(Map.of("yaml", YAML, "node", "tidy", "rows", 5000)).post("/api/v1/pipelines/preview").then()
             .statusCode(400).body("error", equalTo("rows: from 1 to 1000"));
-        as(steward).body(Map.of("yaml", YAML, "step", "named", "port", "nope")).post("/api/v1/pipelines/preview")
+        as(steward).body(Map.of("yaml", YAML, "node", "named", "port", "nope")).post("/api/v1/pipelines/preview")
             .then().statusCode(400).body("error", containsString("its outputs are out, rejected"));
     }
 
@@ -119,14 +119,14 @@ class PipelinePreviewApiTest {
     void aSavedVersionCanBePreviewed() {
         as(steward).body(Map.of("name", "preview-people", "yaml", YAML)).post("/api/v1/pipelines").then()
             .statusCode(201);
-        as(steward).body(Map.of("step", "named", "port", "rejected", "rows", 3))
+        as(steward).body(Map.of("node", "named", "port", "rejected", "rows", 3))
             .post("/api/v1/pipelines/preview-people/versions/1/preview").then().statusCode(200)
             .body("port", equalTo("rejected")).body("rows[0][1]", equalTo("Person 2"));
-        as(steward).body(Map.of("step", "named")).post("/api/v1/pipelines/preview-people/versions/9/preview").then()
+        as(steward).body(Map.of("node", "named")).post("/api/v1/pipelines/preview-people/versions/9/preview").then()
             .statusCode(404);
-        Tokens.as(steward).contentType(ContentType.TEXT).body("step=named")
+        Tokens.as(steward).contentType(ContentType.TEXT).body("node=named")
             .post("/api/v1/pipelines/preview-people/versions/1/preview").then().statusCode(415);
-        as(viewer).body(Map.of("step", "named")).post("/api/v1/pipelines/preview-people/versions/1/preview").then()
+        as(viewer).body(Map.of("node", "named")).post("/api/v1/pipelines/preview-people/versions/1/preview").then()
             .statusCode(403);
     }
 
@@ -146,23 +146,23 @@ class PipelinePreviewApiTest {
         as(steward).body(Map.of("field", "name", "sensitive", true)).queryParam("urn", URN)
             .put("/api/v1/quality/asset/sensitive").then().statusCode(204);
 
-        JsonPath masked = as(steward).body(Map.of("yaml", YAML, "step", "people", "rows", 3))
+        JsonPath masked = as(steward).body(Map.of("yaml", YAML, "node", "people", "rows", 3))
             .post("/api/v1/pipelines/preview").then().statusCode(200).extract().jsonPath();
         assertEquals(List.of("name"), masked.getList("masked"));
         assertEquals(List.of("1", Masking.MASK), masked.getList("rows[0]"));
         // Nothing upstream may look inside it: a calculation or a condition on it is refused.
-        as(steward).body(Map.of("yaml", YAML, "step", "tidy")).post("/api/v1/pipelines/preview").then()
-            .statusCode(403).body("error", startsWith("Only an admin can preview this: step tidy (compute) works out "
+        as(steward).body(Map.of("yaml", YAML, "node", "tidy")).post("/api/v1/pipelines/preview").then()
+            .statusCode(403).body("error", startsWith("Only an admin can preview this: node tidy (compute) works out "
                 + "a value from name"));
-        as(steward).body(Map.of("yaml", YAML, "step", "named")).post("/api/v1/pipelines/preview").then()
-            .statusCode(403).body("error", startsWith("Only an admin can preview this: step named (filter) chooses "
+        as(steward).body(Map.of("yaml", YAML, "node", "named")).post("/api/v1/pipelines/preview").then()
+            .statusCode(403).body("error", startsWith("Only an admin can preview this: node named (filter) chooses "
                 + "rows by name"));
 
-        JsonPath open = as(Tokens.ADMIN).body(Map.of("yaml", YAML, "step", "tidy", "rows", 3))
+        JsonPath open = as(Tokens.ADMIN).body(Map.of("yaml", YAML, "node", "tidy", "rows", 3))
             .post("/api/v1/pipelines/preview").then().statusCode(200).extract().jsonPath();
         assertEquals(List.of(), open.getList("masked"));
         assertEquals("PERSON 1", open.getString("rows[0][2]"));
-        as(Tokens.ADMIN).body(Map.of("yaml", YAML, "step", "named", "rows", 2)).post("/api/v1/pipelines/preview")
+        as(Tokens.ADMIN).body(Map.of("yaml", YAML, "node", "named", "rows", 2)).post("/api/v1/pipelines/preview")
             .then().statusCode(200).body("rowCount", equalTo(2));
     }
 }

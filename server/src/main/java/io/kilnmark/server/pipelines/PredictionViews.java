@@ -23,15 +23,15 @@ public final class PredictionViews {
     }
 
     /**
-     * The predicted quality of a pipeline: rows on each step's output ports (null when unknown), and
+     * The predicted quality of a pipeline: rows on each node's output ports (null when unknown), and
      * each write ({@code output}) and gate. {@code valid} is whether the YAML has no problems; a
      * pipeline with problems is still predicted as far as it can be.
      */
-    public record Prediction(boolean estimate, boolean valid, List<PredictedStep> steps, List<PredictedQuality> outputs) {
+    public record Prediction(boolean estimate, boolean valid, List<PredictedNode> nodes, List<PredictedQuality> outputs) {
     }
 
     /** Rows estimated to leave each output port. */
-    public record PredictedStep(String step, String type, Map<String, Long> rows) {
+    public record PredictedNode(String node, String type, Map<String, Long> rows) {
     }
 
     /**
@@ -39,7 +39,7 @@ public final class PredictionViews {
      * dimension only those the metadata can tell. {@code unknown} says what could not be told,
      * {@code assumptions} what was assumed. {@code rows} the rows expected to arrive, or null.
      */
-    public record PredictedQuality(String step, String role, String asset, Double overall, Map<String, Double> dimensions,
+    public record PredictedQuality(String node, String role, String asset, Double overall, Map<String, Double> dimensions,
                                    List<String> reasons, List<String> unknown, List<String> assumptions, Long rows,
                                    PredictedGate gate) {
     }
@@ -62,17 +62,17 @@ public final class PredictionViews {
     }
 
     /**
-     * A suggestion: the steps to add (in order) and where (cut the connection from {@code from} into
-     * {@code before}.{@code port}; the first new step reads {@code from}, {@code before} then reads
+     * A suggestion: the nodes to add (in order) and where (cut the connection from {@code from} into
+     * {@code before}.{@code port}; the first new node reads {@code from}, {@code before} then reads
      * {@code through}), with the predicted effect on that write's score. {@code source} is
      * {@code rules} (Kilnmark's own) or {@code ai}.
      */
     public record SuggestionView(String id, String kind, String title, String why, String source,
-                                 List<NewStepView> steps, PlacementView placement, EffectView effect) {
+                                 List<NewNodeView> nodes, PlacementView placement, EffectView effect) {
     }
 
-    /** A step to add: id, type, its settings as YAML holds them, and its inputs (port to step[.port]). */
-    public record NewStepView(String id, String type, Map<String, Object> settings, Map<String, String> inputs) {
+    /** A node to add: id, type, its settings as YAML holds them, and its inputs (port to node[.port]). */
+    public record NewNodeView(String id, String type, Map<String, Object> settings, Map<String, String> inputs) {
     }
 
     public record PlacementView(String before, String port, String from, String through) {
@@ -97,12 +97,12 @@ public final class PredictionViews {
 
     static Prediction of(QualityPredictor.Result r, boolean valid) {
         return new Prediction(true, valid,
-            r.steps().stream().map(s -> new PredictedStep(s.step(), s.type(), s.rows())).toList(),
+            r.nodes().stream().map(s -> new PredictedNode(s.node(), s.type(), s.rows())).toList(),
             r.outputs().stream().map(PredictionViews::of).toList());
     }
 
     static PredictedQuality of(QualityPredictor.Predicted p) {
-        return new PredictedQuality(p.step(), p.role(), p.asset(), p.overall(), p.dimensions(), p.reasons(), p.unknown(),
+        return new PredictedQuality(p.node(), p.role(), p.asset(), p.overall(), p.dimensions(), p.reasons(), p.unknown(),
             p.assumptions(), p.rows(), of(p.gate()));
     }
 
@@ -120,7 +120,7 @@ public final class PredictionViews {
     static SuggestionView of(PipelineAdvisor.Suggestion s) {
         PipelineAdvisor.Effect e = s.effect();
         return new SuggestionView(s.id(), s.kind(), s.title(), s.why(), s.source(),
-            s.steps().stream().map(n -> new NewStepView(n.id(), n.type(), n.settings(), n.inputs())).toList(),
+            s.nodes().stream().map(n -> new NewNodeView(n.id(), n.type(), n.settings(), n.inputs())).toList(),
             new PlacementView(s.placement().before(), s.placement().port(), s.placement().from(),
                 s.placement().through()),
             e == null ? null : new EffectView(e.output(), e.before(), e.after(), e.dimensionsBefore(),

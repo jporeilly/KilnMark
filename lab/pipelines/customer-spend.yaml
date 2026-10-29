@@ -6,7 +6,7 @@ kilnmark: pipeline/v1
 name: demo-customer-spend
 description: Spend per lab customer, with name and segment, and the big spenders on their own.
 
-steps:
+nodes:
   - id: transactions
     type: read
     source: lab-db

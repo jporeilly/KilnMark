@@ -181,7 +181,7 @@ bomb, too slow, ...).
 ## Left out, for later
 
 - **OCR** (scanned PDFs, images): Tesseract is a native program, and slow. A later option, as a
-  separate worker image or an AI step (round 3 can read images with a vision model).
+  separate worker image or an AI node (round 3 can read images with a vision model).
 - **Encrypted documents** (password-protected Office files and PDFs, S/MIME mail): they need Bouncy
   Castle (8 MB) and the password. Recorded as not readable, saying they are protected.
 - **Mailboxes** (.pst, .ost, .mbox), **Access** (.mdb, .accdb), Apple iWork, WordPerfect, Visio,
@@ -194,11 +194,11 @@ bomb, too slow, ...).
 
 Chunks leave the reader as Arrow rows (`DocumentEvents.CHUNK_SCHEMA`: `asset_urn`, `sequence`,
 `text`, `page`, `start_offset`, `end_offset`), and the server's document pipeline is
-`read` (`DocumentInput`) then `store-text` (`ChunkRows` in `DocumentScan.read`). An embedding step
+`read` (`DocumentInput`) then `store-text` (`ChunkRows` in `DocumentScan.read`). An embedding node
 goes between the two: it takes the batches, adds a vector column from `text`, and passes them on;
 `ChunkRows` and `DocumentStore.replaceChunks` then store the vector in a new `embedding vector(n)`
 column on `document_chunk` (with the model name, as dimensions differ). Chunks are about 1,500
-characters (roughly 350 to 400 tokens), within every common embedding model's input. The step must
+characters (roughly 350 to 400 tokens), within every common embedding model's input. The node must
 honour the source's `ai_egress` setting, and a source with `keep_text=false` has no chunks to embed.
 Re-embedding after a model change can read stored chunks (`GET /api/v1/documents/chunks`, or
 `DocumentStore.chunks`) without reading the documents again.

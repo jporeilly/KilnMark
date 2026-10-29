@@ -231,7 +231,7 @@ public class NotificationPublisher {
 
     /**
      * As {@link #pipelineRunFinished(String, long, String, Double, Double, String)}, naming the write
-     * step whose output scored lowest ({@code output}, or null), so the notification says which.
+     * node whose output scored lowest ({@code output}, or null), so the notification says which.
      */
     public void pipelineRunFinished(String pipeline, long runId, String status, Double score, Double threshold,
                                     String output, String link) {
@@ -247,7 +247,7 @@ public class NotificationPublisher {
         String key = "pipeline:" + pipeline;
         if ("failed".equals(status)) {
             publish(new NotificationEvent(NotificationKind.PIPELINE_FAILED, Severity.HIGH, null, "Run " + runId + " of "
-                + pipeline + " failed", "The pipeline run failed. Open the run to see which step stopped it.", link,
+                + pipeline + " failed", "The pipeline run failed. Open the run to see which node stopped it.", link,
                 null, null, null, key, null));
             return;
         }
@@ -258,7 +258,7 @@ public class NotificationPublisher {
         if (score != null && threshold != null && score < threshold) {
             publish(new NotificationEvent(NotificationKind.PIPELINE_LOW_QUALITY, Severity.MEDIUM, null,
                 "Run " + runId + " of " + pipeline + " wrote data below its quality threshold", "Quality score "
-                    + percent(score) + (output == null ? "" : " for what step " + output + " wrote")
+                    + percent(score) + (output == null ? "" : " for what node " + output + " wrote")
                     + ", below the pipeline's threshold of " + percent(threshold) + ".", link, null,
                 null, null, "pipeline-quality:" + runId, null));
         }

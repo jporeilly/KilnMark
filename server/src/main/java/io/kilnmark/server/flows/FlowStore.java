@@ -28,7 +28,7 @@ public class FlowStore {
                        Instant createdAt, String updatedBy, Instant updatedAt) {
     }
 
-    /** {@code problems} is a JSON array of {line, column, step, message}. */
+    /** {@code problems} is a JSON array of {line, column, node, message}. */
     public record Version(String flow, int n, String yaml, String message, String author, Instant createdAt,
                           boolean valid, String problems) {
     }
@@ -43,8 +43,8 @@ public class FlowStore {
         }
     }
 
-    /** {@code reported} is a JSON object of what the step reported; {@code pipelineRunId} is null for other steps. */
-    public record StepRun(String stepId, String type, int position, String status, Instant startedAt,
+    /** {@code reported} is a JSON object of what the node reported; {@code pipelineRunId} is null for other nodes. */
+    public record NodeRun(String nodeId, String type, int position, String status, Instant startedAt,
                           Instant finishedAt, Long pipelineRunId, String message, String reported) {
     }
 
@@ -411,9 +411,9 @@ public class FlowStore {
      */
     public int failOrphanedRuns() {
         return db.tx(c -> {
-            // Steps of those runs still marked running will never end: say so.
+            // Nodes of those runs still marked running will never end: say so.
             try (PreparedStatement ps = c.prepareStatement("""
-                UPDATE kilnmark.flow_step_run s SET status = 'failed', finished_at = now(),
+                UPDATE kilnmark.flow_node_run s SET status = 'failed', finished_at = now(),
                     message = 'The worker running this flow stopped'
                 FROM kilnmark.flow_run r, kilnmark.job j
                 WHERE s.run_id = r.id AND s.status = 'running' AND r.status IN ('queued', 'running')
@@ -433,20 +433,20 @@ public class FlowStore {
         });
     }
 
-    // ---- steps ----
+    // ---- nodes ----
 
-    /** Records a step as running, or its ending: one row per step and run, replaced as it changes. */
-    public void saveStep(long runId, StepRun s) {
+    /** Records a node as running, or its ending: one row per node and run, replaced as it changes. */
+    public void saveNode(long runId, NodeRun s) {
         db.tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.flow_step_run (run_id, step_id, type, "
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.flow_node_run (run_id, node_id, type, "
                 + "position, status, started_at, finished_at, pipeline_run_id, message, reported) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb) ON CONFLICT (run_id, step_id) DO UPDATE SET "
-                + "status = EXCLUDED.status, started_at = coalesce(EXCLUDED.started_at, flow_step_run.started_at), "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb) ON CONFLICT (run_id, node_id) DO UPDATE SET "
+                + "status = EXCLUDED.status, started_at = coalesce(EXCLUDED.started_at, flow_node_run.started_at), "
                 + "finished_at = EXCLUDED.finished_at, "
-                + "pipeline_run_id = coalesce(EXCLUDED.pipeline_run_id, flow_step_run.pipeline_run_id), "
+                + "pipeline_run_id = coalesce(EXCLUDED.pipeline_run_id, flow_node_run.pipeline_run_id), "
                 + "message = EXCLUDED.message, reported = EXCLUDED.reported")) {
                 ps.setLong(1, runId);
-                ps.setString(2, s.stepId());
+                ps.setString(2, s.nodeId());
                 ps.setString(3, s.type());
                 ps.setInt(4, s.position());
                 ps.setString(5, s.status());
@@ -465,12 +465,12 @@ public class FlowStore {
         });
     }
 
-    public List<StepRun> stepRuns(long runId) {
+    public List<NodeRun> nodeRuns(long runId) {
         return db.tx(c -> {
-            List<StepRun> out = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement("SELECT step_id, type, position, status, started_at, "
-                + "finished_at, pipeline_run_id, message, reported::text FROM kilnmark.flow_step_run "
-                + "WHERE run_id = ? ORDER BY position, step_id")) {
+            List<NodeRun> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT node_id, type, position, status, started_at, "
+                + "finished_at, pipeline_run_id, message, reported::text FROM kilnmark.flow_node_run "
+                + "WHERE run_id = ? ORDER BY position, node_id")) {
                 ps.setLong(1, runId);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
@@ -478,7 +478,7 @@ public class FlowStore {
                         Instant finished = at(rs, 6);
                         long p = rs.getLong(7);
                         Long pipelineRun = rs.wasNull() ? null : p;
-                        out.add(new StepRun(rs.getString(1), rs.getString(2), rs.getInt(3), rs.getString(4),
+                        out.add(new NodeRun(rs.getString(1), rs.getString(2), rs.getInt(3), rs.getString(4),
                             started, finished, pipelineRun, rs.getString(8), rs.getString(9)));
                     }
                 }

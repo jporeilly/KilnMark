@@ -14,7 +14,7 @@ import com.fasterxml.jackson.core.io.JsonStringEncoder;
 
 /**
  * What a document reader reports: one {@code DOCUMENT} event per document (and per attachment of
- * a mail message), and the text's chunks as Arrow rows. The server stores both; a step placed
+ * a mail message), and the text's chunks as Arrow rows. The server stores both; a node placed
  * between the reader and the store (embeddings, later) sees every chunk as a row with a
  * {@value #TEXT} column.
  */

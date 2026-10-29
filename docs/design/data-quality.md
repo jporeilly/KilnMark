@@ -112,16 +112,16 @@ and the MCP server expose it. Open formats at the edges:
 
 ## 7. Quality gate for pipelines
 
-A pipeline's read step can require the asset's contract to hold. It either uses the latest
+A pipeline's read node can require the asset's contract to hold. It either uses the latest
 results when they are recent enough or runs the checks inline. On failure the run stops, or the
 failing rows are diverted to a quarantine output, as the pipeline chooses.
 
-Built so far (docs/guide/pipelines.md, "Quality gates"): a `gate` step that runs the asset's
-enabled rules, and rules written on the step, inline on the Arrow batches passing through
+Built so far (docs/guide/pipelines.md, "Quality gates"): a `gate` node that runs the asset's
+enabled rules, and rules written on the node, inline on the Arrow batches passing through
 (`RowChecks`, one pass, no second read), with `on_fail: stop`, `quarantine` (a `quarantine`
 output port) or `warn`, and run-level thresholds (`min_score`, `max_failing_share`). Each gate and
 each write gets a measured score per dimension and overall, stored with the run
-(`pipeline_step_quality`, beside an empty `predicted` for section 8's design-time scores), and a
+(`pipeline_node_quality`, beside an empty `predicted` for section 8's design-time scores), and a
 pipeline's `quality.min_score` tells its followers of a run whose outputs score below it. Still to
 come: reusing recent results when the change check says the source is unchanged.
 
@@ -132,14 +132,14 @@ Pipelines do not re-read sources to find out what they hold.
 
 - **At design time, no data is read.** A pipeline's inputs already have profiles, patterns,
   samples, relationships and rule results in the catalogue. Kilnmark propagates them through the
-  steps to predict the quality of each output. A not-null filter drops a known share of rows. A
+  nodes to predict the quality of each output. A not-null filter drops a known share of rows. A
   join's orphan rate comes from the stored sketches. A date parse fails on the share of values in
   other shapes. The pipeline gets a predicted quality score per output and per dimension before
   it ever runs.
 - **AI suggests improvements from that metadata**, for example: trim these columns, standardise
   the two date formats, deduplicate on this key, repair these orphans with a lookup, quarantine
   rows outside the accepted patterns. Each suggestion shows its predicted effect on the score. A
-  person adds the ones they want as steps.
+  person adds the ones they want as nodes.
 - **At run time, nothing is read twice.** Before reading, the gate checks whether the source
   changed since its last profile (row count and watermark, file size and modified time or ETag,
   database change markers). If it did not change, the stored results stand. While data flows,
@@ -161,7 +161,7 @@ where the metadata, or the pipeline, needs attention.
 Built (docs/guide/pipelines.md, "Predicted quality"):
 
 - **Prediction** (`QualityPredictor`): each read's latest profile, accepted shapes, relationships
-  and rule results, carried through the steps with a rule per step type, to an estimated profile
+  and rule results, carried through the nodes with a rule per node type, to an estimated profile
   at each write, scored with the same `Measures` and `Scores` a run uses for what it wrote (so the
   dimensions match), and to each gate's rules' failing shares, scored as the gate scores itself.
   Unknown stays unknown: a dimension without evidence gets no score, and each prediction lists
@@ -169,7 +169,7 @@ Built (docs/guide/pipelines.md, "Predicted quality"):
   containment, else from the two columns' HyperLogLog sketches (`Containment`), as a share of
   distinct values used as a share of rows. `POST /api/v1/pipelines/predict` (YAML in, for the
   canvas, debounced) and `GET /api/v1/pipelines/{name}/versions/{n}/prediction`; no source is read.
-- **At run start** each write's and gate's prediction is stored in `pipeline_step_quality`
+- **At run start** each write's and gate's prediction is stored in `pipeline_node_quality`
   (`predicted`, `predicted_dimensions`, and V17's `predicted_detail`: reasons, unknowns,
   assumptions, rows, a gate's expected decision), beside what the run then measures; a run that
   fails keeps its predictions.
@@ -180,8 +180,8 @@ Built (docs/guide/pipelines.md, "Predicted quality"):
   out). The AI feature `pipeline_suggestions` ranks, explains and adds; it is sent metadata only of
   columns whose source's `ai_egress` allows that model (`EgressPolicy`), never values, never a
   computed column, and the gateway checks the call again against the strictest source shown. Its
-  additions are checked like the rest (step types the server has, the settings they take, columns
-  it was shown that reach that point, the step's own check and output schema) and dropped
+  additions are checked like the rest (node types the server has, the settings they take, columns
+  it was shown that reach that point, the node's own check and output schema) and dropped
   otherwise.
 
 ## 9. Drift

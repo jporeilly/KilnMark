@@ -15,7 +15,7 @@ from round 3 the pipeline palette of inputs and outputs.
   so on. One folder or bucket connection reads every supported format inside it. A source can be
   limited to some formats, and discovery shows how many files of each format it found.
 
-Pipelines (round 3) use both: an input step names a connection and, for files and streams, a
+Pipelines (round 3) use both: an input node names a connection and, for files and streams, a
 format with its options (delimiter, record path, schema).
 
 ## Categories

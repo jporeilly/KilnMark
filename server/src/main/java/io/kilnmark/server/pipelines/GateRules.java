@@ -18,7 +18,7 @@ import io.kilnmark.server.quality.RuleDraft;
 import io.kilnmark.server.quality.RuleType;
 
 /**
- * The quality rules written on a gate step ({@code rules:}), read into {@link Rule}s with the same
+ * The quality rules written on a gate node ({@code rules:}), read into {@link Rule}s with the same
  * checks a rule made in the quality pages gets ({@link RuleDraft#check}). In YAML each rule is a
  * mapping with {@code snake_case} keys:
  *

@@ -21,13 +21,13 @@ import io.kilnmark.kiln.graph.RunProgress;
  * A run's log and progress, as the worker hears them (V19, docs/design/pipelines.md section 5,
  * "Seeing inside a run"). The engine's calls are kept and written to {@code pipeline_run_event} in
  * batches, with each progress snapshot (about every two seconds) and when the run ends; the snapshot
- * itself goes to {@code pipeline_run.progress}, and each step's rows a second and output fill, a point
+ * itself goes to {@code pipeline_run.progress}, and each node's rows a second and output fill, a point
  * at a time, to {@code pipeline_run_point} (appended, never rewritten), so the API, which may be another
  * container, reads them from the database. Every time is on the worker's clock: the snapshot says when the worker started on
  * the run ({@code workerStartedAt}) and, once it has finished, when it did, so pages never mix it with
  * the database's or the browser's clock.
  *
- * <p>Event text is the server's own words. Anything an engine says (a step's error, a stall) is the
+ * <p>Event text is the server's own words. Anything an engine says (a node's error, a stall) is the
  * event's detail, with the run's secrets blanked out, and is held back from callers as the run's other
  * messages are. At most {@value #MAX_EVENTS} events are kept, then one saying the log was cut short.
  * Nothing here ever fails the run: a database problem is logged and the log goes on without it.
@@ -59,9 +59,9 @@ final class RunLog implements RunListener {
     private long progressWritten; // System.nanoTime() of the last progress write, 0 for none; guarded by this
     private ObjectNode lastProgress; // guarded by this
     private boolean finished;     // guarded by this: the worker is done; a late snapshot changes nothing
-    // Rows a second: the steps' order, the points kept (as written), how many snapshots a point stands
+    // Rows a second: the nodes' order, the points kept (as written), how many snapshots a point stands
     // for, and the point being filled (the highest rate and fill of its snapshots so far).
-    private final List<String> seriesSteps = new ArrayList<>(); // guarded by this
+    private final List<String> seriesNodes = new ArrayList<>(); // guarded by this
     private final List<PipelineStore.Point> points = new ArrayList<>(); // guarded by this
     private int stride = 1;       // guarded by this
     private int inBucket;         // guarded by this
@@ -70,7 +70,7 @@ final class RunLog implements RunListener {
     private double[] bucketFills; // guarded by this
     private Set<String> gates = Set.of();
     private final Set<String> quarantining = new HashSet<>(); // gates said to have started setting rows aside
-    private final Set<String> ended = new HashSet<>();        // steps said to have ended; guarded by this
+    private final Set<String> ended = new HashSet<>();        // nodes said to have ended; guarded by this
 
     RunLog(PipelineStore store, long runId, RunContext context, ObjectMapper json) {
         this.store = store;
@@ -79,7 +79,7 @@ final class RunLog implements RunListener {
         this.json = json;
     }
 
-    /** The pipeline's gate steps: the first rows a gate sends anywhere but on {@code out} are it setting rows aside. */
+    /** The pipeline's gate nodes: the first rows a gate sends anywhere but on {@code out} are it setting rows aside. */
     void gates(Set<String> ids) {
         gates = Set.copyOf(ids);
     }
@@ -92,27 +92,27 @@ final class RunLog implements RunListener {
     // ---- what the engine says ----
 
     @Override
-    public void stepStarted(String step, Instant at) {
-        add(at, step, "info", "step_started", "Step " + step + " started", null);
+    public void nodeStarted(String node, Instant at) {
+        add(at, node, "info", "node_started", "Node " + node + " started", null);
     }
 
     @Override
-    public void firstRowIn(String step, Instant at) {
-        add(at, step, "info", "first_row_in", "Step " + step + " received its first row", null);
+    public void firstRowIn(String node, Instant at) {
+        add(at, node, "info", "first_row_in", "Node " + node + " received its first row", null);
     }
 
     @Override
-    public void firstRowOut(String step, Instant at) {
-        add(at, step, "info", "first_row_out", "Step " + step + " handed on its first row", null);
+    public void firstRowOut(String node, Instant at) {
+        add(at, node, "info", "first_row_out", "Node " + node + " handed on its first row", null);
     }
 
     @Override
-    public void lastRowOut(String step, Instant at) {
-        add(at, step, "info", "last_row_out", "Step " + step + " handed on its last row", null);
+    public void lastRowOut(String node, Instant at) {
+        add(at, node, "info", "last_row_out", "Node " + node + " handed on its last row", null);
     }
 
     @Override
-    public void stepEnded(String step, RunResult.Outcome outcome, Instant at) {
+    public void nodeEnded(String node, RunResult.Outcome outcome, Instant at) {
         String level = switch (outcome) {
             case FAILED -> "error";
             case STOPPED -> "warn";
@@ -120,10 +120,10 @@ final class RunLog implements RunListener {
         };
         boolean again;
         synchronized (this) {
-            again = !ended.add(step);
+            again = !ended.add(node);
         }
-        if (again) { // the engine found, once every step had ended, that it had not freed its memory
-            add(at, step, level, "step_ended", "Step " + step + " counted as " + (outcome == RunResult.Outcome.FAILED
+        if (again) { // the engine found, once every node had ended, that it had not freed its memory
+            add(at, node, level, "node_ended", "Node " + node + " counted as " + (outcome == RunResult.Outcome.FAILED
                 ? "failed: it did not free all its memory" : outcome.name().toLowerCase(Locale.ROOT)), null);
             return;
         }
@@ -133,42 +133,42 @@ final class RunLog implements RunListener {
             case STOPPED -> "was stopped by the engine";
             case FAILED -> "failed";
         };
-        add(at, step, level, "step_ended", "Step " + step + " " + how, null);
+        add(at, node, level, "node_ended", "Node " + node + " " + how, null);
     }
 
     @Override
-    public void note(Level level, String step, String text) {
-        note(level, step, text, Instant.now());
+    public void note(Level level, String node, String text) {
+        note(level, node, text, Instant.now());
     }
 
     /** The engine's own words may quote the data: they are the detail, under the server's words. */
     @Override
-    public void note(Level level, String step, String text, Instant at) {
+    public void note(Level level, String node, String text, Instant at) {
         String l = level.name().toLowerCase(Locale.ROOT);
         String words = switch (level) {
-            case ERROR -> (step == null ? "The engine" : "Step " + step) + " reported an error";
-            case WARN -> (step == null ? "The engine" : "Step " + step) + " reported a warning";
-            case INFO -> (step == null ? "The engine" : "Step " + step) + " reported a note";
+            case ERROR -> (node == null ? "The engine" : "Node " + node) + " reported an error";
+            case WARN -> (node == null ? "The engine" : "Node " + node) + " reported a warning";
+            case INFO -> (node == null ? "The engine" : "Node " + node) + " reported a note";
         };
-        add(at == null ? Instant.now() : at, step, l, "engine_note", words, context.scrub(text));
+        add(at == null ? Instant.now() : at, node, l, "engine_note", words, context.scrub(text));
     }
 
     @Override
     public void progress(RunProgress p) {
         // A gate sending its first rows anywhere but on, as a mark on the run's time axis.
         for (RunProgress.EdgeProgress e : p.edges()) {
-            if (gates.contains(e.fromStep()) && !e.fromPort().equals("out") && e.rows() > 0
-                && quarantining.add(e.fromStep())) {
-                add(p.at(), e.fromStep(), "warn", "gate_quarantining", "Gate " + e.fromStep()
+            if (gates.contains(e.fromNode()) && !e.fromPort().equals("out") && e.rows() > 0
+                && quarantining.add(e.fromNode())) {
+                add(p.at(), e.fromNode(), "warn", "gate_quarantining", "Gate " + e.fromNode()
                     + " started setting rows aside", null);
             }
         }
-        boolean last = p.steps().stream().allMatch(s -> s.state() == RunProgress.State.ENDED
+        boolean last = p.nodes().stream().allMatch(s -> s.state() == RunProgress.State.ENDED
             || s.state() == RunProgress.State.NOT_STARTED);
         String progress = null;
         List<PipelineStore.Point> append = new ArrayList<>();
         List<PipelineStore.Point> rewrite = null;
-        String steps;
+        String nodes;
         int strideNow;
         synchronized (this) {
             if (finished) {
@@ -181,13 +181,13 @@ final class RunLog implements RunListener {
                 progressWritten = now;
                 progress = lastProgress.toString();
             }
-            steps = stepsJson();
+            nodes = nodesJson();
             strideNow = stride;
         }
         if (progress != null) {
             writeProgress(progress);
         }
-        writePoints(steps, strideNow, append, rewrite);
+        writePoints(nodes, strideNow, append, rewrite);
         flush();
     }
 
@@ -215,17 +215,17 @@ final class RunLog implements RunListener {
      * the merged points to write instead; else null.
      */
     private List<PipelineStore.Point> sample(RunProgress p, boolean last, List<PipelineStore.Point> append) {
-        if (seriesSteps.isEmpty()) {
-            p.steps().forEach(s -> seriesSteps.add(s.name()));
+        if (seriesNodes.isEmpty()) {
+            p.nodes().forEach(s -> seriesNodes.add(s.name()));
         }
-        int n = seriesSteps.size();
+        int n = seriesNodes.size();
         if (inBucket == 0) {
             bucketT = Math.max(0, p.at().toEpochMilli() - workerStarted.toEpochMilli());
             bucketRates = new double[n];
             bucketFills = new double[n];
         }
         for (int i = 0; i < n; i++) {
-            RunProgress.StepProgress s = p.step(seriesSteps.get(i));
+            RunProgress.NodeProgress s = p.node(seriesNodes.get(i));
             if (s != null) {
                 bucketRates[i] = Math.max(bucketRates[i], s.rowsPerSecond());
                 bucketFills[i] = Math.max(bucketFills[i], s.outputFill());
@@ -252,7 +252,7 @@ final class RunLog implements RunListener {
         return List.copyOf(merged);
     }
 
-    /** Two points as one: the first's time, the higher rate and fill of each step. */
+    /** Two points as one: the first's time, the higher rate and fill of each node. */
     private PipelineStore.Point merge(PipelineStore.Point a, PipelineStore.Point b) {
         return new PipelineStore.Point(a.t(), maxArray(a.rates(), b.rates()), maxArray(a.fills(), b.fills()));
     }
@@ -279,20 +279,20 @@ final class RunLog implements RunListener {
         return out.toString();
     }
 
-    private String stepsJson() {
+    private String nodesJson() {
         ArrayNode out = json.createArrayNode();
-        seriesSteps.forEach(out::add);
+        seriesNodes.forEach(out::add);
         return out.toString();
     }
 
-    private void writePoints(String steps, int strideNow, List<PipelineStore.Point> append,
+    private void writePoints(String nodes, int strideNow, List<PipelineStore.Point> append,
                              List<PipelineStore.Point> rewrite) {
         try {
             if (rewrite != null) {
-                store.replacePoints(runId, steps, strideNow, rewrite);
+                store.replacePoints(runId, nodes, strideNow, rewrite);
             }
             for (PipelineStore.Point point : append) {
-                store.addPoint(runId, steps, strideNow, point);
+                store.addPoint(runId, nodes, strideNow, point);
             }
         } catch (RuntimeException e) {
             LOG.warnf("Could not store rows a second of run %d: %s", runId, context.scrub(e.getMessage()));
@@ -315,7 +315,7 @@ final class RunLog implements RunListener {
      * shows them to everyone; a rule's message and the gate's stop reason can hold values, so they are
      * the detail, held back as the engine's words are.
      */
-    void gate(String step, QualityGate.Outcome g) {
+    void gate(String node, QualityGate.Outcome g) {
         if (g == null) {
             return;
         }
@@ -324,19 +324,19 @@ final class RunLog implements RunListener {
         switch (g.decision()) {
             case "passed" -> {
                 level = "info";
-                text = "Gate " + step + " passed all " + count(g.rowsIn()) + " rows";
+                text = "Gate " + node + " passed all " + count(g.rowsIn()) + " rows";
             }
             case "quarantined" -> {
                 level = "warn";
-                text = "Gate " + step + " quarantined " + count(g.rowsQuarantined()) + " rows";
+                text = "Gate " + node + " quarantined " + count(g.rowsQuarantined()) + " rows";
             }
             case "stopped" -> {
                 level = "error";
-                text = "Gate " + step + " stopped the run";
+                text = "Gate " + node + " stopped the run";
             }
             default -> {
                 level = "warn";
-                text = "Gate " + step + " let " + count(g.rowsFailing()) + " failing rows through with a warning";
+                text = "Gate " + node + " let " + count(g.rowsFailing()) + " failing rows through with a warning";
             }
         }
         List<String> failing = new ArrayList<>();
@@ -352,7 +352,7 @@ final class RunLog implements RunListener {
         if (g.stopReason() != null) {
             why.add(g.stopReason());
         }
-        server(step, level, "gate_verdict", failing.isEmpty() ? text : text + " (" + String.join(", ", failing) + ")",
+        server(node, level, "gate_verdict", failing.isEmpty() ? text : text + " (" + String.join(", ", failing) + ")",
             why.isEmpty() ? null : String.join("; ", why));
     }
 
@@ -361,11 +361,11 @@ final class RunLog implements RunListener {
     }
 
     /** An event of the server's own: {@code text} its words, {@code detail} anything quoting the engine or data. */
-    void server(String step, String level, String kind, String text, String detail) {
-        add(Instant.now(), step, level, kind, text, detail == null ? null : context.scrub(detail));
+    void server(String node, String level, String kind, String text, String detail) {
+        add(Instant.now(), node, level, kind, text, detail == null ? null : context.scrub(detail));
     }
 
-    private synchronized void add(Instant at, String step, String level, String kind, String text, String detail) {
+    private synchronized void add(Instant at, String node, String level, String kind, String text, String detail) {
         if (truncated) {
             return;
         }
@@ -375,7 +375,7 @@ final class RunLog implements RunListener {
                 "The log was cut short at " + count(MAX_EVENTS) + " events; later events were not kept", null));
             return;
         }
-        pending.add(new PipelineStore.Event(++seq, at, step, level, kind, cut(text, MAX_TEXT), cut(detail, MAX_DETAIL)));
+        pending.add(new PipelineStore.Event(++seq, at, node, level, kind, cut(text, MAX_TEXT), cut(detail, MAX_DETAIL)));
     }
 
     /** Writes the events waiting; never throws. A batch the database refuses is tried again event by event. */
@@ -457,14 +457,14 @@ final class RunLog implements RunListener {
         } else {
             root.put("slowest", p.slowest());
         }
-        ArrayNode steps = root.putArray("steps");
+        ArrayNode nodes = root.putArray("nodes");
         ArrayNode edges = root.putArray("edges");
         if (p == null) {
             return root;
         }
-        for (RunProgress.StepProgress s : p.steps()) {
-            ObjectNode n = steps.addObject();
-            n.put("step", s.name());
+        for (RunProgress.NodeProgress s : p.nodes()) {
+            ObjectNode n = nodes.addObject();
+            n.put("node", s.name());
             n.put("state", s.state().name().toLowerCase(Locale.ROOT));
             n.put("rowsIn", s.rowsIn());
             n.put("rowsOut", s.rowsOut());
@@ -479,9 +479,9 @@ final class RunLog implements RunListener {
         }
         for (RunProgress.EdgeProgress e : p.edges()) {
             ObjectNode n = edges.addObject();
-            n.put("from", e.fromStep());
+            n.put("from", e.fromNode());
             n.put("fromPort", e.fromPort());
-            n.put("to", e.toStep());
+            n.put("to", e.toNode());
             n.put("toPort", e.toPort());
             n.put("rows", e.rows());
             n.put("queued", e.queued());

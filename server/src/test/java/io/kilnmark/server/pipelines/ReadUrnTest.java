@@ -11,7 +11,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.kilnmark.kiln.StepFactories;
+import io.kilnmark.kiln.NodeFactories;
 import io.kilnmark.kiln.connect.ConnectorContext;
 import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.plugins.files.FilesConnector;
@@ -38,7 +38,7 @@ class ReadUrnTest {
         return """
             kilnmark: pipeline/v1
             name: lin
-            steps:
+            nodes:
               - id: r
                 type: read
                 source: share
@@ -57,13 +57,13 @@ class ReadUrnTest {
         Files.createDirectories(root.resolve("out"));
         Files.writeString(root.resolve("out/a#b%c.csv"), "id,name\n1,Ann\n");
         FakeSources s = share(root);
-        StepFactories steps = StepFactories.discover().register(new ReadStepFactory(s)).register(new WriteStepFactory(s));
+        NodeFactories nodes = NodeFactories.discover().register(new ReadNodeFactory(s)).register(new WriteNodeFactory(s));
         for (String asset : List.of("out/a#b%c.csv", "out/a%23b%25c.csv")) {
             RunContext run = new RunContext("lin", 1, "jo", AccessRole.STEWARD);
-            PipelineCompilerPort.Compilation c = run.run(() -> new KilnPipelineCompiler().compile(yaml(asset), steps));
+            PipelineCompilerPort.Compilation c = run.run(() -> new KilnPipelineCompiler().compile(yaml(asset), nodes));
             assertEquals(List.of(), c.problems(), asset);
             assertNotNull(c.graph(), asset);
-            PipelineExecution.closeSteps(c.graph());
+            PipelineExecution.closeNodes(c.graph());
             assertEquals(Map.of("r", CATALOGUED), PipelineExecution.reads(c, run), asset);
             assertEquals(List.of(CATALOGUED), PipelineExecution.writes(c, run).get(0).inputs(), asset);
         }
@@ -73,7 +73,7 @@ class ReadUrnTest {
     void readColumnsAreFoundWhicheverFormIsWritten() throws Exception {
         FakeSources s = new FakeSources().add("share", "files", Map.of(), null).asset(CATALOGUED, "id:int64",
             "name:text");
-        ReadStepFactory read = new ReadStepFactory(s);
+        ReadNodeFactory read = new ReadNodeFactory(s);
         for (String asset : List.of("out/a#b%c.csv", "out/a%23b%25c.csv")) {
             assertNotNull(read.outputSchema("out", Map.of(), Map.of("source", "share", "asset", asset)), asset);
         }

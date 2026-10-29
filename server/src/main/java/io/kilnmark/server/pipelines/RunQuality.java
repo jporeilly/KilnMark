@@ -34,47 +34,47 @@ final class RunQuality {
     }
 
     /**
-     * One step's quality in a run. {@code role} is {@code output} (a write) or {@code gate};
+     * One node's quality in a run. {@code role} is {@code output} (a write) or {@code gate};
      * {@code measured} is null when it could not be measured, and {@code note} says why;
      * {@code predicted} is the estimate made when the run started (null when none could be made),
      * {@code predictedDetail} its JSON: {reasons, unknown, assumptions, rows, gate};
      * {@code gate} is a gate's outcome.
      */
-    record StepQuality(String step, String role, String asset, Score measured, Score predicted, String note,
+    record NodeQuality(String node, String role, String asset, Score measured, Score predicted, String note,
                        QualityGate.Outcome gate, String predictedDetail) {
 
-        StepQuality(String step, String role, String asset, Score measured, Score predicted, String note,
+        NodeQuality(String node, String role, String asset, Score measured, Score predicted, String note,
                     QualityGate.Outcome gate) {
-            this(step, role, asset, measured, predicted, note, gate, null);
+            this(node, role, asset, measured, predicted, note, gate, null);
         }
     }
 
-    /** What the run could not measure for a step it predicted, by role and how the run ended. */
+    /** What the run could not measure for a node it predicted, by role and how the run ended. */
     static String notMeasured(String role, String status) {
         if ("succeeded".equals(status)) {
-            return "output".equals(role) ? "The run did not report what this step wrote" : "The gate did not report";
+            return "output".equals(role) ? "The run did not report what this node wrote" : "The gate did not report";
         }
-        return "output".equals(role) ? "The run did not succeed, so what this step wrote was not measured"
+        return "output".equals(role) ? "The run did not succeed, so what this node wrote was not measured"
             : "The run ended before this gate reported";
     }
 
     /**
-     * The measured quality with each step's prediction beside it: a step measured and predicted
+     * The measured quality with each node's prediction beside it: a node measured and predicted
      * gets both; one only predicted (the run failed before it wrote) keeps its prediction and says
      * why it was not measured.
      */
-    static List<StepQuality> withPredicted(List<StepQuality> measured, List<StepQuality> predicted, String status) {
-        Map<String, StepQuality> byStep = new LinkedHashMap<>();
-        for (StepQuality p : predicted) {
-            byStep.put(p.step(), new StepQuality(p.step(), p.role(), p.asset(), null, p.predicted(),
+    static List<NodeQuality> withPredicted(List<NodeQuality> measured, List<NodeQuality> predicted, String status) {
+        Map<String, NodeQuality> byNode = new LinkedHashMap<>();
+        for (NodeQuality p : predicted) {
+            byNode.put(p.node(), new NodeQuality(p.node(), p.role(), p.asset(), null, p.predicted(),
                 notMeasured(p.role(), status), null, p.predictedDetail()));
         }
-        for (StepQuality m : measured) {
-            StepQuality p = byStep.get(m.step());
-            byStep.put(m.step(), p == null ? m : new StepQuality(m.step(), m.role(), m.asset() != null ? m.asset()
+        for (NodeQuality m : measured) {
+            NodeQuality p = byNode.get(m.node());
+            byNode.put(m.node(), p == null ? m : new NodeQuality(m.node(), m.role(), m.asset() != null ? m.asset()
                 : p.asset(), m.measured(), p.predicted(), m.note(), m.gate(), p.predictedDetail()));
         }
-        return new ArrayList<>(byStep.values());
+        return new ArrayList<>(byNode.values());
     }
 
     /** Most reasons kept per score. */
@@ -84,17 +84,17 @@ final class RunQuality {
     }
 
     /** The quality of what a write wrote, from its writer's events. */
-    static StepQuality output(PipelineExecution.WriteTarget w, List<MetadataEvent> events,
+    static NodeQuality output(PipelineExecution.WriteTarget w, List<MetadataEvent> events,
                               Function<MetadataEvent, String> profileJson, ObjectMapper json) {
         List<MetadataEvent> mine = events.stream().filter(e -> e.assetUrn().equals(w.urn())).toList();
         MetadataEvent rowCount = mine.stream().filter(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT).findFirst()
             .orElse(null);
         List<MetadataEvent> profiles = mine.stream().filter(e -> e.kind() == MetadataEvent.Kind.PROFILE).toList();
         if (profiles.isEmpty()) {
-            return new StepQuality(w.step(), "output", w.urn(), null, null, unmeasured(w, rowCount), null);
+            return new NodeQuality(w.node(), "output", w.urn(), null, null, unmeasured(w, rowCount), null);
         }
         Score s = score(facts(w, mine, profiles, rowCount, profileJson, json));
-        return new StepQuality(w.step(), "output", w.urn(), s.overall() == null ? null : s, null,
+        return new NodeQuality(w.node(), "output", w.urn(), s.overall() == null ? null : s, null,
             s.overall() == null ? "Nothing in the rows written could be measured" : null, null);
     }
 
@@ -188,20 +188,20 @@ final class RunQuality {
     }
 
     /** A gate's quality from its outcome. */
-    static StepQuality gate(String step, QualityGate.Outcome o) {
+    static NodeQuality gate(String node, QualityGate.Outcome o) {
         Score s = o.score() == null ? null : new Score(o.score(), o.dimensions(),
             o.reasons().stream().limit(REASONS).toList());
         String note = !o.complete() ? "The gate checked only the first " + QualityGate.count(o.rowsIn()) + " rows: the "
             + "run ended its rows early, so it could not judge the rest"
             : s != null ? null : o.rules().isEmpty() ? "The gate had no rules to check"
             : "None of the gate's rules could run";
-        return new StepQuality(step, "gate", o.asset(), s, null, note, o);
+        return new NodeQuality(node, "gate", o.asset(), s, null, note, o);
     }
 
     /** The lowest measured overall score among the outputs, or null when none was measured. */
-    static Double lowestOutput(List<StepQuality> steps) {
+    static Double lowestOutput(List<NodeQuality> nodes) {
         Double low = null;
-        for (StepQuality q : steps) {
+        for (NodeQuality q : nodes) {
             if ("output".equals(q.role()) && q.measured() != null && q.measured().overall() != null) {
                 low = low == null ? q.measured().overall() : Math.min(low, q.measured().overall());
             }
@@ -210,9 +210,9 @@ final class RunQuality {
     }
 
     /** The output with that lowest score, for the notification's words; null when none. */
-    static StepQuality lowestOutputStep(List<StepQuality> steps) {
-        StepQuality low = null;
-        for (StepQuality q : steps) {
+    static NodeQuality lowestOutputNode(List<NodeQuality> nodes) {
+        NodeQuality low = null;
+        for (NodeQuality q : nodes) {
             if ("output".equals(q.role()) && q.measured() != null && q.measured().overall() != null
                 && (low == null || q.measured().overall() < low.measured().overall())) {
                 low = q;

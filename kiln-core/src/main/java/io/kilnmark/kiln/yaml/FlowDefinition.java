@@ -16,33 +16,33 @@ import java.util.regex.Pattern;
 import io.kilnmark.kiln.flow.FlowEngine;
 
 /**
- * A flow as written in its YAML ({@code kilnmark: flow/v1}, docs/design/flows.md): flow steps
- * joined by paths, and the parameters it takes. {@link #parse} reads one and checks everything
- * that can be checked without the server: keys, ids, step settings, paths, loops, and every
+ * A flow as written in its YAML ({@code kilnmark: flow/v1}, docs/design/flows.md): flow nodes
+ * joined by connections, and the parameters it takes. {@link #parse} reads one and checks everything
+ * that can be checked without the server: keys, ids, node settings, connections, loops, and every
  * condition against the values it can read. Whether the pipelines a flow runs exist is for the
  * server to check.
  *
  * @param name         the flow's name
  * @param description  what it does, or null
  * @param parameters   what it takes, in the order written
- * @param steps        the steps in the order written
- * @param paths        the paths in the order written
- * @param queueTimeout how long a step waits for a pipeline that is already running before it fails
+ * @param nodes        the nodes in the order written
+ * @param connections  the connections in the order written
+ * @param queueTimeout how long a node waits for a pipeline that is already running before it fails
  */
-public record FlowDefinition(String name, String description, List<Parameter> parameters, List<Step> steps,
-                             List<Path> paths, Duration queueTimeout) {
+public record FlowDefinition(String name, String description, List<Parameter> parameters, List<Node> nodes,
+                             List<Connection> connections, Duration queueTimeout) {
 
     /** The format this version reads. */
     public static final String FORMAT = "flow/v1";
     /** Flow names, as pipeline names. */
     public static final Pattern NAME = Pattern.compile("[a-z][a-z0-9-]{0,62}");
-    /** The step type that runs a pipeline. */
+    /** The node type that runs a pipeline. */
     public static final String RUN_PIPELINE = "run-pipeline";
-    /** The step type that ends the flow. */
+    /** The node type that ends the flow. */
     public static final String STOP = "stop";
-    /** The step types this version knows. */
+    /** The node types this version knows. */
     public static final List<String> TYPES = List.of(RUN_PIPELINE, STOP);
-    /** What a step that runs a pipeline reports, for conditions, besides {@code status}. */
+    /** What a node that runs a pipeline reports, for conditions, besides {@code status}. */
     public static final Map<String, FlowCondition.Type> PIPELINE_VALUES = Map.of(
         "score", FlowCondition.Type.NUMBER,
         "quarantined_share", FlowCondition.Type.NUMBER,
@@ -52,17 +52,17 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
     /** The default of {@code queue_timeout}. */
     public static final Duration DEFAULT_QUEUE_TIMEOUT = Duration.ofMinutes(30);
     static final Duration MAX_QUEUE_TIMEOUT = Duration.ofHours(24);
-    static final int MAX_STEPS = 200;
-    static final int MAX_PATHS = 1_000;
+    static final int MAX_NODES = 200;
+    static final int MAX_CONNECTIONS = 1_000;
     static final int MAX_PARAMETERS = 50;
 
     static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "parameters", "queue_timeout",
-        "steps", "paths", "layout");
-    static final Set<String> STEP_KEYS = Set.of("id", "type");
+        "nodes", "connections", "layout");
+    static final Set<String> NODE_KEYS = Set.of("id", "type");
     static final Map<String, Set<String>> TYPE_KEYS = Map.of(
         RUN_PIPELINE, Set.of("pipeline", "version"),
         STOP, Set.of("status", "message"));
-    static final Set<String> PATH_KEYS = Set.of("from", "to", "when");
+    static final Set<String> CONNECTION_KEYS = Set.of("from", "to", "when");
     static final Set<String> PARAMETER_KEYS = Set.of("type", "default", "description");
     static final Set<String> RESERVED = Set.of("and", "or", "not", "true", "false", "good", "fair", "poor");
     static final Pattern PARAMETER_NAME = Pattern.compile("[a-z][a-z0-9_]{0,63}");
@@ -74,24 +74,24 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
     }
 
     /**
-     * One flow step. {@code pipeline} and {@code version} (null for the latest) are set for
+     * One flow node. {@code pipeline} and {@code version} (null for the latest) are set for
      * {@link #RUN_PIPELINE}; {@code status} ({@code succeeded} or {@code failed}) and {@code message}
      * for {@link #STOP}.
      */
-    public record Step(String id, String type, String pipeline, Integer version, String status, String message,
+    public record Node(String id, String type, String pipeline, Integer version, String status, String message,
                        Position position, Map<String, Position> keys) {
 
-        /** Where {@code key} is written, or where the step starts if it is not. */
+        /** Where {@code key} is written, or where the node starts if it is not. */
         public Position at(String key) {
             return keys.getOrDefault(key, position);
         }
     }
 
     /**
-     * One path. {@code when} is {@code success}, {@code failure}, {@code always} or a condition;
+     * One connection. {@code when} is {@code success}, {@code failure}, {@code always} or a condition;
      * {@code condition} is set only in the last case.
      */
-    public record Path(String from, String to, FlowEngine.Kind kind, String when, FlowCondition condition,
+    public record Connection(String from, String to, FlowEngine.Kind kind, String when, FlowCondition condition,
                        Position position) {
     }
 
@@ -108,24 +108,24 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
 
     public FlowDefinition {
         parameters = List.copyOf(parameters);
-        steps = List.copyOf(steps);
-        paths = List.copyOf(paths);
+        nodes = List.copyOf(nodes);
+        connections = List.copyOf(connections);
         queueTimeout = queueTimeout == null ? DEFAULT_QUEUE_TIMEOUT : queueTimeout;
     }
 
-    /** The path conditions as the engine reads them. */
-    public List<FlowEngine.Path> enginePaths() {
-        List<FlowEngine.Path> out = new ArrayList<>();
-        for (Path p : paths) {
+    /** The connection conditions as the engine reads them. */
+    public List<FlowEngine.Connection> engineConnections() {
+        List<FlowEngine.Connection> out = new ArrayList<>();
+        for (Connection p : connections) {
             FlowCondition c = p.condition();
-            out.add(new FlowEngine.Path(p.from(), p.to(), p.kind(), c == null ? null : c::evaluate));
+            out.add(new FlowEngine.Connection(p.from(), p.to(), p.kind(), c == null ? null : c::evaluate));
         }
         return out;
     }
 
-    /** The step with this id, or null. */
-    public Step step(String id) {
-        for (Step s : steps) {
+    /** The node with this id, or null. */
+    public Node node(String id) {
+        for (Node s : nodes) {
             if (s.id().equals(id)) {
                 return s;
             }
@@ -157,7 +157,7 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         }
         if (!(root instanceof YamlReader.Mapping top)) {
             problems.add(Problem.at(root == null ? Position.START : root.position(), null,
-                "A flow starts with kilnmark: " + FORMAT + ", followed by its name, steps and paths"));
+                "A flow starts with kilnmark: " + FORMAT + ", followed by its name, nodes and connections"));
             return new Parsed(null, problems);
         }
         YamlReader.Entry format = top.entries().get("kilnmark");
@@ -171,10 +171,10 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
                 ? ": this looks like a pipeline, which belongs under Pipelines" : "")));
         }
         for (YamlReader.Entry e : top.entries().values()) {
-            if (!TOP_LEVEL_KEYS.contains(e.key())) {
+            if (!TOP_LEVEL_KEYS.contains(e.key()) && !Renamed.isOld(e.key(), TOP_LEVEL_KEYS)) {
                 problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + Suggest.clip(e.key()) + "'"
                     + Suggest.hint(e.key(), TOP_LEVEL_KEYS)
-                    + ": a flow has kilnmark, name, description, parameters, queue_timeout, steps, paths and layout"));
+                    + ": a flow has kilnmark, name, description, parameters, queue_timeout, nodes, connections and layout"));
             }
         }
         String name = text(top.entries().get("name"), "name", problems);
@@ -189,42 +189,42 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         Duration timeout = queueTimeout(top.entries().get("queue_timeout"), problems);
         List<Parameter> parameters = parameters(top.entries().get("parameters"), problems);
 
-        List<Step> steps = new ArrayList<>();
-        YamlReader.Entry stepsEntry = top.entries().get("steps");
-        if (stepsEntry == null) {
-            problems.add(Problem.at(top.position(), null, "The flow needs steps"));
-        } else if (!(stepsEntry.value() instanceof YamlReader.Sequence list)) {
-            problems.add(Problem.at(stepsEntry.value().position(), null,
-                "steps must be a list, each step starting with - id: …"));
+        List<Node> nodes = new ArrayList<>();
+        YamlReader.Entry nodesEntry = Renamed.entry(top, "nodes", "flow", problems);
+        if (nodesEntry == null) {
+            problems.add(Problem.at(top.position(), null, "The flow needs nodes"));
+        } else if (!(nodesEntry.value() instanceof YamlReader.Sequence list)) {
+            problems.add(Problem.at(nodesEntry.value().position(), null,
+                "nodes must be a list, each node starting with - id: …"));
         } else if (list.items().isEmpty()) {
-            problems.add(Problem.at(stepsEntry.value().position(), null, "The flow needs at least one step"));
-        } else if (list.items().size() > MAX_STEPS) {
-            problems.add(Problem.at(list.position(), null, "A flow has at most " + MAX_STEPS + " steps"));
+            problems.add(Problem.at(nodesEntry.value().position(), null, "The flow needs at least one node"));
+        } else if (list.items().size() > MAX_NODES) {
+            problems.add(Problem.at(list.position(), null, "A flow has at most " + MAX_NODES + " nodes"));
         } else {
             Map<String, Position> ids = new HashMap<>();
             for (YamlReader.Node item : list.items()) {
-                Step s = step(item, ids, problems);
+                Node s = node(item, ids, problems);
                 if (s != null) {
-                    steps.add(s);
+                    nodes.add(s);
                 }
             }
         }
-        List<Path> paths = new ArrayList<>();
-        YamlReader.Entry pathsEntry = top.entries().get("paths");
-        Map<String, Step> byId = new LinkedHashMap<>();
-        steps.forEach(s -> byId.put(s.id(), s));
-        if (pathsEntry != null) {
-            if (!(pathsEntry.value() instanceof YamlReader.Sequence list)) {
-                problems.add(Problem.at(pathsEntry.value().position(), null,
-                    "paths must be a list, each path starting with - from: …"));
-            } else if (list.items().size() > MAX_PATHS) {
-                problems.add(Problem.at(list.position(), null, "A flow has at most " + MAX_PATHS + " paths"));
+        List<Connection> connections = new ArrayList<>();
+        YamlReader.Entry connectionsEntry = Renamed.entry(top, "connections", "flow", problems);
+        Map<String, Node> byId = new LinkedHashMap<>();
+        nodes.forEach(s -> byId.put(s.id(), s));
+        if (connectionsEntry != null) {
+            if (!(connectionsEntry.value() instanceof YamlReader.Sequence list)) {
+                problems.add(Problem.at(connectionsEntry.value().position(), null,
+                    "connections must be a list, each connection starting with - from: …"));
+            } else if (list.items().size() > MAX_CONNECTIONS) {
+                problems.add(Problem.at(list.position(), null, "A flow has at most " + MAX_CONNECTIONS + " connections"));
             } else {
-                pathItems(list, byId, parameters, paths, problems);
+                connectionItems(list, byId, parameters, connections, problems);
             }
         }
-        FlowDefinition def = new FlowDefinition(name, description, parameters, steps, paths, timeout);
-        loops(def, pathsEntry, problems);
+        FlowDefinition def = new FlowDefinition(name, description, parameters, nodes, connections, timeout);
+        loops(def, connectionsEntry, problems);
         return new Parsed(def, problems);
     }
 
@@ -236,7 +236,7 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
             ? DURATION.matcher(sc.written().strip().toLowerCase()) : null;
         if (m == null || !m.matches()) {
             problems.add(Problem.at(e.value().position(), null,
-                "queue_timeout is a time such as 30m, 90s or 2h: how long a step waits for a pipeline already running"));
+                "queue_timeout is a time such as 30m, 90s or 2h: how long a node waits for a pipeline already running"));
             return null;
         }
         long n = Long.parseLong(m.group(1));
@@ -328,22 +328,22 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         return out;
     }
 
-    private static Step step(YamlReader.Node item, Map<String, Position> ids, List<Problem> problems) {
+    private static Node node(YamlReader.Node item, Map<String, Position> ids, List<Problem> problems) {
         if (!(item instanceof YamlReader.Mapping m)) {
-            problems.add(Problem.at(item.position(), null, "Each step is a mapping starting with - id: …"));
+            problems.add(Problem.at(item.position(), null, "Each node is a mapping starting with - id: …"));
             return null;
         }
         YamlReader.Entry idEntry = m.entries().get("id");
         if (idEntry == null) {
-            problems.add(Problem.at(m.position(), null, "Each step needs an id"));
+            problems.add(Problem.at(m.position(), null, "Each node needs an id"));
             return null;
         }
         if (!(idEntry.value() instanceof YamlReader.Scalar sc) || !(sc.value() instanceof String id)) {
             problems.add(Problem.at(idEntry.value().position(), null,
-                "A step id is a word such as nightly-load, not a number, list or mapping"));
+                "A node id is a word such as nightly-load, not a number, list or mapping"));
             return null;
         }
-        if (!PipelineCompiler.STEP_ID.matcher(id).matches()) {
+        if (!PipelineCompiler.NODE_ID.matcher(id).matches()) {
             problems.add(Problem.at(idEntry.value().position(), Suggest.clip(id), PipelineCompiler.badId(id)));
             if (id.length() > Suggest.MAX_ECHO) {
                 return null;
@@ -352,7 +352,7 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         Position first = ids.putIfAbsent(id, idEntry.value().position());
         if (first != null) {
             problems.add(Problem.at(idEntry.value().position(), id,
-                "Step id '" + id + "' is used twice (first on line " + first.line() + ")"));
+                "Node id '" + id + "' is used twice (first on line " + first.line() + ")"));
             return null;
         }
         Map<String, Position> keys = new LinkedHashMap<>();
@@ -360,22 +360,22 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         YamlReader.Entry typeEntry = m.entries().get("type");
         String type = typeEntry == null ? null : text(typeEntry, "type", problems);
         if (typeEntry == null) {
-            problems.add(Problem.at(m.position(), id, "Step " + id + " needs a type: " + String.join(" or ", TYPES)));
-            return new Step(id, null, null, null, null, null, m.position(), keys);
+            problems.add(Problem.at(m.position(), id, "Node " + id + " needs a type: " + String.join(" or ", TYPES)));
+            return new Node(id, null, null, null, null, null, m.position(), keys);
         }
         if (type != null && !TYPES.contains(type)) {
-            problems.add(Problem.at(typeEntry.value().position(), id, "Unknown step type '" + Suggest.clip(type) + "'"
-                + Suggest.hint(type, TYPES) + ": a flow step is " + String.join(" or ", TYPES)));
-            return new Step(id, null, null, null, null, null, m.position(), keys);
+            problems.add(Problem.at(typeEntry.value().position(), id, "Unknown node type '" + Suggest.clip(type) + "'"
+                + Suggest.hint(type, TYPES) + ": a flow node is " + String.join(" or ", TYPES)));
+            return new Node(id, null, null, null, null, null, m.position(), keys);
         }
         if (type == null) {
-            return new Step(id, null, null, null, null, null, m.position(), keys);
+            return new Node(id, null, null, null, null, null, m.position(), keys);
         }
         Set<String> allowed = TYPE_KEYS.get(type);
         for (YamlReader.Entry e : m.entries().values()) {
-            if (!STEP_KEYS.contains(e.key()) && !allowed.contains(e.key())) {
+            if (!NODE_KEYS.contains(e.key()) && !allowed.contains(e.key())) {
                 List<String> all = new ArrayList<>(allowed);
-                problems.add(Problem.at(e.keyPosition(), id, "Step " + id + " (" + type + ") has no setting '"
+                problems.add(Problem.at(e.keyPosition(), id, "Node " + id + " (" + type + ") has no setting '"
                     + Suggest.clip(e.key()) + "'" + Suggest.hint(e.key(), all) + ": it takes " + String.join(", ",
                     allowed.stream().sorted().toList())));
             }
@@ -384,7 +384,7 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
             YamlReader.Entry p = m.entries().get("pipeline");
             String pipeline = null;
             if (p == null) {
-                problems.add(Problem.at(m.position(), id, "Step " + id + " needs a pipeline: the name of the pipeline to run"));
+                problems.add(Problem.at(m.position(), id, "Node " + id + " needs a pipeline: the name of the pipeline to run"));
             } else {
                 pipeline = text(p, "pipeline", problems);
                 if (pipeline != null && !PIPELINE_NAME.matcher(pipeline).matches()) {
@@ -403,7 +403,7 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
                         + "to run the pipeline's latest"));
                 }
             }
-            return new Step(id, type, pipeline, version, null, null, m.position(), keys);
+            return new Node(id, type, pipeline, version, null, null, m.position(), keys);
         }
         String status = "failed";
         YamlReader.Entry s = m.entries().get("status");
@@ -413,32 +413,32 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
                 status = t;
             } else {
                 problems.add(Problem.at(s.value().position(), id, "status is succeeded or failed: how the flow counts "
-                    + "when this step ends it"));
+                    + "when this node ends it"));
             }
         }
         YamlReader.Entry msg = m.entries().get("message");
         String message = msg == null ? null : text(msg, "message", problems);
-        return new Step(id, type, null, null, status, message, m.position(), keys);
+        return new Node(id, type, null, null, status, message, m.position(), keys);
     }
 
     private static final Pattern PIPELINE_NAME = Pattern.compile("[a-z][a-z0-9-]{0,62}");
 
-    /** A path as written, before its condition is read. */
-    private record RawPath(String from, String to, String when, YamlReader.Node whenNode, Position position) {
+    /** A connection as written, before its condition is read. */
+    private record RawConnection(String from, String to, String when, YamlReader.Node whenNode, Position position) {
     }
 
-    private static void pathItems(YamlReader.Sequence list, Map<String, Step> byId, List<Parameter> parameters,
-                                  List<Path> out, List<Problem> problems) {
-        List<RawPath> raw = new ArrayList<>();
+    private static void connectionItems(YamlReader.Sequence list, Map<String, Node> byId, List<Parameter> parameters,
+                                  List<Connection> out, List<Problem> problems) {
+        List<RawConnection> raw = new ArrayList<>();
         for (YamlReader.Node item : list.items()) {
             if (!(item instanceof YamlReader.Mapping m)) {
-                problems.add(Problem.at(item.position(), null, "Each path is a mapping: - { from: a, to: b, when: success }"));
+                problems.add(Problem.at(item.position(), null, "Each connection is a mapping: - { from: a, to: b, when: success }"));
                 continue;
             }
             for (YamlReader.Entry e : m.entries().values()) {
-                if (!PATH_KEYS.contains(e.key())) {
-                    problems.add(Problem.at(e.keyPosition(), null, "A path has no setting '" + Suggest.clip(e.key()) + "'"
-                        + Suggest.hint(e.key(), PATH_KEYS) + ": it takes from, to and when"));
+                if (!CONNECTION_KEYS.contains(e.key())) {
+                    problems.add(Problem.at(e.keyPosition(), null, "A connection has no setting '" + Suggest.clip(e.key()) + "'"
+                        + Suggest.hint(e.key(), CONNECTION_KEYS) + ": it takes from, to and when"));
                 }
             }
             String from = endpoint(m, "from", byId, problems);
@@ -449,20 +449,20 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
                 continue;
             }
             if (from.equals(to)) {
-                problems.add(Problem.at(m.entries().get("to").value().position(), to, "A path cannot lead from step "
+                problems.add(Problem.at(m.entries().get("to").value().position(), to, "A connection cannot lead from node "
                     + from + " back to itself"));
                 continue;
             }
-            raw.add(new RawPath(from, to, when, w == null ? null : w.value(), m.position()));
+            raw.add(new RawConnection(from, to, when, w == null ? null : w.value(), m.position()));
         }
-        // Every step that can have ended before a path is decided: found from all the paths, so the
+        // Every node that can have ended before a connection is decided: found from all the connections, so the
         // order they are written in does not matter.
         Map<String, Set<String>> before = new HashMap<>();
-        for (RawPath r : raw) {
+        for (RawConnection r : raw) {
             before.computeIfAbsent(r.to(), k -> new LinkedHashSet<>()).add(r.from());
         }
         Set<String> seen = new HashSet<>();
-        for (RawPath r : raw) {
+        for (RawConnection r : raw) {
             String word = r.when().strip().toLowerCase();
             FlowEngine.Kind kind;
             FlowCondition condition = null;
@@ -479,39 +479,39 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
                 }
             }
             if (!seen.add(r.from() + "|" + r.to() + "|" + (condition == null ? word : r.when().strip()))) {
-                problems.add(Problem.at(r.position(), r.to(), "The path from " + r.from() + " to " + r.to() + " when "
+                problems.add(Problem.at(r.position(), r.to(), "The connection from " + r.from() + " to " + r.to() + " when "
                     + r.when().strip() + " is written twice"));
                 continue;
             }
-            out.add(new Path(r.from(), r.to(), kind, kind == FlowEngine.Kind.CONDITION ? r.when().strip() : word,
+            out.add(new Connection(r.from(), r.to(), kind, kind == FlowEngine.Kind.CONDITION ? r.when().strip() : word,
                 condition, r.position()));
         }
     }
 
-    private static String endpoint(YamlReader.Mapping m, String key, Map<String, Step> byId, List<Problem> problems) {
+    private static String endpoint(YamlReader.Mapping m, String key, Map<String, Node> byId, List<Problem> problems) {
         YamlReader.Entry e = m.entries().get(key);
         if (e == null) {
-            problems.add(Problem.at(m.position(), null, "A path needs a '" + key + "': the id of a step"));
+            problems.add(Problem.at(m.position(), null, "A connection needs a '" + key + "': the id of a node"));
             return null;
         }
         if (!(e.value() instanceof YamlReader.Scalar sc) || !(sc.value() instanceof String id) || id.isBlank()) {
-            problems.add(Problem.at(e.value().position(), null, "'" + key + "' is the id of a step"));
+            problems.add(Problem.at(e.value().position(), null, "'" + key + "' is the id of a node"));
             return null;
         }
         if (!byId.containsKey(id)) {
-            problems.add(Problem.at(e.value().position(), null, "This path " + key + " step '" + Suggest.clip(id)
-                + "' which is not a step of the flow" + Suggest.hint(id, byId.keySet())));
+            problems.add(Problem.at(e.value().position(), null, "This connection " + key + " node '" + Suggest.clip(id)
+                + "' which is not a node of the flow" + Suggest.hint(id, byId.keySet())));
             return null;
         }
         return id;
     }
 
     /**
-     * Reads a path's condition. It may read the parameters, and the values of the step it leaves
-     * and of steps before that one (a step that has not ended when the path is decided has nothing
+     * Reads a connection's condition. It may read the parameters, and the values of the node it leaves
+     * and of nodes before that one (a node that has not ended when the connection is decided has nothing
      * to report).
      */
-    private static FlowCondition condition(String text, Position at, String from, Map<String, Step> byId,
+    private static FlowCondition condition(String text, Position at, String from, Map<String, Node> byId,
                                            List<Parameter> parameters, Map<String, Set<String>> before,
                                            List<Problem> problems) {
         Set<String> upstream = new LinkedHashSet<>();
@@ -530,7 +530,7 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
             types.put(p.name(), p.type());
         }
         for (String id : upstream) {
-            Step s = byId.get(id);
+            Node s = byId.get(id);
             types.put(id + ".status", FlowCondition.Type.TEXT);
             if (s != null && RUN_PIPELINE.equals(s.type())) {
                 PIPELINE_VALUES.forEach((field, type) -> types.put(id + "." + field, type));
@@ -549,15 +549,15 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         });
         for (FlowCondition.Issue issue : parsed.issues()) {
             problems.add(Problem.at(new Position(at.line(), at.column() + issue.column() - 1), from,
-                "Path from " + from + ": " + issue.message()));
+                "Connection from " + from + ": " + issue.message()));
         }
         return parsed.condition();
     }
 
-    private static void loops(FlowDefinition def, YamlReader.Entry pathsEntry, List<Problem> problems) {
+    private static void loops(FlowDefinition def, YamlReader.Entry connectionsEntry, List<Problem> problems) {
         Map<String, Integer> waiting = new HashMap<>();
-        def.steps().forEach(s -> waiting.put(s.id(), 0));
-        for (Path p : def.paths()) {
+        def.nodes().forEach(s -> waiting.put(s.id(), 0));
+        for (Connection p : def.connections()) {
             waiting.merge(p.to(), 1, Integer::sum);
         }
         ArrayDeque<String> ready = new ArrayDeque<>();
@@ -570,16 +570,16 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         while (!ready.isEmpty()) {
             String id = ready.poll();
             done.add(id);
-            for (Path p : def.paths()) {
+            for (Connection p : def.connections()) {
                 if (p.from().equals(id) && waiting.merge(p.to(), -1, Integer::sum) == 0) {
                     ready.add(p.to());
                 }
             }
         }
         if (done.size() < waiting.size()) {
-            List<String> stuck = def.steps().stream().map(Step::id).filter(s -> !done.contains(s)).toList();
-            problems.add(Problem.at(pathsEntry == null ? Position.START : pathsEntry.keyPosition(), null,
-                "The paths form a loop through " + String.join(", ", stuck.subList(0, Math.min(5, stuck.size())))
+            List<String> stuck = def.nodes().stream().map(Node::id).filter(s -> !done.contains(s)).toList();
+            problems.add(Problem.at(connectionsEntry == null ? Position.START : connectionsEntry.keyPosition(), null,
+                "The connections form a loop through " + String.join(", ", stuck.subList(0, Math.min(5, stuck.size())))
                     + ": a flow must run one way"));
         }
     }

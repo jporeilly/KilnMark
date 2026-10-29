@@ -397,7 +397,7 @@ export async function callText(path: string, accept: string): Promise<string> {
   return text;
 }
 
-/** "?step=a&level=warn", leaving out what is not set. */
+/** "?node=a&level=warn", leaving out what is not set. */
 function logQuery(q: Record<string, string | number | null | undefined>): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(q)) if (v != null && v !== "") p.set(k, String(v));
@@ -1143,10 +1143,10 @@ export function rating(score: number): { word: string; tone: "good" | "fair" | "
 // ---- Pipelines (docs/design/pipelines.md) ----
 
 /** line and column count from 1; 0 when the problem has no place in the text. */
-export type PipelineProblem = { line: number; column: number; step: string | null; message: string };
+export type PipelineProblem = { line: number; column: number; node: string | null; message: string };
 export type PipelineColumn = { name: string; type: string };
 /** columns: per output port, or null for a port whose columns are not known before a run. */
-export type PipelineStepOutline = {
+export type PipelineNodeOutline = {
   id: string;
   type: string | null;
   kind: string | null;
@@ -1155,14 +1155,14 @@ export type PipelineStepOutline = {
   outputs: string[];
   columns: Record<string, PipelineColumn[] | null>;
 };
-export type PipelineEdge = { fromStep: string; fromPort: string; toStep: string; toPort: string };
+export type PipelineEdge = { fromNode: string; fromPort: string; toNode: string; toPort: string };
 export type PipelineValidation = {
   valid: boolean;
   name: string | null;
   description: string | null;
   problems: PipelineProblem[];
   notes: PipelineProblem[];
-  steps: PipelineStepOutline[];
+  nodes: PipelineNodeOutline[];
   edges: PipelineEdge[];
 };
 export type PipelineRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -1223,8 +1223,8 @@ export type PipelineDetail = {
   lastRun: PipelineRun | null;
 };
 /** ports: rows per input and output port; null where the engine did not count a port on its own. */
-export type PipelineStepRun = {
-  step: string;
+export type PipelineNodeRun = {
+  node: string;
   type: string;
   position: number;
   rowsIn: number | null;
@@ -1233,24 +1233,24 @@ export type PipelineStepRun = {
   peakMemory: number | null;
   durationMs: number | null;
   error: string | null;
-  /** How the step ended; a step the engine stopped is not a clean finish. Null when not recorded. */
+  /** How the node ended; a node the engine stopped is not a clean finish. Null when not recorded. */
   outcome: "finished" | "ended_early" | "stopped" | "failed" | null;
   /**
-   * When it started, had its first row (in; out for a step with no input), handed on its last row
-   * (out; in for a step with no output) and ended. Null for a step that never started; missing from
+   * When it started, had its first row (in; out for a node with no input), handed on its last row
+   * (out; in for a node with no output) and ended. Null for a node that never started; missing from
    * older servers.
    */
   startedAt?: string | null;
   firstRowAt?: string | null;
   lastRowAt?: string | null;
   finishedAt?: string | null;
-  /** Time it waited for rows on its inputs, and for room on its outputs (held up by the next step); the rest is working. */
+  /** Time it waited for rows on its inputs, and for room on its outputs (held up by the next node); the rest is working. */
   waitingForRowsMs?: number | null;
   heldUpMs?: number | null;
 };
-/** One step while a run goes: its rows so far and its rate since the snapshot before. */
-export type PipelineStepProgress = {
-  step: string;
+/** One node while a run goes: its rows so far and its rate since the snapshot before. */
+export type PipelineNodeProgress = {
+  node: string;
   state: "not_started" | "waiting" | "running" | "ended";
   rowsIn: number;
   rowsOut: number;
@@ -1259,7 +1259,7 @@ export type PipelineStepProgress = {
   firstRowAt: string | null;
   lastRowAt: string | null;
   finishedAt: string | null;
-  /** So far: time it waited for rows, and was held up by the next step; how full its fullest output queue is now (0 to 1). */
+  /** So far: time it waited for rows, and was held up by the next node; how full its fullest output queue is now (0 to 1). */
   waitingForRowsMs?: number;
   heldUpMs?: number;
   outputFill?: number;
@@ -1280,7 +1280,7 @@ export type PipelineEdgeProgress = {
 };
 /**
  * Where a run's rows are, as the worker last wrote it (every two seconds while it runs). `slowest`
- * is the step holding the run back: its input queues are full while its output queues are not.
+ * is the node holding the run back: its input queues are full while its output queues are not.
  */
 export type PipelineRunProgress = {
   at: string;
@@ -1288,7 +1288,7 @@ export type PipelineRunProgress = {
   workerStartedAt?: string;
   workerFinishedAt?: string | null;
   slowest: string | null;
-  steps: PipelineStepProgress[];
+  nodes: PipelineNodeProgress[];
   edges: PipelineEdgeProgress[];
 };
 export type PipelineRunEventLevel = "info" | "warn" | "error";
@@ -1296,7 +1296,7 @@ export type PipelineRunEventLevel = "info" | "warn" | "error";
 export type PipelineRunEvent = {
   seq: number;
   at: string;
-  step: string | null;
+  node: string | null;
   level: PipelineRunEventLevel;
   kind: string;
   text: string;
@@ -1304,9 +1304,9 @@ export type PipelineRunEvent = {
   withheld: string | null;
 };
 export type PipelineRunEvents = { events: PipelineRunEvent[]; next: number | null };
-export type RunLogFilter = { step?: string | null; level?: PipelineRunEventLevel | null };
+export type RunLogFilter = { node?: string | null; level?: PipelineRunEventLevel | null };
 export type PipelineWrittenAsset = {
-  step: string;
+  node: string;
   urn: string;
   source: string;
   target: string;
@@ -1343,11 +1343,11 @@ export type GateOutcome = {
   rules: GateRuleResult[];
 };
 /**
- * A step's quality in a run: each write (output) and each gate. `predicted` is the score worked out
+ * A node's quality in a run: each write (output) and each gate. `predicted` is the score worked out
  * before the run from the inputs' metadata: null until Kilnmark predicts scores.
  */
-export type PipelineStepQuality = {
-  step: string;
+export type PipelineNodeQuality = {
+  node: string;
   role: "output" | "gate";
   asset: string | null;
   measured: QualityScore | null;
@@ -1365,22 +1365,22 @@ export type PipelineStepQuality = {
 };
 export type PipelineRunDetail = {
   run: PipelineRun;
-  steps: PipelineStepRun[];
+  nodes: PipelineNodeRun[];
   written: PipelineWrittenAsset[];
   read: string[];
-  lineage: { step: string; input: string; output: string }[];
+  lineage: { node: string; input: string; output: string }[];
   notes: string[];
   /** Missing from servers before measured quality. */
-  quality?: PipelineStepQuality[];
+  quality?: PipelineNodeQuality[];
   /** Where the rows are, while the run goes (and the last snapshot once it has ended); missing from older servers. */
   progress?: PipelineRunProgress | null;
 };
 /**
- * A run's rows a second over time, read on its own (pipelinesApi.series): t is ms from workerStartedAt; r each step's
- * rows/s, q its output queue's fill (0 to 1), in steps' order. When stride changes the points were merged: read again.
+ * A run's rows a second over time, read on its own (pipelinesApi.series): t is ms from workerStartedAt; r each node's
+ * rows/s, q its output queue's fill (0 to 1), in nodes' order. When stride changes the points were merged: read again.
  */
-export type PipelineProgressSeries = { steps: string[]; stride: number; points: { t: number; r: number[]; q: number[] }[] };
-export type StepTypeSetting = {
+export type PipelineProgressSeries = { nodes: string[]; stride: number; points: { t: number; r: number[]; q: number[] }[] };
+export type NodeTypeSetting = {
   key: string;
   label: string;
   kind: string;
@@ -1389,7 +1389,7 @@ export type StepTypeSetting = {
   help: string;
   choices: string[];
 };
-export type StepType = {
+export type NodeType = {
   type: string;
   kind: string;
   label: string;
@@ -1397,7 +1397,7 @@ export type StepType = {
   inputs: string[];
   manyInputs: string[];
   outputs: string[];
-  settings: StepTypeSetting[];
+  settings: NodeTypeSetting[];
   /** write only: for each kind of source that can be written to, the keys of the writer settings it takes. */
   writerSettings?: Record<string, string[]> | null;
   /** The palette folder: Read, Write, Filter and route, Transform, Combine, Aggregate, Quality, AI or Other. */
@@ -1443,23 +1443,23 @@ export const pipelinesApi = {
       `/api/v1/pipeline-runs/${id}/events/download${logQuery({ ...f, format })}`,
       format === "ndjson" ? "application/x-ndjson" : "text/plain",
     ),
-  /** The step catalogue with settings schemas, from which the canvas builds its palette and settings panels. */
-  steps: () => call<StepType[]>("/api/v1/steps"),
+  /** The node catalogue with settings schemas, from which the canvas builds its palette and settings panels. */
+  nodes: () => call<NodeType[]>("/api/v1/node-types"),
   /**
-   * The first rows leaving one output of one step of the YAML as it stands (saved or not). Only the
-   * step and the steps before it run; nothing is written. Stewards and admins.
+   * The first rows leaving one output of one node of the YAML as it stands (saved or not). Only the
+   * node and the nodes before it run; nothing is written. Stewards and admins.
    */
-  preview: (p: { yaml: string; step: string; port?: string | null; rows?: number }, signal?: AbortSignal) =>
-    call<StepPreview>("/api/v1/pipelines/preview", { method: "POST", body: JSON.stringify(p), signal }),
+  preview: (p: { yaml: string; node: string; port?: string | null; rows?: number }, signal?: AbortSignal) =>
+    call<NodePreview>("/api/v1/pipelines/preview", { method: "POST", body: JSON.stringify(p), signal }),
 };
 
 /**
- * A preview at a step: shaped as a source's preview (asset is "step.port"), plus whether these are
- * all the step's rows, how long it took, the columns whose values are hidden (made from columns
- * marked sensitive) and, in words, the steps before it that read all their rows first.
+ * A preview at a node: shaped as a source's preview (asset is "node.port"), plus whether these are
+ * all the node's rows, how long it took, the columns whose values are hidden (made from columns
+ * marked sensitive) and, in words, the nodes before it that read all their rows first.
  */
-export type StepPreview = Preview & {
-  step: string;
+export type NodePreview = Preview & {
+  node: string;
   port: string;
   complete: boolean;
   millis: number;

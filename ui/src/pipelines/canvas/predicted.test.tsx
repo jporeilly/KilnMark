@@ -5,7 +5,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ReactFlowProvider } from "@xyflow/react";
-import type { StepType, StepTypeSetting } from "../../api";
+import type { NodeType, NodeTypeSetting } from "../../api";
 import {
   changedDimensions,
   dimensionRows,
@@ -18,9 +18,9 @@ import {
   type PredictedQuality,
   type Suggestion,
 } from "../prediction";
-import { catalogueOf, insertSteps, readGraph, type Change, type GraphStep } from "./model";
+import { catalogueOf, insertNodes, readGraph, type Change, type GraphNode } from "./model";
 import { PredictedSection } from "./PredictedSection";
-import { StepNode, type StepData } from "./StepNode";
+import { NodeCard, type NodeData } from "./NodeCard";
 import SuggestionsPanel from "./SuggestionsPanel";
 
 const ok = (c: Change) => {
@@ -28,8 +28,8 @@ const ok = (c: Change) => {
   return c.text;
 };
 
-const S = (key: string, kind: string): StepTypeSetting => ({ key, label: key, kind, required: false, defaultValue: null, help: "", choices: [] });
-const T = (type: string, kind: string, inputs: string[], outputs: string[], settings: StepTypeSetting[] = []): StepType => ({
+const S = (key: string, kind: string): NodeTypeSetting => ({ key, label: key, kind, required: false, defaultValue: null, help: "", choices: [] });
+const T = (type: string, kind: string, inputs: string[], outputs: string[], settings: NodeTypeSetting[] = []): NodeType => ({
   type,
   kind,
   label: type,
@@ -49,7 +49,7 @@ const CAT = catalogueOf([
 
 const PIPELINE = `kilnmark: pipeline/v1
 name: people-out
-steps:
+nodes:
   - id: people
     type: read
     source: lab-db       # synthetic people
@@ -61,14 +61,14 @@ steps:
     source: warehouse
     table: crm.people_out
 
-# Where the canvas draws each step. Kilnmark ignores this when it runs the pipeline.
+# Where the canvas draws each node. Kilnmark ignores this when it runs the pipeline.
 layout:
   people: {x: 40, y: 120}
   out: {x: 360, y: 120}
 `;
 
 const PREDICTED: PredictedQuality = {
-  step: "out",
+  node: "out",
   role: "output",
   asset: "urn:kilnmark:warehouse:crm.people_out",
   overall: 0.912,
@@ -86,7 +86,7 @@ const TRIM: Suggestion = {
   title: "Trim spaces from name before out",
   why: "Some values start or end with spaces.",
   source: "rules",
-  steps: [{ id: "trim", type: "compute", settings: { columns: { name: "trim(name)" } }, inputs: { in: "people" } }],
+  nodes: [{ id: "trim", type: "compute", settings: { columns: { name: "trim(name)" } }, inputs: { in: "people" } }],
   placement: { before: "out", port: "in", from: "people", through: "trim" },
   effect: {
     output: "out",
@@ -127,7 +127,7 @@ describe("words for predictions", () => {
       { dimension: "consistency", measured: null, predicted: 0.9, gap: null },
     ]);
     expect(gapWords(measured, predicted)).toBe(
-      "Measured 25 points below the estimate; the widest gap is in completeness (−25 points). Check the metadata of what this step reads, or the steps before it.",
+      "Measured 25 points below the estimate; the widest gap is in completeness (−25 points). Check the metadata of what this node reads, or the nodes before it.",
     );
     expect(gapWords({ ...measured, dimensions: { completeness: 0.9 } }, { ...predicted, dimensions: { completeness: 0.91 } })).toBe(
       "Measured as predicted: the catalogue's metadata matched the rows.",
@@ -142,8 +142,8 @@ describe("words for predictions", () => {
 });
 
 describe("adding a suggestion through the YAML", () => {
-  test("one change: the step after where rows come from, the write rewired, every other byte kept", () => {
-    const text = ok(insertSteps(PIPELINE, CAT, TRIM.steps, TRIM.placement));
+  test("one change: the node after where rows come from, the write rewired, every other byte kept", () => {
+    const text = ok(insertNodes(PIPELINE, CAT, TRIM.nodes, TRIM.placement));
     expect(text).toContain(`  - id: trim
     type: compute
     input: people
@@ -164,7 +164,7 @@ describe("adding a suggestion through the YAML", () => {
 
   test("a lookup with its own read, and a gate with its rules, are written as the guides write them", () => {
     const lookup = ok(
-      insertSteps(
+      insertNodes(
         PIPELINE,
         CAT,
         [
@@ -180,7 +180,7 @@ describe("adding a suggestion through the YAML", () => {
     const g = readGraph(lookup, CAT);
     expect(g.ok && g.graph.edges.filter((e) => e.to === "out")).toEqual([{ from: "match-countries", fromPort: "out", to: "out", toPort: "in" }]);
     const gate = ok(
-      insertSteps(
+      insertNodes(
         PIPELINE,
         CAT,
         [{ id: "check-email", type: "gate", settings: { on_fail: "quarantine", asset_rules: false, rules: [{ type: "not_null", field: "email" }] }, inputs: { in: "people" } }],
@@ -193,7 +193,7 @@ describe("adding a suggestion through the YAML", () => {
   test("keys and values with colons, hashes and line breaks read back exactly", () => {
     const columns = { "a: b": "x || ' # not a comment'", "c#d": "concat(first, ': ', last)", e: "line one\nline two" };
     const text = ok(
-      insertSteps(PIPELINE, CAT, [{ id: "odd", type: "compute", settings: { columns }, inputs: { in: "people" } }], {
+      insertNodes(PIPELINE, CAT, [{ id: "odd", type: "compute", settings: { columns }, inputs: { in: "people" } }], {
         before: "out",
         port: "in",
         from: "people",
@@ -202,25 +202,25 @@ describe("adding a suggestion through the YAML", () => {
     );
     const g = readGraph(text, CAT);
     expect(g.ok).toBe(true);
-    const step = g.ok ? g.graph.steps.find((s) => s.id === "odd") : undefined;
-    expect(step?.settings.columns).toEqual(columns);
-    expect(g.ok && g.graph.steps.find((s) => s.id === "out")?.inputs).toEqual([{ port: null, from: "odd", fromPort: "out" }]);
+    const node = g.ok ? g.graph.nodes.find((s) => s.id === "odd") : undefined;
+    expect(node?.settings.columns).toEqual(columns);
+    expect(g.ok && g.graph.nodes.find((s) => s.id === "out")?.inputs).toEqual([{ port: null, from: "odd", fromPort: "out" }]);
   });
 
   test("refused when the pipeline has changed since the suggestion was made", () => {
     const taken = PIPELINE.replace("  - id: out", "  - id: trim\n    type: compute\n    input: people\n\n  - id: out");
-    expect(insertSteps(taken, CAT, TRIM.steps, TRIM.placement)).toEqual({
-      error: "The pipeline already has a step called trim. Ask for the suggestions again.",
+    expect(insertNodes(taken, CAT, TRIM.nodes, TRIM.placement)).toEqual({
+      error: "The pipeline already has a node called trim. Ask for the suggestions again.",
     });
     const rewired = PIPELINE.replace("    input: people\n    source: warehouse", "    input: elsewhere\n    source: warehouse");
-    expect("error" in insertSteps(rewired, CAT, TRIM.steps, TRIM.placement)).toBe(true);
+    expect("error" in insertNodes(rewired, CAT, TRIM.nodes, TRIM.placement)).toBe(true);
   });
 });
 
 describe("predictions on the canvas", () => {
-  const step: GraphStep = { id: "out", type: "write", settings: {}, texts: {}, inputs: [], line: 1, keyLines: {} };
-  const data: StepData = {
-    step,
+  const node: GraphNode = { id: "out", type: "write", settings: {}, texts: {}, inputs: [], line: 1, keyLines: {} };
+  const data: NodeData = {
+    node,
     kind: "sink",
     label: "write",
     summary: "",
@@ -237,10 +237,10 @@ describe("predictions on the canvas", () => {
   test("a write shows its predicted score, labelled as an estimate", () => {
     const html = renderToStaticMarkup(
       <ReactFlowProvider>
-        <StepNode
+        <NodeCard
           id="out"
           data={data}
-          type="step"
+          type="node"
           selected={false}
           dragging={false}
           zIndex={0}

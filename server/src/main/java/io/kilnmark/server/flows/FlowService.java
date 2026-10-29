@@ -37,9 +37,9 @@ import jakarta.ws.rs.core.Response;
 
 /**
  * Flows (docs/design/flows.md): saving them with every version, checking their YAML, queueing runs
- * on the job queue and, on a worker, deciding which flow step runs next. A flow step that runs a
+ * on the job queue and, on a worker, deciding which flow node runs next. A flow node that runs a
  * pipeline queues an ordinary pipeline run, so any worker may run it, as the person who started the
- * flow and with their role; the flow only watches those runs and follows the paths.
+ * flow and with their role; the flow only watches those runs and follows the connections.
  */
 @ApplicationScoped
 public class FlowService {
@@ -54,7 +54,7 @@ public class FlowService {
     private final PipelineStore pipelineStore;
     private final ObjectMapper json;
 
-    /** How often a running flow looks at its steps. */
+    /** How often a running flow looks at its nodes. */
     volatile long pollMillis = 500;
 
     @Inject
@@ -83,7 +83,7 @@ public class FlowService {
     }
 
     /**
-     * Checks a flow's YAML: its shape, paths and conditions, and that every pipeline it runs exists
+     * Checks a flow's YAML: its shape, connections and conditions, and that every pipeline it runs exists
      * (and every version it names).
      */
     public Validation validate(String yaml) {
@@ -98,18 +98,18 @@ public class FlowService {
         List<Problem> problems = new ArrayList<>(parsed.problems());
         FlowDefinition def = parsed.definition();
         if (def != null) {
-            for (FlowDefinition.Step s : def.steps()) {
+            for (FlowDefinition.Node s : def.nodes()) {
                 if (!FlowDefinition.RUN_PIPELINE.equals(s.type()) || s.pipeline() == null) {
                     continue;
                 }
                 Position at = s.at("pipeline");
                 Optional<PipelineStore.Pipeline> p = pipelineStore.pipeline(s.pipeline());
                 if (p.isEmpty()) {
-                    problems.add(new Problem(at.line(), at.column(), s.id(), "Step " + s.id() + " runs the pipeline '"
+                    problems.add(new Problem(at.line(), at.column(), s.id(), "Node " + s.id() + " runs the pipeline '"
                         + s.pipeline() + "', which does not exist: save it under Pipelines first"));
                 } else if (s.version() != null && s.version() > p.get().latestVersion()) {
                     Position v = s.at("version");
-                    problems.add(new Problem(v.line(), v.column(), s.id(), "Step " + s.id() + " runs version "
+                    problems.add(new Problem(v.line(), v.column(), s.id(), "Node " + s.id() + " runs version "
                         + s.version() + " of " + s.pipeline() + ", which has only " + p.get().latestVersion()));
                 }
             }
@@ -158,7 +158,7 @@ public class FlowService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("line", p.line());
             m.put("column", p.column());
-            m.put("step", p.stepId());
+            m.put("node", p.nodeId());
             m.put("message", p.message());
             out.add(m);
         }
@@ -253,8 +253,8 @@ public class FlowService {
         return store.run(id);
     }
 
-    public List<FlowStore.StepRun> stepRuns(long id) {
-        return store.stepRuns(id);
+    public List<FlowStore.NodeRun> nodeRuns(long id) {
+        return store.nodeRuns(id);
     }
 
     public List<FlowStore.Run> runs(String flow, int limit) {
@@ -314,7 +314,7 @@ public class FlowService {
         return new ScanService.Result(ScanService.Outcome.FINISHED, null);
     }
 
-    /** One flow run on a worker: the engine, and the pipeline runs its steps started. */
+    /** One flow run on a worker: the engine, and the pipeline runs its nodes started. */
     private final class Execution {
         private final FlowStore.Run run;
         private final BooleanSupplier shutdown;
@@ -322,7 +322,7 @@ public class FlowService {
         private final Map<String, Long> pipelineRuns = new HashMap<>();
         private final Map<String, Instant> waitingSince = new HashMap<>();
         private final Set<String> cancelAsked = new HashSet<>();
-        private boolean stepWasCancelled;
+        private boolean nodeWasCancelled;
 
         Execution(FlowStore.Run run, BooleanSupplier shutdown) {
             this.run = run;
@@ -339,8 +339,8 @@ public class FlowService {
                 return;
             }
             Map<String, Object> params = readParameters(run.parameters());
-            List<String> ids = def.steps().stream().map(FlowDefinition.Step::id).toList();
-            FlowEngine engine = new FlowEngine(ids, def.enginePaths(), params);
+            List<String> ids = def.nodes().stream().map(FlowDefinition.Node::id).toList();
+            FlowEngine engine = new FlowEngine(ids, def.engineConnections(), params);
             AccessRole role = role(run.requestedRole());
             boolean cancelling = false;
             while (true) {
@@ -369,20 +369,20 @@ public class FlowService {
                     cancelRunning(engine, def, role);
                 }
                 startReady(def, engine, role);
-                for (String step : engine.running()) {
-                    poll(def, engine, step, role, cancelling);
+                for (String node : engine.running()) {
+                    poll(def, engine, node, role, cancelling);
                 }
                 if (!cancelling && engine.running().isEmpty()) {
-                    // Steps that just ended may have made others ready; look once more before deciding.
+                    // Nodes that just ended may have made others ready; look once more before deciding.
                     startReady(def, engine, role);
                 }
-                if (!cancelling && stepWasCancelled && !engine.halted()) {
-                    // Someone cancelled a step's pipeline run: the whole flow stops.
+                if (!cancelling && nodeWasCancelled && !engine.halted()) {
+                    // Someone cancelled a node's pipeline run: the whole flow stops.
                     cancelling = true;
                     engine.cancel();
                 }
                 if (engine.halted()) {
-                    cancelRunning(engine, def, role); // a stop step ends what is still running
+                    cancelRunning(engine, def, role); // a stop node ends what is still running
                 }
                 if (engine.done()) {
                     break;
@@ -402,38 +402,38 @@ public class FlowService {
         }
 
         /**
-         * Starts what is ready. Steps that became ready in the same moment as a stop step are not started:
+         * Starts what is ready. Nodes that became ready in the same moment as a stop node are not started:
          * the stop has already ended the flow.
          */
         private void startReady(FlowDefinition def, FlowEngine engine, AccessRole role) {
-            for (String step : engine.ready()) {
-                if (engine.halted() && !FlowDefinition.STOP.equals(def.step(step).type())) {
-                    end(def, engine, step, FlowEngine.State.CANCELLED, null, "Not started: the flow was stopped by a "
-                        + "stop step", Map.of());
+            for (String node : engine.ready()) {
+                if (engine.halted() && !FlowDefinition.STOP.equals(def.node(node).type())) {
+                    end(def, engine, node, FlowEngine.State.CANCELLED, null, "Not started: the flow was stopped by a "
+                        + "stop node", Map.of());
                 } else {
-                    begin(def, engine, step, role);
+                    begin(def, engine, node, role);
                 }
             }
         }
 
-        private void begin(FlowDefinition def, FlowEngine engine, String step, AccessRole role) {
-            FlowDefinition.Step s = def.step(step);
+        private void begin(FlowDefinition def, FlowEngine engine, String node, AccessRole role) {
+            FlowDefinition.Node s = def.node(node);
             Instant now = Instant.now();
-            started.put(step, now);
+            started.put(node, now);
             if (FlowDefinition.STOP.equals(s.type())) {
                 boolean failed = "failed".equals(s.status());
                 engine.halt(failed, s.message() == null ? "" : s.message());
-                engine.finish(step, FlowEngine.State.SUCCEEDED, Map.of());
-                save(def, step, "succeeded", null, now, s.message(), Map.of());
+                engine.finish(node, FlowEngine.State.SUCCEEDED, Map.of());
+                save(def, node, "succeeded", null, now, s.message(), Map.of());
                 return;
             }
-            save(def, step, "running", null, null, null, Map.of());
+            save(def, node, "running", null, null, null, Map.of());
             tryQueue(def, engine, s, role);
         }
 
-        /** Queues the step's pipeline run, or notes that it must wait for the pipeline's current one. */
-        private void tryQueue(FlowDefinition def, FlowEngine engine, FlowDefinition.Step s, AccessRole role) {
-            Optional<PipelineStore.Run> existing = pipelineStore.flowStepRun(run.id(), s.id());
+        /** Queues the node's pipeline run, or notes that it must wait for the pipeline's current one. */
+        private void tryQueue(FlowDefinition def, FlowEngine engine, FlowDefinition.Node s, AccessRole role) {
+            Optional<PipelineStore.Run> existing = pipelineStore.flowNodeRun(run.id(), s.id());
             if (existing.isPresent()) {
                 pipelineRuns.put(s.id(), existing.get().id());
                 return;
@@ -462,15 +462,15 @@ public class FlowService {
             }
         }
 
-        private void poll(FlowDefinition def, FlowEngine engine, String step, AccessRole role, boolean cancelling) {
-            if (engine.state(step) != FlowEngine.State.RUNNING) {
+        private void poll(FlowDefinition def, FlowEngine engine, String node, AccessRole role, boolean cancelling) {
+            if (engine.state(node) != FlowEngine.State.RUNNING) {
                 return;
             }
-            FlowDefinition.Step s = def.step(step);
-            Long prId = pipelineRuns.get(step);
+            FlowDefinition.Node s = def.node(node);
+            Long prId = pipelineRuns.get(node);
             if (prId == null) {
                 if (cancelling || engine.halted()) {
-                    end(def, engine, step, FlowEngine.State.CANCELLED, null, "Not started: the flow was stopped",
+                    end(def, engine, node, FlowEngine.State.CANCELLED, null, "Not started: the flow was stopped",
                         Map.of());
                 } else {
                     tryQueue(def, engine, s, role);
@@ -482,7 +482,7 @@ public class FlowService {
                 return;
             }
             if (pr.isEmpty()) {
-                end(def, engine, step, FlowEngine.State.FAILED, prId, "The pipeline run no longer exists", Map.of());
+                end(def, engine, node, FlowEngine.State.FAILED, prId, "The pipeline run no longer exists", Map.of());
                 return;
             }
             Optional<PipelineStore.FlowReport> report = pipelineStore.flowReport(prId);
@@ -496,18 +496,18 @@ public class FlowService {
             String status = pr.get().status();
             // Why a pipeline run failed may quote data; its own page shows it to those who may see it.
             switch (status) {
-                case "succeeded" -> end(def, engine, step, FlowEngine.State.SUCCEEDED, prId, null, reported);
-                case "cancelled" -> end(def, engine, step, FlowEngine.State.CANCELLED, prId,
+                case "succeeded" -> end(def, engine, node, FlowEngine.State.SUCCEEDED, prId, null, reported);
+                case "cancelled" -> end(def, engine, node, FlowEngine.State.CANCELLED, prId,
                     "The pipeline run was cancelled", reported);
-                default -> end(def, engine, step, FlowEngine.State.FAILED, prId,
+                default -> end(def, engine, node, FlowEngine.State.FAILED, prId,
                     "The pipeline run failed; its run page says why", reported);
             }
         }
 
         private void cancelRunning(FlowEngine engine, FlowDefinition def, AccessRole role) {
-            for (String step : engine.running()) {
-                Long prId = pipelineRuns.get(step);
-                if (prId != null && cancelAsked.add(step)) {
+            for (String node : engine.running()) {
+                Long prId = pipelineRuns.get(node);
+                if (prId != null && cancelAsked.add(node)) {
                     try {
                         pipelines.cancel(prId, run.requestedBy());
                     } catch (RuntimeException e) {
@@ -517,24 +517,24 @@ public class FlowService {
             }
         }
 
-        private void end(FlowDefinition def, FlowEngine engine, String step, FlowEngine.State state, Long prId,
+        private void end(FlowDefinition def, FlowEngine engine, String node, FlowEngine.State state, Long prId,
                          String message, Map<String, Object> reported) {
-            engine.finish(step, state, reported);
-            stepWasCancelled |= state == FlowEngine.State.CANCELLED;
-            save(def, step, state.name().toLowerCase(), prId, Instant.now(), message, reported);
+            engine.finish(node, state, reported);
+            nodeWasCancelled |= state == FlowEngine.State.CANCELLED;
+            save(def, node, state.name().toLowerCase(), prId, Instant.now(), message, reported);
         }
 
-        private void save(FlowDefinition def, String step, String status, Long prId, Instant finished, String message,
+        private void save(FlowDefinition def, String node, String status, Long prId, Instant finished, String message,
                           Map<String, Object> reported) {
-            FlowDefinition.Step s = def.step(step);
-            int position = def.steps().indexOf(s);
+            FlowDefinition.Node s = def.node(node);
+            int position = def.nodes().indexOf(s);
             String values = "{}";
             try {
                 values = json.writeValueAsString(reported);
             } catch (JsonProcessingException e) {
                 // keep {}
             }
-            store.saveStep(run.id(), new FlowStore.StepRun(step, s.type(), position, status, started.get(step), finished,
+            store.saveNode(run.id(), new FlowStore.NodeRun(node, s.type(), position, status, started.get(node), finished,
                 prId, message, values));
         }
 
@@ -550,13 +550,13 @@ public class FlowService {
             LOG.infof("Flow run %d of %s %s", run.id(), run.flow(), outcome.name().toLowerCase());
         }
 
-        /** Steps that never ran are recorded, so a run shows every step of its version. */
+        /** Nodes that never ran are recorded, so a run shows every node of its version. */
         private void recordSkipped(FlowDefinition def) {
             Set<String> recorded = new HashSet<>();
-            store.stepRuns(run.id()).forEach(r -> recorded.add(r.stepId()));
-            for (FlowDefinition.Step s : def.steps()) {
+            store.nodeRuns(run.id()).forEach(r -> recorded.add(r.nodeId()));
+            for (FlowDefinition.Node s : def.nodes()) {
                 if (!recorded.contains(s.id())) {
-                    store.saveStep(run.id(), new FlowStore.StepRun(s.id(), s.type(), def.steps().indexOf(s), "skipped",
+                    store.saveNode(run.id(), new FlowStore.NodeRun(s.id(), s.type(), def.nodes().indexOf(s), "skipped",
                         null, null, null, null, "{}"));
                 }
             }
@@ -564,11 +564,11 @@ public class FlowService {
 
         private String failure(FlowDefinition def, FlowEngine engine) {
             if (engine.halted()) {
-                return engine.haltMessage().isBlank() ? "The flow stopped at a stop step" : engine.haltMessage();
+                return engine.haltMessage().isBlank() ? "The flow stopped at a stop node" : engine.haltMessage();
             }
-            for (FlowDefinition.Step s : def.steps()) {
+            for (FlowDefinition.Node s : def.nodes()) {
                 if (engine.state(s.id()) == FlowEngine.State.FAILED && !engine.handled(s.id())) {
-                    return "Step " + s.id() + " failed" + (s.pipeline() == null ? "" : " (the pipeline " + s.pipeline() + ")");
+                    return "Node " + s.id() + " failed" + (s.pipeline() == null ? "" : " (the pipeline " + s.pipeline() + ")");
                 }
             }
             return "The flow failed";

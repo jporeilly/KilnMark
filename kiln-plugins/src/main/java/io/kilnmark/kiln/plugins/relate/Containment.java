@@ -47,7 +47,7 @@ public record Containment(double fraction, double margin, double fromCount, doub
     }
 
     /**
-     * A's containment in B from serialised sketches (as {@code ProfileStep} stores them).
+     * A's containment in B from serialised sketches (as {@code ProfileNode} stores them).
      *
      * @throws IllegalArgumentException if either is not a HyperLogLog sketch
      */

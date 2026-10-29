@@ -15,7 +15,7 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 
-/** The profiling step: one {@link ColumnProfile} per column, fed from Arrow batches or row objects. */
+/** The profiling node: one {@link ColumnProfile} per column, fed from Arrow batches or row objects. */
 final class Profiler {
 
     private ColumnProfile[] columns;

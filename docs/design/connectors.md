@@ -15,7 +15,7 @@ line in a services file; nothing in the server changes.
 | `settings()` | The settings a source takes, in form order (key, label, required, hint, multiple, kind, choices, default); see [Setting kinds](#setting-kinds) |
 | `validate(source)` | Problems with the settings without connecting, each starting `setting: ...` |
 | `catalog(source)` | Every asset the source holds, with its fields; throws `ConnectorException` with a message a person can act on |
-| `reader(source, asset, read)` | The first pipeline step that reads one asset as Arrow batches |
+| `reader(source, asset, read)` | The first pipeline node that reads one asset as Arrow batches |
 | `withContext(context)` | Optional (default: unchanged). Returns the connector set up with server-wide settings |
 | `containerKind()` | Optional. The list setting holding the containers chosen for scanning, what they are called and what their counts count (default `containers`) |
 | `containers(source)` | Optional. Every container with how many assets in it the patterns keep; cheap (metadata, a listing). The default reads the full catalogue, so override it |
@@ -33,8 +33,8 @@ line in a services file; nothing in the server changes.
 | `secretScope()` | Optional. Settings that decide where the secret goes; changing one needs the secret again (default: every setting) |
 | `addressSettings(host, port, database)` | Optional. Settings built from a host, port and database, for bulk import (default: none) |
 | `catalogWithRelationships(source)` | Optional (default: `catalog` with no relationships). The catalogue plus the relationships the source declares, such as foreign keys; the scan calls this one |
-| `writer(source, write)` | Optional (default: refuses). The pipeline step that writes its `in` port's rows to the source; see [The writer step](#the-writer-step). List `WRITE` in `capabilities()` when you override it |
-| `writeOptions()` | Optional (default: none). The settings a write step takes, as `SettingSpec`s (key, kind, default, help); the service passes only these keys in `WriteOptions.options` |
+| `writer(source, write)` | Optional (default: refuses). The pipeline node that writes its `in` port's rows to the source; see [The writer node](#the-writer-node). List `WRITE` in `capabilities()` when you override it |
+| `writeOptions()` | Optional (default: none). The settings a write node takes, as `SettingSpec`s (key, kind, default, help); the service passes only these keys in `WriteOptions.options` |
 | `writtenAssetPath(source, write)` | Optional (default: the target). The catalogue path of the written asset, as a scan would give it |
 
 **Choosing assets.** `AssetFilter` (in `kiln-core`) holds the containers chosen and the `include`
@@ -111,9 +111,9 @@ The built-in connectors declare:
 | S3 | `endpoint` URL; `region`, `bucket`, `prefix`, `access_key_id`, `encoding`, `delimiter` TEXT; `path_style` BOOLEAN (false); `header`, `keep_text`, `read_text_on_demand` as for folders |
 | Every source | `description`, `include`, `exclude` TEXT; `ai_egress` CHOICE; `allow_writing` BOOLEAN (false); `keep_samples` BOOLEAN (true); `sample_rows` NUMBER (0 to 10,000); `table_sample_above_rows` NUMBER (databases) |
 
-## The reader step
+## The reader node
 
-The reader is an ordinary Kiln `Step` with no input:
+The reader is an ordinary Kiln `Node` with no input:
 
 - each `process` call puts one Arrow batch on `context.output()`, allocated from
   `context.allocator()`, and returns `false` after the last;
@@ -122,33 +122,33 @@ The reader is an ordinary Kiln `Step` with no input:
   `complete` (false when a row limit cut the read short);
 - it closes everything it opened in `close()`, which runs even after a failure.
 
-In a pipeline graph, a step can be interrupted when another step fails, and interrupting a thread
+In a pipeline graph, a node can be interrupted when another node fails, and interrupting a thread
 blocked in socket I/O closes the socket: readers and writers must close any batch they hold in
 `close()` or a `finally`, validate pooled connections before reuse, and roll back in `close()` when
-they did not finish (docs/design/pipelines.md, "Writing a step for graphs").
+they did not finish (docs/design/pipelines.md, "Writing a node for graphs").
 
 Use the engine's field kinds (`JdbcColumn.Kind`: boolean, int16, int32, int64, float32,
 float64, decimal, text, binary, date, time, timestamp, timestamp_tz) and the Arrow types
 `JdbcColumn` maps them to, so the profiler treats every source alike. Timestamps are
 microseconds. Types with no Arrow equivalent are read as text rather than dropped.
 
-## The writer step
+## The writer node
 
 A connector that can write overrides `writer(source, WriteOptions)` and adds `Capability.WRITE`
-to `capabilities()`. The pipeline service calls it for a `write` step after checking that the
+to `capabilities()`. The pipeline service calls it for a `write` node after checking that the
 source allows writing and that its hosts are allowed, so the connector checks only what is its
 own: the target, the mode and the settings. Refuse what is wrong at once with a
 `ConnectorException` whose message starts with the setting (`table: ...`, `path: ...`,
 `mode: ...`), before connecting to anything.
 
 `WriteOptions` holds the `target` (`schema.table`, or a path inside the source), the `mode`
-(`create`, `append`, `replace` or `upsert`), the upsert `key`, the file `format`, the step's
+(`create`, `append`, `replace` or `upsert`), the upsert `key`, the file `format`, the node's
 further settings as written in the YAML (`options`, limited to the keys `writeOptions()` declares;
 read them with `WriteSettings`, whose `withProfiling` adds the `profile_output` and `keep_values`
 settings every writer takes), the `assetUrn` the written asset is recorded under, and the
 source's `profiling` settings, which the writer hands to its profile.
 
-The step is an ordinary Kiln `Step` with an input and no output:
+The node is an ordinary Kiln `Node` with an input and no output:
 
 - each `process` call takes one batch from `context.input()` (the `in` port), writes it and closes
   it; the end of the input (`null`) is where it commits or puts the file in place;
@@ -158,7 +158,7 @@ The step is an ordinary Kiln `Step` with an input and no output:
 - it reports only after success, through `WriteReport`, as
   [pipelines.md, "What a write reports"](pipelines.md#what-a-write-reports) sets out: for a write
   that leaves the asset holding exactly what was written, `SCHEMA`, `ROW_COUNT` and the profile
-  (computed in the same pass with `ProfileStep`'s own code); for rows added to an existing table,
+  (computed in the same pass with `ProfileNode`'s own code); for rows added to an existing table,
   a `ROW_COUNT` with `complete=false` and `appended=true` only;
 - it takes the columns from the batches with `WriteColumn`, which turns any Arrow type into the
   engine's kinds (`JdbcColumn.Kind`) and gives each value as one Java type per kind, so every
@@ -170,7 +170,7 @@ The built-in writers: `JdbcTableOutput` (PostgreSQL, SQL Server, MySQL and Maria
 matching of input to table in `WritePlan`) and `FileOutput` (folders and S3; `FileTarget` checks
 paths, `CsvEncoder` and `ParquetEncoder` write the formats, and each `FileStore` writes with
 `create(path, overwrite)`, which returns an `Upload` to commit or abort). The decisions are in
-[pipelines.md, section 4](pipelines.md#4-steps-in-step-1) and the guide for people is
+[pipelines.md, section 4](pipelines.md#4-nodes-in-step-1) and the guide for people is
 [Writing data from a pipeline](../guide/writing-data.md).
 
 ## JDBC databases
@@ -214,7 +214,7 @@ as its own code in results), so `JdbcColumn.map` matches type names where codes 
 Text columns are read with `getObject`, and bytes found there (a `sql_variant` holding
 `varbinary`) are written as hex, `0xCAFE`.
 
-When a read stops early (a later step failed), `JdbcTableInput` cancels the query before closing
+When a read stops early (a later node failed), `JdbcTableInput` cancels the query before closing
 it: some drivers, SQL Server's among them, otherwise read every remaining row while closing.
 
 ### SQL Server
@@ -238,7 +238,7 @@ self-signed certificate, such as the reference lab's: when it is `true` the conn
 reads alike, and never edits the URL. A URL that sets `trustServerCertificate` itself still works,
 but not together with the setting. Turning it on asks for the password again, since a server
 whose certificate is not checked could be another server. Connectors add driver properties like
-this by overriding `driverSettings`; the reader step receives them as `driver.<name>` settings.
+this by overriding `driverSettings`; the reader node receives them as `driver.<name>` settings.
 
 ### MySQL and MariaDB
 
@@ -287,7 +287,7 @@ databases the source scans.
 **Reads** stream in a read-only transaction at the server's isolation level (InnoDB's consistent
 snapshot). **Writes** follow the writer contract: `create`, `append`, `upsert` (`INSERT … ON
 DUPLICATE KEY UPDATE`) and `replace` (fill `kiln_new_…`, then one atomic `RENAME TABLE`). Their
-DDL commits by itself, so a failed create or replace drops the table it made. Tables the step
+DDL commits by itself, so a failed create or replace drops the table it made. Tables the node
 creates are loaded with `LOAD DATA LOCAL INFILE` streamed from memory when the server allows
 `local_infile`, otherwise with batched inserts; after each load `@@warning_count` must be 0.
 Sessions set a fixed `sql_mode` (`STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,
@@ -526,7 +526,7 @@ reasons for them are in [ADR 0015](../adr/0015-file-formats.md).
   holding JSON; bytes inside them are written `0xCAFE`, as the JDBC connectors write bytes.
 - **Safety.** The folder connector refuses paths with `..`, absolute paths and links that resolve
   outside the folder, both when listing and when reading; hidden files and folders are skipped.
-- **Stopping.** A read that ends early (a row limit, or a failing later step) closes its stream or
+- **Stopping.** A read that ends early (a row limit, or a failing later node) closes its stream or
   aborts its S3 requests, including Parquet range requests still in flight, rather than draining
   the rest of the object.
 - **Changed files.** If a CSV header no longer matches the catalogue, the reader infers the
@@ -544,7 +544,7 @@ Libraries, limits and the reasons for them are in [ADR 0017](../adr/0017-documen
   attributes: content type, pages, words, characters, language, title, author, dates, owner, tags,
   mail headers, page boundaries, notes, or `readable=false` with a `problem`) and the text's chunks
   as Arrow rows (`DocumentEvents.CHUNK_SCHEMA`). A document that cannot be read is never a failed
-  step.
+  node.
 - **Attachments.** A mail message's attachments get `DOCUMENT` events of their own, with URN
   `<message urn>#attachments/<n>/<file name>` and the attribute `parent`; the scan records each as
   an asset inside the message.
@@ -570,7 +570,7 @@ beyond the schemas the source lists, and refuse to run under a superuser or a lo
 server files, run programs or signal other sessions. See the security section of
 [the development guide](../development.md#security-give-every-source-a-read-only-login).
 
-The scan's profile step (`ProfileStep`) also keeps value shapes, formats and quantiles, and with
+The scan's profile node (`ProfileNode`) also keeps value shapes, formats and quantiles, and with
 values allowed a sample of rows: settings `keep-values`, `examples`, `sample-size`, `sample-mode`
 (`key`, `row` or `reservoir`), `sample-key` and `sample-seed`. It reports the rows and the example
 values per shape as one `SAMPLE` metadata event, which the server stores under the source's
@@ -598,7 +598,7 @@ form then shows switches, lists and numbers without guessing.
 - Unit tests for `validate` and type mapping, and for a writer's SQL or encoding (`WriteSqlTest`,
   `FileWriteTest`).
 - An integration test with Testcontainers against the real system: catalogue, a read through
-  `Runner` with `ProfileStep`, a row limit, and a clear failure for a missing asset. Follow
+  `Runner` with `ProfileNode`, a row limit, and a clear failure for a missing asset. Follow
   `PostgresIngestTest`.
 - A writer: an integration test writing each mode and reading back with the connector's own
   reader, a permission error, and a failure that must leave nothing behind (`PostgresWriteTest`,

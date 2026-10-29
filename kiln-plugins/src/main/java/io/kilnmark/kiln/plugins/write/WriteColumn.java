@@ -46,7 +46,7 @@ import io.kilnmark.kiln.plugins.jdbc.JdbcColumn.Kind;
 /**
  * One column arriving at a writer: its name, the engine's kind for it and, for decimals, precision
  * and scale. Writers decide what to create and how to encode from the kind, so every Arrow type a
- * step may produce is written, the way readers read: integers of any width, floats, decimals,
+ * node may produce is written, the way readers read: integers of any width, floats, decimals,
  * text, bytes, dates, times and timestamps keep their type; anything else (lists, structs, maps,
  * intervals) is written as text, never dropped.
  *

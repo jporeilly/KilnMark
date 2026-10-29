@@ -66,7 +66,7 @@ class ColumnStatsTest {
 
     @Test
     void sketchFieldNamesSurviveCommas() {
-        String s = ProfileStep.sketchFields(java.util.List.of("id", "a,b", "naïve id"));
+        String s = ProfileNode.sketchFields(java.util.List.of("id", "a,b", "naïve id"));
         assertEquals(3, s.split(",").length);
     }
 }

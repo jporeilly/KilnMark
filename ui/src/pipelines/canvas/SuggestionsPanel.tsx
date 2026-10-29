@@ -7,7 +7,7 @@ import { changedDimensions, effectWords, predictionApi, type Advice, type Sugges
  * Suggestions for raising the predicted quality, beside the canvas (loaded when first opened).
  * Kilnmark's own come from the catalogue's metadata with no model; when an AI model is set for
  * pipeline suggestions it ranks, explains and adds to them. Each shows its predicted effect as an
- * estimate; Add inserts its steps through the canvas, as one change to undo.
+ * estimate; Add inserts its nodes through the canvas, as one change to undo.
  */
 export default function SuggestionsPanel({
   yaml,
@@ -17,7 +17,7 @@ export default function SuggestionsPanel({
 }: {
   yaml: string;
   readOnly: boolean;
-  /** Adds the suggestion's steps; returns why not, or null. */
+  /** Adds the suggestion's nodes; returns why not, or null. */
   onAdd: (s: Suggestion) => string | null;
   onClose: () => void;
 }) {
@@ -72,7 +72,7 @@ export default function SuggestionsPanel({
         </button>
       </div>
       <p className="small muted">
-        Steps that would raise the predicted quality of a write. Every score here is an estimate from the catalogue's
+        Nodes that would raise the predicted quality of a write. Every score here is an estimate from the catalogue's
         metadata; no data is read.
       </p>
       <Switch
@@ -128,7 +128,7 @@ export default function SuggestionsPanel({
               </p>
               {s.effect?.note && <p className="small cv-suggest-rows">{s.effect.note} (estimate).</p>}
               <p className="small muted">
-                Adds {s.steps.map((n) => `${n.id} (${n.type})`).join(" and ")} before {s.placement.before}.
+                Adds {s.nodes.map((n) => `${n.id} (${n.type})`).join(" and ")} before {s.placement.before}.
               </p>
               {!readOnly && (
                 <Button

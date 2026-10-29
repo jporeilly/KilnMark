@@ -13,9 +13,9 @@ import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 
 import io.kilnmark.kiln.MetadataEvent;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.plugins.documents.DocumentException;
 import io.kilnmark.kiln.plugins.documents.DocumentLimits;
 import io.kilnmark.kiln.plugins.documents.DocumentRuntime;
@@ -36,7 +36,7 @@ import io.kilnmark.kiln.plugins.documents.DocumentTypes;
  * a remote workbook's copy within a scan), {@code asset-urn}, {@code row-limit} (0 for all),
  * {@code batch-size}.
  */
-public final class SheetInput implements Step {
+public final class SheetInput implements Node {
 
     public static final String TYPE = "sheet-input";
 
@@ -72,7 +72,7 @@ public final class SheetInput implements Step {
     }
 
     @Override
-    public void init(StepContext context) throws StepException {
+    public void init(NodeContext context) throws NodeException {
         String path = context.setting("path");
         String sheet = context.setting("sheet");
         assetUrn = context.setting("asset-urn");
@@ -113,11 +113,11 @@ public final class SheetInput implements Step {
             }
         } catch (IOException | DocumentException | RuntimeException e) {
             close();
-            throw new StepException("Cannot read " + label + ": " + e.getMessage(), e);
+            throw new NodeException("Cannot read " + label + ": " + e.getMessage(), e);
         } catch (InterruptedException e) {
             close();
             Thread.currentThread().interrupt();
-            throw new StepException("Interrupted", e);
+            throw new NodeException("Interrupted", e);
         }
         List<Field> fields = new ArrayList<>();
         for (FileColumn c : columns) {
@@ -127,7 +127,7 @@ public final class SheetInput implements Step {
     }
 
     @Override
-    public boolean process(StepContext context) throws StepException {
+    public boolean process(NodeContext context) throws NodeException {
         VectorSchemaRoot batch = VectorSchemaRoot.create(schema, context.allocator());
         boolean limitReached = false;
         boolean done = false;
@@ -170,7 +170,7 @@ public final class SheetInput implements Step {
             read += n;
         } catch (IOException | RuntimeException e) {
             batch.close();
-            throw new StepException("Reading " + label + " failed after " + read + " rows: " + e.getMessage(), e);
+            throw new NodeException("Reading " + label + " failed after " + read + " rows: " + e.getMessage(), e);
         }
         try {
             if (batch.getRowCount() > 0 || read == 0) {
@@ -180,7 +180,7 @@ public final class SheetInput implements Step {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StepException("Interrupted", e);
+            throw new NodeException("Interrupted", e);
         }
         if (limitReached) {
             boolean more;
@@ -213,7 +213,7 @@ public final class SheetInput implements Step {
         return r;
     }
 
-    private void finish(StepContext context, boolean complete) {
+    private void finish(NodeContext context, boolean complete) {
         Map<String, String> a = new HashMap<>();
         a.put("rows", Long.toString(read));
         a.put("complete", Boolean.toString(complete));

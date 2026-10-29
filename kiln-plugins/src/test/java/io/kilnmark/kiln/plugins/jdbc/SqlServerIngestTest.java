@@ -30,15 +30,15 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.SourceConfig;
-import io.kilnmark.kiln.plugins.profile.ProfileStep;
+import io.kilnmark.kiln.plugins.profile.ProfileNode;
 
 /**
  * The SQL Server connector against a real server: catalogue, a profiled read, a sample and
@@ -308,8 +308,8 @@ class SqlServerIngestTest {
                 + "FROM sys.all_columns a CROSS JOIN sys.all_columns b",
             "label", "a big join", "asset-urn", URN, "batch-size", "1024");
         RunResult r = new Runner(64L << 20, 2).run(new Pipeline("stop", List.of(
-            new StepSpec("read", new JdbcTableInput(), input),
-            new StepSpec("give-up", new GiveUpAfterOneBatch(), Map.of()))), e -> { });
+            new NodeSpec("read", new JdbcTableInput(), input),
+            new NodeSpec("give-up", new GiveUpAfterOneBatch(), Map.of()))), e -> { });
         assertEquals(RunResult.Status.FAILED, r.status());
         assertTrue(r.error().contains("gave up"), r.error());
         assertTrue(r.duration().compareTo(Duration.ofSeconds(5)) < 0, "took " + r.duration());
@@ -383,9 +383,9 @@ class SqlServerIngestTest {
 
     private static RunResult run(SourceConfig from, AssetInfo asset, long rowLimit, List<MetadataEvent> events)
         throws InterruptedException {
-        StepSpec reader = CONNECTOR.reader(from, asset, new Connector.ReadOptions(URN, rowLimit, 4096));
+        NodeSpec reader = CONNECTOR.reader(from, asset, new Connector.ReadOptions(URN, rowLimit, 4096));
         Pipeline p = new Pipeline("ingest", List.of(reader,
-            new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", URN))));
+            new NodeSpec("profile", new ProfileNode(), Map.of("asset-urn", URN))));
         return new Runner(128L << 20, 2).run(p, events::add);
     }
 
@@ -400,8 +400,8 @@ class SqlServerIngestTest {
         return asset.fields().stream().map(AssetInfo.FieldInfo::name).toList();
     }
 
-    /** A step that takes one batch and fails, as a profiler or sink might part way through a table. */
-    private static final class GiveUpAfterOneBatch implements Step {
+    /** A node that takes one batch and fails, as a profiler or sink might part way through a table. */
+    private static final class GiveUpAfterOneBatch implements Node {
 
         @Override
         public String type() {
@@ -409,17 +409,17 @@ class SqlServerIngestTest {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
             // nothing to prepare
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             try (VectorSchemaRoot batch = context.input().take(context.allocator())) {
-                throw new StepException("gave up after " + (batch == null ? 0 : batch.getRowCount()) + " rows");
+                throw new NodeException("gave up after " + (batch == null ? 0 : batch.getRowCount()) + " rows");
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StepException("Interrupted", e);
+                throw new NodeException("Interrupted", e);
             }
         }
     }

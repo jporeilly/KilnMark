@@ -21,7 +21,7 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.graph.Edge;
 import io.kilnmark.kiln.graph.GraphRunner;
-import io.kilnmark.kiln.graph.GraphStep;
+import io.kilnmark.kiln.graph.GraphNode;
 import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.graph.PortRef;
 import io.kilnmark.kiln.graph.RunListener;
@@ -30,23 +30,23 @@ import io.kilnmark.kiln.graph.RunListener;
  * One run of a compiled pipeline, without the database: finds what it reads and writes, runs the
  * graph with the {@link GraphRunner} (writers profile what they write themselves), stops it when
  * asked, keeps what the writers report about the assets they wrote, and turns the engine's result
- * into each step's record. {@link PipelineService} stores what it returns.
+ * into each node's record. {@link PipelineService} stores what it returns.
  */
 final class PipelineExecution {
 
     /** Metadata events kept per run for written assets; profiles of very wide tables beyond this are dropped. */
     static final int MAX_EVENTS = 20_000;
 
-    /** A write step: where it writes, how, and the assets it reads from upstream (its lineage). */
-    record WriteTarget(String step, String source, String target, String mode, String urn, List<String> key,
+    /** A write node: where it writes, how, and the assets it reads from upstream (its lineage). */
+    record WriteTarget(String node, String source, String target, String mode, String urn, List<String> key,
                        List<String> inputs) {
 
-        /** This write under another URN: the one its connector worked out when the step was made. */
+        /** This write under another URN: the one its connector worked out when the node was made. */
         WriteTarget withUrn(String other) {
-            return new WriteTarget(step, source, target, mode, other, key, inputs);
+            return new WriteTarget(node, source, target, mode, other, key, inputs);
         }
 
-        /** Whether the step writes the whole target, so a profile of its rows describes it. */
+        /** Whether the node writes the whole target, so a profile of its rows describes it. */
         boolean wholeTarget() {
             return mode.equals("create") || mode.equals("replace");
         }
@@ -54,18 +54,18 @@ final class PipelineExecution {
 
     /**
      * How a run ended. {@code status} is succeeded, failed or cancelled; {@code rowsIn} holds the
-     * rows each write step received; {@code events} what the writers reported about the written
+     * rows each write node received; {@code events} what the writers reported about the written
      * assets (docs/design/pipelines.md, section 5, "What a write reports").
      */
-    record Outcome(String status, String error, List<PipelineStore.StepRun> steps, Map<String, Long> rowsIn,
+    record Outcome(String status, String error, List<PipelineStore.NodeRun> nodes, Map<String, Long> rowsIn,
                    List<MetadataEvent> events) {
     }
 
-    /** Closes the steps of a graph that will not run. */
-    static void closeSteps(PipelineGraph graph) {
-        for (GraphStep s : graph.steps()) {
+    /** Closes the nodes of a graph that will not run. */
+    static void closeNodes(PipelineGraph graph) {
+        for (GraphNode s : graph.nodes()) {
             try {
-                s.step().close();
+                s.node().close();
             } catch (RuntimeException e) {
                 // never started; nothing to report
             }
@@ -78,22 +78,22 @@ final class PipelineExecution {
         this.json = json;
     }
 
-    /** The assets the pipeline reads, by step id, as the settings name them (before a run resolves them). */
+    /** The assets the pipeline reads, by node id, as the settings name them (before a run resolves them). */
     static Map<String, String> reads(PipelineCompilerPort.Compilation c) {
         return reads(c, null);
     }
 
     /**
-     * The assets the pipeline reads, by step id: under the URN each read step resolved and the
+     * The assets the pipeline reads, by node id: under the URN each read node resolved and the
      * catalogue records (a file's {@code #} and {@code %} escaped, say) when {@code run} made the
-     * steps, else as the settings name them.
+     * nodes, else as the settings name them.
      */
     static Map<String, String> reads(PipelineCompilerPort.Compilation c, RunContext run) {
         Map<String, String> out = new LinkedHashMap<>();
-        for (PipelineCompilerPort.StepOutline s : c.steps()) {
-            if (ReadStepFactory.TYPE.equals(s.type())) {
+        for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
+            if (ReadNodeFactory.TYPE.equals(s.type())) {
                 Map<String, Object> config = c.configs().getOrDefault(s.id(), Map.of());
-                String urn = ReadStepFactory.urn(config);
+                String urn = ReadNodeFactory.urn(config);
                 if (run != null) {
                     urn = run.readUrn(PipelineSources.text(config, "source"), PipelineSources.text(config, "asset"), urn);
                 }
@@ -105,26 +105,26 @@ final class PipelineExecution {
         return out;
     }
 
-    /** Every write step, with the read assets upstream of it (as the settings name them). */
+    /** Every write node, with the read assets upstream of it (as the settings name them). */
     static List<WriteTarget> writes(PipelineCompilerPort.Compilation c) {
         return writes(c, null);
     }
 
     /**
-     * Every write step, with the read assets upstream of it; with {@code run}, each under the URN
+     * Every write node, with the read assets upstream of it; with {@code run}, each under the URN
      * its connector resolved, read and written alike.
      */
     static List<WriteTarget> writes(PipelineCompilerPort.Compilation c, RunContext run) {
         Map<String, String> reads = reads(c, run);
         List<WriteTarget> out = new ArrayList<>();
-        for (PipelineCompilerPort.StepOutline s : c.steps()) {
-            if (!WriteStepFactory.TYPE.equals(s.type())) {
+        for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
+            if (!WriteNodeFactory.TYPE.equals(s.type())) {
                 continue;
             }
             Map<String, Object> config = c.configs().getOrDefault(s.id(), Map.of());
-            String urn = WriteStepFactory.urn(config);
-            String mode = WriteStepFactory.mode(config);
-            List<String> key = WriteStepFactory.key(config);
+            String urn = WriteNodeFactory.urn(config);
+            String mode = WriteNodeFactory.mode(config);
+            List<String> key = WriteNodeFactory.key(config);
             if (urn == null || mode == null) {
                 continue;
             }
@@ -134,7 +134,7 @@ final class PipelineExecution {
                     inputs.add(reads.get(up));
                 }
             }
-            out.add(new WriteTarget(s.id(), PipelineSources.text(config, "source"), WriteStepFactory.target(config),
+            out.add(new WriteTarget(s.id(), PipelineSources.text(config, "source"), WriteNodeFactory.target(config),
                 mode, urn, key == null ? List.of() : key, List.copyOf(inputs)));
         }
         return run == null ? out
@@ -150,15 +150,15 @@ final class PipelineExecution {
         return e.kind() != MetadataEvent.Kind.ROW_COUNT || "true".equals(e.attributes().get("written"));
     }
 
-    /** Every step whose rows reach {@code step}. */
-    static Set<String> upstream(String step, List<PipelineCompilerPort.EdgeOutline> edges) {
+    /** Every node whose rows reach {@code node}. */
+    static Set<String> upstream(String node, List<PipelineCompilerPort.EdgeOutline> edges) {
         Set<String> seen = new LinkedHashSet<>();
-        ArrayDeque<String> todo = new ArrayDeque<>(List.of(step));
+        ArrayDeque<String> todo = new ArrayDeque<>(List.of(node));
         while (!todo.isEmpty()) {
             String s = todo.poll();
             for (PipelineCompilerPort.EdgeOutline e : edges) {
-                if (e.toStep().equals(s) && seen.add(e.fromStep())) {
-                    todo.add(e.fromStep());
+                if (e.toNode().equals(s) && seen.add(e.fromNode())) {
+                    todo.add(e.fromNode());
                 }
             }
         }
@@ -214,7 +214,7 @@ final class PipelineExecution {
         } catch (InterruptedException e) {
             interrupted = true;
         } catch (RuntimeException e) {
-            closeSteps(graph); // the runner refused the graph before starting its steps
+            closeNodes(graph); // the runner refused the graph before starting its nodes
             result = new RunResult(graph.name(), RunResult.Status.FAILED, Instant.now(), Instant.now(), List.of(),
                 "The engine failed: " + e.getMessage());
         } finally {
@@ -230,17 +230,17 @@ final class PipelineExecution {
         }
         if (interrupted || result == null) {
             boolean byPerson = cancelled.getAsBoolean();
-            List<PipelineStore.StepRun> none = graph.order() == null ? List.of() : graph.order().stream()
-                .map(id -> new PipelineStore.StepRun(id, graph.step(id).step().type(), position(graph, id), null, null,
+            List<PipelineStore.NodeRun> none = graph.order() == null ? List.of() : graph.order().stream()
+                .map(id -> new PipelineStore.NodeRun(id, graph.node(id).node().type(), position(graph, id), null, null,
                     "{}", null, null, null, "stopped")).toList();
             return new Outcome(byPerson ? "cancelled" : "failed", byPerson ? "Cancelled while it was running"
                 : "The worker running this pipeline was stopped before it finished. Run it again; check what its "
                 + "writes had written first.", none, Map.of(), List.of());
         }
         Map<String, Long> rowsIn = new HashMap<>();
-        List<PipelineStore.StepRun> steps = steps(graph, result, context, rowsIn);
+        List<PipelineStore.NodeRun> nodes = nodes(graph, result, context, rowsIn);
         String error = result.succeeded() ? null : context.scrub(result.error());
-        return new Outcome(result.succeeded() ? "succeeded" : "failed", error, steps, rowsIn, List.copyOf(events));
+        return new Outcome(result.succeeded() ? "succeeded" : "failed", error, nodes, rowsIn, List.copyOf(events));
     }
 
     private static void joinQuietly(Thread t) {
@@ -266,7 +266,7 @@ final class PipelineExecution {
 
     /**
      * Rows on each edge, as the graph runner counted them ({@link RunResult#edges()}). A runner that
-     * reports none leaves each edge carrying its step's rows out when the step has one output port
+     * reports none leaves each edge carrying its node's rows out when the node has one output port
      * connected, and unknown (null) otherwise.
      */
     static Map<Edge, Long> rowsByEdge(PipelineGraph graph, RunResult result) {
@@ -274,34 +274,34 @@ final class PipelineExecution {
         if (!result.edges().isEmpty()) {
             Map<String, Long> counted = new HashMap<>();
             for (RunResult.EdgeResult e : result.edges()) {
-                counted.put(e.fromStep() + "." + e.fromPort() + ">" + e.toStep() + "." + e.toPort(), e.rows());
+                counted.put(e.fromNode() + "." + e.fromPort() + ">" + e.toNode() + "." + e.toPort(), e.rows());
             }
             for (Edge e : graph.edges()) {
                 out.put(e, counted.get(e.from() + ">" + e.to()));
             }
             return out;
         }
-        Map<String, RunResult.StepResult> byName = new HashMap<>();
-        result.steps().forEach(s -> byName.put(s.name(), s));
+        Map<String, RunResult.NodeResult> byName = new HashMap<>();
+        result.nodes().forEach(s -> byName.put(s.name(), s));
         for (Edge e : graph.edges()) {
-            RunResult.StepResult from = byName.get(e.from().step());
-            long ports = graph.outOf(e.from().step()).stream().map(x -> x.from().port()).distinct().count();
+            RunResult.NodeResult from = byName.get(e.from().node());
+            long ports = graph.outOf(e.from().node()).stream().map(x -> x.from().port()).distinct().count();
             out.put(e, from != null && ports == 1 ? from.rowsOut() : null);
         }
         return out;
     }
 
-    private List<PipelineStore.StepRun> steps(PipelineGraph graph, RunResult result, RunContext context,
+    private List<PipelineStore.NodeRun> nodes(PipelineGraph graph, RunResult result, RunContext context,
                                               Map<String, Long> rowsIn) {
-        Map<String, RunResult.StepResult> byName = new HashMap<>();
-        result.steps().forEach(s -> byName.put(s.name(), s));
+        Map<String, RunResult.NodeResult> byName = new HashMap<>();
+        result.nodes().forEach(s -> byName.put(s.name(), s));
         Map<Edge, Long> edgeRows = rowsByEdge(graph, result);
-        List<String> order = graph.order() == null ? graph.steps().stream().map(GraphStep::id).toList() : graph.order();
-        List<PipelineStore.StepRun> out = new ArrayList<>();
+        List<String> order = graph.order() == null ? graph.nodes().stream().map(GraphNode::id).toList() : graph.order();
+        List<PipelineStore.NodeRun> out = new ArrayList<>();
         int position = 0;
         for (String id : order) {
-            GraphStep step = graph.step(id);
-            RunResult.StepResult r = byName.get(id);
+            GraphNode node = graph.node(id);
+            RunResult.NodeResult r = byName.get(id);
             Map<String, Long> in = new LinkedHashMap<>();
             Map<String, Long> outs = new LinkedHashMap<>();
             if (r != null && (!r.rowsInByPort().isEmpty() || !r.rowsOutByPort().isEmpty())) {
@@ -318,7 +318,7 @@ final class PipelineExecution {
             }
             Long rowsInTotal = in.isEmpty() ? null : in.values().stream().anyMatch(v -> v < 0) ? null
                 : in.values().stream().mapToLong(Long::longValue).sum();
-            // A step with nothing connected after it (a write) has no rows out: what it wrote is its target.
+            // A node with nothing connected after it (a write) has no rows out: what it wrote is its target.
             Long rowsOut = r == null || graph.outOf(id).isEmpty() ? null : r.rowsOut();
             String error = r == null ? null : r.error();
             long peak = r == null ? 0 : r.peakMemoryBytes();
@@ -343,7 +343,7 @@ final class PipelineExecution {
                 }
             });
             java.time.Duration took = r == null ? null : r.duration();
-            out.add(new PipelineStore.StepRun(id, step.step().type(), position++, rowsInTotal, rowsOut,
+            out.add(new PipelineStore.NodeRun(id, node.node().type(), position++, rowsInTotal, rowsOut,
                 ports.toString(), r == null ? null : peak, took == null ? null : took.toMillis(), context.scrub(error),
                 r == null ? null : r.outcome().name().toLowerCase(java.util.Locale.ROOT),
                 r == null ? null : r.startedAt(), r == null ? null : r.firstRowAt(), r == null ? null : r.lastRowAt(),

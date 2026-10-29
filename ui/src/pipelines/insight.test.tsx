@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { PipelineRun, PipelineRunDetail, PipelineRunProgress, PipelineStepRun } from "../api";
-import { badgeRows, runWords, stepChips } from "./canvas/StepNode";
-import { liveEdgeRows, liveSteps, rateWords } from "./live";
+import type { PipelineRun, PipelineRunDetail, PipelineRunProgress, PipelineNodeRun } from "../api";
+import { badgeRows, runWords, nodeChips } from "./canvas/NodeCard";
+import { liveEdgeRows, liveNodes, rateWords } from "./live";
 import { RunTimeline, qualityMark } from "./RunTimeline";
 import { RunTimeSpent, limitWords } from "./RunTimeSpent";
 import { RatesChart } from "./RunRates";
@@ -15,7 +15,7 @@ import {
   rowWords,
   shareOfRun,
   shareWords,
-  slowestStep,
+  slowestNode,
   ticks,
   timeline,
 } from "./timeline";
@@ -41,15 +41,15 @@ const run = (over: Partial<PipelineRun> = {}): PipelineRun =>
     ...over,
   }) as PipelineRun;
 
-const step = (
+const node = (
   id: string,
   start: number,
   first: number | null,
   last: number | null,
   end: number,
-  outcome: PipelineStepRun["outcome"] = "finished",
-): PipelineStepRun => ({
-  step: id,
+  outcome: PipelineNodeRun["outcome"] = "finished",
+): PipelineNodeRun => ({
+  node: id,
   type: "t",
   position: 0,
   rowsIn: 5000,
@@ -67,16 +67,16 @@ const step = (
 
 const detail = (over: Partial<PipelineRunDetail> = {}): PipelineRunDetail => ({
   run: run(),
-  steps: [
-    step("customers", 10, 400, 2900, 3000),
-    step("tidy", 12, 420, 2950, 3010),
-    step("clean", 15, 450, 3900, 3950, "failed"),
+  nodes: [
+    node("customers", 10, 400, 2900, 3000),
+    node("tidy", 12, 420, 2950, 3010),
+    node("clean", 15, 450, 3900, 3950, "failed"),
   ],
   written: [],
   read: [],
   lineage: [],
   notes: [],
-  progress: { at: at(4000), workerStartedAt: at(0), workerFinishedAt: at(4000), slowest: null, steps: [], edges: [] },
+  progress: { at: at(4000), workerStartedAt: at(0), workerFinishedAt: at(4000), slowest: null, nodes: [], edges: [] },
   ...over,
 });
 
@@ -84,9 +84,9 @@ const progress: PipelineRunProgress = {
   at: at(2000),
   workerStartedAt: at(0),
   slowest: "tidy",
-  steps: [
+  nodes: [
     {
-      step: "customers",
+      node: "customers",
       state: "running",
       rowsIn: 0,
       rowsOut: 3000,
@@ -97,7 +97,7 @@ const progress: PipelineRunProgress = {
       finishedAt: null,
     },
     {
-      step: "tidy",
+      node: "tidy",
       state: "running",
       rowsIn: 2600,
       rowsOut: 2400,
@@ -108,7 +108,7 @@ const progress: PipelineRunProgress = {
       finishedAt: null,
     },
     {
-      step: "clean",
+      node: "clean",
       state: "waiting",
       rowsIn: 0,
       rowsOut: 0,
@@ -146,11 +146,11 @@ const progress: PipelineRunProgress = {
 };
 
 describe("a run's timeline", () => {
-  test("each step from the run's start, overlapping, to the run's end", () => {
+  test("each node from the run's start, overlapping, to the run's end", () => {
     const t = timeline(detail())!;
     expect(t.live).toBe(false);
     expect(t.span).toBe(4000);
-    expect(t.rows.map((r) => [r.step, r.start, r.firstRow, r.lastRow, r.end])).toEqual([
+    expect(t.rows.map((r) => [r.node, r.start, r.firstRow, r.lastRow, r.end])).toEqual([
       ["customers", 10, 400, 2900, 3000],
       ["tidy", 12, 420, 2950, 3010],
       ["clean", 15, 450, 3900, 3950],
@@ -158,11 +158,11 @@ describe("a run's timeline", () => {
     expect(rowWords(t.rows[0])).toBe("Started at 10 ms, first row at 400 ms, last row at 2.9 s, ended at 3.0 s, after 3.0 s");
   });
 
-  test("nothing to draw for a run whose steps were not timed", () => {
+  test("nothing to draw for a run whose nodes were not timed", () => {
     const old = detail({
-      steps: [
+      nodes: [
         {
-          ...step("a", 0, 0, 0, 0),
+          ...node("a", 0, 0, 0, 0),
           startedAt: null,
           firstRowAt: null,
           lastRowAt: null,
@@ -174,19 +174,19 @@ describe("a run's timeline", () => {
     expect(renderToStaticMarkup(<RunTimeline detail={old} />)).toContain("were not timed");
   });
 
-  test("while the run goes, from its progress, to now, with the slowest step", () => {
+  test("while the run goes, from its progress, to now, with the slowest node", () => {
     const t = timeline(
       detail({
         run: run({ status: "running", finishedAt: null }),
-        steps: [],
+        nodes: [],
         progress,
       }),
       { now: T0 + 2500, fetchedAt: T0 + 2000 },
     )!;
     expect(t.live).toBe(true);
     expect(t.span).toBe(2500);
-    expect(t.rows.find((r) => r.slowest)?.step).toBe("tidy");
-    const clean = t.rows.find((r) => r.step === "clean")!;
+    expect(t.rows.find((r) => r.slowest)?.node).toBe("tidy");
+    const clean = t.rows.find((r) => r.node === "clean")!;
     expect(clean.running).toBe(true);
     expect(rowWords(clean)).toBe("Started at 15 ms, waiting for its first row, still running");
   });
@@ -196,14 +196,14 @@ describe("a run's timeline", () => {
       <RunTimeline
         detail={detail({
           run: run({ status: "running", finishedAt: null }),
-          steps: [],
+          nodes: [],
           progress,
         })}
         clock={{ now: T0 + 2500, fetchedAt: T0 + 2000 }}
       />,
     );
     expect(html).toContain('role="img"');
-    expect(html).toContain("the slowest step now is tidy");
+    expect(html).toContain("the slowest node now is tidy");
     expect(html).toContain(">Slowest<");
     expect(html).toContain("Show the timeline as a table");
     expect(html).toContain("Waiting for rows");
@@ -222,8 +222,8 @@ describe("a run's timeline", () => {
 });
 
 describe("live figures while a run goes", () => {
-  test("rows so far, the rate and the slowest step", () => {
-    const m = liveSteps(progress);
+  test("rows so far, the rate and the slowest node", () => {
+    const m = liveNodes(progress);
     expect(m.get("tidy")).toEqual({
       rowsIn: 2600,
       rowsOut: 2400,
@@ -239,7 +239,7 @@ describe("live figures while a run goes", () => {
   });
 
   test("the canvas chips: rows and rate in one chip, Slowest in words in another, on the first row", () => {
-    const m = liveSteps(progress);
+    const m = liveNodes(progress);
     const info = (id: string) => {
       const l = m.get(id)!;
       return {
@@ -250,7 +250,7 @@ describe("live figures while a run goes", () => {
         live: { rate: l.rate, state: l.state, slowest: l.slowest },
       };
     };
-    const [first] = stepChips({
+    const [first] = nodeChips({
       problems: 0,
       run: info("tidy"),
       quality: null,
@@ -261,7 +261,7 @@ describe("live figures while a run goes", () => {
       { kind: "slowest", tone: "orange", text: "Slowest" },
     ]);
     expect(
-      stepChips({
+      nodeChips({
         problems: 0,
         run: info("clean"),
         quality: null,
@@ -269,7 +269,7 @@ describe("live figures while a run goes", () => {
       })[0],
     ).toMatchObject([{ kind: "live", tone: "neutral", text: "Waiting for rows" }]);
     expect(runWords(info("tidy"))).toBe("2,400 rows out · 1,200 rows/s · Slowest");
-    // Live chips sit on the first row, so a step's height does not change as they come and go.
+    // Live chips sit on the first row, so a node's height does not change as they come and go.
     expect(
       badgeRows({
         problems: 0,
@@ -306,25 +306,25 @@ describe("the critical path and the run at a glance", () => {
         workerStartedAt: at(0),
         workerFinishedAt: at(4000),
         slowest: null,
-        steps: [],
+        nodes: [],
         edges: edges(pairs),
       },
     });
 
-  test("walks back from the step that ended last through the input whose rows arrived last", () => {
+  test("walks back from the node that ended last through the input whose rows arrived last", () => {
     const d = detail({
-      steps: [
-        step("customers", 10, 400, 2900, 3000),
-        step("tidy", 12, 420, 2950, 3010),
-        step("aside", 14, 430, 3600, 3610),
-        step("clean", 15, 450, 3900, 3950),
+      nodes: [
+        node("customers", 10, 400, 2900, 3000),
+        node("tidy", 12, 420, 2950, 3010),
+        node("aside", 14, 430, 3600, 3610),
+        node("clean", 15, 450, 3900, 3950),
       ],
       progress: {
         at: at(4000),
         workerStartedAt: at(0),
         workerFinishedAt: at(4000),
         slowest: null,
-        steps: [],
+        nodes: [],
         edges: edges([
           ["customers", "tidy"],
           ["customers", "aside"],
@@ -335,22 +335,22 @@ describe("the critical path and the run at a glance", () => {
     });
     const t = timeline(d)!;
     const p = criticalPath(t, d.progress!.edges)!;
-    expect(p.steps).toEqual(["customers", "aside", "clean"]);
+    expect(p.nodes).toEqual(["customers", "aside", "clean"]);
     expect(p.share).toBeCloseTo(0.985, 3);
     expect(shareWords(0.82)).toBe("82%");
     expect(peakConcurrent(t)).toBe(4);
-    expect(slowestStep(t)?.step).toBe("clean");
+    expect(slowestNode(t)?.node).toBe("clean");
     expect(shareOfRun(t.rows[0], t.span)).toBeCloseTo(0.7475, 3);
   });
 
   test("none while the run goes, or without its connections", () => {
     expect(criticalPath(timeline(detail())!, [])).toBeNull();
-    const live = timeline(detail({ run: run({ status: "running", finishedAt: null }), steps: [], progress }), {
+    const live = timeline(detail({ run: run({ status: "running", finishedAt: null }), nodes: [], progress }), {
       now: T0 + 2500,
       fetchedAt: T0 + 2000,
     })!;
     expect(criticalPath(live, progress.edges)).toBeNull();
-    expect(slowestStep(live)?.step).toBe("tidy");
+    expect(slowestNode(live)?.node).toBe("tidy");
   });
 
   test("tiles, the path highlighted with a toggle, and quality markers in words", () => {
@@ -360,7 +360,7 @@ describe("the critical path and the run at a glance", () => {
     ]);
     d.quality = [
       {
-        step: "tidy",
+        node: "tidy",
         role: "gate",
         asset: null,
         measured: null,
@@ -381,7 +381,7 @@ describe("the critical path and the run at a glance", () => {
         },
       },
       {
-        step: "clean",
+        node: "clean",
         role: "output",
         asset: null,
         measured: { overall: 0.99, dimensions: {}, reasons: [] },
@@ -392,7 +392,7 @@ describe("the critical path and the run at a glance", () => {
     ];
     const html = renderToStaticMarkup(<RunTimeline detail={d} />);
     expect(html).toContain("Wall-clock time");
-    expect(html).toContain("Most steps at once");
+    expect(html).toContain("Most nodes at once");
     expect(html).toContain("customers → tidy → clean, 99% of the run");
     expect(html).toContain("Show the critical path");
     expect((html.match(/pl-tl-row is-critical/g) ?? []).length).toBe(3);
@@ -404,20 +404,20 @@ describe("the critical path and the run at a glance", () => {
   });
 });
 
-describe("where each step spent its time, and what limited the run", () => {
+describe("where each node spent its time, and what limited the run", () => {
   const chain = (over: Partial<PipelineRunDetail> = {}) =>
     detail({
-      steps: [
-        { ...step("read", 0, 300, 3800, 3900), waitingForRowsMs: 0, heldUpMs: 2600 },
-        { ...step("check", 10, 320, 3850, 3900), waitingForRowsMs: 100, heldUpMs: 0 },
-        { ...step("write", 20, 330, 3880, 3920), waitingForRowsMs: 3100, heldUpMs: 0 },
+      nodes: [
+        { ...node("read", 0, 300, 3800, 3900), waitingForRowsMs: 0, heldUpMs: 2600 },
+        { ...node("check", 10, 320, 3850, 3900), waitingForRowsMs: 100, heldUpMs: 0 },
+        { ...node("write", 20, 330, 3880, 3920), waitingForRowsMs: 3100, heldUpMs: 0 },
       ],
       progress: {
         at: at(4000),
         workerStartedAt: at(0),
         workerFinishedAt: at(4000),
         slowest: null,
-        steps: [],
+        nodes: [],
         edges: [
           {
             from: "read",
@@ -448,24 +448,24 @@ describe("where each step spent its time, and what limited the run", () => {
       ...over,
     });
 
-  test("each step's time is working, waiting for rows and held up, adding up to all of it", () => {
+  test("each node's time is working, waiting for rows and held up, adding up to all of it", () => {
     const s = timeSpent(chain())!;
-    const read = s.rows.find((r) => r.step === "read")!;
+    const read = s.rows.find((r) => r.node === "read")!;
     expect(read.active).toBe(3900);
     expect(shares(read).heldUp).toBeCloseTo(2600 / 3900, 5);
     const sum = shares(read).working + shares(read).waiting + shares(read).heldUp;
     expect(sum).toBeCloseTo(1, 5);
-    expect(s.limit).toEqual({ step: "check", working: expect.closeTo(3790 / 3890, 5), bySource: false });
+    expect(s.limit).toEqual({ node: "check", working: expect.closeTo(3790 / 3890, 5), bySource: false });
     expect(limitWords(s.limit, false)).toBe("What limited this run: check, working 97% of the time.");
   });
 
   test("with nothing held up, the run was limited by reading its source", () => {
     const rows = [
-      { step: "read", active: 1000, working: 950, waiting: 0, heldUp: 50 - 50, running: false, source: true },
-      { step: "write", active: 1000, working: 100, waiting: 900, heldUp: 0, running: false, source: false },
+      { node: "read", active: 1000, working: 950, waiting: 0, heldUp: 50 - 50, running: false, source: true },
+      { node: "write", active: 1000, working: 100, waiting: 900, heldUp: 0, running: false, source: false },
     ];
     const l = limiting(rows, [{ from: "read", to: "write" }]);
-    expect(l).toEqual({ step: "read", working: 0.95, bySource: true });
+    expect(l).toEqual({ node: "read", working: 0.95, bySource: true });
     expect(limitWords(l, false)).toBe(
       "Nothing was held up: this run was limited by reading its source, read (working 95% of the time).",
     );
@@ -475,9 +475,9 @@ describe("where each step spent its time, and what limited the run", () => {
     expect(timeSpent(detail())).toBeNull();
     const html = renderToStaticMarkup(<RunTimeSpent detail={chain()} />);
     expect(html).toContain("What limited this run: check, working 97% of the time.");
-    expect(html).toContain("read: working 33%, waiting for rows 0%, held up by the next step 67%");
+    expect(html).toContain("read: working 33%, waiting for rows 0%, held up by the next node 67%");
     expect(html).toContain("Limited the run");
-    expect(html).toContain("Show where each step spent its time as a table");
+    expect(html).toContain("Show where each node spent its time as a table");
     expect(html).toContain("Wall-clock time");
     expect(html).not.toContain("Critical path");
   });
@@ -485,22 +485,22 @@ describe("where each step spent its time, and what limited the run", () => {
   test("live: from the progress, to its snapshot plus the time since it was fetched", () => {
     const live = detail({
       run: run({ status: "running", finishedAt: null }),
-      steps: [],
+      nodes: [],
       progress: {
         ...progress,
-        steps: progress.steps.map((p) => ({ ...p, waitingForRowsMs: 100, heldUpMs: p.step === "customers" ? 1500 : 0 })),
+        nodes: progress.nodes.map((p) => ({ ...p, waitingForRowsMs: 100, heldUpMs: p.node === "customers" ? 1500 : 0 })),
       },
     });
     const s = timeSpent(live, { now: T0 + 2500, fetchedAt: T0 + 2000 })!;
     expect(s.live).toBe(true);
-    expect(s.rows.find((r) => r.step === "customers")!.active).toBe(2490);
-    expect(s.limit?.step).toBe("tidy");
+    expect(s.rows.find((r) => r.node === "customers")!.active).toBe(2490);
+    expect(s.limit?.node).toBe("tidy");
   });
 });
 
 describe("rows a second through the run", () => {
   const series = {
-    steps: ["read", "check"],
+    nodes: ["read", "check"],
     stride: 1,
     points: [
       { t: 1000, r: [100, 80], q: [0.25, 0] },
@@ -515,7 +515,7 @@ describe("rows a second through the run", () => {
         workerStartedAt: at(0),
         workerFinishedAt: at(4000),
         slowest: null,
-        steps: [],
+        nodes: [],
         edges: [
           {
             from: "read",
@@ -533,7 +533,7 @@ describe("rows a second through the run", () => {
       },
     });
 
-  test("a line per step with its peak, average and how often its output queue was full", () => {
+  test("a line per node with its peak, average and how often its output queue was full", () => {
     const r = rates(d(), series)!;
     expect(r.span).toBe(4000);
     const read = r.lines[0];

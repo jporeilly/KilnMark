@@ -9,7 +9,7 @@ import io.kilnmark.kiln.SettingSpec;
 import io.kilnmark.kiln.connect.ConnectorException;
 
 /**
- * Reads a write step's further settings ({@code WriteOptions.options()}, as written in the pipeline
+ * Reads a write node's further settings ({@code WriteOptions.options()}, as written in the pipeline
  * YAML: strings, numbers and booleans). Each connector declares the keys it takes in
  * {@code Connector.writeOptions()}; the pipeline service passes only those, and keys a writer does
  * not read are ignored here. A setting of the wrong type is refused with a message naming it.

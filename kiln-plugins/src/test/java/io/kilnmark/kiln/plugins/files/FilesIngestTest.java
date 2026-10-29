@@ -102,7 +102,7 @@ class FilesIngestTest {
     void csvReadsEveryRowAndCountsTheValueThatDoesNotParse() throws Exception {
         TestFiles.Read r = TestFiles.read(files, source, assets.get("exports/customers.csv"), 0);
         assertTrue(r.result().succeeded(), r.result().error());
-        assertEquals(TestFiles.CSV_ROWS, r.result().steps().get(0).rowsOut());
+        assertEquals(TestFiles.CSV_ROWS, r.result().nodes().get(0).rowsOut());
         assertEquals(Map.of("rows", "3000", "complete", "true", "unparsed", "1"), r.rowCount());
         assertEquals("1", r.profile().get("balance").get("nulls"), "the 'n/a' balance is read as null");
         assertEquals("60", r.profile().get("email").get("nulls"));

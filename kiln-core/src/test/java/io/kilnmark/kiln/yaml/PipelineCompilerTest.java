@@ -25,7 +25,7 @@ class PipelineCompilerTest {
         kilnmark: pipeline/v1
         name: toy
         description: Numbers, filtered, joined and written.
-        steps:
+        nodes:
           - id: a
             type: numbers
             batches: 4
@@ -73,11 +73,11 @@ class PipelineCompilerTest {
     }
 
     @Test
-    void aGoodPipelineChecksWithoutCreatingStepsAndRuns() throws Exception {
+    void aGoodPipelineChecksWithoutCreatingNodesAndRuns() throws Exception {
         int before = ToyFactories.CREATED.get();
         Compiled c = compile(GOOD);
         assertTrue(c.ok(), c.problems().toString());
-        assertEquals(before, ToyFactories.CREATED.get(), "checking created no steps");
+        assertEquals(before, ToyFactories.CREATED.get(), "checking created no nodes");
         assertEquals("toy", c.definition().name());
         assertEquals(List.of("n", "lookup_n"), names(c.schemas().get("joined").get("out")));
         assertEquals(List.of("n"), names(c.schemas().get("keep").get("rejected")));
@@ -90,12 +90,12 @@ class PipelineCompilerTest {
         assertEquals("all.out -> out.in", g.into("out").getFirst().toString());
         assertEquals(List.of("joined.out -> all.in", "keep.rejected -> all.in"),
             g.into("all").stream().map(Object::toString).toList());
-        assertEquals(Map.of("batches", 4), g.step("a").config());
+        assertEquals(Map.of("batches", 4), g.node("a").config());
 
         RunResult r = new KilnGraphRunner(64L << 20, 2).run(g, e -> { });
         assertTrue(r.succeeded(), r.error());
-        assertEquals(40, r.step("a").rowsOut());
-        assertEquals(40 + 30, r.step("all").rowsIn(), "the lookup toy passes both sides on; nothing is rejected");
+        assertEquals(40, r.node("a").rowsOut());
+        assertEquals(40 + 30, r.node("all").rowsIn(), "the lookup toy passes both sides on; nothing is rejected");
     }
 
     @Test
@@ -104,7 +104,7 @@ class PipelineCompilerTest {
         Compiled c = compile("""
             kilnmark: pipeline/v1
             name: u
-            steps:
+            nodes:
               - { id: a, type: numbers }
               - { id: b, type: numbers }
               - { id: c, type: numbers }
@@ -115,60 +115,72 @@ class PipelineCompilerTest {
     }
 
     @Test
+    void aPipelineWrittenWithTheOldNodesKeyStillReads() {
+        Compiled old = compile(GOOD.replace("nodes:", "steps:"));
+        assertTrue(old.ok(), old.problems().toString());
+        assertEquals(compile(GOOD).definition().nodes().size(), old.definition().nodes().size());
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nsteps: []\nnodes:\n  - { id: a, type: numbers }\n"), 3),
+            "'steps' is the old name of 'nodes', and this pipeline has both: keep nodes");
+        // paths is a flow's old key, not a pipeline's.
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\npaths: []\nnodes:\n  - { id: a, type: numbers }\n"), 3),
+            "Unknown key 'paths'");
+    }
+
+    @Test
     void theFormatLineIsRequired() {
-        contains(only(compile("name: x\nsteps:\n  - { id: a, type: numbers }\n"), 1), "kilnmark: pipeline/v1");
-        contains(only(compile("kilnmark: pipeline/v9\nname: x\nsteps:\n  - { id: a, type: numbers }\n"), 1),
+        contains(only(compile("name: x\nnodes:\n  - { id: a, type: numbers }\n"), 1), "kilnmark: pipeline/v1");
+        contains(only(compile("kilnmark: pipeline/v9\nname: x\nnodes:\n  - { id: a, type: numbers }\n"), 1),
             "pipeline/v9", "reads pipeline/v1");
     }
 
     @Test
     void unknownTopLevelKeysAreNamedWithASuggestion() {
-        Problem p = only(compile("kilnmark: pipeline/v1\nname: x\ndescripton: y\nsteps:\n  - { id: a, type: numbers }\n"), 3);
+        Problem p = only(compile("kilnmark: pipeline/v1\nname: x\ndescripton: y\nnodes:\n  - { id: a, type: numbers }\n"), 3);
         contains(p, "descripton", "did you mean 'description'");
-        assertNull(p.stepId());
+        assertNull(p.nodeId());
     }
 
     @Test
     void theCanvasLayoutIsAcceptedAndIgnored() {
-        String steps = "kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: a, type: numbers }\n";
-        Compiled plain = compile(steps);
+        String nodes = "kilnmark: pipeline/v1\nname: x\nnodes:\n  - { id: a, type: numbers }\n";
+        Compiled plain = compile(nodes);
         assertTrue(plain.problems().isEmpty(), plain.problems().toString());
-        // Whatever the layout holds (positions, unknown steps, odd shapes), it changes nothing.
+        // Whatever the layout holds (positions, unknown nodes, odd shapes), it changes nothing.
         for (String layout : List.of("layout:\n  a: { x: 40, y: 120 }\n", "layout:\n  nobody: { x: -1, y: 2.5 }\n",
             "layout: [1, 2]\n", "layout:\n")) {
-            Compiled c = compile(steps + layout);
+            Compiled c = compile(nodes + layout);
             assertTrue(c.problems().isEmpty(), layout + c.problems());
             assertEquals(plain.schemas(), c.schemas(), layout);
             assertEquals(plain.notes(), c.notes(), layout);
         }
-        contains(only(compile(steps + "layuot:\n  a: { x: 1, y: 2 }\n"), 5), "layuot", "did you mean 'layout'");
+        contains(only(compile(nodes + "layuot:\n  a: { x: 1, y: 2 }\n"), 5), "layuot", "did you mean 'layout'");
     }
 
     @Test
     void thePipelinesQualityThresholdIsAShare() {
-        String steps = "steps:\n  - { id: a, type: numbers }\n";
-        Compiled none = compile("kilnmark: pipeline/v1\nname: x\n" + steps);
+        String nodes = "nodes:\n  - { id: a, type: numbers }\n";
+        Compiled none = compile("kilnmark: pipeline/v1\nname: x\n" + nodes);
         assertNull(none.definition().quality());
-        Compiled c = compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_score: 0.95\n" + steps);
+        Compiled c = compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_score: 0.95\n" + nodes);
         assertTrue(c.ok(), c.problems().toString());
         assertEquals(0.95, c.definition().quality().minScore(), 1e-12);
-        assertEquals(1.0, compile("kilnmark: pipeline/v1\nname: x\nquality: { min_score: 1 }\n" + steps).definition()
+        assertEquals(1.0, compile("kilnmark: pipeline/v1\nname: x\nquality: { min_score: 1 }\n" + nodes).definition()
             .quality().minScore());
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_score: 95\n" + steps), 4),
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_score: 95\n" + nodes), 4),
             "quality.min_score must be a share from 0 to 1");
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_score: high\n" + steps), 4),
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_score: high\n" + nodes), 4),
             "quality.min_score");
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_scor: 0.9\n" + steps), 4),
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality:\n  min_scor: 0.9\n" + nodes), 4),
             "quality has no setting 'min_scor'", "did you mean 'min_score'");
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality: 0.9\n" + steps), 3),
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nquality: 0.9\n" + nodes), 3),
             "quality must be a mapping");
-        assertNull(compile("kilnmark: pipeline/v1\nname: x\nquality: {}\n" + steps).definition().quality()
+        assertNull(compile("kilnmark: pipeline/v1\nname: x\nquality: {}\n" + nodes).definition().quality()
             .minScore());
     }
 
     @Test
     void aRulesSettingIsAListOfMappings() {
-        String head = "kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: a, type: numbers }\n"
+        String head = "kilnmark: pipeline/v1\nname: x\nnodes:\n  - { id: a, type: numbers }\n"
             + "  - id: f\n    type: filter\n    input: a\n    condition: \"n > 0\"\n";
         Compiled c = compile(head + "    checks:\n      - {type: not_null, field: n}\n      - type: unique\n"
             + "        fields: [n]\n");
@@ -180,11 +192,11 @@ class PipelineCompilerTest {
     }
 
     @Test
-    void stepIdsMustBeWordsAndUnique() {
+    void nodeIdsMustBeWordsAndUnique() {
         Compiled c = compile("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - { id: Bad Id, type: numbers }
               - { id: a, type: numbers }
               - { id: a, type: numbers }
@@ -197,20 +209,20 @@ class PipelineCompilerTest {
     }
 
     @Test
-    void anUnknownStepTypeSuggestsTheClosest() {
-        Problem p = only(compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - id: a\n    type: numbrs\n"), 5);
+    void anUnknownNodeTypeSuggestsTheClosest() {
+        Problem p = only(compile("kilnmark: pipeline/v1\nname: x\nnodes:\n  - id: a\n    type: numbrs\n"), 5);
         contains(p, "numbrs", "did you mean 'numbers'");
-        assertEquals("a", p.stepId());
+        assertEquals("a", p.nodeId());
         assertEquals(5, p.column());
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - id: a\n    type: zzzzzzzz\n"), 5),
-            "The step types are: filter, lookup");
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nnodes:\n  - id: a\n    type: zzzzzzzz\n"), 5),
+            "The node types are: filter, lookup");
     }
 
     @Test
-    void inputsMustNameStepsAndPortsThatExist() {
-        String head = "kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: src, type: numbers }\n  - { id: f, type: filter, input: src, condition: x }\n";
+    void inputsMustNameNodesAndPortsThatExist() {
+        String head = "kilnmark: pipeline/v1\nname: x\nnodes:\n  - { id: src, type: numbers }\n  - { id: f, type: filter, input: src, condition: x }\n";
         contains(only(compile(head + "  - { id: s, type: sink, input: srcc, path: p }\n"), 6),
-            "'srcc'", "not a step", "did you mean 'src'");
+            "'srcc'", "not a node", "did you mean 'src'");
         contains(only(compile(head + "  - { id: s, type: sink, input: f.rejectd, path: p }\n"), 6),
             "no output 'rejectd'", "did you mean 'rejected'", "out, rejected");
         contains(only(compile(head + "  - { id: s, type: sink, inputs: { inn: f }, path: p }\n"), 6),
@@ -228,15 +240,15 @@ class PipelineCompilerTest {
         Problem p = only(compile("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - { id: a, type: numbers }
               - id: j
                 type: lookup
                 inputs: { main: a }
             """), 5);
         contains(p, "needs an input on port 'lookup'");
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: s, type: sink, path: p }\n"), 4),
-            "needs an input on port 'in'", "input: <step id>");
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nnodes:\n  - { id: s, type: sink, path: p }\n"), 4),
+            "needs an input on port 'in'", "input: <node id>");
     }
 
     @Test
@@ -244,7 +256,7 @@ class PipelineCompilerTest {
         Problem p = only(compile("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - { id: a, type: numbers }
               - { id: b, type: numbers }
               - id: p
@@ -255,8 +267,8 @@ class PipelineCompilerTest {
     }
 
     @Test
-    void settingsAreCheckedAgainstTheStepType() {
-        String head = "kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: a, type: numbers }\n  - id: f\n    type: filter\n    input: a\n";
+    void settingsAreCheckedAgainstTheNodeType() {
+        String head = "kilnmark: pipeline/v1\nname: x\nnodes:\n  - { id: a, type: numbers }\n  - id: f\n    type: filter\n    input: a\n";
         contains(only(compile(head + "    condition: x\n    conditon: y\n"), 9),
             "no setting 'conditon'", "did you mean 'condition'", "its settings are condition, mode");
         contains(only(compile(head + "    mode: keep\n"), 5), "needs the setting 'condition' (Condition)");
@@ -267,8 +279,8 @@ class PipelineCompilerTest {
         contains(only(compile(head + "    condition: x\n    rename: [a]\n"), 9), "mapping of column names");
         contains(only(compile(head + "    condition: [x]\n"), 8), "single value");
         Problem own = only(compile(head + "    mode: drop\n    condition: bad > 1\n"), 9);
-        contains(own, "Step f: condition uses a column that does not exist");
-        assertEquals("f", own.stepId());
+        contains(own, "Node f: condition uses a column that does not exist");
+        assertEquals("f", own.nodeId());
         assertTrue(compile(head + "    condition: x\n    limit: 5\n    strict: false\n    columns: [n]\n    rename: { n: m }\n").ok());
     }
 
@@ -277,7 +289,7 @@ class PipelineCompilerTest {
         Compiled c = compile("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - { id: src, type: numbers }
               - { id: m, type: lookup, inputs: { main: src, lookup: q } }
               - { id: p, type: pass, input: m }
@@ -290,11 +302,11 @@ class PipelineCompilerTest {
     }
 
     @Test
-    void columnsFlowThroughTheStepsAndProblemsWithThemAreReported() {
+    void columnsFlowThroughTheNodesAndProblemsWithThemAreReported() {
         Problem p = only(compile("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - { id: a, type: numbers }
               - { id: b, type: numbers }
               - id: j
@@ -302,7 +314,7 @@ class PipelineCompilerTest {
                 inputs: { main: a, lookup: b }
                 keep: [missing]
             """), 6);
-        contains(p, "Step j: keep names missing, which the lookup side does not have");
+        contains(p, "Node j: keep names missing, which the lookup side does not have");
     }
 
     @Test
@@ -310,7 +322,7 @@ class PipelineCompilerTest {
         Compiled c = compile("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - { id: a, type: numbers }
               - { id: m, type: mystery }
               - id: j
@@ -323,48 +335,48 @@ class PipelineCompilerTest {
         assertEquals(1, c.notes().size(), c.notes().toString());
         Problem note = c.notes().getFirst();
         assertEquals(5, note.line());
-        contains(note, "step m cannot be known", "steps j, p are not checked");
+        contains(note, "node m cannot be known", "nodes j, p are not checked");
         assertNull(c.schemas().get("j"));
         assertEquals(List.of("n"), names(c.schemas().get("a").get("out")));
     }
 
     @Test
-    void inputsSharingAStepUpstreamGetANote() {
+    void inputsSharingANodeUpstreamGetANote() {
         Compiled c = compile("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - { id: a, type: numbers }
               - { id: p, type: pass, input: a }
               - { id: j, type: lookup, inputs: { main: a, lookup: p } }
             """);
         assertTrue(c.ok(), c.problems().toString());
-        assertTrue(c.notes().stream().anyMatch(n -> n.line() == 6 && n.message().contains("both come from step a")),
+        assertTrue(c.notes().stream().anyMatch(n -> n.line() == 6 && n.message().contains("both come from node a")),
             c.notes().toString());
     }
 
     @Test
     void theYamlShapeIsChecked() {
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nsteps: nothing\n"), 3), "steps must be a list");
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nsteps: []\n"), 3), "at least one step");
-        contains(only(compile("kilnmark: pipeline/v1\nsteps:\n  - { id: a, type: numbers }\n"), 1), "needs a name");
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - { type: numbers }\n"), 4), "needs an id");
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: a }\n"), 4), "needs a type");
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: a, type: numbers }\n"
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nnodes: nothing\n"), 3), "nodes must be a list");
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nnodes: []\n"), 3), "at least one node");
+        contains(only(compile("kilnmark: pipeline/v1\nnodes:\n  - { id: a, type: numbers }\n"), 1), "needs a name");
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nnodes:\n  - { type: numbers }\n"), 4), "needs an id");
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nnodes:\n  - { id: a }\n"), 4), "needs a type");
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nnodes:\n  - { id: a, type: numbers }\n"
             + "  - { id: p, type: pass, input: a, inputs: { in: a } }\n"), 5), "both input and inputs");
-        contains(only(compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: p, type: pass, input: 5 }\n"), 4),
-            "id of the step to read from");
+        contains(only(compile("kilnmark: pipeline/v1\nname: x\nnodes:\n  - { id: p, type: pass, input: 5 }\n"), 4),
+            "id of the node to read from");
         contains(only(compile("- just\n- a list\n"), 1), "starts with kilnmark");
         contains(only(compile(""), 1), "starts with kilnmark");
     }
 
     @Test
     void unsafeOrBrokenYamlIsRefusedWithItsPosition() {
-        contains(only(compile("kilnmark: pipeline/v1\nname: &n x\nsteps: []\n"), 2), "Anchors");
+        contains(only(compile("kilnmark: pipeline/v1\nname: &n x\nnodes: []\n"), 2), "Anchors");
         contains(only(compile("kilnmark: pipeline/v1\nname: x\nother: *n\n"), 3), "Aliases");
         contains(only(compile("kilnmark: pipeline/v1\nname: !!python/object x\n"), 2), "Tags (!!python/object)");
         contains(only(compile("kilnmark: pipeline/v1\nname: !custom x\n"), 2), "Tags");
-        Problem dup = only(compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - id: a\n    type: numbers\n    type: pass\n"), 6);
+        Problem dup = only(compile("kilnmark: pipeline/v1\nname: x\nnodes:\n  - id: a\n    type: numbers\n    type: pass\n"), 6);
         contains(dup, "'type' appears twice", "first on line 5");
         contains(only(compile("kilnmark: pipeline/v1\n---\nname: y\n"), 2), "one YAML document");
         contains(only(compile("kilnmark: pipeline/v1\nname: x\n  bad: indent\n"), 3), "not valid YAML");
@@ -379,7 +391,7 @@ class PipelineCompilerTest {
         PipelineDefinition.Parsed p = PipelineDefinition.parse("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - id: a
                 type: t
                 i: 12
@@ -395,7 +407,7 @@ class PipelineCompilerTest {
                 list: [1, two]
             """);
         assertTrue(p.problems().isEmpty(), p.problems().toString());
-        Map<String, Object> c = p.definition().steps().getFirst().config();
+        Map<String, Object> c = p.definition().nodes().getFirst().config();
         assertEquals(12, c.get("i"));
         assertEquals(12345678901L, c.get("big"));
         assertEquals(31, c.get("hex"));
@@ -408,35 +420,35 @@ class PipelineCompilerTest {
         assertNull(c.get("nothing"));
         assertEquals("${HOME}", c.get("env"), "environment variables are never substituted");
         assertEquals(List.of(1, "two"), c.get("list"));
-        assertEquals(new Position(7, 5), p.definition().steps().getFirst().at("big"));
+        assertEquals(new Position(7, 5), p.definition().nodes().getFirst().at("big"));
     }
 
     @Test
-    void aStepThatCannotBeCreatedClosesTheOthers() {
-        io.kilnmark.kiln.StepFactories f = ToyFactories.all().register(new ToyFactories.Pass() {
+    void aNodeThatCannotBeCreatedClosesTheOthers() {
+        io.kilnmark.kiln.NodeFactories f = ToyFactories.all().register(new ToyFactories.Pass() {
             @Override
             public String type() {
                 return "broken";
             }
 
             @Override
-            public io.kilnmark.kiln.Step create(Map<String, Object> config) throws io.kilnmark.kiln.StepException {
-                throw new io.kilnmark.kiln.StepException("no connection");
+            public io.kilnmark.kiln.Node create(Map<String, Object> config) throws io.kilnmark.kiln.NodeException {
+                throw new io.kilnmark.kiln.NodeException("no connection");
             }
         });
         Compiled c = new PipelineCompiler(f).compile("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - { id: a, type: numbers }
               - { id: b, type: broken, input: a }
             """);
         assertTrue(c.ok(), c.problems().toString());
-        io.kilnmark.kiln.StepException e = assertThrows(io.kilnmark.kiln.StepException.class, c::graph);
-        assertTrue(e.getMessage().contains("Step b (broken) could not be created: no connection"), e.getMessage());
+        io.kilnmark.kiln.NodeException e = assertThrows(io.kilnmark.kiln.NodeException.class, c::graph);
+        assertTrue(e.getMessage().contains("Node b (broken) could not be created: no connection"), e.getMessage());
     }
 
-    private static final String FILTER_HEAD = "kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: a, type: numbers }\n"
+    private static final String FILTER_HEAD = "kilnmark: pipeline/v1\nname: x\nnodes:\n  - { id: a, type: numbers }\n"
         + "  - id: f\n    type: filter\n    input: a\n";
 
     @Test
@@ -456,9 +468,9 @@ class PipelineCompilerTest {
         assertEquals(Map.of("007", "0x10"), f.get("rename"));
         assertEquals(16, f.get("limit"), "a number setting is a number");
         assertEquals("2024.10", c.configs().get("s").get("path"));
-        assertEquals("2024.10", c.graph().step("s").config().get("path"), "the step receives the text as written");
-        assertEquals("007", c.definition().steps().get(1).configText().get("condition"));
-        assertEquals(7, c.definition().steps().get(1).config().get("condition"), "the definition keeps the YAML value too");
+        assertEquals("2024.10", c.graph().node("s").config().get("path"), "the node receives the text as written");
+        assertEquals("007", c.definition().nodes().get(1).configText().get("condition"));
+        assertEquals(7, c.definition().nodes().get(1).config().get("condition"), "the definition keeps the YAML value too");
     }
 
     @Test
@@ -474,51 +486,51 @@ class PipelineCompilerTest {
 
     @Test
     void mappingKeysAreTheTextWritten() {
-        PipelineDefinition.Parsed p = PipelineDefinition.parse("kilnmark: pipeline/v1\nname: x\nsteps:\n"
+        PipelineDefinition.Parsed p = PipelineDefinition.parse("kilnmark: pipeline/v1\nname: x\nnodes:\n"
             + "  - { id: a, type: t, m: { 007: x, 1.10: y, true: z } }\n");
         assertTrue(p.problems().isEmpty(), p.problems().toString());
         assertEquals(List.of("007", "1.10", "true"),
-            List.copyOf(((Map<?, ?>) p.definition().steps().getFirst().config().get("m")).keySet()));
+            List.copyOf(((Map<?, ?>) p.definition().nodes().getFirst().config().get("m")).keySet()));
     }
 
     @Test
     void hugeValuesAreEchoedShort() {
         String type = "x".repeat(999_000);
-        Compiled c = compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - id: a\n    type: " + type + "\n");
+        Compiled c = compile("kilnmark: pipeline/v1\nname: x\nnodes:\n  - id: a\n    type: " + type + "\n");
         Problem p = only(c, 5);
         assertTrue(p.message().length() < 300, p.message().length() + " characters");
-        contains(p, "Unknown step type 'xxx", "…'");
+        contains(p, "Unknown node type 'xxx", "…'");
         String key = "k".repeat(5_000);
         Problem k = only(compile(FILTER_HEAD + "    condition: x\n    " + key + ": 1\n"), 9);
         assertTrue(k.message().length() < 400, k.message());
         String id = "a".repeat(5_000) + "B";
-        Problem i = only(compile("kilnmark: pipeline/v1\nname: x\nsteps:\n  - { id: " + id + ", type: numbers }\n"), 4);
-        assertTrue(i.message().length() < 300 && i.stepId().length() <= 80, i.message());
+        Problem i = only(compile("kilnmark: pipeline/v1\nname: x\nnodes:\n  - { id: " + id + ", type: numbers }\n"), 4);
+        assertTrue(i.message().length() < 300 && i.nodeId().length() <= 80, i.message());
     }
 
     @Test
     void aPipelineBuiltInCodeGetsTheChecksReadingWouldGive() {
-        PipelineDefinition.StepDefinition a = new PipelineDefinition.StepDefinition("a", "numbers", List.of(), Map.of(),
+        PipelineDefinition.NodeDefinition a = new PipelineDefinition.NodeDefinition("a", "numbers", List.of(), Map.of(),
             new Position(1, 1), Map.of());
-        PipelineDefinition.StepDefinition again = new PipelineDefinition.StepDefinition("a", "numbers", List.of(),
+        PipelineDefinition.NodeDefinition again = new PipelineDefinition.NodeDefinition("a", "numbers", List.of(),
             Map.of(), new Position(2, 1), Map.of());
-        PipelineDefinition.StepDefinition bad = new PipelineDefinition.StepDefinition("Bad", null, List.of(), Map.of(),
+        PipelineDefinition.NodeDefinition bad = new PipelineDefinition.NodeDefinition("Bad", null, List.of(), Map.of(),
             new Position(3, 1), Map.of());
         Compiled c = COMPILER.compile(new PipelineDefinition(" ", null, List.of(a, again, bad)));
         List<String> messages = c.problems().stream().map(Problem::message).toList();
         assertEquals(4, messages.size(), messages.toString());
         assertTrue(messages.get(0).contains("needs a name"), messages.toString());
         assertTrue(messages.get(1).contains("used twice (first on line 1)"), messages.toString());
-        assertTrue(messages.get(2).contains("Step id 'Bad' must start"), messages.toString());
-        assertTrue(messages.get(3).contains("Step Bad needs a type"), messages.toString());
+        assertTrue(messages.get(2).contains("Node id 'Bad' must start"), messages.toString());
+        assertTrue(messages.get(3).contains("Node Bad needs a type"), messages.toString());
     }
 
     @Test
-    void aDuplicateIdStillLetsTheFirstStepBeChecked() {
+    void aDuplicateIdStillLetsTheFirstNodeBeChecked() {
         Compiled c = compile("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - { id: a, type: numbers }
               - { id: p, type: pass }
               - { id: p, type: pass, input: a }
@@ -530,18 +542,18 @@ class PipelineCompilerTest {
     }
 
     @Test
-    void manyInputsSharingAStepUpstreamGetANote() {
+    void manyInputsSharingANodeUpstreamGetANote() {
         Compiled c = compile("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - { id: a, type: numbers }
               - { id: p1, type: pass, input: a }
               - { id: p2, type: pass, input: a }
               - { id: u, type: union, input: [p1, p2] }
             """);
         assertTrue(c.ok(), c.problems().toString());
-        assertTrue(c.notes().stream().anyMatch(n -> n.line() == 7 && n.message().contains("in[0] and in[1] both come from step a")),
+        assertTrue(c.notes().stream().anyMatch(n -> n.line() == 7 && n.message().contains("in[0] and in[1] both come from node a")),
             c.notes().toString());
     }
 
@@ -558,15 +570,15 @@ class PipelineCompilerTest {
         assertEquals(List.of("main", "lookup"), List.copyOf(c.inputSchemas().get("joined").keySet()));
         assertEquals(List.of("in[0]", "in[1]"), List.copyOf(c.inputSchemas().get("all").keySet()));
         PipelineGraph g = c.graph();
-        assertEquals(List.of("n"), names(g.step("joined").inputSchemas().get("lookup")));
-        assertEquals(List.of("n", "lookup_n"), names(g.step("all").inputSchemas().get("in[0]")));
-        assertTrue(g.step("a").inputSchemas().isEmpty());
+        assertEquals(List.of("n"), names(g.node("joined").inputSchemas().get("lookup")));
+        assertEquals(List.of("n", "lookup_n"), names(g.node("all").inputSchemas().get("in[0]")));
+        assertTrue(g.node("a").inputSchemas().isEmpty());
     }
 
     @Test
-    void anErrorWhileCreatingStepsClosesThoseAlreadyMade() {
+    void anErrorWhileCreatingNodesClosesThoseAlreadyMade() {
         java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
-        io.kilnmark.kiln.StepFactories f = ToyFactories.all()
+        io.kilnmark.kiln.NodeFactories f = ToyFactories.all()
             .register(new ToyFactories.Pass() {
                 @Override
                 public String type() {
@@ -574,19 +586,19 @@ class PipelineCompilerTest {
                 }
 
                 @Override
-                public io.kilnmark.kiln.Step create(Map<String, Object> config) {
-                    return new io.kilnmark.kiln.Step() {
+                public io.kilnmark.kiln.Node create(Map<String, Object> config) {
+                    return new io.kilnmark.kiln.Node() {
                         @Override
                         public String type() {
                             return "tracked";
                         }
 
                         @Override
-                        public void init(io.kilnmark.kiln.StepContext context) {
+                        public void init(io.kilnmark.kiln.NodeContext context) {
                         }
 
                         @Override
-                        public boolean process(io.kilnmark.kiln.StepContext context) {
+                        public boolean process(io.kilnmark.kiln.NodeContext context) {
                             return false;
                         }
 
@@ -604,14 +616,14 @@ class PipelineCompilerTest {
                 }
 
                 @Override
-                public io.kilnmark.kiln.Step create(Map<String, Object> config) {
+                public io.kilnmark.kiln.Node create(Map<String, Object> config) {
                     throw new LinkageError("boom");
                 }
             });
         Compiled c = new PipelineCompiler(f).compile("""
             kilnmark: pipeline/v1
             name: x
-            steps:
+            nodes:
               - { id: a, type: numbers }
               - { id: t, type: tracked, input: a }
               - { id: b, type: boom, input: t }
@@ -630,7 +642,7 @@ class PipelineCompilerTest {
         Compiled text = compile(FILTER_HEAD + "    condition: 1e-999999999\n");
         assertTrue(text.ok(), text.problems().toString());
         assertEquals("1e-999999999", text.configs().get("f").get("condition"));
-        PipelineDefinition.StepDefinition built = new PipelineDefinition.StepDefinition("a", "numbers", List.of(),
+        PipelineDefinition.NodeDefinition built = new PipelineDefinition.NodeDefinition("a", "numbers", List.of(),
             Map.of("x", new java.math.BigDecimal("1e-999999999")), new Position(1, 1), Map.of());
         assertEquals("1E-999999999", built.configText().get("x"));
         assertTrue(java.time.Duration.ofNanos(System.nanoTime() - start).toSeconds() < 10);

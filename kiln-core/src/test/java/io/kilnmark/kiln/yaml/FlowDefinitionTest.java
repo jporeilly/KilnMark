@@ -21,7 +21,7 @@ class FlowDefinitionTest {
         parameters:
           region: { type: text, default: EMEA }
           limit_share: { type: number, default: 0.02 }
-        steps:
+        nodes:
           - id: clean
             type: run-pipeline
             pipeline: demo-customers-clean
@@ -33,7 +33,7 @@ class FlowDefinitionTest {
             type: stop
             status: failed
             message: Too many customers were set aside
-        paths:
+        connections:
           - { from: clean, to: spend, when: "clean.quarantined_share < limit_share and clean.score >= good" }
           - { from: clean, to: halt, when: "clean.quarantined_share >= limit_share" }
           - { from: clean, to: halt, when: failure }
@@ -45,6 +45,16 @@ class FlowDefinitionTest {
         FlowDefinition.Parsed p = FlowDefinition.parse(yaml);
         assertTrue(!p.problems().isEmpty(), "expected a problem in:\n" + yaml);
         return p.problems().getFirst().message();
+    }
+
+    @Test
+    void aFlowWrittenWithTheOldKeysStillReads() {
+        FlowDefinition.Parsed old = FlowDefinition.parse(GOOD.replace("nodes:", "steps:").replace("connections:", "paths:"));
+        assertTrue(old.valid(), () -> String.valueOf(old.problems()));
+        assertEquals(3, old.definition().nodes().size());
+        assertEquals(3, old.definition().connections().size());
+        assertTrue(firstProblem(GOOD.replace("layout:", "paths: []\nlayout:"))
+            .contains("'paths' is the old name of 'connections', and this flow has both: keep connections"));
     }
 
     private static String with(String from, String to) {
@@ -62,46 +72,46 @@ class FlowDefinitionTest {
         assertEquals(2, d.parameters().size());
         assertEquals(0.02, d.parameter("limit_share").defaultValue());
         assertEquals("EMEA", d.parameter("region").defaultValue());
-        assertEquals(3, d.steps().size());
-        assertEquals(3, d.step("spend").version());
-        assertEquals("failed", d.step("halt").status());
-        assertEquals(3, d.paths().size());
-        assertEquals(FlowEngine.Kind.CONDITION, d.paths().getFirst().kind());
-        assertNotNull(d.paths().getFirst().condition());
-        assertEquals(FlowEngine.Kind.FAILURE, d.paths().get(2).kind());
-        assertEquals(3, d.enginePaths().size());
+        assertEquals(3, d.nodes().size());
+        assertEquals(3, d.node("spend").version());
+        assertEquals("failed", d.node("halt").status());
+        assertEquals(3, d.connections().size());
+        assertEquals(FlowEngine.Kind.CONDITION, d.connections().getFirst().kind());
+        assertNotNull(d.connections().getFirst().condition());
+        assertEquals(FlowEngine.Kind.FAILURE, d.connections().get(2).kind());
+        assertEquals(3, d.engineConnections().size());
     }
 
     @Test
-    void aPathWithNoWhenIsSuccess() {
+    void aConnectionWithNoWhenIsSuccess() {
         FlowDefinition.Parsed p = FlowDefinition.parse("""
             kilnmark: flow/v1
             name: f
-            steps:
+            nodes:
               - { id: a, type: run-pipeline, pipeline: p1 }
               - { id: b, type: run-pipeline, pipeline: p2 }
-            paths:
+            connections:
               - { from: a, to: b }
             """);
         assertTrue(p.valid(), p.problems().toString());
-        assertEquals(FlowEngine.Kind.SUCCESS, p.definition().paths().getFirst().kind());
+        assertEquals(FlowEngine.Kind.SUCCESS, p.definition().connections().getFirst().kind());
         assertEquals(FlowDefinition.DEFAULT_QUEUE_TIMEOUT, p.definition().queueTimeout());
     }
 
     @Test
-    void anyOrderOfPathsWorksForConditions() {
+    void anyOrderOfConnectionsWorksForConditions() {
         FlowDefinition.Parsed p = FlowDefinition.parse("""
             kilnmark: flow/v1
             name: f
-            steps:
+            nodes:
               - { id: a, type: run-pipeline, pipeline: p1 }
               - { id: b, type: run-pipeline, pipeline: p2 }
               - { id: c, type: run-pipeline, pipeline: p3 }
-            paths:
+            connections:
               - { from: b, to: c, when: "a.score >= good and b.rows_written > 0" }
               - { from: a, to: b }
             """);
-        assertTrue(p.valid(), "a is before b even though its path is written second: " + p.problems());
+        assertTrue(p.valid(), "a is before b even though its connection is written second: " + p.problems());
     }
 
     @Test
@@ -119,11 +129,11 @@ class FlowDefinitionTest {
         assertTrue(firstProblem(with("queue_timeout: 45m", "queue_timeout: 48h")).contains("at most 24h"));
         assertTrue(firstProblem(with("{ type: text, default: EMEA }", "{ type: text, default: 5 }")).contains("must be a text"));
         assertTrue(firstProblem(with("limit_share: { type: number", "limit_share: { type: numbr")).contains("needs a type"));
-        assertTrue(firstProblem(with("from: clean, to: spend", "from: clean, to: spnd")).contains("which is not a step"));
+        assertTrue(firstProblem(with("from: clean, to: spend", "from: clean, to: spnd")).contains("which is not a node"));
         assertTrue(firstProblem(with("from: clean, to: spend", "from: clean, to: clean")).contains("back to itself"));
         assertTrue(firstProblem(with("when: failure", "when: \"clean.scor >= good\"")).contains("did you mean 'clean.score'"));
-        assertTrue(FlowDefinition.parse(with("steps:", "stepz:")).problems().stream()
-            .anyMatch(p -> p.message().contains("Unknown key 'stepz' (did you mean 'steps'?)")));
+        assertTrue(FlowDefinition.parse(with("nodes:", "nodez:")).problems().stream()
+            .anyMatch(p -> p.message().contains("Unknown key 'nodez' (did you mean 'nodes'?)")));
     }
 
     @Test
@@ -136,15 +146,15 @@ class FlowDefinitionTest {
     }
 
     @Test
-    void aConditionMayOnlyReadStepsThatHaveEnded() {
+    void aConditionMayOnlyReadNodesThatHaveEnded() {
         String yaml = """
             kilnmark: flow/v1
             name: f
-            steps:
+            nodes:
               - { id: a, type: run-pipeline, pipeline: p1 }
               - { id: b, type: run-pipeline, pipeline: p2 }
               - { id: c, type: run-pipeline, pipeline: p3 }
-            paths:
+            connections:
               - { from: a, to: b, when: "c.score >= good" }
               - { from: b, to: c }
             """;
@@ -152,15 +162,15 @@ class FlowDefinitionTest {
     }
 
     @Test
-    void aStopStepReportsOnlyItsStatus() {
+    void aStopNodeReportsOnlyItsStatus() {
         String yaml = """
             kilnmark: flow/v1
             name: f
-            steps:
+            nodes:
               - { id: a, type: run-pipeline, pipeline: p1 }
               - { id: s, type: stop }
               - { id: b, type: run-pipeline, pipeline: p2 }
-            paths:
+            connections:
               - { from: a, to: s }
               - { from: s, to: b, when: "s.score >= good" }
             """;
@@ -172,10 +182,10 @@ class FlowDefinitionTest {
         String loop = """
             kilnmark: flow/v1
             name: f
-            steps:
+            nodes:
               - { id: a, type: run-pipeline, pipeline: p1 }
               - { id: b, type: run-pipeline, pipeline: p2 }
-            paths:
+            connections:
               - { from: a, to: b }
               - { from: b, to: a, when: always }
             """;
@@ -190,9 +200,9 @@ class FlowDefinitionTest {
     void refusesAnythingThatIsNotAFlow() {
         assertTrue(firstProblem("").contains("starts with kilnmark"));
         assertTrue(firstProblem("- a\n- b").contains("starts with kilnmark"));
-        assertTrue(firstProblem("kilnmark: flow/v1\nname: f\nsteps: []").contains("at least one step"));
-        assertTrue(firstProblem("kilnmark: flow/v1\nsteps:\n  - {id: a, type: stop}").contains("needs a name"));
-        assertTrue(firstProblem("kilnmark: flow/v1\nname: f\nsteps:\n  - &x {id: a, type: stop}").toLowerCase()
+        assertTrue(firstProblem("kilnmark: flow/v1\nname: f\nnodes: []").contains("at least one node"));
+        assertTrue(firstProblem("kilnmark: flow/v1\nnodes:\n  - {id: a, type: stop}").contains("needs a name"));
+        assertTrue(firstProblem("kilnmark: flow/v1\nname: f\nnodes:\n  - &x {id: a, type: stop}").toLowerCase()
             .contains("anchor"));
     }
 }

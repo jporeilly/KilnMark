@@ -24,11 +24,11 @@ import org.apache.arrow.vector.types.pojo.Schema;
 import org.junit.jupiter.api.Test;
 
 import io.kilnmark.kiln.RunResult;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.graph.Edge;
-import io.kilnmark.kiln.graph.GraphStep;
+import io.kilnmark.kiln.graph.GraphNode;
 import io.kilnmark.kiln.graph.KilnGraphRunner;
 import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.graph.PortRef;
@@ -37,7 +37,7 @@ import io.kilnmark.server.quality.Rule;
 import io.kilnmark.server.quality.RuleType;
 
 /**
- * The gate step on kiln-core's graph runner: stop, quarantine and warn; its thresholds at their
+ * The gate node on kiln-core's graph runner: stop, quarantine and warn; its thresholds at their
  * edges; nulls, repeats and empty input; the asset's rules beside inline ones; and its score. Rows
  * are synthetic people (id, email, country).
  */
@@ -61,7 +61,7 @@ class QualityGateTest {
     }
 
     /** Puts people on its output in batches. */
-    static final class Source implements Step {
+    static final class Source implements Node {
         final List<Person> rows;
         final int batch;
         int sent;
@@ -77,11 +77,11 @@ class QualityGateTest {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             if (sent >= rows.size()) {
                 return false;
             }
@@ -107,14 +107,14 @@ class QualityGateTest {
                 context.emit("out", root);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StepException("Interrupted", e);
+                throw new NodeException("Interrupted", e);
             }
             return true;
         }
     }
 
     /** Collects the ids that reach it, and whether it saw the end of its rows (as a write commits). */
-    static final class Sink implements Step {
+    static final class Sink implements Node {
         final List<Long> ids = Collections.synchronizedList(new ArrayList<>());
         volatile boolean ended;
 
@@ -124,17 +124,17 @@ class QualityGateTest {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             VectorSchemaRoot b;
             try {
                 b = context.input().take(context.allocator());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StepException("Interrupted", e);
+                throw new NodeException("Interrupted", e);
             }
             if (b == null) {
                 ended = true;
@@ -160,15 +160,15 @@ class QualityGateTest {
     static Ran run(QualityGate gate, List<Person> rows, int batch, boolean quarantineConnected) throws Exception {
         Sink out = new Sink();
         Sink quarantine = new Sink();
-        List<GraphStep> steps = new ArrayList<>(List.of(new GraphStep("people", new Source(rows, batch), Map.of()),
-            new GraphStep("check", gate, Map.of()), new GraphStep("good", out, Map.of())));
+        List<GraphNode> nodes = new ArrayList<>(List.of(new GraphNode("people", new Source(rows, batch), Map.of()),
+            new GraphNode("check", gate, Map.of()), new GraphNode("good", out, Map.of())));
         List<Edge> edges = new ArrayList<>(List.of(new Edge(new PortRef("people", "out"), new PortRef("check", "in")),
             new Edge(new PortRef("check", "out"), new PortRef("good", "in"))));
         if (quarantineConnected) {
-            steps.add(new GraphStep("bad", quarantine, Map.of()));
+            nodes.add(new GraphNode("bad", quarantine, Map.of()));
             edges.add(new Edge(new PortRef("check", "quarantine"), new PortRef("bad", "in")));
         }
-        RunResult r = new KilnGraphRunner(64L << 20, 4).run(new PipelineGraph("gate-test", steps, edges), e -> { });
+        RunResult r = new KilnGraphRunner(64L << 20, 4).run(new PipelineGraph("gate-test", nodes, edges), e -> { });
         return new Ran(r, gate, out, quarantine);
     }
 
@@ -470,7 +470,7 @@ class QualityGateTest {
 
     @Test
     void theFactoryChecksItsSettings() throws Exception {
-        GateStepFactory f = new GateStepFactory(new FakeSources());
+        GateNodeFactory f = new GateNodeFactory(new FakeSources());
         assertEquals("Quality", f.category());
         assertEquals(List.of("in"), f.inputPorts());
         assertEquals(List.of("out", "quarantine"), f.outputPorts());
@@ -486,7 +486,7 @@ class QualityGateTest {
         Schema s = f.outputSchema("quarantine", Map.of("in", PEOPLE), Map.of("rules", EMAIL_PRESENT));
         assertEquals(PEOPLE, s);
         assertNull(f.outputSchema("out", Map.of(), Map.of()));
-        StepException bad = assertThrows(StepException.class, () -> f.outputSchema("out", Map.of("in", PEOPLE),
+        NodeException bad = assertThrows(NodeException.class, () -> f.outputSchema("out", Map.of("in", PEOPLE),
             Map.of("rules", List.of(rule("type", "not_null", "field", "phone")))));
         assertTrue(bad.getMessage().startsWith("rules: rule 1: field: no column arrives"), bad.getMessage());
         assertNotNull(f.create(Map.of("rules", EMAIL_PRESENT)));
@@ -497,20 +497,20 @@ class QualityGateTest {
         Map<String, String> types = Map.of("a", "read", "b", "read", "u", "union", "f", "filter", "g", "gate");
         List<Edge> one = List.of(new Edge(new PortRef("a", "out"), new PortRef("f", "in")),
             new Edge(new PortRef("f", "out"), new PortRef("g", "in")));
-        assertEquals("a", GateStepFactory.upstream("g", Map.of(), one, types).read());
-        assertNull(GateStepFactory.upstream("g", Map.of("asset_rules", false), one, types).read());
+        assertEquals("a", GateNodeFactory.upstream("g", Map.of(), one, types).read());
+        assertNull(GateNodeFactory.upstream("g", Map.of("asset_rules", false), one, types).read());
         List<Edge> two = List.of(new Edge(new PortRef("a", "out"), new PortRef("u", "in")),
             new Edge(new PortRef("b", "out"), new PortRef("u", "in")),
             new Edge(new PortRef("u", "out"), new PortRef("g", "in")));
-        GateStepFactory.Upstream both = GateStepFactory.upstream("g", Map.of(), two, types);
+        GateNodeFactory.Upstream both = GateNodeFactory.upstream("g", Map.of(), two, types);
         assertNull(both.read());
-        assertNull(both.key(), "about the step, not a setting it may not have");
-        assertTrue(both.problem().startsWith("asset_rules: rows reach this gate from the read steps a, b; name the "
+        assertNull(both.key(), "about the node, not a setting it may not have");
+        assertTrue(both.problem().startsWith("asset_rules: rows reach this gate from the read nodes a, b; name the "
             + "one whose asset's rules to check with rules_from"),
             both.problem());
-        assertEquals("b", GateStepFactory.upstream("g", Map.of("rules_from", "b"), two, types).read());
-        assertTrue(GateStepFactory.upstream("g", Map.of("rules_from", "f"), one, types).problem()
-            .startsWith("rules_from: 'f' is not a read step"));
+        assertEquals("b", GateNodeFactory.upstream("g", Map.of("rules_from", "b"), two, types).read());
+        assertTrue(GateNodeFactory.upstream("g", Map.of("rules_from", "f"), one, types).problem()
+            .startsWith("rules_from: 'f' is not a read node"));
     }
 
     // ---- what only the whole pipeline shows ----
@@ -520,8 +520,8 @@ class QualityGateTest {
     }
 
     static List<String> findings(Map<String, String> types, Map<String, Map<String, Object>> configs, Edge... edges) {
-        return GateStepFactory.graphChecks(types, configs, List.of(edges)).stream()
-            .map(f -> (f.note() ? "note " : "problem ") + f.step() + "." + f.key() + ": " + f.message()).toList();
+        return GateNodeFactory.graphChecks(types, configs, List.of(edges)).stream()
+            .map(f -> (f.note() ? "note " : "problem ") + f.node() + "." + f.key() + ": " + f.message()).toList();
     }
 
     @Test
@@ -544,13 +544,13 @@ class QualityGateTest {
             edge("g", "w")));
         assertEquals(List.of(), findings(types, Map.of("g", Map.of("on_fail", "warn"), "w", append), edge("r", "g"),
             edge("g", "w")));
-        // Further down, through other steps, it still counts.
+        // Further down, through other nodes, it still counts.
         types.put("f", "filter");
         assertEquals(1, findings(types, Map.of("w", append), edge("r", "g"), edge("g", "f"), edge("f", "w")).size());
     }
 
     @Test
-    void aStepEndingTheRowsEarlyCannotFollowAStopGate() {
+    void aNodeEndingTheRowsEarlyCannotFollowAStopGate() {
         Map<String, String> types = Map.of("r", "read", "g", "gate", "l", "limit", "w", "write");
         List<String> f = findings(types, Map.of(), edge("r", "g"), edge("g", "l"), edge("l", "w"));
         assertEquals(List.of("problem l.null: a limit after the stop gate g ends the rows early, so the gate never sees "
@@ -589,18 +589,18 @@ class QualityGateTest {
     }
 
     /** Reads one batch, then ends: as a limit does once it has its rows. */
-    static final class EndsEarly implements Step {
+    static final class EndsEarly implements Node {
         @Override
         public String type() {
             return "limit";
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             try {
                 VectorSchemaRoot b = context.input().take(context.allocator());
                 if (b != null) {
@@ -608,7 +608,7 @@ class QualityGateTest {
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StepException("Interrupted", e);
+                throw new NodeException("Interrupted", e);
             }
             return false;
         }
@@ -618,13 +618,13 @@ class QualityGateTest {
     void aGateWhoseRowsAreCutShortIsStillJudgedAndSaysSo() throws Exception {
         QualityGate gate = gate("stop", null, null, List.of(rule("type", "not_null", "field", "email", "fail_above",
             new BigDecimal("0.5"))));
-        List<GraphStep> steps = List.of(new GraphStep("people", new Source(people(10_000, 10), 100), Map.of()),
-            new GraphStep("check", gate, Map.of()), new GraphStep("first", new EndsEarly(), Map.of()));
+        List<GraphNode> nodes = List.of(new GraphNode("people", new Source(people(10_000, 10), 100), Map.of()),
+            new GraphNode("check", gate, Map.of()), new GraphNode("first", new EndsEarly(), Map.of()));
         List<Edge> edges = List.of(edge("people", "check"), edge("check", "first"));
-        RunResult r = new KilnGraphRunner(64L << 20, 2).run(new PipelineGraph("cut", steps, edges), e -> { });
+        RunResult r = new KilnGraphRunner(64L << 20, 2).run(new PipelineGraph("cut", nodes, edges), e -> { });
         assertTrue(r.succeeded(), r.error());
         QualityGate.Outcome o = gate.outcome();
-        assertNotNull(o, "judged when the step closed");
+        assertNotNull(o, "judged when the node closed");
         assertFalse(o.complete());
         assertTrue(o.rowsIn() > 0 && o.rowsIn() < 10_000, String.valueOf(o.rowsIn()));
         assertEquals("warned", o.decision());

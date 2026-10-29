@@ -20,7 +20,7 @@ up email, and what an email contains.
 A pipeline has a quality threshold when its YAML sets one, such as `quality: {min_score: 0.95}`
 (see [Building and running a pipeline](pipelines.md#quality-of-what-a-run-writes)). Each run
 measures the quality of every table or file it writes; when the lowest score is below the
-threshold, the notification names the write step and says the score and the threshold.
+threshold, the notification names the write node and says the score and the threshold.
 
 **One message per problem.** A rule that fails on every scan tells you once, when it starts
 failing. You hear again only if it gets worse, for example when a warning becomes a failure, and

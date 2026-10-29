@@ -16,7 +16,7 @@ import dev.hardwood.InputFile;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.plugins.jdbc.JdbcColumn.Kind;
 
 class FileInputTest {
@@ -83,7 +83,7 @@ class FileInputTest {
     private static RunResult read(FailingStore store, String path, String format, List<FileColumn> columns)
         throws InterruptedException {
         String urn = "urn:kilnmark:fake:" + path;
-        return new Runner(16L << 20, 2).run(new Pipeline("read", List.of(new StepSpec("read",
+        return new Runner(16L << 20, 2).run(new Pipeline("read", List.of(new NodeSpec("read",
             new FileInput(() -> store, columns), Map.of("path", path, "format", format, "encoding", "UTF-8",
                 "asset-urn", urn)))), e -> { });
     }
@@ -97,7 +97,7 @@ class FileInputTest {
         assertTrue(r.error().contains("connection reset"), r.error());
         assertEquals(store.opened.get(), store.closed.get(), "every stream opened was closed");
         assertTrue(store.opened.get() > 0);
-        assertEquals(1, store.cancelled.get(), "transfers are stopped when the step closes");
+        assertEquals(1, store.cancelled.get(), "transfers are stopped when the node closes");
     }
 
     @Test

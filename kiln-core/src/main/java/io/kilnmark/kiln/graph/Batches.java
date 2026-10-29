@@ -10,7 +10,7 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.VectorUnloader;
 import org.apache.arrow.vector.ipc.message.ArrowRecordBatch;
 
-/** Copies of Arrow batches, for an output that feeds several steps. */
+/** Copies of Arrow batches, for an output that feeds several nodes. */
 final class Batches {
 
     private Batches() {

@@ -70,7 +70,7 @@ class PipelineHookTest {
         assertEquals(1, p.fired.size());
         NotificationEvent e = p.fired.get(0);
         assertEquals(NotificationKind.PIPELINE_LOW_QUALITY, e.kind());
-        assertEquals("Quality score 91.2% for what step good wrote, below the pipeline's threshold of 95%.", e.detail());
+        assertEquals("Quality score 91.2% for what node good wrote, below the pipeline's threshold of 95%.", e.detail());
         assertEquals("pipeline-quality:8", e.dedupeKey(), "one per run, whatever else is told");
         // At the threshold is not below it; a failed run is told as a failure, not as low quality.
         p.pipelineRunFinished("x", 9, "succeeded", 0.95, 0.95, "good", null);

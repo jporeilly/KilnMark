@@ -131,7 +131,7 @@ public class DocumentResource {
     }
 
     /**
-     * Stored chunks of a document's text, in order; for search and for steps that work on chunks.
+     * Stored chunks of a document's text, in order; for search and for nodes that work on chunks.
      * None for sources that keep no text.
      */
     @GET

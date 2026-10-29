@@ -8,9 +8,9 @@ import java.util.Set;
 import io.kilnmark.server.auth.AccessRole;
 
 /**
- * Whose run is being set up, for the server's {@code read} and {@code write} step factories while
- * the compiler creates the steps of one run: who asked and with which role (write steps check it
- * again), and the secrets the steps were given, so nothing the run reports can hold one. Bound
+ * Whose run is being set up, for the server's {@code read} and {@code write} node factories while
+ * the compiler creates the nodes of one run: who asked and with which role (write nodes check it
+ * again), and the secrets the nodes were given, so nothing the run reports can hold one. Bound
  * with {@link #run} for the length of the compile only.
  */
 public final class RunContext {
@@ -29,7 +29,7 @@ public final class RunContext {
         new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<String, ReadRef> gateReads = new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** A read step's source and asset, as its settings name them. */
+    /** A read node's source and asset, as its settings name them. */
     public record ReadRef(String source, String asset) {
     }
 
@@ -66,14 +66,14 @@ public final class RunContext {
         return role;
     }
 
-    /** Remembers a secret a step was given, so no message the run records can hold it. */
+    /** Remembers a secret a node was given, so no message the run records can hold it. */
     void secret(String secret) {
         if (secret != null && secret.length() >= 3) {
             secrets.add(secret);
         }
     }
 
-    /** Notes an asset a read step reads, under the URN the catalogue records it by. */
+    /** Notes an asset a read node reads, under the URN the catalogue records it by. */
     void read(String source, String asset, String urn) {
         if (urn != null) {
             reads.add(urn);
@@ -105,7 +105,7 @@ public final class RunContext {
             : writeColumns.getOrDefault(source + "\u0000" + target, java.util.List.of());
     }
 
-    /** Notes the read step whose asset's rules gate {@code gate} checks. */
+    /** Notes the read node whose asset's rules gate {@code gate} checks. */
     void gateRead(String gate, ReadRef read) {
         if (gate != null && read != null && read.source() != null && read.asset() != null) {
             gateReads.put(gate, read);
@@ -117,14 +117,14 @@ public final class RunContext {
         return gate == null ? null : gateReads.get(gate);
     }
 
-    /** The assets the run's read steps read, as catalogued. */
+    /** The assets the run's read nodes read, as catalogued. */
     public Set<String> reads() {
         synchronized (reads) {
             return Set.copyOf(reads);
         }
     }
 
-    /** Notes the URN a write step's asset is recorded under, as its connector worked it out. */
+    /** Notes the URN a write node's asset is recorded under, as its connector worked it out. */
     void wrote(String source, String target, String urn) {
         if (source != null && target != null && urn != null) {
             writes.put(source + "\u0000" + target, urn);

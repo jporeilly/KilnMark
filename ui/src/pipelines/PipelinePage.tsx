@@ -20,7 +20,7 @@ import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { RunStatus, runTime } from "./RunStatus";
 import { columnsText } from "./outline";
-import { stepQualityWords } from "./quality";
+import { nodeQualityWords } from "./quality";
 import { emptyYaml, findStarterPicks, renamed, starterYaml, withoutLayout } from "./template";
 import { YamlEditor, type YamlEditorHandle } from "./YamlEditor";
 import type { CanvasRun } from "./canvas/CanvasView";
@@ -33,7 +33,7 @@ const CanvasView = lazy(() => import("./canvas/CanvasView"));
 
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const CHECK_DELAY_MS = 600;
-/** Changes to one setting this close together are one step to undo. */
+/** Changes to one setting this close together are one node to undo. */
 const COALESCE_MS = 1500;
 const HISTORY = 200;
 
@@ -47,12 +47,12 @@ function savedView(): View {
   }
 }
 type Undo = { text: string; label: string; key?: string; at: number };
-const MOVED = "Moved steps";
+const MOVED = "Moved nodes";
 
 /**
  * One pipeline, built on the canvas or written as YAML: two views of one document. The canvas
  * (palette, graph, settings panel) and the YAML editor edit the same text; the YAML is checked a
- * moment after each change and the problems are listed below both (choosing one selects its step
+ * moment after each change and the problems are listed below both (choosing one selects its node
  * on the canvas, or moves the caret to its line in the YAML). Save with a message, Run the saved
  * version, its versions and its runs. With name null, a new pipeline from the starter template or
  * an empty canvas. With a version, that saved version, read-only.
@@ -93,7 +93,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   };
   const tabsId = useTabsId();
   const [selected, setSelected] = useState<string | null>(null);
-  const [focusRequest, setFocusRequest] = useState<{ step: string; key: string | null; n: number } | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{ node: string; key: string | null; n: number } | null>(null);
   const [confirmRun, setConfirmRun] = useState(false);
   const [runShown, setRunShown] = useState<PipelineRunDetail | null>(null);
   const canvasMemory = useRef<{ lastGood?: Graph | null }>({});
@@ -199,7 +199,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
     return () => window.clearInterval(t);
   }, [active, loadLists]);
 
-  // The latest run, step by step, for the canvas: refreshed when the runs list changes.
+  // The latest run, node by node, for the canvas: refreshed when the runs list changes.
   const latestRun = runs?.[0] ?? null;
   const latestKey = latestRun ? `${latestRun.id}:${latestRun.status}` : "";
   useEffect(() => {
@@ -211,7 +211,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
         .then((d) => live && setRunShown(d))
         .catch(() => {});
     void look();
-    // While it runs, look every two seconds: the canvas shows each step's rows so far and rate.
+    // While it runs, look every two seconds: the canvas shows each node's rows so far and rate.
     const t = latestRun.status === "running" ? window.setInterval(look, 2000) : undefined;
     return () => {
       live = false;
@@ -226,7 +226,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
             id: runShown.run.id,
             version: runShown.run.version,
             status: runShown.run.status,
-            steps: runShown.steps,
+            nodes: runShown.nodes,
             quality: runShown.quality ?? [],
             progress: runShown.progress ?? null,
           }
@@ -261,9 +261,9 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
 
   const problems = useMemo(() => check?.problems ?? [], [check]);
   const problemLines = useMemo(() => new Set(problems.filter((p) => p.line > 0).map((p) => p.line)), [problems]);
-  const problemSteps = useMemo(() => new Set(problems.map((p) => p.step).filter((s): s is string => !!s)), [problems]);
+  const problemNodes = useMemo(() => new Set(problems.map((p) => p.node).filter((s): s is string => !!s)), [problems]);
   const dirty = !viewing && (isNew || (savedYaml != null && yaml !== savedYaml));
-  // Moving steps changes only the layout block: that is no reason to warn before a run.
+  // Moving nodes changes only the layout block: that is no reason to warn before a run.
   const contentDirty = dirty && !isNew && savedYaml != null && withoutLayout(yaml) !== withoutLayout(savedYaml);
   const layoutOnly = dirty && !isNew && !contentDirty;
   useEffect(() => {
@@ -372,16 +372,16 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
   };
 
   const goTo = (p: PipelineProblem) => {
-    if (view === "canvas" && p.step) {
+    if (view === "canvas" && p.node) {
       // The setting is the word the message starts with, or the key on the problem's line.
       const key =
-        /Setting '([^']+)' of step/.exec(p.message)?.[1] ??
+        /Setting '([^']+)' of (?:node|step)/.exec(p.message)?.[1] ??
         /has no setting '([^']+)'/.exec(p.message)?.[1] ??
         /needs the setting '([^']+)'/.exec(p.message)?.[1] ??
-        /^Step [^:]+: ([a-z_][a-z0-9_]*):/.exec(p.message)?.[1] ??
+        /^(?:Node|Step) [^:]+: ([a-z_][a-z0-9_]*):/.exec(p.message)?.[1] ??
         null;
-      setSelected(p.step);
-      setFocusRequest((r) => ({ step: p.step!, key, n: (r?.n ?? 0) + 1 }));
+      setSelected(p.node);
+      setFocusRequest((r) => ({ node: p.node!, key, n: (r?.n ?? 0) + 1 }));
       return;
     }
     if (view === "canvas") setView("yaml");
@@ -423,7 +423,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
       : check == null
         ? ""
         : problems.length === 0
-          ? `No problems. ${check.steps.length} ${check.steps.length === 1 ? "step" : "steps"}.`
+          ? `No problems. ${check.nodes.length} ${check.nodes.length === 1 ? "node" : "nodes"}.`
           : `${problems.length} ${problems.length === 1 ? "problem" : "problems"}.`;
 
   return (
@@ -637,13 +637,13 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                 />
               </div>
               <div className="pl-graph">
-                <h3 id="graph-h">Steps</h3>
-                {check && check.steps.length > 0 ? (
+                <h3 id="graph-h">Nodes</h3>
+                {check && check.nodes.length > 0 ? (
                   <Suspense fallback={<p role="status">Loading the graph…</p>}>
-                    <PipelineDiagram steps={check.steps} edges={check.edges} problemSteps={problemSteps} />
+                    <PipelineDiagram nodes={check.nodes} edges={check.edges} problemNodes={problemNodes} />
                   </Suspense>
                 ) : (
-                  <p className="muted">{checking ? "Checking…" : "The steps appear here once the YAML can be read."}</p>
+                  <p className="muted">{checking ? "Checking…" : "The nodes appear here once the YAML can be read."}</p>
                 )}
               </div>
             </div>
@@ -663,14 +663,14 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
             <ul className="pl-problem-list" aria-label="Problems">
               {problems.map((p, i) => (
                 <li key={i}>
-                  {p.line > 0 || (view === "canvas" && p.step) ? (
+                  {p.line > 0 || (view === "canvas" && p.node) ? (
                     <button type="button" className="pl-problem" onClick={() => goTo(p)}>
                       {p.line > 0 && <span className="pl-problem-at">Line {p.line}</span>}
-                      {p.step && <span className="mono"> ({p.step})</span>}: {p.message}
+                      {p.node && <span className="mono"> ({p.node})</span>}: {p.message}
                     </button>
                   ) : (
                     <span className="pl-problem">
-                      {p.step && <span className="mono">{p.step}: </span>}
+                      {p.node && <span className="mono">{p.node}: </span>}
                       {p.message}
                     </span>
                   )}
@@ -727,14 +727,14 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
         )}
       </section>
 
-      <section aria-labelledby="steps-table-h" className="panel">
-        <h2 id="steps-table-h">Steps as a table</h2>
-        {check && check.steps.length > 0 ? (
-          <div className="table-scroll" role="region" aria-label="Steps table" tabIndex={0}>
+      <section aria-labelledby="nodes-table-h" className="panel">
+        <h2 id="nodes-table-h">Nodes as a table</h2>
+        {check && check.nodes.length > 0 ? (
+          <div className="table-scroll" role="region" aria-label="Nodes table" tabIndex={0}>
             <table className="small">
               <thead>
                 <tr>
-                  <th scope="col">Step</th>
+                  <th scope="col">Node</th>
                   <th scope="col">Type</th>
                   <th scope="col">Reads from</th>
                   <th scope="col">Columns out</th>
@@ -742,9 +742,9 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                 </tr>
               </thead>
               <tbody>
-                {check.steps.map((s) => {
-                  const ran = canvasRun?.steps.find((r) => r.step === s.id);
-                  const measured = stepQualityWords(canvasRun?.quality?.find((q) => q.step === s.id));
+                {check.nodes.map((s) => {
+                  const ran = canvasRun?.nodes.find((r) => r.node === s.id);
+                  const measured = nodeQualityWords(canvasRun?.quality?.find((q) => q.node === s.id));
                   return (
                     <tr key={s.id}>
                       <th scope="row">
@@ -754,7 +754,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                           onClick={() => {
                             if (view === "canvas") {
                               setSelected(s.id);
-                              setFocusRequest((r) => ({ step: s.id, key: null, n: (r?.n ?? 0) + 1 }));
+                              setFocusRequest((r) => ({ node: s.id, key: null, n: (r?.n ?? 0) + 1 }));
                             } else {
                               editor.current?.goToLine(s.line);
                             }
@@ -763,13 +763,13 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                         >
                           {s.id}
                         </button>
-                        {problemSteps.has(s.id) && <div className="pl-bad">Has a problem</div>}
+                        {problemNodes.has(s.id) && <div className="pl-bad">Has a problem</div>}
                       </th>
                       <td>{s.type ?? "–"}</td>
                       <td className="mono">
                         {check.edges
-                          .filter((e) => e.toStep === s.id)
-                          .map((e) => `${e.fromStep}${e.fromPort === "out" ? "" : `.${e.fromPort}`}${e.toPort === "in" ? "" : ` → ${e.toPort}`}`)
+                          .filter((e) => e.toNode === s.id)
+                          .map((e) => `${e.fromNode}${e.fromPort === "out" ? "" : `.${e.fromPort}`}${e.toPort === "in" ? "" : ` → ${e.toPort}`}`)
                           .join(", ") || "–"}
                       </td>
                       <td>{columnsText(s)}</td>
@@ -793,7 +793,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
             </table>
           </div>
         ) : (
-          <p className="muted">{checking ? "Checking…" : "The steps are listed here once the pipeline can be read."}</p>
+          <p className="muted">{checking ? "Checking…" : "The nodes are listed here once the pipeline can be read."}</p>
         )}
       </section>
 

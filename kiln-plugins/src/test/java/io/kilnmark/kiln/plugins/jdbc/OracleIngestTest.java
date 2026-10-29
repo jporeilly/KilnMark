@@ -32,7 +32,7 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.CatalogInfo;
 import io.kilnmark.kiln.connect.Connector;
@@ -41,7 +41,7 @@ import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.DriverFolder;
 import io.kilnmark.kiln.connect.RelationshipInfo;
 import io.kilnmark.kiln.connect.SourceConfig;
-import io.kilnmark.kiln.plugins.profile.ProfileStep;
+import io.kilnmark.kiln.plugins.profile.ProfileNode;
 import io.kilnmark.kiln.plugins.write.Rows;
 
 /**
@@ -299,10 +299,10 @@ class OracleIngestTest {
 
     @Test
     void aReadStoppedEarlyEndsAtOnce() throws Exception {
-        StepSpec reader = db.connector().reader(source, assets.get("KT_SALES.MANY"),
+        NodeSpec reader = db.connector().reader(source, assets.get("KT_SALES.MANY"),
             new Connector.ReadOptions(URN, 0, 1024));
         RunResult r = new Runner(64L << 20, 2).run(new Pipeline("stop", List.of(reader,
-            new StepSpec("give-up", new GiveUpAfterOneBatch(), Map.of()))), e -> { });
+            new NodeSpec("give-up", new GiveUpAfterOneBatch(), Map.of()))), e -> { });
         assertEquals(RunResult.Status.FAILED, r.status());
         assertTrue(r.error().contains("gave up"), r.error());
         assertTrue(r.duration().compareTo(Duration.ofSeconds(20)) < 0, "took " + r.duration());
@@ -371,8 +371,8 @@ class OracleIngestTest {
 
     private Rows.Collected collect(SourceConfig from, AssetInfo asset) throws Exception {
         Rows.Collected c = new Rows.Collected();
-        StepSpec reader = db.connector().reader(from, asset, new Connector.ReadOptions(URN, 0, 1000));
-        RunResult r = Rows.run(reader, new StepSpec("collect", Rows.collector(c), Map.of()), Rows.events());
+        NodeSpec reader = db.connector().reader(from, asset, new Connector.ReadOptions(URN, 0, 1000));
+        RunResult r = Rows.run(reader, new NodeSpec("collect", Rows.collector(c), Map.of()), Rows.events());
         assertTrue(r.succeeded(), r.error());
         return c;
     }
@@ -386,9 +386,9 @@ class OracleIngestTest {
 
     private RunResult run(SourceConfig from, AssetInfo asset, long rowLimit, List<MetadataEvent> events)
         throws InterruptedException {
-        StepSpec reader = db.connector().reader(from, asset, new Connector.ReadOptions(URN, rowLimit, 4096));
+        NodeSpec reader = db.connector().reader(from, asset, new Connector.ReadOptions(URN, rowLimit, 4096));
         Pipeline p = new Pipeline("ingest", List.of(reader,
-            new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", URN))));
+            new NodeSpec("profile", new ProfileNode(), Map.of("asset-urn", URN))));
         return new Runner(128L << 20, 2).run(p, events::add);
     }
 
@@ -396,8 +396,8 @@ class OracleIngestTest {
         return events.stream().filter(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT).findFirst().orElseThrow();
     }
 
-    /** A step that takes one batch and fails, as a profiler or sink might part way through a table. */
-    private static final class GiveUpAfterOneBatch implements io.kilnmark.kiln.Step {
+    /** A node that takes one batch and fails, as a profiler or sink might part way through a table. */
+    private static final class GiveUpAfterOneBatch implements io.kilnmark.kiln.Node {
 
         @Override
         public String type() {
@@ -405,18 +405,18 @@ class OracleIngestTest {
         }
 
         @Override
-        public void init(io.kilnmark.kiln.StepContext context) {
+        public void init(io.kilnmark.kiln.NodeContext context) {
             // nothing to prepare
         }
 
         @Override
-        public boolean process(io.kilnmark.kiln.StepContext context) throws io.kilnmark.kiln.StepException {
+        public boolean process(io.kilnmark.kiln.NodeContext context) throws io.kilnmark.kiln.NodeException {
             try (org.apache.arrow.vector.VectorSchemaRoot batch = context.input().take(context.allocator())) {
-                throw new io.kilnmark.kiln.StepException("gave up after " + (batch == null ? 0 : batch.getRowCount())
+                throw new io.kilnmark.kiln.NodeException("gave up after " + (batch == null ? 0 : batch.getRowCount())
                     + " rows");
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new io.kilnmark.kiln.StepException("Interrupted", e);
+                throw new io.kilnmark.kiln.NodeException("Interrupted", e);
             }
         }
     }

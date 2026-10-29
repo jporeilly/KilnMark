@@ -17,14 +17,14 @@ import io.kilnmark.graph.store.Records;
 /**
  * The engine's kinds of value ({@link io.kilnmark.kiln.connect.AssetInfo.FieldInfo#kind()}: boolean,
  * int16, int32, int64, float32, float64, decimal, text, binary, date, time, timestamp, timestamp_tz)
- * and the Arrow types steps exchange, both ways.
+ * and the Arrow types nodes exchange, both ways.
  */
 final class ArrowKinds {
 
     private ArrowKinds() {
     }
 
-    /** The columns of a catalogued asset as an Arrow schema, for a read step's output. */
+    /** The columns of a catalogued asset as an Arrow schema, for a read node's output. */
     static Schema schema(List<Records.FieldDetail> fields) {
         List<Field> out = new ArrayList<>();
         fields.stream().sorted(java.util.Comparator.comparingInt(Records.FieldDetail::position))

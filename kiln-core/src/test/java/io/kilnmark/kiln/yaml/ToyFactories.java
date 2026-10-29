@@ -11,17 +11,17 @@ import org.apache.arrow.vector.types.pojo.Schema;
 
 import io.kilnmark.kiln.SettingSpec;
 import io.kilnmark.kiln.SettingSpec.Kind;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.StepFactories;
-import io.kilnmark.kiln.StepFactory;
-import io.kilnmark.kiln.StepKind;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.NodeFactories;
+import io.kilnmark.kiln.NodeFactory;
+import io.kilnmark.kiln.NodeKind;
 import io.kilnmark.kiln.graph.Toys;
 
-/** Step types for compiler tests, making the toy steps of the graph tests. */
+/** Node types for compiler tests, making the toy nodes of the graph tests. */
 final class ToyFactories {
 
-    /** How many steps have been created, to show that checking creates none. */
+    /** How many nodes have been created, to show that checking creates none. */
     static final AtomicInteger CREATED = new AtomicInteger();
     /** The input schemas each union was given, by key. */
     static final List<List<String>> UNION_KEYS = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -29,8 +29,8 @@ final class ToyFactories {
     private ToyFactories() {
     }
 
-    static StepFactories all() {
-        return new StepFactories().register(new Numbers()).register(new Mystery()).register(new Pass())
+    static NodeFactories all() {
+        return new NodeFactories().register(new Numbers()).register(new Mystery()).register(new Pass())
             .register(new Filter()).register(new Union()).register(new Lookup()).register(new Sink());
     }
 
@@ -42,7 +42,7 @@ final class ToyFactories {
         return new Schema(fields);
     }
 
-    private abstract static class Base implements StepFactory {
+    private abstract static class Base implements NodeFactory {
         @Override
         public String label() {
             return type();
@@ -50,7 +50,7 @@ final class ToyFactories {
 
         @Override
         public String help() {
-            return "A step for tests.";
+            return "A node for tests.";
         }
 
         @Override
@@ -67,8 +67,8 @@ final class ToyFactories {
         }
 
         @Override
-        public StepKind kind() {
-            return StepKind.SOURCE;
+        public NodeKind kind() {
+            return NodeKind.SOURCE;
         }
 
         @Override
@@ -88,7 +88,7 @@ final class ToyFactories {
         }
 
         @Override
-        public Step create(Map<String, Object> config) {
+        public Node create(Map<String, Object> config) {
             CREATED.incrementAndGet();
             int batches = ((Number) config.getOrDefault("batches", 3)).intValue();
             int start = ((Number) config.getOrDefault("start", 0)).intValue();
@@ -109,8 +109,8 @@ final class ToyFactories {
         }
 
         @Override
-        public StepKind kind() {
-            return StepKind.SOURCE;
+        public NodeKind kind() {
+            return NodeKind.SOURCE;
         }
 
         @Override
@@ -124,7 +124,7 @@ final class ToyFactories {
         }
 
         @Override
-        public Step create(Map<String, Object> config) {
+        public Node create(Map<String, Object> config) {
             CREATED.incrementAndGet();
             return new Toys.Generate(1, 1);
         }
@@ -137,8 +137,8 @@ final class ToyFactories {
         }
 
         @Override
-        public StepKind kind() {
-            return StepKind.TRANSFORM;
+        public NodeKind kind() {
+            return NodeKind.TRANSFORM;
         }
 
         @Override
@@ -152,7 +152,7 @@ final class ToyFactories {
         }
 
         @Override
-        public Step create(Map<String, Object> config) throws StepException {
+        public Node create(Map<String, Object> config) throws NodeException {
             CREATED.incrementAndGet();
             return new Toys.Pass();
         }
@@ -171,8 +171,8 @@ final class ToyFactories {
         }
 
         @Override
-        public StepKind kind() {
-            return StepKind.TRANSFORM;
+        public NodeKind kind() {
+            return NodeKind.TRANSFORM;
         }
 
         @Override
@@ -203,7 +203,7 @@ final class ToyFactories {
         }
 
         @Override
-        public Step create(Map<String, Object> config) {
+        public Node create(Map<String, Object> config) {
             CREATED.incrementAndGet();
             return new Toys.Pass();
         }
@@ -221,8 +221,8 @@ final class ToyFactories {
         }
 
         @Override
-        public StepKind kind() {
-            return StepKind.TRANSFORM;
+        public NodeKind kind() {
+            return NodeKind.TRANSFORM;
         }
 
         @Override
@@ -236,7 +236,7 @@ final class ToyFactories {
         }
 
         @Override
-        public Step create(Map<String, Object> config) {
+        public Node create(Map<String, Object> config) {
             CREATED.incrementAndGet();
             return new Toys.Merge();
         }
@@ -256,8 +256,8 @@ final class ToyFactories {
         }
 
         @Override
-        public StepKind kind() {
-            return StepKind.TRANSFORM;
+        public NodeKind kind() {
+            return NodeKind.TRANSFORM;
         }
 
         @Override
@@ -276,21 +276,21 @@ final class ToyFactories {
         }
 
         @Override
-        public Step create(Map<String, Object> config) {
+        public Node create(Map<String, Object> config) {
             CREATED.incrementAndGet();
             return new Toys.Merge();
         }
 
         @Override
         public Schema outputSchema(String port, Map<String, Schema> inputs, Map<String, Object> config)
-            throws StepException {
+            throws NodeException {
             Schema lookup = inputs.get("lookup");
             List<Field> fields = new ArrayList<>(inputs.get("main").getFields());
             Object keep = config.get("keep");
             if (keep instanceof List<?> names) {
                 for (Object n : names) {
                     Field f = lookup.getFields().stream().filter(x -> x.getName().equals(n)).findFirst()
-                        .orElseThrow(() -> new StepException("keep names " + n + ", which the lookup side does not have"));
+                        .orElseThrow(() -> new NodeException("keep names " + n + ", which the lookup side does not have"));
                     fields.add(new Field("lookup_" + f.getName(), f.getFieldType(), f.getChildren()));
                 }
             }
@@ -305,8 +305,8 @@ final class ToyFactories {
         }
 
         @Override
-        public StepKind kind() {
-            return StepKind.SINK;
+        public NodeKind kind() {
+            return NodeKind.SINK;
         }
 
         @Override
@@ -325,7 +325,7 @@ final class ToyFactories {
         }
 
         @Override
-        public Step create(Map<String, Object> config) {
+        public Node create(Map<String, Object> config) {
             CREATED.incrementAndGet();
             return new Toys.Collect();
         }

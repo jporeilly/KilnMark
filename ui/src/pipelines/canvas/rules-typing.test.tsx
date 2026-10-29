@@ -4,18 +4,18 @@ import { useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import userEvent from "@testing-library/user-event";
-import type { StepTypeSetting } from "../../api";
+import type { NodeTypeSetting } from "../../api";
 import type { Value } from "./model";
 import { SettingControl, type ControlContext } from "./SettingControls";
 
-const spec: StepTypeSetting = { key: "rules", label: "Rules", kind: "rules", required: false, defaultValue: null, help: "Rules", choices: [] };
+const spec: NodeTypeSetting = { key: "rules", label: "Rules", kind: "rules", required: false, defaultValue: null, help: "Rules", choices: [] };
 const context: ControlContext = {
   columns: { main: [{ name: "email", type: "text" }, { name: "amount", type: "decimal" }], lookup: null },
   side: null,
   sources: null,
   writing: false,
   assets: null,
-  stepType: "gate",
+  nodeType: "gate",
 };
 
 let root: Root | null = null;

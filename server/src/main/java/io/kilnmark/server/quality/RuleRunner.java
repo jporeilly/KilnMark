@@ -21,7 +21,7 @@ import java.util.function.Function;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.SourceConfig;
@@ -328,10 +328,10 @@ public final class RuleRunner {
     }
 
     private List<Evaluation> stream(List<Rule> rules, Target t, Instant now) throws InterruptedException {
-        RuleStreamStep check = new RuleStreamStep(rules, t.kinds(), t.previousRows(), keepFailing, now);
+        RuleStreamNode check = new RuleStreamNode(rules, t.kinds(), t.previousRows(), keepFailing, now);
         String urn = new io.kilnmark.graph.Urn(t.source().name(), t.asset().path()).toString();
-        StepSpec read = t.connector().reader(t.source(), t.asset(), new Connector.ReadOptions(urn, 0, 8192));
-        Pipeline p = new Pipeline("quality-" + t.asset().path(), List.of(read, new StepSpec("rules", check, Map.of())));
+        NodeSpec read = t.connector().reader(t.source(), t.asset(), new Connector.ReadOptions(urn, 0, 8192));
+        Pipeline p = new Pipeline("quality-" + t.asset().path(), List.of(read, new NodeSpec("rules", check, Map.of())));
         java.util.concurrent.atomic.AtomicBoolean sampled = new java.util.concurrent.atomic.AtomicBoolean();
         RunResult r = new Runner(memoryLimitBytes, 4).run(p, event -> {
             if (event.kind() == io.kilnmark.kiln.MetadataEvent.Kind.ROW_COUNT

@@ -20,7 +20,7 @@ import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.Connectors;
@@ -255,11 +255,11 @@ public class DocumentTexts {
         String name = path.substring(path.lastIndexOf('/') + 1);
         AssetInfo asset = new AssetInfo(path, "document", "", name, null, List.of(), List.of(), false, true, Map.of());
         Map<String, List<DocumentRecords.Chunk>> chunks = new HashMap<>();
-        StepSpec reader = connector.reader(config, asset, new Connector.ReadOptions(readUrn, 0, 256));
+        NodeSpec reader = connector.reader(config, asset, new Connector.ReadOptions(readUrn, 0, 256));
         RunResult r;
         try {
             r = new Runner(this.config.scan().memoryLimitMb() << 20, 4).run(new Pipeline("read-" + path, List.of(reader,
-                new StepSpec("collect", new ChunkRows((k, c) -> {
+                new NodeSpec("collect", new ChunkRows((k, c) -> {
                     synchronized (chunks) {
                         chunks.computeIfAbsent(k, x -> new ArrayList<>()).add(c);
                     }

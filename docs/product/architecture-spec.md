@@ -51,7 +51,7 @@ Seven capabilities, each tagged with where it comes from: Kettle (K), Data Optim
 
 | Capability | What it does | Heritage |
 | --- | --- | --- |
-| Harvest | Connectors scan schemas, files and object stores into the graph; incremental by change markers | K (steps as plugins), M |
+| Harvest | Connectors scan schemas, files and object stores into the graph; incremental by change markers | K (nodes as plugins), M |
 | Profile | Column stats, patterns, cardinality, nulls, sample values, computed in-stream during harvest | K (row streaming) |
 | Classify | Dictionaries, regex patterns, rules and LLM classifiers with a confidence score per hit | DO / PDC, M (CLAIRE, DataHub) |
 | Govern | Glossary, ownership, stewardship tasks, certification, policies | DO / PDC, M (Collibra) |
@@ -127,21 +127,21 @@ Keep Kettle's proven model, rebuilt clean: a pipeline is a graph of steps, each 
 
 **What to keep from Kettle**
 
-- **Steps as plugins.** One interface (`init`, `processRow`, `dispose`) for every source, transform and sink, discovered at start-up from a plugins folder
-- **Row sets with back-pressure.** Bounded queues between steps; a slow sink throttles the source instead of exhausting memory
+- **Nodes as plugins.** One interface (`init`, `processRow`, `dispose`) for every source, transform and sink, discovered at start-up from a plugins folder
+- **Row sets with back-pressure.** Bounded queues between nodes; a slow sink throttles the source instead of exhausting memory
 - **Step copies.** Run N copies of a CPU- or latency-bound step in parallel, as PDI does for lookups and scripts
-- **Flows over pipelines.** A flow orchestrates pipelines with success/failure paths; the rules engine submits flows
+- **Flows over pipelines.** A flow orchestrates pipelines with success/failure connections; the rules engine submits flows
 - **Metadata injection.** Build pipelines at runtime from graph metadata, so one template can harvest or move a thousand assets
 - **Remote workers.** A remote worker agent that runs near the data and reports back, giving the agent-affinity model PDC uses
 
 **What to change**
 
 - **Pipelines as code.** YAML/JSON definitions in Git, versioned and diffable, instead of XML `.ktr` files
-- **Metadata side-channel.** Every step emits schema, row counts and field-level lineage as it runs, so the engine writes the graph without extra scanning
-- **Polyglot plugins.** Java/Kotlin for core steps; a Python SDK for extractors and AI steps (Komprise KAPPA pattern)
+- **Metadata side-channel.** Every node emits schema, row counts and field-level lineage as it runs, so the engine writes the graph without extra scanning
+- **Polyglot plugins.** Java/Kotlin for core nodes; a Python SDK for extractors and AI nodes (Komprise KAPPA pattern)
 - **Incremental by default.** Connectors track change markers (modified time, ETag, CDC offset, schema hash) and only re-harvest what moved
 
-**Scan lifecycle:** discover → harvest schema → sample and profile → classify → emit lineage → evaluate rules. Each stage is a step, so a scan is itself just a pipeline you can inspect and extend.
+**Scan lifecycle:** discover → harvest schema → sample and profile → classify → emit lineage → evaluate rules. Each stage is a node, so a scan is itself just a pipeline you can inspect and extend.
 
 ## Profiling and classification
 
@@ -278,7 +278,7 @@ AI runs in two directions, as Informatica frames it: AI builds the catalog, and 
 
 Lineage comes from three sources, ranked by trust: engine runs (exact), OpenLineage events from other tools (reported), and parsed SQL or AI inference (derived).
 
-- **Engine runs** — each step knows its input and output fields, so column-level lineage is emitted as a by-product of execution, not reverse-engineered
+- **Engine runs** — each node knows its input and output fields, so column-level lineage is emitted as a by-product of execution, not reverse-engineered
 - **OpenLineage in and out** — accept events from Airflow, Spark, dbt and PDI's OpenLineage plugin; emit the engine's own runs as OpenLineage so Marquez or any consumer can display them
 - **SQL parsing** — parse view definitions and query logs (Apache Calcite) for column lineage across warehouses
 - **Inferred** — AI-proposed links, shown dashed and never used for propagation until approved
@@ -354,7 +354,7 @@ A modern, fast web app, not a desktop designer: everything runs in the browser, 
 
 **WCAG 2.2 criteria that bite for this UI**
 
-- **Dragging movements (2.5.7):** every drag on the pipeline canvas and graph has a non-drag alternative (Add step, keyboard move, context menu)
+- **Dragging movements (2.5.7):** every drag on the pipeline canvas and graph has a non-drag alternative (Add node, keyboard move, context menu)
 - **Target size (2.5.8):** at least 24 by 24 px; Kilnmark uses 40 to 44 px for main controls
 - **Focus not obscured (2.4.11):** sticky headers, toasts and side panels never cover the focused element
 - **Accessible authentication (3.3.8):** sign-in allows password managers and paste; no puzzles
@@ -393,10 +393,10 @@ Not a box-and-wire flow editor with a pop-up dialog per node. The designer shoul
 - **Canvas and code are one artefact.** Each pipeline is a YAML file in Git; the canvas is a view of it, edits round-trip both ways, and changes show as readable diffs
 - **Live data while building.** Select any connection to see sample rows and a quick profile; schemas propagate so type mismatches and missing columns show before a run
 - **Catalog-aware.** Drag an asset from search onto the canvas; columns autocomplete from the graph; connections carrying sensitive fields are flagged
-- **No dialogs.** Step settings open in a side panel generated from each step's schema
-- **Keyboard first.** Add steps from the command palette; auto-layout, minimap, and grouping into sub-pipelines
-- **Run and debug in place.** Run to a selected step, watch row counts and timings live on each connection, set breakpoints
-- **AI drafts, people approve.** Describe a pipeline in plain English for a draft; explain a step; suggest a fix for an error
+- **No dialogs.** Node settings open in a side panel generated from each node's schema
+- **Keyboard first.** Add nodes from the command palette; auto-layout, minimap, and grouping into sub-pipelines
+- **Run and debug in place.** Run to a selected node, watch row counts and timings live on each connection, set breakpoints
+- **AI drafts, people approve.** Describe a pipeline in plain English for a draft; explain a node; suggest a fix for an error
 - **Review like code.** Comments, version history, and an approval step before a pipeline goes live
 
 Delivery: a read-only canvas in v0.3 that shows and runs built-in pipelines and Kettle imports with live data; full editing after v0.5.
@@ -443,7 +443,7 @@ Kilnmark ships as two services: **PostgreSQL** (with AGE and pgvector as in-data
 
 | Project | Used for | From |
 | --- | --- | --- |
-| Apache Arrow | Columnar row batches between Kiln steps; zero-copy to the Python sidecar | v0.1 |
+| Apache Arrow | Columnar row batches between Kiln nodes; zero-copy to the Python sidecar | v0.1 |
 | Apache Parquet, ORC, Avro | Reading file formats in connectors and profiling | v0.1 (Parquet), later the rest |
 | Apache DataSketches | HyperLogLog distinct counts, KLL quantiles, frequent items; theta-sketch intersections to find columns that share values, the basis of join and key discovery | v0.1 |
 | Apache Lucene | Optional later search backend behind the SearchIndex interface, if ranking or facets outgrow PostgreSQL full-text | Later, if needed |
@@ -476,7 +476,7 @@ Kilnmark is fully independent: no runtime dependency on Apache Hop, Pentaho or a
 
 | Option | Gains | Costs |
 | --- | --- | --- |
-| 1. Clean-room Kiln | Lean, Arrow-native, fully owned, nothing to untangle | Starts with a handful of steps |
+| 1. Clean-room Kiln | Lean, Arrow-native, fully owned, nothing to untangle | Starts with a handful of nodes |
 | 2. Full fork of Kettle 10.2 | Hundreds of steps and job entries; runs existing .ktr/.kjb files | Inherits OSGi/Karaf, the SWT designer, older Java and years of debt; Hop needed about two years and a team to modernise a similar fork; frozen at a 2024 codebase |
 | 3. Clean Kiln plus selective Kettle borrowing (chosen) | Lean core; reuse proven Apache-licensed pieces where they save time, such as database dialects, value types and specific step logic; a .ktr/.kjb importer converts supported steps to Kiln pipelines | Each borrowed class needs adapting to Kiln's interfaces; the importer covers a subset of steps |
 

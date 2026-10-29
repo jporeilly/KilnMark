@@ -25,7 +25,7 @@ export function starterYaml(name: string, picks: StarterPicks = NO_PICKS): strin
   return `kilnmark: pipeline/v1
 name: ${name}
 description: A sample of rows from one source, written to another.
-steps:
+nodes:
   # Read a table or file from a saved source. The source holds the credentials.
   - id: rows
     type: read
@@ -33,8 +33,8 @@ steps:
     asset: ${read?.asset ?? "<schema.table, or a file's path>"}
     row_limit: 100            # 0 reads every row
 
-  # Add steps here, from the types this server lists (GET /api/v1/steps): each names the
-  # step feeding it with input: <id>, or input: <id>.<port> for another of its outputs.
+  # Add nodes here, from the types this server lists (GET /api/v1/node-types): each names the
+  # node feeding it with input: <id>, or input: <id>.<port> for another of its outputs.
 
   # Write the rows. The source must allow writing: an admin turns on Allow writing for it.
   - id: sample
@@ -88,17 +88,17 @@ export async function findStarterPicks(): Promise<StarterPicks> {
   };
 }
 
-/** A pipeline with no steps yet, for starting on an empty canvas. The check reports that it needs a step. */
+/** A pipeline with no nodes yet, for starting on an empty canvas. The check reports that it needs a node. */
 export function emptyYaml(name: string): string {
   return `kilnmark: pipeline/v1
 name: ${name}
-steps: []
+nodes: []
 `;
 }
 
 /**
- * The YAML without its top-level layout block (where the canvas draws steps) and the comment the
- * canvas writes above it: what decides whether a change is more than moving steps.
+ * The YAML without its top-level layout block (where the canvas draws nodes) and the comment the
+ * canvas writes above it: what decides whether a change is more than moving nodes.
  */
 export function withoutLayout(yaml: string): string {
   const lines = yaml.split("\n");

@@ -12,7 +12,7 @@ import {
 } from "@xyflow/react";
 import { Graph, layout } from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
-import type { PipelineEdge, PipelineStepOutline } from "../api";
+import type { PipelineEdge, PipelineNodeOutline } from "../api";
 import { useColourScheme } from "../theme/appearance";
 import { columnsText } from "./outline";
 
@@ -20,24 +20,24 @@ const WIDTH = 230;
 const HEADER = 52;
 const PORT = 20;
 
-type StepData = { step: PipelineStepOutline; problem: boolean };
-type StepNode = Node<StepData, "step">;
+type NodeData = { node: PipelineNodeOutline; problem: boolean };
+type NodeCard = Node<NodeData, "node">;
 
-function StepBox({ data }: NodeProps<StepNode>) {
-  const { step, problem } = data;
-  const rows = Math.max(step.inputs.length, step.outputs.length, 1);
+function NodeBox({ data }: NodeProps<NodeCard>) {
+  const { node, problem } = data;
+  const rows = Math.max(node.inputs.length, node.outputs.length, 1);
   return (
-    <div className={`pl-step pl-kind-${step.kind ?? "unknown"}${problem ? " has-problem" : ""}`}>
-      <div className="pl-step-head">
-        <span className="pl-step-id mono">{step.id}</span>
-        <span className="pl-step-type">
-          {step.type ?? "no type"}
+    <div className={`pl-node pl-kind-${node.kind ?? "unknown"}${problem ? " has-problem" : ""}`}>
+      <div className="pl-node-head">
+        <span className="pl-node-id mono">{node.id}</span>
+        <span className="pl-node-type">
+          {node.type ?? "no type"}
           {problem && " · has a problem"}
         </span>
       </div>
       <div className="pl-ports" style={{ minHeight: rows * PORT }}>
         <ul className="pl-port-list">
-          {step.inputs.map((p) => (
+          {node.inputs.map((p) => (
             <li key={p} className="pl-port pl-port-in">
               <Handle type="target" position={Position.Left} id={`in-${p}`} className="pl-handle" />
               {p}
@@ -45,7 +45,7 @@ function StepBox({ data }: NodeProps<StepNode>) {
           ))}
         </ul>
         <ul className="pl-port-list pl-port-list-out">
-          {step.outputs.map((p) => (
+          {node.outputs.map((p) => (
             <li key={p} className="pl-port pl-port-out">
               {p}
               <Handle type="source" position={Position.Right} id={`out-${p}`} className="pl-handle" />
@@ -53,59 +53,59 @@ function StepBox({ data }: NodeProps<StepNode>) {
           ))}
         </ul>
       </div>
-      <div className="pl-step-columns small">
-        {columnsText(step)}
+      <div className="pl-node-columns small">
+        {columnsText(node)}
       </div>
     </div>
   );
 }
 
-const nodeTypes = { step: StepBox };
+const nodeTypes = { node: NodeBox };
 
 /**
- * The pipeline's steps as a read-only graph: a box per step with its input ports on the left and
+ * The pipeline's nodes as a read-only graph: a box per node with its input ports on the left and
  * output ports on the right, edges from port to port (labelled when they use a port other than
- * out and in), laid out left to right with dagre. Hovering or focusing a step shows the columns
- * leaving it; its label carries them too. The steps table beside it says the same in text.
+ * out and in), laid out left to right with dagre. Hovering or focusing a node shows the columns
+ * leaving it; its label carries them too. The nodes table beside it says the same in text.
  */
 export default function PipelineDiagram({
-  steps,
+  nodes,
   edges,
-  problemSteps,
+  problemNodes,
 }: {
-  steps: PipelineStepOutline[];
+  nodes: PipelineNodeOutline[];
   edges: PipelineEdge[];
-  problemSteps: Set<string>;
+  problemNodes: Set<string>;
 }) {
   const scheme = useColourScheme();
-  const { nodes, links } = useMemo(() => {
+  const { flowNodes, links } = useMemo(() => {
     const g = new Graph();
     g.setGraph({ rankdir: "LR", nodesep: 30, ranksep: 80, marginx: 16, marginy: 16 });
     g.setDefaultEdgeLabel(() => ({}));
-    const ids = new Set(steps.map((s) => s.id));
-    for (const s of steps) {
+    const ids = new Set(nodes.map((s) => s.id));
+    for (const s of nodes) {
       g.setNode(s.id, { width: WIDTH, height: HEADER + PORT * Math.max(s.inputs.length, s.outputs.length, 1) + 12 });
     }
-    const drawn = edges.filter((e) => ids.has(e.fromStep) && ids.has(e.toStep));
-    for (const e of drawn) g.setEdge(e.fromStep, e.toStep);
+    const drawn = edges.filter((e) => ids.has(e.fromNode) && ids.has(e.toNode));
+    for (const e of drawn) g.setEdge(e.fromNode, e.toNode);
     layout(g);
-    const nodes: StepNode[] = steps.map((s) => {
+    const flowNodes: NodeCard[] = nodes.map((s) => {
       const n = g.node(s.id);
       return {
         id: s.id,
-        type: "step",
+        type: "node",
         position: { x: n.x - n.width / 2, y: n.y - n.height / 2 },
-        data: { step: s, problem: problemSteps.has(s.id) },
+        data: { node: s, problem: problemNodes.has(s.id) },
         draggable: true,
-        ariaLabel: `Step ${s.id}, ${s.type ?? "no type"}${problemSteps.has(s.id) ? ", has a problem" : ""}. ${columnsText(s)}`,
+        ariaLabel: `Node ${s.id}, ${s.type ?? "no type"}${problemNodes.has(s.id) ? ", has a problem" : ""}. ${columnsText(s)}`,
       };
     });
     const links: Edge[] = drawn.map((e, i) => {
       const plain = e.fromPort === "out" && e.toPort === "in";
       return {
         id: `e${i}`,
-        source: e.fromStep,
-        target: e.toStep,
+        source: e.fromNode,
+        target: e.toNode,
         sourceHandle: `out-${e.fromPort}`,
         targetHandle: `in-${e.toPort}`,
         type: "smoothstep",
@@ -113,16 +113,16 @@ export default function PipelineDiagram({
         className: e.fromPort === "out" ? "pl-edge" : "pl-edge pl-edge-other",
         style: e.fromPort === "out" ? undefined : { strokeDasharray: "6 4" },
         markerEnd: { type: MarkerType.ArrowClosed, color: "var(--km-ink)" },
-        ariaLabel: `${e.fromStep}.${e.fromPort} feeds ${e.toStep}.${e.toPort}`,
+        ariaLabel: `${e.fromNode}.${e.fromPort} feeds ${e.toNode}.${e.toPort}`,
       };
     });
-    return { nodes, links };
-  }, [steps, edges, problemSteps]);
+    return { flowNodes, links };
+  }, [nodes, edges, problemNodes]);
 
   return (
-    <div className="dg-frame pl-frame" role="group" aria-label="Graph of the pipeline's steps">
+    <div className="dg-frame pl-frame" role="group" aria-label="Graph of the pipeline's nodes">
       <ReactFlow
-        nodes={nodes}
+        nodes={flowNodes}
         edges={links}
         nodeTypes={nodeTypes}
         fitView
@@ -136,7 +136,7 @@ export default function PipelineDiagram({
         proOptions={{ hideAttribution: false }}
         ariaLabelConfig={{
           "node.a11yDescription.default":
-            "A step of the pipeline. Its label lists the columns leaving it. The steps table beside the graph says the same.",
+            "A node of the pipeline. Its label lists the columns leaving it. The nodes table beside the graph says the same.",
         }}
       >
         <Background gap={20} size={1} />

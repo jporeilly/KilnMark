@@ -354,9 +354,9 @@ class DocumentFlowTest {
             }
 
             @Override
-            public io.kilnmark.kiln.StepSpec reader(io.kilnmark.kiln.connect.SourceConfig s,
+            public io.kilnmark.kiln.NodeSpec reader(io.kilnmark.kiln.connect.SourceConfig s,
                                                     io.kilnmark.kiln.connect.AssetInfo a, ReadOptions read) {
-                return new io.kilnmark.kiln.StepSpec("read", new PassingFailure(read.assetUrn()), Map.of());
+                return new io.kilnmark.kiln.NodeSpec("read", new PassingFailure(read.assetUrn()), Map.of());
             }
         };
         var asset = new io.kilnmark.kiln.connect.AssetInfo("2025-04-delivery-schedule.eml", "document", "",
@@ -375,7 +375,7 @@ class DocumentFlowTest {
     }
 
     /** A document reader that reports a passing failure and no text. */
-    static final class PassingFailure implements io.kilnmark.kiln.Step {
+    static final class PassingFailure implements io.kilnmark.kiln.Node {
         private final String urn;
 
         PassingFailure(String urn) {
@@ -388,11 +388,11 @@ class DocumentFlowTest {
         }
 
         @Override
-        public void init(io.kilnmark.kiln.StepContext context) {
+        public void init(io.kilnmark.kiln.NodeContext context) {
         }
 
         @Override
-        public boolean process(io.kilnmark.kiln.StepContext context) throws io.kilnmark.kiln.StepException {
+        public boolean process(io.kilnmark.kiln.NodeContext context) throws io.kilnmark.kiln.NodeException {
             context.metadata().emit(new io.kilnmark.kiln.MetadataEvent(urn, io.kilnmark.kiln.MetadataEvent.Kind.DOCUMENT,
                 Map.of("readable", "false", "passing", "true", "problem", "every document reader was busy"),
                 java.time.Instant.now()));

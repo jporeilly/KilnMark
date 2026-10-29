@@ -5,129 +5,129 @@ Status: design, 25 October 2026. Round 3, step 1: a first pipeline that runs. Th
 the decision to run pipelines as graphs.
 
 A pipeline reads from sources, transforms the rows and writes them somewhere, measuring the data
-as it flows. It is saved as YAML, versioned, run by a worker, and every run is recorded step by
-step.
+as it flows. It is saved as YAML, versioned, run by a worker, and every run is recorded node by
+node.
 
 ## 1. Pipelines are graphs
 
-Today's runner takes steps in a line. Lookups, joins, unions and routing need more than one input
+Today's runner takes nodes in a line. Lookups, joins, unions and routing need more than one input
 or output, so a pipeline is a directed acyclic graph:
 
-- A **step** has named **ports**: inputs (`in`, or `main` and `lookup`) and outputs (`out`, or
+- A **node** has named **ports**: inputs (`in`, or `main` and `lookup`) and outputs (`out`, or
   `out` and `rejected`). A source has no inputs; a write has no outputs.
 - An **edge** joins one output port to one input port. One output may feed several inputs: the
-  engine copies each batch to every reader (a tee), so each step owns what it takes.
-- Each edge is a bounded `RowSet`, so back-pressure and per-step memory accounting work as they
-  do today. A step that must see all its input before writing (aggregate, the lookup side of a
+  engine copies each batch to every reader (a tee), so each node owns what it takes.
+- Each edge is a bounded `RowSet`, so back-pressure and per-node memory accounting work as they
+  do today. A node that must see all its input before writing (aggregate, the lookup side of a
   lookup) has a memory limit of its own and fails with a plain message when it is exceeded.
 - The graph is checked before a run: ids unique, every edge between existing ports, every
   required input connected, no cycles.
-- A failing step stops the whole run, and the run reports the step where the failure started,
+- A failing node stops the whole run, and the run reports the node where the failure started,
   as today.
 
 The linear `Pipeline` and `Runner` stay for scanning and are run as a graph internally.
 
 ### The contract (kiln-core, `io.kilnmark.kiln.graph`)
 
-- `PortRef(step, port)`, `Edge(from, to)`, `GraphStep(id, step, config)`,
-  `PipelineGraph(name, steps, edges)` with `check()`.
-- `StepContext` gains named ports, `input(port)` / `output(port)` with `inputPorts()` /
-  `outputPorts()`, and structured settings, `config()`: the step's YAML settings as maps, lists,
+- `PortRef(node, port)`, `Edge(from, to)`, `GraphNode(id, node, config)`,
+  `PipelineGraph(name, nodes, edges)` with `check()`.
+- `NodeContext` gains named ports, `input(port)` / `output(port)` with `inputPorts()` /
+  `outputPorts()`, and structured settings, `config()`: the node's YAML settings as maps, lists,
   strings, numbers and booleans. `input()` / `output()` remain the `in` / `out` ports.
-- `StepFactory`, found through `ServiceLoader` and registered with `StepFactories`: the step type,
+- `NodeFactory`, found through `ServiceLoader` and registered with `NodeFactories`: the node type,
   kind (source, transform, sink, gate), label, help, its input and output ports, a settings
-  schema (`SettingSpec`) the canvas turns into the step's settings panel, `create(config)`, and
+  schema (`SettingSpec`) the canvas turns into the node's settings panel, `create(config)`, and
   optionally `outputSchema(port, inputSchemas, config)` so the canvas and validation know each
-  step's columns before anything runs.
-- `GraphRunner.run(graph, metadata)` returns a `RunResult` with rows per edge and per step.
+  node's columns before anything runs.
+- `GraphRunner.run(graph, metadata)` returns a `RunResult` with rows per edge and per node.
 
 Added while building the engine (round 3, step 1):
 
-- `StepContext.inputs(port)`: every row set arriving on a port, in the order the pipeline lists
+- `NodeContext.inputs(port)`: every row set arriving on a port, in the order the pipeline lists
   them. A factory port named with a trailing `*` (union's `in*`) is connected, read and named in
   edges without the `*`, as `in`. `input(port)` on a port with several inputs is an error that
   points to `inputs(port)`.
-- `StepContext.emit(port, batch)`: hands the batch to the port, or closes it when nothing is
+- `NodeContext.emit(port, batch)`: hands the batch to the port, or closes it when nothing is
   connected. `output(port)` returns `null` for an unconnected port; in a graph run it does so for
-  any name, since the compiler has already checked the edges against the step type's ports.
+  any name, since the compiler has already checked the edges against the node type's ports.
 - `RowSet.takeAny(rowSets, allocator)` returns the next batch from whichever input has one, with
   its index, or `null` once all have ended; `RowSet.poll(allocator, timeout, unit)` and
-  `RowSet.atEnd()` underneath it. A step with several inputs that does not care about order
+  `RowSet.atEnd()` underneath it. A node with several inputs that does not care about order
   (union) must read them this way: reading one to its end first stalls a pipeline whose inputs
-  share a step upstream (a route followed by a union), because that step waits for room on the
+  share a node upstream (a route followed by a union), because that node waits for room on the
   input not being read.
-- `RunResult.edges()`: `EdgeResult(fromStep, fromPort, toStep, toPort, rows)` per edge, in the
-  graph's order: the rows that edge's reader was given. `StepResult` gains `rowsIn`,
+- `RunResult.edges()`: `EdgeResult(fromNode, fromPort, toNode, toPort, rows)` per edge, in the
+  graph's order: the rows that edge's reader was given. `NodeResult` gains `rowsIn`,
   `rowsInByPort` and `rowsOutByPort`; `rowsOut` is the sum over connected output ports, each port
-  counted once however many steps read it. Rows dropped because a reader stopped early, or because
-  a step failed, are not counted (`RowSet.rows()` counts rows when they are taken). The old
-  constructors remain. `RunResult.step(name)` finds one step.
-- `StepContext.inputSchema(port)` and `inputSchema(port, index)` (for a port taking many): the
+  counted once however many nodes read it. Rows dropped because a reader stopped early, or because
+  a node failed, are not counted (`RowSet.rows()` counts rows when they are taken). The old
+  constructors remain. `RunResult.node(name)` finds one node.
+- `NodeContext.inputSchema(port)` and `inputSchema(port, index)` (for a port taking many): the
   columns arriving on an input, as worked out when the pipeline was checked, or `null` when they
-  were not known before the run. A step can then act on an input that sends no batch: an
+  were not known before the run. A node can then act on an input that sends no batch: an
   aggregate of no rows writes SQL's one row, a union adds the columns of an empty input, a lookup
-  knows the columns of an empty lookup side. The compiler puts them on `GraphStep.inputSchemas`
+  knows the columns of an empty lookup side. The compiler puts them on `GraphNode.inputSchemas`
   (keyed `in`, `main`, `in[0]`, …; a new record component, the three-argument constructor
-  remains) and the runner hands them to the step.
+  remains) and the runner hands them to the node.
 - In a graph run `hasInput()` and `hasOutput()` mean the `in` and `out` ports, as they did for a
-  step in a line; `inputPorts()` and `outputPorts()` list every connected port.
+  node in a line; `inputPorts()` and `outputPorts()` list every connected port.
 - `RowSet.fail(cause)` never waits: it drops batches still queued (the run is failing) to make
-  room for the end, so a failure always reaches the next step. `finish()` still waits for room.
+  room for the end, so a failure always reaches the next node. `finish()` still waits for room.
   `RowSet.put` closes its batch if interrupted while waiting. Added for the engine: `discard`
   (drop a batch without counting it), `isCancelled`, and `progress`, `readerWaiting` and
   `writerWaiting` for the stall watchdog.
 
 ### Running a graph (`KilnGraphRunner`)
 
-- Every step runs on its own virtual thread; each edge is a bounded `RowSet` of the configured
-  capacity; each step's memory is a child allocator inside the run's one limit, as before.
-- **One output, several readers (the tee).** The step writes to one row set. A copying thread
+- Every node runs on its own virtual thread; each edge is a bounded `RowSet` of the configured
+  capacity; each node's memory is a child allocator inside the run's one limit, as before.
+- **One output, several readers (the tee).** The node writes to one row set. A copying thread
   takes each batch and gives every reader but the last a copy (its buffers copied whole, so
   nested columns copy too) and the last the original; each reader then moves its batch into its
-  own allocator. Copies waiting to be read are accounted to the writing step, in a child of its
+  own allocator. Copies waiting to be read are accounted to the writing node, in a child of its
   allocator, as any batch waiting on an edge is. One slow reader holds the others back by at most
   the row set capacity.
-- **A step that ends early** (it stops before its input ends, like a `limit`) releases its
-  inputs. Each step counts its readers that have not finished, over all its ports and the readers
-  behind a tee; when the last finishes, the step is stopped without failing. Until then, what it
+- **A node that ends early** (it stops before its input ends, like a `limit`) releases its
+  inputs. Each node counts its readers that have not finished, over all its ports and the readers
+  behind a tee; when the last finishes, the node is stopped without failing. Until then, what it
   still writes to a finished reader is read and dropped (a tee simply stops copying to it).
-- **Failures.** A failing step first cancels its inputs (the steps before it stop, not blamed),
-  then fails its outputs without waiting (the steps after it end, not blamed), along every edge,
-  so the whole connected graph stops even if a step after it is stuck. The steps before it are
-  also interrupted, so one waiting on a database or a file stops too. Steps not joined to it at
-  all are stopped. The run's error is the first failure in time; a step that did not free its
-  memory is named when nothing failed first (a step stopped mid-batch is only logged). Running out
+- **Failures.** A failing node first cancels its inputs (the nodes before it stop, not blamed),
+  then fails its outputs without waiting (the nodes after it end, not blamed), along every edge,
+  so the whole connected graph stops even if a node after it is stuck. The nodes before it are
+  also interrupted, so one waiting on a database or a file stops too. Nodes not joined to it at
+  all are stopped. The run's error is the first failure in time; a node that did not free its
+  memory is named when nothing failed first (a node stopped mid-batch is only logged). Running out
   of memory names the run's limit ("ran out of memory: the run may hold 256 MB of Arrow memory in
-  all"). A tee that cannot copy is reported against the writing step.
+  all"). A tee that cannot copy is reported against the writing node.
 - **Stalls.** If no batch moves through any row set for the stall timeout (120 seconds unless
-  set on `KilnGraphRunner` or `Runner`) while every running step is waiting on a row set, the run
-  fails: "The run stalled: no rows moved for 120 seconds while every running step waited for
-  another. Waiting: seq (to read from p1.out->seq.a); p2 (to write to p2.out->seq.b) …". A step
+  set on `KilnGraphRunner` or `Runner`) while every running node is waiting on a row set, the run
+  fails: "The run stalled: no rows moved for 120 seconds while every running node waited for
+  another. Waiting: seq (to read from p1.out->seq.a); p2 (to write to p2.out->seq.b) …". A node
   busy outside the row sets (a slow query) is never taken for a stall.
-- **Interruption** of the calling thread stops every step and waits for every thread ever
+- **Interruption** of the calling thread stops every node and waits for every thread ever
   started before `run` throws `InterruptedException`; no thread starts once a stop has begun.
 - The linear `Runner` builds a graph (`a.out -> b.in -> ...`, settings as configuration) and runs
-  it with `KilnGraphRunner`. One difference from before: if one step fails and another leaks, the
-  run reports the failure, not whichever step came first in the line. A step that ends before its
-  input does no longer leaves the step before it waiting for ever.
-- **Known limit.** A step that reads one input to its end before another (a lookup reads its
-  lookup side first) stalls when both inputs come from the same step and more rows are waiting
+  it with `KilnGraphRunner`. One difference from before: if one node fails and another leaks, the
+  run reports the failure, not whichever node came first in the line. A node that ends before its
+  input does no longer leaves the node before it waiting for ever.
+- **Known limit.** A node that reads one input to its end before another (a lookup reads its
+  lookup side first) stalls when both inputs come from the same node and more rows are waiting
   than the edges hold. The compiler adds a note to such pipelines (also when the inputs of a port
-  taking many share a step, in case the step reads them one after another); reading the source
+  taking many share a node, in case the node reads them one after another); reading the source
   twice avoids it, and the stall watchdog ends such a run with a plain message instead of hanging.
-- **Outcomes.** Each `StepResult` has an `outcome`: `FINISHED`, `ENDED_EARLY` (it stopped before
-  its input ended, or every step reading it had finished), `STOPPED` (the engine stopped it
-  because another step failed, the run stalled or was stopped) or `FAILED`. A UI shows a stopped
+- **Outcomes.** Each `NodeResult` has an `outcome`: `FINISHED`, `ENDED_EARLY` (it stopped before
+  its input ended, or every node reading it had finished), `STOPPED` (the engine stopped it
+  because another node failed, the run stalled or was stopped) or `FAILED`. A UI shows a stopped
   writer as stopped, not as a clean finish. The older constructors derive it from `error`.
-- If anything fails while the run is starting (building a step's context, starting a thread),
-  the steps already started are stopped and waited for before the failure is thrown. Decimal
+- If anything fails while the run is starting (building a node's context, starting a thread),
+  the nodes already started are stopped and waited for before the failure is thrown. Decimal
   settings are turned into text in full only when that is short, otherwise in scientific form
   (`1E-999999999`), so a number can never become a string of a billion zeros.
 
 ### Seeing inside a run (`RunListener`, `RunProgress`)
 
-- **Timing.** Each `StepResult` has `startedAt`, `firstRowAt` (its first row in; for a step with
-  no input, its first row out), `lastRowAt` (its last row out; for a step with no output, its last
+- **Timing.** Each `NodeResult` has `startedAt`, `firstRowAt` (its first row in; for a node with
+  no input, its first row out), `lastRowAt` (its last row out; for a node with no output, its last
   row in) and `finishedAt`, and `duration()`; the run's `finishedAt` is on the same monotonic clock.
   The nine-argument constructor remains (no times). `RowSet` records, as `System.nanoTime()`, the
   first and last batch with rows handed over (`firstPutNanos`, `lastPutNanos`) and taken
@@ -136,53 +136,53 @@ Added while building the engine (round 3, step 1):
 - **Where the time went.** `RowSet` adds up the time its writer waits for room (`putWaitNanos`) and
   its reader waits for a batch (`takeWaitNanos`), only when it has to wait (an `offer` or `poll`
   that succeeds at once costs nothing more) and as it goes, at most 100 ms behind; each has one
-  writing thread. `StepResult.waitingForRowsNanos` is the sum over the step's inputs (what it reads
+  writing thread. `NodeResult.waitingForRowsNanos` is the sum over the node's inputs (what it reads
   from: a copy, behind a tee), `heldUpNanos` over what it writes to (so a tee's waiting counts
   against the producer, whose row set fills); `working()` is the rest of its duration. Rows the
   engine drops for a finished reader are not its waiting. `takeAny` counts its wait against the
   row set it waited on.
 - **Listening.** `GraphRunner.run(graph, metadata, listener)` (a default method that ignores the
   listener; `KilnGraphRunner` implements it, and `run(graph, metadata)` uses `RunListener.NONE`).
-  A `RunListener` hears `stepStarted`, `firstRowIn`, `firstRowOut`, `lastRowOut` and
-  `stepEnded(outcome)`, each with when it happened. A step is ended once its thread and any tee
-  copying its rows have (a tee's failure is the step's); if memory it did not free is found once
-  every step has ended, `stepEnded` is called again with the corrected outcome (the log says "Step
+  A `RunListener` hears `nodeStarted`, `firstRowIn`, `firstRowOut`, `lastRowOut` and
+  `nodeEnded(outcome)`, each with when it happened. A node is ended once its thread and any tee
+  copying its rows have (a tee's failure is the node's); if memory it did not free is found once
+  every node has ended, `nodeEnded` is called again with the corrected outcome (the log says "Node
   write counted as failed: it did not free all its memory").
   `progress(RunProgress)` every `progressEvery` (2 seconds unless set in the four-argument
-  constructor) and once at the end; and `note(level, step, text, at)` (defaulting to the
-  three-argument form) for a step's failure, a stall (error) and memory a step did not free
+  constructor) and once at the end; and `note(level, node, text, at)` (defaulting to the
+  three-argument form) for a node's failure, a stall (error) and memory a node did not free
   (warning), with when the engine noticed it. The text may quote the data.
-- **Never in the way.** Steps only record times. The thread watching the run turns them into
+- **Never in the way.** Nodes only record times. The thread watching the run turns them into
   calls at each of its ticks (at most a second apart) and queues them for the listener's own
   virtual thread, which calls it in order and drops anything it throws. Past 4,096 calls waiting,
   a slow listener misses some (logged). However the run ends (an exception included), the run
   then waits up to 10 seconds for the listener to hear the rest and goes on without it. With no
   listener nothing is queued or built.
-- **Progress.** `RunProgress(at, steps, edges, slowest)`: each step's state (not started,
+- **Progress.** `RunProgress(at, nodes, edges, slowest)`: each node's state (not started,
   waiting for its first row, running, ended), rows in and out, rows a second since the snapshot
   before, its times, its waits so far and how full its fullest output queue is (`outputFill`,
   copies behind a tee included); each edge's rows, batches queued, capacity, `fill`, and whether
-  it is full (or its writer waits) or empty (or its reader waits). `slowest` is a running step
+  it is full (or its writer waits) or empty (or its reader waits). `slowest` is a running node
   whose input queues are full while none of its output queues is: it cannot keep up with what it
   is given and what comes after it can. With several, the one with the most full inputs, then the
   first in the graph's order; null when none (a slow source shows as empty queues everywhere, not
-  as a slowest step).
+  as a slowest node).
 
-### Writing a step for graphs
+### Writing a node for graphs
 
 - Read with `input(port)` or, for a port taking many, `inputs(port)` with `RowSet.takeAny`; write
   with `emit(port, batch)`, which drops rows for an unconnected port.
-- A step that polls with a timeout counts as waiting only while it waits; work between polls (a
+- A node that polls with a timeout counts as waiting only while it waits; work between polls (a
   commit, a remote call) is never taken for a stall.
-- **Close what you hold in `close()` or a `finally`.** When another step fails, the steps before
-  it are interrupted wherever they are, and every step can be stopped mid-batch. A batch taken but
-  not yet handed on must still be closed, or the step is reported (or, when stopped, logged) for
+- **Close what you hold in `close()` or a `finally`.** When another node fails, the nodes before
+  it are interrupted wherever they are, and every node can be stopped mid-batch. A batch taken but
+  not yet handed on must still be closed, or the node is reported (or, when stopped, logged) for
   not freeing its memory.
 - **Interruption closes sockets.** Interrupting a thread blocked in socket or channel I/O closes
-  that socket. A step using a connection pool must validate connections before reuse, and must not
+  that socket. A node using a connection pool must validate connections before reuse, and must not
   return a connection to the pool after it was interrupted mid-call. Writers should roll back in
-  `close()` when the step did not finish.
-- `inputSchema(port)` gives an input's columns when they were known before the run, so a step can
+  `close()` when the node did not finish.
+- `inputSchema(port)` gives an input's columns when they were known before the run, so a node can
   act correctly on an input that sends no batch.
 
 ## 2. The YAML format
@@ -191,7 +191,7 @@ Added while building the engine (round 3, step 1):
 kilnmark: pipeline/v1
 name: customer-billing
 description: Monthly spend per customer, with orphan transactions set aside.
-steps:
+nodes:
   - id: customers
     type: read
     source: lab-db
@@ -239,23 +239,26 @@ steps:
     mode: replace              # create | append | replace | upsert (with key)
 ```
 
-- `input: <id>` means that step's `out` port; `input: <id>.<port>` names another port;
-  `inputs: {port: id[.port]}` connects several. `input` connects the step's only input port; a
-  list (`input: [a, b, c]`, or a list under `inputs`) connects several steps to a port that takes
+- `input: <id>` means that node's `out` port; `input: <id>.<port>` names another port;
+  `inputs: {port: id[.port]}` connects several. `input` connects the node's only input port; a
+  list (`input: [a, b, c]`, or a list under `inputs`) connects several nodes to a port that takes
   many.
-- Steps are listed in any order; the edges decide the order of work.
+- Nodes are listed in any order; the edges decide the order of work. Files written before the
+  rename list them under `steps:`, which the reader and the canvas still accept (with both written,
+  `nodes:` is read and the old key is a problem). Saved versions keep the YAML they were saved with;
+  the canvas writes `nodes:` the first time it changes an old pipeline.
 - Unknown keys are errors, with the line number, so typing mistakes are caught. One top-level key
-  is the exception to "checked": `layout` (round 3, step 2) holds where the canvas draws each step,
-  step id → `{ x, y }`, and reading accepts and ignores whatever it holds, so a pipeline runs the
+  is the exception to "checked": `layout` (round 3, step 2) holds where the canvas draws each node,
+  node id → `{ x, y }`, and reading accepts and ignores whatever it holds, so a pipeline runs the
   same however it is drawn. The canvas writes it last, under a comment saying so:
 
   ```yaml
-  # Where the canvas draws each step. Kilnmark ignores this when it runs the pipeline.
+  # Where the canvas draws each node. Kilnmark ignores this when it runs the pipeline.
   layout:
     customers: {x: 40, y: 120}
     tidy: {x: 320, y: 120}
   ```
-- Secrets never appear: steps name saved sources, and the source holds the credentials.
+- Secrets never appear: nodes name saved sources, and the source holds the credentials.
 
 ### Reading and checking (`io.kilnmark.kiln.yaml`)
 
@@ -264,9 +267,9 @@ steps:
   object is ever constructed from a tag. Scalars follow the YAML 1.2 core schema: `yes` and `on`
   are text, quoted values are always text, `${VAR}` is never substituted. Decimals are read as
   exact `BigDecimal`s. The text written is kept beside each value
-  (`StepDefinition.configText`), and mapping keys are always the text written (`007` stays
+  (`NodeDefinition.configText`), and mapping keys are always the text written (`007` stays
   `007`).
-- Settings reach the step in the form their kind needs (`Compiled.configs()`): a setting that is
+- Settings reach the node in the form their kind needs (`Compiled.configs()`): a setting that is
   text (text, expression, column, source, asset, choice, and the values of columns, expressions,
   conditions and column maps) holds exactly what was written, so `asset: 2024.10` is `"2024.10"`
   and `007` is `"007"`; a number is a whole number (Integer or Long) or a BigDecimal, never
@@ -277,26 +280,26 @@ steps:
   document, anchors and aliases (a pipeline is written out in full, so the canvas can rewrite it),
   tags, duplicate keys, keys that are lists or mappings, nesting deeper than 64, more than
   100,000 values, and characters YAML forbids. Values echoed in messages are cut to 80 characters.
-- `PipelineDefinition.parse(yaml)` reads the format line, names, steps, ids, inputs and settings
-  with their positions. `PipelineCompiler(stepFactories).compile(yaml)` checks it against the step
-  types and returns `Compiled`: `problems()` (line, column, step id, message), `notes()`,
-  `schemas()` (columns per step and output port) and `graph()`. Checking never creates a step or
-  opens a connection; `graph()` creates new steps for one run, and closes those already made if one
+- `PipelineDefinition.parse(yaml)` reads the format line, names, nodes, ids, inputs and settings
+  with their positions. `PipelineCompiler(nodeFactories).compile(yaml)` checks it against the node
+  types and returns `Compiled`: `problems()` (line, column, node id, message), `notes()`,
+  `schemas()` (columns per node and output port) and `graph()`. Checking never creates a node or
+  opens a connection; `graph()` creates new nodes for one run, and closes those already made if one
   fails.
 - `compile(PipelineDefinition)`, for a pipeline built in code, also checks what reading does: the
-  name, step ids (pattern and uniqueness) and that each step has a type.
-- Checks: the format line; unknown top-level keys; step ids (`[a-z][a-z0-9_-]{0,63}`, unique);
-  unknown step types, suggesting the closest; settings against the step type's `SettingSpec`s
+  name, node ids (pattern and uniqueness) and that each node has a type.
+- Checks: the format line; unknown top-level keys; node ids (`[a-z][a-z0-9_-]{0,63}`, unique);
+  unknown node types, suggesting the closest; settings against the node type's `SettingSpec`s
   (unknown keys with a suggestion, required, kind, choices) and then the factory's `check`, whose
-  messages point at the setting they start with; inputs naming unknown steps or ports; every input
-  port connected; a single-input port not fed twice, nor a port fed twice by the same step;
-  loops, naming the steps in them.
+  messages point at the setting they start with; inputs naming unknown nodes or ports; every input
+  port connected; a single-input port not fed twice, nor a port fed twice by the same node;
+  loops, naming the nodes in them.
 - Columns are then worked out in the order rows flow with each factory's `outputSchema`. A port
-  that takes many inputs is given them keyed `in[0]`, `in[1]`, … in the order listed. When a step
-  returns null (columns unknown before the run), the steps after it are not checked against
-  columns, and one note on that step names them. A step with a problem of its own is skipped
+  that takes many inputs is given them keyed `in[0]`, `in[1]`, … in the order listed. When a node
+  returns null (columns unknown before the run), the nodes after it are not checked against
+  columns, and one note on that node names them. A node with a problem of its own is skipped
   silently.
-- The server registers `read` and `write` itself; the compiler works with any `StepFactories`.
+- The server registers `read` and `write` itself; the compiler works with any `NodeFactories`.
 
 ## 3. Expressions
 
@@ -312,10 +315,10 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   date_part parse_date parse_timestamp format_date`. Aggregates in `aggregate` only: `count
   count_distinct sum min max avg`.
 - SQL null rules. Types are checked against the input schema before the run: an unknown column or
-  a type mismatch is an error naming the step, the expression and the position.
+  a type mismatch is an error naming the node, the expression and the position.
 - Later, a read followed by filters and computes on the same database can be pushed down as SQL.
 
-### As built (`kiln-steps`, `io.kilnmark.kiln.steps.expr`)
+### As built (`kiln-nodes`, `io.kilnmark.kiln.nodes.expr`)
 
 - **Parsing.** A hand-written lexer and recursive-descent parser; no `eval`, no reflection, no
   regular expressions over the expression text. Keywords are case-insensitive; bare column names
@@ -332,7 +335,7 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   any Arrow unit or time zone reads as the same instant, and text without an offset is UTC), and
   the type of a bare `null`. Dates and timestamps are limited to years -9999 to 9999 (literals,
   parsing and date arithmetic), so every date is also a timestamp; arithmetic that still leaves the
-  range is a plain error. Other Arrow types (binary, lists, structs, times) pass through steps
+  range is a plain error. Other Arrow types (binary, lists, structs, times) pass through nodes
   untouched but cannot be used in expressions. Results are written as `Int64`, `Float64`,
   `Decimal(38,s)`, `Utf8`, `Date(DAY)` and `Timestamp(MICROSECOND, "UTC")`.
 - **Implicit conversion only widens**: `int64` → `decimal` → `float64`, and `date` → `timestamp`
@@ -346,7 +349,7 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   than false, `filter` and `route` treat null as not true, `coalesce`, `nullif` and `concat`
   (which skips nulls) are the exceptions to null-in, null-out.
 - **Evaluation** works a whole batch at a time into plain Java arrays, then writes each result to
-  an Arrow vector from the step's allocator. A row mask passed down the tree means `case`,
+  an Arrow vector from the node's allocator. A row mask passed down the tree means `case`,
   `and`, `or` and `coalesce` only work out the rows that need it, so
   `case when x <> 0 then 10 / x end` never divides by zero and a guarded `cast` never fails.
 - **Casts** from text are strict: whole numbers for `int64`; plain decimals with an optional
@@ -357,7 +360,7 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   `parse_date` and `parse_timestamp` give null instead.
 - **Functions as built:** `trim lower upper length substring replace coalesce nullif abs round
   floor ceil concat regex_match regex_replace now today date_trunc date_part parse_date
-  parse_timestamp format_date`. `now()` is fixed when the step starts. Date patterns use
+  parse_timestamp format_date`. `now()` is fixed when the node starts. Date patterns use
   `DateTimeFormatter` letters, read strictly (31 February is rejected) and must be written out;
   so must `date_trunc` / `date_part` units and `round`'s digits, so mistakes are found before a run.
 - **Regular expressions** are safe on any data and pattern. Refused: a repeated group that itself
@@ -385,12 +388,12 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
   the like, but not the no-break space U+00A0).
 - **Aggregates** (`aggregate` only) may be combined in expressions with group-by columns
   (`sum(price * qty) / count(*)`); a column outside an aggregate must be grouped by, and
-  aggregates cannot nest. `count_distinct` is exact, counted against the step's memory limit.
+  aggregates cannot nest. `count_distinct` is exact, counted against the node's memory limit.
 - **Errors** say what, where (character position from 1) and, when there is one, a suggestion:
   `column full_name: unknown column 'frist_name' at 7; did you mean first_name?`. Validation adds
-  `Step tidy: ` in front; at run time the runner adds `Step tidy (compute) failed: `.
+  `Node tidy: ` in front; at run time the runner adds `Node tidy (compute) failed: `.
 
-## 4. Steps in step 1
+## 4. Nodes in step 1
 
 | Type | Ports | What it does |
 | --- | --- | --- |
@@ -407,7 +410,7 @@ parsed and checked once, evaluated a batch at a time on Arrow vectors. It never 
 | `gate` | `in` → `out`, `quarantine` | Checks rows against the asset's rules and its own in the stream; stops the run, quarantines failing rows or warns (docs/design/data-quality.md section 7) |
 | `write` | `in` → | Writes to a database table or a file in a saved source |
 
-The row steps live in the `kiln-steps` module (`io.kilnmark.kiln.steps`), one `StepFactory` each,
+The row nodes live in the `kiln-nodes` module (`io.kilnmark.kiln.nodes`), one `NodeFactory` each,
 found through `ServiceLoader`. Settings, with defaults:
 
 - `filter`: `condition`. `compute`: `columns` (name → expression, worked out in order; each sees
@@ -421,34 +424,34 @@ found through `ServiceLoader`. Settings, with defaults:
   Arrow batches plus a hash table from key to row. Keys match by value across number types
   (1, 1.0 and 1.00) and dates match timestamps at midnight; null keys never match. While the
   lookup side loads, main batches that are ready are read and held (counted against the memory
-  limit) once the lookup side has been quiet for 250 ms, until it moves again, so a main input fed by the same step
+  limit) once the lookup side has been quiet for 250 ms, until it moves again, so a main input fed by the same node
   as the lookup input does not stall the run, while a merely slow lookup side does not pull main
   into memory. An empty lookup side uses the columns the pipeline check worked out
-  (`StepContext.inputSchema`).
+  (`NodeContext.inputSchema`).
 - `aggregate`: `group_by` (none: one row for everything, even with no rows), `values` (name →
   expression of aggregates), `memory_limit_mb` (256). Groups are emitted in the order first
   seen, 8,192 rows a batch; nulls form one group. With no input batch at all the columns come
-  from `StepContext.inputSchema`, so an aggregate without `group_by` still writes SQL's one row;
+  from `NodeContext.inputSchema`, so an aggregate without `group_by` still writes SQL's one row;
   only when those are unknown is nothing written.
 - `union`: `strict` (false), `memory_limit_mb` (256). Inputs are read with `RowSet.takeAny`.
   Columns are matched by name in the order first seen across the inputs as listed; a missing
   column is null; differing types widen as expressions do (int32 and int64 to int64, whole numbers
   and decimals to decimal …) or are an error naming both. The output's columns come from the
-  inputs' columns as the pipeline check worked them out (`StepContext.inputSchema("in", i)`);
+  inputs' columns as the pipeline check worked them out (`NodeContext.inputSchema("in", i)`);
   only when those are unknown do batches wait in memory until every input has sent its first
   batch or ended (an input that then sends nothing adds no columns).
 - `dedupe`: `key` (default: whole rows), `memory_limit_mb` (256); nulls equal each other.
 - `route`: `routes` (port → condition, in order; port names are lower case, not `in` or `out`).
-- `limit`: `rows`. Stops reading once it has its rows; the runner ends the steps before it that
+- `limit`: `rows`. Stops reading once it has its rows; the runner ends the nodes before it that
   feed nothing else.
 
-Memory: a step closes every batch it takes or hands it on, and splits batches by copying only
+Memory: a node closes every batch it takes or hands it on, and splits batches by copying only
 when rows go to more than one port (a batch whose rows all go one way is handed on whole).
 Memory limits are checked after each batch, with messages that say what to change.
 
 Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](../guide/writing-data.md)):
 
-- **The contract.** A `write` step is `Connector.writer(source, WriteOptions)`: target, mode, key,
+- **The contract.** A `write` node is `Connector.writer(source, WriteOptions)`: target, mode, key,
   format, further settings (`options`), the asset URN and the source's profiling settings
   (`profiling`; see "What a write reports" in section 5). Connectors that write list
   `Capability.WRITE`, declare the settings they take in `Connector.writeOptions()` (`SettingSpec`s
@@ -459,7 +462,7 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
   (`schema.table`; on SQL Server an existing table's catalogue spelling, since names ignore case
   there), or for files the path below the source's prefix, escaped as the catalogue escapes it
   (`raw/` + `out/a.csv` on a prefixed S3 source). The pipeline service checks that the
-  source allows writing and that its hosts are allowed before it asks for the step; the step reads
+  source allows writing and that its hosts are allowed before it asks for the node; the node reads
   its `in` port and has no outputs.
 - **Databases** (PostgreSQL, SQL Server), target `schema.table`, names used exactly and always
   quoted, values always bound or streamed, never pasted into SQL:
@@ -496,7 +499,7 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
       publications `FOR ALL TABLES` or `FOR TABLES IN SCHEMA` take in the new table by themselves);
       on SQL Server schema-bound views and functions, foreign keys, replication and change data
       capture. A
-      table with row-level security (or a SQL Server security policy) is refused unless the step
+      table with row-level security (or a SQL Server security policy) is refused unless the node
       sets `allow_dropping_row_security: true`, since the repeated grants would then see every row.
   - `upsert` with `key`: PostgreSQL `INSERT … ON CONFLICT (key) DO UPDATE`, which needs a unique
     index or primary key on exactly the key columns (checked first, with the `CREATE UNIQUE INDEX`
@@ -505,7 +508,7 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
   - Speed: PostgreSQL `COPY … FROM STDIN` as CSV for create, append and replace; batches of
     prepared statements (1,000 rows a batch; 5,000 for SQL Server inserts) for upsert and for SQL
     Server, whose driver bulk-copies
-    batches into tables the step created (`bulk_copy`; not for append, since bulk copy skips
+    batches into tables the node created (`bulk_copy`; not for append, since bulk copy skips
     constraints and triggers).
   - One transaction per run. `commit_every: N` commits after each batch that reaches N rows; a
     failure then leaves the rows already committed, and the message says how many (a replace
@@ -544,7 +547,7 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
     (`compression`: zstd, gzip, none) through the codec jars reading already uses, and
     `created_by` naming the Kilnmark version. Logical types as the reader maps them back. Checked
     against Hardwood in every build and against pyarrow where it is installed (not on CI).
-- **Profile as written.** The writer profiles each batch with `ProfileStep`'s own code as it
+- **Profile as written.** The writer profiles each batch with `ProfileNode`'s own code as it
   writes it and reports only after the commit (or once the file is in place); see "What a write
   reports" in section 5. `profile_output: false` turns profiling off; `keep_values: false` keeps no
   example values.
@@ -555,7 +558,7 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
   YAML; an invalid pipeline can be saved as a draft but not run.
 - **Run** queues a job; a worker compiles the YAML of that exact version into a graph, resolves
   sources (credentials, allowed hosts, write permission) and runs it.
-- Each run records its pipeline version, status, timings, and per step: how it ended, rows in and
+- Each run records its pipeline version, status, timings, and per node: how it ended, rows in and
   out per port, peak memory, when it started, had its first row, handed on its last and ended
   (and so its duration), and the error if it failed. While it runs, where its rows are is kept
   every two seconds, and its log as it goes. A run can be cancelled.
@@ -569,19 +572,19 @@ Writing (built in round 3, step 1; the guide is [Writing data from a pipeline](.
 ### What a write reports
 
 The contract between the writers and the pipeline service. The writer owns the profile of what it
-writes; the service adds no profile step of its own. It catalogues the asset under
+writes; the service adds no profile node of its own. It catalogues the asset under
 `urn:kilnmark:<source>:<Connector.writtenAssetPath(source, write)>`, and passes that URN as
 `WriteOptions.assetUrn`. A writer emits metadata events for that URN only after the write has
 succeeded; a failed or cancelled write emits nothing (with `commit_every`, rows already committed
-remain, and the step's error says so).
+remain, and the node's error says so).
 
 **Profiling settings.** `WriteOptions.profiling` is a map the service fills from the source's own
-profiling settings, exactly as it builds the profile step's settings for a scan of that source,
+profiling settings, exactly as it builds the profile node's settings for a scan of that source,
 under the same keys: `keep-values`, `examples`, `sample-size`, `sample-mode`, `sample-key`,
 `sample-seed`, `sample-max-bytes` and `sketch-fields` (the fields whose distinct-value sketch is
-kept). It never comes from the YAML. The step's own `keep_values: false` can keep fewer values than
+kept). It never comes from the YAML. The node's own `keep_values: false` can keep fewer values than
 the source allows, never more; `profile_output: false` turns profiling off. An empty map means the
-profile step's defaults.
+profile node's defaults.
 
 | Write | Events | Meaning for the service |
 | --- | --- | --- |
@@ -604,10 +607,10 @@ asset's previous profile.
 - **Storage (V12).** `pipeline` (fixed name, display name, description, latest version),
   `pipeline_version` (never changed once saved: YAML, message, author, whether it was valid and its
   problems), `pipeline_run` (one version, status `queued`, `running`, `succeeded`, `failed` or
-  `cancelled`, who asked and with which role, error, a JSON result), `pipeline_step_run` (outcome,
-  rows in and out, rows per port, peak memory, error) and `pipeline_lineage` (written asset from read
-  asset, kept when the pipeline is deleted). Deleting a pipeline deletes its versions and runs;
-  refused while a run is queued or running.
+  `cancelled`, who asked and with which role, error, a JSON result), `pipeline_node_run` (renamed
+  from `pipeline_step_run` in V21; outcome, rows in and out, rows per port, peak memory, error) and
+  `pipeline_lineage` (written asset from read asset, kept when the pipeline is deleted). Deleting a
+  pipeline deletes its versions and runs; refused while a run is queued or running.
 - **Saving.** Names are `[a-z][a-z0-9-]{0,62}` and never change; the YAML's `name` must match.
   YAML over `kilnmark.pipelines.max-yaml-kb` (256 KB) is refused. `PUT` saves the next version;
   its ETag is the latest version's number and `If-Match` with an older number is refused with 409,
@@ -619,7 +622,7 @@ asset's previous profile.
   It holds an advisory lock of its own (keyed by the job), not a source lock, so runs may overlap
   scans of the sources they read; recovery leaves a job alone while its lock is held, and marks
   the run failed when the job is given up.
-- **One writer per target.** Before its steps run, a run takes an advisory lock for each asset it
+- **One writer per target.** Before its nodes run, a run takes an advisory lock for each asset it
   writes (a 64-bit key from the URN's SHA-256), whatever the mode, and holds them until what it
   wrote is catalogued. These locks, and the written source's scan lock taken for cataloguing, are
   taken on the connection the job's own lease already holds, so a run uses one pooled connection
@@ -627,7 +630,7 @@ asset's previous profile.
   finding a target locked waits up to `kilnmark.pipelines.wait-for-target` (30 seconds) and then
   fails plainly, naming the target, before writing anything; a cancel or shutdown ends the wait.
 - **On the worker.** The worker compiles that exact version inside a run context naming who asked
-  and their role. The server's `read` and `write` step factories resolve saved sources, decrypt
+  and their role. The server's `read` and `write` node factories resolve saved sources, decrypt
   their secrets and re-check the allowed hosts only then; `write` also re-checks `allow_writing`
   and that the role is steward or admin. Readers get their connector's own settings (which may
   hold the secret) through a wrapper, never through the YAML or the graph's config. Every message
@@ -654,48 +657,48 @@ asset's previous profile.
   scan records. Cataloguing takes the written source's scan lock (waiting as above); if a scan
   holds it, the run notes that the source should be scanned. A scan does not mark removed an asset
   a pipeline wrote after the scan began. Lineage links each written asset to every read asset
-  upstream of it (`GET /api/v1/lineage?urn=`), each under the URN its read step resolved and the
+  upstream of it (`GET /api/v1/lineage?urn=`), each under the URN its read node resolved and the
   catalogue records (a file's `#` and `%` escaped, as its asset path), which is also what the run's
   read list and its assets for Sights hold.
-- **Each step's outcome** is recorded as the engine reports it (finished, ended early, stopped by the
+- **Each node's outcome** is recorded as the engine reports it (finished, ended early, stopped by the
   engine, failed), so a writer the engine stopped never looks like a clean finish.
 - **Write permission stays with admins.** Only admins change `allow_writing`, and while it is on
   only admins change where the source points (any setting but its description, display name,
-  sampling, AI rule and include and exclude patterns). A write step takes its own settings (where
+  sampling, AI rule and include and exclude patterns). A write node takes its own settings (where
   and how) and exactly the writer settings its connector's writer declares
   (`Connector.writeOptions()`; a connector that declares none takes none), written beside them in
   the YAML and passed to the writer in `WriteOptions.options`. Nothing else is accepted, and never a
   name that says where or as whom to connect (url, host, bucket, credentials, `profile` and the
   like), even when a writer declares one.
-- **Messages from the data.** A failed run's error, its steps' errors and the details of its notes
-  (whatever the run's status) may quote values from the rows. Viewers see that a step failed, or a
+- **Messages from the data.** A failed run's error, its nodes' errors and the details of its notes
+  (whatever the run's status) may quote values from the rows. Viewers see that a node failed, or a
   note's own words, not the detail; when the run read or wrote an asset with columns marked
   sensitive, only admins see the detail. This is decided through the request's `Sights`, as other
   views of data values are, on the assets the run recorded as it started (`pipeline_run.assets`,
-  with read assets under the URNs their read steps catalogue them by).
-- **Seeing inside a run (V19).** The worker gives the engine a `RunLog` listener. Step times go
-  to `pipeline_step_run` (`started_at`, `first_row_at`, `last_row_at`, `finished_at`,
+  with read assets under the URNs their read nodes catalogue them by).
+- **Seeing inside a run (V19).** The worker gives the engine a `RunLog` listener. Node times go
+  to `pipeline_node_run` (`started_at`, `first_row_at`, `last_row_at`, `finished_at`,
   `waiting_for_rows_ms`, `held_up_ms`, and `duration_ms`, now filled). Each progress snapshot goes
   to `pipeline_run.progress` (JSON: counts, states, fills and times, never values; `progress_at`),
   written at most every two seconds and once more when the worker has finished with the run, with
   `workerStartedAt` and `workerFinishedAt` (a snapshot reaching the log after that changes
-  nothing); and each step's rows a second and output fill, a point at a time, to
-  `pipeline_run_point` (appended as the run goes, never rewritten; the steps' order and the
+  nothing); and each node's rows a second and output fill, a point at a time, to
+  `pipeline_run_point` (appended as the run goes, never rewritten; the nodes' order and the
   stride on `pipeline_run`). A point stands for `stride` snapshots and keeps their highest rate and
   fill, so spikes survive; when a run reaches 900 points they are merged in pairs the same way and
   the stride doubles, keeping them evenly spaced. All of it goes through the database because the API may run in another container. **One clock:** every
   time the run page draws counts from `workerStartedAt`, on the worker's clock, never the
   database's (`pipeline_run.started_at`) or the browser's; a live run's "now" is its last
   snapshot's `at` plus the time since the page fetched it. The log is `pipeline_run_event` (run,
-  seq, at, step or null, level info, warn or error, kind, text, detail), written in batches with
-  each snapshot and at the end: the run starting and ending, each step starting, its first row in
+  seq, at, node or null, level info, warn or error, kind, text, detail), written in batches with
+  each snapshot and at the end: the run starting and ending, each node starting, its first row in
   and out, its last row out and how it ended, the engine's notes (stamped with when the engine
-  noticed them), a gate starting to set rows aside (`gate_quarantining`: the first rows a gate step
+  noticed them), a gate starting to set rows aside (`gate_quarantining`: the first rows a gate node
   sends anywhere but `out`), each gate's verdict (`gate_verdict`: "Gate check quarantined 229 rows (email
   format: 229)": rule names and counts, as the run's quality section shows everyone; a rule's
   message and a stop reason are the detail, as they can hold values) and the run's own notes, as
   information or warnings as each is. At most 10,000 events a run, then one `log_truncated`;
-  deleted with the run. An event's `text` is always the server's words ("Step check reported an
+  deleted with the run. An event's `text` is always the server's words ("Node check reported an
   error"); anything an engine says is its `detail`, with the run's secrets and any NUL character
   removed, and is held back exactly as the run's error is (below). Storing the log or progress
   never fails a run, and a slow statement or a lock wait does not hold it up for long: each
@@ -705,29 +708,29 @@ asset's previous profile.
   by event; a timeout or a lost connection drops the batch with one warning, rather than waiting
   again for each event. The page reads the log again from the start when the
   run ends, so events written late, after its last live look, are not missed.
-- **On the run page.** Tiles for wall-clock time, most steps at once, the longest step and what
-  limited the run. **Where each step spent its time**: per step, its time split into working,
-  waiting for rows and held up by the next step (a 100% bar, each part its own pattern, with a
-  table). **What limited the run** is, among the steps others were held up by (held up for at least
+- **On the run page.** Tiles for wall-clock time, most nodes at once, the longest node and what
+  limited the run. **Where each node spent its time**: per node, its time split into working,
+  waiting for rows and held up by the next node (a 100% bar, each part its own pattern, with a
+  table). **What limited the run** is, among the nodes others were held up by (held up for at least
   5% of their time, through the last snapshot's edges), the one working the largest share of its
   time; when nothing was held up, the source working most ("limited by reading its source").
-  **Rows per second through the run**: a line per step from the series, with a band under it for
+  **Rows per second through the run**: a line per node from the series, with a band under it for
   its output queue's fill (Held up), the run's warnings, errors and gates starting to quarantine
-  marked on the time axis, each point readable by pointer or keyboard, and a table. Each step's
-  share of the run is in the steps table. The Gantt chart (with its critical path) is kept in the
+  marked on the time axis, each point readable by pointer or keyboard, and a table. Each node's
+  share of the run is in the nodes table. The Gantt chart (with its critical path) is kept in the
   code for flows (docs/design/flows.md), not shown on pipeline runs.
-- **API.** The run view adds each step's times and waits and `progress`; it stays small however
+- **API.** The run view adds each node's times and waits and `progress`; it stays small however
   long the run, as rows a second are read on their own: `GET /api/v1/pipeline-runs/{id}/series?after=`
-  gives the steps, the stride and the points after `after` ms (the page reads only the new ones while
+  gives the nodes, the stride and the points after `after` ms (the page reads only the new ones while
   the run goes, and all of them again when the stride has changed). `GET
-  /api/v1/pipeline-runs/{id}/events?step=&level=&after=&limit=` pages the log (`level` is the least
+  /api/v1/pipeline-runs/{id}/events?node=&level=&after=&limit=` pages the log (`level` is the least
   serious shown; `next` is the `after` of the next page; at most 1,000 a page) and
   `.../events/download?format=text|ndjson` streams all of it, with the same filters, as a file
   (`after` and `limit` that are not whole numbers, 0 or more, are a 400). Both
   follow the run's own role and Sights rules: a held-back detail is null, with `withheld` saying
   why.
 - **Cancelling.** A queued run is cancelled at once and its job taken off the queue; a running one
-  is interrupted within about half a second, and one asked to stop while its steps are being set
+  is interrupted within about half a second, and one asked to stop while its nodes are being set
   up stops before they run. A cancel asked for too late to stop a run is cleared when it ends. A
   run left running by a worker that stopped is finished by a cancel, and by workers' recovery once
   its job is done or failed, so it never blocks its pipeline. A worker shutting down marks its runs failed rather
@@ -737,24 +740,24 @@ asset's previous profile.
 
 - `GET/POST /api/v1/pipelines`, `GET/PUT/DELETE /api/v1/pipelines/{name}` (PUT saves a new
   version), `GET .../versions`, `GET .../versions/{n}`, `POST .../validate` (YAML in, problems
-  out with line numbers, and each step's output columns), `POST .../runs`, `GET .../runs`,
+  out with line numbers, and each node's output columns), `POST .../runs`, `GET .../runs`,
   `GET /api/v1/pipeline-runs/{id}`, `POST /api/v1/pipeline-runs/{id}/cancel`,
-  `GET /api/v1/steps` (the step catalogue with settings schemas).
+  `GET /api/v1/node-types` (the node catalogue with settings schemas).
 - Roles: viewers read; stewards edit and run; writes to a source also need that source to allow
   writing.
 - UI: a **Pipelines** page (list, last run, run now), a pipeline page with a YAML editor that
-  validates as you type and shows problems by line, a read-only graph of the steps (the existing
-  diagram library), versions, and runs with a per-step breakdown.
+  validates as you type and shows problems by line, a read-only graph of the nodes (the existing
+  diagram library), versions, and runs with a per-node breakdown.
 
-### Step catalogue and seams (decisions)
+### Node catalogue and seams (decisions)
 
-- `GET /api/v1/steps` lists every `StepFactory`: those on the class path (`ServiceLoader`:
-  kiln-steps' transforms) and the server's `read` and `write`. `write` takes `target`, or `table` and
+- `GET /api/v1/node-types` lists every `NodeFactory`: those on the class path (`ServiceLoader`:
+  kiln-nodes' transforms) and the server's `read` and `write`. `write` takes `target`, or `table` and
   `path` as other names for it, and `mode` defaults to `create`, which never overwrites. Its entry
   also has `writerSettings`: for each kind of source that can be written to, the keys of the writer
-  settings a step writing to such a source takes, so the canvas offers only those of the chosen
+  settings a node writing to such a source takes, so the canvas offers only those of the chosen
   source (round 3, step 2).
-- The write step calls the writers' contract directly: `Connector.writeOptions()` for its
+- The write node calls the writers' contract directly: `Connector.writeOptions()` for its
   allow-list, `Connector.writtenAssetPath(...)` for the written asset's URN, `WriteOptions.profiling`
   for the source's profiling settings, and `WriteReport.PROFILED` and `PROFILE_ERROR` for a profile
   failure.
@@ -773,95 +776,95 @@ asset's previous profile.
   (comments and their alignment, indentation, flow maps' spacing, folded and literal blocks,
   quoting, line endings). A setting that changes is written afresh: a scalar keeps the comment after
   it, an expression is double-quoted, a list is written `[a, b]`. A change whose result would not
-  read back as YAML is refused, and so is one to a step with both `input` and `inputs`, which the
+  read back as YAML is refused, and so is one to a node with both `input` and `inputs`, which the
   compiler refuses too. Unreadable YAML leaves the last good graph on the canvas, read-only, under a
   banner.
-- **Positions** go in the top-level `layout` block (section 2). Moving a step writes its position;
-  a change that adds, removes, renames, duplicates, connects or disconnects steps also writes the
-  position of every step drawn without one, so nothing jumps when the layout is worked out again.
-  Steps without a position are placed by a layered layout (dagre). Run's unsaved-changes question
+- **Positions** go in the top-level `layout` block (section 2). Moving a node writes its position;
+  a change that adds, removes, renames, duplicates, connects or disconnects nodes also writes the
+  position of every node drawn without one, so nothing jumps when the layout is worked out again.
+  Nodes without a position are placed by a layered layout (dagre). Run's unsaved-changes question
   ignores the layout block.
-- **Room to work.** The canvas takes the page's full width and the window's height. The step list
-  is an icon rail of folders (`StepFactory.category()`, from `GET /api/v1/steps`), expanding to a
+- **Room to work.** The canvas takes the page's full width and the window's height. The node list
+  is an icon rail of folders (`NodeFactory.category()`, from `GET /api/v1/node-types`), expanding to a
   searchable tree docked in a column of its own, so the canvas narrows rather than being covered (over
   the canvas on a phone); a folder's rail button opens the tree at that folder. The settings are a
-  drawer over the canvas, open while a step is selected; a
+  drawer over the canvas, open while a node is selected; a
   minimap shows large pipelines. **Fit** fits the whole pipeline into the part of the canvas not
   under the list or the drawer; **Readable size** never goes below a readable zoom.
 - **React Flow** (`@xyflow/react` 12.12.0, MIT) draws the canvas; the canvas, React Flow and
   `yaml` load lazily with the pipeline page, outside the main bundle. React Flow's own keyboard
-  moves are off: the canvas's keys move between connected steps, Shift+arrows move a step, C opens
+  moves are off: the canvas's keys move between connected nodes, Shift+arrows move a node, C opens
   Connect to…, and changes are announced in a live region. Connections are not focusable; they
   are removed with Disconnect in the settings. Single-letter keys act only on the canvas and its
   toolbar.
-- **Settings panels** come from `GET /api/v1/steps`: one control per `SettingSpec` kind; column
-  pickers use the columns validation worked out for the step's inputs; a write shows the writer
+- **Settings panels** come from `GET /api/v1/node-types`: one control per `SettingSpec` kind; column
+  pickers use the columns validation worked out for the node's inputs; a write shows the writer
   settings its source's kind takes (`writerSettings`).
 - **Connections** are refused before they reach the YAML when the compiler would refuse them: a
-  step reading from itself, loops, a single-input port fed twice, and the same edge twice (two
-  ports of one step may both feed a port that takes many). References split at the last dot, as
+  node reading from itself, loops, a single-input port fed twice, and the same edge twice (two
+  ports of one node may both feed a port that takes many). References split at the last dot, as
   `PortRef.parse` does.
-- Data previews at a step (built, below). Each write's and gate's predicted score shows on the
+- Data previews at a node (built, below). Each write's and gate's predicted score shows on the
   canvas (step 3, built).
 
-### Preview at a step (decisions)
+### Preview at a node (decisions)
 
-The first rows leaving one output of one step, for the pipeline as it stands on the canvas, saved
-or not (`POST /api/v1/pipelines/preview` {yaml, step, port?, rows?}; for a saved version
-`POST .../{name}/versions/{n}/preview`). `StepPreview` holds the engine-facing parts and
+The first rows leaving one output of one node, for the pipeline as it stands on the canvas, saved
+or not (`POST /api/v1/pipelines/preview` {yaml, node, port?, rows?}; for a saved version
+`POST .../{name}/versions/{n}/preview`). `NodePreview` holds the engine-facing parts and
 `PipelinePreviews` the server's.
 
-- **What runs.** The YAML is read, then cut down to the chosen step and every step whose rows reach
-  it (by the inputs the steps name), in the order written, and that `PipelineDefinition` is compiled
+- **What runs.** The YAML is read, then cut down to the chosen node and every node whose rows reach
+  it (by the inputs the nodes name), in the order written, and that `PipelineDefinition` is compiled
   (`KilnPipelineCompiler.compile(definition, …)`). Problems elsewhere in the pipeline do not stop a
-  preview; problems in the part that runs do (400). The chosen output (`out`, or the step's first,
+  preview; problems in the part that runs do (400). The chosen output (`out`, or the node's first,
   unless `port` names another) feeds an in-memory collector (id `Preview`: a capital letter, so never
   one of the pipeline's ids) that keeps the first N rows as text, as a source's preview writes values,
-  and then finishes, so "A step that ends early" (section 1) stops the steps before it. Other output
-  ports of those steps have nothing connected, and their rows are dropped.
+  and then finishes, so "A node that ends early" (section 1) stops the nodes before it. Other output
+  ports of those nodes have nothing connected, and their rows are dropped.
 - **Nothing is written.** Only `read`, `filter`, `compute`, `select`, `lookup`, `aggregate`, `union`,
-  `dedupe`, `route`, `limit` and `gate` may run in a preview: an allow-list, so a step type added
+  `dedupe`, `route`, `limit` and `gate` may run in a preview: an allow-list, so a node type added
   later is refused until it is known to have no side effects. A write is never upstream (it has no
-  outputs); previewing one is refused, and so is any other step type, before anything is created. A
+  outputs); previewing one is refused, and so is any other node type, before anything is created. A
   gate's quarantine targets are writes downstream of it and never run; a preview records nothing
-  (its metadata events are dropped, no run or step row is stored).
-- **Ending early with unconnected ports.** Building this showed that a step whose only connected
+  (its metadata events are dropped, no run or node row is stored).
+- **Ending early with unconnected ports.** Building this showed that a node whose only connected
   output had finished kept reading when it wrote only to unconnected ports (a filter previewed at
   `rejected`), since only a write to a finished reader told it. `KilnGraphRunner` now checks after
-  each `process` call: when every connected output has been let go, the step ends early as it would
+  each `process` call: when every connected output has been let go, the node ends early as it would
   on a refused write.
-- **Steps without a type** in the part that runs are refused plainly before anything is checked.
+- **Nodes without a type** in the part that runs are refused plainly before anything is checked.
 - **Where and how long.** On the API process, synchronously: the caller waits for rows, a preview is
-  bounded (rows, time, memory, steps) like a source's preview, and the worker queue's latency would
+  bounded (rows, time, memory, nodes) like a source's preview, and the worker queue's latency would
   make it slow to use. Who may start one is checked before any work: one preview per person at a
   time, `previews-per-minute` (6) per person (not used up when the next check refuses), and
   `preview-concurrency` (2) at once in a process (429 otherwise). Then the plan: at most
-  `preview-max-steps` (50) steps and `preview-max-reads` (10) read steps, and each step holding rows
+  `preview-max-nodes` (50) nodes and `preview-max-reads` (10) read nodes, and each node holding rows
   in its own state (aggregate, dedupe, lookup, union; that state is Java heap counted against its
   `memory_limit_mb`, which YAML may set very high) has its limit set to its share of
   `preview-memory-limit-mb` (256), whatever was written (a lower whole number is kept; a decimal,
-  text or anything larger becomes the share). The steps are created and run on a thread of their own, and the
+  text or anything larger becomes the share). The nodes are created and run on a thread of their own, and the
   request waits for them at most `preview-timeout` (30 seconds), or until its HTTP connection
   closes: it then interrupts that thread, waits two seconds' grace, and answers 422 whatever the
-  steps are doing. The preview's `KilnGraphRunner` (its own Arrow memory limit, the run's row set
-  capacity, the time limit as its stall timeout) waits at most five seconds for its steps to stop
-  (`KilnGraphRunner`'s `stopWait`; a step stuck where an interrupt cannot reach it is left to end
+  nodes are doing. The preview's `KilnGraphRunner` (its own Arrow memory limit, the run's row set
+  capacity, the time limit as its stall timeout) waits at most five seconds for its nodes to stop
+  (`KilnGraphRunner`'s `stopWait`; a node stuck where an interrupt cannot reach it is left to end
   on its own, with a warning naming it, and reported by `threadsLeftRunning()`). A preview answered
-  while still stopping, or whose steps the engine stopped waiting for, keeps its two slots until
+  while still stopping, or whose nodes the engine stopped waiting for, keeps its two slots until
   every one of its threads has ended, is logged when it ends and counted (`PipelinePreviews.stillStopping`), so stuck
   previews can fill the slots but never the process. Two at once, each up to 256 MB of Arrow memory,
-  sit beside a run's own 1,024 MB when one process has both roles. Steps that read all their rows
+  sit beside a run's own 1,024 MB when one process has both roles. Nodes that read all their rows
   before passing any on (an aggregate, a lookup's lookup side) are named in the answer, and in the
   message when the time runs out.
 - **Same rules as previewing the sources.** Steward or admin (`@RolesAllowed`), with the existing
-  error format. The steps are created inside a `RunContext` naming the caller and their role, so
+  error format. The nodes are created inside a `RunContext` naming the caller and their role, so
   reads resolve their saved sources, secrets and allowed hosts as a run's do, and messages have the
   secrets blanked out.
 - **Columns marked sensitive: through, never inside.** For all but admins the rule is general:
   a column marked sensitive may pass through a preview untouched (kept, dropped, reordered,
-  renamed, unioned, limited, carried by a lookup), and is masked where it leaves; no step upstream
-  may look inside one. A preview is refused (403, "Only an admin can preview this: step … chooses
-  rows by email, which is marked sensitive …") when any step names one in an expression (compute,
+  renamed, unioned, limited, carried by a lookup), and is masked where it leaves; no node upstream
+  may look inside one. A preview is refused (403, "Only an admin can preview this: node … chooses
+  rows by email, which is marked sensitive …") when any node names one in an expression (compute,
   filter, route, aggregate values, including casts and function calls), groups, deduplicates or
   matches by one (aggregate `group_by`, dedupe `key`, or whole rows when it has none, lookup `on`),
   changes its type (`select`'s `cast`, or a union converting it between its inputs' types: the inputs
@@ -873,29 +876,29 @@ or not (`POST /api/v1/pipelines/preview` {yaml, step, port?, rows?}; for a saved
   checking `name` against `^Ada$` on one row answers yes or no). The marks are read through the
   request's `Sights`, for every URN an asset read may be catalogued under (as written, as the
   catalogue escapes a file's path, and as the connector resolved it), before anything connects and
-  again once the steps exist. Columns are followed by name ignoring case, and a column once hidden
+  again once the nodes exist. Columns are followed by name ignoring case, and a column once hidden
   stays hidden: a computed column sharing its name in any case (`NAME: "'x'"` beside `name`) is
   masked as well, so nothing can un-hide one. Values are masked (`••••`, nulls stay null, as in a
   source's preview) inside the collector as rows are taken, so no hidden value is held and the size
   cap counts what is shown. A failure's message, which may quote values, is shown only when nothing
   read has columns marked sensitive or the caller is an admin, as for a run's errors ("Only admins
   can see why").
-- **UI.** A step's context menu on the canvas (right-click, Ctrl+click on a Mac, or Shift+F10 or
-  the menu key on a focused step; a right-click does not select the step first, so the drawer does
+- **UI.** A node's context menu on the canvas (right-click, Ctrl+click on a Mac, or Shift+F10 or
+  the menu key on a focused node; a right-click does not select the node first, so the drawer does
   not open under the pointer) with Preview rows, Settings, Connect to…, Duplicate and Remove; a Preview tab in the
-  step's drawer, wider while it is open, with the output and rows, Stop, and the rows in
+  node's drawer, wider while it is open, with the output and rows, Stop, and the rows in
   `PreviewTable`. A preview made before the YAML changed says it is out of date. The menu's Preview
-  runs once: the canvas clears its ask when the tab has acted on it, so switching tabs or steps does
+  runs once: the canvas clears its ask when the tab has acted on it, so switching tabs or nodes does
   not run it again.
 
 ## 7. Next
 
-- **Step 2, the canvas:** drag steps from the catalogue, connect ports, a settings panel built
-  from each step's settings schema, YAML side by side kept in sync, data previews at any step
-  (done; "Preview at a step" above), keyboard operation.
-- **Step 3, quality:** the gate step and measured scores per run and output, with the
+- **Step 2, the canvas:** drag nodes from the catalogue, connect ports, a settings panel built
+  from each node's settings schema, YAML side by side kept in sync, data previews at any node
+  (done; "Preview at a node" above), keyboard operation.
+- **Step 3, quality:** the gate node and measured scores per run and output, with the
   pipeline's `quality.min_score` and `pipeline_low_quality` (done; docs/guide/pipelines.md,
   "Quality gates"); predicted scores beside the measured ones and suggestions (done;
   docs/guide/pipelines.md, "Predicted quality"); then version diffs.
-- Flows, which run pipelines in an order joined by paths, are in [flows.md](flows.md). Later:
+- Flows, which run pipelines in an order joined by connections, are in [flows.md](flows.md). Later:
   scheduling (which starts flows), parameters, the importer, push-down to SQL.

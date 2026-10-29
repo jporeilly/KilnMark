@@ -32,7 +32,7 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.util.TransferPair;
 
 /**
- * One measurement: a source step hands batches through a bounded pipe to one or more profiling steps,
+ * One measurement: a source node hands batches through a bounded pipe to one or more profiling nodes,
  * which profile in-stream and are merged at the end.
  *
  * <pre>
@@ -40,12 +40,12 @@ import org.apache.arrow.vector.util.TransferPair;
  * --rows N          synthetic rows (default 1,000,000)
  * --batch N         rows per batch (default 8192)
  * --queue N         batches the pipe holds before the source blocks (default 4)
- * --consumers N     profiling steps in parallel (default 1)
- * --slow-ms N       pause per batch in each profiling step, to show back-pressure (default 0)
+ * --consumers N     profiling nodes in parallel (default 1)
+ * --slow-ms N       pause per batch in each profiling node, to show back-pressure (default 0)
  * --limit-mb N      Arrow memory limit for the whole run (default 512)
  * --url, --user, --password, --sql   JDBC source (defaults: the lab on localhost:5433, transactions_big)
  * --no-decimal-hint read NUMERIC without telling the adapter its precision
- * --count-only      the receiving step only counts rows: the cost of the hand-over itself
+ * --count-only      the receiving node only counts rows: the cost of the hand-over itself
  * </pre>
  */
 public final class Spike {
@@ -215,7 +215,7 @@ public final class Spike {
             gcCount() - gc0, gcMillis() - gcMs0, merged);
     }
 
-    /** Moves a batch's buffers into the receiving step's allocator, so each step's memory is accounted. */
+    /** Moves a batch's buffers into the receiving node's allocator, so each node's memory is accounted. */
     static VectorSchemaRoot transfer(VectorSchemaRoot from, BufferAllocator to) {
         List<FieldVector> moved = new ArrayList<>();
         for (FieldVector v : from.getFieldVectors()) {

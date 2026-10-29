@@ -22,7 +22,7 @@ class RunnerTest {
     private static final Schema SCHEMA = new Schema(List.of(Field.nullable("n", new ArrowType.Int(32, true))));
 
     /** Emits {@code batches} batches of 1,000 ints. */
-    static final class Numbers implements Step {
+    static final class Numbers implements Node {
         private final int batches;
         private final int failAt;
         private int sent;
@@ -38,13 +38,13 @@ class RunnerTest {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             if (sent == failAt) {
-                throw new StepException("source broke");
+                throw new NodeException("source broke");
             }
             VectorSchemaRoot root = VectorSchemaRoot.create(SCHEMA, context.allocator());
             IntVector v = (IntVector) root.getVector(0);
@@ -57,14 +57,14 @@ class RunnerTest {
                 context.output().put(root);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StepException("interrupted", e);
+                throw new NodeException("interrupted", e);
             }
             return ++sent < batches;
         }
     }
 
     /** Counts rows; optionally slow, failing, or leaking a batch. */
-    static final class Count implements Step {
+    static final class Count implements Node {
         final AtomicLong rows = new AtomicLong();
         private final long sleepMillis;
         private final boolean fail;
@@ -82,11 +82,11 @@ class RunnerTest {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             try {
                 VectorSchemaRoot b = context.input().take(context.allocator());
                 if (b == null) {
@@ -97,26 +97,26 @@ class RunnerTest {
                     b.close();
                 }
                 if (fail) {
-                    throw new StepException("sink broke");
+                    throw new NodeException("sink broke");
                 }
                 if (sleepMillis > 0) {
                     Thread.sleep(sleepMillis);
                 }
                 if (context.hasOutput()) {
-                    throw new StepException("count is a sink");
+                    throw new NodeException("count is a sink");
                 }
                 return true;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StepException("interrupted", e);
+                throw new NodeException("interrupted", e);
             }
         }
     }
 
-    private static Pipeline line(Step... steps) {
-        var specs = new java.util.ArrayList<StepSpec>();
-        for (int i = 0; i < steps.length; i++) {
-            specs.add(new StepSpec("s" + i, steps[i], Map.of()));
+    private static Pipeline line(Node... nodes) {
+        var specs = new java.util.ArrayList<NodeSpec>();
+        for (int i = 0; i < nodes.length; i++) {
+            specs.add(new NodeSpec("s" + i, nodes[i], Map.of()));
         }
         return new Pipeline("test", specs);
     }
@@ -127,7 +127,7 @@ class RunnerTest {
         RunResult r = new Runner(64L << 20, 4).run(line(new Numbers(200, -1), sink), e -> { });
         assertTrue(r.succeeded(), r.error());
         assertEquals(200_000, sink.rows.get());
-        assertEquals(200_000, r.steps().get(0).rowsOut());
+        assertEquals(200_000, r.nodes().get(0).rowsOut());
     }
 
     @Test
@@ -145,7 +145,7 @@ class RunnerTest {
         RunResult r = new Runner(64L << 20, 4).run(line(new Numbers(100, 10), sink), e -> { });
         assertEquals(RunResult.Status.FAILED, r.status());
         assertTrue(r.error().contains("s0") && r.error().contains("source broke"), r.error());
-        assertNull(r.steps().get(1).error(), "the sink only saw the source fail");
+        assertNull(r.nodes().get(1).error(), "the sink only saw the source fail");
     }
 
     @Test
@@ -154,28 +154,28 @@ class RunnerTest {
         RunResult r = new Runner(64L << 20, 2).run(line(source, new Count(0, true, false)), e -> { });
         assertEquals(RunResult.Status.FAILED, r.status());
         assertTrue(r.error().contains("sink broke"), r.error());
-        assertNull(r.steps().get(0).error(), "the source was stopped, not failed");
+        assertNull(r.nodes().get(0).error(), "the source was stopped, not failed");
         assertTrue(source.sent < 10, "the source stopped soon after the sink, not at its end: sent " + source.sent);
     }
 
     @Test
-    void interruptingTheCallerStopsEveryStepBeforeRunReturns() throws Exception {
+    void interruptingTheCallerStopsEveryNodeBeforeRunReturns() throws Exception {
         java.util.concurrent.CountDownLatch flowing = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
         java.util.concurrent.atomic.AtomicReference<Throwable> outcome = new java.util.concurrent.atomic.AtomicReference<>();
         Numbers numbers = new Numbers(Integer.MAX_VALUE, -1);
-        Step endless = new Step() {
+        Node endless = new Node() {
             @Override
             public String type() {
                 return numbers.type();
             }
 
             @Override
-            public void init(StepContext context) {
+            public void init(NodeContext context) {
             }
 
             @Override
-            public boolean process(StepContext context) throws StepException {
+            public boolean process(NodeContext context) throws NodeException {
                 flowing.countDown();
                 return numbers.process(context);
             }
@@ -198,11 +198,11 @@ class RunnerTest {
         caller.join(java.time.Duration.ofSeconds(10));
         assertTrue(!caller.isAlive(), "run returned after the interrupt");
         assertTrue(outcome.get() instanceof InterruptedException, String.valueOf(outcome.get()));
-        assertTrue(closed.get(), "the source step was stopped and closed before run returned");
+        assertTrue(closed.get(), "the source node was stopped and closed before run returned");
     }
 
     @Test
-    void aStepThatLeaksMemoryIsNamed() throws Exception {
+    void aNodeThatLeaksMemoryIsNamed() throws Exception {
         RunResult r = new Runner(64L << 20, 4).run(line(new Numbers(3, -1), new Count(0, false, true)), e -> { });
         assertEquals(RunResult.Status.FAILED, r.status());
         assertTrue(r.error().contains("s1") && r.error().contains("memory"), r.error());
@@ -211,18 +211,18 @@ class RunnerTest {
     @Test
     void metadataEventsReachTheEmitter() throws Exception {
         List<MetadataEvent> seen = new CopyOnWriteArrayList<>();
-        Step reporter = new Step() {
+        Node reporter = new Node() {
             @Override
             public String type() {
                 return "reporter";
             }
 
             @Override
-            public void init(StepContext context) {
+            public void init(NodeContext context) {
             }
 
             @Override
-            public boolean process(StepContext context) {
+            public boolean process(NodeContext context) {
                 context.metadata().emit(new MetadataEvent("urn:kilnmark:pg:t", MetadataEvent.Kind.ROW_COUNT,
                     Map.of("rows", "1"), Instant.now()));
                 return false;

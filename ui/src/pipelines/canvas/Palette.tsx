@@ -16,8 +16,8 @@ import {
   IconSparkles,
   IconSum,
 } from "@tabler/icons-react";
-import type { StepType } from "../../api";
-import { StepIcon } from "./StepNode";
+import type { NodeType } from "../../api";
+import { NodeIcon } from "./NodeCard";
 
 /** The folders, in order; a category the server names that is not here comes after them. */
 export const CATEGORIES = ["Read", "Write", "Filter and route", "Transform", "Combine", "Aggregate", "Quality", "AI", "Other"];
@@ -36,8 +36,8 @@ const ICONS: Record<string, typeof IconBox> = {
   [RECENT]: IconHistory,
 };
 
-/** A step type's folder: the one the server names, else one from its kind (for an older server). */
-export const categoryOf = (t: StepType) =>
+/** A node type's folder: the one the server names, else one from its kind (for an older server). */
+export const categoryOf = (t: NodeType) =>
   t.category ?? (t.kind === "source" ? "Read" : t.kind === "sink" ? "Write" : t.kind === "gate" ? "Quality" : "Other");
 
 const OPEN_KEY = "kilnmark.canvas.folders";
@@ -60,17 +60,17 @@ function store(key: string, value: unknown) {
   }
 }
 
-/** The step types added most recently, newest first: at most five. */
+/** The node types added most recently, newest first: at most five. */
 export function rememberUsed(type: string) {
   const list = stored<string[]>(RECENT_KEY, []).filter((t) => t !== type);
   store(RECENT_KEY, [type, ...list].slice(0, 5));
 }
 
-type Folder = { name: string; types: StepType[] };
+type Folder = { name: string; types: NodeType[] };
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
-/** Moves the focus through the visible folders and steps of a tree with the arrow keys. */
+/** Moves the focus through the visible folders and nodes of a tree with the arrow keys. */
 function treeKeys(e: KeyboardEvent<HTMLElement>, root: HTMLElement | null, toggle: (folder: string, open?: boolean) => void) {
   if (!root) return;
   const items = [...root.querySelectorAll<HTMLElement>("[data-tree-item]")].filter((el) => el.offsetParent !== null);
@@ -111,10 +111,10 @@ function treeKeys(e: KeyboardEvent<HTMLElement>, root: HTMLElement | null, toggl
 }
 
 /**
- * The step types, in folders by category: an icon rail (a button per folder) and, beside it, a list
+ * The node types, in folders by category: an icon rail (a button per folder) and, beside it, a list
  * docked in its own column so it never covers the canvas. A folder's rail button opens the list with
  * that folder open. In the list, folders are disclosure buttons; the arrow keys move through the
- * tree, Right and Left open and close a folder, Enter adds a step after the selected one. Which
+ * tree, Right and Left open and close a folder, Enter adds a node after the selected one. Which
  * folders are open is remembered in this browser.
  */
 export function Palette({
@@ -127,7 +127,7 @@ export function Palette({
   searchRef,
   hint,
 }: {
-  types: StepType[] | null;
+  types: NodeType[] | null;
   usedTypes: string[];
   readOnly: boolean;
   expanded: boolean;
@@ -137,15 +137,15 @@ export function Palette({
   hint: string;
 }) {
   const [search, setSearch] = useState("");
-  // Read each time: steps added by dragging or from the rail update it too.
+  // Read each time: nodes added by dragging or from the rail update it too.
   const recent = stored<string[]>(RECENT_KEY, []);
   const recentKey = recent.join(",");
   const folders: Folder[] = useMemo(() => {
-    const byName = new Map<string, StepType[]>();
+    const byName = new Map<string, NodeType[]>();
     for (const t of types ?? []) byName.set(categoryOf(t), [...(byName.get(categoryOf(t)) ?? []), t]);
     const names = [...CATEGORIES.filter((c) => byName.has(c)), ...[...byName.keys()].filter((c) => !CATEGORIES.includes(c))];
     const out = names.map((name) => ({ name, types: byName.get(name)! }));
-    const used = recent.map((r) => types?.find((t) => t.type === r)).filter((t): t is StepType => !!t);
+    const used = recent.map((r) => types?.find((t) => t.type === r)).filter((t): t is NodeType => !!t);
     return used.length ? [{ name: RECENT, types: used }, ...out] : out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [types, recentKey]);
@@ -156,7 +156,7 @@ export function Palette({
     const last = stored<string | null>(LAST_KEY, null);
     return new Set(last ? [last] : []);
   });
-  // Folders holding the steps this pipeline uses open by themselves, until folders are opened or
+  // Folders holding the nodes this pipeline uses open by themselves, until folders are opened or
   // closed by hand (which is then remembered).
   const usedKey = usedTypes.join(",");
   useEffect(() => {
@@ -181,7 +181,7 @@ export function Palette({
   const add = (type: string) => onAdd(type);
 
   const q = search.trim().toLowerCase();
-  const matches = (t: StepType) => !q || `${t.type} ${t.label} ${t.help} ${categoryOf(t)}`.toLowerCase().includes(q);
+  const matches = (t: NodeType) => !q || `${t.type} ${t.label} ${t.help} ${categoryOf(t)}`.toLowerCase().includes(q);
   const shown = folders
     .map((f) => ({ ...f, types: f.types.filter(matches) }))
     .filter((f) => f.types.length > 0 && !(q && f.name === RECENT));
@@ -205,7 +205,7 @@ export function Palette({
     setReveal(null);
   }, [reveal, expanded]);
 
-  const stepButton = (t: StepType, folder: string) => (
+  const nodeButton = (t: NodeType, folder: string) => (
     <button
       type="button"
       className={`cv-type cv-kind-${t.kind}`}
@@ -213,16 +213,16 @@ export function Palette({
       disabled={readOnly}
       title={t.help}
       aria-description={t.help}
-      data-tree-item="step"
+      data-tree-item="node"
       data-folder={folder}
       onDragStart={(e) => {
-        e.dataTransfer.setData("application/x-kilnmark-step", t.type);
+        e.dataTransfer.setData("application/x-kilnmark-node", t.type);
         e.dataTransfer.effectAllowed = "copy";
       }}
       onClick={() => add(t.type)}
     >
       <span className="cv-type-icon">
-        <StepIcon type={t.type} kind={t.kind} />
+        <NodeIcon type={t.type} kind={t.kind} />
       </span>
       <span>{t.label}</span>
     </button>
@@ -249,15 +249,15 @@ export function Palette({
 
   return (
     <div className={`cv-palette${expanded ? " is-expanded" : ""}`}>
-      <nav className="cv-rail" aria-label="Step types" onKeyDown={railKeys}>
+      <nav className="cv-rail" aria-label="Node types" onKeyDown={railKeys}>
         <button
           type="button"
           className="cv-rail-button"
           data-rail-item
           aria-expanded={expanded}
           aria-controls="cv-palette-panel"
-          aria-label={expanded ? "Hide the step list" : "Add a step: show the step list"}
-          title={expanded ? "Hide the step list" : "Show the step list"}
+          aria-label={expanded ? "Hide the node list" : "Add a node: show the node list"}
+          title={expanded ? "Hide the node list" : "Show the node list"}
           onClick={() => onExpand(!expanded)}
         >
           {expanded ? <IconLayoutSidebarLeftCollapse size={20} stroke={1.8} aria-hidden="true" /> : <IconLayoutSidebarLeftExpand size={20} stroke={1.8} aria-hidden="true" />}
@@ -273,7 +273,7 @@ export function Palette({
               className={`cv-rail-button${showing ? " is-open" : ""}`}
               data-rail-item
               data-folder={f.name}
-              aria-label={`${f.name} (${f.types.length}): show in the step list`}
+              aria-label={`${f.name} (${f.types.length}): show in the node list`}
               title={`${f.name} (${f.types.length})`}
               aria-controls={expanded ? `cv-folder-${slug(f.name)}` : undefined}
               disabled={readOnly}
@@ -288,15 +288,15 @@ export function Palette({
       {expanded && (
         <section id="cv-palette-panel" className="cv-palette-panel" aria-labelledby="cv-palette-h">
           <h3 id="cv-palette-h" className="cv-side-title">
-            Steps
+            Nodes
           </h3>
           <label className="cv-search">
-            <span className="visually-hidden">Find a step type</span>
+            <span className="visually-hidden">Find a node type</span>
             <IconSearch size={16} stroke={1.8} aria-hidden="true" />
             <input
               ref={searchRef}
               type="search"
-              placeholder="Find a step"
+              placeholder="Find a node"
               value={search}
               disabled={readOnly}
               aria-describedby="cv-palette-hint"
@@ -312,7 +312,7 @@ export function Palette({
           <p id="cv-palette-hint" className="hint">
             {hint}
           </p>
-          {types == null && <p className="small muted">Loading the step types…</p>}
+          {types == null && <p className="small muted">Loading the node types…</p>}
           <div className="cv-tree" ref={tree} onKeyDown={(e) => treeKeys(e, tree.current, toggle)}>
             <ul className="cv-folders">
               {shown.map((f) => {
@@ -328,7 +328,7 @@ export function Palette({
                       aria-controls={id}
                       data-tree-item="folder"
                       data-folder={f.name}
-                      // While searching every folder with a match is open, so Tab goes straight to the steps.
+                      // While searching every folder with a match is open, so Tab goes straight to the nodes.
                       tabIndex={q ? -1 : undefined}
                       onClick={() => !q && toggle(f.name)}
                     >
@@ -340,7 +340,7 @@ export function Palette({
                     </button>
                     <ul id={id} className="cv-type-list" hidden={!isOpen}>
                       {f.types.map((t) => (
-                        <li key={t.type}>{stepButton(t, f.name)}</li>
+                        <li key={t.type}>{nodeButton(t, f.name)}</li>
                       ))}
                     </ul>
                   </li>
@@ -348,7 +348,7 @@ export function Palette({
               })}
             </ul>
           </div>
-          {types && shown.length === 0 && <p className="small muted">No step type matches “{search}”.</p>}
+          {types && shown.length === 0 && <p className="small muted">No node type matches “{search}”.</p>}
         </section>
       )}
     </div>

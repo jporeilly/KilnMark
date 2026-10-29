@@ -39,7 +39,7 @@ public class PipelineResource {
     private final PipelineService pipelines;
     private final SecurityIdentity identity;
 
-    /** Previews at a step: the first rows leaving one step, read live and never kept. */
+    /** Previews at a node: the first rows leaving one node, read live and never kept. */
     @jakarta.inject.Inject
     io.kilnmark.server.pipelines.PipelinePreviews previews;
 
@@ -85,7 +85,7 @@ public class PipelineResource {
     @Path("validate")
     @Consumes(MediaType.APPLICATION_JSON)
     @Operation(summary = "Check pipeline YAML", description = "Checks YAML without saving or running it: the problems, "
-        + "each with its line, column and step, and each step's ports and the columns leaving each port where they "
+        + "each with its line, column and node, and each node's ports and the columns leaving each port where they "
         + "can be known before a run. For a pipeline not yet saved; give name to check the YAML's name against it. "
         + "Role: viewer.")
     @APIResponses({
@@ -104,8 +104,8 @@ public class PipelineResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @Operation(summary = "Predict a pipeline's quality", description = "Estimates the quality of each write and gate "
         + "from the catalogue's metadata about what the pipeline reads (profiles, value shapes, relationships and "
-        + "rule results), carried through its steps, without reading any data: each one's score overall and per "
-        + "dimension, what could not be told and what was assumed, and the rows expected on each step's ports. "
+        + "rule results), carried through its nodes, without reading any data: each one's score overall and per "
+        + "dimension, what could not be told and what was assumed, and the rows expected on each node's ports. "
         + "Every figure is an estimate. For YAML being edited, valid or not. Role: viewer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The prediction"),
@@ -122,7 +122,7 @@ public class PipelineResource {
     @Path("suggest")
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.STEWARD_ROLE)
-    @Operation(summary = "Suggest improvements", description = "Steps that would raise the predicted quality of a "
+    @Operation(summary = "Suggest improvements", description = "Nodes that would raise the predicted quality of a "
         + "write, each with its predicted effect (an estimate) and where it goes. Kilnmark's own come from the "
         + "metadata with no model; when a model is set for pipeline suggestions and ai is not false, it ranks, "
         + "explains and adds to them, seeing only the metadata of sources whose AI rule allows it, never values. "
@@ -143,31 +143,31 @@ public class PipelineResource {
     @Path("preview")
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.STEWARD_ROLE)
-    @Operation(summary = "Preview a step", description = "The first rows leaving one output of one step of pipeline "
+    @Operation(summary = "Preview a node", description = "The first rows leaving one output of one node of pipeline "
         + "YAML as it stands, saved or not: its columns with their kinds, the rows (100 by default, at most 1,000), "
-        + "how long it took and, when a step before it reads all its rows first (an aggregate, a lookup's lookup "
-        + "side), that in words. Only the step and the steps upstream of it run, and nothing is written: a preview "
-        + "needing a write, or a step that could change anything, is refused. Read live and never kept. For all but "
+        + "how long it took and, when a node before it reads all its rows first (an aggregate, a lookup's lookup "
+        + "side), that in words. Only the node and the nodes upstream of it run, and nothing is written: a preview "
+        + "needing a write, or a node that could change anything, is refused. Read live and never kept. For all but "
         + "admins, columns marked sensitive may only pass through unchanged and are masked; a preview in which any "
-        + "step looks at their values (an expression, a key, a cast or a gate's rule) is refused. At most 30 "
-        + "seconds and 50 steps; one preview per person at a time, six a minute. Role: steward.")
+        + "node looks at their values (an expression, a key, a cast or a gate's rule) is refused. At most 30 "
+        + "seconds and 50 nodes; one preview per person at a time, six a minute. Role: steward.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The rows"),
-        @APIResponse(responseCode = "400", description = "No YAML or step, YAML over the size limit or with problems "
-            + "in the part that would run, an unknown step or port, rows out of range, or a step that cannot run in "
+        @APIResponse(responseCode = "400", description = "No YAML or node, YAML over the size limit or with problems "
+            + "in the part that would run, an unknown node or port, rows out of range, or a node that cannot run in "
             + "a preview"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward, or a step would look at the values of a "
+        @APIResponse(responseCode = "403", description = "Not a steward, or a node would look at the values of a "
             + "column marked sensitive"),
-        @APIResponse(responseCode = "422", description = "The preview ran but could not give rows: a step failed, "
+        @APIResponse(responseCode = "422", description = "The preview ran but could not give rows: a node failed, "
             + "it took too long, or a source could not be reached"),
         @APIResponse(responseCode = "429", description = "A preview of yours is running, or too many previews")})
     public Response preview(PipelineViews.PreviewRequest body,
                             @jakarta.ws.rs.core.Context io.vertx.core.http.HttpServerRequest request) {
         if (body == null) {
-            throw new IllegalArgumentException("Send {\"yaml\": \"...\", \"step\": \"...\"}");
+            throw new IllegalArgumentException("Send {\"yaml\": \"...\", \"node\": \"...\"}");
         }
-        return noStore(previews.preview(body.yaml(), body.step(), body.port(), body.rows(), who(), role(), sights,
+        return noStore(previews.preview(body.yaml(), body.node(), body.port(), body.rows(), who(), role(), sights,
             abandoned(request)));
     }
 
@@ -175,14 +175,14 @@ public class PipelineResource {
     @Path("{name}/versions/{n}/preview")
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.STEWARD_ROLE)
-    @Operation(summary = "Preview a step of a version", description = "As POST /api/v1/pipelines/preview, for a saved "
-        + "version: send step, and port and rows if wanted. Role: steward.")
+    @Operation(summary = "Preview a node of a version", description = "As POST /api/v1/pipelines/preview, for a saved "
+        + "version: send node, and port and rows if wanted. Role: steward.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The rows"),
-        @APIResponse(responseCode = "400", description = "No step, an unknown step or port, rows out of range, or a "
-            + "step that cannot run in a preview"),
+        @APIResponse(responseCode = "400", description = "No node, an unknown node or port, rows out of range, or a "
+            + "node that cannot run in a preview"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward, or a step would look at the values of a "
+        @APIResponse(responseCode = "403", description = "Not a steward, or a node would look at the values of a "
             + "column marked sensitive"),
         @APIResponse(responseCode = "404", description = "No such pipeline or version"),
         @APIResponse(responseCode = "422", description = "The preview ran but could not give rows"),
@@ -191,9 +191,9 @@ public class PipelineResource {
                                    PipelineViews.PreviewRequest body,
                                    @jakarta.ws.rs.core.Context io.vertx.core.http.HttpServerRequest request) {
         if (body == null) {
-            throw new IllegalArgumentException("Send {\"step\": \"...\"}");
+            throw new IllegalArgumentException("Send {\"node\": \"...\"}");
         }
-        return noStore(previews.previewVersion(name, n, body.step(), body.port(), body.rows(), who(), role(), sights,
+        return noStore(previews.previewVersion(name, n, body.node(), body.port(), body.rows(), who(), role(), sights,
             abandoned(request)));
     }
 
@@ -336,7 +336,7 @@ public class PipelineResource {
     }
 
     /** A preview as a response no browser or proxy keeps: the rows are the sources' data. */
-    private static Response noStore(PipelineViews.StepPreviewView preview) {
+    private static Response noStore(PipelineViews.NodePreviewView preview) {
         jakarta.ws.rs.core.CacheControl none = new jakarta.ws.rs.core.CacheControl();
         none.setNoStore(true);
         none.setNoCache(true);

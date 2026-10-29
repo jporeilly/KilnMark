@@ -1,6 +1,6 @@
 /**
- * A run while it goes, for the canvas and the run page: each step's rows so far and rate, and the
- * step holding the run back, from the run's latest progress. Pure functions, unit tested.
+ * A run while it goes, for the canvas and the run page: each node's rows so far and rate, and the
+ * node holding the run back, from the run's latest progress. Pure functions, unit tested.
  */
 import { formatNumber, type PipelineRunProgress } from "../api";
 
@@ -11,7 +11,7 @@ export function rateWords(rate: number): string {
   return `${formatNumber(Math.round(rate))} rows/s`;
 }
 
-export type LiveStep = {
+export type LiveNode = {
   rowsIn: number;
   rowsOut: number;
   /** Rows a second since the snapshot before, when rows are moving; null otherwise. */
@@ -20,16 +20,16 @@ export type LiveStep = {
   slowest: boolean;
 };
 
-/** Each step's live figures by id, from a running run's progress. */
-export function liveSteps(progress: PipelineRunProgress | null | undefined): Map<string, LiveStep> {
-  const out = new Map<string, LiveStep>();
-  for (const s of progress?.steps ?? []) {
-    out.set(s.step, {
+/** Each node's live figures by id, from a running run's progress. */
+export function liveNodes(progress: PipelineRunProgress | null | undefined): Map<string, LiveNode> {
+  const out = new Map<string, LiveNode>();
+  for (const s of progress?.nodes ?? []) {
+    out.set(s.node, {
       rowsIn: s.rowsIn,
       rowsOut: s.rowsOut,
       rate: s.state === "running" ? s.rowsPerSecond : null,
       state: s.state,
-      slowest: progress?.slowest === s.step,
+      slowest: progress?.slowest === s.node,
     });
   }
   return out;

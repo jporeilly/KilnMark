@@ -138,7 +138,7 @@ public class QualityService {
     }
 
     /**
-     * Settings for the scan's profile step: whether values are kept, and how rows are sampled:
+     * Settings for the scan's profile node: whether values are kept, and how rows are sampled:
      * by key hash for tables with a primary key, by whole-row hash for other tables, and by a
      * reservoir seeded from the asset's URN for files.
      */
@@ -184,7 +184,7 @@ public class QualityService {
                 }
                 case SAMPLE -> {
                     if (!keepSamples(source.settings())) {
-                        return; // the profile step was told not to keep values; never store any
+                        return; // the profile node was told not to keep values; never store any
                     }
                     Map<String, String> a = e.attributes();
                     String method = a.getOrDefault("method", "none");

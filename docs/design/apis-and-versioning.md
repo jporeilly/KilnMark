@@ -61,7 +61,7 @@ earlier tools offered data services.
 ## Python service (parked)
 
 Parked until a design partner asks. It is a second runtime to package, secure and support. The
-AI steps and the documented REST API cover most needs. Anyone can generate a Python client from
+AI nodes and the documented REST API cover most needs. Anyone can generate a Python client from
 the OpenAPI document in minutes. The idea, for later:
 
 
@@ -70,13 +70,13 @@ A Python sidecar built on FastAPI serves Python users and AI tooling:
 - **Python SDK** (`pip install kilnmark`): a typed client generated from the OpenAPI document, plus
   helpers that read published data or pipeline outputs straight into pandas or Polars through
   Arrow.
-- **Python steps in pipelines:** a pipeline step can call a Python function hosted by the
+- **Python nodes in pipelines:** a pipeline node can call a Python function hosted by the
   sidecar. Batches go through Arrow Flight or Arrow IPC, so there is no row-by-row conversion.
   This covers data science libraries, custom parsing and model code that does not exist in Java.
 - **The sidecar's own API** is FastAPI, documented at its own `/docs`, reachable only from the
   Kilnmark server, and authenticated with a service token.
 - It runs as an optional compose profile, `python`, with a pinned image and a locked dependency
-  set. Python steps are off unless an admin turns them on, because they run arbitrary code.
+  set. Python nodes are off unless an admin turns them on, because they run arbitrary code.
 
 ## Version control
 

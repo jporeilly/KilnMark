@@ -1,25 +1,25 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import type { PipelineColumn, Source, StepTypeSetting } from "../../api";
+import type { PipelineColumn, Source, NodeTypeSetting } from "../../api";
 import { Switch } from "../../components/ui";
 import { defaultText } from "./insight";
 import type { Value } from "./model";
 
 /** What a control needs besides its setting: the columns it can offer, sources, and assets. */
 export type ControlContext = {
-  /** Columns arriving at the step (for a lookup: main and lookup sides); null when not known. */
+  /** Columns arriving at the node (for a lookup: main and lookup sides); null when not known. */
   columns: { main: PipelineColumn[] | null; lookup: PipelineColumn[] | null };
   /** Which side a column setting names; the right-hand side of a column map may name the other. */
   side: "main" | "lookup" | null;
   sources: Source[] | null;
-  /** For write steps: the source must allow writing. */
+  /** For write nodes: the source must allow writing. */
   writing: boolean;
-  /** Tables and files of the step's source, for the asset picker. */
+  /** Tables and files of the node's source, for the asset picker. */
   assets: string[] | null;
-  stepType: string | null;
+  nodeType: string | null;
 };
 
 export type ControlProps = {
-  spec: StepTypeSetting;
+  spec: NodeTypeSetting;
   /** A stable id for the control, unique on the page. */
   id: string;
   value: Value | undefined;
@@ -46,7 +46,7 @@ function Field({
   children,
   group,
 }: {
-  spec: StepTypeSetting;
+  spec: NodeTypeSetting;
   id: string;
   problems: string[];
   children: (describedBy: string, invalid: boolean) => ReactNode;
@@ -538,13 +538,13 @@ function ColumnsControl(p: ControlProps) {
 
 type PairKind = "column-map" | "expressions" | "conditions";
 
-function pairLabels(kind: PairKind, stepType: string | null, key: string): [string, string, string] {
+function pairLabels(kind: PairKind, nodeType: string | null, key: string): [string, string, string] {
   if (kind === "conditions") return ["Port", "Condition", "Add a route"];
   if (kind === "expressions") {
     if (key === "cast") return ["Column", "Type", "Add a column"];
-    return ["Column", stepType === "aggregate" ? "Summary" : "Expression", "Add a column"];
+    return ["Column", nodeType === "aggregate" ? "Summary" : "Expression", "Add a column"];
   }
-  if (stepType === "lookup") return ["Main column", "Lookup column", "Add a key"];
+  if (nodeType === "lookup") return ["Main column", "Lookup column", "Add a key"];
   if (key === "rename") return ["Column", "New name", "Add a rename"];
   return ["From", "To", "Add a pair"];
 }
@@ -565,8 +565,8 @@ function PairsControl(p: ControlProps & { kind: PairKind }) {
       mine.current = key;
     }
   }, [key]);
-  const [left, right, addLabel] = pairLabels(p.kind, p.context.stepType, p.spec.key);
-  const valueIsColumn = p.kind === "column-map" && p.context.stepType === "lookup";
+  const [left, right, addLabel] = pairLabels(p.kind, p.context.nodeType, p.spec.key);
+  const valueIsColumn = p.kind === "column-map" && p.context.nodeType === "lookup";
   const leftIsColumn = p.kind === "column-map" || (p.kind === "expressions" && p.spec.key === "cast");
   const dupes = new Set(rows.map((r) => r[0]).filter((n, i, all) => n !== "" && all.indexOf(n) !== i));
   const commit = (next: [string, string][]) => {
@@ -1048,5 +1048,5 @@ export function SettingControl(p: ControlProps) {
   }
 }
 
-/** A stable id base for a step's controls. */
+/** A stable id base for a node's controls. */
 export const useControlIds = () => useId().replace(/:/g, "");
