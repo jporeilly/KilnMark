@@ -43,7 +43,7 @@ class RegisteredDriverTest {
     private final java.util.List<DriverFolder> opened = new java.util.ArrayList<>();
 
     private DriverFolder open(Path d) {
-        DriverFolder f = open(d);
+        DriverFolder f = new DriverFolder(d);
         opened.add(f);
         return f;
     }
