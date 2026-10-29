@@ -160,7 +160,7 @@ class ServerStepFactoriesTest {
                 throw new IllegalStateException(x.getMessage(), x);
             }
         }));
-        assertTrue(e.getMessage().contains("Only stewards and admins"), e.getMessage());
+        assertTrue(e.getMessage().contains("Only stewards, designers and admins"), e.getMessage());
     }
 
     @Test

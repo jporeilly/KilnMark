@@ -33,13 +33,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "$engine build failed with exit code $LASTEXITCODE" }
           # Testcontainers talks to Docker, which keeps its own image store: copy the image across when
           # Docker is installed, so the integration tests can start it.
-          if ($engine -ne 'docker' -and (Get-Command docker -ErrorAction SilentlyContinue)) {
+          # Docker Desktop's CLI is often not on the PATH of a runner, so look where its installer puts it.
+          $dockerCli = (Get-Command docker -ErrorAction SilentlyContinue).Source
+          if (-not $dockerCli) {
+            $known = Join-Path $env:ProgramFiles 'Docker\Docker\resources\bin\docker.exe'
+            if (Test-Path $known) { $dockerCli = $known }
+          }
+          if ($engine -ne 'docker' -and $dockerCli) {
             $tar = Join-Path $env:RUNNER_TEMP 'kilnmark-postgres.tar'
             & podman save -o $tar kilnmark-postgres:dev
             if ($LASTEXITCODE -ne 0) { throw "podman save failed with exit code $LASTEXITCODE" }
-            & docker load -i $tar
+            & $dockerCli load -i $tar
             if ($LASTEXITCODE -ne 0) { throw "docker load failed with exit code $LASTEXITCODE" }
             Remove-Item $tar
+          } else {
+            Write-Host "Docker not found, so the server tests will not see the image: $dockerCli"
           }
 
       - uses: actions/setup-java@v4
