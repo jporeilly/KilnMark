@@ -71,7 +71,7 @@ Each sprint builds on the last: graph before engine, engine before connectors, c
 | 10 | Step plugin interface and plugin loader | S2 | Engine | Not started |
 | 11 | Arrow row sets with back-pressure | S2 | Engine | Not started |
 | 12 | YAML pipeline format and validator | S2 | Engine | Not started |
-| 13 | Local runner, job hops, run records, PostgreSQL job queue (SKIP LOCKED) | S2 | Engine | Not started |
+| 13 | Local runner, flow paths, run records, PostgreSQL job queue (SKIP LOCKED) | S2 | Engine | Not started |
 | 14 | JDBC connector: PostgreSQL, SQL Server (database dialects adapted from Kettle 10.2) | S3 | Connectors | Not started |
 | 15 | File connector: CSV, Parquet, JSON | S3 | Connectors | Not started |
 | 16 | S3-compatible object storage connector | S3 | Connectors | Not started |
@@ -105,7 +105,7 @@ One mono-repo, one build, one Compose file: the whole product runs from a clean 
 
 ```
 kilnmark/
-  kiln-core/          step SPI, Arrow row sets, runner, job hops
+  kiln-core/          step SPI, Arrow row sets, runner, flow paths
   kiln-plugins/       connectors and profiling steps
   graph/              schema, migrations, URNs, assertion envelope
   api/                REST service (Quarkus)
