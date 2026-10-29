@@ -23,7 +23,7 @@ jobs:
 
       # Integration tests run against the same PostgreSQL image Kilnmark ships with.
       - name: Build the PostgreSQL image (AGE, pgvector)
-        shell: pwsh
+        shell: powershell
         run: |
           # The same engine choice as build.ps1: podman first, then docker.
           $engine = if (Get-Command podman -ErrorAction SilentlyContinue) { 'podman' }
