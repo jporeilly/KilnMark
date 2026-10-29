@@ -20,7 +20,7 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.graph.Edge;
 import io.kilnmark.kiln.graph.GraphRunner;
-import io.kilnmark.kiln.graph.GraphStep;
+import io.kilnmark.kiln.graph.GraphNode;
 import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.graph.PortRef;
 import io.kilnmark.server.auth.AccessRole;
@@ -34,12 +34,12 @@ class PipelineExecutionTest {
 
     /** read customers -> keep emails -> write out (replace); and a second write appending the rejected rows. */
     static PipelineCompilerPort.Compilation compiled(String mode) {
-        List<PipelineCompilerPort.StepOutline> steps = List.of(
-            new PipelineCompilerPort.StepOutline("customers", "read", "source", 5, List.of(), List.of("out"), Map.of()),
-            new PipelineCompilerPort.StepOutline("emails", "keep", "transform", 10, List.of("in"),
+        List<PipelineCompilerPort.NodeOutline> nodes = List.of(
+            new PipelineCompilerPort.NodeOutline("customers", "read", "source", 5, List.of(), List.of("out"), Map.of()),
+            new PipelineCompilerPort.NodeOutline("emails", "keep", "transform", 10, List.of("in"),
                 List.of("out", "rejected"), Map.of()),
-            new PipelineCompilerPort.StepOutline("out", "write", "sink", 15, List.of("in"), List.of(), Map.of()),
-            new PipelineCompilerPort.StepOutline("odd", "write", "sink", 22, List.of("in"), List.of(), Map.of()));
+            new PipelineCompilerPort.NodeOutline("out", "write", "sink", 15, List.of("in"), List.of(), Map.of()),
+            new PipelineCompilerPort.NodeOutline("odd", "write", "sink", 22, List.of("in"), List.of(), Map.of()));
         List<PipelineCompilerPort.EdgeOutline> edges = List.of(
             new PipelineCompilerPort.EdgeOutline("customers", "out", "emails", "in"),
             new PipelineCompilerPort.EdgeOutline("emails", "out", "out", "in"),
@@ -49,14 +49,14 @@ class PipelineExecutionTest {
             "emails", Map.of("columns", List.of("email")),
             "out", Map.of("source", "warehouse", "table", "crm.customer_emails", "mode", mode),
             "odd", Map.of("source", "warehouse", "path", "quarantine/odd.csv", "mode", "append"));
-        return new PipelineCompilerPort.Compilation("customer-copy", null, List.of(), List.of(), steps, edges, configs,
+        return new PipelineCompilerPort.Compilation("customer-copy", null, List.of(), List.of(), nodes, edges, configs,
             graph());
     }
 
     static PipelineGraph graph() {
         KilnPipelineCompilerTest.Nothing n = new KilnPipelineCompilerTest.Nothing("x");
-        return new PipelineGraph("customer-copy", List.of(new GraphStep("customers", n, Map.of()),
-            new GraphStep("emails", n, Map.of()), new GraphStep("out", n, Map.of()), new GraphStep("odd", n, Map.of())),
+        return new PipelineGraph("customer-copy", List.of(new GraphNode("customers", n, Map.of()),
+            new GraphNode("emails", n, Map.of()), new GraphNode("out", n, Map.of()), new GraphNode("odd", n, Map.of())),
             List.of(new Edge(new PortRef("customers", "out"), new PortRef("emails", "in")),
                 new Edge(new PortRef("emails", "out"), new PortRef("out", "in")),
                 new Edge(new PortRef("emails", "rejected"), new PortRef("odd", "in"))));
@@ -94,47 +94,47 @@ class PipelineExecutionTest {
         }
     }
 
-    private static RunResult.StepResult step(String name, long in, long out, Map<String, Long> ins,
+    private static RunResult.NodeResult node(String name, long in, long out, Map<String, Long> ins,
                                              Map<String, Long> outs, String error) {
-        return new RunResult.StepResult(name, "t", out, 1024, error, in, ins, outs);
+        return new RunResult.NodeResult(name, "t", out, 1024, error, in, ins, outs);
     }
 
     @Test
-    void eachStepIsRecordedWithRowsPerPortAndSecretsScrubbed() throws Exception {
+    void eachNodeIsRecordedWithRowsPerPortAndSecretsScrubbed() throws Exception {
         PipelineCompilerPort.Compilation c = compiled("replace");
         List<PipelineExecution.WriteTarget> writes = PipelineExecution.writes(c);
         PipelineGraph g = c.graph();
         FakeRunner runner = new FakeRunner();
         runner.answer = new RunResult("customer-copy", RunResult.Status.FAILED, Instant.now(), Instant.now(), List.of(
-            step("customers", 0, 10, Map.of(), Map.of("out", 10L), null),
-            step("emails", 10, 10, Map.of("in", 10L), Map.of("out", 8L, "rejected", 2L), null),
-            step("out", 8, 0, Map.of("in", 8L), Map.of(), "Step out (write) failed: login hunter22 refused"),
-            new RunResult.StepResult("odd", "t", 0, 1024, null, 2, Map.of("in", 2L), Map.of(),
-                RunResult.Outcome.STOPPED)), List.of(), "Step out failed: login hunter22 refused");
+            node("customers", 0, 10, Map.of(), Map.of("out", 10L), null),
+            node("emails", 10, 10, Map.of("in", 10L), Map.of("out", 8L, "rejected", 2L), null),
+            node("out", 8, 0, Map.of("in", 8L), Map.of(), "Node out (write) failed: login hunter22 refused"),
+            new RunResult.NodeResult("odd", "t", 0, 1024, null, 2, Map.of("in", 2L), Map.of(),
+                RunResult.Outcome.STOPPED)), List.of(), "Node out failed: login hunter22 refused");
         RunContext ctx = new RunContext("customer-copy", 3, "jo", AccessRole.STEWARD);
         ctx.secret("hunter22");
         PipelineExecution.Outcome o = new PipelineExecution(JSON).run(runner, g, writes, ctx, () -> false, () -> false);
         assertEquals("failed", o.status());
-        assertEquals("Step out failed: login ******** refused", o.error());
-        assertEquals(java.util.Set.of("customers", "emails", "out", "odd"), o.steps().stream()
-            .map(PipelineStore.StepRun::stepId).collect(java.util.stream.Collectors.toSet()),
-            "every step of the pipeline, and only those");
-        Map<String, PipelineStore.StepRun> byId = new java.util.HashMap<>();
-        o.steps().forEach(s -> byId.put(s.stepId(), s));
+        assertEquals("Node out failed: login ******** refused", o.error());
+        assertEquals(java.util.Set.of("customers", "emails", "out", "odd"), o.nodes().stream()
+            .map(PipelineStore.NodeRun::nodeId).collect(java.util.stream.Collectors.toSet()),
+            "every node of the pipeline, and only those");
+        Map<String, PipelineStore.NodeRun> byId = new java.util.HashMap<>();
+        o.nodes().forEach(s -> byId.put(s.nodeId(), s));
         assertEquals(0, byId.get("customers").position());
-        PipelineStore.StepRun emails = byId.get("emails");
+        PipelineStore.NodeRun emails = byId.get("emails");
         assertEquals(10L, emails.rowsIn());
         assertEquals(10L, emails.rowsOut());
         JsonNode ports = JSON.readTree(emails.portRows());
         assertEquals(8, ports.path("out").path("out").asLong());
         assertEquals(2, ports.path("out").path("rejected").asLong());
-        PipelineStore.StepRun out = byId.get("out");
+        PipelineStore.NodeRun out = byId.get("out");
         assertEquals(8L, out.rowsIn());
         assertNull(out.rowsOut(), "a write's rows go to its target, not a port");
         assertTrue(out.error().contains("********") && !out.error().contains("hunter22"), out.error());
         assertEquals(1024L, out.peakMemory());
         assertEquals("failed", out.outcome());
-        assertEquals("finished", byId.get("emails").outcome(), "the engine said how each step ended");
+        assertEquals("finished", byId.get("emails").outcome(), "the engine said how each node ended");
         assertEquals("stopped", byId.get("odd").outcome(), "a writer the engine stopped is not a clean finish");
         assertEquals(Map.of("emails", 10L, "out", 8L, "odd", 2L), o.rowsIn());
         assertEquals(List.of(WRITE_URN), o.events().stream().map(MetadataEvent::assetUrn).toList(),
@@ -184,19 +184,19 @@ class PipelineExecutionTest {
     }
 
     @Test
-    void eachStepKeepsItsTimesAndDuration() {
+    void eachNodeKeepsItsTimesAndDuration() {
         PipelineCompilerPort.Compilation c = compiled("replace");
         FakeRunner runner = new FakeRunner();
         Instant t = Instant.parse("2026-10-28T10:00:00Z");
-        List<RunResult.StepResult> steps = new java.util.ArrayList<>();
+        List<RunResult.NodeResult> nodes = new java.util.ArrayList<>();
         for (String s : List.of("customers", "emails", "out", "odd")) {
-            steps.add(new RunResult.StepResult(s, "t", 0, 0, null, 0, Map.of(), Map.of(), RunResult.Outcome.FINISHED,
+            nodes.add(new RunResult.NodeResult(s, "t", 0, 0, null, 0, Map.of(), Map.of(), RunResult.Outcome.FINISHED,
                 t, t.plusMillis(20), t.plusMillis(900), t.plusMillis(1250), 300_000_000L, 150_000_000L));
         }
-        runner.answer = new RunResult("customer-copy", RunResult.Status.SUCCEEDED, t, t.plusSeconds(2), steps, null);
+        runner.answer = new RunResult("customer-copy", RunResult.Status.SUCCEEDED, t, t.plusSeconds(2), nodes, null);
         PipelineExecution.Outcome o = new PipelineExecution(JSON).run(runner, c.graph(), PipelineExecution.writes(c),
             new RunContext("customer-copy", 3, "jo", AccessRole.STEWARD), () -> false, () -> false);
-        PipelineStore.StepRun out = o.steps().stream().filter(s -> s.stepId().equals("out")).findFirst().orElseThrow();
+        PipelineStore.NodeRun out = o.nodes().stream().filter(s -> s.nodeId().equals("out")).findFirst().orElseThrow();
         assertEquals(1250L, out.durationMs());
         assertEquals(t, out.startedAt());
         assertEquals(t.plusMillis(20), out.firstRowAt());

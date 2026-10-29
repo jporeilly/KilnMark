@@ -14,8 +14,8 @@ function pointWords(line: RateLine, i: number): string {
 }
 
 /**
- * One step's rows a second over the run, with a band under it for how full its output queue was
- * (the next step holding it up). Hover, or focus it and use the arrow keys, to read a point.
+ * One node's rows a second over the run, with a band under it for how full its output queue was
+ * (the next node holding it up). Hover, or focus it and use the arrow keys, to read a point.
  */
 function Spark({ line, span }: { line: RateLine; span: number }) {
   const [at, setAt] = useState<number | null>(null);
@@ -43,13 +43,13 @@ function Spark({ line, span }: { line: RateLine; span: number }) {
   };
   const x = (t: number) => (t / span) * W;
   const p = at == null ? null : line.points[at];
-  const id = `rate-${line.step}`;
+  const id = `rate-${line.node}`;
   return (
     <div
       className="pl-rt-chart"
       tabIndex={0}
       role="group"
-      aria-label={`Rows a second through ${line.step} over the run; use the arrow keys to read each point`}
+      aria-label={`Rows a second through ${line.node} over the run; use the arrow keys to read each point`}
       aria-describedby={`${id}-read`}
       onMouseMove={move}
       onMouseLeave={() => setAt(null)}
@@ -86,8 +86,8 @@ function Spark({ line, span }: { line: RateLine; span: number }) {
 }
 
 /**
- * Rows a second through the run (docs/guide/pipelines.md, "Reading a run"): a line per step from the
- * progress snapshots, with a band under it for how full its output queue was (Held up: the next step
+ * Rows a second through the run (docs/guide/pipelines.md, "Reading a run"): a line per node from the
+ * progress snapshots, with a band under it for how full its output queue was (Held up: the next node
  * not keeping up), its peak and average at the right, and the run's warnings, errors and gates setting
  * rows aside marked on the time axis. A table says the same.
  */
@@ -176,10 +176,10 @@ export function RatesChart({
         </span>
         <span className="pl-rt-value" />
       </div>
-      <ul className="pl-rt-rows" aria-label="Rows a second through each step">
+      <ul className="pl-rt-rows" aria-label="Rows a second through each node">
         {r.lines.map((line) => (
-          <li key={line.step} className="pl-rt-row">
-            <span className="pl-rt-name mono pl-tl-step">{line.step}</span>
+          <li key={line.node} className="pl-rt-row">
+            <span className="pl-rt-name mono pl-tl-node">{line.node}</span>
             <Spark line={line} span={r.span} />
             <span className="pl-rt-value small">
               <strong>peak {rateWords(line.peak)}</strong>
@@ -205,11 +205,11 @@ export function RatesChart({
       )}
       <details className="pl-tl-table">
         <summary>Show rows a second as a table</summary>
-        <div className="table-scroll" role="region" aria-label="Rows a second through each step, as a table" tabIndex={0}>
+        <div className="table-scroll" role="region" aria-label="Rows a second through each node, as a table" tabIndex={0}>
           <table className="small">
             <thead>
               <tr>
-                <th scope="col">Step</th>
+                <th scope="col">Node</th>
                 <th scope="col">Peak</th>
                 <th scope="col">Average while moving rows</th>
                 <th scope="col">Output queue full</th>
@@ -217,9 +217,9 @@ export function RatesChart({
             </thead>
             <tbody>
               {r.lines.map((line) => (
-                <tr key={line.step}>
+                <tr key={line.node}>
                   <th scope="row" className="mono">
-                    {line.step}
+                    {line.node}
                   </th>
                   <td>{rateWords(line.peak)}</td>
                   <td>{rateWords(line.average)}</td>

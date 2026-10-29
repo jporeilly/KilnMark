@@ -5,7 +5,7 @@ import java.util.Locale;
 import io.kilnmark.kiln.connect.ConnectorException;
 
 /**
- * Where a pipeline's {@code write} step puts a file: a path relative to the source's folder or
+ * Where a pipeline's {@code write} node puts a file: a path relative to the source's folder or
  * bucket prefix, checked before anything is opened. Refused: an empty path, an absolute one
  * ({@code /…}, {@code C:…}), one holding {@code ..}, {@code //}, a backslash or a control
  * character, a folder or file name starting with a dot (scans skip hidden files, so the file would

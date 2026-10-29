@@ -10,7 +10,7 @@ import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.server.sources.HostPolicy;
 
-/** Saved sources in memory, for testing the read and write steps without a database. */
+/** Saved sources in memory, for testing the read and write nodes without a database. */
 final class FakeSources implements PipelineSources {
 
     final Map<String, Records.Source> sources = new HashMap<>();

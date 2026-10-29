@@ -27,8 +27,8 @@ See the [development guide](docs/development.md).
 
 | Folder | Contents |
 | --- | --- |
-| `kiln-core/` | Kiln engine: step interface, Arrow row sets, metadata side-channel, runner |
-| `kiln-plugins/` | Built-in steps: connectors, profiling, discovery |
+| `kiln-core/` | Kiln engine: node interface, Arrow row sets, metadata side-channel, runner |
+| `kiln-plugins/` | Built-in nodes: connectors, profiling, discovery |
 | `graph/` | Metadata store: URNs, schema migrations, the GraphStore interface |
 | `server/` | The one server image (roles: api, scheduler, worker) |
 | `ui/` | Web UI: React and TypeScript |

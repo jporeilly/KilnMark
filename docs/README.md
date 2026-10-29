@@ -18,19 +18,19 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Writing data from a pipeline](guide/writing-data.md): writing to tables (create, append, replace, upsert) and to CSV and Parquet files, the rights a write needs, and what replace keeps
 - [Branding and appearance](guide/branding.md): themes, accent colours and density; the branding folder for an organisation's name, logo and connector logos
 - [Building and running a pipeline](guide/pipelines.md): the Pipelines page, YAML basics, checking as you type, saving versions, running, and reading a run
-- [Pipeline steps and expressions](guide/pipeline-steps.md): filter, compute, select, lookup, aggregate, union, dedupe, route and limit, and the expression language for conditions and computed columns
+- [Pipeline nodes and expressions](guide/pipeline-nodes.md): filter, compute, select, lookup, aggregate, union, dedupe, route and limit, and the expression language for conditions and computed columns
 - [Notifications and email alerts](guide/notifications.md): what can notify you, in the app and by email; choosing what you get; setting up email and team addresses
 
 ## Spikes
 
-- [0001 Arrow row sets](spikes/0001-arrow-row-sets.md): Arrow between steps, measured against row objects
+- [0001 Arrow row sets](spikes/0001-arrow-row-sets.md): Arrow between nodes, measured against row objects
 
 ## Design
 
 - [UI mockups](design/mockups.md): asset page, steward inbox, relationship explorer, pipeline designer
-- [Writing a connector](design/connectors.md): the connector interface, the reader and writer steps, registering and testing
-- [Pipelines](design/pipelines.md): graphs of steps, the YAML format, expressions, the step catalogue, running and recording
-- [Flows](design/flows.md): pipelines run in an order joined by paths (on success, on failure, always, or on a quality condition), conditions, how a flow runs and is recorded
+- [Writing a connector](design/connectors.md): the connector interface, the reader and writer nodes, registering and testing
+- [Pipelines](design/pipelines.md): graphs of nodes, the YAML format, expressions, the node catalogue, running and recording
+- [Flows](design/flows.md): pipelines run in an order joined by connections (on success, on failure, always, or on a quality condition), conditions, how a flow runs and is recorded
 - [The assistant](design/assistant.md): a chat window that answers from knowledge domains, starting with the documentation
 - [Notifications](design/notifications.md): one event type, dedupe, masking per recipient, the email worker and the in-app feed's contract
 - [Lessons from earlier work](design/prior-work.md): ideas taken from an earlier Trusted Data Operations example, and the release each lands in

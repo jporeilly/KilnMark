@@ -7,13 +7,13 @@ import java.util.Objects;
 import java.util.function.Function;
 
 /**
- * The condition on a flow's path (docs/design/flows.md, "Conditions"): a small language of
- * comparisons over what earlier steps reported and the flow's parameters, such as
+ * The condition on a flow's connection (docs/design/flows.md, "Conditions"): a small language of
+ * comparisons over what earlier nodes reported and the flow's parameters, such as
  * {@code clean.quarantined_share < 0.02 and clean.score >= good}.
  *
  * <p>Parsed once and checked against the values that exist ({@link #parse}); it never runs code.
  * Comparisons with an unknown value (a score nothing measured) are unknown, not false, with SQL's
- * rules for {@code and}, {@code or} and {@code not}; a path is taken only when its condition is
+ * rules for {@code and}, {@code or} and {@code not}; a connection is taken only when its condition is
  * true. Quality words stand for the lowest score of the band, as people read them everywhere:
  * {@code good} is 0.95, {@code fair} 0.8, {@code poor} 0.
  */
@@ -47,10 +47,10 @@ public final class FlowCondition {
         }
     }
 
-    private final Node root;
+    private final Expr root;
     private final List<String> references;
 
-    private FlowCondition(Node root, List<String> references) {
+    private FlowCondition(Expr root, List<String> references) {
         this.root = root;
         this.references = List.copyOf(references);
     }
@@ -83,7 +83,7 @@ public final class FlowCondition {
             return new Parsed(null, issues);
         }
         Reader r = new Reader(text, scope, issues);
-        Node n = null;
+        Expr n = null;
         try {
             n = r.or(0);
             if (r.peek().kind != Kind.END) {
@@ -105,20 +105,20 @@ public final class FlowCondition {
 
     // ---- the tree ----
 
-    private sealed interface Node permits Literal, Ref, Compare, Logic, Not {
+    private sealed interface Expr permits Literal, Ref, Compare, Logic, Not {
         Type type();
 
         Object eval(Function<String, Object> values);
     }
 
-    private record Literal(Object value, Type type) implements Node {
+    private record Literal(Object value, Type type) implements Expr {
         @Override
         public Object eval(Function<String, Object> values) {
             return value;
         }
     }
 
-    private record Ref(String name, Type type) implements Node {
+    private record Ref(String name, Type type) implements Expr {
         @Override
         public Object eval(Function<String, Object> values) {
             Object v = values.apply(name);
@@ -133,7 +133,7 @@ public final class FlowCondition {
         }
     }
 
-    private record Compare(String op, Node left, Node right) implements Node {
+    private record Compare(String op, Expr left, Expr right) implements Expr {
         @Override
         public Type type() {
             return Type.BOOLEAN;
@@ -166,7 +166,7 @@ public final class FlowCondition {
         }
     }
 
-    private record Logic(boolean and, Node left, Node right) implements Node {
+    private record Logic(boolean and, Expr left, Expr right) implements Expr {
         @Override
         public Type type() {
             return Type.BOOLEAN;
@@ -189,7 +189,7 @@ public final class FlowCondition {
         }
     }
 
-    private record Not(Node inner) implements Node {
+    private record Not(Expr inner) implements Expr {
         @Override
         public Type type() {
             return Type.BOOLEAN;
@@ -333,8 +333,8 @@ public final class FlowCondition {
             return t.kind == Kind.WORD && t.text.equalsIgnoreCase(w);
         }
 
-        Node or(int depth) {
-            Node left = and(depth);
+        Expr or(int depth) {
+            Expr left = and(depth);
             while (word("or")) {
                 next();
                 left = logic(false, left, and(depth));
@@ -342,8 +342,8 @@ public final class FlowCondition {
             return left;
         }
 
-        private Node and(int depth) {
-            Node left = not(depth);
+        private Expr and(int depth) {
+            Expr left = not(depth);
             while (word("and")) {
                 next();
                 left = logic(true, left, not(depth));
@@ -351,7 +351,7 @@ public final class FlowCondition {
             return left;
         }
 
-        private Node logic(boolean and, Node l, Node r) {
+        private Expr logic(boolean and, Expr l, Expr r) {
             if (l.type() != Type.BOOLEAN || r.type() != Type.BOOLEAN) {
                 fail(peek(), "'" + (and ? "and" : "or") + "' joins comparisons, such as a.score >= good "
                     + (and ? "and" : "or") + " a.rows_written > 0");
@@ -359,13 +359,13 @@ public final class FlowCondition {
             return new Logic(and, l, r);
         }
 
-        private Node not(int depth) {
+        private Expr not(int depth) {
             if (depth > MAX_DEPTH) {
                 fail(peek(), "The condition is nested too deeply: at most " + MAX_DEPTH + " levels");
             }
             if (word("not")) {
                 Token t = next();
-                Node inner = not(depth + 1);
+                Expr inner = not(depth + 1);
                 if (inner.type() != Type.BOOLEAN) {
                     fail(t, "'not' goes before a comparison, such as not a.status = 'failed'");
                 }
@@ -374,18 +374,18 @@ public final class FlowCondition {
             return compare(depth);
         }
 
-        private Node compare(int depth) {
-            Node left = operand(depth);
+        private Expr compare(int depth) {
+            Expr left = operand(depth);
             if (peek().kind == Kind.OP) {
                 Token op = next();
-                Node right = operand(depth);
+                Expr right = operand(depth);
                 check(op, left, right);
                 return new Compare(op.text, left, right);
             }
             return left;
         }
 
-        private void check(Token op, Node l, Node r) {
+        private void check(Token op, Expr l, Expr r) {
             if (l.type() != r.type()) {
                 fail(op, "Cannot compare a " + l.type().name().toLowerCase() + " with a "
                     + r.type().name().toLowerCase() + ": " + describe(l) + " " + op.text + " " + describe(r));
@@ -395,7 +395,7 @@ public final class FlowCondition {
             }
         }
 
-        private static String describe(Node n) {
+        private static String describe(Expr n) {
             return switch (n) {
                 case Literal l -> String.valueOf(l.value);
                 case Ref ref -> ref.name;
@@ -403,7 +403,7 @@ public final class FlowCondition {
             };
         }
 
-        private Node operand(int depth) {
+        private Expr operand(int depth) {
             Token t = next();
             switch (t.kind) {
                 case NUMBER:
@@ -414,7 +414,7 @@ public final class FlowCondition {
                     if (depth > MAX_DEPTH) {
                         fail(t, "The condition is nested too deeply: at most " + MAX_DEPTH + " levels");
                     }
-                    Node inner = or(depth + 1);
+                    Expr inner = or(depth + 1);
                     if (peek().kind != Kind.CLOSE) {
                         fail(t, "This bracket is not closed: add a )");
                     }
@@ -430,7 +430,7 @@ public final class FlowCondition {
             }
         }
 
-        private Node wordOperand(Token t) {
+        private Expr wordOperand(Token t) {
             switch (t.text.toLowerCase()) {
                 case "true":
                     return new Literal(Boolean.TRUE, Type.BOOLEAN);
@@ -451,7 +451,7 @@ public final class FlowCondition {
             Type type = scope.typeOf(t.text);
             if (type == null) {
                 fail(t, "Unknown value '" + Suggest.clip(t.text) + "'" + Suggest.hint(t.text, scope.names())
-                    + ": a condition reads what an earlier step reported, such as step.score, or a parameter");
+                    + ": a condition reads what an earlier node reported, such as node.score, or a parameter");
             }
             if (!refs.contains(t.text)) {
                 refs.add(t.text);

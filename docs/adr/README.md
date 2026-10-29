@@ -9,7 +9,7 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0002](0002-linux-on-prem-one-image.md) | Linux servers, on-prem first, one image with roles | Accepted |
 | [0003](0003-postgresql-age-pgvector.md) | PostgreSQL with Apache AGE and pgvector as the only store | Accepted |
 | [0004](0004-java-quarkus-arrow.md) | Java 21, Quarkus and Apache Arrow | Accepted |
-| [0005](0005-step-plugin-interface.md) | Step plugin interface stays provisional until sprint 3 | Accepted |
+| [0005](0005-node-plugin-interface.md) | Node plugin interface stays provisional until sprint 3 | Accepted |
 | [0006](0006-kettle-10-2-no-hop.md) | Clean engine, selective Kettle 10.2 code, no Apache Hop | Accepted |
 | [0007](0007-dependency-policy.md) | Libraries yes, platforms no | Accepted |
 | [0008](0008-licence.md) | Business Source License 1.1 | Accepted |
@@ -21,7 +21,7 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0014](0014-authentication.md) | Sign-in through OpenID Connect; Keycloak optional | Accepted |
 | [0015](0015-file-formats.md) | File formats: Parquet through Hardwood, S3 through the AWS SDK | Accepted |
 | [0021](0021-pipeline-first.md) | Pipeline-first: a data integration engine, not a catalogue | Accepted |
-| [0022](0022-pipelines-as-graphs.md) | Pipelines run as graphs of steps with named ports | Accepted |
+| [0022](0022-pipelines-as-graphs.md) | Pipelines run as graphs of nodes with named ports | Accepted |
 | [0016](0016-ai-runtime-choices.md) | AI runtime: LangChain4j modules, model profiles, one egress gate, embeddings in one table | Accepted |
 | [0019](0019-relationships.md) | Relationships: declared and inferred, in PostgreSQL tables, proposed for people to decide | Accepted |
 | [0017](0017-documents.md) | Documents: Tika's parsers, POI's streaming reader for sheets, text in chunks | Accepted |

@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * A bounded hand-over between two steps. {@link #put} blocks when {@code capacity} batches are waiting:
+ * A bounded hand-over between two nodes. {@link #put} blocks when {@code capacity} batches are waiting:
  * that is the back-pressure. Ownership of a batch moves with it; the taker closes it.
  */
 final class BatchPipe<T> {

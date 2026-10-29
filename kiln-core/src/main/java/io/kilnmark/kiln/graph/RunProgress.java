@@ -7,21 +7,21 @@ import java.util.List;
  * Where a graph run's rows are at one moment (see {@link RunListener#progress}).
  *
  * @param at      when the snapshot was taken
- * @param steps   each step, in the graph's order
+ * @param nodes   each node, in the graph's order
  * @param edges   each edge, in the graph's order
- * @param slowest the step holding the run back right now, or null: a running step whose input queues
+ * @param slowest the node holding the run back right now, or null: a running node whose input queues
  *                are full while none of its output queues is (it cannot keep up with what it is given,
  *                and what comes after it can). When several are, the one with the most full inputs,
  *                then the first in the graph's order
  */
-public record RunProgress(Instant at, List<StepProgress> steps, List<EdgeProgress> edges, String slowest) {
+public record RunProgress(Instant at, List<NodeProgress> nodes, List<EdgeProgress> edges, String slowest) {
 
     public RunProgress {
-        steps = List.copyOf(steps);
+        nodes = List.copyOf(nodes);
         edges = List.copyOf(edges);
     }
 
-    /** Where a step is in its life. */
+    /** Where a node is in its life. */
     public enum State {
         /** Its thread has not started. */
         NOT_STARTED,
@@ -34,15 +34,15 @@ public record RunProgress(Instant at, List<StepProgress> steps, List<EdgeProgres
     }
 
     /**
-     * One step.
+     * One node.
      *
      * @param rowsPerSecond rows it handled per second since the snapshot before (rows out, or rows
-     *                      in for a step with no output); 0 when nothing moved
+     *                      in for a node with no output); 0 when nothing moved
      * @param waitingForRowsNanos time so far it waited for rows on its inputs
-     * @param heldUpNanos   time so far it waited for room on its outputs (held up by the next step)
-     * @param outputFill    how full its fullest output queue is now, 0 to 1 (0 for a step with no output)
+     * @param heldUpNanos   time so far it waited for room on its outputs (held up by the next node)
+     * @param outputFill    how full its fullest output queue is now, 0 to 1 (0 for a node with no output)
      */
-    public record StepProgress(String name, State state, long rowsIn, long rowsOut, double rowsPerSecond,
+    public record NodeProgress(String name, State state, long rowsIn, long rowsOut, double rowsPerSecond,
                                Instant startedAt, Instant firstRowAt, Instant lastRowAt, Instant finishedAt,
                                long waitingForRowsNanos, long heldUpNanos, double outputFill) {
     }
@@ -57,13 +57,13 @@ public record RunProgress(Instant at, List<StepProgress> steps, List<EdgeProgres
      * @param empty    whether nothing waits on it now (or its reader is waiting for a batch)
      * @param fill     batches waiting over capacity, 0 to 1 (1 also while its writer waits for room)
      */
-    public record EdgeProgress(String fromStep, String fromPort, String toStep, String toPort, long rows, int queued,
+    public record EdgeProgress(String fromNode, String fromPort, String toNode, String toPort, long rows, int queued,
                                int capacity, boolean full, boolean empty, double fill) {
     }
 
-    /** The step called {@code name}, or null. */
-    public StepProgress step(String name) {
-        for (StepProgress s : steps) {
+    /** The node called {@code name}, or null. */
+    public NodeProgress node(String name) {
+        for (NodeProgress s : nodes) {
             if (s.name().equals(name)) {
                 return s;
             }

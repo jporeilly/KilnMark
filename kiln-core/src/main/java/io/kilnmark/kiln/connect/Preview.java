@@ -11,10 +11,10 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.NodeSpec;
 
 /**
  * The first rows of an asset, read live through its connector's reader, for people to look at
@@ -61,10 +61,10 @@ public record Preview(List<Column> columns, List<List<String>> rows, boolean tru
         }
         int limit = Math.max(1, Math.min(rows, MAX_ROWS));
         String urn = "urn:kilnmark:" + source.name() + ":" + asset.path(); // readers expect a URN; nothing is stored under it
-        StepSpec reader = connector.reader(source, asset, new Connector.ReadOptions(urn, limit,
+        NodeSpec reader = connector.reader(source, asset, new Connector.ReadOptions(urn, limit,
             Math.min(limit, 1000)));
         Collector collector = new Collector(limit);
-        Pipeline p = new Pipeline("preview", List.of(reader, new StepSpec("preview", collector, Map.of())));
+        Pipeline p = new Pipeline("preview", List.of(reader, new NodeSpec("preview", collector, Map.of())));
         RunResult result;
         try {
             result = new Runner(128L << 20, 2).run(p, event -> { });
@@ -84,8 +84,8 @@ public record Preview(List<Column> columns, List<List<String>> rows, boolean tru
         return new Preview(columns, collector.rows, collector.truncated, Map.of());
     }
 
-    /** The last step: keeps the first rows as text, and drains the rest so the reader can finish. */
-    private static final class Collector implements Step {
+    /** The last node: keeps the first rows as text, and drains the rest so the reader can finish. */
+    private static final class Collector implements Node {
         private final int limit;
         private final List<List<String>> rows = new ArrayList<>();
         private final List<String> names = new ArrayList<>();
@@ -102,18 +102,18 @@ public record Preview(List<Column> columns, List<List<String>> rows, boolean tru
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
             // nothing to prepare
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             VectorSchemaRoot batch;
             try {
                 batch = context.input().take(context.allocator());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StepException("Interrupted", e);
+                throw new NodeException("Interrupted", e);
             }
             if (batch == null) {
                 return false;

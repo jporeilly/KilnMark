@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
-import type { PipelineProblem, PipelineStepQuality, PipelineValidation, Source, StepType } from "../../api";
-import { dimensionWord, percent, RULE_STATUS_WORDS, stepQualityWords } from "../quality";
+import type { PipelineProblem, PipelineNodeQuality, PipelineValidation, Source, NodeType } from "../../api";
+import { dimensionWord, percent, RULE_STATUS_WORDS, nodeQualityWords } from "../quality";
 import type { PredictedQuality } from "../prediction";
 import { PredictedSection } from "./PredictedSection";
 import { browseApi } from "../../browse/browseApi";
 import { columnsText } from "../outline";
 import { arrivingColumns, columnSide, kindWord, problemSetting, problemWords, shownSettings } from "./insight";
-import { portOfLink, portsOf, refText, type Catalogue, type GraphEdge, type GraphStep, type Value } from "./model";
+import { portOfLink, portsOf, refText, type Catalogue, type GraphEdge, type GraphNode, type Value } from "./model";
 import { SettingControl } from "./SettingControls";
-import { runWords, StepIcon, type StepRunInfo } from "./StepNode";
+import { runWords, NodeIcon, type NodeRunInfo } from "./NodeCard";
 
 const assetCache = new Map<string, Promise<string[]>>();
 
@@ -45,12 +45,12 @@ function useAssets(source: string | null): string[] | null {
 }
 
 /**
- * The selected step's settings, generated from its type's settings schema: one control per
+ * The selected node's settings, generated from its type's settings schema: one control per
  * setting kind, each with its help, default and the problems validation found in it. Above them,
- * the step's id and what it reads from; below, the columns leaving it and its last run.
+ * the node's id and what it reads from; below, the columns leaving it and its last run.
  */
 export function SettingsPanel({
-  step,
+  node,
   type,
   catalogue,
   check,
@@ -67,17 +67,17 @@ export function SettingsPanel({
   onDelete,
   onDuplicate,
 }: {
-  step: GraphStep;
-  type: StepType | undefined;
+  node: GraphNode;
+  type: NodeType | undefined;
   catalogue: Catalogue;
   check: PipelineValidation | null;
   problems: PipelineProblem[];
   sources: Source[] | null;
   readOnly: boolean;
-  run: StepRunInfo | null;
-  /** The step's measured quality in that run, for writes and gates. */
-  quality?: PipelineStepQuality | null;
-  /** The step's predicted quality as the pipeline stands, for writes and gates (an estimate). */
+  run: NodeRunInfo | null;
+  /** The node's measured quality in that run, for writes and gates. */
+  quality?: PipelineNodeQuality | null;
+  /** The node's predicted quality as the pipeline stands, for writes and gates (an estimate). */
   predicted?: PredictedQuality | null;
   onSetting: (key: string, value: Value | undefined, kind: string) => void;
   onRename: (to: string) => string | null;
@@ -86,37 +86,37 @@ export function SettingsPanel({
   onDelete: () => void;
   onDuplicate: () => void;
 }) {
-  const [idDraft, setIdDraft] = useState(step.id);
+  const [idDraft, setIdDraft] = useState(node.id);
   const [idProblem, setIdProblem] = useState<string | null>(null);
   useEffect(() => {
-    setIdDraft(step.id);
+    setIdDraft(node.id);
     setIdProblem(null);
-  }, [step.id]);
+  }, [node.id]);
 
-  const sourceName = typeof step.settings.source === "string" ? step.settings.source : null;
+  const sourceName = typeof node.settings.source === "string" ? node.settings.source : null;
   const sourceKind = sources?.find((s) => s.name === sourceName)?.kind ?? null;
-  const { specs, writerHidden } = shownSettings(type, step, sourceKind);
+  const { specs, writerHidden } = shownSettings(type, node, sourceKind);
   const known = new Set(type?.settings.map((s) => s.key) ?? []);
-  const extra = Object.keys(step.settings).filter((k) => !known.has(k));
+  const extra = Object.keys(node.settings).filter((k) => !known.has(k));
   const assets = useAssets(sourceName);
-  const ports = portsOf(step, catalogue);
+  const ports = portsOf(node, catalogue);
   const columns = {
-    main: arrivingColumns(check, step.id, step.type === "lookup" ? "main" : undefined),
-    lookup: step.type === "lookup" ? arrivingColumns(check, step.id, "lookup") : null,
+    main: arrivingColumns(check, node.id, node.type === "lookup" ? "main" : undefined),
+    lookup: node.type === "lookup" ? arrivingColumns(check, node.id, "lookup") : null,
   };
   const bySetting = new Map<string, string[]>();
   const general: PipelineProblem[] = [];
   for (const p of problems) {
-    const k = problemSetting(p, step);
-    if (k && (known.has(k) || k in step.settings)) bySetting.set(k, [...(bySetting.get(k) ?? []), problemWords(p)]);
+    const k = problemSetting(p, node);
+    if (k && (known.has(k) || k in node.settings)) bySetting.set(k, [...(bySetting.get(k) ?? []), problemWords(p)]);
     else general.push(p);
   }
-  const outline = check?.steps.find((s) => s.id === step.id);
-  const base = `cv-set-${step.id}`;
+  const outline = check?.nodes.find((s) => s.id === node.id);
+  const base = `cv-set-${node.id}`;
 
   const rename = () => {
     const to = idDraft.trim();
-    if (to === step.id) return;
+    if (to === node.id) return;
     const problem = onRename(to);
     setIdProblem(problem);
   };
@@ -125,20 +125,20 @@ export function SettingsPanel({
     <div className="cv-panel-body">
       <div className="cv-panel-head">
         <span className={`cv-kind-chip cv-kind-${type?.kind ?? "unknown"}`}>
-          <StepIcon type={step.type} kind={type?.kind} size={16} />
-          {kindWord(type?.kind)} · {type?.label ?? step.type ?? "no type"}
+          <NodeIcon type={node.type} kind={type?.kind} size={16} />
+          {kindWord(type?.kind)} · {type?.label ?? node.type ?? "no type"}
         </span>
-        <h3 className="cv-panel-title mono">{step.id}</h3>
+        <h3 className="cv-panel-title mono">{node.id}</h3>
         {type?.help && <p className="small muted cv-type-help">{type.help}</p>}
-        {!type && step.type && <p className="small pl-bad">This server has no step type called {step.type}.</p>}
+        {!type && node.type && <p className="small pl-bad">This server has no node type called {node.type}.</p>}
       </div>
 
       <div className="cv-field">
         <label className="cv-label" htmlFor={`${base}-id`}>
-          Step id
+          Node id
         </label>
         <p className="hint" id={`${base}-id-help`}>
-          Small letters, digits, - and _. Changing it updates the steps reading from it.
+          Small letters, digits, - and _. Changing it updates the nodes reading from it.
         </p>
         <input
           id={`${base}-id`}
@@ -168,7 +168,7 @@ export function SettingsPanel({
           <h4 id={`${base}-reads`}>Reads from</h4>
           <ul className="cv-links">
             {ports.inputs.map((port) => {
-              const links = step.inputs.filter((l) => portOfLink(l, ports) === port);
+              const links = node.inputs.filter((l) => portOfLink(l, ports) === port);
               return (
                 <li key={port}>
                   <span className="cv-port-name">{port}</span>
@@ -184,8 +184,8 @@ export function SettingsPanel({
                             <button
                               type="button"
                               className="cv-mini"
-                              aria-label={`Disconnect ${refText(l.from, l.fromPort)} from ${step.id}.${port}`}
-                              onClick={() => onDisconnect({ from: l.from, fromPort: l.fromPort, to: step.id, toPort: port })}
+                              aria-label={`Disconnect ${refText(l.from, l.fromPort)} from ${node.id}.${port}`}
+                              onClick={() => onDisconnect({ from: l.from, fromPort: l.fromPort, to: node.id, toPort: port })}
                             >
                               Disconnect
                             </button>
@@ -210,13 +210,13 @@ export function SettingsPanel({
             Duplicate
           </button>
           <button type="button" className="cv-danger" onClick={onDelete}>
-            Delete step
+            Delete node
           </button>
         </div>
       )}
 
       {general.length > 0 && (
-        <ul className="cv-step-problems" aria-label={`Problems with ${step.id}`}>
+        <ul className="cv-node-problems" aria-label={`Problems with ${node.id}`}>
           {general.map((p, i) => (
             <li key={i}>{problemWords(p)}</li>
           ))}
@@ -226,24 +226,24 @@ export function SettingsPanel({
       {type && (
         <section className="cv-section" aria-labelledby={`${base}-settings`}>
           <h4 id={`${base}-settings`}>Settings</h4>
-          {specs.length === 0 && extra.length === 0 && <p className="small muted">This step has no settings.</p>}
+          {specs.length === 0 && extra.length === 0 && <p className="small muted">This node has no settings.</p>}
           {specs.map((spec) => (
             <SettingControl
-              key={`${step.id}:${spec.key}`}
+              key={`${node.id}:${spec.key}`}
               spec={spec}
               id={`${base}-${spec.key}`}
-              value={step.settings[spec.key]}
-              text={step.texts[spec.key]}
+              value={node.settings[spec.key]}
+              text={node.texts[spec.key]}
               readOnly={readOnly}
               problems={bySetting.get(spec.key) ?? []}
               onChange={(v) => onSetting(spec.key, v, spec.kind)}
               context={{
                 columns,
-                side: columnSide(step.type, spec.key),
+                side: columnSide(node.type, spec.key),
                 sources,
                 writing: type.kind === "sink",
                 assets: spec.kind === "asset" ? assets : null,
-                stepType: step.type,
+                nodeType: node.type,
               }}
             />
           ))}
@@ -258,22 +258,22 @@ export function SettingsPanel({
           )}
           {extra.map((k) => (
             <SettingControl
-              key={`${step.id}:${k}`}
-              spec={{ key: k, label: k, kind: "text", required: false, defaultValue: null, help: "A setting this step type does not list.", choices: [] }}
+              key={`${node.id}:${k}`}
+              spec={{ key: k, label: k, kind: "text", required: false, defaultValue: null, help: "A setting this node type does not list.", choices: [] }}
               id={`${base}-${k}`}
-              value={step.settings[k]}
-              text={step.texts[k]}
-              readOnly={readOnly || typeof step.settings[k] === "object"}
+              value={node.settings[k]}
+              text={node.texts[k]}
+              readOnly={readOnly || typeof node.settings[k] === "object"}
               problems={bySetting.get(k) ?? []}
               onChange={(v) => onSetting(k, v, "text")}
-              context={{ columns, side: null, sources, writing: false, assets: null, stepType: step.type }}
+              context={{ columns, side: null, sources, writing: false, assets: null, nodeType: node.type }}
             />
           ))}
         </section>
       )}
 
       <section className="cv-section" aria-labelledby={`${base}-cols`}>
-        <h4 id={`${base}-cols`}>Columns leaving this step</h4>
+        <h4 id={`${base}-cols`}>Columns leaving this node</h4>
         <p className="small">{outline ? columnsText(outline) : "Known once the pipeline has been checked."}</p>
       </section>
 
@@ -286,7 +286,7 @@ export function SettingsPanel({
           {run.error && <p className="small pl-bad">{run.error}</p>}
           {quality && (
             <>
-              <p className="small">{stepQualityWords(quality)}</p>
+              <p className="small">{nodeQualityWords(quality)}</p>
               {quality.measured && Object.keys(quality.measured.dimensions).length > 0 && (
                 <ul className="small cv-quality-dims">
                   {Object.entries(quality.measured.dimensions).map(([d, v]) => (

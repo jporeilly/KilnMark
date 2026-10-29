@@ -41,7 +41,7 @@ import io.kilnmark.kiln.plugins.write.WriteColumn;
  *       in transactions. Where they commit by themselves, a failed create drops the table again.</li>
  * </ul>
  *
- * <p>Each value is checked against the column it goes to, also for a table the step created (it is
+ * <p>Each value is checked against the column it goes to, also for a table the node created (it is
  * described again once made): a decimal that would need rounding or more digits, text longer than
  * the column, bytes longer than the column, fractions of a second the column does not keep, an
  * integer outside a {@code TINYINT} or unsigned column. A column whose size the driver does not
@@ -82,7 +82,7 @@ final class GenericWriteSql extends WriteSql {
     private final Set<String> unsignedTypes;
     /**
      * Why a column of the table described last cannot be written safely, by column name: its size or
-     * type is unknown. Filled by {@link #targetColumnsByMetadata}; one step writes one table.
+     * type is unknown. Filled by {@link #targetColumnsByMetadata}; one node writes one table.
      */
     private final Map<String, String> unchecked = new HashMap<>();
     /**
@@ -380,10 +380,10 @@ final class GenericWriteSql extends WriteSql {
                 problems.add("the column " + c.name() + " is " + what + ", and the driver lists no type for it"
                     + switch (c.kind()) {
                         case TIMESTAMP_TZ -> ": convert it to a timestamp without a time zone (in UTC) with a compute "
-                            + "step first";
+                            + "node first";
                         case TEXT -> textLength > 0 ? " that long: lower text_length" : ": set text_length";
                         case DECIMAL -> " with that many digits";
-                        default -> ": convert it with a compute step first";
+                        default -> ": convert it with a compute node first";
                     });
             }
         }
@@ -570,7 +570,7 @@ final class GenericWriteSql extends WriteSql {
             int bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
             if (bytes > maxBytes) {
                 return "the value is " + bytes + " bytes long in UTF-8, but the column holds at most " + maxBytes
-                    + " bytes, and longer text could be cut. Shorten the values with a compute step, or ask for the "
+                    + " bytes, and longer text could be cut. Shorten the values with a compute node, or ask for the "
                     + "column to be widened";
             }
         }
@@ -597,7 +597,7 @@ final class GenericWriteSql extends WriteSql {
             };
             if (nanos != 0) {
                 return "the value " + v + " has fractions of a second, and the driver does not say how many digits of "
-                    + "a second the column keeps, so they could be cut. Truncate them with a compute step first";
+                    + "a second the column keeps, so they could be cut. Truncate them with a compute node first";
             }
         }
         return null;

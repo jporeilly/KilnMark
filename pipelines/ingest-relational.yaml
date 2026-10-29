@@ -8,7 +8,7 @@ parameters:
   source: { type: datasource, required: true }
   sample_rows: { type: integer, default: 10000 }
 
-steps:
+nodes:
   - name: harvest
     type: jdbc-schema-harvester
     settings:

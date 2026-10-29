@@ -32,8 +32,8 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.WebApplicationException;
 
 /**
- * Flows end to end on PostgreSQL (docs/design/flows.md): a flow's steps run saved pipelines on the
- * job queue, as the person who started the flow, and the paths decide what runs next: success,
+ * Flows end to end on PostgreSQL (docs/design/flows.md): a flow's nodes run saved pipelines on the
+ * job queue, as the person who started the flow, and the connections decide what runs next: success,
  * failure, and a condition on what the pipeline measured. Sources are the in-memory test
  * connector, so nothing outside the test is written.
  */
@@ -49,7 +49,7 @@ class FlowRunTest {
         kilnmark: pipeline/v1
         name: fl-copy
         description: Synthetic people, copied.
-        steps:
+        nodes:
           - id: people
             type: read
             source: fl-src
@@ -68,7 +68,7 @@ class FlowRunTest {
         kilnmark: pipeline/v1
         name: fl-gated
         description: Synthetic people, checked on the way.
-        steps:
+        nodes:
           - id: people
             type: read
             source: fl-src
@@ -141,8 +141,8 @@ class FlowRunTest {
             r -> status.equals(r.status()));
     }
 
-    private FlowStore.StepRun step(long runId, String id) {
-        return flows.stepRuns(runId).stream().filter(s -> s.stepId().equals(id)).findFirst().orElse(null);
+    private FlowStore.NodeRun node(long runId, String id) {
+        return flows.nodeRuns(runId).stream().filter(s -> s.nodeId().equals(id)).findFirst().orElse(null);
     }
 
     private FlowStore.Flow save(String yaml) {
@@ -177,49 +177,49 @@ class FlowRunTest {
 
     @Test
     @Order(2)
-    void stepsRunInOrderAndEachPipelineRunSaysWhichFlowStartedIt() throws Exception {
+    void nodesRunInOrderAndEachPipelineRunSaysWhichFlowStartedIt() throws Exception {
         save("""
             kilnmark: flow/v1
             name: fl-sequence
-            steps:
+            nodes:
               - { id: first, type: run-pipeline, pipeline: fl-copy }
               - { id: second, type: run-pipeline, pipeline: fl-gated }
-            paths:
+            connections:
               - { from: first, to: second }
             """);
         FlowStore.Run run = start("fl-sequence", Map.of());
         assertEquals("queued", run.status());
         FlowStore.Run done = waitForFlow(run.id(), "succeeded");
         assertNull(done.error());
-        assertEquals("succeeded", step(run.id(), "first").status());
-        assertEquals("succeeded", step(run.id(), "second").status());
-        PipelineStore.Run a = pipelineStore.flowStepRun(run.id(), "first").orElseThrow();
-        PipelineStore.Run b = pipelineStore.flowStepRun(run.id(), "second").orElseThrow();
+        assertEquals("succeeded", node(run.id(), "first").status());
+        assertEquals("succeeded", node(run.id(), "second").status());
+        PipelineStore.Run a = pipelineStore.flowNodeRun(run.id(), "first").orElseThrow();
+        PipelineStore.Run b = pipelineStore.flowNodeRun(run.id(), "second").orElseThrow();
         assertEquals("fl-copy", a.pipeline());
         assertEquals("fl-gated", b.pipeline());
         assertEquals("tester", a.requestedBy(), "the pipeline runs as the person who started the flow");
         assertEquals("steward", a.requestedRole());
         assertFalse(b.startedAt().isBefore(a.finishedAt()), "second started only after first had finished");
-        assertEquals(a.id(), step(run.id(), "first").pipelineRunId());
-        assertNotNull(step(run.id(), "second").finishedAt());
+        assertEquals(a.id(), node(run.id(), "first").pipelineRunId());
+        assertNotNull(node(run.id(), "second").finishedAt());
     }
 
     @Test
     @Order(3)
-    void aConditionOnWhatThePipelineMeasuredChoosesThePath() throws Exception {
+    void aConditionOnWhatThePipelineMeasuredChoosesTheConnection() throws Exception {
         save("""
             kilnmark: flow/v1
             name: fl-quality
             parameters:
               limit_share: { type: number, default: 0.02 }
-            steps:
+            nodes:
               - { id: clean, type: run-pipeline, pipeline: fl-gated }
               - { id: publish, type: run-pipeline, pipeline: fl-copy }
               - id: halt
                 type: stop
                 status: failed
                 message: Too many customers were set aside
-            paths:
+            connections:
               - { from: clean, to: publish, when: "clean.quarantined_share < limit_share" }
               - { from: clean, to: halt, when: "clean.quarantined_share >= limit_share" }
             """);
@@ -227,74 +227,74 @@ class FlowRunTest {
         FlowStore.Run run = start("fl-quality", Map.of());
         FlowStore.Run done = waitForFlow(run.id(), "failed");
         assertEquals("Too many customers were set aside", done.error());
-        assertEquals("succeeded", step(run.id(), "clean").status());
-        assertEquals("skipped", step(run.id(), "publish").status());
-        assertEquals("succeeded", step(run.id(), "halt").status());
-        assertTrue(step(run.id(), "clean").reported().contains("\"quarantined_share\": 0.2"),
-            step(run.id(), "clean").reported());
-        assertTrue(step(run.id(), "clean").reported().contains("\"rows_written\""), step(run.id(), "clean").reported());
+        assertEquals("succeeded", node(run.id(), "clean").status());
+        assertEquals("skipped", node(run.id(), "publish").status());
+        assertEquals("succeeded", node(run.id(), "halt").status());
+        assertTrue(node(run.id(), "clean").reported().contains("\"quarantined_share\": 0.2"),
+            node(run.id(), "clean").reported());
+        assertTrue(node(run.id(), "clean").reported().contains("\"rows_written\""), node(run.id(), "clean").reported());
 
         // With the limit raised by a parameter, the same data passes and publish runs.
         FlowStore.Run second = start("fl-quality", Map.of("limit_share", 0.5));
         FlowStore.Run ok = waitForFlow(second.id(), "succeeded");
         assertNull(ok.error());
-        assertEquals("succeeded", step(second.id(), "publish").status());
-        assertEquals("skipped", step(second.id(), "halt").status());
+        assertEquals("succeeded", node(second.id(), "publish").status());
+        assertEquals("skipped", node(second.id(), "halt").status());
         assertTrue(ok.parameters().contains("0.5"), ok.parameters());
     }
 
     @Test
     @Order(4)
-    void aFailurePathHandlesAFailureAndWithoutOneTheFlowFails() throws Exception {
+    void aFailureConnectionHandlesAFailureAndWithoutOneTheFlowFails() throws Exception {
         save("""
             kilnmark: flow/v1
             name: fl-handled
-            steps:
+            nodes:
               - { id: broken, type: run-pipeline, pipeline: fl-broken }
               - { id: after, type: run-pipeline, pipeline: fl-copy }
               - { id: tell, type: stop, status: succeeded, message: Handled }
-            paths:
+            connections:
               - { from: broken, to: after }
               - { from: broken, to: tell, when: failure }
             """);
         FlowStore.Run handled = start("fl-handled", Map.of());
         FlowStore.Run done = waitForFlow(handled.id(), "succeeded");
-        assertEquals("Handled", done.error(), "a stop step's message is kept even when the flow succeeds");
-        assertEquals("failed", step(handled.id(), "broken").status());
-        assertEquals("skipped", step(handled.id(), "after").status());
-        assertEquals("succeeded", step(handled.id(), "tell").status());
-        assertFalse(step(handled.id(), "broken").message().contains("secret"),
-            "the step says that the pipeline failed, not why");
+        assertEquals("Handled", done.error(), "a stop node's message is kept even when the flow succeeds");
+        assertEquals("failed", node(handled.id(), "broken").status());
+        assertEquals("skipped", node(handled.id(), "after").status());
+        assertEquals("succeeded", node(handled.id(), "tell").status());
+        assertFalse(node(handled.id(), "broken").message().contains("secret"),
+            "the node says that the pipeline failed, not why");
 
         save("""
             kilnmark: flow/v1
             name: fl-unhandled
-            steps:
+            nodes:
               - { id: broken, type: run-pipeline, pipeline: fl-broken }
               - { id: after, type: run-pipeline, pipeline: fl-copy }
-            paths:
+            connections:
               - { from: broken, to: after }
             """);
         FlowStore.Run unhandled = start("fl-unhandled", Map.of());
         FlowStore.Run failed = waitForFlow(unhandled.id(), "failed");
-        assertTrue(failed.error().startsWith("Step broken failed"), failed.error());
-        assertEquals("skipped", step(unhandled.id(), "after").status());
+        assertTrue(failed.error().startsWith("Node broken failed"), failed.error());
+        assertEquals("skipped", node(unhandled.id(), "after").status());
     }
 
     @Test
     @Order(5)
-    void aStepWaitsForAPipelineThatIsAlreadyRunningThenGivesUp() throws Exception {
+    void aNodeWaitsForAPipelineThatIsAlreadyRunningThenGivesUp() throws Exception {
         save("""
             kilnmark: flow/v1
             name: fl-waits
-            steps:
+            nodes:
               - { id: copy, type: run-pipeline, pipeline: fl-copy }
             """);
         save("""
             kilnmark: flow/v1
             name: fl-gives-up
             queue_timeout: 1s
-            steps:
+            nodes:
               - { id: copy, type: run-pipeline, pipeline: fl-copy }
             """);
         HoldingGraphRunner.hold = true;
@@ -303,7 +303,7 @@ class FlowRunTest {
         await("the direct run to start", () -> pipelineStore.run(direct).orElseThrow().status(), "running"::equals);
 
         FlowStore.Run waits = start("fl-waits", Map.of());
-        FlowStore.StepRun waiting = await("the step to say it waits", () -> step(waits.id(), "copy"),
+        FlowStore.NodeRun waiting = await("the node to say it waits", () -> node(waits.id(), "copy"),
             s -> s != null && s.message() != null);
         assertEquals("running", waiting.status());
         assertEquals("Waiting for fl-copy to finish its current run", waiting.message());
@@ -315,7 +315,7 @@ class FlowRunTest {
         HoldingGraphRunner.hold = false;
         FlowStore.Run done = waitForFlow(waits.id(), "succeeded");
         assertNull(done.error());
-        assertNotNull(step(waits.id(), "copy").pipelineRunId());
+        assertNotNull(node(waits.id(), "copy").pipelineRunId());
 
         HoldingGraphRunner.hold = true;
         long again = as(steward).post("/api/v1/pipelines/fl-copy/runs").then().statusCode(202).extract().jsonPath()
@@ -323,9 +323,9 @@ class FlowRunTest {
         await("the second direct run to start", () -> pipelineStore.run(again).orElseThrow().status(), "running"::equals);
         FlowStore.Run gives = start("fl-gives-up", Map.of());
         FlowStore.Run failed = waitForFlow(gives.id(), "failed");
-        assertEquals("Step copy failed (the pipeline fl-copy)", failed.error());
-        assertTrue(step(gives.id(), "copy").message().startsWith("Waited 1 seconds for fl-copy"),
-            step(gives.id(), "copy").message());
+        assertEquals("Node copy failed (the pipeline fl-copy)", failed.error());
+        assertTrue(node(gives.id(), "copy").message().startsWith("Waited 1 seconds for fl-copy"),
+            node(gives.id(), "copy").message());
         as(steward).post("/api/v1/pipeline-runs/" + again + "/cancel").then().statusCode(200);
         await("the direct run to be cancelled", () -> pipelineStore.run(again).orElseThrow().status(), "cancelled"::equals);
         HoldingGraphRunner.hold = false;
@@ -337,48 +337,48 @@ class FlowRunTest {
         save("""
             kilnmark: flow/v1
             name: fl-cancel
-            steps:
+            nodes:
               - { id: copy, type: run-pipeline, pipeline: fl-copy }
               - { id: gated, type: run-pipeline, pipeline: fl-gated }
-            paths:
+            connections:
               - { from: copy, to: gated }
             """);
         HoldingGraphRunner.hold = true;
         FlowStore.Run run = start("fl-cancel", Map.of());
-        FlowStore.StepRun running = await("the first pipeline to run", () -> step(run.id(), "copy"),
+        FlowStore.NodeRun running = await("the first pipeline to run", () -> node(run.id(), "copy"),
             s -> s != null && s.pipelineRunId() != null);
         await("it to be running", () -> pipelineStore.run(running.pipelineRunId()).orElseThrow().status(),
             "running"::equals);
         flows.cancel(run.id(), "tester", AccessRole.STEWARD);
         FlowStore.Run done = waitForFlow(run.id(), "cancelled");
         assertEquals("cancelled", pipelineStore.run(running.pipelineRunId()).orElseThrow().status());
-        assertEquals("cancelled", step(run.id(), "copy").status());
-        assertEquals("skipped", step(run.id(), "gated").status());
+        assertEquals("cancelled", node(run.id(), "copy").status());
+        assertEquals("skipped", node(run.id(), "gated").status());
         assertThrows(WebApplicationException.class, () -> flows.cancel(run.id(), "tester", AccessRole.STEWARD), "already finished");
         assertEquals("Cancelled", done.error());
     }
 
     @Test
     @Order(7)
-    void aStopStepEndsWhatIsStillRunning() throws Exception {
+    void aStopNodeEndsWhatIsStillRunning() throws Exception {
         save("""
             kilnmark: flow/v1
             name: fl-stop-early
-            steps:
+            nodes:
               - { id: slow, type: run-pipeline, pipeline: fl-copy }
               - { id: now, type: stop, status: failed, message: Stopped early }
               - { id: never, type: run-pipeline, pipeline: fl-gated }
-            paths:
+            connections:
               - { from: now, to: never }
             """);
         HoldingGraphRunner.hold = true;
         FlowStore.Run run = start("fl-stop-early", Map.of());
         FlowStore.Run done = waitForFlow(run.id(), "failed");
         assertEquals("Stopped early", done.error());
-        assertEquals("succeeded", step(run.id(), "now").status());
-        assertEquals("skipped", step(run.id(), "never").status());
-        assertEquals("cancelled", step(run.id(), "slow").status());
-        assertEquals("cancelled", pipelineStore.flowStepRun(run.id(), "slow").orElseThrow().status());
+        assertEquals("succeeded", node(run.id(), "now").status());
+        assertEquals("skipped", node(run.id(), "never").status());
+        assertEquals("cancelled", node(run.id(), "slow").status());
+        assertEquals("cancelled", pipelineStore.flowNodeRun(run.id(), "slow").orElseThrow().status());
     }
 
     @Test
@@ -387,7 +387,7 @@ class FlowRunTest {
         FlowService.Validation unknown = flows.validate("""
             kilnmark: flow/v1
             name: fl-bad
-            steps:
+            nodes:
               - { id: a, type: run-pipeline, pipeline: no-such-pipeline }
               - { id: b, type: run-pipeline, pipeline: fl-copy, version: 9 }
             """);
@@ -401,7 +401,7 @@ class FlowRunTest {
         FlowStore.Flow draft = save("""
             kilnmark: flow/v1
             name: fl-draft
-            steps:
+            nodes:
               - { id: a, type: run-pipeline, pipeline: no-such-pipeline }
             """);
         assertEquals(1, draft.latestVersion());
@@ -414,7 +414,7 @@ class FlowRunTest {
         String yaml = """
             kilnmark: flow/v1
             name: fl-draft
-            steps:
+            nodes:
               - { id: a, type: run-pipeline, pipeline: fl-copy }
             """;
         assertEquals(2, flows.save(yaml, "fixed", "tester", AccessRole.STEWARD, 1).latestVersion());
@@ -436,7 +436,7 @@ class FlowRunTest {
         // A pipeline deleted since the flow was saved stops it running.
         Optional<FlowStore.Flow> f = flows.find("fl-draft");
         assertTrue(f.isPresent());
-        assertThrows(IllegalArgumentException.class, () -> flows.save("kilnmark: flow/v1\nsteps: []", null, "t", AccessRole.STEWARD, null));
+        assertThrows(IllegalArgumentException.class, () -> flows.save("kilnmark: flow/v1\nnodes: []", null, "t", AccessRole.STEWARD, null));
     }
 
     @Test
@@ -449,7 +449,7 @@ class FlowRunTest {
               region: { type: text, default: EMEA }
               limit: { type: number }
               dry: { type: boolean, default: false }
-            steps:
+            nodes:
               - { id: a, type: run-pipeline, pipeline: fl-copy }
             """);
         assertEquals("parameters: limit needs a value (it has no default)", assertThrows(IllegalArgumentException.class,

@@ -10,13 +10,13 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 
 import io.kilnmark.kiln.MetadataEmitter;
 import io.kilnmark.kiln.MetadataEvent;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.plugins.profile.ProfileStep;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.plugins.profile.ProfileNode;
 
 /**
  * What a writer reports about the asset it wrote, so the server can register it with its profile
  * (docs/design/pipelines.md, section 5, "What a write reports"). The writer owns the profile of
- * what it writes: batches are profiled in the same pass by {@link ProfileStep}'s own logic, with
+ * what it writes: batches are profiled in the same pass by {@link ProfileNode}'s own logic, with
  * the source's profiling settings ({@code WriteOptions.profiling()}), and nothing is reported until
  * the write has succeeded (committed, or the file is in place).
  *
@@ -56,38 +56,38 @@ public final class WriteReport {
 
     private final String assetUrn;
     private final boolean wholeAsset;
-    private ProfileStep profile;
+    private ProfileNode profile;
     private String profileError;
     private String warning;
     private long rows;
 
     /**
      * @param assetUrn   the written asset's URN
-     * @param settings   the write step's settings: {@value WriteSettings#PROFILE} and
+     * @param settings   the write node's settings: {@value WriteSettings#PROFILE} and
      *                   {@value WriteSettings#KEEP_VALUES} are read
      * @param profiling  the source's profiling settings ({@code WriteOptions.profiling()}): the
-     *                   profile step's settings, as a scan of the source would give them
+     *                   profile node's settings, as a scan of the source would give them
      * @param wholeAsset whether the asset will hold exactly what is written (false for append and upsert)
-     * @throws StepException without a valid URN
+     * @throws NodeException without a valid URN
      */
-    public WriteReport(String stepName, String assetUrn, WriteSettings settings, Map<String, String> profiling,
-                       boolean wholeAsset) throws StepException, io.kilnmark.kiln.connect.ConnectorException {
+    public WriteReport(String nodeName, String assetUrn, WriteSettings settings, Map<String, String> profiling,
+                       boolean wholeAsset) throws NodeException, io.kilnmark.kiln.connect.ConnectorException {
         this.assetUrn = assetUrn;
         this.wholeAsset = wholeAsset;
         if (assetUrn == null || !assetUrn.startsWith("urn:kilnmark:")) {
-            throw new StepException("Step " + stepName + " needs the URN of the asset it writes (urn:kilnmark:...)");
+            throw new NodeException("Node " + nodeName + " needs the URN of the asset it writes (urn:kilnmark:...)");
         }
         boolean wanted = settings.bool(WriteSettings.PROFILE, true);
         boolean keepValues = settings.bool(WriteSettings.KEEP_VALUES, true);
         if (wholeAsset && wanted) {
             Map<String, String> p = new HashMap<>(profiling == null ? Map.of() : profiling);
             p.put("asset-urn", assetUrn);
-            // the source's rule wins: the step can keep fewer values than the source allows, never more
+            // the source's rule wins: the node can keep fewer values than the source allows, never more
             boolean sourceKeeps = !"false".equalsIgnoreCase(p.getOrDefault("keep-values", "true"));
             p.put("keep-values", Boolean.toString(sourceKeeps && keepValues));
             try {
-                profile = ProfileStep.tap(stepName, p);
-            } catch (StepException | RuntimeException e) {
+                profile = ProfileNode.tap(nodeName, p);
+            } catch (NodeException | RuntimeException e) {
                 stopProfiling(e);
             }
         }

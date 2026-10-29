@@ -27,10 +27,10 @@ import org.testcontainers.utility.DockerImageName;
 
 import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.RunResult;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.write.Rows;
@@ -94,9 +94,9 @@ class PostgresWriteTest {
 
     static Rows.Collected read(String table) throws Exception {
         Rows.Collected c = new Rows.Collected();
-        StepSpec reader = CONNECTOR.reader(source, CONNECTOR.asset(source, table),
+        NodeSpec reader = CONNECTOR.reader(source, CONNECTOR.asset(source, table),
             new Connector.ReadOptions("urn:kilnmark:warehouse:" + table, 0, 1000));
-        RunResult r = Rows.run(reader, new StepSpec("collect", Rows.collector(c), Map.of()), Rows.events());
+        RunResult r = Rows.run(reader, new NodeSpec("collect", Rows.collector(c), Map.of()), Rows.events());
         assertTrue(r.succeeded(), r.error());
         return c;
     }
@@ -241,7 +241,7 @@ class PostgresWriteTest {
             "GRANT SELECT ON billing.report TO reader_role");
         CountDownLatch firstBatchSent = new CountDownLatch(1);
         CountDownLatch carryOn = new CountDownLatch(1);
-        Step slow = slowSource(SPEND, spend(0, 2000, "new"), 500, firstBatchSent, carryOn);
+        Node slow = slowSource(SPEND, spend(0, 2000, "new"), 500, firstBatchSent, carryOn);
         java.util.concurrent.atomic.AtomicReference<Throwable> seen = new java.util.concurrent.atomic.AtomicReference<>();
         Thread checker = Thread.ofVirtual().start(() -> {
             try {
@@ -397,9 +397,9 @@ class PostgresWriteTest {
     }
 
     /** A source that sends its first batch, then waits for {@code carryOn}. */
-    static Step slowSource(Schema schema, List<Object[]> rows, int batch, CountDownLatch sent, CountDownLatch carryOn) {
-        Step inner = Rows.source(schema, rows, batch);
-        return new Step() {
+    static Node slowSource(Schema schema, List<Object[]> rows, int batch, CountDownLatch sent, CountDownLatch carryOn) {
+        Node inner = Rows.source(schema, rows, batch);
+        return new Node() {
             private int calls;
 
             @Override
@@ -408,19 +408,19 @@ class PostgresWriteTest {
             }
 
             @Override
-            public void init(StepContext context) throws StepException {
+            public void init(NodeContext context) throws NodeException {
                 inner.init(context);
             }
 
             @Override
-            public boolean process(StepContext context) throws StepException {
+            public boolean process(NodeContext context) throws NodeException {
                 if (calls++ == 1) {
                     sent.countDown();
                     try {
                         carryOn.await(60, TimeUnit.SECONDS);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
-                        throw new StepException("Interrupted", e);
+                        throw new NodeException("Interrupted", e);
                     }
                 }
                 return inner.process(context);

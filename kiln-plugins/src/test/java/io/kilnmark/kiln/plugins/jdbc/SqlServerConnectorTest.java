@@ -48,9 +48,9 @@ class SqlServerConnectorTest {
         assertTrue(sql.validate(on).isEmpty(), sql.validate(on).toString());
         assertEquals("true", sql.driverSettings(on).getProperty("trustServerCertificate"));
         assertEquals(1, sql.driverSettings(on).size());
-        Map<String, String> step = sql.reader(on, t, read).settings();
-        assertEquals(url, step.get("url"), "the URL is passed on as written");
-        assertEquals("true", step.get(JdbcTableInput.DRIVER_PREFIX + "trustServerCertificate"));
+        Map<String, String> node = sql.reader(on, t, read).settings();
+        assertEquals(url, node.get("url"), "the URL is passed on as written");
+        assertEquals("true", node.get(JdbcTableInput.DRIVER_PREFIX + "trustServerCertificate"));
         assertEquals("true", sql.driverSettings(trusting(url, "TRUE")).getProperty("trustServerCertificate"));
 
         // off, or not set: nothing is added, so the driver checks the certificate as before

@@ -32,7 +32,7 @@ import org.junit.jupiter.api.TestInstance;
 import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.SettingSpec;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorContext;
@@ -335,9 +335,9 @@ class GenericJdbcConnectorTest {
 
     Rows.Collected read(SourceConfig source, String path, long limit) throws Exception {
         Rows.Collected c = new Rows.Collected();
-        StepSpec r = h2.connector().reader(source, h2.connector().asset(source, path),
+        NodeSpec r = h2.connector().reader(source, h2.connector().asset(source, path),
             new Connector.ReadOptions("urn:kilnmark:h2-lab:" + path, limit, 1000));
-        RunResult result = Rows.run(r, new StepSpec("collect", Rows.collector(c), Map.of()), Rows.events());
+        RunResult result = Rows.run(r, new NodeSpec("collect", Rows.collector(c), Map.of()), Rows.events());
         assertTrue(result.succeeded(), result.error());
         return c;
     }
@@ -506,7 +506,7 @@ class GenericJdbcConnectorTest {
         assertTrue(r.error().contains("Row 8: the value in column note is 19 characters long, but the column holds "
             + "at most 5"), r.error());
         assertEquals(List.of(List.of(0L)), query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE "
-            + "TABLE_SCHEMA = 'SALES' AND TABLE_NAME = 'half'"), "H2 commits the CREATE; the step drops it again");
+            + "TABLE_SCHEMA = 'SALES' AND TABLE_NAME = 'half'"), "H2 commits the CREATE; the node drops it again");
         RunResult again = write(writer, options("SALES.ORDERS", "create", Map.of()), s, rows.subList(0, 1),
             Rows.events());
         assertTrue(again.error().contains("already exists"), again.error());

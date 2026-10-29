@@ -40,7 +40,7 @@ next failure is told.
 id, status, score, threshold, output, link)` wherever a run gets its final status on the worker.
 `score` is the lowest measured score among the run's outputs (each write's, from the profile its
 writer made), `threshold` the pipeline's `quality.min_score` for the version that ran, and `output`
-the write step with that score; any of them is null when there is none, and then only a failure
+the write node with that score; any of them is null when there is none, and then only a failure
 can be told.
 
 ## Recording: off the caller's thread

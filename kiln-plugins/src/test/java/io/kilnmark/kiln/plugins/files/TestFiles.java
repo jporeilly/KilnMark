@@ -20,12 +20,12 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorContext;
 import io.kilnmark.kiln.connect.SourceConfig;
-import io.kilnmark.kiln.plugins.profile.ProfileStep;
+import io.kilnmark.kiln.plugins.profile.ProfileNode;
 
 /** Generated test files, and reading an asset through the engine the way a scan does. */
 final class TestFiles {
@@ -129,9 +129,9 @@ final class TestFiles {
         throws InterruptedException {
         String urn = "urn:kilnmark:" + source.name() + ":" + asset.path();
         List<MetadataEvent> events = new CopyOnWriteArrayList<>();
-        StepSpec reader = connector.reader(source, asset, new Connector.ReadOptions(urn, rowLimit, 1024));
+        NodeSpec reader = connector.reader(source, asset, new Connector.ReadOptions(urn, rowLimit, 1024));
         RunResult r = new Runner(64L << 20, 4).run(new Pipeline("read", List.of(reader,
-            new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", urn)))), events::add);
+            new NodeSpec("profile", new ProfileNode(), Map.of("asset-urn", urn)))), events::add);
         Map<String, String> rows = events.stream().filter(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT)
             .map(MetadataEvent::attributes).findFirst().orElse(Map.of());
         Map<String, Map<String, String>> profile = new HashMap<>();

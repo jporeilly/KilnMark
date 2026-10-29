@@ -23,12 +23,12 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetFilter;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.SourceConfig;
-import io.kilnmark.kiln.plugins.profile.ProfileStep;
+import io.kilnmark.kiln.plugins.profile.ProfileNode;
 
 @Testcontainers
 class PostgresIngestTest {
@@ -182,11 +182,11 @@ class PostgresIngestTest {
             "password", PG.getPassword(), "schema", "crm", "table", "customers", "asset-urn", URN,
             "batch-size", "4096"));
         Pipeline p = new Pipeline("ingest", List.of(
-            new StepSpec("read", new JdbcTableInput(), input),
-            new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", URN))));
+            new NodeSpec("read", new JdbcTableInput(), input),
+            new NodeSpec("profile", new ProfileNode(), Map.of("asset-urn", URN))));
         RunResult r = new Runner(256L << 20, 4).run(p, events::add);
         assertTrue(r.succeeded(), r.error());
-        assertEquals(20_000, r.steps().get(0).rowsOut());
+        assertEquals(20_000, r.nodes().get(0).rowsOut());
 
         MetadataEvent rows = events.stream().filter(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT).findFirst()
             .orElseThrow();
@@ -228,8 +228,8 @@ class PostgresIngestTest {
             "password", PG.getPassword(), "schema", "crm", "table", "customers", "asset-urn", URN,
             "row-limit", "1000");
         RunResult r = new Runner(64L << 20, 2).run(new Pipeline("sample", List.of(
-            new StepSpec("read", new JdbcTableInput(), input),
-            new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", URN)))), events::add);
+            new NodeSpec("read", new JdbcTableInput(), input),
+            new NodeSpec("profile", new ProfileNode(), Map.of("asset-urn", URN)))), events::add);
         assertTrue(r.succeeded(), r.error());
         MetadataEvent rows = events.stream().filter(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT).findFirst()
             .orElseThrow();
@@ -242,8 +242,8 @@ class PostgresIngestTest {
         Map<String, String> input = Map.of("url", PG.getJdbcUrl(), "user", PG.getUsername(),
             "password", PG.getPassword(), "schema", "crm", "table", "nope", "asset-urn", URN);
         RunResult r = new Runner(64L << 20, 2).run(new Pipeline("missing", List.of(
-            new StepSpec("read", new JdbcTableInput(), input),
-            new StepSpec("profile", new ProfileStep(), Map.of("asset-urn", URN)))), e -> { });
+            new NodeSpec("read", new JdbcTableInput(), input),
+            new NodeSpec("profile", new ProfileNode(), Map.of("asset-urn", URN)))), e -> { });
         assertEquals(RunResult.Status.FAILED, r.status());
         assertTrue(r.error().contains("Cannot read crm.nope"), r.error());
     }

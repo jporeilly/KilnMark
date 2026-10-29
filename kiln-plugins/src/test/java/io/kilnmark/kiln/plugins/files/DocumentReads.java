@@ -13,10 +13,10 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.SourceConfig;
@@ -42,16 +42,16 @@ final class DocumentReads {
         String urn = "urn:kilnmark:" + source.name() + ":" + asset.path();
         List<MetadataEvent> events = new CopyOnWriteArrayList<>();
         List<Chunk> chunks = new CopyOnWriteArrayList<>();
-        StepSpec reader = connector.reader(source, asset, new Connector.ReadOptions(urn, 0, 1024));
+        NodeSpec reader = connector.reader(source, asset, new Connector.ReadOptions(urn, 0, 1024));
         RunResult r = new Runner(64L << 20, 4).run(new Pipeline("read", List.of(reader,
-            new StepSpec("collect", new Collector(chunks), Map.of()))), events::add);
+            new NodeSpec("collect", new Collector(chunks), Map.of()))), events::add);
         List<MetadataEvent> docs = new ArrayList<>(events.stream()
             .filter(e -> e.kind() == MetadataEvent.Kind.DOCUMENT).toList());
         return new Read(r, docs, chunks);
     }
 
     /** A sink keeping every chunk row. */
-    static final class Collector implements Step {
+    static final class Collector implements Node {
         private final List<Chunk> into;
 
         Collector(List<Chunk> into) {
@@ -64,17 +64,17 @@ final class DocumentReads {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             VectorSchemaRoot b;
             try {
                 b = context.input().take(context.allocator());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StepException("Interrupted", e);
+                throw new NodeException("Interrupted", e);
             }
             if (b == null) {
                 return false;

@@ -6,7 +6,7 @@ kilnmark: pipeline/v1
 name: demo-customers-clean
 description: Lab customers, tidied and checked on the way to the warehouse; failing rows set aside.
 
-steps:
+nodes:
   - id: customers
     type: read
     source: lab-db

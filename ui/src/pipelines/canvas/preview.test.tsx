@@ -3,19 +3,19 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { StepPreview } from "../../api";
-import { StepMenu, type StepMenuItem } from "./StepMenu";
-import { StepPreviewPanel, previewSummary, secondsWords, type PreviewAsk, type PreviewResult } from "./StepPreviewPanel";
+import type { NodePreview } from "../../api";
+import { NodeMenu, type NodeMenuItem } from "./NodeMenu";
+import { NodePreviewPanel, previewSummary, secondsWords, type PreviewAsk, type PreviewResult } from "./NodePreviewPanel";
 
 const YAML = `kilnmark: pipeline/v1
 name: people-tidy
-steps:
+nodes:
   - {id: people, type: read, source: lab-db, asset: lab.people}
   - {id: tidy, type: compute, input: people, columns: {shout: "upper(name)"}}
 `;
 
-const VIEW: StepPreview = {
-  step: "tidy",
+const VIEW: NodePreview = {
+  node: "tidy",
   port: "out",
   asset: "tidy.out",
   columns: [
@@ -33,7 +33,7 @@ const VIEW: StepPreview = {
   complete: false,
   millis: 420,
   masked: ["name", "shout"],
-  waits: ["Step spend (aggregate) reads every row it is given before it passes any on, so every row before it was read."],
+  waits: ["Node spend (aggregate) reads every row it is given before it passes any on, so every row before it was read."],
 };
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -66,9 +66,9 @@ function Harness(props: {
 }) {
   const [last, setLast] = useState<PreviewResult | null>(null);
   return (
-    <StepPreviewPanel
+    <NodePreviewPanel
       yaml={props.yaml ?? YAML}
-      step="tidy"
+      node="tidy"
       outputs={props.outputs ?? ["out"]}
       kind={props.kind ?? "transform"}
       role={props.role ?? "steward"}
@@ -92,7 +92,7 @@ describe("previewSummary and secondsWords", () => {
   });
 });
 
-describe("StepPreviewPanel", () => {
+describe("NodePreviewPanel", () => {
   test("previews the YAML as it stands and shows the rows, what was masked and why it waited", async () => {
     const fetch = vi.fn(async () => json(VIEW));
     vi.stubGlobal("fetch", fetch);
@@ -102,10 +102,10 @@ describe("StepPreviewPanel", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("/api/v1/pipelines/preview");
-    expect(JSON.parse(init.body as string)).toEqual({ yaml: YAML, step: "tidy", port: "out", rows: 100 });
+    expect(JSON.parse(init.body as string)).toEqual({ yaml: YAML, node: "tidy", port: "out", rows: 100 });
     expect(el.textContent).toContain("The first 2 rows leaving tidy, in 0.4 seconds.");
     expect(el.textContent).toContain("Values of name, shout are hidden");
-    expect(el.textContent).toContain("Step spend (aggregate) reads every row");
+    expect(el.textContent).toContain("Node spend (aggregate) reads every row");
     const table = el.querySelector("table.preview-table")!;
     expect([...table.querySelectorAll("th")].map((t) => t.textContent)).toEqual(["id int64", "name text", "shout text"]);
     expect(table.querySelector("caption")?.textContent).toContain("tidy.out");
@@ -132,22 +132,22 @@ describe("StepPreviewPanel", () => {
   test("runs at once when the context menu asks, and says when the pipeline has changed since", async () => {
     const fetch = vi.fn(async () => json(VIEW));
     vi.stubGlobal("fetch", fetch);
-    const el = await mount(<Harness ask={{ step: "tidy", n: 1 }} />);
+    const el = await mount(<Harness ask={{ node: "tidy", n: 1 }} />);
     await act(async () => {});
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(el.textContent).not.toContain("has changed since");
-    await act(async () => root!.render(<Harness ask={{ step: "tidy", n: 1 }} yaml={YAML + "# edited\n"} />));
+    await act(async () => root!.render(<Harness ask={{ node: "tidy", n: 1 }} yaml={YAML + "# edited\n"} />));
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(el.textContent).toContain("The pipeline has changed since this preview.");
   });
 
-  test("tells the canvas once it has acted on an ask, so switching tabs or steps does not run it again", async () => {
+  test("tells the canvas once it has acted on an ask, so switching tabs or nodes does not run it again", async () => {
     const fetch = vi.fn(async () => json(VIEW));
     vi.stubGlobal("fetch", fetch);
     const asked = vi.fn();
     // As the canvas does: the ask is cleared once used, so a fresh panel (another tab, then back) has none.
     function Canvas() {
-      const [ask, setAsk] = useState<PreviewAsk | null>({ step: "tidy", n: 1 });
+      const [ask, setAsk] = useState<PreviewAsk | null>({ node: "tidy", n: 1 });
       const [tab, setTab] = useState("preview");
       return (
         <>
@@ -184,7 +184,7 @@ describe("StepPreviewPanel", () => {
       const [a, setA] = useState<PreviewAsk | null>(null);
       ask = () => {
         count.current += 1;
-        setA({ step: "tidy", n: count.current });
+        setA({ node: "tidy", n: count.current });
       };
       return <Harness ask={a} onAsked={() => setA(null)} />;
     }
@@ -197,7 +197,7 @@ describe("StepPreviewPanel", () => {
   });
 
   test("shows the server's refusal as an alert", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => json({ error: "Only an admin can preview this: step ps (filter) chooses rows by name" }, 403)));
+    vi.stubGlobal("fetch", vi.fn(async () => json({ error: "Only an admin can preview this: node ps (filter) chooses rows by name" }, 403)));
     const el = await mount(<Harness />);
     await act(async () => [...el.querySelectorAll("button")].find((b) => b.textContent?.includes("Preview rows"))!.click());
     expect(el.querySelector("[role=alert]")?.textContent).toContain("Only an admin can preview this");
@@ -216,8 +216,8 @@ describe("StepPreviewPanel", () => {
   });
 });
 
-describe("StepMenu", () => {
-  const items = (picked: string[]): StepMenuItem[] => [
+describe("NodeMenu", () => {
+  const items = (picked: string[]): NodeMenuItem[] => [
     { id: "preview", label: "Preview rows", onSelect: () => picked.push("preview") },
     { id: "settings", label: "Settings", onSelect: () => picked.push("settings") },
     { id: "remove", label: "Remove", onSelect: () => picked.push("remove"), disabled: true, note: "Read-only here" },
@@ -226,9 +226,9 @@ describe("StepMenu", () => {
   test("is a menu the keyboard can use: focus on the first item, arrows, Home and End, Escape", async () => {
     const picked: string[] = [];
     const closed: boolean[] = [];
-    const el = await mount(<StepMenu step="tidy" at={{ x: 10, y: 10 }} items={items(picked)} onClose={(back) => closed.push(back)} />);
+    const el = await mount(<NodeMenu node="tidy" at={{ x: 10, y: 10 }} items={items(picked)} onClose={(back) => closed.push(back)} />);
     const menu = el.querySelector("[role=menu]")!;
-    expect(menu.getAttribute("aria-label")).toBe("Actions for step tidy");
+    expect(menu.getAttribute("aria-label")).toBe("Actions for node tidy");
     const buttons = [...menu.querySelectorAll<HTMLButtonElement>("[role=menuitem]")];
     expect(document.activeElement).toBe(buttons[0]);
     const key = (k: string, shift = false) => act(async () => { menu.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey: shift, bubbles: true })); });

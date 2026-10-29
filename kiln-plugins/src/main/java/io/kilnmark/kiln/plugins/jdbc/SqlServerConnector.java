@@ -212,13 +212,13 @@ public final class SqlServerConnector extends JdbcConnector {
     List<io.kilnmark.kiln.SettingSpec> writeOptionsOfOwn() {
         List<io.kilnmark.kiln.SettingSpec> out = new ArrayList<>(super.writeOptionsOfOwn());
         out.add(io.kilnmark.kiln.plugins.write.WriteSettings.flag("bulk_copy", "Bulk copy", true,
-            "Load tables this step creates through the driver's bulk copy"));
+            "Load tables this node creates through the driver's bulk copy"));
         return out;
     }
 
     /**
      * Times sent as {@code time}, not {@code datetime} (which would round them to 1/300 of a
-     * second); and, for a table the step created, batches of inserts sent through the driver's bulk
+     * second); and, for a table the node created, batches of inserts sent through the driver's bulk
      * copy ({@code useBulkCopyForBatchInsert}), which checks no constraints and fires no triggers,
      * so it is used only where there are none.
      */

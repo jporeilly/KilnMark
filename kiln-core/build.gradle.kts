@@ -1,4 +1,4 @@
-// Kiln engine core: the step interface, Arrow row sets, the metadata side-channel and the runner.
+// Kiln engine core: the node interface, Arrow row sets, the metadata side-channel and the runner.
 plugins {
     `java-library`
 }

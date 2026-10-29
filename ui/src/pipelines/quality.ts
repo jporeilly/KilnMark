@@ -3,7 +3,7 @@
  * what a run writes"): scores as a percentage and a word, never by colour alone, and what a gate
  * did with the rows. Pure functions, unit tested.
  */
-import { formatNumber, formatScore, rating, type GateOutcome, type PipelineStepQuality } from "../api";
+import { formatNumber, formatScore, rating, type GateOutcome, type PipelineNodeQuality } from "../api";
 
 export const DIMENSION_WORDS: Record<string, string> = {
   completeness: "Completeness",
@@ -52,8 +52,8 @@ export const ON_FAIL_WORDS: Record<GateOutcome["onFail"], string> = {
 
 export const RULE_STATUS_WORDS: Record<string, string> = { pass: "Pass", warn: "Warn", fail: "Fail", error: "Could not run" };
 
-/** The badge words for a step on the canvas after a run; null when the run measured nothing for it. */
-export function stepQualityWords(q: PipelineStepQuality | undefined | null): string | null {
+/** The badge words for a node on the canvas after a run; null when the run measured nothing for it. */
+export function nodeQualityWords(q: PipelineNodeQuality | undefined | null): string | null {
   if (!q) return null;
   const parts: string[] = [];
   if (q.measured) parts.push(scoreWords(q.measured.overall));

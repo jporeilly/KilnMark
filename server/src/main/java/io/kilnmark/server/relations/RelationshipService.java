@@ -16,7 +16,7 @@ import io.kilnmark.graph.store.Records;
 import io.kilnmark.graph.store.RelationshipStore;
 import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.connect.RelationshipInfo;
-import io.kilnmark.kiln.plugins.profile.ProfileStep;
+import io.kilnmark.kiln.plugins.profile.ProfileNode;
 import io.kilnmark.kiln.plugins.relate.KeyInference;
 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -50,25 +50,25 @@ public class RelationshipService {
 
     /** True for a profile attribute that is stored apart from the profile JSON. */
     public static boolean storedApart(String attribute) {
-        return ProfileStep.SKETCH.equals(attribute);
+        return ProfileNode.SKETCH.equals(attribute);
     }
 
     /**
      * The fields of {@code asset} whose sketch is worth keeping: those inference can use, either
      * end of a relationship. An identifier-like name ({@code id}, {@code customer_id}, {@code order_no})
-     * or the asset's whole single-column primary key. As {@link ProfileStep#SKETCH_FIELDS} wants them.
+     * or the asset's whole single-column primary key. As {@link ProfileNode#SKETCH_FIELDS} wants them.
      */
     public static String sketchFields(io.kilnmark.kiln.connect.AssetInfo asset) {
         List<String> fields = asset.fields().stream().map(io.kilnmark.kiln.connect.AssetInfo.FieldInfo::name)
             .filter(f -> io.kilnmark.kiln.plugins.relate.KeyNames.idLike(f)
                 || asset.primaryKey().size() == 1 && asset.primaryKey().get(0).equals(f))
             .toList();
-        return ProfileStep.sketchFields(fields);
+        return ProfileNode.sketchFields(fields);
     }
 
     /** Stores the sketch a {@code PROFILE} event carries, if any, with the profile of run {@code runId}. */
     public void saveSketch(MetadataEvent e, long runId) {
-        String encoded = e.attributes().get(ProfileStep.SKETCH);
+        String encoded = e.attributes().get(ProfileNode.SKETCH);
         if (encoded == null) {
             return;
         }

@@ -3,25 +3,25 @@ import { formatNumber, type PipelineRunDetail } from "../api";
 import { StatTile, StatusChip } from "../components/ui";
 import { qualityMark } from "./RunTimeline";
 import { shares, timeSpent, type SpentRow } from "./timeSpent";
-import { offsetWords, peakConcurrent, shareOfRun, shareWords, slowestStep, timeline, type Clock } from "./timeline";
+import { offsetWords, peakConcurrent, shareOfRun, shareWords, slowestNode, timeline, type Clock } from "./timeline";
 
 /** "What limited this run: check, working 87% of the time", or the source when nothing was held up. */
-export function limitWords(limit: { step: string; working: number; bySource: boolean } | null, live: boolean): string {
+export function limitWords(limit: { node: string; working: number; bySource: boolean } | null, live: boolean): string {
   if (!limit) return live ? "Not known yet." : "Not known.";
   const when = live ? "so far" : "of the time";
   return limit.bySource
-    ? `Nothing was held up: this run was limited by reading its source, ${limit.step} (working ${shareWords(limit.working)} ${when}).`
-    : `What limited this run: ${limit.step}, working ${shareWords(limit.working)} ${when}.`;
+    ? `Nothing was held up: this run was limited by reading its source, ${limit.node} (working ${shareWords(limit.working)} ${when}).`
+    : `What limited this run: ${limit.node}, working ${shareWords(limit.working)} ${when}.`;
 }
 
-/** What a step did, in words, at the end of its row: a gate's verdict, a write's quality, else its rows. */
-function result(detail: PipelineRunDetail, step: string): string | null {
-  const mark = qualityMark((detail.quality ?? []).find((q) => q.step === step));
+/** What a node did, in words, at the end of its row: a gate's verdict, a write's quality, else its rows. */
+function result(detail: PipelineRunDetail, node: string): string | null {
+  const mark = qualityMark((detail.quality ?? []).find((q) => q.node === node));
   if (mark) return mark.text;
-  const s = detail.steps.find((x) => x.step === step);
+  const s = detail.nodes.find((x) => x.node === node);
   if (s?.rowsOut != null) return `${formatNumber(s.rowsOut)} rows out`;
   if (s?.rowsIn != null) return `${formatNumber(s.rowsIn)} rows in`;
-  const p = detail.progress?.steps.find((x) => x.step === step);
+  const p = detail.progress?.nodes.find((x) => x.node === node);
   if (p) return p.rowsOut > 0 ? `${formatNumber(p.rowsOut)} rows out so far` : `${formatNumber(p.rowsIn)} rows in so far`;
   return null;
 }
@@ -41,7 +41,7 @@ function Segments({ r }: { r: SpentRow }) {
         <span
           className="pl-ts-heldup"
           style={{ width: pc(s.heldUp) }}
-          title={`Held up by the next step ${shareWords(s.heldUp)}`}
+          title={`Held up by the next node ${shareWords(s.heldUp)}`}
         />
       )}
     </span>
@@ -49,10 +49,10 @@ function Segments({ r }: { r: SpentRow }) {
 }
 
 /**
- * Where each step spent its time (docs/guide/pipelines.md, "Reading a run"): the run at a glance in
- * tiles, what limited it in one line, and per step a bar of 100% split into working, waiting for rows
- * and held up by the next step (back-pressure), each with its own pattern, with "% working" and what
- * the step did at the right. A table says the same.
+ * Where each node spent its time (docs/guide/pipelines.md, "Reading a run"): the run at a glance in
+ * tiles, what limited it in one line, and per node a bar of 100% split into working, waiting for rows
+ * and held up by the next node (back-pressure), each with its own pattern, with "% working" and what
+ * the node did at the right. A table says the same.
  */
 export function RunTimeSpent({ detail, clock }: { detail: PipelineRunDetail; clock?: Clock }) {
   const spent = timeSpent(detail, clock);
@@ -61,11 +61,11 @@ export function RunTimeSpent({ detail, clock }: { detail: PipelineRunDetail; clo
     const unfinished = detail.run.status === "queued" || detail.run.status === "running";
     return (
       <p className="muted">
-        {unfinished ? "Where each step spends its time appears once the steps start." : "This run's steps were not timed."}
+        {unfinished ? "Where each node spends its time appears once the nodes start." : "This run's nodes were not timed."}
       </p>
     );
   }
-  const longest = slowestStep(t);
+  const longest = slowestNode(t);
   return (
     <div className="pl-ts">
       <section aria-label="The run at a glance" className="km-grid-4 pl-tl-tiles">
@@ -77,15 +77,15 @@ export function RunTimeSpent({ detail, clock }: { detail: PipelineRunDetail; clo
           note={t.live ? "so far" : "from start to end"}
         />
         <StatTile
-          label="Most steps at once"
+          label="Most nodes at once"
           value={String(peakConcurrent(t))}
           icon={<IconStack2 size={18} aria-hidden="true" />}
           tint="violet"
           note={`of ${t.rows.length}`}
         />
         <StatTile
-          label={t.live ? "Slowest step now" : "Longest step"}
-          value={longest ? <span className="mono">{longest.step}</span> : "–"}
+          label={t.live ? "Slowest node now" : "Longest node"}
+          value={longest ? <span className="mono">{longest.node}</span> : "–"}
           icon={<IconHourglass size={18} aria-hidden="true" />}
           tint="orange"
           note={
@@ -100,7 +100,7 @@ export function RunTimeSpent({ detail, clock }: { detail: PipelineRunDetail; clo
         />
         <StatTile
           label="What limited this run"
-          value={spent.limit ? <span className="mono">{spent.limit.step}</span> : "–"}
+          value={spent.limit ? <span className="mono">{spent.limit.node}</span> : "–"}
           icon={<IconTargetArrow size={18} aria-hidden="true" />}
           tint="teal"
           note={
@@ -115,15 +115,15 @@ export function RunTimeSpent({ detail, clock }: { detail: PipelineRunDetail; clo
       <p className="pl-ts-limit">
         <strong>{limitWords(spent.limit, spent.live)}</strong>
       </p>
-      <ul className="pl-ts-rows" aria-label="Where each step spent its time">
+      <ul className="pl-ts-rows" aria-label="Where each node spent its time">
         {spent.rows.map((r) => {
           const s = shares(r);
-          const words = result(detail, r.step);
-          const limit = spent.limit?.step === r.step;
+          const words = result(detail, r.node);
+          const limit = spent.limit?.node === r.node;
           return (
-            <li key={r.step} className={`pl-ts-row${limit ? " is-limit" : ""}`}>
+            <li key={r.node} className={`pl-ts-row${limit ? " is-limit" : ""}`}>
               <span className="pl-ts-name">
-                <span className="mono pl-tl-step">{r.step}</span>
+                <span className="mono pl-tl-node">{r.node}</span>
                 {limit && (
                   <StatusChip tone="orange" kind="limit">
                     Limited the run
@@ -133,7 +133,7 @@ export function RunTimeSpent({ detail, clock }: { detail: PipelineRunDetail; clo
               <span
                 className="pl-ts-track"
                 role="img"
-                aria-label={`${r.step}: working ${shareWords(s.working)}, waiting for rows ${shareWords(s.waiting)}, held up by the next step ${shareWords(s.heldUp)}${r.running ? ", so far" : ""}`}
+                aria-label={`${r.node}: working ${shareWords(s.working)}, waiting for rows ${shareWords(s.waiting)}, held up by the next node ${shareWords(s.heldUp)}${r.running ? ", so far" : ""}`}
               >
                 <Segments r={r} />
               </span>
@@ -147,19 +147,19 @@ export function RunTimeSpent({ detail, clock }: { detail: PipelineRunDetail; clo
       </ul>
       <p className="small muted pl-tl-key" aria-hidden="true">
         <span className="pl-ts-working" /> Working <span className="pl-ts-waiting" /> Waiting for rows{" "}
-        <span className="pl-ts-heldup" /> Held up by the next step
+        <span className="pl-ts-heldup" /> Held up by the next node
       </p>
       <details className="pl-tl-table">
-        <summary>Show where each step spent its time as a table</summary>
-        <div className="table-scroll" role="region" aria-label="Where each step spent its time, as a table" tabIndex={0}>
+        <summary>Show where each node spent its time as a table</summary>
+        <div className="table-scroll" role="region" aria-label="Where each node spent its time, as a table" tabIndex={0}>
           <table className="small">
             <thead>
               <tr>
-                <th scope="col">Step</th>
+                <th scope="col">Node</th>
                 <th scope="col">Time</th>
                 <th scope="col">Working</th>
                 <th scope="col">Waiting for rows</th>
-                <th scope="col">Held up by the next step</th>
+                <th scope="col">Held up by the next node</th>
                 <th scope="col">Result</th>
               </tr>
             </thead>
@@ -167,10 +167,10 @@ export function RunTimeSpent({ detail, clock }: { detail: PipelineRunDetail; clo
               {spent.rows.map((r) => {
                 const s = shares(r);
                 return (
-                  <tr key={r.step}>
+                  <tr key={r.node}>
                     <th scope="row">
-                      <span className="mono">{r.step}</span>
-                      {spent.limit?.step === r.step && <div>Limited the run</div>}
+                      <span className="mono">{r.node}</span>
+                      {spent.limit?.node === r.node && <div>Limited the run</div>}
                     </th>
                     <td>
                       {offsetWords(r.active)}
@@ -179,7 +179,7 @@ export function RunTimeSpent({ detail, clock }: { detail: PipelineRunDetail; clo
                     <td>{shareWords(s.working)}</td>
                     <td>{shareWords(s.waiting)}</td>
                     <td>{shareWords(s.heldUp)}</td>
-                    <td>{result(detail, r.step) ?? "–"}</td>
+                    <td>{result(detail, r.node) ?? "–"}</td>
                   </tr>
                 );
               })}

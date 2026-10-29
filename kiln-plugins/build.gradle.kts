@@ -1,10 +1,10 @@
-// Built-in Kiln steps: connectors, profiling and discovery.
+// Built-in Kiln nodes: connectors, profiling and discovery.
 // Code adapted from Apache-licensed Kettle 10.2 must be logged in docs/legal/provenance.md.
 plugins {
     `java-library`
 }
 
-description = "Built-in Kiln steps"
+description = "Built-in Kiln nodes"
 
 dependencies {
     "api"(project(":kiln-core"))

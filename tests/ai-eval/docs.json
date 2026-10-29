@@ -24,7 +24,7 @@
     {"question": "When was version 0.0.1 released and what did it contain?", "relevant": ["whats-new/001-24-october-2026"]},
     {"question": "What do the numbers in brackets in an answer link to?", "relevant": ["assistant/sources-and-links"]},
     {"question": "How do I commit a very large table write in parts instead of one transaction?", "relevant": ["writing-data/large-writes"]},
-    {"question": "How do I add columns from a lookup input to each row with the same key, like a join?", "relevant": ["pipeline-steps/lookup"]},
+    {"question": "How do I add columns from a lookup input to each row with the same key, like a join?", "relevant": ["pipeline-nodes/lookup"]},
     {"question": "Who saved each version of a pipeline, and can I see the YAML of an earlier version?", "relevant": ["pipelines/saving-versions"]}
   ]
 }

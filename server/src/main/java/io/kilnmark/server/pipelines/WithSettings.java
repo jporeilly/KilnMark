@@ -8,31 +8,31 @@ import org.apache.arrow.memory.BufferAllocator;
 
 import io.kilnmark.kiln.MetadataEmitter;
 import io.kilnmark.kiln.RowSet;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
 
 /**
- * A step that reads its settings from {@link StepContext#settings()} (a connector's reader, the
- * profile step), given the settings it was built with instead of the pipeline YAML's: whatever
- * runner runs the graph, the step sees what its connector meant it to see (which may hold the
+ * A node that reads its settings from {@link NodeContext#settings()} (a connector's reader, the
+ * profile node), given the settings it was built with instead of the pipeline YAML's: whatever
+ * runner runs the graph, the node sees what its connector meant it to see (which may hold the
  * source's secret, so they never appear in the YAML, the graph's config or a log). Everything else
  * comes from the runner's context.
  */
-final class WithSettings implements Step {
+final class WithSettings implements Node {
 
-    private final Step inner;
+    private final Node inner;
     private final Map<String, String> settings;
-    private StepContext lastOuter;
-    private StepContext lastWrapped;
+    private NodeContext lastOuter;
+    private NodeContext lastWrapped;
 
-    WithSettings(Step inner, Map<String, String> settings) {
+    WithSettings(Node inner, Map<String, String> settings) {
         this.inner = inner;
         this.settings = Map.copyOf(settings);
     }
 
-    /** The wrapped step, for tests. */
-    Step inner() {
+    /** The wrapped node, for tests. */
+    Node inner() {
         return inner;
     }
 
@@ -42,12 +42,12 @@ final class WithSettings implements Step {
     }
 
     @Override
-    public void init(StepContext context) throws StepException {
+    public void init(NodeContext context) throws NodeException {
         inner.init(wrap(context));
     }
 
     @Override
-    public boolean process(StepContext context) throws StepException {
+    public boolean process(NodeContext context) throws NodeException {
         return inner.process(wrap(context));
     }
 
@@ -56,7 +56,7 @@ final class WithSettings implements Step {
         inner.close();
     }
 
-    private StepContext wrap(StepContext outer) {
+    private NodeContext wrap(NodeContext outer) {
         if (outer != lastOuter) {
             lastOuter = outer;
             lastWrapped = new Context(outer, settings);
@@ -64,11 +64,11 @@ final class WithSettings implements Step {
         return lastWrapped;
     }
 
-    private record Context(StepContext outer, Map<String, String> settings) implements StepContext {
+    private record Context(NodeContext outer, Map<String, String> settings) implements NodeContext {
 
         @Override
-        public String stepName() {
-            return outer.stepName();
+        public String nodeName() {
+            return outer.nodeName();
         }
 
         @Override
@@ -117,18 +117,18 @@ final class WithSettings implements Step {
         }
 
         @Override
-        public RowSet input(String port) throws StepException {
+        public RowSet input(String port) throws NodeException {
             return outer.input(port);
         }
 
         @Override
-        public RowSet output(String port) throws StepException {
+        public RowSet output(String port) throws NodeException {
             return outer.output(port);
         }
 
         @Override
         public String toString() {
-            return "StepContext[" + outer.stepName() + "]"; // never the settings: they may hold a secret
+            return "NodeContext[" + outer.nodeName() + "]"; // never the settings: they may hold a secret
         }
     }
 }

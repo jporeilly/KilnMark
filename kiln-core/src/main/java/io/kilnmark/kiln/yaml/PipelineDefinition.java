@@ -12,38 +12,38 @@ import java.util.Set;
 
 /**
  * A pipeline as written in its YAML ({@code kilnmark: pipeline/v1}, docs/design/pipelines.md
- * section 2), before its step types are looked up: names, steps, the inputs each step names and
- * each step's settings, with where each was written. {@link #parse} reads one;
- * {@link PipelineCompiler} checks it against the step types and makes it a graph.
+ * section 2), before its node types are looked up: names, nodes, the inputs each node names and
+ * each node's settings, with where each was written. {@link #parse} reads one;
+ * {@link PipelineCompiler} checks it against the node types and makes it a graph.
  *
  * @param name        the pipeline's name
  * @param description what it does, or null
- * @param steps       the steps in the order written
+ * @param nodes       the nodes in the order written
  * @param quality     the pipeline's quality settings ({@code quality:}), or null when it has none
  */
-public record PipelineDefinition(String name, String description, List<StepDefinition> steps, Quality quality) {
+public record PipelineDefinition(String name, String description, List<NodeDefinition> nodes, Quality quality) {
 
     /** The format this version reads. */
     public static final String FORMAT = "pipeline/v1";
 
-    static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "quality", "steps", "layout");
+    static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "quality", "nodes", "layout");
     static final Set<String> QUALITY_KEYS = Set.of("min_score");
 
     /**
-     * The top-level key holding where the canvas draws each step ({@code layout: { rows: { x: 40, y: 120 } }}).
+     * The top-level key holding where the canvas draws each node ({@code layout: { rows: { x: 40, y: 120 } }}).
      * Reading accepts it and ignores what it holds: it never changes what a pipeline does, so a pipeline
-     * runs the same however its steps are drawn.
+     * runs the same however its nodes are drawn.
      */
     public static final String LAYOUT = "layout";
-    static final Set<String> STEP_KEYS = Set.of("id", "type", "input", "inputs");
+    static final Set<String> NODE_KEYS = Set.of("id", "type", "input", "inputs");
 
     public PipelineDefinition {
-        steps = List.copyOf(steps);
+        nodes = List.copyOf(nodes);
     }
 
     /** A pipeline without quality settings. */
-    public PipelineDefinition(String name, String description, List<StepDefinition> steps) {
-        this(name, description, steps, null);
+    public PipelineDefinition(String name, String description, List<NodeDefinition> nodes) {
+        this(name, description, nodes, null);
     }
 
     /**
@@ -57,23 +57,23 @@ public record PipelineDefinition(String name, String description, List<StepDefin
     }
 
     /**
-     * One step as written.
+     * One node as written.
      *
      * @param id       its id, unique in the pipeline
-     * @param type     its step type, or null if none was given
+     * @param type     its node type, or null if none was given
      * @param inputs   the inputs it names, in the order written
      * @param config     its settings: every key except {@code id}, {@code type}, {@code input} and
      *                   {@code inputs}, as maps, lists, strings, numbers (whole numbers as Integer, Long
      *                   or BigInteger, decimals as BigDecimal), booleans and nulls
-     * @param position   where the step starts
-     * @param keys       where each of the step's keys is written
+     * @param position   where the node starts
+     * @param keys       where each of the node's keys is written
      * @param configText the same settings with every scalar as the text written ({@code 007},
      *                   {@code 2024.10}), so a setting that is text keeps exactly what was typed
      */
-    public record StepDefinition(String id, String type, List<InputRef> inputs, Map<String, Object> config,
+    public record NodeDefinition(String id, String type, List<InputRef> inputs, Map<String, Object> config,
                                  Position position, Map<String, Position> keys, Map<String, Object> configText) {
 
-        public StepDefinition {
+        public NodeDefinition {
             Objects.requireNonNull(id, "id");
             inputs = List.copyOf(inputs);
             config = Collections.unmodifiableMap(new LinkedHashMap<>(config));
@@ -82,8 +82,8 @@ public record PipelineDefinition(String name, String description, List<StepDefin
                 : Collections.unmodifiableMap(new LinkedHashMap<>(configText));
         }
 
-        /** A step built in code: the text of each setting is its value written out. */
-        public StepDefinition(String id, String type, List<InputRef> inputs, Map<String, Object> config,
+        /** A node built in code: the text of each setting is its value written out. */
+        public NodeDefinition(String id, String type, List<InputRef> inputs, Map<String, Object> config,
                               Position position, Map<String, Position> keys) {
             this(id, type, inputs, config, position, keys, null);
         }
@@ -106,18 +106,18 @@ public record PipelineDefinition(String name, String description, List<StepDefin
             return value == null ? null : (T) String.valueOf(value);
         }
 
-        /** Where {@code key} is written, or where the step starts if it is not. */
+        /** Where {@code key} is written, or where the node starts if it is not. */
         public Position at(String key) {
             return keys.getOrDefault(key, position);
         }
     }
 
     /**
-     * One input a step names.
+     * One input a node names.
      *
-     * @param port     the step's own input port, or null for {@code input:}, meaning the step's
+     * @param port     the node's own input port, or null for {@code input:}, meaning the node's
      *                 only input port
-     * @param from     where the rows come from: {@code id} for that step's {@code out} port, or
+     * @param from     where the rows come from: {@code id} for that node's {@code out} port, or
      *                 {@code id.port}
      * @param position where it is written
      */
@@ -142,15 +142,15 @@ public record PipelineDefinition(String name, String description, List<StepDefin
     }
 
     /**
-     * Reads a pipeline's YAML, checking what can be checked without knowing the step types: the
-     * format line, the keys, step ids and the shape of {@code input} and {@code inputs}. Steps
+     * Reads a pipeline's YAML, checking what can be checked without knowing the node types: the
+     * format line, the keys, node ids and the shape of {@code input} and {@code inputs}. Nodes
      * with a problem are kept where they can be, so later checks still find them.
      */
     public static Parsed parse(String yaml) {
         return parse(yaml, new HashSet<>());
     }
 
-    /** As {@link #parse(String)}, also collecting the ids of steps whose inputs could not be read. */
+    /** As {@link #parse(String)}, also collecting the ids of nodes whose inputs could not be read. */
     static Parsed parse(String yaml, Set<String> inputProblems) {
         List<Problem> problems = new ArrayList<>();
         YamlReader.Node root;
@@ -162,7 +162,7 @@ public record PipelineDefinition(String name, String description, List<StepDefin
         }
         if (!(root instanceof YamlReader.Mapping top)) {
             problems.add(Problem.at(root == null ? Position.START : root.position(), null,
-                "A pipeline starts with kilnmark: " + FORMAT + ", followed by its name and steps"));
+                "A pipeline starts with kilnmark: " + FORMAT + ", followed by its name and nodes"));
             return new Parsed(null, problems);
         }
         YamlReader.Entry format = top.entries().get("kilnmark");
@@ -174,10 +174,10 @@ public record PipelineDefinition(String name, String description, List<StepDefin
                 + Suggest.clip(String.valueOf(format.value().text())) + "', but this version of Kilnmark reads " + FORMAT));
         }
         for (YamlReader.Entry e : top.entries().values()) {
-            if (!TOP_LEVEL_KEYS.contains(e.key())) {
+            if (!TOP_LEVEL_KEYS.contains(e.key()) && !Renamed.isOld(e.key(), TOP_LEVEL_KEYS)) {
                 problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + Suggest.clip(e.key()) + "'"
                     + Suggest.hint(e.key(), TOP_LEVEL_KEYS)
-                    + ": a pipeline has kilnmark, name, description, quality, steps and layout"));
+                    + ": a pipeline has kilnmark, name, description, quality, nodes and layout"));
             }
         }
         String name = text(top.entries().get("name"), "name", null, problems);
@@ -187,25 +187,25 @@ public record PipelineDefinition(String name, String description, List<StepDefin
         String description = text(top.entries().get("description"), "description", null, problems);
         Quality quality = quality(top.entries().get("quality"), problems);
 
-        List<StepDefinition> steps = new ArrayList<>();
-        YamlReader.Entry stepsEntry = top.entries().get("steps");
-        if (stepsEntry == null) {
-            problems.add(Problem.at(top.position(), null, "The pipeline needs steps"));
-        } else if (!(stepsEntry.value() instanceof YamlReader.Sequence list)) {
-            problems.add(Problem.at(stepsEntry.value().position(), null,
-                "steps must be a list, each step starting with - id: …"));
+        List<NodeDefinition> nodes = new ArrayList<>();
+        YamlReader.Entry nodesEntry = Renamed.entry(top, "nodes", "pipeline", problems);
+        if (nodesEntry == null) {
+            problems.add(Problem.at(top.position(), null, "The pipeline needs nodes"));
+        } else if (!(nodesEntry.value() instanceof YamlReader.Sequence list)) {
+            problems.add(Problem.at(nodesEntry.value().position(), null,
+                "nodes must be a list, each node starting with - id: …"));
         } else if (list.items().isEmpty()) {
-            problems.add(Problem.at(stepsEntry.value().position(), null, "The pipeline needs at least one step"));
+            problems.add(Problem.at(nodesEntry.value().position(), null, "The pipeline needs at least one node"));
         } else {
             Map<String, Position> ids = new HashMap<>();
             for (YamlReader.Node item : list.items()) {
-                StepDefinition s = step(item, ids, problems, inputProblems);
+                NodeDefinition s = node(item, ids, problems, inputProblems);
                 if (s != null) {
-                    steps.add(s);
+                    nodes.add(s);
                 }
             }
         }
-        return new Parsed(new PipelineDefinition(name, description, steps, quality), problems);
+        return new Parsed(new PipelineDefinition(name, description, nodes, quality), problems);
     }
 
     /** The {@code quality:} mapping: {@code min_score}, a share from 0 to 1. Null when absent or wrong. */
@@ -238,23 +238,23 @@ public record PipelineDefinition(String name, String description, List<StepDefin
         return new Quality(score);
     }
 
-    private static StepDefinition step(YamlReader.Node item, Map<String, Position> ids, List<Problem> problems,
+    private static NodeDefinition node(YamlReader.Node item, Map<String, Position> ids, List<Problem> problems,
                                        Set<String> inputProblems) {
         if (!(item instanceof YamlReader.Mapping m)) {
-            problems.add(Problem.at(item.position(), null, "Each step is a mapping starting with - id: …"));
+            problems.add(Problem.at(item.position(), null, "Each node is a mapping starting with - id: …"));
             return null;
         }
         YamlReader.Entry idEntry = m.entries().get("id");
         if (idEntry == null) {
-            problems.add(Problem.at(m.position(), null, "Each step needs an id"));
+            problems.add(Problem.at(m.position(), null, "Each node needs an id"));
             return null;
         }
         if (!(idEntry.value() instanceof YamlReader.Scalar sc) || !(sc.value() instanceof String id)) {
             problems.add(Problem.at(idEntry.value().position(), null,
-                "A step id is a word such as tidy-customers, not a number, list or mapping"));
+                "A node id is a word such as tidy-customers, not a number, list or mapping"));
             return null;
         }
-        if (!PipelineCompiler.STEP_ID.matcher(id).matches()) {
+        if (!PipelineCompiler.NODE_ID.matcher(id).matches()) {
             problems.add(Problem.at(idEntry.value().position(), Suggest.clip(id), PipelineCompiler.badId(id)));
             if (id.length() > Suggest.MAX_ECHO) {
                 return null; // too long to name in later messages
@@ -263,12 +263,12 @@ public record PipelineDefinition(String name, String description, List<StepDefin
         Position first = ids.putIfAbsent(id, idEntry.value().position());
         if (first != null) {
             problems.add(Problem.at(idEntry.value().position(), id,
-                "Step id '" + id + "' is used twice (first on line " + first.line() + ")"));
+                "Node id '" + id + "' is used twice (first on line " + first.line() + ")"));
             return null;
         }
         String type = text(m.entries().get("type"), "type", id, problems);
         if (!m.entries().containsKey("type")) {
-            problems.add(Problem.at(m.position(), id, "Step " + id + " needs a type"));
+            problems.add(Problem.at(m.position(), id, "Node " + id + " needs a type"));
         }
 
         Map<String, Position> keys = new LinkedHashMap<>();
@@ -276,7 +276,7 @@ public record PipelineDefinition(String name, String description, List<StepDefin
         Map<String, Object> configText = new LinkedHashMap<>();
         for (YamlReader.Entry e : m.entries().values()) {
             keys.put(e.key(), e.keyPosition());
-            if (!STEP_KEYS.contains(e.key())) {
+            if (!NODE_KEYS.contains(e.key())) {
                 config.put(e.key(), e.value().value());
                 configText.put(e.key(), e.value().text());
             }
@@ -286,7 +286,7 @@ public record PipelineDefinition(String name, String description, List<StepDefin
         YamlReader.Entry inputsEntry = m.entries().get("inputs");
         if (input != null && inputsEntry != null) {
             problems.add(Problem.at(inputsEntry.keyPosition(), id,
-                "Step " + id + " has both input and inputs: use input for one, inputs to name ports"));
+                "Node " + id + " has both input and inputs: use input for one, inputs to name ports"));
         }
         int before = problems.size();
         if (input != null) {
@@ -299,20 +299,20 @@ public record PipelineDefinition(String name, String description, List<StepDefin
                 }
             } else {
                 problems.add(Problem.at(inputsEntry.value().position(), id,
-                    "inputs names each input port and the step feeding it, such as inputs: { main: spend, lookup: tidy }"));
+                    "inputs names each input port and the node feeding it, such as inputs: { main: spend, lookup: tidy }"));
             }
         }
         if (problems.size() != before) {
             inputProblems.add(id);
         }
-        return new StepDefinition(id, type, inputs, config, m.position(), keys, configText);
+        return new NodeDefinition(id, type, inputs, config, m.position(), keys, configText);
     }
 
-    /** {@code step}, {@code step.port}, or a list of them. */
+    /** {@code node}, {@code node.port}, or a list of them. */
     private static void refs(YamlReader.Node value, String port, String id, List<InputRef> out, List<Problem> problems) {
         List<YamlReader.Node> items = value instanceof YamlReader.Sequence s ? s.items() : List.of(value);
         if (items.isEmpty()) {
-            problems.add(Problem.at(value.position(), id, "Step " + id + " names no step to read from"));
+            problems.add(Problem.at(value.position(), id, "Node " + id + " names no node to read from"));
         }
         for (YamlReader.Node n : items) {
             Object v = n.value();
@@ -320,19 +320,19 @@ public record PipelineDefinition(String name, String description, List<StepDefin
                 out.add(new InputRef(port, from.strip(), n.position()));
             } else {
                 problems.add(Problem.at(n.position(), id,
-                    "An input is the id of the step to read from, or id.port for another of its outputs"));
+                    "An input is the id of the node to read from, or id.port for another of its outputs"));
             }
         }
     }
 
-    private static String text(YamlReader.Entry e, String key, String stepId, List<Problem> problems) {
+    private static String text(YamlReader.Entry e, String key, String nodeId, List<Problem> problems) {
         if (e == null) {
             return null;
         }
         if (e.value() instanceof YamlReader.Scalar sc && sc.value() != null && !sc.written().isBlank()) {
             return sc.written(); // name: 2024 is the name "2024"
         }
-        problems.add(Problem.at(e.value().position(), stepId, key + " must be text"));
+        problems.add(Problem.at(e.value().position(), nodeId, key + " must be text"));
         return null;
     }
 }

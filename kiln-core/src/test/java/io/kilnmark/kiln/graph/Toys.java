@@ -16,11 +16,11 @@ import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 
 import io.kilnmark.kiln.RowSet;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
 
-/** Small steps for testing graphs: generate numbers, pass them on, split them, merge and collect them. */
+/** Small nodes for testing graphs: generate numbers, pass them on, split them, merge and collect them. */
 public final class Toys {
 
     public static final Schema N = new Schema(List.of(Field.nullable("n", new ArrowType.Int(32, true))));
@@ -39,13 +39,13 @@ public final class Toys {
         return root;
     }
 
-    static StepException interrupted(InterruptedException e) {
+    static NodeException interrupted(InterruptedException e) {
         Thread.currentThread().interrupt();
-        return new StepException("interrupted", e);
+        return new NodeException("interrupted", e);
     }
 
     /** Emits {@code batches} batches of {@code rows} numbers counting up from {@code start}; fails at batch {@code failAt}. */
-    public static final class Generate implements Step {
+    public static final class Generate implements Node {
         final int batches;
         final int rows;
         final int start;
@@ -70,17 +70,17 @@ public final class Toys {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             int k = sent.get();
             if (k >= batches) {
                 return false;
             }
             if (k == failAt) {
-                throw new StepException("generate broke");
+                throw new NodeException("generate broke");
             }
             try {
                 context.emit("out", batch(context.allocator(), start + k * rows, rows));
@@ -97,7 +97,7 @@ public final class Toys {
     }
 
     /** Passes each batch on; optionally slow, or failing after {@code failAfter} batches. */
-    public static final class Pass implements Step {
+    public static final class Pass implements Node {
         final long sleepMillis;
         final int failAfter;
         int seen;
@@ -117,11 +117,11 @@ public final class Toys {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             try {
                 VectorSchemaRoot b = context.input("in").take(context.allocator());
                 if (b == null) {
@@ -129,7 +129,7 @@ public final class Toys {
                 }
                 if (seen++ == failAfter) {
                     b.close();
-                    throw new StepException("pass broke");
+                    throw new NodeException("pass broke");
                 }
                 if (sleepMillis > 0) {
                     Thread.sleep(sleepMillis);
@@ -143,18 +143,18 @@ public final class Toys {
     }
 
     /** Sends even numbers to {@code even} and odd numbers to {@code odd}. */
-    public static final class Split implements Step {
+    public static final class Split implements Node {
         @Override
         public String type() {
             return "split";
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             try {
                 VectorSchemaRoot b = context.input().take(context.allocator());
                 if (b == null) {
@@ -187,18 +187,18 @@ public final class Toys {
     }
 
     /** Takes from every input on every port, whichever has a batch, and passes it on. */
-    public static final class Merge implements Step {
+    public static final class Merge implements Node {
         @Override
         public String type() {
             return "merge";
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             List<RowSet> all = new java.util.ArrayList<>();
             for (String port : context.inputPorts()) {
                 all.addAll(context.inputs(port));
@@ -217,7 +217,7 @@ public final class Toys {
     }
 
     /** Reads port {@code a} to its end, then port {@code b}, dropping the rows: the way a lookup reads. */
-    public static final class Sequential implements Step {
+    public static final class Sequential implements Node {
         private String port = "a";
 
         @Override
@@ -226,11 +226,11 @@ public final class Toys {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             try {
                 VectorSchemaRoot b = context.input(port).take(context.allocator());
                 if (b != null) {
@@ -248,8 +248,8 @@ public final class Toys {
         }
     }
 
-    /** Emits one batch, then waits a long time outside any row set, as a step waiting on a database does. */
-    public static final class Slow implements Step {
+    /** Emits one batch, then waits a long time outside any row set, as a node waiting on a database does. */
+    public static final class Slow implements Node {
         final AtomicBoolean closed = new AtomicBoolean();
         private boolean sent;
 
@@ -259,11 +259,11 @@ public final class Toys {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             try {
                 if (!sent) {
                     sent = true;
@@ -287,7 +287,7 @@ public final class Toys {
      * Collects the numbers it is given; optionally slow, scribbling over each batch before freeing
      * it, stopping after {@code limit} batches, failing, or leaking a batch.
      */
-    public static class Collect implements Step {
+    public static class Collect implements Node {
         final ConcurrentLinkedQueue<Integer> values = new ConcurrentLinkedQueue<>();
         final AtomicLong rows = new AtomicLong();
         final AtomicBoolean foreignMemory = new AtomicBoolean();
@@ -308,14 +308,14 @@ public final class Toys {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
             settings = context.settings();
             config = context.config();
             inputPorts = context.inputPorts();
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             if (batches == limit) {
                 return false;
             }
@@ -342,7 +342,7 @@ public final class Toys {
                     b.close();
                 }
                 if (++batches == failAfter) {
-                    throw new StepException("collect broke");
+                    throw new NodeException("collect broke");
                 }
                 return true;
             } catch (InterruptedException e) {

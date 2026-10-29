@@ -4,7 +4,7 @@ This guide shows you how to build a pipeline in Kilnmark: where pipelines live, 
 written, how saving keeps every version, how to run one and how to read what a run did.
 
 A pipeline reads rows from saved sources, changes them and writes them somewhere. Kilnmark checks
-it as you write it, runs it on a worker, records every step, and adds what it wrote to the
+it as you write it, runs it on a worker, records every node, and adds what it wrote to the
 catalogue with where it came from.
 
 ## Before you start
@@ -48,47 +48,47 @@ lines it changes in the YAML, so your comments, layout and every other setting s
 they were, and a change to the YAML redraws the canvas. Kilnmark remembers which tab you used last.
 
 The canvas uses the page's full width. On the left is a narrow rail with a button per folder of
-step types; the pipeline fills the rest, with an overview in its corner for finding your way
-around a large one. The selected step's settings open in a panel over the right of the canvas (below
+node types; the pipeline fills the rest, with an overview in its corner for finding your way
+around a large one. The selected node's settings open in a panel over the right of the canvas (below
 it on a narrow screen), and close with its **×** or when nothing is selected.
 
-### Adding and connecting steps
+### Adding and connecting nodes
 
-- **Add a step** by dragging its type from the list onto the canvas, or by choosing it: with a step
-  selected, the new step is added after it and reads from it.
-- **The step list** is in folders: Read, Write, Filter and route, Transform, Combine, Aggregate,
+- **Add a node** by dragging its type from the list onto the canvas, or by choosing it: with a node
+  selected, the new node is added after it and reads from it.
+- **The node list** is in folders: Read, Write, Filter and route, Transform, Combine, Aggregate,
   Quality, AI and Other, each with how many types it holds, and **Recently used** first with the
   last five types you added. The first button on the rail opens the whole list, with **Find a
-  step** to search every folder at once (the folders with a match open by themselves); choose a
+  node** to search every folder at once (the folders with a match open by themselves); choose a
   folder's icon on the rail to open the list at that folder. The list sits beside the canvas, which
-  narrows to make room, so it never covers your steps (on a phone it opens over the canvas). Folders
-  holding the steps your pipeline uses start open, and Kilnmark remembers in this browser which
+  narrows to make room, so it never covers your nodes (on a phone it opens over the canvas). Folders
+  holding the nodes your pipeline uses start open, and Kilnmark remembers in this browser which
   folders you open.
-- **Each step** shows its type, its id, a line summing up its settings, its input ports on the
-  left and output ports on the right, and how many problems it has. Hover over a step, or move the
+- **Each node** shows its type, its id, a line summing up its settings, its input ports on the
+  left and output ports on the right, and how many problems it has. Hover over a node, or move the
   focus to it, to see the columns leaving it.
-- **Connect steps** by dragging from an output port to an input port. A connection Kilnmark cannot
-  make is refused with the reason: a step reading from itself, a loop, or an input that already
-  reads from another step (combine rows with a union step instead). Lines for ports other than
+- **Connect nodes** by dragging from an output port to an input port. A connection Kilnmark cannot
+  make is refused with the reason: a node reading from itself, a loop, or an input that already
+  reads from another node (combine rows with a union node instead). Lines for ports other than
   `out` are dashed and labelled.
-- **Remove a connection** with **Disconnect** beside it in the settings of the step it feeds, or
+- **Remove a connection** with **Disconnect** beside it in the settings of the node it feeds, or
   click it and press Delete.
-- **Move** a step by dragging it. **Auto-layout** lays the steps out again from left to right.
+- **Move** a node by dragging it. **Auto-layout** lays the nodes out again from left to right.
   **Fit** shows the whole pipeline, however small that makes it; **Readable size** shows it at a
-  size you can read, from its first steps if it is too wide for that. The overview in the corner
+  size you can read, from its first nodes if it is too wide for that. The overview in the corner
   shows where you are: drag in it to move around.
-- **Duplicate** copies a step with its settings and inputs; **Delete step** removes it and its
+- **Duplicate** copies a node with its settings and inputs; **Delete node** removes it and its
   connections. **Undo** and **Redo** step back and forward through your changes, including a burst
   of typing in the YAML tab and loading the latest version; they are off while the canvas cannot
   change the pipeline.
 
-Where each step is drawn is kept at the end of the YAML, in a `layout` block. Kilnmark ignores it
-when it runs the pipeline, so moving steps never changes what a pipeline does, and **Run now** does
-not ask about unsaved changes that only move steps (saving them suggests the message "Moved
-steps"):
+Where each node is drawn is kept at the end of the YAML, in a `layout` block. Kilnmark ignores it
+when it runs the pipeline, so moving nodes never changes what a pipeline does, and **Run now** does
+not ask about unsaved changes that only move nodes (saving them suggests the message "Moved
+nodes"):
 
 ```yaml
-# Where the canvas draws each step. Kilnmark ignores this when it runs the pipeline.
+# Where the canvas draws each node. Kilnmark ignores this when it runs the pipeline.
 layout:
   customers: {x: 40, y: 120}
   tidy: {x: 320, y: 120}
@@ -96,34 +96,34 @@ layout:
 
 ### Settings
 
-Select a step to see its settings. Each has its help and, where there is one, its default; a
+Select a node to see its settings. Each has its help and, where there is one, its default; a
 setting left at its default is left out of the YAML.
 
 - On and off settings are switches; numbers, choices and text are fields and lists.
 - **Source** lists your saved sources; for a write, those that do not allow writing say so.
   **Table or file** suggests the tables and files of the chosen source.
-- Column settings offer the columns arriving at the step, as the last check worked them out, so
+- Column settings offer the columns arriving at the node, as the last check worked them out, so
   you choose rather than type. Before the columns are known you can type names.
 - Expressions (a filter's condition, computed columns, aggregate values, routes) have the arriving
   columns as buttons below them: choosing one puts its name where the cursor is.
-- A write step shows the settings of its source's writer, such as **Commit every N rows** for a
+- A write node shows the settings of its source's writer, such as **Commit every N rows** for a
   database or **Overwrite** for files, once you choose the source.
-- **Step id** renames the step, and the steps reading from it follow.
+- **Node id** renames the node, and the nodes reading from it follow.
 
-Problems the check finds show on the step (as a count), under the setting they are about, and in
-the problems list under the canvas. Choosing a problem in the list selects its step and moves to
+Problems the check finds show on the node (as a count), under the setting they are about, and in
+the problems list under the canvas. Choosing a problem in the list selects its node and moves to
 the setting. If the YAML cannot be read at all (a typing mistake in the YAML tab), the canvas shows
 the last pipeline that could be read, does not let you change it, and says so; fix the YAML to go
 on.
 
 ### After a run
 
-Once a run has finished, each step on the canvas shows the rows it passed on and how it ended
+Once a run has finished, each node on the canvas shows the rows it passed on and how it ended
 (Finished, Ended early, Stopped by the engine or Failed), and each connection its rows. Each write
 and each quality gate also shows its measured quality, as a percentage and a word (Good, Fair or
 Poor), and a gate what it did with the rows, such as "900 passed · 100 quarantined" (see
 [Quality gates](#quality-gates)), beside the score Kilnmark predicted for it (see
-[Predicted quality](#predicted-quality)). The steps table under the canvas, and the step's settings panel
+[Predicted quality](#predicted-quality)). The nodes table under the canvas, and the node's settings panel
 with its score per dimension and each rule's result, say the same in words.
 
 Each kind has its own look, and its own words, so none depends on colour: the rows (and
@@ -133,50 +133,50 @@ the prediction in a violet chip with a dashed edge and a sparkles icon, **Predic
 is an estimate; and a gate's counts as plain text. Each is on a line of its own.
 
 The canvas makes room for these lines and for the connections' labels: where a layout saved before
-the run is too tight, it moves steps apart on the screen only, and the YAML's `layout:` stays as it
-was. **Auto-layout** saves a layout with room for them, and moving a step saves where it is shown.
+the run is too tight, it moves nodes apart on the screen only, and the YAML's `layout:` stays as it
+was. **Auto-layout** saves a layout with room for them, and moving a node saves where it is shown.
 
-**While a run goes**, the canvas looks again every two seconds. Each step shows its rows so far
+**While a run goes**, the canvas looks again every two seconds. Each node shows its rows so far
 and how many it is handling a second ("19,814 out · 8,351 rows/s"), or "Waiting for rows", and
-each connection the rows that have crossed it. The step holding the run back says **Slowest**, in
+each connection the rows that have crossed it. The node holding the run back says **Slowest**, in
 a chip of its own with an hourglass, and has an orange edge: rows are queuing in front of it while
-the steps after it keep up, so it is the one to look at first (a slow query in a `read`, a
+the nodes after it keep up, so it is the one to look at first (a slow query in a `read`, a
 `lookup` against a large table, a `write` to a busy database).
 
 **Run now** runs the saved version. If you have changes that are not saved, Kilnmark says so first
 and asks you to confirm; save them to run them.
 
-### Preview a step
+### Preview a node
 
-To see the rows leaving a step before you run anything, right-click it (Ctrl+click on a Mac) and
+To see the rows leaving a node before you run anything, right-click it (Ctrl+click on a Mac) and
 choose **Preview rows**,
 or select it and open the **Preview** tab beside its settings. From the keyboard, press Shift+F10
-(or the menu key) on a step for the same menu. For a step with more than one output, such as a
+(or the menu key) on a node for the same menu. For a node with more than one output, such as a
 quality gate's **out** and **quarantine** or a filter's **out** and **rejected**, choose the
 **Output**; choose how many **Rows** to see (100 unless you choose another number, at most 1,000).
 
-The preview runs the pipeline as it is on the canvas, saved or not, but only the step and the steps
+The preview runs the pipeline as it is on the canvas, saved or not, but only the node and the nodes
 before it. Nothing is written: writes never run in a preview, and a gate's quarantined rows go
-nowhere. It shows the columns with their kinds, the rows, and how long it took. Each step before it
-stops as soon as the preview has its rows, so a preview of a large table is quick, unless a step
+nowhere. It shows the columns with their kinds, the rows, and how long it took. Each node before it
+stops as soon as the preview has its rows, so a preview of a large table is quick, unless a node
 before it has to read all its rows first: an aggregate, or a lookup's lookup side. The preview then
 says so, and a preview stops after 30 seconds. To try such a pipeline out, set a **Row limit** on
-the read step for a while.
+the read node for a while.
 
 Previews follow the same rules as previewing a source:
 
 - They are for stewards and admins. Each person runs one preview at a time and up to six a minute,
-  and a server runs two at once. A preview runs at most 50 steps, 10 of them reads; a step that holds
+  and a server runs two at once. A preview runs at most 50 nodes, 10 of them reads; a node that holds
   rows (an aggregate, a dedupe, a lookup or a union) is given a share of the preview's memory,
   whatever its own `memory_limit_mb` says.
 - Sources are reached as a run reaches them, with their saved credentials and the allowed hosts.
 - Columns marked sensitive can pass through a preview, kept, renamed or carried along, and are
-  masked (••••) for everyone but admins. But no step before the one you preview may look at their
+  masked (••••) for everyone but admins. But no node before the one you preview may look at their
   values: a calculation or condition that uses one, a cast, a group, dedupe or lookup key on one,
   or a quality gate with a rule on one. For everyone but admins such a preview is refused, and
-  says which step and column, because the rows shown, a value worked out from it, or even whether
-  the preview works, could give the values away. Preview the step before it, or ask an admin.
-- When a step fails, its message may quote values from the rows; if anything read has columns
+  says which node and column, because the rows shown, a value worked out from it, or even whether
+  the preview works, could give the values away. Preview the node before it, or ask an admin.
+- When a node fails, its message may quote values from the rows; if anything read has columns
   marked sensitive, only admins see it, as with a run's errors.
 
 The rows are read when you ask and not kept. After you change the pipeline, the preview says it is
@@ -184,45 +184,45 @@ out of date; choose **Preview again**.
 
 ### Using the keyboard
 
-Everything on the canvas can be done without a mouse. Press Tab to move from step to step (each
-step is described when it gets the focus), and on to its settings. Press `?` on the canvas for this
+Everything on the canvas can be done without a mouse. Press Tab to move from node to node (each
+node is described when it gets the focus), and on to its settings. Press `?` on the canvas for this
 list:
 
 | Keys | What they do |
 | --- | --- |
-| Tab, Shift+Tab | Move between steps, and on to the settings |
-| Arrow keys | Move to a connected step: right to the next, left to the one before; up and down to the step above or below |
-| Shift+arrow keys | Move the step on the canvas |
+| Tab, Shift+Tab | Move between nodes, and on to the settings |
+| Arrow keys | Move to a connected node: right to the next, left to the one before; up and down to the node above or below |
+| Shift+arrow keys | Move the node on the canvas |
 | Alt+arrow keys | Pan the canvas |
-| A | Open the step list at **Find a step**; type, Tab to the type and press Enter to add it after the selected step |
-| Arrow keys in the step list | Up and down through the folders and steps; Right opens a folder, Left closes it; Enter adds the step. On the rail, Right opens the list at that folder |
-| C | **Connect to…**: a list of the steps this step can send rows to or read rows from |
-| Enter | Go to the step's settings |
-| Shift+F10 or the menu key | The step's menu: **Preview rows**, **Settings**, **Connect to…**, **Duplicate**, **Remove** |
-| Delete or Backspace | Remove the step (or a connection you clicked) |
-| Ctrl+D | Duplicate the step |
+| A | Open the node list at **Find a node**; type, Tab to the type and press Enter to add it after the selected node |
+| Arrow keys in the node list | Up and down through the folders and nodes; Right opens a folder, Left closes it; Enter adds the node. On the rail, Right opens the list at that folder |
+| C | **Connect to…**: a list of the nodes this node can send rows to or read rows from |
+| Enter | Go to the node's settings |
+| Shift+F10 or the menu key | The node's menu: **Preview rows**, **Settings**, **Connect to…**, **Duplicate**, **Remove** |
+| Delete or Backspace | Remove the node (or a connection you clicked) |
+| Ctrl+D | Duplicate the node |
 | Ctrl+Z; Ctrl+Shift+Z or Ctrl+Y | Undo; redo |
 | + and - | Zoom in and out |
 | F | Fit the whole pipeline in view |
 | R | Readable size |
-| L | Lay the steps out again |
+| L | Lay the nodes out again |
 | Escape | Clear the selection, or close a list |
 
 On a Mac, use Cmd for Ctrl. These keys work on the canvas and its tools, not while you are in the
-settings or the step list. Connections are not in the Tab order: remove one with **Disconnect**
-in the settings, and add one with **Connect to…**. What each change did is announced to screen readers, the steps are
+settings or the node list. Connections are not in the Tab order: remove one with **Disconnect**
+in the settings, and add one with **Connect to…**. What each change did is announced to screen readers, the nodes are
 also listed as a table under the canvas, and the canvas does not animate when your system asks for
 reduced motion.
 
 ## YAML basics
 
-A pipeline starts with the format line and its name, then lists its steps:
+A pipeline starts with the format line and its name, then lists its nodes:
 
 ```yaml
 kilnmark: pipeline/v1
 name: customer-billing
 description: Monthly spend per customer.
-steps:
+nodes:
   - id: customers
     type: read
     source: sales-db
@@ -236,26 +236,26 @@ steps:
     mode: replace
 ```
 
-- Each step has an **id** (small letters, digits, `-` and `_`) and a **type**. The other keys are
-  the step's settings.
+- Each node has an **id** (small letters, digits, `-` and `_`) and a **type**. The other keys are
+  the node's settings.
 - An optional `quality:` block sets the pipeline's quality threshold (see
   [Quality of what a run writes](#quality-of-what-a-run-writes)).
-- **input** says which step feeds this one: `input: customers` takes that step's main output.
+- **input** says which node feeds this one: `input: customers` takes that node's main output.
   `input: joined.rejected` takes another output port, here the rows a lookup could not match.
-  A step with several inputs names each one: `inputs: {main: spend, lookup: customers}`.
-- Steps can be listed in any order; the inputs decide the order of work.
+  A node with several inputs names each one: `inputs: {main: spend, lookup: customers}`.
+- Nodes can be listed in any order; the inputs decide the order of work.
 - A key Kilnmark does not know is a problem, with its line, so typing mistakes are caught early.
 - Comments start with `#`.
 
 ### Reading
 
-The `read` step takes `source` (a saved source's name) and `asset`: a table or view as
+The `read` node takes `source` (a saved source's name) and `asset`: a table or view as
 `schema.table`, or a file's path inside the source. `row_limit` reads only the first rows, which
 is handy while you try a pipeline out; 0 reads them all.
 
 ### Writing
 
-The `write` step takes `source` and where to write: `table` for a database, `path` for a file
+The `write` node takes `source` and where to write: `table` for a database, `path` for a file
 (or `target` for either). Files also take `format`: `csv` or `parquet`.
 
 `mode` says what happens to what is already there:
@@ -267,25 +267,25 @@ The `write` step takes `source` and where to write: `table` for a database, `pat
 | `replace` | Writes the rows in place of what is there, swapping them in at the end. |
 | `upsert` | Updates rows with the same `key` and adds the rest. Needs `key`, such as `key: [customer_id]`. |
 
-A write step also takes the settings of the source's writer, such as `commit_every` for large
+A write node also takes the settings of the source's writer, such as `commit_every` for large
 table writes, `overwrite` and `delimiter` for files, `compression` for Parquet, and
-`profile_output: false` to skip profiling what is written. They are written beside the step's other
+`profile_output: false` to skip profiling what is written. They are written beside the node's other
 settings, as in [Writing data from a pipeline](writing-data.md), which describes them; a setting the
 source's writer does not take is a problem, with its line.
 
-The steps between reading and writing (filter, compute, select, lookup, aggregate, union, dedupe,
-route and limit) are described in [Pipeline steps and expressions](pipeline-steps.md). The quality
-gate is described below. The step
-catalogue (`GET /api/v1/steps`) lists every type this server has, with the settings each takes.
+The nodes between reading and writing (filter, compute, select, lookup, aggregate, union, dedupe,
+route and limit) are described in [Pipeline nodes and expressions](pipeline-nodes.md). The quality
+gate is described below. The node
+catalogue (`GET /api/v1/node-types`) lists every type this server has, with the settings each takes.
 
 ## Quality gates
 
-A `gate` step checks the rows passing through it against quality rules, in the same pass that moves
+A `gate` node checks the rows passing through it against quality rules, in the same pass that moves
 them: nothing is read twice. Its rules are
 
 - **the asset's own rules**: the enabled rules of the table or file read upstream, as stewards set
   them in **Quality** (on unless you set `asset_rules: false`). When rows reach the gate from more
-  than one read step, name the one whose rules apply with `rules_from: <read step id>`;
+  than one read node, name the one whose rules apply with `rules_from: <read node id>`;
 - **rules written on the gate**, for this pipeline only, under `rules`.
 
 ```yaml
@@ -387,7 +387,7 @@ stopped the run: rule 'email not null' failed on 120 of 9,000 rows (1.3%), more 
 If a rule's column does not arrive at the gate, the rule cannot run: it is shown as **Could not
 run** and does not fail the rows. A gate with no rows to check passes every check of rows, but a
 `row_count` with a `min` fails, and so does `freshness`: there is no latest value to be recent.
-If the run ends the gate's rows before it sees their end (another step failed), it shows what it
+If the run ends the gate's rows before it sees their end (another node failed), it shows what it
 checked so far and says it saw only the first rows.
 
 The gate always uses the rules as they are when the run starts. It checks every row: it does not yet
@@ -418,7 +418,7 @@ kilnmark: pipeline/v1
 name: customer-billing
 quality:
   min_score: 0.95
-steps:
+nodes:
   ...
 ```
 
@@ -432,25 +432,25 @@ quality, use a gate.
 Before a pipeline runs, Kilnmark predicts the quality of each write and gate from what the catalogue
 already knows about the tables and files it reads: their profiles (empty values, distinct values,
 value shapes, formats, most common values, spread), accepted patterns, relationships and rule
-results. No data is read. The estimate is carried through the steps, each with its own rule, and
+results. No data is read. The estimate is carried through the nodes, each with its own rule, and
 each write is then scored with the same measures a run uses for what it wrote, so the prediction
 and the measurement compare directly.
 
 On the canvas, each write and gate shows **Predicted ≈ 91%**, in a violet chip with a dashed edge (an estimate), a moment after you stop
 editing; select it to see the score per dimension, what a gate is expected to do with each rule,
-and what the estimate could not tell or had to assume. A read step that has not been scanned has
+and what the estimate could not tell or had to assume. A read node that has not been scanned has
 no profile, so what follows it is **unknown**: scan its source first. Kilnmark never fills a gap
 with a guess; a dimension it cannot judge has no score. The chip says how many things the estimate
-could not tell ("1 unknown"); the step's settings list them.
+could not tell ("1 unknown"); the node's settings list them.
 
 The estimate uses a column's values (its most common values and its spread) only when you may see
 them, as the Quality pages decide: not at all for viewers, and for a column marked sensitive only
 for admins. Otherwise what depends on them, such as how many rows `salary <= 50000` keeps, is
 unknown, so the estimate never gives the values away.
 
-How each step carries the estimate:
+How each node carries the estimate:
 
-| Step | Rule |
+| Node | Rule |
 | --- | --- |
 | `read` | The asset's latest profile; with `row_limit`, the first rows are taken to be like the rest |
 | `filter`, `route` | `is [not] null` drops the known share of empty values; `=`, `<>`, `in` use the column's most common values when they account for every value (for a number or time, a value not among them is unknown, since it may be written another way); `<`, `>`, `between` use its quantiles, and bounds on one column joined with `and` make one range; `regex_match` tests each value shape with several letters and digits, and is unknown when they disagree or the pattern names particular letters or digits; `not` leaves out the rows where its test is empty, as SQL does; other conditions joined with `and` and `or` are combined as if independent, which the estimate says. Anything else keeps an unknown share of rows. The columns not tested are taken to be spread the same in the rows kept |
@@ -466,11 +466,11 @@ How each step carries the estimate:
 When a run starts, each write's and gate's prediction is stored with it. The run's page then shows
 **measured beside predicted**, per dimension, with the gap and what it says: a wide gap means the
 catalogue's metadata, or the pipeline, needs attention (a source changed since its last scan, or a
-step does something the estimate could not see).
+node does something the estimate could not see).
 
 ### Suggestions
 
-**Suggestions** on the canvas toolbar lists steps that would raise a write's predicted score, each
+**Suggestions** on the canvas toolbar lists nodes that would raise a write's predicted score, each
 with its predicted effect (an estimate), such as "Predicted 89% → 94% (+5 points, estimate)":
 
 - trim the spaces from padded text columns;
@@ -483,16 +483,16 @@ with its predicted effect (an estimate), such as "Predicted 89% → 94% (+5 poin
 
 A suggestion that takes rows out (a dedupe, a gate, a lookup that drops rows with no match) also says
 how many fewer rows reach the write, since fewer rows can score higher. Choose **Add** to insert a
-suggestion's steps before the write: the YAML changes only where the steps go, and one **Undo** takes
+suggestion's nodes before the write: the YAML changes only where the nodes go, and one **Undo** takes
 it out again. Suggestions are for stewards and admins.
 
 When an admin sets a model for **Pipeline suggestions** under **AI models**, it ranks and explains
 the suggestions and may add its own. It sees metadata only (asset and column names, kinds, shares
 and value shapes, never a value from the data) and only of sources whose AI rule lets that model
 see them: a source set to `none` is never shown, and one set to `local_only` only to a local
-model. What it suggests is checked before it is shown: only step types this server has, settings
-those steps take, and columns that reach that point; anything else is left out, and the panel says
-how many. A step that would read another table is only shown to the model when that table's source allows it.
+model. What it suggests is checked before it is shown: only node types this server has, settings
+those nodes take, and columns that reach that point; anything else is left out, and the panel says
+how many. A node that would read another table is only shown to the model when that table's source allows it.
 The model is asked when the panel opens and when you choose **Ask again**, at most six times a minute
 for each person; after an edit or an **Add**, only Kilnmark's own suggestions are worked out again.
 Without a model, or when it is refused, slow or fails, the suggestions are Kilnmark's own and the
@@ -502,19 +502,19 @@ panel says why. Turn **Ask the AI model too** off to skip it.
 
 A moment after you stop typing, or after a change on the canvas, Kilnmark checks the pipeline.
 Under the canvas or the editor it says how many problems it found, and lists each one with its line
-and the step it is about. In the editor, lines with a problem are marked with `!` beside their
+and the node it is about. In the editor, lines with a problem are marked with `!` beside their
 number.
 
-- **Choose a problem** to move the cursor to its line (on the canvas: to select its step).
+- **Choose a problem** to move the cursor to its line (on the canvas: to select its node).
 - **Notes** do not stop a run. For example, a table that has not been scanned yet has columns
   Kilnmark only learns when the pipeline runs.
 - In the editor, Tab indents by two spaces. Press Escape and then Tab to move on to the next
   control.
 
-Beside the YAML, **Steps** draws the pipeline as a read-only graph: each step with its input ports
+Beside the YAML, **Nodes** draws the pipeline as a read-only graph: each node with its input ports
 on the left and output ports on the right, and lines from port to port. Hover over or move the
-focus to a step to see the columns leaving it. **Steps as a table** says the same in words; choose
-a step's id there to go to its line (or, on the canvas, to select it).
+focus to a node to see the columns leaving it. **Nodes as a table** says the same in words; choose
+a node's id there to go to its line (or, on the canvas, to select it).
 
 ## Saving versions
 
@@ -552,50 +552,50 @@ Open a run from the **Runs** list. The page updates itself until the run ends, a
 status changes.
 
 - **Summary:** the status, the version that ran, who asked, when it started and finished, how long
-  it took and how many rows its writes received. A failed run says why, naming the step where the
+  it took and how many rows its writes received. A failed run says why, naming the node where the
   failure started.
-- **The run at a glance:** four tiles: its **wall-clock time**, the **most steps at once**, the
-  **longest step** (while it runs, the slowest step now) and **what limited this run**. Every time
+- **The run at a glance:** four tiles: its **wall-clock time**, the **most nodes at once**, the
+  **longest node** (while it runs, the slowest node now) and **what limited this run**. Every time
   on the page counts from when the worker started on the run, by the worker's own clock.
-- **Where each step spent its time:** one bar per step, its whole time from start to end split into
-  **Working** (solid), **Waiting for rows** (light hatching: the steps before it had nothing for it)
-  and **Held up by the next step** (amber cross-hatching: the step after it was not keeping up, so
+- **Where each node spent its time:** one bar per node, its whole time from start to end split into
+  **Working** (solid), **Waiting for rows** (light hatching: the nodes before it had nothing for it)
+  and **Held up by the next node** (amber cross-hatching: the node after it was not keeping up, so
   there was no room to hand rows on; this is back-pressure). At the right, how much of its time it
   was working and what it did: a gate's verdict (Passed, Quarantined 229, Stopped the run), a
   write's measured quality (Quality 99% (Good)), else its rows. Above the bars one line says **what
-  limited this run**: of the steps that others were held up by, the one working the largest share
+  limited this run**: of the nodes that others were held up by, the one working the largest share
   of its time, such as "What limited this run: check, working 90% of the time". When nothing was
-  held up it says the run was limited by reading its source. Speed that step up (a simpler rule, a
+  held up it says the run was limited by reading its source. Speed that node up (a simpler rule, a
   smaller lookup, a faster target) and the run gets faster; speeding up the others does little.
-  **Show where each step spent its time as a table** gives the same in words. While the run goes
+  **Show where each node spent its time as a table** gives the same in words. While the run goes
   this is drawn from its latest progress.
-- **Rows per second through the run:** a line per step of the rows it handled each second, from
+- **Rows per second through the run:** a line per node of the rows it handled each second, from
   the snapshots taken every two seconds, with its peak at the right. Under it, an amber band shows
   how full its output queue was (**Held up**: the taller and stronger, the fuller; full means the
-  step was waiting for the next one), and the words "output queue full 78% of the time". Numbered
+  node was waiting for the next one), and the words "output queue full 78% of the time". Numbered
   marks on the time axis show the run's warnings and errors, and a gate starting to set rows aside,
   listed under the chart. Point at a line, or focus it and use the arrow keys, to read the time,
   rows a second and how full the queue was at that point. **Show rows a second as a table** gives
-  each step's peak, average and how often its output queue was full.
-- **Steps:** for each step, how it ended (Finished; Ended early, as a `limit` does once it has its
-  rows; Stopped by the engine, because another step failed or the run was stopped; or Failed), the
-  rows that came in and went out, with the count on each port when a step has several (for
+  each node's peak, average and how often its output queue was full.
+- **Nodes:** for each node, how it ended (Finished; Ended early, as a `limit` does once it has its
+  rows; Stopped by the engine, because another node failed or the run was stopped; or Failed), the
+  rows that came in and went out, with the count on each port when a node has several (for
   example, a filter's `out` and `rejected`), the most memory it held, how long it took and its
   share of the run's time, and its error if it failed. A write that was stopped wrote nothing, unless
-  it used `commit_every`. While the run goes, the table shows each step's rows so far and rows a
+  it used `commit_every`. While the run goes, the table shows each node's rows so far and rows a
   second instead.
-- **Log:** what happened, in order: the run starting, each step starting, its first row in and
+- **Log:** what happened, in order: the run starting, each node starting, its first row in and
   out, its last row out and how it ended, a gate starting to set rows aside and its verdict ("Gate
   check quarantined 229 rows (email format: 229)", the rules that failed and their counts; a rule's
   own message, which can quote the data, is its detail), warnings and errors, and the run's notes.
   The log is read again from the start when the run ends, so nothing written at the last moment is
-  missed. Choose a step,
+  missed. Choose a node,
   or **Warnings and errors** or **Errors only**, to narrow it, and **Download as text** (or
   **NDJSON**, one JSON object a line) to save it with the same choices. Where the engine's own
   message could quote values from your data, it shows only to those who may see why the run
   failed (stewards, or admins when the run touched columns marked sensitive); others see that it
   was held back. A run keeps up to 10,000 events; the log says if it was cut short.
-- **What it wrote:** each table or file a write step wrote, with its mode and rows. Choose one to
+- **What it wrote:** each table or file a write node wrote, with its mode and rows. Choose one to
   open it in the catalogue.
 - **Lineage:** which assets each written asset came from.
 

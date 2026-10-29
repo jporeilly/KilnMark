@@ -23,7 +23,7 @@ import java.util.function.BooleanSupplier;
 import org.jboss.logging.Logger;
 
 import io.kilnmark.kiln.RunResult;
-import io.kilnmark.kiln.StepFactories;
+import io.kilnmark.kiln.NodeFactories;
 import io.kilnmark.kiln.graph.Edge;
 import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.graph.PortRef;
@@ -38,28 +38,28 @@ import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 
 /**
- * Preview at a step (docs/design/pipelines.md, "Preview at a step"; docs/guide/pipelines.md,
- * "Preview a step"): the first rows leaving one output of one step, from the pipeline as it stands,
+ * Preview at a node (docs/design/pipelines.md, "Preview at a node"; docs/guide/pipelines.md,
+ * "Preview a node"): the first rows leaving one output of one node, from the pipeline as it stands,
  * on the API's own process while the person waits.
  *
- * <p>Only the chosen step and the steps upstream of it run, and only reads and the steps that work
- * on rows in memory may ({@link StepPreview#plan}); the chosen output feeds a collector that takes
- * the rows asked for and finishes, so the engine ends the steps before it early. Nothing is
+ * <p>Only the chosen node and the nodes upstream of it run, and only reads and the nodes that work
+ * on rows in memory may ({@link NodePreview#plan}); the chosen output feeds a collector that takes
+ * the rows asked for and finishes, so the engine ends the nodes before it early. Nothing is
  * written, stored or logged.
  *
  * <p>The same rules as previewing the sources involved: stewards and admins only (the resource
  * says so); reads resolve their saved sources as a run's do (credentials, allowed hosts) inside a
  * run context naming the caller; for all but admins, columns marked sensitive may only pass through
- * untouched and are masked where they leave, and a preview in which any step looks inside one is
- * refused ({@link StepPreview#hidden}); a failure's message, which may quote values, is held back
+ * untouched and are masked where they leave, and a preview in which any node looks inside one is
+ * refused ({@link NodePreview#hidden}); a failure's message, which may quote values, is held back
  * as a run's is.
  *
  * <p>Limits: one preview per person at a time and {@code previews-per-minute} (6) per person, and
  * {@code preview-concurrency} (2) at once in this process, all checked before any work;
- * {@code preview-max-steps} (50) and {@code preview-max-reads} (10); rows 1 to 1,000;
- * {@code preview-memory-limit-mb} (256) of Arrow memory, with each stateful step's own limit lowered
+ * {@code preview-max-nodes} (50) and {@code preview-max-reads} (10); rows 1 to 1,000;
+ * {@code preview-memory-limit-mb} (256) of Arrow memory, with each stateful node's own limit lowered
  * to its share of it; and {@code preview-timeout} (30 seconds) of wall-clock time. The work runs on
- * a thread of its own, so the request is answered in time whatever a step does: a preview still
+ * a thread of its own, so the request is answered in time whatever a node does: a preview still
  * stopping then ends in the background, its slot held until it has, and is logged and counted.
  */
 @ApplicationScoped
@@ -76,9 +76,9 @@ public class PipelinePreviews {
 
     /** The limits, from {@code kilnmark.pipelines.*}. */
     record Limits(long memoryBytes, int rowSetCapacity, Duration timeout, int perMinute, int concurrency,
-                  int maxYamlKb, int maxSteps, int maxReads, Duration grace, Duration stopWait) {
+                  int maxYamlKb, int maxNodes, int maxReads, Duration grace, Duration stopWait) {
 
-        /** The limits tests use most: 50 steps, 10 reads, 2 seconds' grace, 5 seconds to stop. */
+        /** The limits tests use most: 50 nodes, 10 reads, 2 seconds' grace, 5 seconds to stop. */
         Limits(long memoryBytes, int rowSetCapacity, Duration timeout, int perMinute, int concurrency, int maxYamlKb) {
             this(memoryBytes, rowSetCapacity, timeout, perMinute, concurrency, maxYamlKb, 50, 10, Duration.ofSeconds(2),
                 Duration.ofSeconds(5));
@@ -88,32 +88,32 @@ public class PipelinePreviews {
             KilnmarkConfig.Pipelines p = config.pipelines();
             return new Limits(Math.max(16, p.previewMemoryLimitMb()) << 20, Math.max(1, p.rowSetCapacity()),
                 p.previewTimeout(), Math.max(1, p.previewsPerMinute()), Math.max(1, p.previewConcurrency()),
-                Math.max(1, p.maxYamlKb()), Math.max(1, p.previewMaxSteps()), Math.max(1, p.previewMaxReads()),
+                Math.max(1, p.maxYamlKb()), Math.max(1, p.previewMaxNodes()), Math.max(1, p.previewMaxReads()),
                 Duration.ofSeconds(2), Duration.ofSeconds(5));
         }
 
-        StepPreview.Caps caps() {
-            return new StepPreview.Caps(maxSteps, maxReads, Math.max(1, memoryBytes >> 20));
+        NodePreview.Caps caps() {
+            return new NodePreview.Caps(maxNodes, maxReads, Math.max(1, memoryBytes >> 20));
         }
     }
 
-    private final StepFactories steps;
+    private final NodeFactories nodes;
     private final PipelineStore store;
     private final PipelineSources sources;
     private final Limits limits;
     private final CallerRate rate;
     private final Semaphore slots;
     private final Set<String> running = ConcurrentHashMap.newKeySet();
-    /** Previews answered while their steps were still stopping, not yet ended. */
+    /** Previews answered while their nodes were still stopping, not yet ended. */
     private final AtomicInteger stopping = new AtomicInteger();
 
     @Inject
-    public PipelinePreviews(StepFactories steps, PipelineStore store, PipelineSources sources, KilnmarkConfig config) {
-        this(steps, store, sources, Limits.of(config));
+    public PipelinePreviews(NodeFactories nodes, PipelineStore store, PipelineSources sources, KilnmarkConfig config) {
+        this(nodes, store, sources, Limits.of(config));
     }
 
-    PipelinePreviews(StepFactories steps, PipelineStore store, PipelineSources sources, Limits limits) {
-        this.steps = steps;
+    PipelinePreviews(NodeFactories nodes, PipelineStore store, PipelineSources sources, Limits limits) {
+        this.nodes = nodes;
         this.store = store;
         this.sources = sources;
         this.limits = limits;
@@ -121,28 +121,28 @@ public class PipelinePreviews {
         this.slots = new Semaphore(limits.concurrency());
     }
 
-    /** Previews answered while their steps were still stopping and not ended yet, for monitoring. */
+    /** Previews answered while their nodes were still stopping and not ended yet, for monitoring. */
     public int stillStopping() {
         return stopping.get();
     }
 
     /**
-     * Previews {@code step}'s output {@code port} of pipeline YAML as it stands, saved or not, for
+     * Previews {@code node}'s output {@code port} of pipeline YAML as it stands, saved or not, for
      * {@code caller} with {@code role}, masked through the request's {@code sights}. {@code abandoned}
      * says the HTTP request was closed.
      */
-    public PipelineViews.StepPreviewView preview(String yaml, String step, String port, Integer rows, String caller,
+    public PipelineViews.NodePreviewView preview(String yaml, String node, String port, Integer rows, String caller,
                                                  AccessRole role, Sights sights, BooleanSupplier abandoned) {
-        return preview(yaml, step, port, rows, caller, role, viewer(sights), abandoned);
+        return preview(yaml, node, port, rows, caller, role, viewer(sights), abandoned);
     }
 
     /** As {@link #preview}, for a saved version of a pipeline. */
-    public PipelineViews.StepPreviewView previewVersion(String name, int n, String step, String port, Integer rows,
+    public PipelineViews.NodePreviewView previewVersion(String name, int n, String node, String port, Integer rows,
                                                         String caller, AccessRole role, Sights sights,
                                                         BooleanSupplier abandoned) {
         PipelineStore.Version v = store.version(name, n).orElseThrow(() -> PipelineService.fail(
             Response.Status.NOT_FOUND, "There is no version " + n + " of a pipeline called " + name));
-        return preview(v.yaml(), step, port, rows, caller, role, viewer(sights), abandoned);
+        return preview(v.yaml(), node, port, rows, caller, role, viewer(sights), abandoned);
     }
 
     private static Viewer viewer(Sights sights) {
@@ -159,12 +159,12 @@ public class PipelinePreviews {
         };
     }
 
-    PipelineViews.StepPreviewView preview(String yaml, String step, String port, Integer rows, String caller,
+    PipelineViews.NodePreviewView preview(String yaml, String node, String port, Integer rows, String caller,
                                           AccessRole role, Viewer viewer, BooleanSupplier abandoned) {
         checkSize(yaml);
-        int n = rows == null ? StepPreview.DEFAULT_ROWS : rows;
-        if (n < 1 || n > StepPreview.MAX_ROWS) {
-            throw new IllegalArgumentException("rows: from 1 to " + StepPreview.MAX_ROWS);
+        int n = rows == null ? NodePreview.DEFAULT_ROWS : rows;
+        if (n < 1 || n > NodePreview.MAX_ROWS) {
+            throw new IllegalArgumentException("rows: from 1 to " + NodePreview.MAX_ROWS);
         }
         // Who may start one, before any work: one each at a time, a few at once, so many a minute.
         String who = caller == null || caller.isBlank() ? "anonymous" : caller;
@@ -183,7 +183,7 @@ public class PipelinePreviews {
                     throw PipelineService.fail(Response.Status.TOO_MANY_REQUESTS, "You have previewed "
                         + limits.perMinute() + " times in the last minute. Wait a minute, then try again.");
                 }
-                Prepared p = prepare(yaml, step, port, viewer);
+                Prepared p = prepare(yaml, node, port, viewer);
                 // handedOn is set once the job's thread has started: it then releases the slots.
                 return run(p, n, who, role == null ? AccessRole.STEWARD : role, viewer, abandoned, handedOn);
             } finally {
@@ -200,52 +200,52 @@ public class PipelinePreviews {
     }
 
     /** What is worked out before anything connects. */
-    private record Prepared(StepPreview.Plan plan, PipelineCompilerPort.Compilation checked, String port) {
+    private record Prepared(NodePreview.Plan plan, PipelineCompilerPort.Compilation checked, String port) {
     }
 
-    private Prepared prepare(String yaml, String step, String port, Viewer viewer) {
-        StepPreview.Plan plan = StepPreview.plan(yaml, step, limits.caps());
-        PipelineCompilerPort.Compilation checked = KilnPipelineCompiler.compile(plan.definition(), steps, false);
+    private Prepared prepare(String yaml, String node, String port, Viewer viewer) {
+        NodePreview.Plan plan = NodePreview.plan(yaml, node, limits.caps());
+        PipelineCompilerPort.Compilation checked = KilnPipelineCompiler.compile(plan.definition(), nodes, false);
         if (!checked.valid()) {
-            throw new IllegalArgumentException("Fix the pipeline before previewing " + plan.step() + ": "
+            throw new IllegalArgumentException("Fix the pipeline before previewing " + plan.node() + ": "
                 + problems(checked.problems()));
         }
-        String out = StepPreview.port(checked, plan.step(), port);
+        String out = NodePreview.port(checked, plan.node(), port);
         // Refused before anything connects, by the reads as their settings name them; checked again
         // once the reads are resolved (a table's name in the database's own case, say).
         try {
-            StepPreview.hidden(checked, readHidden(checked, null, viewer), gateFields(checked, null), plan.step());
-        } catch (StepPreview.Refused e) {
+            NodePreview.hidden(checked, readHidden(checked, null, viewer), gateFields(checked, null), plan.node());
+        } catch (NodePreview.Refused e) {
             throw PipelineService.fail(Response.Status.FORBIDDEN, e.getMessage());
         }
         return new Prepared(plan, checked, out);
     }
 
-    /** One preview's work on its own thread: create the steps, wait for the go-ahead, run them. */
+    /** One preview's work on its own thread: create the nodes, wait for the go-ahead, run them. */
     private final class Job {
         final CompletableFuture<PipelineCompilerPort.Compilation> created = new CompletableFuture<>();
         /** The columns to mask, to run; null not to run. */
-        final CompletableFuture<StepPreview.Hidden> go = new CompletableFuture<>();
-        final CompletableFuture<StepPreview.Outcome> done = new CompletableFuture<>();
+        final CompletableFuture<NodePreview.Hidden> go = new CompletableFuture<>();
+        final CompletableFuture<NodePreview.Outcome> done = new CompletableFuture<>();
         /** Answered while its thread was still running: it is counted and logged when it ends. */
         final AtomicBoolean orphaned = new AtomicBoolean();
         /** Its thread has given the slots back (guarded by the job). */
         boolean finished;
         volatile Thread thread;
-        /** The engine running it, for the steps it stopped waiting for. */
+        /** The engine running it, for the nodes it stopped waiting for. */
         final java.util.concurrent.atomic.AtomicReference<io.kilnmark.kiln.graph.KilnGraphRunner> runner =
             new java.util.concurrent.atomic.AtomicReference<>();
     }
 
-    private PipelineViews.StepPreviewView run(Prepared p, int rows, String who, AccessRole role, Viewer viewer,
+    private PipelineViews.NodePreviewView run(Prepared p, int rows, String who, AccessRole role, Viewer viewer,
                                               BooleanSupplier abandoned, AtomicBoolean handedOn) {
-        StepPreview.Plan plan = p.plan();
+        NodePreview.Plan plan = p.plan();
         RunContext context = new RunContext(plan.definition().name(), 0, who, role);
         long started = System.nanoTime();
         long deadline = started + limits.timeout().toNanos();
-        List<String> waits = StepPreview.waits(p.checked());
+        List<String> waits = NodePreview.waits(p.checked());
         Job job = new Job();
-        job.thread = Thread.ofVirtual().name("kilnmark-preview-" + plan.step()).unstarted(() -> work(job, context, p,
+        job.thread = Thread.ofVirtual().name("kilnmark-preview-" + plan.node()).unstarted(() -> work(job, context, p,
             rows, who, started));
         job.thread.start();
         handedOn.set(true);
@@ -254,12 +254,12 @@ public class PipelinePreviews {
             if (!c.valid() || c.graph() == null) {
                 throw PreviewFailed.of(context.scrub("The preview could not start: " + problems(c.problems())));
             }
-            StepPreview.Hidden masks;
+            NodePreview.Hidden masks;
             Map<String, Set<String>> hidden;
             try {
                 hidden = readHidden(c, context, viewer);
-                masks = StepPreview.hidden(c, hidden, gateFields(c, context), plan.step());
-            } catch (StepPreview.Refused e) {
+                masks = NodePreview.hidden(c, hidden, gateFields(c, context), plan.node());
+            } catch (NodePreview.Refused e) {
                 throw PipelineService.fail(Response.Status.FORBIDDEN, e.getMessage());
             } catch (RuntimeException e) {
                 checkStop(deadline, abandoned, waits); // out of time while looking: say so, not a server error
@@ -268,24 +268,24 @@ public class PipelinePreviews {
             checkStop(deadline, abandoned, waits);
             boolean marked = !viewer.mayUnmask() && hidden.values().stream().anyMatch(s -> !s.isEmpty());
             job.go.complete(masks);
-            StepPreview.Outcome o = await(job, job.done, deadline, abandoned, waits);
+            NodePreview.Outcome o = await(job, job.done, deadline, abandoned, waits);
             RunResult result = o.result();
             if (result.status() != RunResult.Status.SUCCEEDED) {
-                String at = result.steps().stream().filter(s -> s.outcome() == RunResult.Outcome.FAILED)
-                    .map(RunResult.StepResult::name).filter(s -> !StepPreview.COLLECTOR.equals(s)).findFirst()
+                String at = result.nodes().stream().filter(s -> s.outcome() == RunResult.Outcome.FAILED)
+                    .map(RunResult.NodeResult::name).filter(s -> !NodePreview.COLLECTOR.equals(s)).findFirst()
                     .orElse(null);
                 // Its words may quote values from the rows: held back as a run's are.
-                throw PreviewFailed.of(marked ? "The preview stopped" + (at == null ? "" : " at step " + at) + ". "
+                throw PreviewFailed.of(marked ? "The preview stopped" + (at == null ? "" : " at node " + at) + ". "
                     + PipelineService.FOR_ADMINS : context.scrub(result.error()));
             }
-            return view(c, plan.step(), p.port(), o.rows(), (System.nanoTime() - started) / 1_000_000, waits);
+            return view(c, plan.node(), p.port(), o.rows(), (System.nanoTime() - started) / 1_000_000, waits);
         } catch (Stop s) {
             end(job, true);
             throw stopped(s.why, waits);
         } catch (PreviewFailed e) {
             throw unprocessable(e.getMessage());
         } finally {
-            end(job, false); // a job not told to run closes its steps; one still running is stopped
+            end(job, false); // a job not told to run closes its nodes; one still running is stopped
         }
     }
 
@@ -293,27 +293,27 @@ public class PipelinePreviews {
     private void work(Job job, RunContext context, Prepared p, int rows, String who, long started) {
         try {
             PipelineCompilerPort.Compilation c = context.run(() -> KilnPipelineCompiler.compile(p.plan().definition(),
-                steps, true));
+                nodes, true));
             job.created.complete(c);
             PipelineGraph graph = c.graph();
             if (graph == null) {
                 return;
             }
-            StepPreview.Hidden masks;
+            NodePreview.Hidden masks;
             try {
                 masks = job.go.get();
             } catch (InterruptedException e) {
                 masks = null;
             }
             if (masks == null) {
-                PipelineExecution.closeSteps(graph);
+                PipelineExecution.closeNodes(graph);
                 return;
             }
             try {
-                job.done.complete(StepPreview.run(graph, p.plan().step(), p.port(), rows, masks, limits.memoryBytes(),
+                job.done.complete(NodePreview.run(graph, p.plan().node(), p.port(), rows, masks, limits.memoryBytes(),
                     limits.rowSetCapacity(), limits.timeout(), limits.stopWait(), job.runner));
             } catch (IllegalArgumentException e) {
-                PipelineExecution.closeSteps(graph); // refused before its steps started
+                PipelineExecution.closeNodes(graph); // refused before its nodes started
                 job.done.completeExceptionally(PreviewFailed.of(context.scrub("The preview could not start: "
                     + e.getMessage())));
             }
@@ -323,7 +323,7 @@ public class PipelinePreviews {
         } finally {
             job.created.completeExceptionally(new IllegalStateException("ended"));
             job.done.completeExceptionally(new IllegalStateException("ended"));
-            // Steps the engine stopped waiting for still hold their slot until they end.
+            // Nodes the engine stopped waiting for still hold their slot until they end.
             io.kilnmark.kiln.graph.KilnGraphRunner runner = job.runner.get();
             for (Thread left : runner == null ? List.<Thread>of() : runner.threadsLeftRunning()) {
                 boolean again = false;
@@ -335,7 +335,7 @@ public class PipelinePreviews {
                     }
                 }
                 if (again) {
-                    LOG.debug("interrupted while a preview's step ended");
+                    LOG.debug("interrupted while a preview's node ended");
                 }
             }
             slots.release();
@@ -345,7 +345,7 @@ public class PipelinePreviews {
                 if (job.orphaned.get()) {
                     int left = stopping.updateAndGet(x -> Math.max(0, x - 1));
                     LOG.infof("A preview at %s ended %d ms after it started, after its request had been answered; "
-                        + "previews still stopping: %d", p.plan().step(), (System.nanoTime() - started) / 1_000_000,
+                        + "previews still stopping: %d", p.plan().node(), (System.nanoTime() - started) / 1_000_000,
                         left);
                 }
             }
@@ -376,7 +376,7 @@ public class PipelinePreviews {
         synchronized (job) {
             if (!ended && !job.finished && job.orphaned.compareAndSet(false, true)) {
                 int now = stopping.incrementAndGet();
-                LOG.warnf("A preview's steps had not stopped %s after it was answered; left to end on its own "
+                LOG.warnf("A preview's nodes had not stopped %s after it was answered; left to end on its own "
                     + "(previews still stopping: %d)", limits.grace(), now);
             }
         }
@@ -442,7 +442,7 @@ public class PipelinePreviews {
     }
 
     /**
-     * Each read step's columns hidden from the caller (none for an admin), under every URN its asset
+     * Each read node's columns hidden from the caller (none for an admin), under every URN its asset
      * may be catalogued by: as the settings name it, as the catalogue escapes a file's path, and, with
      * {@code context}, as its connector resolved it.
      */
@@ -452,8 +452,8 @@ public class PipelinePreviews {
         if (viewer.mayUnmask()) {
             return out;
         }
-        for (PipelineCompilerPort.StepOutline s : c.steps()) {
-            if (!ReadStepFactory.TYPE.equals(s.type())) {
+        for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
+            if (!ReadNodeFactory.TYPE.equals(s.type())) {
                 continue;
             }
             Map<String, Object> config = c.configs().getOrDefault(s.id(), Map.of());
@@ -468,9 +468,9 @@ public class PipelinePreviews {
         String source = PipelineSources.text(readConfig, "source");
         String asset = PipelineSources.text(readConfig, "asset");
         Set<String> urns = new LinkedHashSet<>();
-        urns.add(ReadStepFactory.urn(readConfig));
+        urns.add(ReadNodeFactory.urn(readConfig));
         if (asset != null) {
-            urns.add(PipelineSources.urn(source, ReadStepFactory.escapedFilePath(asset)));
+            urns.add(PipelineSources.urn(source, ReadNodeFactory.escapedFilePath(asset)));
         }
         if (context != null) {
             urns.add(context.readUrn(source, asset, null));
@@ -487,12 +487,12 @@ public class PipelinePreviews {
     private Map<String, Set<String>> gateFields(PipelineCompilerPort.Compilation c, RunContext context) {
         Map<String, Set<String>> out = new LinkedHashMap<>();
         Map<String, String> types = new LinkedHashMap<>();
-        c.steps().forEach(s -> types.putIfAbsent(s.id(), s.type()));
+        c.nodes().forEach(s -> types.putIfAbsent(s.id(), s.type()));
         List<Edge> edges = new ArrayList<>();
-        c.edges().forEach(e -> edges.add(new Edge(new PortRef(e.fromStep(), e.fromPort()), new PortRef(e.toStep(),
+        c.edges().forEach(e -> edges.add(new Edge(new PortRef(e.fromNode(), e.fromPort()), new PortRef(e.toNode(),
             e.toPort()))));
-        for (PipelineCompilerPort.StepOutline s : c.steps()) {
-            if (!GateStepFactory.TYPE.equals(s.type())) {
+        for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
+            if (!GateNodeFactory.TYPE.equals(s.type())) {
                 continue;
             }
             Map<String, Object> config = c.configs().getOrDefault(s.id(), Map.of());
@@ -501,8 +501,8 @@ public class PipelinePreviews {
                 for (Rule r : GateRules.read(config.get("rules"), null)) {
                     ruleColumns(r, fields);
                 }
-                if (GateStepFactory.assetRules(config)) {
-                    GateStepFactory.Upstream up = GateStepFactory.upstream(s.id(), config, edges, types);
+                if (GateNodeFactory.assetRules(config)) {
+                    GateNodeFactory.Upstream up = GateNodeFactory.upstream(s.id(), config, edges, types);
                     if (up.read() != null) {
                         for (String urn : readUrns(c.configs().getOrDefault(up.read(), Map.of()), context)) {
                             for (Rule r : sources == null ? List.<Rule>of() : sources.rules(urn)) {
@@ -542,13 +542,13 @@ public class PipelinePreviews {
         }
     }
 
-    private static PipelineViews.StepPreviewView view(PipelineCompilerPort.Compilation c, String step, String port,
-                                                      StepPreview.Collector rows, long millis, List<String> waits) {
+    private static PipelineViews.NodePreviewView view(PipelineCompilerPort.Compilation c, String node, String port,
+                                                      NodePreview.Collector rows, long millis, List<String> waits) {
         List<PipelineViews.PreviewColumn> columns = new ArrayList<>();
         if (!rows.fields.isEmpty()) {
             rows.fields.forEach(f -> columns.add(new PipelineViews.PreviewColumn(f.getName(), ArrowKinds.kind(f), null)));
         } else {
-            c.steps().stream().filter(s -> s.id().equals(step)).findFirst()
+            c.nodes().stream().filter(s -> s.id().equals(node)).findFirst()
                 .map(s -> s.columns().get(port)).ifPresent(known -> known.forEach(k ->
                     columns.add(new PipelineViews.PreviewColumn(k.name(), k.type(), null))));
         }
@@ -558,7 +558,7 @@ public class PipelinePreviews {
                 masked.add(columns.get(i).name());
             }
         }
-        return new PipelineViews.StepPreviewView(step, port, step + "." + port, columns, List.copyOf(rows.rows),
+        return new PipelineViews.NodePreviewView(node, port, node + "." + port, columns, List.copyOf(rows.rows),
             rows.rows.size(), rows.truncated, Map.of(), rows.complete && !rows.truncated, millis, masked, waits);
     }
 
@@ -570,7 +570,7 @@ public class PipelinePreviews {
         return unprocessable("The preview took longer than " + seconds + (seconds == 1 ? " second" : " seconds")
             + ", so it was stopped."
             + (waits.isEmpty() ? "" : " " + String.join(" ", waits))
-            + " Preview a step nearer the start, or set a row limit on the read step while you try the pipeline out.");
+            + " Preview a node nearer the start, or set a row limit on the read node while you try the pipeline out.");
     }
 
     /** 422: the request was understood, but the preview could not give rows. */

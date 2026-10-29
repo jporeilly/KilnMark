@@ -21,7 +21,7 @@ v0.1 proves the core loop: point the engine at a source, and it ingests metadata
 
 - Metadata graph in PostgreSQL: DataSource, Asset, Field, Profile, Run, with URNs and the assertion envelope
 - REST API with OpenAPI spec and token auth
-- Java 21 engine: step plugin interface, Arrow row sets, YAML pipelines, local runner
+- Java 21 engine: node plugin interface, Arrow row sets, YAML pipelines, local runner
 - Connectors: PostgreSQL, SQL Server, local files (CSV, Parquet, JSON), S3-compatible object storage
 - Incremental ingest using change markers
 - In-stream profiling with mergeable sketches
@@ -68,15 +68,15 @@ Each sprint builds on the last: graph before engine, engine before connectors, c
 | 7 | URN scheme and assertion envelope | S1 | Graph and API | Not started |
 | 8 | REST CRUD for sources, assets, fields | S1 | Graph and API | Not started |
 | 9 | OpenAPI spec and token auth | S1 | Graph and API | Not started |
-| 10 | Step plugin interface and plugin loader | S2 | Engine | Not started |
+| 10 | Node plugin interface and plugin loader | S2 | Engine | Not started |
 | 11 | Arrow row sets with back-pressure | S2 | Engine | Not started |
 | 12 | YAML pipeline format and validator | S2 | Engine | Not started |
-| 13 | Local runner, flow paths, run records, PostgreSQL job queue (SKIP LOCKED) | S2 | Engine | Not started |
+| 13 | Local runner, flow connections, run records, PostgreSQL job queue (SKIP LOCKED) | S2 | Engine | Not started |
 | 14 | JDBC connector: PostgreSQL, SQL Server (database dialects adapted from Kettle 10.2) | S3 | Connectors | Not started |
 | 15 | File connector: CSV, Parquet, JSON | S3 | Connectors | Not started |
 | 16 | S3-compatible object storage connector | S3 | Connectors | Not started |
 | 17 | Change markers for incremental ingest | S3 | Connectors | Not started |
-| 18 | Profiling step with Apache DataSketches: stats, top-N, inferred formats | S4 | Profiling | Not started |
+| 18 | Profiling node with Apache DataSketches: stats, top-N, inferred formats | S4 | Profiling | Not started |
 | 19 | HyperLogLog and quantile sketches, profile merge | S4 | Profiling | Not started |
 | 20 | Profile versions and basic drift diff | S4 | Profiling | Not started |
 | 21 | PostgreSQL full-text and trigram search API behind a SearchIndex interface | S5 | Search and UI | Not started |
@@ -105,8 +105,8 @@ One mono-repo, one build, one Compose file: the whole product runs from a clean 
 
 ```
 kilnmark/
-  kiln-core/          step SPI, Arrow row sets, runner, flow paths
-  kiln-plugins/       connectors and profiling steps
+  kiln-core/          node SPI, Arrow row sets, runner, flow connections
+  kiln-plugins/       connectors and profiling nodes
   graph/              schema, migrations, URNs, assertion envelope
   api/                REST service (Quarkus)
   ui/                 React + TypeScript

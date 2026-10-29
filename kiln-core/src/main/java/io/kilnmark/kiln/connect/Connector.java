@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 
 /**
  * A kind of data source: how to list what it holds, and how to read one asset as Arrow batches.
@@ -58,12 +58,12 @@ public interface Connector {
     }
 
     /**
-     * The first step of the pipeline that reads {@code asset}: it puts Arrow batches on its output
+     * The first node of the pipeline that reads {@code asset}: it puts Arrow batches on its output
      * and, when it finishes, reports the rows it read as a {@code ROW_COUNT} event for
-     * {@code read.assetUrn()} with attributes {@code rows} and {@code complete}. The step's
+     * {@code read.assetUrn()} with attributes {@code rows} and {@code complete}. The node's
      * settings may hold the source's secret; they are never logged.
      */
-    StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read);
+    NodeSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read);
 
     /**
      * This connector set up with the server's settings for connectors. The registry calls it once,
@@ -391,7 +391,7 @@ public interface Connector {
     }
 
     /**
-     * A step that writes the rows it receives on its {@code in} port to {@code source}
+     * A node that writes the rows it receives on its {@code in} port to {@code source}
      * (docs/design/pipelines.md, section 4). Connectors that can write list
      * {@link Capability#WRITE} in {@link #capabilities()} and override this; the default refuses.
      * The caller (the pipeline service) has already checked that the source allows writing and
@@ -400,12 +400,12 @@ public interface Connector {
      * @param write what to write and how; see {@link WriteOptions}
      * @throws ConnectorException if this connector cannot write, or the options are wrong for it
      */
-    default io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+    default io.kilnmark.kiln.Node writer(SourceConfig source, WriteOptions write) throws ConnectorException {
         throw new ConnectorException(displayName() + " sources cannot be written to yet");
     }
 
     /**
-     * The further settings a {@code write} step to this kind of source accepts (the keys of
+     * The further settings a {@code write} node to this kind of source accepts (the keys of
      * {@link WriteOptions#options()}), with their kind, default and help, so the pipeline service
      * can pass only these and the canvas can show them. Empty (the default) for connectors that
      * cannot write.
@@ -418,7 +418,7 @@ public interface Connector {
      * Problems with a write to this source, found without connecting to anything: the target, the
      * mode, the settings, and whether the source can read back what would be written (for example a
      * CSV delimiter other than the source's). Empty when the write may be tried. Each problem starts
-     * with the setting it is about. The default asks {@link #writer} for the step and reports its
+     * with the setting it is about. The default asks {@link #writer} for the node and reports its
      * refusal; connectors whose {@code writer} connects override it.
      */
     default List<String> checkWrite(SourceConfig source, WriteOptions write) {
@@ -443,22 +443,22 @@ public interface Connector {
     }
 
     /**
-     * Where and how a pipeline's {@code write} step writes.
+     * Where and how a pipeline's {@code write} node writes.
      *
      * @param target    a table ({@code schema.table}) for databases, or a path inside the source for
      *                  files and object storage
      * @param mode      {@code create}, {@code append}, {@code replace} or {@code upsert}
      * @param key       the key columns for {@code upsert}; empty otherwise
      * @param format    for files: {@code csv} or {@code parquet}; null for databases
-     * @param options   any further step settings from the pipeline YAML, as written; only the keys in
+     * @param options   any further node settings from the pipeline YAML, as written; only the keys in
      *                  {@link Connector#writeOptions()} are read
      * @param assetUrn  the URN the written asset is recorded under, for metadata and lineage
      * @param profiling how to profile what is written, set by the server from the source's own
-     *                  profiling settings: the settings a scan gives the profile step
+     *                  profiling settings: the settings a scan gives the profile node
      *                  ({@code keep-values}, {@code examples}, {@code sample-size},
      *                  {@code sample-mode}, {@code sample-key}, {@code sample-seed},
      *                  {@code sample-max-bytes}, {@code sketch-fields}); never from the YAML.
-     *                  Empty: the profile step's defaults
+     *                  Empty: the profile node's defaults
      */
     record WriteOptions(String target, String mode, java.util.List<String> key, String format,
                         Map<String, Object> options, String assetUrn, Map<String, String> profiling) {
@@ -468,7 +468,7 @@ public interface Connector {
             profiling = profiling == null ? Map.of() : Map.copyOf(profiling);
         }
 
-        /** Without profiling settings: the profile step's defaults apply. */
+        /** Without profiling settings: the profile node's defaults apply. */
         public WriteOptions(String target, String mode, java.util.List<String> key, String format,
                             Map<String, Object> options, String assetUrn) {
             this(target, mode, key, format, options, assetUrn, Map.of());
@@ -496,7 +496,7 @@ public interface Connector {
     record Setting(String key, String label, boolean required, String hint, boolean multiple,
                    io.kilnmark.kiln.SettingSpec.Kind kind, List<String> choices, String defaultValue) {
 
-        /** The kinds a connector setting may have: the step kinds that fit a stored text value, and URL. */
+        /** The kinds a connector setting may have: the node kinds that fit a stored text value, and URL. */
         public static final Set<io.kilnmark.kiln.SettingSpec.Kind> KINDS = Set.of(io.kilnmark.kiln.SettingSpec.Kind.TEXT,
             io.kilnmark.kiln.SettingSpec.Kind.NUMBER, io.kilnmark.kiln.SettingSpec.Kind.BOOLEAN,
             io.kilnmark.kiln.SettingSpec.Kind.CHOICE, io.kilnmark.kiln.SettingSpec.Kind.URL);

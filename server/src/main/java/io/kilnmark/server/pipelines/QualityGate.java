@@ -15,9 +15,9 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.Field;
 
 import io.kilnmark.kiln.RowSet;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.plugins.profile.CellText;
 import io.kilnmark.server.quality.Dimension;
 import io.kilnmark.server.quality.RowChecks;
@@ -25,7 +25,7 @@ import io.kilnmark.server.quality.Rule;
 import io.kilnmark.server.quality.Scores;
 
 /**
- * The running {@code gate} step (docs/design/data-quality.md section 7): checks every row against
+ * The running {@code gate} node (docs/design/data-quality.md section 7): checks every row against
  * its rules as the rows stream past, in the one pass the pipeline makes anyway, and then
  * <ul>
  *   <li>{@link OnFail#STOP}: passes every row on {@code out}; at the end, fails the run when a rule
@@ -40,7 +40,7 @@ import io.kilnmark.server.quality.Scores;
  * </ul>
  * After the run, {@link #outcome()} says what it found, for the run's measured quality.
  */
-final class QualityGate implements Step {
+final class QualityGate implements Node {
 
     static final String TYPE = "gate";
     static final List<String> PORTS = List.of("out", "quarantine");
@@ -61,7 +61,7 @@ final class QualityGate implements Step {
     record GateRule(Rule rule, String origin) {
     }
 
-    /** The asset's rules, looked up when the step starts. */
+    /** The asset's rules, looked up when the node starts. */
     interface AssetRules {
         /** The asset read upstream whose rules apply, or null for none. */
         String urn();
@@ -117,10 +117,10 @@ final class QualityGate implements Step {
     private volatile Outcome outcome;
     private String name = "gate";
 
-    /** Finds the asset whose rules apply, given the step's id in its pipeline; null for none. */
+    /** Finds the asset whose rules apply, given the node's id in its pipeline; null for none. */
     @FunctionalInterface
     interface AssetRulesLookup {
-        AssetRules find(String stepId);
+        AssetRules find(String nodeId);
     }
 
     QualityGate(OnFail onFail, Double minScore, Double maxFailingShare, List<Rule> inline, boolean assetRules,
@@ -144,7 +144,7 @@ final class QualityGate implements Step {
     }
 
     /**
-     * A gate whose rows were cut short (a step after it ended early, or the run stopped elsewhere)
+     * A gate whose rows were cut short (a node after it ended early, or the run stopped elsewhere)
      * never reaches {@link #finish}: what it checked is judged here so the run still shows it, and
      * marked incomplete. It can no longer stop anything.
      */
@@ -159,8 +159,8 @@ final class QualityGate implements Step {
     }
 
     @Override
-    public void init(StepContext context) throws StepException {
-        name = context.stepName();
+    public void init(NodeContext context) throws NodeException {
+        name = context.nodeName();
         rules = new ArrayList<>();
         asset = assetRules && lookup != null ? lookup.find(name) : null;
         if (asset != null) {
@@ -175,13 +175,13 @@ final class QualityGate implements Step {
     }
 
     @Override
-    public boolean process(StepContext ctx) throws StepException {
+    public boolean process(NodeContext ctx) throws NodeException {
         VectorSchemaRoot batch;
         try {
             batch = ctx.input("in").take(ctx.allocator());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StepException("Interrupted", e);
+            throw new NodeException("Interrupted", e);
         }
         if (batch == null) {
             finish();
@@ -192,13 +192,13 @@ final class QualityGate implements Step {
             target = check(batch);
         } catch (RuntimeException e) {
             batch.close();
-            throw new StepException("Checking rules failed: " + e.getMessage(), e);
+            throw new NodeException("Checking rules failed: " + e.getMessage(), e);
         }
         String early = onFail == OnFail.STOP ? certainFailure() : null;
         if (early != null) {
             batch.close();
             outcome = judge(early);
-            throw new StepException(early);
+            throw new NodeException(early);
         }
         distribute(ctx, batch, target);
         return true;
@@ -278,11 +278,11 @@ final class QualityGate implements Step {
     }
 
     /** At the end of the rows: every rule's result, the score and the decision; stops the run if it must. */
-    void finish() throws StepException {
+    void finish() throws NodeException {
         Outcome o = judge(null);
         outcome = o;
         if (o.stopReason() != null) {
-            throw new StepException(o.stopReason());
+            throw new NodeException(o.stopReason());
         }
     }
 
@@ -414,7 +414,7 @@ final class QualityGate implements Step {
     }
 
     /** Rows to {@code out} or {@code quarantine}: a batch going one way whole is handed on as it is. */
-    private static void distribute(StepContext ctx, VectorSchemaRoot batch, int[] target) throws StepException {
+    private static void distribute(NodeContext ctx, VectorSchemaRoot batch, int[] target) throws NodeException {
         boolean handedOver = false;
         try {
             int n = batch.getRowCount();
@@ -448,13 +448,13 @@ final class QualityGate implements Step {
         }
     }
 
-    private static void emit(StepContext ctx, String port, VectorSchemaRoot batch) throws StepException {
+    private static void emit(NodeContext ctx, String port, VectorSchemaRoot batch) throws NodeException {
         try {
             ctx.emit(port, batch);
         } catch (InterruptedException e) {
             batch.close();
             Thread.currentThread().interrupt();
-            throw new StepException("Interrupted", e);
+            throw new NodeException("Interrupted", e);
         }
     }
 

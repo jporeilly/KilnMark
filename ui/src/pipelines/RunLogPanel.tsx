@@ -25,41 +25,41 @@ function save(text: string, name: string, type: string) {
 }
 
 /**
- * A run's log: what happened, in order, filtered by step and by level, a page at a time, and saved
+ * A run's log: what happened, in order, filtered by node and by level, a page at a time, and saved
  * as text or NDJSON. While the run goes, `tick` changes with each look at the run and new events
  * are added. An event's detail may be held back (the engine's words can quote the data); it then
  * says why.
  */
 export function RunLogPanel({
   runId,
-  steps,
+  nodes,
   origin,
   tick,
   final,
 }: {
   runId: number;
-  steps: string[];
+  nodes: string[];
   /** The run's origin on the worker's clock (ms), the same as the charts'; null to show clock times. */
   origin: number | null;
   tick: number;
   /** The run has ended: the log is read again from the start, so late writes are not missed. */
   final: boolean;
 }) {
-  const [step, setStep] = useState("");
+  const [node, setNode] = useState("");
   const [level, setLevel] = useState<PipelineRunEventLevel>("info");
   const [events, setEvents] = useState<PipelineRunEvent[] | null>(null);
   const [next, setNext] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const filters = useRef({ step, level });
-  filters.current = { step, level };
+  const filters = useRef({ node, level });
+  filters.current = { node, level };
   const lastSeq = useRef(0);
   // Each change of filter starts a new generation; answers for an older one are dropped.
   const generation = useRef(0);
 
   const filter = useCallback(
     () => ({
-      step: filters.current.step || null,
+      node: filters.current.node || null,
       level: filters.current.level,
     }),
     [],
@@ -84,7 +84,7 @@ export function RunLogPanel({
     return () => {
       live = false;
     };
-  }, [runId, step, level, filter, final]);
+  }, [runId, node, level, filter, final]);
 
   // While the run goes: what has happened since, unless more pages are still to be shown.
   useEffect(() => {
@@ -143,10 +143,10 @@ export function RunLogPanel({
     <div className="pl-log">
       <div className="pl-log-tools">
         <span className="pl-log-filter">
-          <label htmlFor={`log-step-${runId}`}>Step</label>
-          <select id={`log-step-${runId}`} value={step} onChange={(e) => setStep(e.target.value)}>
-            <option value="">All steps</option>
-            {steps.map((s) => (
+          <label htmlFor={`log-node-${runId}`}>Node</label>
+          <select id={`log-node-${runId}`} value={node} onChange={(e) => setNode(e.target.value)}>
+            <option value="">All nodes</option>
+            {nodes.map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>
@@ -178,7 +178,7 @@ export function RunLogPanel({
       {events == null ? (
         !error && <p className="muted">Loading the log…</p>
       ) : events.length === 0 ? (
-        <p className="muted">{step || level !== "info" ? "Nothing in the log matches." : "Nothing has been logged yet."}</p>
+        <p className="muted">{node || level !== "info" ? "Nothing in the log matches." : "Nothing has been logged yet."}</p>
       ) : (
         <div className="pl-log-scroll" role="region" aria-label="Log entries" tabIndex={0}>
           <ol className="pl-log-list" aria-label="The run's log">

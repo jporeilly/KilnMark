@@ -25,9 +25,9 @@ import io.kilnmark.graph.store.GraphStore;
 import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.SettingSpec;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.StepFactories;
-import io.kilnmark.kiln.StepFactory;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.NodeFactories;
+import io.kilnmark.kiln.NodeFactory;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.graph.GraphRunner;
@@ -49,7 +49,7 @@ import jakarta.ws.rs.core.Response;
 /**
  * Pipelines (docs/design/pipelines.md sections 5 and 6): saving them with every version, checking
  * their YAML, queueing runs on the job queue and, on a worker, running one exact version and
- * recording each step's part, the assets it wrote and their lineage.
+ * recording each node's part, the assets it wrote and their lineage.
  */
 @ApplicationScoped
 public class PipelineService {
@@ -64,7 +64,7 @@ public class PipelineService {
 
     private final PipelineStore store;
     private final PipelineCompilerPort compiler;
-    private final StepFactories steps;
+    private final NodeFactories nodes;
     private final GraphRunner runner;
     private final GraphStore graph;
     private final PipelineSources sources;
@@ -97,11 +97,11 @@ public class PipelineService {
 
 
     @Inject
-    public PipelineService(PipelineStore store, PipelineCompilerPort compiler, StepFactories steps, GraphRunner runner,
+    public PipelineService(PipelineStore store, PipelineCompilerPort compiler, NodeFactories nodes, GraphRunner runner,
                            GraphStore graph, PipelineSources sources, KilnmarkConfig config, ObjectMapper json) {
         this.store = store;
         this.compiler = compiler;
-        this.steps = steps;
+        this.nodes = nodes;
         this.runner = runner;
         this.graph = graph;
         this.sources = sources;
@@ -158,20 +158,20 @@ public class PipelineService {
     // ---- validation ----
 
     /**
-     * Checks YAML without running anything: problems with lines, each step's ports and output
+     * Checks YAML without running anything: problems with lines, each node's ports and output
      * columns. {@code expectedName}, when given, is the pipeline's name, which the YAML's
      * {@code name} must match.
      */
     public PipelineViews.Validation validate(String yaml, String expectedName) {
         checkSize(yaml);
-        PipelineCompilerPort.Compilation c = compiler.check(yaml, steps);
+        PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes);
         List<PipelineCompilerPort.Problem> problems = new ArrayList<>(c.problems());
         if (expectedName != null && c.name() != null && !c.name().equals(expectedName)) {
             problems.add(0, new PipelineCompilerPort.Problem(lineOf(yaml, "name"), 1, null, "name: this pipeline is "
                 + "called " + expectedName + "; a pipeline's name cannot change. Write name: " + expectedName));
         }
         return new PipelineViews.Validation(problems.isEmpty(), c.name(), c.description(), problems, c.notes(),
-            c.steps(), c.edges());
+            c.nodes(), c.edges());
     }
 
     /** The line of a top-level key, or 0. */
@@ -214,16 +214,16 @@ public class PipelineService {
      */
     public PredictionViews.Prediction predict(String yaml, Sights sights) {
         checkSize(yaml);
-        PipelineCompilerPort.Compilation c = compiler.check(yaml, steps);
+        PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes);
         PredictionCatalogue.Remembering catalogue = predictions.open(sights);
         QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
         return PredictionViews.of(new QualityPredictor(catalogue).predict(plan), c.valid());
     }
 
     /**
-     * The assets read, by step, before a run resolves them: as the settings name them, or, when the
+     * The assets read, by node, before a run resolves them: as the settings name them, or, when the
      * catalogue has nothing under that name and the path is a file's, under the path as the catalogue
-     * escapes it ({@code #} and {@code %}), as a run's read step finds it.
+     * escapes it ({@code #} and {@code %}), as a run's read node finds it.
      */
     static Map<String, String> designReads(PipelineCompilerPort.Compilation c, QualityPredictor.Catalogue catalogue) {
         Map<String, String> out = new LinkedHashMap<>(PipelineExecution.reads(c));
@@ -234,7 +234,7 @@ public class PipelineService {
             if (asset == null || catalogue.facts(r.getValue()) != null) {
                 continue;
             }
-            String escaped = PipelineSources.urn(source, ReadStepFactory.escapedFilePath(asset));
+            String escaped = PipelineSources.urn(source, ReadNodeFactory.escapedFilePath(asset));
             if (escaped != null && !escaped.equals(r.getValue()) && catalogue.facts(escaped) != null) {
                 r.setValue(escaped);
             }
@@ -280,10 +280,10 @@ public class PipelineService {
      */
     public PredictionViews.Advice suggest(String yaml, boolean useAi, String caller, Sights sights) {
         checkSize(yaml);
-        PipelineCompilerPort.Compilation c = compiler.check(yaml, steps);
+        PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes);
         PredictionCatalogue.Remembering catalogue = predictions.open(sights);
         QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
-        PipelineAdvisor advisor = new PipelineAdvisor(catalogue, steps, json);
+        PipelineAdvisor advisor = new PipelineAdvisor(catalogue, nodes, json);
         PipelineAdvisor.Model model = null;
         PipelineAdvisor.AiStatus status;
         io.kilnmark.server.ai.AiFeature feature = io.kilnmark.server.ai.AiFeature.PIPELINE_SUGGESTIONS;
@@ -325,8 +325,8 @@ public class PipelineService {
      * now and the reads as the run resolved them. Never fails the run: a prediction that cannot be
      * made is left out.
      */
-    List<RunQuality.StepQuality> predictRun(PipelineCompilerPort.Compilation c, RunContext context) {
-        List<RunQuality.StepQuality> out = new ArrayList<>();
+    List<RunQuality.NodeQuality> predictRun(PipelineCompilerPort.Compilation c, RunContext context) {
+        List<RunQuality.NodeQuality> out = new ArrayList<>();
         try {
             QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, PipelineExecution.reads(c, context));
             for (QualityPredictor.Predicted p : new QualityPredictor(predictions.open()).predict(plan).outputs()) {
@@ -344,7 +344,7 @@ public class PipelineService {
                 }
                 RunQuality.Score score = p.overall() == null ? null : new RunQuality.Score(p.overall(), p.dimensions(),
                     p.reasons());
-                out.add(new RunQuality.StepQuality(p.step(), p.role(), p.asset(), null, score,
+                out.add(new RunQuality.NodeQuality(p.node(), p.role(), p.asset(), null, score,
                     "Not measured yet: the run has just started", null, json.writeValueAsString(detail)));
             }
         } catch (RuntimeException | JsonProcessingException e) {
@@ -509,19 +509,19 @@ public class PipelineService {
     }
 
     /**
-     * Queues a run for a step of a flow (docs/design/flows.md): the same checks as {@link #queueRun}, and
-     * the run records which flow run and step started it. A run of the pipeline already queued or running
+     * Queues a run for a node of a flow (docs/design/flows.md): the same checks as {@link #queueRun}, and
+     * the run records which flow run and node started it. A run of the pipeline already queued or running
      * is not an error here: the flow waits and asks again.
      *
      * @throws PipelineStore.Busy when the pipeline has a run queued or running
      * @throws WebApplicationException (404, 409) when the pipeline or version is missing or cannot run
      */
     public PipelineStore.Run queueRunForFlow(String name, Integer version, String by, AccessRole role,
-                                             long flowRunId, String flowStep) {
+                                             long flowRunId, String flowNode) {
         int n = runnableVersion(name, version);
-        PipelineStore.Run run = store.queueRun(name, n, by, role.id(), flowRunId, flowStep);
-        LOG.infof("Run %d of pipeline %s (version %d) queued by %s for step %s of flow run %d", run.id(), name, n, by,
-            flowStep, flowRunId);
+        PipelineStore.Run run = store.queueRun(name, n, by, role.id(), flowRunId, flowNode);
+        LOG.infof("Run %d of pipeline %s (version %d) queued by %s for node %s of flow run %d", run.id(), name, n, by,
+            flowNode, flowRunId);
         return run;
     }
 
@@ -560,9 +560,9 @@ public class PipelineService {
     public PipelineViews.RunDetail run(long id, Sights sights) {
         PipelineStore.Run r = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline run " + id));
         String withheld = withheld(r, sights);
-        List<PipelineViews.StepRunView> stepViews = store.stepRuns(id).stream().map(s -> new PipelineViews.StepRunView(
-            s.stepId(), s.type(), s.position(), s.rowsIn(), s.rowsOut(), tree(s.portRows()), s.peakMemory(),
-            s.durationMs(), s.error() == null || withheld == null ? s.error() : "This step failed. " + withheld,
+        List<PipelineViews.NodeRunView> nodeViews = store.nodeRuns(id).stream().map(s -> new PipelineViews.NodeRunView(
+            s.nodeId(), s.type(), s.position(), s.rowsIn(), s.rowsOut(), tree(s.portRows()), s.peakMemory(),
+            s.durationMs(), s.error() == null || withheld == null ? s.error() : "This node failed. " + withheld,
             s.outcome(), s.startedAt(), s.firstRowAt(), s.lastRowAt(), s.finishedAt(), s.waitingForRowsMs(),
             s.heldUpMs())).toList();
         JsonNode result = tree(r.result());
@@ -571,7 +571,7 @@ public class PipelineService {
         List<String> notes = new ArrayList<>();
         if (result != null) {
             for (JsonNode w : result.path("written")) {
-                written.add(new PipelineViews.WrittenAsset(w.path("step").asText(), w.path("urn").asText(),
+                written.add(new PipelineViews.WrittenAsset(w.path("node").asText(), w.path("urn").asText(),
                     w.path("source").asText(), w.path("target").asText(), w.path("mode").asText(),
                     w.hasNonNull("rows") ? w.get("rows").asLong() : null, w.path("registered").asBoolean()));
             }
@@ -583,9 +583,9 @@ public class PipelineService {
             }
         }
         List<PipelineViews.LineageLink> lineage = store.lineageOfRun(id).stream()
-            .map(l -> new PipelineViews.LineageLink(l.stepId(), l.inputUrn(), l.outputUrn())).toList();
-        List<PipelineViews.StepQualityView> quality = store.quality(id).stream().map(this::qualityView).toList();
-        return new PipelineViews.RunDetail(summary(r, sights), stepViews, written, read, lineage, notes, quality,
+            .map(l -> new PipelineViews.LineageLink(l.nodeId(), l.inputUrn(), l.outputUrn())).toList();
+        List<PipelineViews.NodeQualityView> quality = store.quality(id).stream().map(this::qualityView).toList();
+        return new PipelineViews.RunDetail(summary(r, sights), nodeViews, written, read, lineage, notes, quality,
             tree(store.progress(id)));
     }
 
@@ -599,24 +599,24 @@ public class PipelineService {
         PipelineStore.Series s = store.series(id, Math.max(-1, after));
         List<PipelineViews.SeriesPoint> points = s.points().stream()
             .map(p -> new PipelineViews.SeriesPoint(p.t(), tree(p.rates()), tree(p.fills()))).toList();
-        return new PipelineViews.RunSeries(tree(s.steps()), s.stride(), points);
+        return new PipelineViews.RunSeries(tree(s.nodes()), s.stride(), points);
     }
 
     /** Events per page of a run's log, at most. */
     public static final int MAX_EVENTS_PAGE = 1000;
 
     /**
-     * A page of a run's log: events after {@code after}, about {@code step} (null for all), at least
+     * A page of a run's log: events after {@code after}, about {@code node} (null for all), at least
      * as serious as {@code level} (info, warn or error; null for all). Details are held back as the
      * run's other messages are.
      */
-    public PipelineViews.RunEvents events(long id, String step, String level, int after, int limit, Sights sights) {
+    public PipelineViews.RunEvents events(long id, String node, String level, int after, int limit, Sights sights) {
         PipelineStore.Run r = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline run " + id));
         if (level != null && !level.isBlank() && !List.of("info", "warn", "error").contains(level)) {
             throw new IllegalArgumentException("level: info, warn or error");
         }
         String min = level == null || level.isBlank() ? null : level;
-        String which = step == null || step.isBlank() ? null : step;
+        String which = node == null || node.isBlank() ? null : node;
         int n = Math.max(1, Math.min(limit, MAX_EVENTS_PAGE));
         String withheld = withheld(r, sights);
         List<PipelineStore.Event> rows = store.events(id, which, min, Math.max(0, after), n + 1);
@@ -632,13 +632,13 @@ public class PipelineService {
      *
      * @return the reader, which throws nothing but what {@code each} throws
      */
-    public LogReader allEvents(long id, String step, String level, Sights sights) {
+    public LogReader allEvents(long id, String node, String level, Sights sights) {
         PipelineStore.Run r = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No pipeline run " + id));
         if (level != null && !level.isBlank() && !List.of("info", "warn", "error").contains(level)) {
             throw new IllegalArgumentException("level: info, warn or error");
         }
         String min = level == null || level.isBlank() ? null : level;
-        String which = step == null || step.isBlank() ? null : step;
+        String which = node == null || node.isBlank() ? null : node;
         String withheld = withheld(r, sights);
         return each -> {
             int after = 0;
@@ -683,22 +683,22 @@ public class PipelineService {
         throw new IllegalArgumentException(name + ": a whole number, 0 or more");
     }
 
-    /** One event as a line of the downloaded log: time, level, step, words and detail (or why it is held back). */
+    /** One event as a line of the downloaded log: time, level, node, words and detail (or why it is held back). */
     public static String logLine(PipelineViews.RunEvent e) {
         String detail = e.detail() != null ? " (" + e.detail().replaceAll("\\R", " ") + ")"
             : e.withheld() != null ? " [detail held back: " + e.withheld() + "]" : "";
         return e.at() + "  " + String.format(Locale.ROOT, "%-5s", e.level().toUpperCase(Locale.ROOT)) + "  "
-            + (e.step() == null ? "-" : e.step()) + "  " + e.text() + detail;
+            + (e.node() == null ? "-" : e.node()) + "  " + e.text() + detail;
     }
 
     private static PipelineViews.RunEvent event(PipelineStore.Event e, String withheld) {
         boolean hide = e.detail() != null && withheld != null;
-        return new PipelineViews.RunEvent(e.seq(), e.at(), e.stepId(), e.level(), e.kind(), e.text(),
+        return new PipelineViews.RunEvent(e.seq(), e.at(), e.nodeId(), e.level(), e.kind(), e.text(),
             hide ? null : e.detail(), hide ? withheld : null);
     }
 
-    /** A step's stored quality as the API gives it; scores and gate results hold words and counts only. */
-    private PipelineViews.StepQualityView qualityView(PipelineStore.QualityRow q) {
+    /** A node's stored quality as the API gives it; scores and gate results hold words and counts only. */
+    private PipelineViews.NodeQualityView qualityView(PipelineStore.QualityRow q) {
         JsonNode detail = tree(q.predictedDetail());
         String reasons = detail != null && detail.has("reasons") ? detail.get("reasons").toString() : null;
         JsonNode prediction = null;
@@ -707,7 +707,7 @@ public class PipelineService {
             p.remove("reasons");
             prediction = p;
         }
-        return new PipelineViews.StepQualityView(q.stepId(), q.role(), q.assetUrn(),
+        return new PipelineViews.NodeQualityView(q.nodeId(), q.role(), q.assetUrn(),
             scoreView(q.measured(), q.measuredDimensions(), q.measuredReasons()),
             scoreView(q.predicted(), q.predictedDimensions(), reasons), q.note(), tree(q.gate()), prediction);
     }
@@ -757,9 +757,9 @@ public class PipelineService {
         List<PipelineViews.LineageEntry> down = new ArrayList<>();
         for (PipelineStore.Lineage l : store.lineageOfAsset(urn)) {
             if (l.outputUrn().equals(urn)) {
-                up.add(new PipelineViews.LineageEntry(l.inputUrn(), l.pipeline(), l.runId(), l.stepId(), l.recordedAt()));
+                up.add(new PipelineViews.LineageEntry(l.inputUrn(), l.pipeline(), l.runId(), l.nodeId(), l.recordedAt()));
             } else {
-                down.add(new PipelineViews.LineageEntry(l.outputUrn(), l.pipeline(), l.runId(), l.stepId(),
+                down.add(new PipelineViews.LineageEntry(l.outputUrn(), l.pipeline(), l.runId(), l.nodeId(),
                     l.recordedAt()));
             }
         }
@@ -783,7 +783,7 @@ public class PipelineService {
 
     /**
      * Why the run's messages from the engine are held back from this caller, or null when they are
-     * not: a failed run's error, its steps' errors and the details of its notes, whatever its status.
+     * not: a failed run's error, its nodes' errors and the details of its notes, whatever its status.
      * An engine's message may quote values from the rows (a value that would not convert, say), so
      * only roles that see data read them, and only admins when the run read or wrote an asset with
      * columns marked sensitive. Decided through the request's {@link Sights}, as every view of data
@@ -845,12 +845,12 @@ public class PipelineService {
             withheld == null ? r.error() : "The run failed. " + withheld, rows, score, threshold);
     }
 
-    // ---- the step catalogue ----
+    // ---- the node catalogue ----
 
-    /** Every step type with its ports and settings schema, by type. */
-    public List<PipelineViews.StepType> catalogue() {
-        List<PipelineViews.StepType> out = new ArrayList<>();
-        for (StepFactory f : steps.all()) {
+    /** Every node type with its ports and settings schema, by type. */
+    public List<PipelineViews.NodeType> catalogue() {
+        List<PipelineViews.NodeType> out = new ArrayList<>();
+        for (NodeFactory f : nodes.all()) {
             List<String> inputs = f.inputPorts().stream().map(p -> p.endsWith("*") ? p.substring(0, p.length() - 1) : p)
                 .toList();
             List<String> many = f.inputPorts().stream().filter(p -> p.endsWith("*"))
@@ -860,9 +860,9 @@ public class PipelineService {
                 settings.add(new PipelineViews.SettingView(s.key(), s.label(), s.kind().name().toLowerCase(Locale.ROOT),
                     s.required(), s.defaultValue(), s.help(), s.choices()));
             }
-            out.add(new PipelineViews.StepType(f.type(), f.kind().name().toLowerCase(Locale.ROOT), f.label(), f.help(),
+            out.add(new PipelineViews.NodeType(f.type(), f.kind().name().toLowerCase(Locale.ROOT), f.label(), f.help(),
                 inputs, many, f.outputPorts(), settings,
-                f instanceof WriteStepFactory w ? w.writerSettingsByKind() : null, f.category()));
+                f instanceof WriteNodeFactory w ? w.writerSettingsByKind() : null, f.category()));
         }
         return out;
     }
@@ -909,7 +909,7 @@ public class PipelineService {
             + ", asked for by " + run.requestedBy(), null);
         log.flush();
         List<String> held = new ArrayList<>();
-        List<RunQuality.StepQuality> predicted = new ArrayList<>();
+        List<RunQuality.NodeQuality> predicted = new ArrayList<>();
         boolean measuredSaved = false;
         PipelineCompilerPort.Compilation c = null;
         boolean ran = false;
@@ -923,7 +923,7 @@ public class PipelineService {
             if (stopped(id, shutdown, null)) {
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
-            c = context.run(() -> compiler.compile(v.yaml(), steps));
+            c = context.run(() -> compiler.compile(v.yaml(), nodes));
             if (!c.valid() || c.graph() == null) {
                 ended(log, "failed", "The pipeline could not start: " + firstProblems(c.problems()));
                 store.finishRun(id, "failed", context.scrub("The pipeline could not start: "
@@ -935,8 +935,8 @@ public class PipelineService {
             }
             // Each write's asset under the URN its connector worked out (for a prefixed S3 source, the prefix
             // and the path), as a scan of the source records it.
-            log.gates(c.steps().stream().filter(st -> "gate".equals(st.kind()) || "gate".equals(st.type()))
-                .map(PipelineCompilerPort.StepOutline::id).collect(java.util.stream.Collectors.toSet()));
+            log.gates(c.nodes().stream().filter(st -> "gate".equals(st.kind()) || "gate".equals(st.type()))
+                .map(PipelineCompilerPort.NodeOutline::id).collect(java.util.stream.Collectors.toSet()));
             List<PipelineExecution.WriteTarget> writes = PipelineExecution.writes(c, context);
             java.util.Set<String> assets = new java.util.TreeSet<>(context.reads());
             assets.addAll(PipelineExecution.reads(c, context).values());
@@ -950,7 +950,7 @@ public class PipelineService {
                     if (stopped(id, shutdown, c.graph())) {
                         return new ScanService.Result(ScanService.Outcome.FINISHED, null);
                     }
-                    PipelineExecution.closeSteps(c.graph());
+                    PipelineExecution.closeNodes(c.graph());
                     store.finishRun(id, "failed", "Another pipeline run is writing " + urn + ". Run this one again "
                         + "when it has finished.", null);
                     return new ScanService.Result(ScanService.Outcome.FINISHED, null);
@@ -964,8 +964,8 @@ public class PipelineService {
             ran = true;
             PipelineExecution.Outcome o = execution.run(runner, c.graph(), writes, context,
                 () -> store.cancelRequested(id), shutdown, log);
-            store.saveStepRuns(id, o.steps());
-            List<RunQuality.StepQuality> measured = RunQuality.withPredicted(measure(c, writes, o), predicted,
+            store.saveNodeRuns(id, o.nodes());
+            List<RunQuality.NodeQuality> measured = RunQuality.withPredicted(measure(c, writes, o), predicted,
                 o.status());
             ObjectNode result = json.createObjectNode();
             ArrayNode read = result.putArray("read");
@@ -974,7 +974,7 @@ public class PipelineService {
             ArrayNode written = result.putArray("written");
             long total = 0;
             for (PipelineExecution.WriteTarget w : writes) {
-                Long rows = o.rowsIn().get(w.step());
+                Long rows = o.rowsIn().get(w.node());
                 total += rows == null ? 0 : rows;
                 boolean registered = false;
                 if (o.status().equals("succeeded")) {
@@ -986,13 +986,13 @@ public class PipelineService {
                     }
                     String warning = writeWarning(o.events(), w.urn());
                     if (warning != null) {
-                        note(notes, w.step() + ": " + context.scrub(warning), null);
+                        note(notes, w.node() + ": " + context.scrub(warning), null);
                     }
                     registered = register(w, rows, o.events(), profileFailure == null, c, context, notes, lease,
                         shutdown);
                 }
                 ObjectNode n = written.addObject();
-                n.put("step", w.step());
+                n.put("node", w.node());
                 n.put("urn", w.urn());
                 n.put("source", w.source());
                 n.put("target", w.target());
@@ -1013,8 +1013,8 @@ public class PipelineService {
             putScore(q, "threshold", threshold);
             saveQuality(id, measured, context);
             measuredSaved = true;
-            for (RunQuality.StepQuality sq : measured) {
-                log.gate(sq.step(), sq.gate());
+            for (RunQuality.NodeQuality sq : measured) {
+                log.gate(sq.node(), sq.gate());
             }
             for (JsonNode n : notes) {
                 log.server(null, n.path("level").asText("warn"), "run_note", n.path("text").asText(), n.hasNonNull("detail")
@@ -1022,13 +1022,13 @@ public class PipelineService {
             }
             ended(log, o.status(), o.error());
             store.finishRun(id, o.status(), o.error(), result.toString());
-            RunQuality.StepQuality lowest = RunQuality.lowestOutputStep(measured);
-            finished(run.pipeline(), id, o.status(), score, threshold, lowest == null ? null : lowest.step());
+            RunQuality.NodeQuality lowest = RunQuality.lowestOutputNode(measured);
+            finished(run.pipeline(), id, o.status(), score, threshold, lowest == null ? null : lowest.node());
             LOG.infof("Run %d of pipeline %s: %s", id, run.pipeline(), o.status());
         } catch (InterruptedException e) {
             Thread.interrupted(); // cleared so the run's record can be written
             if (!ran && c != null && c.graph() != null) {
-                PipelineExecution.closeSteps(c.graph());
+                PipelineExecution.closeNodes(c.graph());
             }
             if (!measuredSaved && !predicted.isEmpty()) {
                 saveQuality(id, RunQuality.withPredicted(List.of(), predicted, "failed"), context);
@@ -1041,7 +1041,7 @@ public class PipelineService {
             // The exception's own text may hold a source's secret: log it scrubbed, without the trace.
             LOG.errorf("Run %d of pipeline %s failed: %s", id, run.pipeline(), context.scrub(String.valueOf(e)));
             if (!ran && c != null && c.graph() != null) {
-                PipelineExecution.closeSteps(c.graph()); // created, never handed to the runner
+                PipelineExecution.closeNodes(c.graph()); // created, never handed to the runner
             }
             if (!measuredSaved && !predicted.isEmpty()) {
                 // The predictions stay; they must not say the run has just started.
@@ -1076,8 +1076,8 @@ public class PipelineService {
     }
 
     /**
-     * Whether the run was asked to stop, or its worker is stopping, before its steps run; if so the
-     * run gets its final status and {@code graph}'s steps (when created) are closed.
+     * Whether the run was asked to stop, or its worker is stopping, before its nodes run; if so the
+     * run gets its final status and {@code graph}'s nodes (when created) are closed.
      */
     private boolean stopped(long id, BooleanSupplier shutdown, PipelineGraph graph) {
         boolean cancelled = store.cancelRequested(id);
@@ -1085,14 +1085,14 @@ public class PipelineService {
             return false;
         }
         if (graph != null) {
-            PipelineExecution.closeSteps(graph);
+            PipelineExecution.closeNodes(graph);
         }
         store.finishRun(id, cancelled ? "cancelled" : "failed", cancelled ? "Cancelled before it started"
             : "The worker running this pipeline was stopped before it started. Run it again.", null);
         return true;
     }
 
-    /** Tells of a run that finished without measuring anything (it failed before its steps ran). */
+    /** Tells of a run that finished without measuring anything (it failed before its nodes ran). */
     void finished(String pipeline, long id, String status) {
         finished(pipeline, id, status, null, null, null);
     }
@@ -1101,7 +1101,7 @@ public class PipelineService {
      * Tells of a finished run: a failure, or a success whose lowest output score (what it wrote,
      * as measured) is below the pipeline's {@code quality.min_score}, which tells
      * {@code pipeline_low_quality} (once per run; the publisher dedupes). {@code output} is the write
-     * step with that score, for the notification's words.
+     * node with that score, for the notification's words.
      */
     void finished(String pipeline, long id, String status, Double score, Double threshold, String output) {
         if (notifications != null) {
@@ -1131,12 +1131,12 @@ public class PipelineService {
      * The run's measured quality: each gate's outcome (also when it stopped the run), and, when the
      * run succeeded, each write's score from the profile its writer made while writing.
      */
-    List<RunQuality.StepQuality> measure(PipelineCompilerPort.Compilation c, List<PipelineExecution.WriteTarget> writes,
+    List<RunQuality.NodeQuality> measure(PipelineCompilerPort.Compilation c, List<PipelineExecution.WriteTarget> writes,
                                          PipelineExecution.Outcome o) {
-        List<RunQuality.StepQuality> out = new ArrayList<>();
+        List<RunQuality.NodeQuality> out = new ArrayList<>();
         try {
-            for (io.kilnmark.kiln.graph.GraphStep s : c.graph().steps()) {
-                if (s.step() instanceof QualityGate g && g.outcome() != null) {
+            for (io.kilnmark.kiln.graph.GraphNode s : c.graph().nodes()) {
+                if (s.node() instanceof QualityGate g && g.outcome() != null) {
                     out.add(RunQuality.gate(s.id(), g.outcome()));
                 }
             }
@@ -1151,17 +1151,17 @@ public class PipelineService {
         return out;
     }
 
-    private void saveQuality(long id, List<RunQuality.StepQuality> steps, RunContext context) {
-        if (steps.isEmpty()) {
+    private void saveQuality(long id, List<RunQuality.NodeQuality> nodes, RunContext context) {
+        if (nodes.isEmpty()) {
             return;
         }
         try {
             List<PipelineStore.QualityRow> rows = new ArrayList<>();
-            for (RunQuality.StepQuality q : steps) {
+            for (RunQuality.NodeQuality q : nodes) {
                 RunQuality.Score m = q.measured();
                 RunQuality.Score p = q.predicted();
                 String gate = q.gate() == null ? null : context.scrub(json.writeValueAsString(q.gate()));
-                rows.add(new PipelineStore.QualityRow(q.step(), q.role(), q.asset(), m == null ? null : m.overall(),
+                rows.add(new PipelineStore.QualityRow(q.node(), q.role(), q.asset(), m == null ? null : m.overall(),
                     m == null ? null : json.writeValueAsString(m.dimensions()),
                     m == null ? null : json.writeValueAsString(m.reasons()), p == null ? null : p.overall(),
                     p == null ? null : json.writeValueAsString(p.dimensions()), q.note(), gate,
@@ -1193,11 +1193,11 @@ public class PipelineService {
         try {
             Records.Source s = graph.source(w.source()).orElse(null);
             if (s == null) {
-                note(notes, w.step() + ": source " + w.source() + " no longer exists, so what it wrote is not catalogued",
+                note(notes, w.node() + ": source " + w.source() + " no longer exists, so what it wrote is not catalogued",
                     null);
                 return false;
             }
-            store.saveLineage(context.pipeline(), context.runId(), w.step(), w.inputs(), w.urn());
+            store.saveLineage(context.pipeline(), context.runId(), w.node(), w.inputs(), w.urn());
             // A scan ending now would mark an asset it did not see as removed: catalogue under the
             // source's scan lock, or leave it to the next scan.
             boolean locked;
@@ -1209,7 +1209,7 @@ public class PipelineService {
                 locked = false;
             }
             if (!locked) {
-                note(notes, w.step() + ": a scan of " + w.source() + " was running, so " + w.target() + " is not in "
+                note(notes, w.node() + ": a scan of " + w.source() + " was running, so " + w.target() + " is not in "
                     + "the catalogue yet. Scan the source to catalogue the written table or file", null);
                 return false;
             }
@@ -1220,9 +1220,9 @@ public class PipelineService {
             }
             return true;
         } catch (RuntimeException e) {
-            LOG.warnf("Could not catalogue what step %s of pipeline %s wrote: %s", w.step(), context.pipeline(),
+            LOG.warnf("Could not catalogue what node %s of pipeline %s wrote: %s", w.node(), context.pipeline(),
                 context.scrub(String.valueOf(e)));
-            note(notes, w.step() + ": what it wrote could not be catalogued", context.scrub(e.getMessage()));
+            note(notes, w.node() + ": what it wrote could not be catalogued", context.scrub(e.getMessage()));
             return false;
         }
     }
@@ -1262,7 +1262,7 @@ public class PipelineService {
 
     /** The run's note for a write whose profile failed: the server's words, the writer's reason as its detail. */
     static void profileFailureNote(ArrayNode notes, PipelineExecution.WriteTarget w, String reason) {
-        note(notes, w.step() + ": what it wrote could not be profiled; scan " + w.source() + " to profile "
+        note(notes, w.node() + ": what it wrote could not be profiled; scan " + w.source() + " to profile "
             + w.target(), reason);
     }
 
@@ -1330,7 +1330,7 @@ public class PipelineService {
     private void catalogue(Records.Source s, PipelineExecution.WriteTarget w, Long rows, List<MetadataEvent> events,
                            boolean profiled, PipelineCompilerPort.Compilation c, RunContext context, ArrayNode notes) {
         long recordRun = store.recordWrite(s.id(), rows == null ? 0 : rows, "Written by pipeline "
-            + context.pipeline() + " (run " + context.runId() + ", step " + w.step() + ")");
+            + context.pipeline() + " (run " + context.runId() + ", node " + w.node() + ")");
         Records.AssetDetail known = graph.asset(w.urn()).orElse(null);
         List<MetadataEvent> mine = reported(events, w.urn());
         MetadataEvent schema = mine.stream().filter(e -> e.kind() == MetadataEvent.Kind.SCHEMA).findFirst().orElse(null);
@@ -1341,7 +1341,7 @@ public class PipelineService {
             graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), known.kind(), known.container(), known.name(),
                 known.description(), known.primaryKey()), known.fields().stream().map(f -> new Records.Field(f.name(),
                 f.position(), f.sourceType(), f.kind(), f.nullable(), f.description())).toList());
-            infoNote(notes, w.step() + ": the " + w.mode() + " added " + (rows == null ? "rows" : rows + " rows") + " to "
+            infoNote(notes, w.node() + ": the " + w.mode() + " added " + (rows == null ? "rows" : rows + " rows") + " to "
                 + w.target() + "; its columns, row count and profile stay as its last scan found them. Scan "
                 + w.source() + " to refresh them", null);
             return;
@@ -1366,7 +1366,7 @@ public class PipelineService {
         graph.saveAsset(s.id(), recordRun, new Records.Asset(w.urn(), kind, container, name, description, key),
             fields);
         if (appended) {
-            infoNote(notes, w.step() + ": the " + w.mode() + " added rows to " + w.target() + ", which Kilnmark had not "
+            infoNote(notes, w.node() + ": the " + w.mode() + " added rows to " + w.target() + ", which Kilnmark had not "
                 + "catalogued; scan " + w.source() + " for its row count and profile", null);
             return;
         }
@@ -1387,7 +1387,7 @@ public class PipelineService {
             quality.observe(e, recordRun, s); // samples only when the source keeps them
         }
         if (failed > 0) {
-            note(notes, w.step() + ": " + failed + " column profiles could not be stored; scan " + w.source()
+            note(notes, w.node() + ": " + failed + " column profiles could not be stored; scan " + w.source()
                 + " to profile " + w.target(), null);
         }
         quality.afterScan(s, recordRun);
@@ -1415,9 +1415,9 @@ public class PipelineService {
     /** The written asset as its connector now describes it, or null when it cannot. */
     private AssetInfo describe(PipelineExecution.WriteTarget w, RunContext context) {
         try {
-            PipelineSources.Resolved r = sources.resolve(w.step(), w.source(), context);
+            PipelineSources.Resolved r = sources.resolve(w.node(), w.source(), context);
             return r.connector().asset(r.config(), assetPath(w));
-        } catch (StepException | io.kilnmark.kiln.connect.ConnectorException | RuntimeException e) {
+        } catch (NodeException | io.kilnmark.kiln.connect.ConnectorException | RuntimeException e) {
             LOG.debugf("Could not describe %s after writing it: %s", w.urn(), context.scrub(e.getMessage()));
             return null;
         }
@@ -1437,16 +1437,16 @@ public class PipelineService {
             f.nullable(), f.description())).toList();
     }
 
-    /** The write's columns as validation worked them out, else as the profile step saw them. */
+    /** The write's columns as validation worked them out, else as the profile node saw them. */
     private static List<Records.Field> fieldsFromColumns(PipelineExecution.WriteTarget w,
                                                          PipelineCompilerPort.Compilation c,
                                                          List<MetadataEvent> events) {
         for (PipelineCompilerPort.EdgeOutline e : c.edges()) {
-            if (!e.toStep().equals(w.step())) {
+            if (!e.toNode().equals(w.node())) {
                 continue;
             }
-            for (PipelineCompilerPort.StepOutline s : c.steps()) {
-                if (s.id().equals(e.fromStep()) && s.columns().get(e.fromPort()) != null) {
+            for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
+                if (s.id().equals(e.fromNode()) && s.columns().get(e.fromPort()) != null) {
                     List<Records.Field> out = new ArrayList<>();
                     int i = 0;
                     for (PipelineCompilerPort.Column col : s.columns().get(e.fromPort())) {

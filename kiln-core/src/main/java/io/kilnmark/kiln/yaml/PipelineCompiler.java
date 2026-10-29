@@ -22,26 +22,26 @@ import org.apache.arrow.vector.types.pojo.Schema;
 
 import io.kilnmark.kiln.Decimals;
 import io.kilnmark.kiln.SettingSpec;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.StepFactories;
-import io.kilnmark.kiln.StepFactory;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.NodeFactories;
+import io.kilnmark.kiln.NodeFactory;
 import io.kilnmark.kiln.graph.Edge;
 import io.kilnmark.kiln.graph.PortRef;
 import io.kilnmark.kiln.yaml.PipelineDefinition.InputRef;
-import io.kilnmark.kiln.yaml.PipelineDefinition.StepDefinition;
+import io.kilnmark.kiln.yaml.PipelineDefinition.NodeDefinition;
 
 /**
- * Checks a pipeline against the step types in a {@link StepFactories} and works out the columns
- * leaving each step (docs/design/pipelines.md). Checking never creates a step: it calls only each
+ * Checks a pipeline against the node types in a {@link NodeFactories} and works out the columns
+ * leaving each node (docs/design/pipelines.md). Checking never creates a node: it calls only each
  * factory's ports, settings, {@code check} and {@code outputSchema}. {@link Compiled#graph()} then
- * creates the steps for a run.
+ * creates the nodes for a run.
  *
- * <p>Checks, each reported with its line and column: the format line; unknown top-level keys; step
- * ids; unknown step types, suggesting the closest; each setting against the step type's settings
+ * <p>Checks, each reported with its line and column: the format line; unknown top-level keys; node
+ * ids; unknown node types, suggesting the closest; each setting against the node type's settings
  * (required, kind, choices, unknown keys) and the factory's own {@code check}; inputs naming
- * unknown steps or ports; required inputs not connected; a single-input port fed twice; loops; and
- * then, in the order rows flow, each step's columns from its factory's {@code outputSchema}. When a
- * step's columns cannot be known before the run, the steps after it are not checked against
+ * unknown nodes or ports; required inputs not connected; a single-input port fed twice; loops; and
+ * then, in the order rows flow, each node's columns from its factory's {@code outputSchema}. When a
+ * node's columns cannot be known before the run, the nodes after it are not checked against
  * columns, and a note says so.
  */
 public final class PipelineCompiler {
@@ -49,12 +49,12 @@ public final class PipelineCompiler {
     /** Most digits a number setting may have, and furthest its decimal point may sit from them. */
     static final int MAX_DIGITS = 1000;
 
-    /** A step id: a lower-case letter, then up to 63 lower-case letters, digits, dashes and underscores. */
-    public static final Pattern STEP_ID = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
+    /** A node id: a lower-case letter, then up to 63 lower-case letters, digits, dashes and underscores. */
+    public static final Pattern NODE_ID = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
 
-    private final StepFactories factories;
+    private final NodeFactories factories;
 
-    public PipelineCompiler(StepFactories factories) {
+    public PipelineCompiler(NodeFactories factories) {
         this.factories = Objects.requireNonNull(factories, "factories");
     }
 
@@ -69,17 +69,17 @@ public final class PipelineCompiler {
     }
 
     /**
-     * Checks a pipeline built in code, including what reading YAML checks: the name, step ids
-     * (pattern and uniqueness) and that each step has a type.
+     * Checks a pipeline built in code, including what reading YAML checks: the name, node ids
+     * (pattern and uniqueness) and that each node has a type.
      */
     public Compiled compile(PipelineDefinition definition) {
         Objects.requireNonNull(definition, "definition");
         return new Check(definition, List.of(), Set.of(), true).run();
     }
 
-    /** The problem with a step id that does not match {@link #STEP_ID}. */
+    /** The problem with a node id that does not match {@link #NODE_ID}. */
     static String badId(String id) {
-        return "Step id '" + Suggest.clip(id)
+        return "Node id '" + Suggest.clip(id)
             + "' must start with a lower-case letter and use only a-z, 0-9, - and _, up to 64 characters";
     }
 
@@ -93,19 +93,19 @@ public final class PipelineCompiler {
         private final PipelineDefinition definition;
         private final List<Problem> problems;
         private final List<Problem> notes = new ArrayList<>();
-        private final Map<String, StepDefinition> steps = new LinkedHashMap<>();
-        private final Map<String, StepFactory> factoryOf = new LinkedHashMap<>();
-        /** Steps whose settings or inputs have a problem: their columns are not worked out. */
+        private final Map<String, NodeDefinition> nodes = new LinkedHashMap<>();
+        private final Map<String, NodeFactory> factoryOf = new LinkedHashMap<>();
+        /** Nodes whose settings or inputs have a problem: their columns are not worked out. */
         private final Set<String> broken = new HashSet<>();
-        /** Steps with a problem in the inputs they name, so a missing input is not reported as well. */
+        /** Nodes with a problem in the inputs they name, so a missing input is not reported as well. */
         private final Set<String> badInputs = new HashSet<>();
         private final List<Edge> edges = new ArrayList<>();
         private final Map<Edge, InputRef> refOf = new HashMap<>();
-        /** The steps checked: those written, less any whose id is used twice. */
-        private final List<StepDefinition> list = new ArrayList<>();
-        /** Each step's settings as its factory and step receive them. */
+        /** The nodes checked: those written, less any whose id is used twice. */
+        private final List<NodeDefinition> list = new ArrayList<>();
+        /** Each node's settings as its factory and node receive them. */
         private final Map<String, Map<String, Object>> configs = new LinkedHashMap<>();
-        /** The columns arriving on each step's input ports, where known. */
+        /** The columns arriving on each node's input ports, where known. */
         private final Map<String, Map<String, Schema>> inputSchemas = new LinkedHashMap<>();
 
         Check(PipelineDefinition definition, List<Problem> parseProblems, Set<String> inputProblems,
@@ -116,36 +116,36 @@ public final class PipelineCompiler {
             if (checkDefinition && (definition.name() == null || definition.name().isBlank())) {
                 problems.add(Problem.at(Position.START, null, "The pipeline needs a name"));
             }
-            if (checkDefinition && definition.steps().isEmpty()) {
-                problems.add(Problem.at(Position.START, null, "The pipeline needs at least one step"));
+            if (checkDefinition && definition.nodes().isEmpty()) {
+                problems.add(Problem.at(Position.START, null, "The pipeline needs at least one node"));
             }
-            for (StepDefinition s : definition.steps()) {
+            for (NodeDefinition s : definition.nodes()) {
                 if (checkDefinition) {
-                    if (!STEP_ID.matcher(s.id()).matches()) {
+                    if (!NODE_ID.matcher(s.id()).matches()) {
                         problems.add(Problem.at(s.position(), Suggest.clip(s.id()), badId(s.id())));
                     }
-                    if (steps.containsKey(s.id())) {
-                        problems.add(Problem.at(s.position(), Suggest.clip(s.id()), "Step id '" + Suggest.clip(s.id())
-                            + "' is used twice (first on line " + steps.get(s.id()).position().line() + ")"));
+                    if (nodes.containsKey(s.id())) {
+                        problems.add(Problem.at(s.position(), Suggest.clip(s.id()), "Node id '" + Suggest.clip(s.id())
+                            + "' is used twice (first on line " + nodes.get(s.id()).position().line() + ")"));
                         continue;
                     }
                     if (s.type() == null) {
-                        problems.add(Problem.at(s.position(), s.id(), "Step " + Suggest.clip(s.id()) + " needs a type"));
+                        problems.add(Problem.at(s.position(), s.id(), "Node " + Suggest.clip(s.id()) + " needs a type"));
                     }
                 }
-                if (steps.putIfAbsent(s.id(), s) == null) {
+                if (nodes.putIfAbsent(s.id(), s) == null) {
                     list.add(s);
                 }
             }
         }
 
         Compiled run() {
-            for (StepDefinition s : list) {
+            for (NodeDefinition s : list) {
                 if (s.type() == null) {
                     broken.add(s.id());
                     continue;
                 }
-                StepFactory f = factories.get(s.type()).orElse(null);
+                NodeFactory f = factories.get(s.type()).orElse(null);
                 if (f == null) {
                     broken.add(s.id());
                     problems.add(Problem.at(s.at("type"), s.id(), unknownType(s.type())));
@@ -154,10 +154,10 @@ public final class PipelineCompiler {
                 factoryOf.put(s.id(), f);
                 settings(s, f);
             }
-            for (StepDefinition s : list) {
+            for (NodeDefinition s : list) {
                 inputs(s);
             }
-            for (StepDefinition s : list) {
+            for (NodeDefinition s : list) {
                 connected(s);
             }
             List<String> order = order();
@@ -173,19 +173,19 @@ public final class PipelineCompiler {
             factories.all().forEach(f -> types.add(f.type()));
             String closest = Suggest.closest(type, types);
             if (closest != null) {
-                return "Unknown step type '" + Suggest.clip(type) + "' (did you mean '" + closest + "'?)";
+                return "Unknown node type '" + Suggest.clip(type) + "' (did you mean '" + closest + "'?)";
             }
-            return "Unknown step type '" + Suggest.clip(type) + "'. The step types are: " + String.join(", ", types);
+            return "Unknown node type '" + Suggest.clip(type) + "'. The node types are: " + String.join(", ", types);
         }
 
-        /** A step's settings as its factory receives them (as written, if they could not be checked). */
-        private Map<String, Object> config(StepDefinition s) {
+        /** A node's settings as its factory receives them (as written, if they could not be checked). */
+        private Map<String, Object> config(NodeDefinition s) {
             return configs.getOrDefault(s.id(), s.config());
         }
 
         // ---- settings ----
 
-        private void settings(StepDefinition s, StepFactory f) {
+        private void settings(NodeDefinition s, NodeFactory f) {
             int before = problems.size();
             Map<String, SettingSpec> specs = new LinkedHashMap<>();
             f.settings().forEach(spec -> specs.put(spec.key(), spec));
@@ -194,7 +194,7 @@ public final class PipelineCompiler {
                     String hint = Suggest.hint(key, specs.keySet());
                     String known = specs.isEmpty() ? "it takes no settings"
                         : "its settings are " + String.join(", ", specs.keySet());
-                    problems.add(Problem.at(s.at(key), s.id(), "Step " + s.id() + " (" + s.type()
+                    problems.add(Problem.at(s.at(key), s.id(), "Node " + s.id() + " (" + s.type()
                         + ") has no setting '" + Suggest.clip(key) + "'" + hint + ": " + known));
                 }
             }
@@ -203,14 +203,14 @@ public final class PipelineCompiler {
                 Object value = s.config().get(spec.key());
                 if (value == null) {
                     if (spec.required()) {
-                        problems.add(Problem.at(s.position(), s.id(), "Step " + s.id() + " (" + s.type()
+                        problems.add(Problem.at(s.position(), s.id(), "Node " + s.id() + " (" + s.type()
                             + ") needs the setting '" + spec.key() + "' (" + spec.label() + ")"));
                     }
                     continue;
                 }
                 Checked c = kind(spec, value, s.configText().get(spec.key()));
                 if (c.wrong() != null) {
-                    problems.add(Problem.at(s.at(spec.key()), s.id(), "Setting '" + spec.key() + "' of step "
+                    problems.add(Problem.at(s.at(spec.key()), s.id(), "Setting '" + spec.key() + "' of node "
                         + s.id() + " " + c.wrong()));
                 } else {
                     config.put(spec.key(), c.value());
@@ -221,10 +221,10 @@ public final class PipelineCompiler {
                 try {
                     for (String message : f.check(config)) {
                         problems.add(Problem.at(s.at(firstWord(message, s.config().keySet())), s.id(),
-                            "Step " + s.id() + ": " + message));
+                            "Node " + s.id() + ": " + message));
                     }
                 } catch (RuntimeException e) {
-                    problems.add(Problem.at(s.position(), s.id(), "Step " + s.id()
+                    problems.add(Problem.at(s.position(), s.id(), "Node " + s.id()
                         + ": its settings could not be checked: " + message(e)));
                 }
             }
@@ -233,7 +233,7 @@ public final class PipelineCompiler {
             }
         }
 
-        /** A setting's value as the step receives it, or what is wrong with it. */
+        /** A setting's value as the node receives it, or what is wrong with it. */
         private record Checked(Object value, String wrong) {
             static Checked ok(Object value) {
                 return new Checked(value, null);
@@ -245,7 +245,7 @@ public final class PipelineCompiler {
         }
 
         /**
-         * Checks a value against its kind of setting and gives it the form the step receives: a
+         * Checks a value against its kind of setting and gives it the form the node receives: a
          * setting that is text keeps the text as written (007, 2024.10), a number is a whole number
          * or a BigDecimal, never infinite or not-a-number.
          */
@@ -337,19 +337,19 @@ public final class PipelineCompiler {
 
         // ---- inputs ----
 
-        private void inputs(StepDefinition s) {
-            StepFactory f = factoryOf.get(s.id());
+        private void inputs(NodeDefinition s) {
+            NodeFactory f = factoryOf.get(s.id());
             for (InputRef ref : s.inputs()) {
                 PortRef from = PortRef.parse(ref.from(), "out");
-                StepDefinition source = steps.get(from.step());
+                NodeDefinition source = nodes.get(from.node());
                 if (source == null) {
-                    problems.add(Problem.at(ref.position(), s.id(), "Step " + s.id() + " reads from '"
-                        + Suggest.clip(from.step()) + "', which is not a step in this pipeline" + Suggest.hint(from.step(), steps.keySet())));
+                    problems.add(Problem.at(ref.position(), s.id(), "Node " + s.id() + " reads from '"
+                        + Suggest.clip(from.node()) + "', which is not a node in this pipeline" + Suggest.hint(from.node(), nodes.keySet())));
                     bad(s.id());
                     continue;
                 }
                 if (source.id().equals(s.id())) {
-                    problems.add(Problem.at(ref.position(), s.id(), "Step " + s.id() + " reads from itself"));
+                    problems.add(Problem.at(ref.position(), s.id(), "Node " + s.id() + " reads from itself"));
                     bad(s.id());
                     continue;
                 }
@@ -366,7 +366,7 @@ public final class PipelineCompiler {
                 }
                 Edge e = new Edge(from, new PortRef(s.id(), port));
                 if (refOf.containsKey(e)) {
-                    problems.add(Problem.at(ref.position(), s.id(), "Step " + s.id() + " reads from "
+                    problems.add(Problem.at(ref.position(), s.id(), "Node " + s.id() + " reads from "
                         + Suggest.clip(ref.from()) + " twice on its input '" + port + "'"));
                     bad(s.id());
                     continue;
@@ -381,10 +381,10 @@ public final class PipelineCompiler {
             badInputs.add(id);
         }
 
-        private boolean outputExists(StepDefinition s, InputRef ref, StepDefinition source, String port) {
-            StepFactory sf = factoryOf.get(source.id());
+        private boolean outputExists(NodeDefinition s, InputRef ref, NodeDefinition source, String port) {
+            NodeFactory sf = factoryOf.get(source.id());
             if (sf == null) {
-                return true; // reported against that step
+                return true; // reported against that node
             }
             List<String> outs;
             try {
@@ -397,10 +397,10 @@ public final class PipelineCompiler {
             }
             bad(s.id());
             if (outs.isEmpty()) {
-                problems.add(Problem.at(ref.position(), s.id(), "Step " + source.id() + " (" + source.type()
-                    + ") has no outputs, so step " + s.id() + " cannot read from it"));
+                problems.add(Problem.at(ref.position(), s.id(), "Node " + source.id() + " (" + source.type()
+                    + ") has no outputs, so node " + s.id() + " cannot read from it"));
             } else {
-                problems.add(Problem.at(ref.position(), s.id(), "Step " + source.id() + " (" + source.type()
+                problems.add(Problem.at(ref.position(), s.id(), "Node " + source.id() + " (" + source.type()
                     + ") has no output '" + Suggest.clip(port) + "'" + Suggest.hint(port, outs) + ": its outputs are "
                     + String.join(", ", outs)));
             }
@@ -408,9 +408,9 @@ public final class PipelineCompiler {
         }
 
         /** The input port a reference connects to, or null after reporting why there is none. */
-        private String inputPort(StepDefinition s, StepFactory f, InputRef ref) {
+        private String inputPort(NodeDefinition s, NodeFactory f, InputRef ref) {
             List<String> declared = f.inputPorts().stream().map(PipelineCompiler::portName).toList();
-            String what = "Step " + s.id() + " (" + s.type() + ")";
+            String what = "Node " + s.id() + " (" + s.type() + ")";
             if (declared.isEmpty()) {
                 problems.add(Problem.at(ref.position(), s.id(), what + " takes no input"));
                 return null;
@@ -433,8 +433,8 @@ public final class PipelineCompiler {
         }
 
         /** Every input connected, and a single-input port fed once. */
-        private void connected(StepDefinition s) {
-            StepFactory f = factoryOf.get(s.id());
+        private void connected(NodeDefinition s) {
+            NodeFactory f = factoryOf.get(s.id());
             if (f == null) {
                 return;
             }
@@ -443,31 +443,31 @@ public final class PipelineCompiler {
                 boolean many = declared.endsWith("*");
                 List<Edge> into = into(s.id(), port);
                 if (into.isEmpty() && !badInputs.contains(s.id())) {
-                    String add = f.inputPorts().size() == 1 ? "add input: <step id>" : "add it under inputs";
-                    problems.add(Problem.at(s.position(), s.id(), "Step " + s.id() + " (" + s.type()
+                    String add = f.inputPorts().size() == 1 ? "add input: <node id>" : "add it under inputs";
+                    problems.add(Problem.at(s.position(), s.id(), "Node " + s.id() + " (" + s.type()
                         + ") needs an input on port '" + port + "': " + add));
                     broken.add(s.id());
                 } else if (!many && into.size() > 1) {
-                    problems.add(Problem.at(refOf.get(into.get(1)).position(), s.id(), "Step " + s.id()
+                    problems.add(Problem.at(refOf.get(into.get(1)).position(), s.id(), "Node " + s.id()
                         + "'s input '" + port + "' takes one input, but " + into.size()
-                        + " are connected: combine them with a union step first"));
+                        + " are connected: combine them with a union node first"));
                     broken.add(s.id());
                 }
             }
         }
 
-        private List<Edge> into(String step, String port) {
-            return edges.stream().filter(e -> e.to().step().equals(step) && e.to().port().equals(port)).toList();
+        private List<Edge> into(String node, String port) {
+            return edges.stream().filter(e -> e.to().node().equals(node) && e.to().port().equals(port)).toList();
         }
 
         // ---- order and columns ----
 
-        /** Step ids in the order rows flow; null, after reporting the loop, if there is one. */
+        /** Node ids in the order rows flow; null, after reporting the loop, if there is one. */
         private List<String> order() {
             Map<String, Integer> waiting = new LinkedHashMap<>();
-            steps.keySet().forEach(id -> waiting.put(id, 0));
+            nodes.keySet().forEach(id -> waiting.put(id, 0));
             for (Edge e : edges) {
-                waiting.merge(e.to().step(), 1, Integer::sum);
+                waiting.merge(e.to().node(), 1, Integer::sum);
             }
             ArrayDeque<String> ready = new ArrayDeque<>();
             waiting.forEach((id, n) -> {
@@ -480,39 +480,39 @@ public final class PipelineCompiler {
                 String id = ready.poll();
                 out.add(id);
                 for (Edge e : edges) {
-                    if (e.from().step().equals(id) && waiting.merge(e.to().step(), -1, Integer::sum) == 0) {
-                        ready.add(e.to().step());
+                    if (e.from().node().equals(id) && waiting.merge(e.to().node(), -1, Integer::sum) == 0) {
+                        ready.add(e.to().node());
                     }
                 }
             }
-            if (out.size() == steps.size()) {
+            if (out.size() == nodes.size()) {
                 return out;
             }
             List<String> loop = loop(new HashSet<>(out));
-            StepDefinition first = steps.get(loop.getFirst());
-            problems.add(Problem.at(first.position(), first.id(), "Steps " + String.join(" → ", loop) + " → "
+            NodeDefinition first = nodes.get(loop.getFirst());
+            problems.add(Problem.at(first.position(), first.id(), "Nodes " + String.join(" → ", loop) + " → "
                 + loop.getFirst() + " form a loop: rows in a pipeline must flow one way"));
             return null;
         }
 
         /**
-         * One loop among the steps not in {@code ordered}, in the direction rows flow. Each of those
-         * steps is fed by another of them, so walking back along inputs must come round.
+         * One loop among the nodes not in {@code ordered}, in the direction rows flow. Each of those
+         * nodes is fed by another of them, so walking back along inputs must come round.
          */
         private List<String> loop(Set<String> ordered) {
-            String start = steps.keySet().stream().filter(id -> !ordered.contains(id)).findFirst().orElseThrow();
+            String start = nodes.keySet().stream().filter(id -> !ordered.contains(id)).findFirst().orElseThrow();
             List<String> path = new ArrayList<>();
             Set<String> onPath = new LinkedHashSet<>();
             String at = start;
             while (onPath.add(at)) {
                 path.add(at);
                 String current = at;
-                at = edges.stream().filter(e -> e.to().step().equals(current) && !ordered.contains(e.from().step()))
-                    .map(e -> e.from().step()).findFirst().orElseThrow();
+                at = edges.stream().filter(e -> e.to().node().equals(current) && !ordered.contains(e.from().node()))
+                    .map(e -> e.from().node()).findFirst().orElseThrow();
             }
             List<String> loop = new ArrayList<>(path.subList(path.indexOf(at), path.size()));
             Collections.reverse(loop);
-            List<String> written = new ArrayList<>(steps.keySet()); // start from the step written first
+            List<String> written = new ArrayList<>(nodes.keySet()); // start from the node written first
             String first = loop.stream().min(Comparator.comparingInt(written::indexOf)).orElseThrow();
             Collections.rotate(loop, -loop.indexOf(first));
             return loop;
@@ -520,11 +520,11 @@ public final class PipelineCompiler {
 
         private Map<String, Map<String, Schema>> schemas(List<String> order) {
             Map<String, Map<String, Schema>> known = new LinkedHashMap<>();
-            Map<String, String> unknownBecause = new HashMap<>(); // step → the step whose columns are unknown
+            Map<String, String> unknownBecause = new HashMap<>(); // node → the node whose columns are unknown
             Map<String, List<String>> skipped = new LinkedHashMap<>();
             for (String id : order) {
-                StepDefinition s = steps.get(id);
-                StepFactory f = factoryOf.get(id);
+                NodeDefinition s = nodes.get(id);
+                NodeFactory f = factoryOf.get(id);
                 if (f == null || broken.contains(id)) {
                     continue;
                 }
@@ -536,13 +536,13 @@ public final class PipelineCompiler {
                     List<Edge> into = into(id, port);
                     for (int k = 0; k < into.size(); k++) {
                         PortRef from = into.get(k).from();
-                        Schema schema = known.getOrDefault(from.step(), Map.of()).get(from.port());
+                        Schema schema = known.getOrDefault(from.node(), Map.of()).get(from.port());
                         if (schema != null) {
                             inputs.put(declared.endsWith("*") ? port + "[" + k + "]" : port, schema);
-                        } else if (unknownBecause.containsKey(from.step())) {
-                            origin = origin == null ? unknownBecause.get(from.step()) : origin;
+                        } else if (unknownBecause.containsKey(from.node())) {
+                            origin = origin == null ? unknownBecause.get(from.node()) : origin;
                         } else {
-                            silent = true; // that step has a problem of its own
+                            silent = true; // that node has a problem of its own
                         }
                     }
                 }
@@ -558,7 +558,7 @@ public final class PipelineCompiler {
                 try {
                     outs = f.outputPorts(config(s));
                 } catch (RuntimeException e) {
-                    problems.add(Problem.at(s.position(), id, "Step " + id + ": its outputs could not be worked out: "
+                    problems.add(Problem.at(s.position(), id, "Node " + id + ": its outputs could not be worked out: "
                         + message(e)));
                     continue;
                 }
@@ -567,12 +567,12 @@ public final class PipelineCompiler {
                     Schema schema;
                     try {
                         schema = f.outputSchema(port, inputs, config(s));
-                    } catch (StepException e) {
-                        problems.add(Problem.at(s.position(), id, "Step " + id + ": " + message(e)));
+                    } catch (NodeException e) {
+                        problems.add(Problem.at(s.position(), id, "Node " + id + ": " + message(e)));
                         mine = null;
                         break;
                     } catch (RuntimeException e) {
-                        problems.add(Problem.at(s.position(), id, "Step " + id + ": its columns could not be worked out: "
+                        problems.add(Problem.at(s.position(), id, "Node " + id + ": its columns could not be worked out: "
                             + message(e)));
                         mine = null;
                         break;
@@ -590,32 +590,32 @@ public final class PipelineCompiler {
                     known.put(id, mine);
                 }
             }
-            skipped.forEach((origin, after) -> notes.add(Problem.at(steps.get(origin).position(), origin,
-                "The columns leaving step " + origin + " cannot be known before the run, so "
-                    + (after.size() == 1 ? "step " + after.getFirst() + " is" : "steps " + String.join(", ", after) + " are")
+            skipped.forEach((origin, after) -> notes.add(Problem.at(nodes.get(origin).position(), origin,
+                "The columns leaving node " + origin + " cannot be known before the run, so "
+                    + (after.size() == 1 ? "node " + after.getFirst() + " is" : "nodes " + String.join(", ", after) + " are")
                     + " not checked against columns until then")));
             return known;
         }
 
         /**
-         * A note for a step with several input ports fed, through any number of steps, from the
-         * same step: if it reads one input to its end before another (a lookup reads its lookup
-         * side first), the shared step waits for room on the input not being read, and the run
+         * A note for a node with several input ports fed, through any number of nodes, from the
+         * same node: if it reads one input to its end before another (a lookup reads its lookup
+         * side first), the shared node waits for room on the input not being read, and the run
          * stalls once the data is larger than the edges hold.
          */
         private void sharedUpstream() {
             Map<String, Set<String>> above = new HashMap<>();
-            for (StepDefinition s : list) {
+            for (NodeDefinition s : list) {
                 Map<String, Set<String>> byPort = new LinkedHashMap<>(); // a port taking many: one entry per input
                 Map<String, Integer> seen = new HashMap<>();
                 for (Edge e : edges) {
-                    if (e.to().step().equals(s.id())) {
+                    if (e.to().node().equals(s.id())) {
                         int k = seen.merge(e.to().port(), 1, Integer::sum) - 1;
                         boolean many = into(s.id(), e.to().port()).size() > 1;
                         String key = many ? e.to().port() + "[" + k + "]" : e.to().port();
                         Set<String> a = byPort.computeIfAbsent(key, x -> new HashSet<>());
-                        a.add(e.from().step());
-                        a.addAll(ancestors(e.from().step(), above));
+                        a.add(e.from().node());
+                        a.addAll(ancestors(e.from().node(), above));
                     }
                 }
                 if (byPort.size() < 2) {
@@ -627,8 +627,8 @@ public final class PipelineCompiler {
                     common.retainAll(byPort.get(ports.get(i)));
                 }
                 if (!common.isEmpty()) {
-                    notes.add(Problem.at(s.position(), s.id(), "Step " + s.id() + "'s inputs " + String.join(" and ", ports)
-                        + " both come from step " + common.iterator().next() + ". If " + s.id()
+                    notes.add(Problem.at(s.position(), s.id(), "Node " + s.id() + "'s inputs " + String.join(" and ", ports)
+                        + " both come from node " + common.iterator().next() + ". If " + s.id()
                         + " reads one input to its end before the other, the run can stall once more rows wait than"
                         + " the edges hold; reading the source twice avoids that"));
                 }
@@ -645,8 +645,8 @@ public final class PipelineCompiler {
             while (!todo.isEmpty()) {
                 String at = todo.poll();
                 for (Edge e : edges) {
-                    if (e.to().step().equals(at) && out.add(e.from().step())) {
-                        todo.add(e.from().step());
+                    if (e.to().node().equals(at) && out.add(e.from().node())) {
+                        todo.add(e.from().node());
                     }
                 }
             }

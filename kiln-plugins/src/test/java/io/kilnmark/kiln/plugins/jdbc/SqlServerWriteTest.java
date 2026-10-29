@@ -25,7 +25,7 @@ import org.testcontainers.mssqlserver.MSSQLServerContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import io.kilnmark.kiln.RunResult;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.write.Rows;
@@ -99,9 +99,9 @@ class SqlServerWriteTest {
 
     static Rows.Collected read(String table) throws Exception {
         Rows.Collected c = new Rows.Collected();
-        StepSpec reader = CONNECTOR.reader(source, CONNECTOR.asset(source, table),
+        NodeSpec reader = CONNECTOR.reader(source, CONNECTOR.asset(source, table),
             new Connector.ReadOptions("urn:kilnmark:warehouse:" + table, 0, 1000));
-        RunResult r = Rows.run(reader, new StepSpec("collect", Rows.collector(c), Map.of()), Rows.events());
+        RunResult r = Rows.run(reader, new NodeSpec("collect", Rows.collector(c), Map.of()), Rows.events());
         assertTrue(r.succeeded(), r.error());
         return c;
     }

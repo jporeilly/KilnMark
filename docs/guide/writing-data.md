@@ -1,6 +1,6 @@
 # Writing data from a pipeline
 
-A pipeline ends in one or more `write` steps. Each writes the rows it receives to a table in a
+A pipeline ends in one or more `write` nodes. Each writes the rows it receives to a table in a
 database (PostgreSQL, SQL Server, MySQL, MariaDB, Oracle, or another database through Generic JDBC) or to a CSV or Parquet file in a folder or S3 bucket. This
 guide explains the modes, the file formats, the rights a write needs, and what `replace` keeps.
 
@@ -66,7 +66,7 @@ the column's 2"). Nothing is rounded. The run stops there, and nothing from it s
 table, since the write is one transaction; with `commit_every`, the rows committed before that
 batch stay. This holds for any declared decimal column, beyond 38 digits too, and for PostgreSQL's
 negative scales (`numeric(5,-2)` takes whole hundreds). PostgreSQL, SQL Server, MySQL, MariaDB and Oracle behave the same.
-Text is never turned into numbers or dates: add a `select` step to cast columns first. Columns the
+Text is never turned into numbers or dates: add a `select` node to cast columns first. Columns the
 input lacks are left to their defaults, so a column that is `NOT NULL` without a default must be in
 the input. Two input columns whose names differ only in capitals cannot both go to one column. Text
 longer than a column holds is refused with the row and column named. On PostgreSQL, a table with
@@ -155,7 +155,7 @@ drops the half-filled new one.
 
 Other settings: `batch_size` (rows sent to the database at a time; 1,000, or 5,000 for SQL Server
 inserts) and, on SQL Server, `bulk_copy: false` to turn off the driver's bulk loading, which is
-used only for tables the step creates.
+used only for tables the node creates.
 
 ### MySQL and MariaDB
 
@@ -184,7 +184,7 @@ work:
 - **Fractions of a second are never rounded.** A value with more digits of a second than a
   `DATETIME(p)`, `TIMESTAMP(p)` or `TIME(p)` column keeps stops the write, naming the row; so does
   one for a PostgreSQL `timestamp(p)` or `time(p)` column.
-- **Large writes.** Tables the step creates are loaded in bulk with `LOAD DATA LOCAL INFILE`, sent
+- **Large writes.** Tables the node creates are loaded in bulk with `LOAD DATA LOCAL INFILE`, sent
   from memory, when the server allows it (`local_infile`, off by default on MySQL 8); otherwise,
   or with `bulk_load: false`, with batched inserts. Values that do not fit fail the write rather
   than being cut short: Kilnmark writes with its own SQL mode (`STRICT_ALL_TABLES`,
@@ -247,7 +247,7 @@ with **`append`** and **`create`** only, and only when its **Read only** setting
 - `create` chooses each column's type from the types the driver lists. If the database has no type
   for a column (for example no timestamp with a time zone), the write stops before anything is
   created and says which column to convert.
-- Every value is checked against the column it goes to, also in a table the step just created: a
+- Every value is checked against the column it goes to, also in a table the node just created: a
   decimal that would need rounding, text or bytes longer than the column, more digits of a second
   than the column keeps, or a number outside a `TINYINT` or unsigned column stops the write, naming
   the row. Where the driver says how many bytes a text column holds, the text's length in UTF-8 bytes
@@ -274,7 +274,7 @@ with **`append`** and **`create`** only, and only when its **Read only** setting
 
 - **`path`** is relative to the source's folder (or, for S3, below the source's prefix: with the
   prefix `raw/`, `path: out/spend.csv` writes the object `raw/out/spend.csv`). This differs from a
-  `read` step, whose `asset` is the asset's path as the catalogue shows it: for S3 the whole key,
+  `read` node, whose `asset` is the asset's path as the catalogue shows it: for S3 the whole key,
   prefix included (`asset: raw/out/spend.csv`). Kilnmark records a written file under that same
   catalogue path, so a later `read` or scan finds it. Folders
   that do not exist are created. Paths that are absolute, contain `..`, `//`, a backslash or

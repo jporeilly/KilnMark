@@ -5,17 +5,17 @@ never shipped).
 
 ## Question
 
-Should steps hand each other Apache Arrow batches, or plain row objects? The worry was the
+Should nodes hand each other Apache Arrow batches, or plain row objects? The worry was the
 learning curve, memory handling, and whether back-pressure and in-stream profiling work.
 
 ## Answer: yes, use Arrow
 
-Arrow batches between steps, with the changes below. The fallback to row objects is not needed.
+Arrow batches between nodes, with the changes below. The fallback to row objects is not needed.
 
 ## What was built
 
-A source step hands batches through a bounded pipe to one or more profiling steps. Each
-profiling step takes ownership of a batch by moving its buffers into its own memory allocator,
+A source node hands batches through a bounded pipe to one or more profiling nodes. Each
+profiling node takes ownership of a batch by moving its buffers into its own memory allocator,
 profiles it with DataSketches (distinct count, quantiles, frequent values, nulls, lengths), and
 frees it. Partitions profiled apart are merged at the end. The same run with boxed row objects is
 the baseline. Five tests check that the two agree and that memory is bounded and never leaks.
@@ -65,8 +65,8 @@ On a 2-CPU cloud container, Java 25, 10 million rows of six columns (`spikeRun`)
    vector: 2 != 0`) unless told each column's precision. It also turns `timestamptz` into
    milliseconds. The engine needs a type-mapping layer per database dialect anyway (from Kettle
    10.2's dialects), so the reader belongs there, with the adapter as a reference only.
-4. **Each step owns its memory.** Batches move between steps by transferring buffers into the
-   receiving step's allocator, so the engine can report and limit memory per step.
+4. **Each node owns its memory.** Batches move between nodes by transferring buffers into the
+   receiving node's allocator, so the engine can report and limit memory per node.
 
 ## Not tested
 

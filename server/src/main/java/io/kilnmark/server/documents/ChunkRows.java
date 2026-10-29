@@ -9,17 +9,17 @@ import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
 import io.kilnmark.graph.store.DocumentRecords;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.plugins.documents.DocumentEvents;
 
 /**
- * The last step of a document pipeline: takes chunk rows ({@link DocumentEvents#CHUNK_SCHEMA}) and
- * hands each, with its document's URN, to {@code into}; at the end, calls {@code done}. Steps that
+ * The last node of a document pipeline: takes chunk rows ({@link DocumentEvents#CHUNK_SCHEMA}) and
+ * hands each, with its document's URN, to {@code into}; at the end, calls {@code done}. Nodes that
  * work on chunks (embeddings, in round 3) go between the reader and this one.
  */
-public final class ChunkRows implements Step {
+public final class ChunkRows implements Node {
 
     private final BiConsumer<String, DocumentRecords.Chunk> into;
     private final Runnable done;
@@ -35,18 +35,18 @@ public final class ChunkRows implements Step {
     }
 
     @Override
-    public void init(StepContext context) {
+    public void init(NodeContext context) {
         // nothing to prepare
     }
 
     @Override
-    public boolean process(StepContext context) throws StepException {
+    public boolean process(NodeContext context) throws NodeException {
         VectorSchemaRoot b;
         try {
             b = context.input().take(context.allocator());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StepException("Interrupted", e);
+            throw new NodeException("Interrupted", e);
         }
         if (b == null) {
             done.run();
@@ -60,7 +60,7 @@ public final class ChunkRows implements Step {
             IntVector start = (IntVector) b.getVector(DocumentEvents.START);
             IntVector end = (IntVector) b.getVector(DocumentEvents.END);
             if (urn == null || seq == null || text == null || start == null || end == null) {
-                throw new StepException("The step before " + context.stepName() + " does not send document chunks "
+                throw new NodeException("The node before " + context.nodeName() + " does not send document chunks "
                     + "(columns " + List.of(DocumentEvents.ASSET_URN, DocumentEvents.SEQUENCE, DocumentEvents.TEXT)
                     + ")");
             }

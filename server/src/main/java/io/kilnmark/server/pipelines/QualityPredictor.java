@@ -27,9 +27,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.kilnmark.kiln.graph.Edge;
 import io.kilnmark.kiln.graph.PortRef;
 import io.kilnmark.kiln.plugins.profile.ValueShape;
-import io.kilnmark.kiln.steps.expr.ExprException;
-import io.kilnmark.kiln.steps.expr.ExprView;
-import io.kilnmark.kiln.steps.expr.Expression;
+import io.kilnmark.kiln.nodes.expr.ExprException;
+import io.kilnmark.kiln.nodes.expr.ExprView;
+import io.kilnmark.kiln.nodes.expr.Expression;
 import io.kilnmark.server.quality.Dimension;
 import io.kilnmark.server.quality.Measures;
 import io.kilnmark.server.quality.ProfileFacts;
@@ -42,16 +42,16 @@ import io.kilnmark.server.quality.Scores;
  * Predicted quality at design time (docs/design/data-quality.md section 8, "Profile once, reuse
  * everywhere"): the catalogue's metadata about each asset a pipeline reads (profiles, value shapes,
  * most common values, accepted patterns, relationships and rule results) is carried through the
- * steps, each with its own rule, to estimate what reaches every write and gate. No data is read:
+ * nodes, each with its own rule, to estimate what reaches every write and gate. No data is read:
  * only what the catalogue already holds. Each output is then scored with the same measures a run
  * scores what it wrote with ({@link RunQuality}), and each gate from the rules it would check, so
  * a run's predicted and measured scores compare directly.
  *
  * <p>What is not known stays unknown: a share the metadata cannot tell is never filled with a
  * guess, a dimension that cannot be judged gets no score, and the words say what was unknown and
- * which assumptions were made (most often, that a step's rows are like the rows it was given).
+ * which assumptions were made (most often, that a node's rows are like the rows it was given).
  *
- * <p>The rules per step are documented in docs/guide/pipelines.md, "Predicted quality".
+ * <p>The rules per node are documented in docs/guide/pipelines.md, "Predicted quality".
  */
 final class QualityPredictor {
 
@@ -91,33 +91,33 @@ final class QualityPredictor {
     record LastResult(long failing, long total, Rule.Status status) {
     }
 
-    /** A step as prediction sees it: its type, settings as written, and the columns the check worked out. */
-    record PlanStep(String id, String type, Map<String, Object> config,
+    /** A node as prediction sees it: its type, settings as written, and the columns the check worked out. */
+    record PlanNode(String id, String type, Map<String, Object> config,
                     Map<String, List<PipelineCompilerPort.Column>> columns) {
-        PlanStep {
+        PlanNode {
             config = config == null ? Map.of() : config;
             columns = columns == null ? Map.of() : columns;
         }
     }
 
-    record PlanEdge(String fromStep, String fromPort, String toStep, String toPort) {
+    record PlanEdge(String fromNode, String fromPort, String toNode, String toPort) {
     }
 
-    /** A pipeline to predict: steps, edges in the order written, and the URN each read step reads. */
-    record Plan(List<PlanStep> steps, List<PlanEdge> edges, Map<String, String> reads) {
+    /** A pipeline to predict: nodes, edges in the order written, and the URN each read node reads. */
+    record Plan(List<PlanNode> nodes, List<PlanEdge> edges, Map<String, String> reads) {
 
         static Plan of(PipelineCompilerPort.Compilation c, Map<String, String> reads) {
-            List<PlanStep> steps = new ArrayList<>();
-            for (PipelineCompilerPort.StepOutline s : c.steps()) {
-                steps.add(new PlanStep(s.id(), s.type(), c.configs().getOrDefault(s.id(), Map.of()), s.columns()));
+            List<PlanNode> nodes = new ArrayList<>();
+            for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
+                nodes.add(new PlanNode(s.id(), s.type(), c.configs().getOrDefault(s.id(), Map.of()), s.columns()));
             }
             List<PlanEdge> edges = c.edges().stream()
-                .map(e -> new PlanEdge(e.fromStep(), e.fromPort(), e.toStep(), e.toPort())).toList();
-            return new Plan(steps, edges, reads);
+                .map(e -> new PlanEdge(e.fromNode(), e.fromPort(), e.toNode(), e.toPort())).toList();
+            return new Plan(nodes, edges, reads);
         }
 
-        PlanStep step(String id) {
-            for (PlanStep s : steps) {
+        PlanNode node(String id) {
+            for (PlanNode s : nodes) {
                 if (s.id().equals(id)) {
                     return s;
                 }
@@ -126,12 +126,12 @@ final class QualityPredictor {
         }
 
         /**
-         * This plan with {@code added} steps listed after {@code after} and their edges, and the edge
+         * This plan with {@code added} nodes listed after {@code after} and their edges, and the edge
          * {@code cut} (when given) replaced by {@code rewired}: how a suggestion is tried out.
          */
-        Plan with(List<PlanStep> added, List<PlanEdge> addedEdges, PlanEdge cut, PlanEdge rewired,
+        Plan with(List<PlanNode> added, List<PlanEdge> addedEdges, PlanEdge cut, PlanEdge rewired,
                   Map<String, String> addedReads) {
-            List<PlanStep> s = new ArrayList<>(steps);
+            List<PlanNode> s = new ArrayList<>(nodes);
             s.addAll(added);
             List<PlanEdge> e = new ArrayList<>();
             for (PlanEdge x : edges) {
@@ -146,8 +146,8 @@ final class QualityPredictor {
 
     // ---- what prediction says ----
 
-    /** The rows estimated to leave each output port of a step; a null count is unknown. */
-    record StepEstimate(String step, String type, Map<String, Long> rows) {
+    /** The rows estimated to leave each output port of a node; a null count is unknown. */
+    record NodeEstimate(String node, String type, Map<String, Long> rows) {
     }
 
     /** One rule a gate would check, with the share of rows estimated to fail it and where that came from. */
@@ -165,16 +165,16 @@ final class QualityPredictor {
      * nothing could be predicted; {@code unknown} says what could not be told and {@code assumptions}
      * what was assumed. Always an estimate.
      */
-    record Predicted(String step, String role, String asset, Double overall, Map<String, Double> dimensions,
+    record Predicted(String node, String role, String asset, Double overall, Map<String, Double> dimensions,
                      List<String> reasons, List<String> unknown, List<String> assumptions, Long rows,
                      PredictedGate gate) {
     }
 
-    record Result(List<StepEstimate> steps, List<Predicted> outputs) {
+    record Result(List<NodeEstimate> nodes, List<Predicted> outputs) {
 
-        Predicted output(String step) {
+        Predicted output(String node) {
             for (Predicted p : outputs) {
-                if (p.step().equals(step)) {
+                if (p.node().equals(node)) {
                     return p;
                 }
             }
@@ -346,14 +346,14 @@ final class QualityPredictor {
         return trace(plan).result();
     }
 
-    /** A prediction with the estimate on every output port, by step and port, for suggestions. */
+    /** A prediction with the estimate on every output port, by node and port, for suggestions. */
     record Trace(Result result, Map<String, Map<String, Est>> ports) {
 
-        /** The estimate of the rows arriving at {@code step}'s {@code port}, from the first edge feeding it. */
-        Est arriving(Plan plan, String step, String port) {
+        /** The estimate of the rows arriving at {@code node}'s {@code port}, from the first edge feeding it. */
+        Est arriving(Plan plan, String node, String port) {
             for (PlanEdge e : plan.edges()) {
-                if (e.toStep().equals(step) && e.toPort().equals(port)) {
-                    return ports.getOrDefault(e.fromStep(), Map.of()).get(e.fromPort());
+                if (e.toNode().equals(node) && e.toPort().equals(port)) {
+                    return ports.getOrDefault(e.fromNode(), Map.of()).get(e.fromPort());
                 }
             }
             return null;
@@ -362,25 +362,25 @@ final class QualityPredictor {
 
     Trace trace(Plan plan) {
         Map<String, Map<String, Est>> out = new LinkedHashMap<>();
-        List<StepEstimate> steps = new ArrayList<>();
+        List<NodeEstimate> nodes = new ArrayList<>();
         List<Predicted> predicted = new ArrayList<>();
-        for (PlanStep s : order(plan)) {
+        for (PlanNode s : order(plan)) {
             Map<String, List<Est>> inputs = new LinkedHashMap<>();
             for (PlanEdge e : plan.edges()) {
-                if (!e.toStep().equals(s.id())) {
+                if (!e.toNode().equals(s.id())) {
                     continue;
                 }
-                Est from = out.getOrDefault(e.fromStep(), Map.of()).get(e.fromPort());
+                Est from = out.getOrDefault(e.fromNode(), Map.of()).get(e.fromPort());
                 if (from == null) {
-                    PlanStep up = plan.step(e.fromStep());
+                    PlanNode up = plan.node(e.fromNode());
                     from = Est.unknownRows(up == null ? null : up.columns().get(e.fromPort()));
-                    from.unknown.add("what " + e.fromStep() + " sends on " + e.fromPort());
+                    from.unknown.add("what " + e.fromNode() + " sends on " + e.fromPort());
                 }
                 inputs.computeIfAbsent(e.toPort(), k -> new ArrayList<>()).add(from);
             }
             Map<String, Est> ports;
             try {
-                ports = step(plan, s, inputs, predicted);
+                ports = node(plan, s, inputs, predicted);
             } catch (RuntimeException ex) {
                 ports = new LinkedHashMap<>();
                 for (Map.Entry<String, List<PipelineCompilerPort.Column>> c : s.columns().entrySet()) {
@@ -392,20 +392,20 @@ final class QualityPredictor {
             out.put(s.id(), ports);
             Map<String, Long> rows = new LinkedHashMap<>();
             ports.forEach((port, e) -> rows.put(port, e.rows == null ? null : Math.round(e.rows)));
-            steps.add(new StepEstimate(s.id(), s.type(), rows));
+            nodes.add(new NodeEstimate(s.id(), s.type(), rows));
         }
-        return new Trace(new Result(steps, predicted), out);
+        return new Trace(new Result(nodes, predicted), out);
     }
 
-    /** Steps in the order rows reach them; steps in a loop (refused by the check) come last. */
-    static List<PlanStep> order(Plan plan) {
+    /** Nodes in the order rows reach them; nodes in a loop (refused by the check) come last. */
+    static List<PlanNode> order(Plan plan) {
         Map<String, Integer> waiting = new LinkedHashMap<>();
-        for (PlanStep s : plan.steps()) {
+        for (PlanNode s : plan.nodes()) {
             waiting.put(s.id(), 0);
         }
         for (PlanEdge e : plan.edges()) {
-            if (waiting.containsKey(e.toStep()) && waiting.containsKey(e.fromStep())) {
-                waiting.merge(e.toStep(), 1, Integer::sum);
+            if (waiting.containsKey(e.toNode()) && waiting.containsKey(e.fromNode())) {
+                waiting.merge(e.toNode(), 1, Integer::sum);
             }
         }
         ArrayDeque<String> ready = new ArrayDeque<>();
@@ -414,23 +414,23 @@ final class QualityPredictor {
                 ready.add(id);
             }
         });
-        List<PlanStep> out = new ArrayList<>();
+        List<PlanNode> out = new ArrayList<>();
         Set<String> done = new HashSet<>();
         while (!ready.isEmpty()) {
             String id = ready.poll();
             if (!done.add(id)) {
                 continue;
             }
-            out.add(plan.step(id));
+            out.add(plan.node(id));
             for (PlanEdge e : plan.edges()) {
-                if (e.fromStep().equals(id) && waiting.containsKey(e.toStep())) {
-                    if (waiting.merge(e.toStep(), -1, Integer::sum) == 0) {
-                        ready.add(e.toStep());
+                if (e.fromNode().equals(id) && waiting.containsKey(e.toNode())) {
+                    if (waiting.merge(e.toNode(), -1, Integer::sum) == 0) {
+                        ready.add(e.toNode());
                     }
                 }
             }
         }
-        for (PlanStep s : plan.steps()) {
+        for (PlanNode s : plan.nodes()) {
             if (!done.contains(s.id())) {
                 out.add(s);
             }
@@ -438,7 +438,7 @@ final class QualityPredictor {
         return out;
     }
 
-    private Map<String, Est> step(Plan plan, PlanStep s, Map<String, List<Est>> inputs, List<Predicted> predicted) {
+    private Map<String, Est> node(Plan plan, PlanNode s, Map<String, List<Est>> inputs, List<Predicted> predicted) {
         String type = s.type() == null ? "" : s.type();
         Est in = first(inputs, "in");
         return switch (type) {
@@ -461,7 +461,7 @@ final class QualityPredictor {
                 Map<String, Est> ports = new LinkedHashMap<>();
                 for (Map.Entry<String, List<PipelineCompilerPort.Column>> c : s.columns().entrySet()) {
                     Est e = Est.unknownRows(c.getValue());
-                    e.unknown.add("what a " + type + " step does to its rows (" + s.id() + ")");
+                    e.unknown.add("what a " + type + " node does to its rows (" + s.id() + ")");
                     ports.put(c.getKey(), e);
                 }
                 yield ports;
@@ -486,7 +486,7 @@ final class QualityPredictor {
      * value shapes, formats, most common values, spread and accepted shapes. With {@code row_limit},
      * the first rows are taken to be like the rest.
      */
-    private Est read(Plan plan, PlanStep s) {
+    private Est read(Plan plan, PlanNode s) {
         String urn = plan.reads().get(s.id());
         ProfileFacts f = urn == null ? null : catalogue.facts(urn);
         List<PipelineCompilerPort.Column> outline = s.columns().get("out");
@@ -520,7 +520,7 @@ final class QualityPredictor {
             e.cols.put(name, c);
         }
         e.key = f.primaryKey();
-        long limit = ReadStepFactory.rowLimit(s.config());
+        long limit = ReadNodeFactory.rowLimit(s.config());
         if (limit > 0) {
             e.rows = e.rows == null ? null : Math.min(e.rows, limit);
             e.assumptions.add("the first " + countWords(limit) + " rows of " + s.id() + " are like the rest");
@@ -707,7 +707,7 @@ final class QualityPredictor {
 
     static final String INDEPENDENT = "conditions joined with and or or are taken as independent of each other";
 
-    private Map<String, Est> filter(PlanStep s, Est in) {
+    private Map<String, Est> filter(PlanNode s, Est in) {
         String condition = PipelineSources.text(s.config(), "condition");
         Selection sel = condition == null ? Selection.unknown("the filter's condition") : selection(condition, in);
         Map<String, Est> out = new LinkedHashMap<>();
@@ -717,16 +717,16 @@ final class QualityPredictor {
     }
 
     /** The rows a condition keeps ({@code kept}) or does not. */
-    static Est apply(Est in, Selection sel, boolean kept, String step) {
+    static Est apply(Est in, Selection sel, boolean kept, String node) {
         Est e = in.copy();
         Double share = sel.share() == null ? null : kept ? sel.share() : 1 - sel.share();
         e.scale(share);
         e.narrowed = e.narrowed || sel.narrows();
         if (share == null) {
-            e.unknown.add("how many rows " + step + (kept ? " keeps" : " sets aside") + " (" + sel.unknown() + ")");
+            e.unknown.add("how many rows " + node + (kept ? " keeps" : " sets aside") + " (" + sel.unknown() + ")");
         }
         if (sel.assumed() != null) {
-            e.assumptions.add(step + ": " + sel.assumed());
+            e.assumptions.add(node + ": " + sel.assumed());
         }
         Map<String, UnaryOperator<Col>> changes = kept ? sel.kept() : sel.rejected();
         if (e.cols != null) {
@@ -737,7 +737,7 @@ final class QualityPredictor {
                 }
             }
             if (e.cols.size() > changes.size()) {
-                e.assumptions.add("columns other than those " + step + " tests are spread the same in the rows it "
+                e.assumptions.add("columns other than those " + node + " tests are spread the same in the rows it "
                     + (kept ? "keeps" : "sets aside"));
             }
         }
@@ -1170,7 +1170,7 @@ final class QualityPredictor {
         return x;
     }
 
-    private Map<String, Est> route(PlanStep s, Est in) {
+    private Map<String, Est> route(PlanNode s, Est in) {
         Map<String, Est> out = new LinkedHashMap<>();
         Object routes = s.config().get("routes");
         List<Selection> before = new ArrayList<>();
@@ -1198,7 +1198,7 @@ final class QualityPredictor {
 
     // ---- compute and select ----
 
-    private Est compute(PlanStep s, Est in) {
+    private Est compute(PlanNode s, Est in) {
         Est e = in.copy();
         Object columns = s.config().get("columns");
         if (!(columns instanceof Map<?, ?> m) || e.cols == null) {
@@ -1714,7 +1714,7 @@ final class QualityPredictor {
     }
 
     /** {@code select}: keep or drop, rename, cast; the values of what is kept stay as they were. */
-    private Est select(PlanStep s, Est in) {
+    private Est select(PlanNode s, Est in) {
         Est e = in.copy();
         if (e.cols == null) {
             return e;
@@ -1777,7 +1777,7 @@ final class QualityPredictor {
      * relationship or the two columns' sketches. Unmatched rows are kept with empty lookup columns
      * ({@code keep}), dropped, or sent to {@code rejected}.
      */
-    private Map<String, Est> lookup(PlanStep s, Est main, Est side) {
+    private Map<String, Est> lookup(PlanNode s, Est main, Est side) {
         Map<String, Object> config = s.config();
         Map<String, String> on = new LinkedHashMap<>();
         if (config.get("on") instanceof Map<?, ?> m) {
@@ -1876,7 +1876,7 @@ final class QualityPredictor {
     // ---- aggregate, union, dedupe, limit ----
 
     /** {@code aggregate}: one row per group (from the group column's distinct values); groups are unique. */
-    private Est aggregate(PlanStep s, Est in) {
+    private Est aggregate(PlanNode s, Est in) {
         Est e = new Est();
         e.unknown.addAll(in.unknown);
         e.assumptions.addAll(in.assumptions);
@@ -2039,7 +2039,7 @@ final class QualityPredictor {
     }
 
     /** {@code dedupe}: one row per key value (from the key's distinct values); the repeats go to {@code rejected}. */
-    private Map<String, Est> dedupe(PlanStep s, Est in) {
+    private Map<String, Est> dedupe(PlanNode s, Est in) {
         List<String> key = list(s.config().get("key"));
         Est out = in.copy();
         Double keptShare = null;
@@ -2079,7 +2079,7 @@ final class QualityPredictor {
         return ports;
     }
 
-    private static Est limit(PlanStep s, Est in) {
+    private static Est limit(PlanNode s, Est in) {
         Est e = in.copy();
         long n = -1;
         Object rows = s.config().get("rows");
@@ -2101,19 +2101,19 @@ final class QualityPredictor {
 
     // ---- gate ----
 
-    private Map<String, Est> gate(Plan plan, PlanStep s, Est in, List<Predicted> predicted) {
+    private Map<String, Est> gate(Plan plan, PlanNode s, Est in, List<Predicted> predicted) {
         Map<String, Object> config = s.config();
         String onFail = PipelineSources.text(config, "on_fail");
         onFail = onFail == null ? "stop" : onFail.toLowerCase(Locale.ROOT);
         List<QualityGate.GateRule> rules = new ArrayList<>();
         String assetUrn = null;
         Map<String, String> types = new LinkedHashMap<>();
-        plan.steps().forEach(x -> types.put(x.id(), x.type()));
-        List<Edge> edges = plan.edges().stream().map(x -> new Edge(new PortRef(x.fromStep(), x.fromPort()),
-            new PortRef(x.toStep(), x.toPort()))).toList();
+        plan.nodes().forEach(x -> types.put(x.id(), x.type()));
+        List<Edge> edges = plan.edges().stream().map(x -> new Edge(new PortRef(x.fromNode(), x.fromPort()),
+            new PortRef(x.toNode(), x.toPort()))).toList();
         Est checked = in.copy();
-        if (GateStepFactory.assetRules(config)) {
-            GateStepFactory.Upstream up = GateStepFactory.upstream(s.id(), config, edges, types);
+        if (GateNodeFactory.assetRules(config)) {
+            GateNodeFactory.Upstream up = GateNodeFactory.upstream(s.id(), config, edges, types);
             if (up.read() != null) {
                 assetUrn = plan.reads().get(up.read());
                 if (assetUrn != null) {
@@ -2181,8 +2181,8 @@ final class QualityPredictor {
         String decision;
         boolean anyFail = forScore.stream().anyMatch(x -> x.status() == Rule.Status.FAIL);
         boolean wholeFail = forScore.stream().anyMatch(x -> x.wholeAsset() && x.status() == Rule.Status.FAIL);
-        Double minScore = GateStepFactory.share(config.get("min_score"));
-        Double maxShare = GateStepFactory.share(config.get("max_failing_share"));
+        Double minScore = GateNodeFactory.share(config.get("min_score"));
+        Double maxShare = GateNodeFactory.share(config.get("max_failing_share"));
         boolean breach = (minScore != null && score.overall() != null && score.overall() < minScore)
             || (maxShare != null && failingShare != null && failingShare > maxShare);
         switch (onFail) {
@@ -2439,9 +2439,9 @@ final class QualityPredictor {
 
     // ---- write: the predicted score of what reaches it ----
 
-    private Predicted write(Plan plan, PlanStep s, Est in) {
-        String urn = WriteStepFactory.urn(s.config());
-        List<String> key = WriteStepFactory.key(s.config());
+    private Predicted write(Plan plan, PlanNode s, Est in) {
+        String urn = WriteNodeFactory.urn(s.config());
+        List<String> key = WriteNodeFactory.key(s.config());
         RunQuality.Score score = score(in, urn, key == null ? List.of() : key);
         List<String> unknown = new ArrayList<>(words(in.unknown));
         if (score.overall() == null) {

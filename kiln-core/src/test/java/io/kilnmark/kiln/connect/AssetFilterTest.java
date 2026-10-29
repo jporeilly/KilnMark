@@ -10,7 +10,7 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 
 class AssetFilterTest {
 
@@ -190,7 +190,7 @@ class AssetFilterTest {
         }
 
         @Override
-        public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
+        public NodeSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
             throw new UnsupportedOperationException();
         }
     }

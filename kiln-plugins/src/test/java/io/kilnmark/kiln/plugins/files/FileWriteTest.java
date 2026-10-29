@@ -27,8 +27,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.RunResult;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
@@ -69,15 +69,15 @@ class FileWriteTest {
 
     static RunResult write(Connector connector, SourceConfig source, Connector.WriteOptions options, Schema schema,
                            List<Object[]> rows, int batch, int failAt, List<MetadataEvent> events) throws Exception {
-        Step writer = connector.writer(source, options);
+        Node writer = connector.writer(source, options);
         return Rows.run(Rows.source(schema, rows, batch, failAt), writer, events);
     }
 
     static Rows.Collected read(Connector connector, SourceConfig source, String path) throws Exception {
         AssetInfo asset = connector.asset(source, path);
         Rows.Collected c = new Rows.Collected();
-        StepSpec reader = connector.reader(source, asset, new Connector.ReadOptions("urn:kilnmark:x:" + path, 0, 1000));
-        RunResult r = Rows.run(reader, new StepSpec("collect", Rows.collector(c), Map.of()), Rows.events());
+        NodeSpec reader = connector.reader(source, asset, new Connector.ReadOptions("urn:kilnmark:x:" + path, 0, 1000));
+        RunResult r = Rows.run(reader, new NodeSpec("collect", Rows.collector(c), Map.of()), Rows.events());
         assertTrue(r.succeeded(), r.error());
         return c;
     }
@@ -279,7 +279,7 @@ class FileWriteTest {
         assertTrue(replaced.succeeded(), replaced.error());
         assertEquals("new\r\n7\r\n", Files.readString(file));
 
-        Step viaMode = files.writer(s, new Connector.WriteOptions("keep.csv", "replace", List.of(), null, Map.of(),
+        Node viaMode = files.writer(s, new Connector.WriteOptions("keep.csv", "replace", List.of(), null, Map.of(),
             "urn:kilnmark:out:keep.csv"));
         assertTrue(Rows.run(Rows.source(schema, Rows.list(new Object[] {8L}), 10), viaMode, Rows.events()).succeeded());
         assertEquals("new\r\n8\r\n", Files.readString(file));
@@ -485,7 +485,7 @@ class FileWriteTest {
             null);
         e = assertThrows(ConnectorException.class, () -> files.writer(csvOnly, options("x.parquet", null, Map.of())));
         assertTrue(e.getMessage().contains("outside the folders or patterns the source scans"), e.getMessage());
-        Step upper = files.writer(csvOnly, new Connector.WriteOptions("top.csv", "REPLACE", List.of(), null, Map.of(),
+        Node upper = files.writer(csvOnly, new Connector.WriteOptions("top.csv", "REPLACE", List.of(), null, Map.of(),
             "urn:kilnmark:out:top.csv"));
         assertTrue(Rows.run(Rows.source(schema, Rows.list(new Object[] {2L}), 10), upper, Rows.events()).succeeded());
     }

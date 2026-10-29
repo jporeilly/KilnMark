@@ -358,11 +358,11 @@ public interface KilnmarkConfig {
         @WithDefault("256")
         int maxYamlKb();
 
-        /** Arrow memory one pipeline run may hold at once, across all its steps. */
+        /** Arrow memory one pipeline run may hold at once, across all its nodes. */
         @WithDefault("1024")
         long memoryLimitMb();
 
-        /** Batches each edge holds before the step feeding it waits. */
+        /** Batches each edge holds before the node feeding it waits. */
         @WithDefault("4")
         int rowSetCapacity();
 
@@ -373,30 +373,30 @@ public interface KilnmarkConfig {
         @WithDefault("30s")
         Duration waitForTarget();
 
-        /** Arrow memory one preview at a step may hold at once, across its steps: less than a run. */
+        /** Arrow memory one preview at a node may hold at once, across its nodes: less than a run. */
         @WithDefault("256")
         long previewMemoryLimitMb();
 
-        /** How long one preview at a step may take before it is stopped. */
+        /** How long one preview at a node may take before it is stopped. */
         @WithDefault("30s")
         Duration previewTimeout();
 
-        /** Previews at a step one person may start in any minute. */
+        /** Previews at a node one person may start in any minute. */
         @WithDefault("6")
         int previewsPerMinute();
 
         /**
-         * Previews at a step running at the same time in this process (each person runs one at a time).
+         * Previews at a node running at the same time in this process (each person runs one at a time).
          * Each may hold {@code preview-memory-limit-mb} of Arrow memory beside the runs' own.
          */
         @WithDefault("2")
         int previewConcurrency();
 
-        /** The most steps one preview at a step may run. */
+        /** The most nodes one preview at a node may run. */
         @WithDefault("50")
-        int previewMaxSteps();
+        int previewMaxNodes();
 
-        /** The most read steps one preview at a step may run. */
+        /** The most read nodes one preview at a node may run. */
         @WithDefault("10")
         int previewMaxReads();
     }

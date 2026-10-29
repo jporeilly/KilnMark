@@ -42,12 +42,12 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.NodeSpec;
 
-/** Test rows: a step that sends them as Arrow batches, a step that collects what arrives, and runs. */
+/** Test rows: a node that sends them as Arrow batches, a node that collects what arrives, and runs. */
 public final class Rows {
 
     private Rows() {
@@ -136,14 +136,14 @@ public final class Rows {
         }
     }
 
-    /** A source step sending {@code rows} in batches of {@code batchSize}; at least one batch, so the schema arrives. */
-    public static Step source(Schema schema, List<Object[]> rows, int batchSize) {
+    /** A source node sending {@code rows} in batches of {@code batchSize}; at least one batch, so the schema arrives. */
+    public static Node source(Schema schema, List<Object[]> rows, int batchSize) {
         return source(schema, rows, batchSize, -1);
     }
 
     /** As {@link #source(Schema, List, int)}, failing instead of sending batch number {@code failAt} (0-based). */
-    public static Step source(Schema schema, List<Object[]> rows, int batchSize, int failAt) {
-        return new Step() {
+    public static Node source(Schema schema, List<Object[]> rows, int batchSize, int failAt) {
+        return new Node() {
             private int at;
             private int batch;
 
@@ -153,14 +153,14 @@ public final class Rows {
             }
 
             @Override
-            public void init(StepContext context) {
+            public void init(NodeContext context) {
                 // nothing to open
             }
 
             @Override
-            public boolean process(StepContext context) throws StepException {
+            public boolean process(NodeContext context) throws NodeException {
                 if (batch == failAt) {
-                    throw new StepException("the test source failed on purpose");
+                    throw new NodeException("the test source failed on purpose");
                 }
                 int n = Math.min(batchSize, rows.size() - at);
                 VectorSchemaRoot root = VectorSchemaRoot.create(schema, context.allocator());
@@ -178,7 +178,7 @@ public final class Rows {
                     context.output().put(root);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    throw new StepException("Interrupted", e);
+                    throw new NodeException("Interrupted", e);
                 }
                 return at < rows.size();
             }
@@ -218,27 +218,27 @@ public final class Rows {
         public final List<List<Object>> rows = Collections.synchronizedList(new ArrayList<>());
     }
 
-    /** A last step keeping every row it receives. */
-    public static Step collector(Collected into) {
-        return new Step() {
+    /** A last node keeping every row it receives. */
+    public static Node collector(Collected into) {
+        return new Node() {
             @Override
             public String type() {
                 return "test-collect";
             }
 
             @Override
-            public void init(StepContext context) {
+            public void init(NodeContext context) {
                 // nothing to open
             }
 
             @Override
-            public boolean process(StepContext context) throws StepException {
+            public boolean process(NodeContext context) throws NodeException {
                 VectorSchemaRoot b;
                 try {
                     b = context.input().take(context.allocator());
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    throw new StepException("Interrupted", e);
+                    throw new NodeException("Interrupted", e);
                 }
                 if (b == null) {
                     return false;
@@ -262,11 +262,11 @@ public final class Rows {
     }
 
     /** Runs {@code first} then {@code second}, collecting the metadata events. */
-    public static RunResult run(Step first, Step second, List<MetadataEvent> events) throws InterruptedException {
-        return run(new StepSpec("first", first, Map.of()), new StepSpec("second", second, Map.of()), events);
+    public static RunResult run(Node first, Node second, List<MetadataEvent> events) throws InterruptedException {
+        return run(new NodeSpec("first", first, Map.of()), new NodeSpec("second", second, Map.of()), events);
     }
 
-    public static RunResult run(StepSpec first, StepSpec second, List<MetadataEvent> events)
+    public static RunResult run(NodeSpec first, NodeSpec second, List<MetadataEvent> events)
         throws InterruptedException {
         return new Runner(256L << 20, 2).run(new Pipeline("test", List.of(first, second)), events::add);
     }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { IconClockHour4, IconHourglass, IconRoute, IconStack2 } from "@tabler/icons-react";
-import { formatNumber, type PipelineRunDetail, type PipelineStepQuality } from "../api";
+import { formatNumber, type PipelineRunDetail, type PipelineNodeQuality } from "../api";
 import { StatTile, StatusChip, type Tone } from "../components/ui";
 import { scoreTone, scoreWords } from "./quality";
 import {
@@ -11,7 +11,7 @@ import {
   rowWords,
   shareOfRun,
   shareWords,
-  slowestStep,
+  slowestNode,
   ticks,
   timeline,
   type Clock,
@@ -22,7 +22,7 @@ const DECISION_TONE: Record<string, Tone> = { passed: "good", warned: "warn", qu
 const SCORE_TONE: Record<string, Tone> = { good: "good", fair: "warn", poor: "bad", none: "neutral" };
 
 /** What a gate decided, or what a write's rows measured, in words: the marker at the end of its bar. */
-export function qualityMark(q: PipelineStepQuality | undefined): { text: string; tone: Tone } | null {
+export function qualityMark(q: PipelineNodeQuality | undefined): { text: string; tone: Tone } | null {
   if (!q) return null;
   const g = q.gate;
   if (g) {
@@ -52,7 +52,7 @@ const OUTCOME: Record<string, { word: string; tone: Tone }> = {
   not_started: { word: "Not started", tone: "neutral" },
 };
 
-/** One step's bar: lighter while it waits for its first row, ticks at its first and last row. */
+/** One node's bar: lighter while it waits for its first row, ticks at its first and last row. */
 function Bar({ r, span, critical }: { r: TimelineRow; span: number; critical: boolean }) {
   if (r.start == null) return <span className="pl-tl-none">Did not start</span>;
   const end = r.end ?? span;
@@ -89,9 +89,9 @@ function Bar({ r, span, critical }: { r: TimelineRow; span: number; critical: bo
 }
 
 /**
- * The run as a Gantt chart: one bar per step from its start to its end, lighter while it waits for
- * its first row, with ticks at its first and last row, so steps working at the same time overlap.
- * While the run goes it is drawn from the latest progress, and the step holding the run back says
+ * The run as a Gantt chart: one bar per node from its start to its end, lighter while it waits for
+ * its first row, with ticks at its first and last row, so nodes working at the same time overlap.
+ * While the run goes it is drawn from the latest progress, and the node holding the run back says
  * Slowest. The same in a table for screen readers and anyone who prefers one.
  */
 export function RunTimeline({ detail, clock }: { detail: PipelineRunDetail; clock?: Clock }) {
@@ -100,7 +100,7 @@ export function RunTimeline({ detail, clock }: { detail: PipelineRunDetail; cloc
   if (!t) {
     const unfinished = detail.run.status === "queued" || detail.run.status === "running";
     return (
-      <p className="muted">{unfinished ? "The timeline appears once the steps start." : "This run's steps were not timed."}</p>
+      <p className="muted">{unfinished ? "The timeline appears once the nodes start." : "This run's nodes were not timed."}</p>
     );
   }
   const axis = ticks(t.span);
@@ -109,13 +109,13 @@ export function RunTimeline({ detail, clock }: { detail: PipelineRunDetail; cloc
     t,
     (detail.progress?.edges ?? []).map((e) => ({ from: e.from, to: e.to })),
   );
-  const onPath = new Set(showPath && path ? path.steps : []);
-  const quality = new Map((detail.quality ?? []).map((q) => [q.step, q]));
-  const longest = slowestStep(t);
-  const summary = `Timeline of ${t.rows.length} ${t.rows.length === 1 ? "step" : "steps"} over ${offsetWords(t.span)}${
+  const onPath = new Set(showPath && path ? path.nodes : []);
+  const quality = new Map((detail.quality ?? []).map((q) => [q.node, q]));
+  const longest = slowestNode(t);
+  const summary = `Timeline of ${t.rows.length} ${t.rows.length === 1 ? "node" : "nodes"} over ${offsetWords(t.span)}${
     t.live ? ", so far" : ""
-  }${slowest ? `; the slowest step now is ${slowest.step}` : ""}${
-    path && showPath ? `; the critical path is ${path.steps.join(", ")}` : ""
+  }${slowest ? `; the slowest node now is ${slowest.node}` : ""}${
+    path && showPath ? `; the critical path is ${path.nodes.join(", ")}` : ""
   }. The table below says the same.`;
   return (
     <div className="pl-tl">
@@ -128,15 +128,15 @@ export function RunTimeline({ detail, clock }: { detail: PipelineRunDetail; cloc
           note={t.live ? "so far" : "from start to end"}
         />
         <StatTile
-          label="Most steps at once"
+          label="Most nodes at once"
           value={String(peakConcurrent(t))}
           icon={<IconStack2 size={18} aria-hidden="true" />}
           tint="violet"
           note={`of ${t.rows.length}`}
         />
         <StatTile
-          label={t.live ? "Slowest step now" : "Longest step"}
-          value={longest ? <span className="mono">{longest.step}</span> : "–"}
+          label={t.live ? "Slowest node now" : "Longest node"}
+          value={longest ? <span className="mono">{longest.node}</span> : "–"}
           icon={<IconHourglass size={18} aria-hidden="true" />}
           tint="orange"
           note={
@@ -156,7 +156,7 @@ export function RunTimeline({ detail, clock }: { detail: PipelineRunDetail; cloc
           tint="teal"
           note={
             path
-              ? `${path.steps.join(" → ")}, ${shareWords(path.share)} of the run`
+              ? `${path.nodes.join(" → ")}, ${shareWords(path.share)} of the run`
               : t.live
                 ? "known when the run ends"
                 : "not known"
@@ -182,14 +182,14 @@ export function RunTimeline({ detail, clock }: { detail: PipelineRunDetail; cloc
         <ul className="pl-tl-rows" aria-hidden="true">
           {t.rows.map((r) => {
             const o = r.outcome ? OUTCOME[r.outcome] : null;
-            const mark = r.start != null && !r.running ? qualityMark(quality.get(r.step)) : null;
+            const mark = r.start != null && !r.running ? qualityMark(quality.get(r.node)) : null;
             return (
               <li
-                key={r.step}
-                className={`pl-tl-row${r.slowest ? " is-slowest" : ""}${onPath.has(r.step) ? " is-critical" : ""}`}
+                key={r.node}
+                className={`pl-tl-row${r.slowest ? " is-slowest" : ""}${onPath.has(r.node) ? " is-critical" : ""}`}
               >
                 <span className="pl-tl-name">
-                  <span className="mono pl-tl-step">{r.step}</span>
+                  <span className="mono pl-tl-node">{r.node}</span>
                   {r.slowest ? (
                     <StatusChip tone="orange" kind="slowest">
                       Slowest
@@ -202,7 +202,7 @@ export function RunTimeline({ detail, clock }: { detail: PipelineRunDetail; cloc
                   {axis.map((x) => (
                     <span key={x} className="pl-tl-grid" style={{ left: pct(x, t.span) }} />
                   ))}
-                  <Bar r={r} span={t.span} critical={onPath.has(r.step)} />
+                  <Bar r={r} span={t.span} critical={onPath.has(r.node)} />
                   {mark && (
                     <span
                       className={`pl-tl-mark${(r.end ?? t.span) / t.span < 0.35 ? " is-after" : ""}`}
@@ -236,7 +236,7 @@ export function RunTimeline({ detail, clock }: { detail: PipelineRunDetail; cloc
           <table className="small">
             <thead>
               <tr>
-                <th scope="col">Step</th>
+                <th scope="col">Node</th>
                 <th scope="col">Started</th>
                 <th scope="col">First row</th>
                 <th scope="col">Last row</th>
@@ -249,9 +249,9 @@ export function RunTimeline({ detail, clock }: { detail: PipelineRunDetail; cloc
             </thead>
             <tbody>
               {t.rows.map((r) => (
-                <tr key={r.step}>
+                <tr key={r.node}>
                   <th scope="row">
-                    <span className="mono">{r.step}</span>
+                    <span className="mono">{r.node}</span>
                     {r.slowest && <div>Slowest now</div>}
                     {r.outcome && OUTCOME[r.outcome] && <div className="muted">{OUTCOME[r.outcome].word}</div>}
                   </th>
@@ -261,8 +261,8 @@ export function RunTimeline({ detail, clock }: { detail: PipelineRunDetail; cloc
                   <td>{r.end == null ? (r.running ? "Still running" : "–") : offsetWords(r.end)}</td>
                   <td>{r.end == null || r.start == null ? "–" : offsetWords(r.end - r.start)}</td>
                   <td>{shareOfRun(r, t.span) == null ? "–" : shareWords(shareOfRun(r, t.span)!)}</td>
-                  {path && <td>{path.steps.includes(r.step) ? "On it" : "–"}</td>}
-                  {quality.size > 0 && <td>{qualityMark(quality.get(r.step))?.text ?? "–"}</td>}
+                  {path && <td>{path.nodes.includes(r.node) ? "On it" : "–"}</td>}
+                  {quality.size > 0 && <td>{qualityMark(quality.get(r.node))?.text ?? "–"}</td>}
                 </tr>
               ))}
             </tbody>

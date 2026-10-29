@@ -13,7 +13,7 @@ class SuggestTest {
     @Test
     void suggestsCloseOptions() {
         assertEquals("filter", Suggest.closest("filtr", List.of("filter", "lookup")));
-        assertEquals("steps", Suggest.closest("stpes", List.of("name", "steps")));
+        assertEquals("nodes", Suggest.closest("ndoes", List.of("name", "nodes")));
         assertNull(Suggest.closest("zzzzzz", List.of("filter")));
     }
 

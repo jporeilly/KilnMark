@@ -90,7 +90,7 @@ public class MySqlConnector extends JdbcConnector {
     private static final Pattern PEM = Pattern.compile("-----BEGIN CERTIFICATE-----([A-Za-z0-9+/=\\s]+)"
         + "-----END CERTIFICATE-----");
 
-    /** Settings the reader step receives besides the URL, user and password. */
+    /** Settings the reader node receives besides the URL, user and password. */
     static final String READ_TLS = "tls-mode";
     static final String READ_CA = "server-ca";
     static final String READ_TINYINT = "tinyint1-boolean";
@@ -466,7 +466,7 @@ public class MySqlConnector extends JdbcConnector {
         return new JdbcTableInput(new Reading(product));
     }
 
-    /** How the reader step connects and maps columns. */
+    /** How the reader node connects and maps columns. */
     private record Reading(Product product) implements JdbcTableInput.Reading {
 
         @Override
@@ -632,14 +632,14 @@ public class MySqlConnector extends JdbcConnector {
                 "0 (the default) writes in one transaction; otherwise commit after each batch reaching N rows. A "
                     + "failure then keeps the rows already committed"),
             WriteSettings.number("batch_size", "Rows per batch", 1000,
-                "Rows sent to the database at a time (1,000; 5,000 for tables the step creates)"),
+                "Rows sent to the database at a time (1,000; 5,000 for tables the node creates)"),
             WriteSettings.number("text_length", "Text column length", 0,
                 "For create and replace: VARCHAR columns of this length (at most 16,383); 0 (the default) for "
                     + "LONGTEXT"),
             WriteSettings.number("lock_timeout", "Lock timeout (seconds)", 30,
                 "For replace: how long the swap waits for others using the old table"),
             WriteSettings.flag("bulk_load", "Bulk load", true,
-                "Load tables this step creates with LOAD DATA LOCAL INFILE, sent from memory, when the server allows "
+                "Load tables this node creates with LOAD DATA LOCAL INFILE, sent from memory, when the server allows "
                     + "it (local_infile); otherwise, or when false, with batched inserts"),
             WriteSettings.flag("allow_other_unique_keys", "Allow other unique keys", false,
                 "For upsert: a row matching any unique index is updated, not only one matching the key, so a table "
@@ -662,7 +662,7 @@ public class MySqlConnector extends JdbcConnector {
     }
 
     @Override
-    public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+    public io.kilnmark.kiln.Node writer(SourceConfig source, WriteOptions write) throws ConnectorException {
         WriteOptions w = write;
         if (write.target() != null && !write.target().isBlank()) {
             TableName given = TableName.parse(write.target());

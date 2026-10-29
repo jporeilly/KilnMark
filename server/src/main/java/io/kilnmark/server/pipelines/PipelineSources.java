@@ -5,15 +5,15 @@ import java.util.Optional;
 
 import io.kilnmark.graph.Urn;
 import io.kilnmark.graph.store.Records;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.server.sources.HostPolicy;
 
 /**
- * What the {@code read} and {@code write} steps need from the server: saved sources, their
+ * What the {@code read} and {@code write} nodes need from the server: saved sources, their
  * connectors and secrets, the catalogue, and the administrator's allowed hosts. An interface so
- * the step factories can be tested without a database.
+ * the node factories can be tested without a database.
  */
 public interface PipelineSources {
 
@@ -36,7 +36,7 @@ public interface PipelineSources {
 
     /**
      * The source's own profiling settings for what a write writes (whether values are kept, sampling),
-     * as the profile step names them; empty when there are none to pass.
+     * as the profile node names them; empty when there are none to pass.
      */
     default Map<String, String> profileSettings(Records.Source source, Connector connector, String target,
                                                 java.util.List<String> key, String urn) {
@@ -53,7 +53,7 @@ public interface PipelineSources {
         return profileSettings(source, connector, target, key, urn);
     }
 
-    /** The enabled quality rules of a catalogued asset, for a gate step; empty when it has none. */
+    /** The enabled quality rules of a catalogued asset, for a gate node; empty when it has none. */
     default java.util.List<io.kilnmark.server.quality.Rule> rules(String urn) {
         return java.util.List.of();
     }
@@ -71,10 +71,10 @@ public interface PipelineSources {
      * Resolves a saved source for a run, re-checking the allowed hosts now (an administrator may
      * have narrowed them since the pipeline was saved). Messages never hold the secret.
      */
-    default Resolved resolve(String step, String name, RunContext run) throws StepException {
-        Records.Source s = source(name).orElseThrow(() -> new StepException("Step " + step + ": there is no saved "
+    default Resolved resolve(String node, String name, RunContext run) throws NodeException {
+        Records.Source s = source(name).orElseThrow(() -> new NodeException("Node " + node + ": there is no saved "
             + "source called '" + name + "'"));
-        Connector c = connector(s.kind()).orElseThrow(() -> new StepException("Step " + step + ": this server has no "
+        Connector c = connector(s.kind()).orElseThrow(() -> new NodeException("Node " + node + ": this server has no "
             + "connector for sources of kind '" + s.kind() + "'"));
         String secret = secret(s);
         run.secret(secret);
@@ -82,7 +82,7 @@ public interface PipelineSources {
         try {
             hosts().check(c, config);
         } catch (IllegalArgumentException e) {
-            throw new StepException("Step " + step + " cannot use source " + s.name() + ": " + run.scrub(e.getMessage()));
+            throw new NodeException("Node " + node + " cannot use source " + s.name() + ": " + run.scrub(e.getMessage()));
         }
         return new Resolved(s, c, config);
     }

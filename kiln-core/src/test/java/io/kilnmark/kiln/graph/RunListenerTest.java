@@ -17,20 +17,20 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import io.kilnmark.kiln.RunResult;
-import io.kilnmark.kiln.Step;
+import io.kilnmark.kiln.Node;
 import io.kilnmark.kiln.graph.Toys.Collect;
 import io.kilnmark.kiln.graph.Toys.Generate;
 import io.kilnmark.kiln.graph.Toys.Pass;
 
-/** Timing steps and telling a {@link RunListener} as a run goes. */
+/** Timing nodes and telling a {@link RunListener} as a run goes. */
 class RunListenerTest {
 
-    private static PipelineGraph line(Step... steps) {
-        List<GraphStep> gs = new ArrayList<>();
+    private static PipelineGraph line(Node... nodes) {
+        List<GraphNode> gs = new ArrayList<>();
         List<Edge> edges = new ArrayList<>();
         String[] ids = {"gen", "pass", "sink"};
-        for (int i = 0; i < steps.length; i++) {
-            gs.add(new GraphStep(ids[i], steps[i], null));
+        for (int i = 0; i < nodes.length; i++) {
+            gs.add(new GraphNode(ids[i], nodes[i], null));
             if (i > 0) {
                 edges.add(new Edge(PortRef.parse(ids[i - 1], "out"), PortRef.parse(ids[i], "in")));
             }
@@ -45,28 +45,28 @@ class RunListenerTest {
         final List<String> notes = Collections.synchronizedList(new ArrayList<>());
 
         @Override
-        public void stepStarted(String step, Instant at) {
-            calls.add(step + " started");
+        public void nodeStarted(String node, Instant at) {
+            calls.add(node + " started");
         }
 
         @Override
-        public void firstRowIn(String step, Instant at) {
-            calls.add(step + " first in");
+        public void firstRowIn(String node, Instant at) {
+            calls.add(node + " first in");
         }
 
         @Override
-        public void firstRowOut(String step, Instant at) {
-            calls.add(step + " first out");
+        public void firstRowOut(String node, Instant at) {
+            calls.add(node + " first out");
         }
 
         @Override
-        public void lastRowOut(String step, Instant at) {
-            calls.add(step + " last out");
+        public void lastRowOut(String node, Instant at) {
+            calls.add(node + " last out");
         }
 
         @Override
-        public void stepEnded(String step, RunResult.Outcome outcome, Instant at) {
-            calls.add(step + " ended " + outcome);
+        public void nodeEnded(String node, RunResult.Outcome outcome, Instant at) {
+            calls.add(node + " ended " + outcome);
         }
 
         @Override
@@ -75,14 +75,14 @@ class RunListenerTest {
         }
 
         @Override
-        public void note(Level level, String step, String text, Instant at) {
+        public void note(Level level, String node, String text, Instant at) {
             assertNotNull(at);
-            notes.add(level + " " + step + ": " + text);
+            notes.add(level + " " + node + ": " + text);
         }
 
-        List<String> of(String step) {
+        List<String> of(String node) {
             synchronized (calls) {
-                return calls.stream().filter(c -> c.startsWith(step + " ")).map(c -> c.substring(step.length() + 1))
+                return calls.stream().filter(c -> c.startsWith(node + " ")).map(c -> c.substring(node.length() + 1))
                     .toList();
             }
         }
@@ -90,7 +90,7 @@ class RunListenerTest {
 
     @Test
     @Timeout(30)
-    void eachStepIsTimedInOrder() throws Exception {
+    void eachNodeIsTimedInOrder() throws Exception {
         Heard heard = new Heard();
         RunResult r = new KilnGraphRunner(64L << 20, 4, Duration.ofSeconds(30), Duration.ofMillis(50))
             .run(line(new Generate(20, 100), new Pass(2, -1), new Collect()), e -> { }, heard);
@@ -98,7 +98,7 @@ class RunListenerTest {
         assertEquals(List.of("started", "first out", "last out", "ended FINISHED"), heard.of("gen"));
         assertEquals(List.of("started", "first in", "first out", "last out", "ended FINISHED"), heard.of("pass"));
         assertEquals(List.of("started", "first in", "ended FINISHED"), heard.of("sink"));
-        for (RunResult.StepResult s : r.steps()) {
+        for (RunResult.NodeResult s : r.nodes()) {
             assertNotNull(s.startedAt(), s.name());
             assertNotNull(s.firstRowAt(), s.name());
             assertNotNull(s.lastRowAt(), s.name());
@@ -111,17 +111,17 @@ class RunListenerTest {
             assertNotNull(s.duration());
         }
         // the slow pass takes at least 20 x 2 ms
-        assertTrue(r.step("pass").duration().toMillis() >= 40, r.step("pass").duration().toString());
+        assertTrue(r.node("pass").duration().toMillis() >= 40, r.node("pass").duration().toString());
         RunProgress end = heard.snapshots.getLast();
-        assertEquals(2_000, end.step("sink").rowsIn());
-        assertEquals(RunProgress.State.ENDED, end.step("gen").state());
+        assertEquals(2_000, end.node("sink").rowsIn());
+        assertEquals(RunProgress.State.ENDED, end.node("gen").state());
         assertEquals(2, end.edges().size());
         assertEquals(2_000, end.edges().get(1).rows());
     }
 
     @Test
     @Timeout(30)
-    void aStepThatCannotKeepUpIsTheSlowest() throws Exception {
+    void aNodeThatCannotKeepUpIsTheSlowest() throws Exception {
         Heard heard = new Heard();
         RunResult r = new KilnGraphRunner(64L << 20, 2, Duration.ofSeconds(30), Duration.ofMillis(40))
             .run(line(new Generate(60, 10), new Pass(15, -1), new Collect()), e -> { }, heard);
@@ -130,7 +130,7 @@ class RunListenerTest {
         synchronized (heard.snapshots) {
             slowest = heard.snapshots.stream().map(RunProgress::slowest).filter(s -> s != null).distinct().toList();
             assertTrue(heard.snapshots.stream().anyMatch(p -> p.edges().getFirst().full()), "the edge into pass filled");
-            assertTrue(heard.snapshots.stream().anyMatch(p -> p.step("pass").rowsPerSecond() > 0));
+            assertTrue(heard.snapshots.stream().anyMatch(p -> p.node("pass").rowsPerSecond() > 0));
         }
         assertEquals(List.of("pass"), slowest);
         assertNull(heard.snapshots.getLast().slowest(), "nothing holds back a run that has ended");
@@ -154,7 +154,7 @@ class RunListenerTest {
     void aListenerThatThrowsOrHangsNeverHoldsTheRunBack() throws Exception {
         RunListener throwing = new RunListener() {
             @Override
-            public void stepStarted(String step, Instant at) {
+            public void nodeStarted(String node, Instant at) {
                 throw new IllegalStateException("listener broke");
             }
 
@@ -172,7 +172,7 @@ class RunListenerTest {
         CountDownLatch never = new CountDownLatch(1);
         RunListener hanging = new RunListener() {
             @Override
-            public void stepStarted(String step, Instant at) {
+            public void nodeStarted(String node, Instant at) {
                 try {
                     never.await();
                 } catch (InterruptedException e) {
@@ -192,32 +192,32 @@ class RunListenerTest {
 
     @Test
     @Timeout(30)
-    void eachStepsTimeIsSplitIntoWorkingWaitingAndHeldUp() throws Exception {
+    void eachNodesTimeIsSplitIntoWorkingWaitingAndHeldUp() throws Exception {
         Heard heard = new Heard();
         RunResult r = new KilnGraphRunner(64L << 20, 2, Duration.ofSeconds(30), Duration.ofMillis(40))
             .run(line(new Generate(40, 10), new Pass(15, -1), new Collect()), e -> { }, heard);
         assertTrue(r.succeeded(), r.error());
-        RunResult.StepResult gen = r.step("gen");
-        RunResult.StepResult pass = r.step("pass");
-        RunResult.StepResult sink = r.step("sink");
+        RunResult.NodeResult gen = r.node("gen");
+        RunResult.NodeResult pass = r.node("pass");
+        RunResult.NodeResult sink = r.node("sink");
         long passMillis = pass.duration().toMillis();
-        // The source is held up by the slow step; the sink waits for its rows; the slow step works.
+        // The source is held up by the slow node; the sink waits for its rows; the slow node works.
         assertTrue(gen.heldUpNanos() > gen.duration().toNanos() / 2, gen.toString());
         assertEquals(0, gen.waitingForRowsNanos());
         assertTrue(sink.waitingForRowsNanos() > sink.duration().toNanos() / 2, sink.toString());
         assertEquals(0, sink.heldUpNanos());
         assertTrue(pass.working().toMillis() > passMillis / 2, pass + " " + passMillis);
-        assertTrue(heard.snapshots.stream().anyMatch(p -> p.step("gen").heldUpNanos() > 0
-            && p.step("gen").outputFill() > 0.5), "running totals and queue fill in the snapshots");
+        assertTrue(heard.snapshots.stream().anyMatch(p -> p.node("gen").heldUpNanos() > 0
+            && p.node("gen").outputFill() > 0.5), "running totals and queue fill in the snapshots");
         assertTrue(heard.snapshots.stream().anyMatch(p -> p.edges().getFirst().fill() == 1.0));
     }
 
     @Test
-    void withoutAListenerStepsAreStillTimed() throws Exception {
+    void withoutAListenerNodesAreStillTimed() throws Exception {
         RunResult r = new KilnGraphRunner(64L << 20, 4).run(line(new Generate(5, 10), new Pass(), new Collect()),
             e -> { });
         assertTrue(r.succeeded(), r.error());
-        assertNotNull(r.step("pass").startedAt());
-        assertNotNull(r.step("sink").lastRowAt());
+        assertNotNull(r.node("pass").startedAt());
+        assertNotNull(r.node("sink").lastRowAt());
     }
 }

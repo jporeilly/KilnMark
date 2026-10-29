@@ -18,9 +18,9 @@ import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 
 import io.kilnmark.kiln.MetadataEvent;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
 
 /**
  * Reads a database table into Arrow batches.
@@ -44,13 +44,13 @@ import io.kilnmark.kiln.StepException;
  * reads as null because Arrow has no such value (MySQL's zero dates) are counted, and the
  * {@code ROW_COUNT} event then says {@code zero_dates}.
  */
-public final class JdbcTableInput implements Step {
+public final class JdbcTableInput implements Node {
 
     /** How a database is connected to and its columns mapped, where it differs from plain JDBC. */
     public interface Reading {
 
         /**
-         * A connection for the step's settings: {@code url}, {@code user}, {@code password} and
+         * A connection for the node's settings: {@code url}, {@code user}, {@code password} and
          * driver properties ({@code driver.}...).
          */
         default Connection open(Map<String, String> settings) throws SQLException {
@@ -71,7 +71,7 @@ public final class JdbcTableInput implements Step {
         }
 
         /**
-         * The query to run on {@code connection}, from the step's {@code sql}: the same by default.
+         * The query to run on {@code connection}, from the node's {@code sql}: the same by default.
          * A database whose identifiers are quoted as its driver says builds it here.
          */
         default String query(Connection connection, String sql, Map<String, String> settings) throws SQLException {
@@ -150,7 +150,7 @@ public final class JdbcTableInput implements Step {
     }
 
     @Override
-    public void init(StepContext context) throws StepException {
+    public void init(NodeContext context) throws NodeException {
         batchSize = Integer.parseInt(context.setting("batch-size", "8192"));
         rowLimit = Long.parseLong(context.setting("row-limit", "0"));
         assetUrn = context.setting("asset-urn");
@@ -201,7 +201,7 @@ public final class JdbcTableInput implements Step {
             }
             schema = new Schema(fields);
         } catch (SQLException e) {
-            throw new StepException("Cannot read " + label + ": " + e.getMessage(), e);
+            throw new NodeException("Cannot read " + label + ": " + e.getMessage(), e);
         }
     }
 
@@ -223,7 +223,7 @@ public final class JdbcTableInput implements Step {
     }
 
     @Override
-    public boolean process(StepContext context) throws StepException {
+    public boolean process(NodeContext context) throws NodeException {
         VectorSchemaRoot batch = VectorSchemaRoot.create(schema, context.allocator());
         try {
             for (FieldVector v : batch.getFieldVectors()) {
@@ -242,7 +242,7 @@ public final class JdbcTableInput implements Step {
             read += n;
         } catch (SQLException | RuntimeException e) {
             batch.close();
-            throw new StepException("Reading row " + (read + 1) + " failed: " + e.getMessage(), e);
+            throw new NodeException("Reading row " + (read + 1) + " failed: " + e.getMessage(), e);
         }
         try {
             if (batch.getRowCount() > 0 || read == 0) {
@@ -252,7 +252,7 @@ public final class JdbcTableInput implements Step {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StepException("Interrupted", e);
+            throw new NodeException("Interrupted", e);
         }
         if (exhausted) {
             boolean complete = samplePercent == null && (rowLimit <= 0 || read < rowLimit);
@@ -275,7 +275,7 @@ public final class JdbcTableInput implements Step {
     @Override
     public void close() {
         if (statement != null && !exhausted) {
-            // Stopped early (a failure, or a step after this one gave up). Without a cancel some
+            // Stopped early (a failure, or a node after this one gave up). Without a cancel some
             // drivers, SQL Server's among them, read every remaining row while closing the result.
             try {
                 statement.cancel();
@@ -300,7 +300,7 @@ public final class JdbcTableInput implements Step {
     }
 
     /** The sample query if the table is estimated above the threshold, otherwise {@code sql}. */
-    private String sampled(StepContext context, String sql) throws SQLException, StepException {
+    private String sampled(NodeContext context, String sql) throws SQLException, NodeException {
         long above = Long.parseLong(context.setting(SAMPLE_ABOVE));
         try (ResultSet r = statement.executeQuery(context.setting(ESTIMATE_QUERY))) {
             estimatedRows = r.next() ? r.getLong(1) : -1;

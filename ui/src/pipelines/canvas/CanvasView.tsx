@@ -34,33 +34,33 @@ import {
   formatNumber,
   pipelinesApi,
   type PipelineRunProgress,
-  type PipelineStepQuality,
-  type PipelineStepRun,
+  type PipelineNodeQuality,
+  type PipelineNodeRun,
   type PipelineValidation,
   type Source,
-  type StepType,
+  type NodeType,
 } from "../../api";
 import { useColourScheme } from "../../theme/appearance";
 import { columnsText } from "../outline";
-import { stepQualityWords } from "../quality";
-import { predictedWords, predictionApi, predictionsByStep, type Prediction, type Suggestion } from "../prediction";
-import { liveEdgeRows, liveSteps } from "../live";
-import { kindWord, problemsByStep, stepLabel, stepSummary } from "./insight";
+import { nodeQualityWords } from "../quality";
+import { predictedWords, predictionApi, predictionsByNode, type Prediction, type Suggestion } from "../prediction";
+import { liveEdgeRows, liveNodes } from "../live";
+import { kindWord, problemsByNode, nodeLabel, nodeSummary } from "./insight";
 import { autoLayout, makeRoom, nodeHeight, placed, spotAfter, type EdgeLabel, type LayoutSizes } from "./layout";
 import {
-  addStep,
+  addNode,
   catalogueOf,
   connect,
   connectProblem,
   disconnect,
-  duplicateStep,
-  insertSteps,
+  duplicateNode,
+  insertNodes,
   portsOf,
   possibleConnections,
   readGraph,
   refText,
-  removeStep,
-  renameStep,
+  removeNode,
+  renameNode,
   setPositions,
   setSetting,
   type Catalogue,
@@ -72,21 +72,21 @@ import {
 } from "./model";
 import { Palette, rememberUsed } from "./Palette";
 import { SettingsPanel } from "./SettingsPanel";
-import { StepMenu, type StepMenuItem } from "./StepMenu";
-import { StepPreviewPanel, type PreviewAsk, type PreviewResult } from "./StepPreviewPanel";
+import { NodeMenu, type NodeMenuItem } from "./NodeMenu";
+import { NodePreviewPanel, type PreviewAsk, type PreviewResult } from "./NodePreviewPanel";
 import { TabPanel, Tabs, useTabsId } from "../../components/ui";
 import { useRole } from "../../components/role";
-import { StepNode, badgeRows, runWords, type StepNodeType, type StepRunInfo } from "./StepNode";
+import { NodeCard, badgeRows, runWords, type NodeCardType, type NodeRunInfo } from "./NodeCard";
 import "./canvas.css";
 
 export type CanvasRun = {
   id: number;
   version: number;
   status: string;
-  steps: PipelineStepRun[];
+  nodes: PipelineNodeRun[];
   /** Each write's and gate's measured quality; empty from servers before measured quality. */
-  quality?: PipelineStepQuality[];
-  /** While the run goes: where its rows are (rows and rate per step, the slowest step, rows per connection). */
+  quality?: PipelineNodeQuality[];
+  /** While the run goes: where its rows are (rows and rate per node, the slowest node, rows per connection). */
   progress?: PipelineRunProgress | null;
 };
 
@@ -102,27 +102,27 @@ export type CanvasProps = {
   check: PipelineValidation | null;
   selected: string | null;
   onSelect: (id: string | null) => void;
-  /** Set by the problems list: select this step and move to its setting. */
-  focusRequest: { step: string; key: string | null; n: number } | null;
+  /** Set by the problems list: select this node and move to its setting. */
+  focusRequest: { node: string; key: string | null; n: number } | null;
   run: CanvasRun | null;
   title: string;
   /** Kept by the page across switches to the YAML tab: the last graph that could be read. */
   memory: { lastGood?: Graph | null };
 };
 
-let catalogueLoad: Promise<StepType[]> | null = null;
-const loadCatalogue = () => (catalogueLoad ??= pipelinesApi.steps().catch((e) => {
+let catalogueLoad: Promise<NodeType[]> | null = null;
+const loadCatalogue = () => (catalogueLoad ??= pipelinesApi.nodes().catch((e) => {
   catalogueLoad = null;
   throw e;
 }));
 
-const nodeTypes = { step: StepNode };
+const nodeTypes = { node: NodeCard };
 const SuggestionsPanel = lazy(() => import("./SuggestionsPanel"));
 /** How long after the last change the predicted scores are worked out again. */
 const PREDICT_AFTER_MS = 700;
 /** Setting kinds typed a character at a time: written to the YAML once typing pauses. */
 const TYPED = new Set(["text", "number", "expression", "expressions", "conditions", "column_map", "asset", "rules"]);
-/** The smallest zoom at which a step's words can still be read. */
+/** The smallest zoom at which a node's words can still be read. */
 const MIN_READABLE = 0.7;
 /** On a Mac, Ctrl+click opens a context menu; elsewhere it is a click. */
 const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -137,22 +137,22 @@ const fromHandles = (c: { source: string | null; sourceHandle?: string | null; t
 const edgeWords = (e: GraphEdge) => `${refText(e.from, e.fromPort)} to ${e.to}.${e.toPort}`;
 
 const SHORTCUTS: [string, string][] = [
-  ["Tab, Shift+Tab", "Move between steps (and on to the settings)"],
-  ["Arrow keys", "Move to a connected step: right to the next, left to the one before, up and down between steps beside each other"],
-  ["Shift+Arrow keys", "Move the step on the canvas"],
+  ["Tab, Shift+Tab", "Move between nodes (and on to the settings)"],
+  ["Arrow keys", "Move to a connected node: right to the next, left to the one before, up and down between nodes beside each other"],
+  ["Shift+Arrow keys", "Move the node on the canvas"],
   ["Alt+Arrow keys", "Pan the canvas"],
-  ["C", "Connect to… : connect the step to another"],
-  ["A", "Add a step: open the step list and go to its search"],
-  ["Arrow keys in the step list", "Move through the folders and steps; Right opens a folder, Left closes it; Enter adds the step"],
-  ["Enter", "Go to the step's settings"],
-  ["Shift+F10 or the menu key", "Open the step's menu: preview its rows, open its settings, connect, duplicate or remove it"],
-  ["Delete or Backspace", "Remove the step (or a connection selected with the mouse)"],
-  ["Ctrl+D", "Duplicate the step"],
+  ["C", "Connect to… : connect the node to another"],
+  ["A", "Add a node: open the node list and go to its search"],
+  ["Arrow keys in the node list", "Move through the folders and nodes; Right opens a folder, Left closes it; Enter adds the node"],
+  ["Enter", "Go to the node's settings"],
+  ["Shift+F10 or the menu key", "Open the node's menu: preview its rows, open its settings, connect, duplicate or remove it"],
+  ["Delete or Backspace", "Remove the node (or a connection selected with the mouse)"],
+  ["Ctrl+D", "Duplicate the node"],
   ["Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y", "Undo, redo"],
   ["+ and -", "Zoom in and out"],
   ["F", "Fit the whole pipeline in view"],
-  ["R", "Readable size: the first steps at a size you can read"],
-  ["L", "Lay the steps out again, left to right"],
+  ["R", "Readable size: the first nodes at a size you can read"],
+  ["L", "Lay the nodes out again, left to right"],
   ["?", "These shortcuts"],
   ["Escape", "Clear the selection, or close a menu"],
 ];
@@ -161,7 +161,7 @@ function Canvas(props: CanvasProps) {
   const { yaml, onEdit, readOnly: lockedByPage, check, selected, onSelect, run } = props;
   const flow = useReactFlow();
   const scheme = useColourScheme();
-  const [types, setTypes] = useState<StepType[] | null>(null);
+  const [types, setTypes] = useState<NodeType[] | null>(null);
   const [typesError, setTypesError] = useState<string | null>(null);
   const [sources, setSources] = useState<Source[] | null>(null);
   const [announce, setAnnounce] = useState("");
@@ -171,14 +171,14 @@ function Canvas(props: CanvasProps) {
   const [connectFor, setConnectFor] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [suggestOpen, setSuggestOpen] = useState(false);
-  // The step's context menu, the drawer's tab, and previews at a step.
-  const [menu, setMenu] = useState<{ step: string; x: number; y: number } | null>(null);
+  // The node's context menu, the drawer's tab, and previews at a node.
+  const [menu, setMenu] = useState<{ node: string; x: number; y: number } | null>(null);
   const [drawerTab, setDrawerTab] = useState<"settings" | "preview">("settings");
   const [previewAsk, setPreviewAsk] = useState<PreviewAsk | null>(null);
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
   const role = useRole();
   const drawerTabs = useTabsId();
-  // A right-click (or Ctrl+click on a Mac) focuses the step without selecting it, so the drawer does
+  // A right-click (or Ctrl+click on a Mac) focuses the node without selecting it, so the drawer does
   // not open under the pointer before the menu does. Cleared however the press ends.
   const menuPress = useRef(false);
   const askCount = useRef(0);
@@ -230,31 +230,31 @@ function Canvas(props: CanvasProps) {
   const graph = read.ok ? read.graph : (props.memory.lastGood ?? null);
   const broken = !read.ok;
   const readOnly = lockedByPage || broken || types == null;
-  // An empty canvas opens the step list; otherwise it waits in the rail. (A saved pipeline is empty
+  // An empty canvas opens the node list; otherwise it waits in the rail. (A saved pipeline is empty
   // text until it has loaded, which is not an empty canvas.)
-  const stepCount = graph?.steps.length ?? -1;
+  const nodeCount = graph?.nodes.length ?? -1;
   const loaded = yaml.trim() !== "" && types != null;
   useEffect(() => {
-    if (loaded && stepCount === 0 && !lockedByPage) setPaletteOpen(true);
-  }, [loaded, stepCount, lockedByPage]);
-  // A selected step that is gone (undone, removed in the YAML) is no longer selected.
+    if (loaded && nodeCount === 0 && !lockedByPage) setPaletteOpen(true);
+  }, [loaded, nodeCount, lockedByPage]);
+  // A selected node that is gone (undone, removed in the YAML) is no longer selected.
   useEffect(() => {
-    if (selected && graph && !graph.steps.some((s) => s.id === selected)) onSelect(null);
+    if (selected && graph && !graph.nodes.some((s) => s.id === selected)) onSelect(null);
   }, [graph, selected, onSelect]);
-  const problems = useMemo(() => problemsByStep(check?.problems ?? []), [check]);
-  const runSteps = useMemo(() => {
-    const m = new Map<string, StepRunInfo>();
+  const problems = useMemo(() => problemsByNode(check?.problems ?? []), [check]);
+  const runNodes = useMemo(() => {
+    const m = new Map<string, NodeRunInfo>();
     const going = run != null && (run.status === "queued" || run.status === "running");
-    if (going && run.steps.length === 0) {
+    if (going && run.nodes.length === 0) {
       // Live: rows so far and the rate, from the run's latest progress.
-      for (const [id, l] of liveSteps(run.progress))
+      for (const [id, l] of liveNodes(run.progress))
         m.set(id, { rowsIn: l.rowsIn, rowsOut: l.rowsOut, outcome: null, error: null, live: { rate: l.rate, state: l.state, slowest: l.slowest } });
       return m;
     }
-    for (const s of run?.steps ?? []) m.set(s.step, { rowsIn: s.rowsIn, rowsOut: s.rowsOut, outcome: s.outcome, error: s.error });
+    for (const s of run?.nodes ?? []) m.set(s.node, { rowsIn: s.rowsIn, rowsOut: s.rowsOut, outcome: s.outcome, error: s.error });
     return m;
   }, [run]);
-  const runQuality = useMemo(() => new Map((run?.quality ?? []).map((q) => [q.step, q])), [run]);
+  const runQuality = useMemo(() => new Map((run?.quality ?? []).map((q) => [q.node, q])), [run]);
   // Predicted quality from the catalogue's metadata, worked out again a moment after each change.
   const canPredict = read.ok && yaml.trim() !== "";
   useEffect(() => {
@@ -272,31 +272,31 @@ function Canvas(props: CanvasProps) {
     };
   }, [yaml, canPredict]);
   // An unreadable YAML shows the last pipeline that could be read, without estimates for it.
-  const predicted = useMemo(() => predictionsByStep(read.ok ? prediction : null), [prediction, read.ok]);
+  const predicted = useMemo(() => predictionsByNode(read.ok ? prediction : null), [prediction, read.ok]);
 
-  // ---- where the steps go: their real heights and the connections' labels ----
+  // ---- where the nodes go: their real heights and the connections' labels ----
 
-  // Each step's height as drawn by React Flow, once it has been; until then (and while it grows
+  // Each node's height as drawn by React Flow, once it has been; until then (and while it grows
   // after a run) the height worked out from its ports and rows of chips, whichever is larger.
   const [drawnHeights, setDrawnHeights] = useState<Record<string, number>>({});
   const heights = useMemo(() => {
     const out: Record<string, number> = {};
-    for (const s of graph?.steps ?? []) {
+    for (const s of graph?.nodes ?? []) {
       const rows = badgeRows({
         problems: problems.get(s.id)?.length ?? 0,
-        run: runSteps.get(s.id) ?? null,
+        run: runNodes.get(s.id) ?? null,
         quality: runQuality.get(s.id) ?? null,
         predicted: predicted.get(s.id) ?? null,
       });
       out[s.id] = Math.max(nodeHeight(portsOf(s, catalogue), rows), drawnHeights[s.id] ?? 0);
     }
     return out;
-  }, [graph, catalogue, problems, runSteps, runQuality, predicted, drawnHeights]);
+  }, [graph, catalogue, problems, runNodes, runQuality, predicted, drawnHeights]);
   const edgeLabels = useMemo(() => {
     const out = new Map<string, string>();
     if (!graph) return out;
-    const rows = new Map(run?.steps.map((s) => [s.step, s]) ?? []);
-    const live = run && run.steps.length === 0 ? liveEdgeRows(run.progress) : null;
+    const rows = new Map(run?.nodes.map((s) => [s.node, s]) ?? []);
+    const live = run && run.nodes.length === 0 ? liveEdgeRows(run.progress) : null;
     for (const e of graph.edges) {
       const plain = e.fromPort === "out" && e.toPort === "in";
       const counted = live
@@ -312,13 +312,13 @@ function Canvas(props: CanvasProps) {
     const labels: EdgeLabel[] = (graph?.edges ?? []).map((e) => ({ from: e.from, to: e.to, text: edgeLabels.get(edgeId(e)) ?? "" }));
     return { heights, labels };
   }, [graph, heights, edgeLabels]);
-  // Where each step is placed: its saved position (what the YAML's layout says), else laid out.
+  // Where each node is placed: its saved position (what the YAML's layout says), else laid out.
   const positions = useMemo(() => (graph ? placed(graph, catalogue, sizes) : {}), [graph, catalogue, sizes]);
   // Where it is shown: moved apart in the view only where its badges or a connection's label would
   // not fit between saved positions (a layout saved before a run). The YAML is not changed until a
-  // step is moved or Auto-layout is chosen.
+  // node is moved or Auto-layout is chosen.
   const shown = useMemo(() => makeRoom(positions, heights, sizes.labels), [positions, heights, sizes]);
-  // Choosing a step shows its settings in place of the suggestions.
+  // Choosing a node shows its settings in place of the suggestions.
   const lastSelected = useRef(selected);
   useEffect(() => {
     if (selected && selected !== lastSelected.current) setSuggestOpen(false);
@@ -331,7 +331,7 @@ function Canvas(props: CanvasProps) {
     window.setTimeout(() => setAnnounce(words), 30);
   }, []);
 
-  /** The part of the canvas not under the step list or the settings drawer, in canvas pixels. */
+  /** The part of the canvas not under the node list or the settings drawer, in canvas pixels. */
   const visibleArea = useCallback(() => {
     const box = flowBox.current?.getBoundingClientRect();
     if (!box) return null;
@@ -343,25 +343,25 @@ function Canvas(props: CanvasProps) {
     return { left, top: 0, width: Math.max(120, box.width - left - right), height: box.height };
   }, []);
 
-  /** Focuses a step, moving the view to it when it is outside. */
+  /** Focuses a node, moving the view to it when it is outside. */
   const showNode = useCallback(
     (id: string): boolean => {
       const el = flowBox.current?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(id)}"]`);
       if (!el) return false;
       el.focus({ preventScroll: true });
-      const node = flow.getNode(id);
+      const flowNode = flow.getNode(id);
       const box = flowBox.current?.getBoundingClientRect();
       const area = visibleArea();
       const r = el.getBoundingClientRect();
-      if (node && box && area) {
+      if (flowNode && box && area) {
         const l = box.left + area.left;
         const out = r.left < l || r.right > l + area.width || r.top < box.top || r.bottom > box.bottom;
         if (out) {
-          // Centred in the part of the canvas not under the step list or the drawer.
+          // Centred in the part of the canvas not under the node list or the drawer.
           const z = flow.getZoom();
           const cx = area.left + area.width / 2;
           const cy = area.height / 2;
-          void flow.setViewport({ x: cx - (node.position.x + 106) * z, y: cy - (node.position.y + 60) * z, zoom: z }, { duration });
+          void flow.setViewport({ x: cx - (flowNode.position.x + 106) * z, y: cy - (flowNode.position.y + 60) * z, zoom: z }, { duration });
         }
       }
       return true;
@@ -375,7 +375,7 @@ function Canvas(props: CanvasProps) {
     [showNode],
   );
 
-  // A step added or renamed is focused, and brought into view, once React Flow has drawn it.
+  // A node added or renamed is focused, and brought into view, once React Flow has drawn it.
   useEffect(() => {
     const id = pendingFocus.current;
     if (!id) return;
@@ -385,7 +385,7 @@ function Canvas(props: CanvasProps) {
     return () => window.clearTimeout(t);
   });
 
-  /** Applies a change, or says why it could not be made. Structural changes keep every step where it is drawn. */
+  /** Applies a change, or says why it could not be made. Structural changes keep every node where it is drawn. */
   const apply = useCallback(
     (c: Change, label: string, opts: { pin?: Record<string, Point> | true; coalesce?: string } = {}): string | null => {
       if ("error" in c) {
@@ -434,21 +434,21 @@ function Canvas(props: CanvasProps) {
   flushRef.current = flush;
   useEffect(() => () => flushRef.current(), []);
 
-  // ---- steps ----
+  // ---- nodes ----
 
   const add = (type: string, at?: Point) => {
     if (readOnly || !graph) return;
     flush();
     rememberUsed(type);
-    const sel = !at && selected ? graph.steps.find((s) => s.id === selected) : undefined;
+    const sel = !at && selected ? graph.nodes.find((s) => s.id === selected) : undefined;
     const outs = sel ? portsOf(sel, catalogue).outputs : [];
     const t = catalogue.get(type);
-    const after = sel && outs.length > 0 && t && t.inputs.length > 0 ? { step: sel.id, port: outs.includes("out") ? "out" : outs[0] } : null;
+    const after = sel && outs.length > 0 && t && t.inputs.length > 0 ? { node: sel.id, port: outs.includes("out") ? "out" : outs[0] } : null;
     const spot = at ?? spotAfter(shown, sel?.id ?? null);
-    const c = addStep(yamlRef.current, type, catalogue, after, spot);
+    const c = addNode(yamlRef.current, type, catalogue, after, spot);
     const id = "id" in c ? c.id! : null;
     const label = id
-      ? `Added ${t?.label ?? type} step ${id}${after ? `, reading from ${refText(after.step, after.port)}` : ""}.`
+      ? `Added ${t?.label ?? type} node ${id}${after ? `, reading from ${refText(after.node, after.port)}` : ""}.`
       : "";
     const made = apply(c, label, { pin: id ? { [id]: spot } : true });
     if (made) {
@@ -460,10 +460,10 @@ function Canvas(props: CanvasProps) {
   const remove = (id: string) => {
     if (readOnly || !graph) return;
     flush();
-    const order = graph.steps.map((s) => s.id);
+    const order = graph.nodes.map((s) => s.id);
     const next = order[order.indexOf(id) + 1] ?? order[order.indexOf(id) - 1] ?? null;
-    const c = removeStep(yamlRef.current, id, catalogue);
-    apply(c, `Removed step ${id} and its connections.`, { pin: true });
+    const c = removeNode(yamlRef.current, id, catalogue);
+    apply(c, `Removed node ${id} and its connections.`, { pin: true });
     if (!("error" in c)) {
       onSelect(next);
       if (next) pendingFocus.current = next;
@@ -475,7 +475,7 @@ function Canvas(props: CanvasProps) {
     if (readOnly) return;
     flush();
     const at = positions[id];
-    const c = duplicateStep(yamlRef.current, id);
+    const c = duplicateNode(yamlRef.current, id);
     const newId = "id" in c ? c.id! : null;
     const spot = at ? { x: at.x + 40, y: at.y + 140 } : undefined;
     const made = apply(c, newId ? `Duplicated ${id} as ${newId}.` : "", { pin: newId && spot ? { [newId]: spot } : true });
@@ -487,14 +487,14 @@ function Canvas(props: CanvasProps) {
 
   const rename = (id: string, to: string): string | null => {
     flush();
-    const c = renameStep(yamlRef.current, id, to);
+    const c = renameNode(yamlRef.current, id, to);
     if ("error" in c) return c.error;
     const moved = { ...positions, [to]: positions[id] };
     delete moved[id];
     const pinned = setPositions(c.text, moved);
     yamlRef.current = "error" in pinned ? c.text : pinned.text;
-    onEdit(yamlRef.current, `Renamed step ${id} to ${to}.`);
-    say(`Renamed step ${id} to ${to}.`);
+    onEdit(yamlRef.current, `Renamed node ${id} to ${to}.`);
+    say(`Renamed node ${id} to ${to}.`);
     onSelect(to);
     return null;
   };
@@ -516,50 +516,50 @@ function Canvas(props: CanvasProps) {
     else flush();
   };
 
-  /** Adds a suggestion's steps between the step rows come from and the write, as one change. */
+  /** Adds a suggestion's nodes between the node rows come from and the write, as one change. */
   const addSuggestion = (sg: Suggestion): string | null => {
     if (readOnly || !graph) return "The canvas cannot change this pipeline now.";
     flush();
     const from = positions[sg.placement.from.split(".")[0]];
     const to = positions[sg.placement.before];
     const base = from && to ? { x: (from.x + to.x) / 2, y: Math.max(from.y, to.y) + 170 } : spotAfter(shown, null);
-    const spots = Object.fromEntries(sg.steps.map((n, i) => [n.id, { x: base.x + i * 250, y: base.y }]));
-    const c = insertSteps(yamlRef.current, catalogue, sg.steps, sg.placement);
+    const spots = Object.fromEntries(sg.nodes.map((n, i) => [n.id, { x: base.x + i * 250, y: base.y }]));
+    const c = insertNodes(yamlRef.current, catalogue, sg.nodes, sg.placement);
     if ("error" in c) return c.error;
     // The list stays open (it is worked out again for the changed pipeline); the change is announced.
-    apply(c, `Added ${sg.steps.map((n) => n.id).join(" and ")} before ${sg.placement.before}: ${sg.title}.`, { pin: spots });
+    apply(c, `Added ${sg.nodes.map((n) => n.id).join(" and ")} before ${sg.placement.before}: ${sg.title}.`, { pin: spots });
     return null;
   };
 
   const layOut = () => {
     if (readOnly || !graph) return;
     flush();
-    apply(setPositions(yamlRef.current, autoLayout(graph, catalogue, sizes)), "Laid the steps out again, left to right.");
+    apply(setPositions(yamlRef.current, autoLayout(graph, catalogue, sizes)), "Laid the nodes out again, left to right.");
     window.setTimeout(() => readable(), 50);
   };
 
   // ---- React Flow's view of the graph ----
 
-  const derived = useMemo<StepNodeType[]>(() => {
+  const derived = useMemo<NodeCardType[]>(() => {
     if (!graph) return [];
-    return graph.steps.map((s) => {
+    return graph.nodes.map((s) => {
       const t = s.type ? catalogue.get(s.type) : undefined;
       const ports = portsOf(s, catalogue);
-      const outline = check?.steps.find((o) => o.id === s.id);
+      const outline = check?.nodes.find((o) => o.id === s.id);
       const n = problems.get(s.id)?.length ?? 0;
-      const runInfo = runSteps.get(s.id) ?? null;
+      const runInfo = runNodes.get(s.id) ?? null;
       const quality = runQuality.get(s.id) ?? null;
-      const qualityText = stepQualityWords(quality);
+      const qualityText = nodeQualityWords(quality);
       const estimate = predicted.get(s.id) ?? null;
-      const summary = stepSummary(s);
+      const summary = nodeSummary(s);
       const columns = outline ? columnsText(outline) : "Columns known once the pipeline has been checked";
       return {
         id: s.id,
-        type: "step",
+        type: "node",
         position: shown[s.id] ?? { x: 0, y: 0 },
         selected: s.id === selected,
         data: {
-          step: s,
+          node: s,
           kind: t?.kind ?? null,
           label: t?.label ?? s.type ?? "no type",
           summary,
@@ -573,7 +573,7 @@ function Canvas(props: CanvasProps) {
           connectable: !readOnly,
         },
         ariaLabel: [
-          `Step ${s.id}, ${kindWord(t?.kind)}: ${stepLabel(s, t?.label ?? s.type ?? "no type")}`,
+          `Node ${s.id}, ${kindWord(t?.kind)}: ${nodeLabel(s, t?.label ?? s.type ?? "no type")}`,
           summary,
           s.inputs.length ? `reads from ${s.inputs.map((l) => refText(l.from, l.fromPort)).join(" and ")}` : "",
           n ? `${n} ${n === 1 ? "problem" : "problems"}` : "",
@@ -590,11 +590,11 @@ function Canvas(props: CanvasProps) {
         domAttributes: { "aria-describedby": `cv-cols-${s.id} cv-node-help` },
       };
     });
-  }, [graph, catalogue, check, problems, runSteps, runQuality, predicted, shown, selected, readOnly]);
+  }, [graph, catalogue, check, problems, runNodes, runQuality, predicted, shown, selected, readOnly]);
 
-  const [nodes, setNodes] = useState<StepNodeType[]>(derived);
+  const [flowNodes, setFlowNodes] = useState<NodeCardType[]>(derived);
   useEffect(() => {
-    setNodes((prev) =>
+    setFlowNodes((prev) =>
       derived.map((n) => {
         const old = prev.find((p) => p.id === n.id);
         return old?.measured ? { ...n, measured: old.measured } : n;
@@ -602,10 +602,10 @@ function Canvas(props: CanvasProps) {
     );
   }, [derived]);
 
-  const onNodesChange = useCallback((changes: NodeChange<StepNodeType>[]) => {
+  const onNodesChange = useCallback((changes: NodeChange<NodeCardType>[]) => {
     // Selection is the page's; React Flow's own select and remove changes are not applied.
-    setNodes((ns) => applyNodeChanges(changes.filter((c) => c.type !== "select" && c.type !== "remove"), ns));
-    // Each step's drawn height, for making room (only when it changes by more than a pixel).
+    setFlowNodes((ns) => applyNodeChanges(changes.filter((c) => c.type !== "select" && c.type !== "remove"), ns));
+    // Each node's drawn height, for making room (only when it changes by more than a pixel).
     const drawn = changes.flatMap((c) => (c.type === "dimensions" && c.dimensions ? [[c.id, Math.ceil(c.dimensions.height)] as const] : []));
     if (drawn.length)
       setDrawnHeights((old) => (drawn.some(([id, h]) => Math.abs((old[id] ?? 0) - h) > 1) ? { ...old, ...Object.fromEntries(drawn) } : old));
@@ -613,7 +613,7 @@ function Canvas(props: CanvasProps) {
 
   const edges = useMemo<Edge[]>(() => {
     if (!graph) return [];
-    const ids = new Set(graph.steps.map((s) => s.id));
+    const ids = new Set(graph.nodes.map((s) => s.id));
     return graph.edges
       .filter((e) => ids.has(e.from) && ids.has(e.to))
       .map((e) => {
@@ -656,7 +656,7 @@ function Canvas(props: CanvasProps) {
         );
         return;
       }
-      // Too big to read whole: its first steps at the smallest readable size, centred on them.
+      // Too big to read whole: its first nodes at the smallest readable size, centred on them.
       const z = MIN_READABLE;
       const first = all.filter((n) => n.position.x < b.x + (area.width - 2 * pad) / z);
       const fb = getNodesBounds(first.length ? first : all);
@@ -667,22 +667,22 @@ function Canvas(props: CanvasProps) {
   );
   /** Fits the whole pipeline into the visible part of the canvas, however small that makes it. */
   const fitAll = useCallback((animate = true) => frame(true, animate), [frame]);
-  /** The pipeline at a size its words can be read: all of it if it fits, else its first steps. */
+  /** The pipeline at a size its words can be read: all of it if it fits, else its first nodes. */
   const readable = useCallback((animate = true) => frame(false, animate), [frame]);
 
   // Fit the pipeline into view when it first appears.
   const fitted = useRef(false);
   useEffect(() => {
-    if (fitted.current || nodes.length === 0 || !nodes.every((n) => n.measured)) return;
+    if (fitted.current || flowNodes.length === 0 || !flowNodes.every((n) => n.measured)) return;
     fitted.current = true;
     readable(false);
-  }, [nodes, readable]);
+  }, [flowNodes, readable]);
 
-  // A problem chosen in the problems list: select its step and go to its setting.
+  // A problem chosen in the problems list: select its node and go to its setting.
   useEffect(() => {
     const r = props.focusRequest;
     if (!r) return;
-    onSelect(r.step);
+    onSelect(r.node);
     window.setTimeout(() => {
       const panel = wrap.current?.querySelector<HTMLElement>(".cv-drawer");
       const field = r.key ? panel?.querySelector<HTMLElement>(`[data-setting="${CSS.escape(r.key)}"]`) : null;
@@ -691,7 +691,7 @@ function Canvas(props: CanvasProps) {
         target.focus();
         field?.scrollIntoView({ block: "nearest" });
       } else {
-        focusNode(r.step);
+        focusNode(r.node);
       }
     }, 80);
     // Only a new request moves the focus.
@@ -723,7 +723,7 @@ function Canvas(props: CanvasProps) {
     const aOut = a.id.startsWith("out:");
     const bOut = b.id.startsWith("out:");
     if (aOut === bOut) {
-      const why = "Connect an output port (on the right of a step) to an input port (on the left of another).";
+      const why = "Connect an output port (on the right of a node) to an input port (on the left of another).";
       setRefusal(why);
       say(why);
       return;
@@ -738,7 +738,7 @@ function Canvas(props: CanvasProps) {
   };
 
   const onDrop = (ev: DragEvent) => {
-    const type = ev.dataTransfer.getData("application/x-kilnmark-step");
+    const type = ev.dataTransfer.getData("application/x-kilnmark-node");
     if (!type) return;
     ev.preventDefault();
     const p = flow.screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
@@ -752,11 +752,11 @@ function Canvas(props: CanvasProps) {
     const here = shown[id];
     if (key === "ArrowRight") return graph.edges.find((e) => e.from === id)?.to ?? null;
     if (key === "ArrowLeft") return graph.edges.find((e) => e.to === id)?.from ?? null;
-    // Up and down: the nearest step above or below, preferring the same column.
+    // Up and down: the nearest node above or below, preferring the same column.
     const down = key === "ArrowDown";
     let best: string | null = null;
     let score = Infinity;
-    for (const s of graph.steps) {
+    for (const s of graph.nodes) {
       const p = shown[s.id];
       if (s.id === id || !p || !here) continue;
       const dy = p.y - here.y;
@@ -770,7 +770,7 @@ function Canvas(props: CanvasProps) {
     return best;
   };
 
-  /** After an undo or redo: the focus goes back to the selected step, else to the canvas. */
+  /** After an undo or redo: the focus goes back to the selected node, else to the canvas. */
   const restoreFocus = useCallback(() => {
     window.setTimeout(() => {
       const a = document.activeElement as HTMLElement | null;
@@ -802,7 +802,7 @@ function Canvas(props: CanvasProps) {
 
   const onKeyDown = (ev: KeyboardEvent<HTMLDivElement>) => {
     if (isTyping(ev.target)) return;
-    // Shortcuts belong to the canvas and its tools, not to the panel, the step list or a dialog.
+    // Shortcuts belong to the canvas and its tools, not to the panel, the node list or a dialog.
     const t = ev.target as Node;
     const onCanvas = !!(flowBox.current?.contains(t) || toolbar.current?.contains(t));
     const mod = ev.ctrlKey || ev.metaKey;
@@ -894,7 +894,7 @@ function Canvas(props: CanvasProps) {
     if (k === "ContextMenu" || (k === "F10" && ev.shiftKey)) {
       done();
       const r = nodeEl?.getBoundingClientRect();
-      setMenu({ step: id, x: (r?.left ?? 0) + 16, y: (r?.top ?? 0) + 28 });
+      setMenu({ node: id, x: (r?.left ?? 0) + 16, y: (r?.top ?? 0) + 28 });
       return;
     }
     if (mod && (k === "d" || k === "D")) {
@@ -919,8 +919,8 @@ function Canvas(props: CanvasProps) {
         // From where it is shown, so it moves from where it is seen.
         const p = shown[id];
         if (!p) return;
-        const step = 20;
-        const to = { x: p.x + (k === "ArrowRight" ? step : k === "ArrowLeft" ? -step : 0), y: p.y + (k === "ArrowDown" ? step : k === "ArrowUp" ? -step : 0) };
+        const node = 20;
+        const to = { x: p.x + (k === "ArrowRight" ? node : k === "ArrowLeft" ? -node : 0), y: p.y + (k === "ArrowDown" ? node : k === "ArrowUp" ? -node : 0) };
         apply(setPositions(yamlRef.current, { ...positions, [id]: to }), `Moved ${id} to ${Math.round(to.x)}, ${Math.round(to.y)}.`, { coalesce: `move:${id}` });
         return;
       }
@@ -929,7 +929,7 @@ function Canvas(props: CanvasProps) {
         onSelect(next);
         focusNode(next);
       } else {
-        say(k === "ArrowRight" ? `Nothing reads from ${id}.` : k === "ArrowLeft" ? `${id} reads from no step.` : `No step ${k === "ArrowUp" ? "above" : "below"} ${id}.`);
+        say(k === "ArrowRight" ? `Nothing reads from ${id}.` : k === "ArrowLeft" ? `${id} reads from no node.` : `No node ${k === "ArrowUp" ? "above" : "below"} ${id}.`);
       }
     }
   };
@@ -939,28 +939,28 @@ function Canvas(props: CanvasProps) {
     window.setTimeout(() => connectDialog.current?.showModal(), 0);
   };
 
-  const selectedStep = graph?.steps.find((s) => s.id === selected) ?? null;
+  const selectedNode = graph?.nodes.find((s) => s.id === selected) ?? null;
   const kindOf = (id: string) => {
-    const t = graph?.steps.find((s) => s.id === id)?.type;
+    const t = graph?.nodes.find((s) => s.id === id)?.type;
     return t ? (catalogue.get(t)?.kind ?? null) : null;
   };
-  const previewStep = (id: string) => {
+  const previewNode = (id: string) => {
     flush();
     setSuggestOpen(false);
     onSelect(id);
     setDrawerTab("preview");
     // Counted here, not from the last ask, which the panel clears once it has run it.
     askCount.current += 1;
-    setPreviewAsk({ step: id, n: askCount.current });
+    setPreviewAsk({ node: id, n: askCount.current });
   };
-  const menuItems = (id: string): StepMenuItem[] => {
+  const menuItems = (id: string): NodeMenuItem[] => {
     const writes = kindOf(id) === "sink";
     const steward = allows(role, "steward");
-    const items: StepMenuItem[] = [
+    const items: NodeMenuItem[] = [
       {
         id: "preview",
         label: "Preview rows",
-        onSelect: () => previewStep(id),
+        onSelect: () => previewNode(id),
         disabled: writes || !steward || broken,
         note: writes
           ? "A write passes no rows on"
@@ -1001,7 +1001,7 @@ function Canvas(props: CanvasProps) {
       )}
       {typesError && (
         <p className="error" role="alert">
-          Could not load the step types: {typesError}
+          Could not load the node types: {typesError}
         </p>
       )}
       <div className="cv-toolbar" ref={toolbar} role="group" aria-label="Canvas tools">
@@ -1028,7 +1028,7 @@ function Canvas(props: CanvasProps) {
           <IconTextSize size={18} stroke={1.8} aria-hidden="true" />
           Readable size
         </button>
-        <button type="button" className="cv-tool" onClick={layOut} disabled={readOnly || !graph?.steps.length}>
+        <button type="button" className="cv-tool" onClick={layOut} disabled={readOnly || !graph?.nodes.length}>
           <IconLayoutDistributeHorizontal size={18} stroke={1.8} aria-hidden="true" />
           Auto-layout
         </button>
@@ -1049,7 +1049,7 @@ function Canvas(props: CanvasProps) {
             flush();
             setSuggestOpen((o) => !o);
           }}
-          disabled={!graph?.steps.length}
+          disabled={!graph?.nodes.length}
         >
           <IconSparkles size={18} stroke={1.8} aria-hidden="true" />
           Suggestions
@@ -1061,10 +1061,10 @@ function Canvas(props: CanvasProps) {
         )}
       </div>
 
-      <div className={`cv-stage${selectedStep || suggestOpen ? " has-drawer" : ""}`}>
+      <div className={`cv-stage${selectedNode || suggestOpen ? " has-drawer" : ""}`}>
         <Palette
           types={types}
-          usedTypes={graph?.steps.map((s) => s.type ?? "") ?? []}
+          usedTypes={graph?.nodes.map((s) => s.type ?? "") ?? []}
           readOnly={readOnly}
           expanded={paletteOpen}
           onExpand={setPaletteOpen}
@@ -1074,10 +1074,10 @@ function Canvas(props: CanvasProps) {
             readOnly
               ? lockedByPage
                 ? "This pipeline is read-only here."
-                : "Steps can be added once the YAML can be read."
+                : "Nodes can be added once the YAML can be read."
               : selected
-                ? `Choose a step to add it after ${selected}, or drag it onto the canvas.`
-                : "Choose a step to add it, or drag it onto the canvas."
+                ? `Choose a node to add it after ${selected}, or drag it onto the canvas.`
+                : "Choose a node to add it, or drag it onto the canvas."
           }
         />
         <div
@@ -1085,7 +1085,7 @@ function Canvas(props: CanvasProps) {
           ref={flowBox}
           tabIndex={-1}
           onDragOver={(e) => {
-            if (e.dataTransfer.types.includes("application/x-kilnmark-step")) {
+            if (e.dataTransfer.types.includes("application/x-kilnmark-node")) {
               e.preventDefault();
               e.dataTransfer.dropEffect = "copy";
             }
@@ -1105,10 +1105,10 @@ function Canvas(props: CanvasProps) {
             if (id && id !== selected) onSelect(id);
           }}
           role="region"
-          aria-label={`Canvas of ${props.title}: ${graph?.steps.length ?? 0} steps. Press question mark for keyboard shortcuts.`}
+          aria-label={`Canvas of ${props.title}: ${graph?.nodes.length ?? 0} nodes. Press question mark for keyboard shortcuts.`}
         >
-          <ReactFlow<StepNodeType, Edge>
-            nodes={nodes}
+          <ReactFlow<NodeCardType, Edge>
+            nodes={flowNodes}
             edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
@@ -1128,14 +1128,14 @@ function Canvas(props: CanvasProps) {
               e.preventDefault();
               menuPress.current = false;
               setSelectedEdge(null);
-              setMenu({ step: n.id, x: e.clientX, y: e.clientY });
+              setMenu({ node: n.id, x: e.clientX, y: e.clientY });
             }}
             onNodeDragStop={(_, __, moved) => {
               if (readOnly) return;
               flush();
               const next = { ...positions };
               for (const n of moved) next[n.id] = n.position;
-              apply(setPositions(yamlRef.current, next), moved.length === 1 ? `Moved ${moved[0].id}.` : `Moved ${moved.length} steps.`);
+              apply(setPositions(yamlRef.current, next), moved.length === 1 ? `Moved ${moved[0].id}.` : `Moved ${moved.length} nodes.`);
             }}
             onConnect={onConnect}
             onConnectEnd={onConnectEnd}
@@ -1166,13 +1166,13 @@ function Canvas(props: CanvasProps) {
             />
           </ReactFlow>
           <p id="cv-node-help" className="visually-hidden">
-            Arrow keys move to connected steps; Shift and an arrow key moves the step; C connects it; Delete removes
+            Arrow keys move to connected nodes; Shift and an arrow key moves the node; C connects it; Delete removes
             it; Enter goes to its settings. Question mark lists every shortcut.
           </p>
-          {graph && graph.steps.length === 0 && (
+          {graph && graph.nodes.length === 0 && (
             <div className="cv-empty">
               <p>
-                <strong>An empty canvas.</strong> Add a step from the list: start with a source, such as{" "}
+                <strong>An empty canvas.</strong> Add a node from the list: start with a source, such as{" "}
                 {catalogue.get("read")?.label ?? "a read"}.
               </p>
             </div>
@@ -1184,7 +1184,7 @@ function Canvas(props: CanvasProps) {
             <SuggestionsPanel yaml={yaml} readOnly={readOnly} onAdd={addSuggestion} onClose={() => setSuggestOpen(false)} />
           </Suspense>
         )}
-        {selectedStep && !suggestOpen && (
+        {selectedNode && !suggestOpen && (
           <aside
             className={`cv-drawer${drawerTab === "preview" ? " is-wide" : ""}`}
             aria-labelledby="cv-panel-h"
@@ -1194,17 +1194,17 @@ function Canvas(props: CanvasProps) {
           >
             <div className="cv-drawer-head">
               <h3 id="cv-panel-h" className="cv-side-title">
-                Selected step
+                Selected node
               </h3>
               <button
                 type="button"
                 className="cv-mini"
                 aria-label="Close the settings"
                 onClick={() => {
-                  const id = selectedStep.id;
+                  const id = selectedNode.id;
                   flush();
                   onSelect(null);
-                  // Back to the step, without selecting it again (which would reopen the drawer).
+                  // Back to the node, without selecting it again (which would reopen the drawer).
                   quietFocus.current = id;
                   focusNode(id);
                 }}
@@ -1214,7 +1214,7 @@ function Canvas(props: CanvasProps) {
             </div>
             <Tabs
               idBase={drawerTabs}
-              label={`Step ${selectedStep.id}`}
+              label={`Node ${selectedNode.id}`}
               selected={drawerTab}
               onSelect={(t) => {
                 flush();
@@ -1227,12 +1227,12 @@ function Canvas(props: CanvasProps) {
             />
             <TabPanel idBase={drawerTabs} selected={drawerTab}>
             {drawerTab === "preview" ? (
-              <StepPreviewPanel
-                key={selectedStep.id}
+              <NodePreviewPanel
+                key={selectedNode.id}
                 yaml={yaml}
-                step={selectedStep.id}
-                outputs={portsOf(selectedStep, catalogue).outputs}
-                kind={kindOf(selectedStep.id)}
+                node={selectedNode.id}
+                outputs={portsOf(selectedNode, catalogue).outputs}
+                kind={kindOf(selectedNode.id)}
                 role={role}
                 ask={previewAsk}
                 last={previewResult}
@@ -1241,23 +1241,23 @@ function Canvas(props: CanvasProps) {
               />
             ) : (
             <SettingsPanel
-              key={selectedStep.id}
-              step={selectedStep}
-              type={selectedStep.type ? catalogue.get(selectedStep.type) : undefined}
+              key={selectedNode.id}
+              node={selectedNode}
+              type={selectedNode.type ? catalogue.get(selectedNode.type) : undefined}
               catalogue={catalogue}
               check={check}
-              problems={problems.get(selectedStep.id) ?? []}
+              problems={problems.get(selectedNode.id) ?? []}
               sources={sources}
               readOnly={readOnly}
-              run={runSteps.get(selectedStep.id) ?? null}
-              quality={runQuality.get(selectedStep.id) ?? null}
-              predicted={predicted.get(selectedStep.id) ?? null}
-              onSetting={(key, value, kind) => setOne(selectedStep.id, key, value, kind)}
-              onRename={(to) => rename(selectedStep.id, to)}
+              run={runNodes.get(selectedNode.id) ?? null}
+              quality={runQuality.get(selectedNode.id) ?? null}
+              predicted={predicted.get(selectedNode.id) ?? null}
+              onSetting={(key, value, kind) => setOne(selectedNode.id, key, value, kind)}
+              onRename={(to) => rename(selectedNode.id, to)}
               onDisconnect={unlink}
-              onConnectMenu={() => openConnect(selectedStep.id)}
-              onDelete={() => remove(selectedStep.id)}
-              onDuplicate={() => duplicate(selectedStep.id)}
+              onConnectMenu={() => openConnect(selectedNode.id)}
+              onDelete={() => remove(selectedNode.id)}
+              onDuplicate={() => duplicate(selectedNode.id)}
             />
             )}
             </TabPanel>
@@ -1276,17 +1276,17 @@ function Canvas(props: CanvasProps) {
         </p>
       )}
       <p className="hint cv-hint">
-        Drag from an output port (right) to an input port (left) to connect steps, or use Connect to…. Press ? for keyboard
+        Drag from an output port (right) to an input port (left) to connect nodes, or use Connect to…. Press ? for keyboard
         shortcuts.
       </p>
 
-      {menu && graph?.steps.some((s) => s.id === menu.step) && (
-        <StepMenu
-          step={menu.step}
+      {menu && graph?.nodes.some((s) => s.id === menu.node) && (
+        <NodeMenu
+          node={menu.node}
           at={{ x: menu.x, y: menu.y }}
-          items={menuItems(menu.step)}
+          items={menuItems(menu.node)}
           onClose={(back) => {
-            const id = menu.step;
+            const id = menu.node;
             setMenu(null);
             if (back) {
               quietFocus.current = id;

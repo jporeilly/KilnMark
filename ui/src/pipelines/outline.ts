@@ -1,8 +1,8 @@
-import type { PipelineStepOutline } from "../api";
+import type { PipelineNodeOutline } from "../api";
 
-/** The columns leaving a step, in words, for its label and the box shown on hover and focus. */
-export function columnsText(step: PipelineStepOutline): string {
-  const ports = Object.entries(step.columns);
+/** The columns leaving a node, in words, for its label and the box shown on hover and focus. */
+export function columnsText(node: PipelineNodeOutline): string {
+  const ports = Object.entries(node.columns);
   if (ports.length === 0) return "No outputs";
   return ports
     .map(([port, cols]) =>

@@ -13,15 +13,15 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.util.TransferPair;
 
 /**
- * A bounded hand-over of Arrow batches from one step to the next.
+ * A bounded hand-over of Arrow batches from one node to the next.
  *
  * <p>{@link #put} blocks while {@code capacity} batches are waiting: that is the back-pressure that
- * keeps a fast source from outrunning a slow step. Ownership moves with each batch. {@link #take}
- * moves the batch's buffers into the taking step's allocator, so memory is accounted per step, and
+ * keeps a fast source from outrunning a slow node. Ownership moves with each batch. {@link #take}
+ * moves the batch's buffers into the taking node's allocator, so memory is accounted per node, and
  * the taker must close what it takes. See docs/spikes/0001-arrow-row-sets.md.
  *
  * <p>{@link #rows()} counts the rows the reader was given; batches dropped because the reader
- * stopped, or because the step before failed, are not counted.
+ * stopped, or because the node before failed, are not counted.
  */
 public final class RowSet {
 
@@ -93,8 +93,8 @@ public final class RowSet {
     }
 
     /**
-     * Nanoseconds the writer has spent waiting for room ({@link #put}, {@link #finish}): the step
-     * writing here held up by the step reading. Counted as it goes, at most 100 ms behind.
+     * Nanoseconds the writer has spent waiting for room ({@link #put}, {@link #finish}): the node
+     * writing here held up by the node reading. Counted as it goes, at most 100 ms behind.
      */
     public long putWaitNanos() {
         return putWaitNanos;
@@ -102,7 +102,7 @@ public final class RowSet {
 
     /**
      * Nanoseconds the reader has spent waiting for a batch ({@link #take}, a timed {@link #poll},
-     * {@link #takeAny}): the step reading here waiting for rows. Counted as it goes, at most 100 ms behind.
+     * {@link #takeAny}): the node reading here waiting for rows. Counted as it goes, at most 100 ms behind.
      */
     public long takeWaitNanos() {
         return takeWaitNanos;
@@ -146,16 +146,16 @@ public final class RowSet {
     }
 
     /**
-     * Hands a batch to the next step, waiting while the row set is full. The caller gives up the
+     * Hands a batch to the next node, waiting while the row set is full. The caller gives up the
      * batch: it must not use or close it afterwards.
      *
-     * @throws StepException if the next step has stopped, in which case the batch has been closed
+     * @throws NodeException if the next node has stopped, in which case the batch has been closed
      */
-    public void put(VectorSchemaRoot batch) throws InterruptedException, StepException {
+    public void put(VectorSchemaRoot batch) throws InterruptedException, NodeException {
         int count = batch.getRowCount(); // read before the batch is handed over: the reader may close it
         if (cancelled) { // fail fast even when there is room, or a source would read to its end for nothing
             batch.close();
-            throw new CancelledException("the next step stopped reading " + name);
+            throw new CancelledException("the next node stopped reading " + name);
         }
         if (!queue.offer(batch)) { // full: wait, counting the time
             long last = System.nanoTime();
@@ -167,7 +167,7 @@ public final class RowSet {
                     last = now;
                     if (cancelled) {
                         batch.close();
-                        throw new CancelledException("the next step stopped reading " + name);
+                        throw new CancelledException("the next node stopped reading " + name);
                     }
                 }
             } catch (InterruptedException e) {
@@ -191,7 +191,7 @@ public final class RowSet {
         }
     }
 
-    /** No more batches; waits for room for the end, unless the next step has stopped. */
+    /** No more batches; waits for room for the end, unless the next node has stopped. */
     public void finish() throws InterruptedException {
         if (!cancelled && !queue.offer(END)) {
             long last = System.nanoTime();
@@ -211,9 +211,9 @@ public final class RowSet {
     }
 
     /**
-     * No more batches, because this step failed; the next step's {@link #take} reports it. Never
+     * No more batches, because this node failed; the next node's {@link #take} reports it. Never
      * waits: batches still queued are dropped (the run is failing) to make room for the end, so a
-     * failure can always reach the steps after it.
+     * failure can always reach the nodes after it.
      *
      * @throws InterruptedException never; kept so callers written for the waiting version still compile
      */
@@ -231,9 +231,9 @@ public final class RowSet {
     /**
      * The next batch, moved into {@code into}, or {@code null} at the end of the stream.
      *
-     * @throws UpstreamFailedException if the step before this one failed
+     * @throws UpstreamFailedException if the node before this one failed
      */
-    public VectorSchemaRoot take(BufferAllocator into) throws InterruptedException, StepException {
+    public VectorSchemaRoot take(BufferAllocator into) throws InterruptedException, NodeException {
         Object o = queue.poll();
         if (o == null) {
             long last = System.nanoTime();
@@ -256,27 +256,27 @@ public final class RowSet {
      * The next batch if one arrives within {@code timeout}, moved into {@code into}; {@code null} if
      * none did or the stream has ended, which {@link #atEnd()} tells apart.
      *
-     * @throws UpstreamFailedException if the step before this one failed
+     * @throws UpstreamFailedException if the node before this one failed
      */
     public VectorSchemaRoot poll(BufferAllocator into, long timeout, TimeUnit unit)
-        throws InterruptedException, StepException {
+        throws InterruptedException, NodeException {
         Object o = next(timeout, unit, true);
         return o == null ? null : received(o, into);
     }
 
     /**
      * Reads the next batch and closes it without counting its rows, for an engine dropping what a
-     * finished step no longer reads. Returns {@code false} once the stream has ended.
+     * finished node no longer reads. Returns {@code false} once the stream has ended.
      *
-     * @throws UpstreamFailedException if the step before this one failed
+     * @throws UpstreamFailedException if the node before this one failed
      */
-    public boolean discard(long timeout, TimeUnit unit) throws InterruptedException, StepException {
+    public boolean discard(long timeout, TimeUnit unit) throws InterruptedException, NodeException {
         long waited = takeWaitNanos;
         Object o;
         try {
             o = next(timeout, unit, true);
         } finally {
-            takeWaitNanos = waited; // the engine dropping rows is not the step waiting for them
+            takeWaitNanos = waited; // the engine dropping rows is not the node waiting for them
         }
         if (o == null) {
             return !ended;
@@ -322,13 +322,13 @@ public final class RowSet {
         return ended;
     }
 
-    private VectorSchemaRoot received(Object o, BufferAllocator into) throws StepException {
+    private VectorSchemaRoot received(Object o, BufferAllocator into) throws NodeException {
         moves.incrementAndGet();
         if (o == END) {
             ended = true;
             readerWaitingSince = 0;
             if (failure != null) {
-                throw new UpstreamFailedException("the step before " + name + " failed", failure);
+                throw new UpstreamFailedException("the node before " + name + " failed", failure);
             }
             return null;
         }
@@ -351,13 +351,13 @@ public final class RowSet {
 
     /**
      * The next batch from whichever of these row sets has one, or {@code null} once every one has
-     * ended. For a step that reads several inputs and does not mind the order (union): reading them
-     * one after another would stall a pipeline whose inputs share a step upstream, as that step
+     * ended. For a node that reads several inputs and does not mind the order (union): reading them
+     * one after another would stall a pipeline whose inputs share a node upstream, as that node
      * waits for room on the input not being read.
      *
-     * @throws UpstreamFailedException if a step before any of them failed
+     * @throws UpstreamFailedException if a node before any of them failed
      */
-    public static Taken takeAny(List<RowSet> from, BufferAllocator into) throws InterruptedException, StepException {
+    public static Taken takeAny(List<RowSet> from, BufferAllocator into) throws InterruptedException, NodeException {
         int n = from.size();
         List<RowSet> marked = new ArrayList<>(); // waiting on all of them for as long as this call waits
         try {
@@ -400,7 +400,7 @@ public final class RowSet {
         }
     }
 
-    /** The reading step has stopped: release waiting batches and make further puts fail fast. */
+    /** The reading node has stopped: release waiting batches and make further puts fail fast. */
     public void cancel() {
         cancelled = true;
         drain();
@@ -430,8 +430,8 @@ public final class RowSet {
         }
     }
 
-    /** The step before failed; the runner reports that step's failure, not this one. */
-    public static final class UpstreamFailedException extends StepException {
+    /** The node before failed; the runner reports that node's failure, not this one. */
+    public static final class UpstreamFailedException extends NodeException {
         @java.io.Serial
         private static final long serialVersionUID = 1L;
 
@@ -440,8 +440,8 @@ public final class RowSet {
         }
     }
 
-    /** The step after stopped reading; the runner reports that step's failure, not this one. */
-    public static final class CancelledException extends StepException {
+    /** The node after stopped reading; the runner reports that node's failure, not this one. */
+    public static final class CancelledException extends NodeException {
         @java.io.Serial
         private static final long serialVersionUID = 1L;
 

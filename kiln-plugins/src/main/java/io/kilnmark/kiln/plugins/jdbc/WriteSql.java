@@ -100,7 +100,7 @@ abstract class WriteSql {
     /**
      * Why the converted value {@code v} cannot go into {@code t}, or null (a YEAR column's range, a
      * character the column's character set lacks); {@code t} is null for a column of a table the
-     * step creates.
+     * node creates.
      */
     String targetValueProblem(WritePlan.TargetColumn t, Object v) {
         return null;
@@ -108,7 +108,7 @@ abstract class WriteSql {
 
     /**
      * Whether the database stores empty text (and empty bytes) as null (Oracle), so an empty key
-     * column could never match a row and upsert refuses it whatever else the step allows.
+     * column could never match a row and upsert refuses it whatever else the node allows.
      */
     boolean emptyMeansNull() {
         return false;
@@ -270,7 +270,7 @@ abstract class WriteSql {
 
     /**
      * Binds a value of {@code kind} (null allowed) as parameter {@code i}; {@code bulk} when the
-     * batch goes through the driver's bulk copy into a table this step created.
+     * batch goes through the driver's bulk copy into a table this node created.
      */
     void bind(PreparedStatement ps, int i, Kind kind, Object v, boolean bulk) throws SQLException {
         bind(ps, i, kind, v);
@@ -278,7 +278,7 @@ abstract class WriteSql {
 
     /**
      * As {@link #bind(PreparedStatement, int, Kind, Object, boolean)}, knowing the table's column it
-     * goes to ({@code into}; null for a table the step creates): Oracle binds national character
+     * goes to ({@code into}; null for a table the node creates): Oracle binds national character
      * columns' text as such.
      */
     void bind(PreparedStatement ps, int i, Kind kind, Object v, boolean bulk, WritePlan.TargetColumn into)
@@ -321,7 +321,7 @@ abstract class WriteSql {
         return v instanceof String s ? textProblem(s) : null;
     }
 
-    /** Rows sent at a time when the step does not say ({@code batch_size}). */
+    /** Rows sent at a time when the node does not say ({@code batch_size}). */
     int defaultBatchSize(String mode) {
         return 1000;
     }
@@ -379,7 +379,7 @@ abstract class WriteSql {
     }
 
     /**
-     * Whether a table this step creates is described again once created, so each value is checked
+     * Whether a table this node creates is described again once created, so each value is checked
      * against the columns the database actually made (lengths, digits of a second, decimal places)
      * as for an append: where the column types are chosen from what the driver offers rather than
      * known in advance. False by default.
@@ -783,7 +783,7 @@ abstract class WriteSql {
             return 4000;
         }
 
-        /** The driver's bulk copy, for tables the step creates, unless {@code bulk_copy} is false. */
+        /** The driver's bulk copy, for tables the node creates, unless {@code bulk_copy} is false. */
         @Override
         boolean bulk(String mode, io.kilnmark.kiln.plugins.write.WriteSettings settings)
             throws io.kilnmark.kiln.connect.ConnectorException {
@@ -1059,7 +1059,7 @@ abstract class WriteSql {
         /**
          * The driver's bulk copy for batches turns date and time parameters into text with
          * {@code toString()}, which drops zero seconds ({@code 2024-01-01T00:00}) and which SQL
-         * Server then refuses. For bulk copy into the step's own columns (date, time(6),
+         * Server then refuses. For bulk copy into the node's own columns (date, time(6),
          * datetime2(6), datetimeoffset(6)) they are sent as full ISO 8601 text instead, which those
          * types read whatever the session's language or date format.
          */
@@ -1090,7 +1090,7 @@ abstract class WriteSql {
         private static final java.time.format.DateTimeFormatter ISO_DATE =
             java.time.format.DateTimeFormatter.ofPattern("uuuu-MM-dd", java.util.Locale.ROOT);
         private static final java.time.format.DateTimeFormatter ISO_TIME =
-            // six digits, the scale of the step's own time(6), datetime2(6) and datetimeoffset(6)
+            // six digits, the scale of the node's own time(6), datetime2(6) and datetimeoffset(6)
             // columns (bulk copy refuses text with more: "invalid column length"). Values reach the
             // writer in microseconds (WriteColumn), so nothing is cut, and the typed path stores the
             // same value.

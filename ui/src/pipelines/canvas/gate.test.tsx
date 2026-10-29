@@ -1,19 +1,19 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ReactFlowProvider } from "@xyflow/react";
-import { formatScore, type GateOutcome, type PipelineStepQuality, type StepType, type StepTypeSetting } from "../../api";
-import { belowThreshold, gateWords, percent, scoreWords, stepQualityWords } from "../quality";
-import { stepSummary } from "./insight";
-import { catalogueOf, portsOf, readGraph, setSetting, type Change, type GraphStep } from "./model";
+import { formatScore, type GateOutcome, type PipelineNodeQuality, type NodeType, type NodeTypeSetting } from "../../api";
+import { belowThreshold, gateWords, percent, scoreWords, nodeQualityWords } from "../quality";
+import { nodeSummary } from "./insight";
+import { catalogueOf, portsOf, readGraph, setSetting, type Change, type GraphNode } from "./model";
 import { SettingControl, type ControlContext } from "./SettingControls";
-import { StepNode, type StepData } from "./StepNode";
+import { NodeCard, type NodeData } from "./NodeCard";
 
 const ok = (c: Change) => {
   if ("error" in c) throw new Error(c.error);
   return c.text;
 };
 
-const GATE: StepType = {
+const GATE: NodeType = {
   type: "gate",
   kind: "gate",
   label: "Quality gate",
@@ -34,7 +34,7 @@ const PIPELINE = `kilnmark: pipeline/v1
 name: people-gate
 quality:
   min_score: 0.95   # tell followers below 95%
-steps:
+nodes:
   - id: people
     type: read
     source: lab-db
@@ -84,20 +84,20 @@ const outcome = (over: Partial<GateOutcome> = {}): GateOutcome => ({
 describe("the gate on the canvas", () => {
   test("its ports: out and quarantine, and the quarantine edge reads from that port", () => {
     const g = graphOf(PIPELINE);
-    const check = g.steps.find((s) => s.id === "check")!;
+    const check = g.nodes.find((s) => s.id === "check")!;
     expect(portsOf(check, CAT)).toMatchObject({ inputs: ["in"], outputs: ["out", "quarantine"] });
     expect(g.edges).toContainEqual({ from: "check", fromPort: "quarantine", to: "aside", toPort: "in" });
   });
 
   test("its one-line summary says what happens to failing rows and what it checks", () => {
     const g = graphOf(PIPELINE);
-    expect(stepSummary(g.steps.find((s) => s.id === "check")!)).toBe("quarantine · asset's rules");
+    expect(nodeSummary(g.nodes.find((s) => s.id === "check")!)).toBe("quarantine · asset's rules");
     const withRules = graphOf(
       ok(setSetting(PIPELINE, "check", "rules", [{ type: "not_null", field: "email" }, { type: "unique", field: "id" }], "rules")),
     );
-    expect(stepSummary(withRules.steps.find((s) => s.id === "check")!)).toBe("quarantine · asset's rules + 2 rules");
+    expect(nodeSummary(withRules.nodes.find((s) => s.id === "check")!)).toBe("quarantine · asset's rules + 2 rules");
     const own = graphOf(ok(setSetting(PIPELINE, "check", "asset_rules", false, "boolean")));
-    expect(stepSummary(own.steps.find((s) => s.id === "check")!)).toBe("quarantine");
+    expect(nodeSummary(own.nodes.find((s) => s.id === "check")!)).toBe("quarantine");
   });
 
   test("rules are written one a line, touching nothing else in the YAML", () => {
@@ -113,21 +113,21 @@ describe("the gate on the canvas", () => {
     const again = ok(setSetting(text, "check", "rules", [{ type: "not_null", field: "phone" }], "rules"));
     expect(again).toContain("    rules:\n      - {type: not_null, field: phone}\n");
     expect(again).not.toContain("known country");
-    expect(graphOf(again).steps.find((s) => s.id === "check")!.settings.rules).toEqual([{ type: "not_null", field: "phone" }]);
+    expect(graphOf(again).nodes.find((s) => s.id === "check")!.settings.rules).toEqual([{ type: "not_null", field: "phone" }]);
     const gone = ok(setSetting(again, "check", "rules", undefined, "rules"));
     expect(gone).toBe(PIPELINE);
   });
 });
 
 describe("the rules control", () => {
-  const spec: StepTypeSetting = { key: "rules", label: "Rules", kind: "rules", required: false, defaultValue: null, help: "Rules for this pipeline only", choices: [] };
+  const spec: NodeTypeSetting = { key: "rules", label: "Rules", kind: "rules", required: false, defaultValue: null, help: "Rules for this pipeline only", choices: [] };
   const context: ControlContext = {
     columns: { main: [{ name: "email", type: "text" }, { name: "id", type: "int64" }], lookup: null },
     side: null,
     sources: null,
     writing: false,
     assets: null,
-    stepType: "gate",
+    nodeType: "gate",
   };
   const html = (value: unknown, readOnly = false) =>
     renderToStaticMarkup(<SettingControl spec={spec} id="r" value={value as never} onChange={() => {}} readOnly={readOnly} problems={[]} context={context} />);
@@ -172,21 +172,21 @@ describe("measured quality in words", () => {
     expect(gateWords(outcome({ decision: "stopped", rowsIn: 2500 }))).toBe("Stopped the run after 2,500 rows");
   });
 
-  test("a step's badge: its score and, for a gate, its rows", () => {
-    const gate: PipelineStepQuality = { step: "check", role: "gate", asset: null, measured: { overall: 0.9, dimensions: { completeness: 0.9 }, reasons: [] }, predicted: null, note: null, gate: outcome() };
-    expect(stepQualityWords(gate)).toBe("Quality 90% (Fair) · 900 passed · 100 quarantined");
-    expect(stepQualityWords({ ...gate, role: "output", gate: null, measured: { overall: 1, dimensions: {}, reasons: [] } })).toBe("Quality 100% (Good)");
-    expect(stepQualityWords({ ...gate, role: "output", gate: null, measured: null, note: "appended" })).toBe("Quality not measured");
-    expect(stepQualityWords(null)).toBeNull();
+  test("a node's badge: its score and, for a gate, its rows", () => {
+    const gate: PipelineNodeQuality = { node: "check", role: "gate", asset: null, measured: { overall: 0.9, dimensions: { completeness: 0.9 }, reasons: [] }, predicted: null, note: null, gate: outcome() };
+    expect(nodeQualityWords(gate)).toBe("Quality 90% (Fair) · 900 passed · 100 quarantined");
+    expect(nodeQualityWords({ ...gate, role: "output", gate: null, measured: { overall: 1, dimensions: {}, reasons: [] } })).toBe("Quality 100% (Good)");
+    expect(nodeQualityWords({ ...gate, role: "output", gate: null, measured: null, note: "appended" })).toBe("Quality not measured");
+    expect(nodeQualityWords(null)).toBeNull();
     expect(belowThreshold(0.94, 0.95)).toBe(true);
     expect(belowThreshold(0.95, 0.95)).toBe(false);
     expect(belowThreshold(null, 0.95)).toBe(false);
   });
 
   test("the node shows the badge beside its rows, as text", () => {
-    const step: GraphStep = graphOf(PIPELINE).steps.find((s) => s.id === "check")!;
-    const data: StepData = {
-      step,
+    const node: GraphNode = graphOf(PIPELINE).nodes.find((s) => s.id === "check")!;
+    const data: NodeData = {
+      node,
       kind: "gate",
       label: "Quality gate",
       summary: "quarantine",
@@ -195,15 +195,15 @@ describe("measured quality in words", () => {
       problems: 0,
       columns: "id, email",
       run: { rowsIn: 1000, rowsOut: 1000, outcome: "finished", error: null },
-      quality: { step: "check", role: "gate", asset: null, measured: { overall: 0.9, dimensions: {}, reasons: [] }, predicted: null, note: null, gate: outcome() },
+      quality: { node: "check", role: "gate", asset: null, measured: { overall: 0.9, dimensions: {}, reasons: [] }, predicted: null, note: null, gate: outcome() },
       connectable: false,
     };
     const out = renderToStaticMarkup(
       <ReactFlowProvider>
-        <StepNode
+        <NodeCard
           id="check"
           data={data}
-          type="step"
+          type="node"
           selected={false}
           dragging={false}
           zIndex={0}

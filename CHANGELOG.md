@@ -7,98 +7,112 @@ details.
 
 ### Details
 
-- **The step list sits beside the canvas.** On the pipeline canvas, the open step list now takes a
-  column of its own and the canvas narrows beside it, instead of opening over your steps. A folder's
-  icon on the rail opens the list at that folder, its steps shown under it; the separate pop-out
+- **Steps are now called nodes** (V21). The boxes on a pipeline canvas are **nodes**, and in a flow
+  the line joining two flow nodes is a **connection**. Pipeline and flow YAML list `nodes:`, and
+  flows list `connections:`; files with the old `steps:` and `paths:` keys are still read (saved
+  versions keep the YAML they were written with; the pipeline canvas writes `nodes:` the first time
+  it changes one), and so are problems saved with "Step" in their words. The node catalogue is `GET
+  /api/v1/node-types` (was `/api/v1/steps`), and JSON fields named `step` or `stepId` are now `node`
+  and `nodeId`. Migration V21 renames the run tables and columns (`pipeline_node_run`,
+  `pipeline_node_quality`, `flow_node_run`, `node_id`, `pipeline_run.flow_node`, `series_nodes`) and
+  the run log's `step_started` and `step_ended` events to `node_started` and `node_ended`, and
+  renames the keys Kilnmark wrote in stored JSON (problems, run results and progress, quality), so
+  earlier runs still show. In the code, `kiln-steps` is now `kiln-nodes`, `Step` names become `Node`
+  names (`StepFactory` is `NodeFactory`), and the canvas's `StepNode` is `NodeCard`. The setting
+  `kilnmark.pipelines.preview-max-steps` is now `kilnmark.pipelines.preview-max-nodes`
+  (`KILNMARK_PIPELINES_PREVIEW_MAX_NODES`): set the new name if you had set the old one.
+- **The node list sits beside the canvas.** On the pipeline canvas, the open node list now takes a
+  column of its own and the canvas narrows beside it, instead of opening over your nodes. A folder's
+  icon on the rail opens the list at that folder, its nodes shown under it; the separate pop-out
   beside the rail is gone. On a phone the list still opens over the canvas.
 - **Flows, the engine** (development; V20; ADR 0026; docs/design/flows.md). A flow runs saved
-  pipelines in an order, joined by paths: on success, on failure, always, or on a condition over
-  what a step measured, such as `clean.quarantined_share < 0.02 and clean.score >= good`. Not yet
+  pipelines in an order, joined by connections: on success, on failure, always, or on a condition
+  over what a node measured, such as `clean.quarantined_share < 0.02 and clean.score >= good`. Not yet
   reachable from the API or the pages (flows are queued and cancelled through `FlowService` only);
   the API, the run page with its Gantt chart and the canvas follow, and the user guide with them.
-  `FlowDefinition` (`flow/v1`: parameters, `run-pipeline` and `stop` steps, paths, `queue_timeout`,
-  checked with line and column and suggestions, loops refused), `FlowCondition` (a small language of
-  comparisons with SQL's three-valued logic and the quality words `good`, `fair`, `poor`; a condition
-  may read only steps that must have ended) and `FlowEngine` (the state machine that decides what
-  runs next; no threads, no database) are in kiln-core. `FlowStore` and `FlowService` (server) queue a
+  `FlowDefinition` (`flow/v1`: parameters, `run-pipeline` and `stop` nodes, connections,
+  `queue_timeout`, checked with line and column and suggestions, loops refused), `FlowCondition` (a
+  small language of comparisons with SQL's three-valued logic and the quality words `good`, `fair`,
+  `poor`; a condition may read only nodes that must have ended) and `FlowEngine` (the state machine
+  that decides what runs next; no threads, no database) are in kiln-core. `FlowStore` and `FlowService` (server) queue a
   flow run as a job of kind `flow`; the worker only watches, holds no worker slot, and each
-  `run-pipeline` step queues an ordinary pipeline run as the person who started the flow, with their
-  role, linked by `pipeline_run.flow_run_id` and `flow_step`. A step whose pipeline is already running
+  `run-pipeline` node queues an ordinary pipeline run as the person who started the flow, with their
+  role, linked by `pipeline_run.flow_run_id` and `flow_node`. A node whose pipeline is already running
   waits, up to `queue_timeout` (30 minutes by default). A flow is tried once, like a pipeline; one
-  run of a flow at a time, and one worker watches at most 8 flows at a time. Flow steps never copy
+  run of a flow at a time, and one worker watches at most 8 flows at a time. Flow nodes never copy
   why a pipeline failed or could not run (it can quote data or name fields). Saving, running and
   cancelling take the steward role. Tests:
-  `FlowRunTest` runs flows on PostgreSQL for sequences, quality conditions, failure paths, waiting,
-  cancelling and stop steps.
+  `FlowRunTest` runs flows on PostgreSQL for sequences, quality conditions, failure connections,
+  waiting, cancelling and stop nodes.
 
 ## 0.0.8 (28 October 2026)
 
 ### What's new
 
-- **See inside a run.** The run page shows where each step spent its time (working, waiting for
-  rows, or held up by the next step) and names what limited the run; rows per second for each step
+- **See inside a run.** The run page shows where each node spent its time (working, waiting for
+  rows, or held up by the next node) and names what limited the run; rows per second for each node
   through the run, with a band showing when it was held up; and a log of what happened, gate
-  verdicts included, to filter and download. While a run goes, the canvas shows each step's rows
-  and rows per second and marks the slowest step.
-- **Preview at a step.** Right-click a step and choose **Preview rows**, or open its **Preview**
+  verdicts included, to filter and download. While a run goes, the canvas shows each node's rows
+  and rows per second and marks the slowest node.
+- **Preview at a node.** Right-click a node and choose **Preview rows**, or open its **Preview**
   tab, to see the rows as they would leave it, before running, with nothing written. Sensitive
-  columns stay masked, and for anyone but an admin a preview is refused when a step looks inside
+  columns stay masked, and for anyone but an admin a preview is refused when a node looks inside
   one.
 - **Models that think before answering** (such as gemma4) now pass **Test** under AI models.
-- **Clearer steps after a run.** On the canvas, a step's rows, its measured quality and its
-  predicted quality now each look different, and steps no longer overlap or hide the connections'
+- **Clearer nodes after a run.** On the canvas, a node's rows, its measured quality and its
+  predicted quality now each look different, and nodes no longer overlap or hide the connections'
   row counts once a run's results are shown.
 
 ### Details
 
 - **See inside a run** (V19; `RunListener`, `RunProgress`, `RunLog`; `RunTimeSpent`, `RunRates`, `RunLogPanel`).
-  The engine times every step (`StepResult.startedAt`, `firstRowAt`, `lastRowAt`, `finishedAt`) and
-  adds up where its time went: waiting for rows on its inputs and held up by the next step
-  (`RowSet` put and take waits, counted only when it has to wait; `pipeline_step_run` keeps them,
+  The engine times every node (`NodeResult.startedAt`, `firstRowAt`, `lastRowAt`, `finishedAt`) and
+  adds up where its time went: waiting for rows on its inputs and held up by the next node
+  (`RowSet` put and take waits, counted only when it has to wait; `pipeline_node_run` keeps them,
   and `duration_ms` is now filled). Through an optional `RunListener` on a thread of its own (a
   listener that throws or hangs never fails or holds up a run; no allocation per batch) it reports
-  each step starting, its first row in and out, its last row out and how it ended, the engine's
-  notes, and a snapshot every two seconds: rows and rows a second per step, waits so far, each
-  queue's fill, and the **Slowest** step. The worker keeps the latest snapshot on `pipeline_run` and
+  each node starting, its first row in and out, its last row out and how it ended, the engine's
+  notes, and a snapshot every two seconds: rows and rows a second per node, waits so far, each
+  queue's fill, and the **Slowest** node. The worker keeps the latest snapshot on `pipeline_run` and
   rows a second in `pipeline_run_point` (appended, at most 900 points, spikes kept), and the log in `pipeline_run_event` (at most 10,000
   events; the engine's words and rule messages are the held-back detail; each write gives up after
   5 seconds). Every time is on the worker's clock. `GET /api/v1/pipeline-runs/{id}/events` (by
-  step and level, paged), `.../series` and a streamed `.../events/download` (text or NDJSON). The run page shows
-  the run at a glance in tiles, **where each step spent its time** (working, waiting for rows, held
-  up by the next step, with "What limited this run: check, working 90% of the time"), **rows per
-  second through the run** (a line per step with a Held up band for its output queue, and warnings,
-  errors and gates quarantining marked on the time axis), each step's time and share of the run,
+  node and level, paged), `.../series` and a streamed `.../events/download` (text or NDJSON). The run page shows
+  the run at a glance in tiles, **where each node spent its time** (working, waiting for rows, held
+  up by the next node, with "What limited this run: check, working 90% of the time"), **rows per
+  second through the run** (a line per node with a Held up band for its output queue, and warnings,
+  errors and gates quarantining marked on the time axis), each node's time and share of the run,
   live rows and rates while it runs, and a **Log** to filter and download, with gate verdicts in
-  it. While a run goes the canvas shows each step's rows so far and rows a second ("19,814 out ·
-  8,351 rows/s") and marks the step holding it back Slowest, in words and with an orange edge.
-- **Preview at a step** (`POST /api/v1/pipelines/preview`, `POST /api/v1/pipelines/{name}/versions/{n}/preview`,
-  `PipelinePreviews`, `StepPreview`; docs/design/pipelines.md, "Preview at a step"; the guide's "Preview a
-  step"). The first rows (100 by default, at most 1,000) leaving one output of one step of the YAML as it
-  stands, with their columns and kinds, how long it took and, in words, any step before it that reads all
-  its rows first. Only the step and the steps upstream of it run, on the API process while the caller
-  waits; a collector takes the rows and finishes, so the engine ends the steps before it early. Only reads
-  and the in-memory row steps may run: anything else, writes included, is refused (400). Stewards and
+  it. While a run goes the canvas shows each node's rows so far and rows a second ("19,814 out ·
+  8,351 rows/s") and marks the node holding it back Slowest, in words and with an orange edge.
+- **Preview at a node** (`POST /api/v1/pipelines/preview`, `POST /api/v1/pipelines/{name}/versions/{n}/preview`,
+  `PipelinePreviews`, `NodePreview`; docs/design/pipelines.md, "Preview at a node"; the guide's "Preview a
+  node"). The first rows (100 by default, at most 1,000) leaving one output of one node of the YAML as it
+  stands, with their columns and kinds, how long it took and, in words, any node before it that reads all
+  its rows first. Only the node and the nodes upstream of it run, on the API process while the caller
+  waits; a collector takes the rows and finishes, so the engine ends the nodes before it early. Only reads
+  and the in-memory row nodes may run: anything else, writes included, is refused (400). Stewards and
   admins; reads resolve their sources inside a run context naming the caller. For all but admins,
   columns marked sensitive may pass through unchanged and are masked inside the collector; a preview
-  in which any step looks inside one (an expression, cast, group, dedupe or lookup key, or a gate's
+  in which any node looks inside one (an expression, cast, group, dedupe or lookup key, or a gate's
   rule, inline or the asset's, whatever its `on_fail`) is refused (403), since even its success or
   failure could tell a value; a failure's message is held back as a run's is. Limits, checked before
   any work: one per person at a time, `previews-per-minute` (6 per person), `preview-concurrency` (2),
-  `preview-max-steps` (50), `preview-max-reads` (10); stateful steps' `memory_limit_mb` lowered to a
-  share of `preview-memory-limit-mb` (256); `preview-timeout` (30s) is hard: the steps run on their
+  `preview-max-nodes` (50), `preview-max-reads` (10); stateful nodes' `memory_limit_mb` lowered to a
+  share of `preview-memory-limit-mb` (256); `preview-timeout` (30s) is hard: the nodes run on their
   own thread and the request is answered after the limit and 2 s of grace whatever they do (a
   preview still stopping is logged, counted and keeps its slot until it ends); and a preview stops
-  when its request is closed. Responses are `Cache-Control: no-store`. On the canvas: a step's context menu (right-click,
-  Shift+F10 or the menu key; `StepMenu`) with Preview rows, Settings, Connect to…, Duplicate and Remove,
-  and a Preview tab in the step's drawer (`StepPreviewPanel`, reusing `PreviewTable`). A right-click no
-  longer selects the step first, so the drawer does not open under the pointer.
-- **Engine: a step whose readers have all finished ends early even when it writes only to unconnected
-  ports** (`KilnGraphRunner`). Before, such a step (a filter whose only connected output is `rejected`,
+  when its request is closed. Responses are `Cache-Control: no-store`. On the canvas: a node's context menu (right-click,
+  Shift+F10 or the menu key; `NodeMenu`) with Preview rows, Settings, Connect to…, Duplicate and Remove,
+  and a Preview tab in the node's drawer (`NodePreviewPanel`, reusing `PreviewTable`). A right-click no
+  longer selects the node first, so the drawer does not open under the pointer.
+- **Engine: a node whose readers have all finished ends early even when it writes only to unconnected
+  ports** (`KilnGraphRunner`). Before, such a node (a filter whose only connected output is `rejected`,
   say) learnt its readers had gone only when it next wrote to them, and could read its whole input for
-  nothing. `KilnGraphRunner` also takes a `stopWait`: how long a stopped run waits for its steps'
+  nothing. `KilnGraphRunner` also takes a `stopWait`: how long a stopped run waits for its nodes'
   threads (unbounded unless set; previews wait 5 s). `Preview.text` and `Preview.utf8Length` are now
-  public, for the step preview's collector.
-- **Canvas chips after a run** (`StepNode` `stepChips`, `components/ui/StatusChip`). Each kind of
+  public, for the node preview's collector.
+- **Canvas chips after a run** (`NodeCard` `nodeChips`, `components/ui/StatusChip`). Each kind of
   chip has its own look and words, so none depends on colour: rows and outcome in a neutral chip
   with a rows icon ("5,000 rows out · Finished"; Ended early, Stopped and Failed in a chip of their
   own, toned `warn` or `bad`); measured quality in a solid chip with a gauge icon, toned by its word
@@ -106,14 +120,14 @@ details.
   in the AI violet (`--km-tint-violet-bg`/`-fg`, the new `StatusChip` `outline`, `.km-chip--outline`)
   with a sparkles icon, "Predicted ≈ 100%", "(estimate)" for screen readers and in its title, and
   "1 unknown" for what it could not tell; a gate's counts as plain text, "4,771 passed · 229
-  quarantined". One row per kind, each 20px high, so a step's height is known before it is drawn.
-- **Canvas spacing for run results** (`layout.ts`). `nodeHeight` counts the rows of chips a step
+  quarantined". One row per kind, each 20px high, so a node's height is known before it is drawn.
+- **Canvas spacing for run results** (`layout.ts`). `nodeHeight` counts the rows of chips a node
   shows (problems and run, measured, predicted, gate counts), and the canvas uses the larger of that
-  and the height React Flow measured. Auto-layout (dagre) gets each step's real height and spaces the
+  and the height React Flow measured. Auto-layout (dagre) gets each node's real height and spaces the
   columns for the widest connection label. A layout saved before a run is moved apart in the view
-  only (`makeRoom`: steps move right where a connection's label does not fit between columns, then
+  only (`makeRoom`: nodes move right where a connection's label does not fit between columns, then
   down where they would overlap or come closer than 36px in a column); the YAML's `layout:` is
-  unchanged until a step is moved or Auto-layout is chosen. Connection labels have a padded
+  unchanged until a node is moved or Auto-layout is chosen. Connection labels have a padded
   background.
 - **A write's header says file or table**: "Sink · Write to a file" with `path` or a file-like
   `target` (a folder or a file extension), "Sink · Write to a table" with `table` or another
@@ -152,17 +166,17 @@ details.
   reading any data. What it cannot tell, it says is unknown. Each run keeps its prediction, and the
   run's page shows the measured score beside the predicted one, per dimension, with the gap: a wide
   gap shows where the catalogue's information, or the pipeline, needs attention.
-- **Suggestions to improve a pipeline.** **Suggestions** on the canvas lists steps that would raise
+- **Suggestions to improve a pipeline.** **Suggestions** on the canvas lists nodes that would raise
   a write's predicted score, such as trimming spaces, standardising two date formats, keeping one
   row per key, dropping rows with no match in a related table, or setting aside rows outside the
-  accepted patterns, each with its predicted effect. **Add** puts the step in place, and one Undo
+  accepted patterns, each with its predicted effect. **Add** puts the node in place, and one Undo
   takes it out. With an AI model set for **Pipeline suggestions**, it ranks and explains them and
   adds its own, seeing only names, types, shares and value shapes of sources whose AI rule allows
   it, never values; what it suggests is checked before you see it.
 
 ### Details
 
-- **Canvas icons.** Read steps and the Read folder show a database, write steps and the Write folder
+- **Canvas icons.** Read nodes and the Read folder show a database, write nodes and the Write folder
   a save icon; the two database icons they had differed only by a small arrow.
 - **Generic JDBC connector** (kind `jdbc`; docs/design/connectors.md, "Generic JDBC"; docs/guide/drivers.md,
   "Databases without a connector of their own"; docs/guide/writing-data.md, "Generic JDBC"). Settings
@@ -217,25 +231,25 @@ details.
 - **Predicted quality** (docs/guide/pipelines.md, "Predicted quality"; docs/design/data-quality.md
   section 8). `QualityPredictor` carries each read asset's latest profile (nulls, blanks, distinct,
   value shapes, formats, most common values, quantiles, outliers), accepted shapes, relationships
-  and rule results through the steps, one rule per step type (filter conditions from null shares,
+  and rule results through the nodes, one rule per node type (filter conditions from null shares,
   most common values, quantiles and value shapes; compute's trim, case, coalesce, parse_date and
   format_date; lookup orphan rates from a relationship's containment or the columns' HyperLogLog
   sketches; aggregate and dedupe from distinct counts; union weighted by rows; a quarantining gate
   removing the predicted failing share from `out`). Writes are scored with the same `Measures` and
   `Scores` as a run's measured output, keeping only the dimensions the estimate can tell; gates
   from their rules' predicted failing shares, scored as the gate scores itself. Each prediction
-  lists what it could not tell and what it assumed. `kiln-steps` gains `Expression.view()` and
+  lists what it could not tell and what it assumed. `kiln-nodes` gains `Expression.view()` and
   `columns()`, a read-only view of a parsed expression (`ExprView`).
-- **API.** `POST /api/v1/pipelines/predict` (`{yaml}`; viewer) returns `{estimate, valid, steps:
-  [{step, type, rows}], outputs: [{step, role, asset, overall, dimensions, reasons, unknown,
+- **API.** `POST /api/v1/pipelines/predict` (`{yaml}`; viewer) returns `{estimate, valid, nodes:
+  [{node, type, rows}], outputs: [{node, role, asset, overall, dimensions, reasons, unknown,
   assumptions, rows, gate}]}`; `GET /api/v1/pipelines/{name}/versions/{n}/prediction` the same for a
   saved version; `POST /api/v1/pipelines/suggest` (`{yaml, ai}`; steward) returns `{estimate,
-  suggestions: [{id, kind, title, why, source, steps: [{id, type, settings, inputs}], placement:
+  suggestions: [{id, kind, title, why, source, nodes: [{id, type, settings, inputs}], placement:
   {before, port, from, through}, effect: {output, before, after, dimensionsBefore, dimensionsAfter,
   rowsBefore, rowsAfter, note}}], ai: {state, message, model}}`. A run's quality rows gain
   `prediction` (`{unknown, assumptions, rows, gate}`) beside `predicted`.
 - **At run start** each write's and gate's prediction is stored (migration V17 adds
-  `pipeline_step_quality.predicted_detail`); a failed run keeps its predictions, with a note that the
+  `pipeline_node_quality.predicted_detail`); a failed run keeps its predictions, with a note that the
   write was not measured.
 - **Suggestions** (`PipelineAdvisor`): rule-based candidates with no model, each tried out by
   predicting the pipeline with it and kept only when it raises the write's score. New AI feature
@@ -243,8 +257,8 @@ details.
   budget. Only columns whose source's `ai_egress` lets that model see them are sent (names, kinds,
   shares, value shapes, accepted shapes; never values, never computed columns), with the strictest
   of those sources passed to the gateway for its own check; no call is made when no source allows
-  it. The model's additions are checked (step types the server has, settings they take, columns it
-  was shown that reach that point, the step's own check and output schema) and dropped otherwise.
+  it. The model's additions are checked (node types the server has, settings they take, columns it
+  was shown that reach that point, the node's own check and output schema) and dropped otherwise.
   An absent, refused, slow or failing model leaves the rule-based suggestions, and says why. A
   suggestion reading another asset is shown to the model only when that asset's source allows it.
   The model is asked when the panel opens and on Ask again (at most 6 times a minute per person);
@@ -254,8 +268,8 @@ details.
   admin (through `Sights`, checked by `SightsUseTest`); otherwise those estimates are unknown, so a
   viewer cannot probe values through predicted row counts.
 - **Canvas.** Predicted scores on each write and gate (debounced, labelled "(estimate)", in each
-  step's accessible name and settings drawer); a lazily loaded **Suggestions** panel whose **Add**
-  inserts the steps with `insertSteps` (text edits only, one undo step). The run page shows
+  node's accessible name and settings drawer); a lazily loaded **Suggestions** panel whose **Add**
+  inserts the nodes with `insertNodes` (text edits only, one undo step). The run page shows
   measured beside predicted per dimension with the gap.
 
 - **A demo from start to finish** (development): `lab/README.md` walks through a whole demo, from
@@ -264,15 +278,15 @@ details.
   gate (PostgreSQL), spend per customer with aggregate, lookup and route, and a MariaDB supplier feed
   whose repeated SKUs are quarantined. `lab.sh pipelines` and `lab.ps1 pipelines` add them to a
   running Kilnmark through its API, and `LabPipelinesTest` checks them against the lab's columns so
-  a change to the steps cannot break them unnoticed. Nothing of this ships.
+  a change to the nodes cannot break them unnoticed. Nothing of this ships.
 
 ## 0.0.6 (28 October 2026)
 
 ### What's new
 
-- **Quality gates in pipelines.** Add a **Quality gate** step (in the Quality folder) to check rows
+- **Quality gates in pipelines.** Add a **Quality gate** node (in the Quality folder) to check rows
   against quality rules as they pass, with no second read of the data: the rules of the table or
-  file the pipeline read, and any you write on the step. When rows fail, the gate can stop the run
+  file the pipeline read, and any you write on the node. When rows fail, the gate can stop the run
   so that the writes after it do not commit, send the failing rows to a separate **quarantine**
   output while the rest carry on, or just warn. A limit on the share of failing rows, or on the score, stops the run
   when too much is wrong.
@@ -281,11 +295,11 @@ details.
   dimension and each gate's rules. Give a pipeline a quality threshold (`quality: min_score`) and
   its followers are told when a run writes data that scores below it.
 - **Build pipelines on a canvas.** A pipeline's page has a **Canvas** tab beside the YAML: drag
-  steps from a list of folders (Read, Write, Filter and route, Transform, Combine and more, with
-  your recently used steps first), connect their ports, and change each step's settings in a panel that offers
-  your sources, tables and columns, with problems shown on the step and setting they are about.
+  nodes from a list of folders (Read, Write, Filter and route, Transform, Combine and more, with
+  your recently used nodes first), connect their ports, and change each node's settings in a panel that offers
+  your sources, tables and columns, with problems shown on the node and setting they are about.
   The canvas and the YAML are the same pipeline, so a change in one shows in the other. After a
-  run, each step shows its rows and how it ended. Everything works from the keyboard too.
+  run, each node shows its rows and how it ended. Everything works from the keyboard too.
 - **MySQL and MariaDB.** Add MySQL (8.0.19 and later) or MariaDB (10.6 and later) as a source by
   host, port and database: Kilnmark discovers and profiles their databases, reads their tables in
   pipelines and writes to them in every mode. MySQL's own types are understood: `UNSIGNED`
@@ -309,10 +323,10 @@ details.
 
 ### Details
 
-- **Quality gate step** (`type: gate`, docs/guide/pipelines.md, "Quality gates";
+- **Quality gate node** (`type: gate`, docs/guide/pipelines.md, "Quality gates";
   docs/design/data-quality.md sections 7 and 8). Ports `in`, `out` and `quarantine`. Settings:
   `on_fail` (`stop`, the default; `quarantine`; `warn`), `asset_rules` (on by default: the enabled
-  rules of the asset read upstream), `rules_from` (the read step to take them from when rows come
+  rules of the asset read upstream), `rules_from` (the read node to take them from when rows come
   from several), `rules` (inline rules, each a mapping such as `{type: not_null, field: email}`,
   checked as rules made in Quality are; `references` and `custom_sql` are refused, as they run in
   the database), and the run-level thresholds `min_score` and `max_failing_share` (0 to 1). Rows are
@@ -327,34 +341,34 @@ details.
   it keeps keys as 128-bit hashes, up to 96 MB (`RowChecks` now hashes keys for every streamed
   uniqueness check), and says how many repeats it had set aside if it reaches that. A gate cut short
   by the run is still judged on what it saw, marked incomplete. A new setting kind `RULES`
-  (`SettingSpec.Kind`, `rules` in `GET /api/v1/steps`) takes a list of mappings; the canvas edits
+  (`SettingSpec.Kind`, `rules` in `GET /api/v1/node-types`) takes a list of mappings; the canvas edits
   it as a list of rules and writes one rule a line. A gate whose rows come from several reads must
   name one with `rules_from`, and a note says when a gate has nothing to check.
-- **Measured quality per run** (migration V15, `pipeline_step_quality`): each write's score per
+- **Measured quality per run** (migration V15, `pipeline_node_quality`): each write's score per
   dimension and overall, from the profile its writer made while writing (Measures and Scores, as an
   asset is scored, without history), and each gate's score from its rules' results with its
   decision, row counts and each rule's result. `GET /api/v1/pipeline-runs/{id}` adds `quality`
-  (`[{step, role, asset, measured, predicted, note, gate}]`; `predicted` is null until design-time
+  (`[{node, role, asset, measured, predicted, note, gate}]`; `predicted` is null until design-time
   prediction comes), and run summaries add `qualityScore` (the lowest output's) and
   `qualityThreshold`. An `append` or `upsert` is not profiled, so it has no score, and says so.
 - **Pipeline quality threshold.** A new top-level `quality:` block with `min_score` (0 to 1). When a
   run succeeds and an output scores below it, `pipeline_low_quality` is published once for the run,
-  naming the output (`NotificationPublisher.pipelineRunFinished` gains an overload with the step).
-- **The pipeline canvas** (docs/guide/pipelines.md, "Building on the canvas"): a palette of step
-  types by kind with search, steps with named ports and problem badges, connections refused with a
+  naming the output (`NotificationPublisher.pipelineRunFinished` gains an overload with the node).
+- **The pipeline canvas** (docs/guide/pipelines.md, "Building on the canvas"): a palette of node
+  types by kind with search, nodes with named ports and problem badges, connections refused with a
   reason, move, duplicate, delete, undo and redo, zoom, fit and a left-to-right auto-layout, and a
-  settings panel generated from each step type's settings schema. Where steps are drawn is kept in
-  a new top-level `layout` block that the compiler accepts and ignores. `GET /api/v1/steps` gives
-  the write step `writerSettings`, the writer settings each kind of source takes. New pipelines
+  settings panel generated from each node type's settings schema. Where nodes are drawn is kept in
+  a new top-level `layout` block that the compiler accepts and ignores. `GET /api/v1/node-types` gives
+  the write node `writerSettings`, the writer settings each kind of source takes. New pipelines
   can start from the template or an empty canvas; **Run now** asks first when there are unsaved
-  changes. Keyboard: arrow keys between connected steps, Shift+arrows to move, `C` for Connect to…,
+  changes. Keyboard: arrow keys between connected nodes, Shift+arrows to move, `C` for Connect to…,
   `?` for every shortcut. The UI adds `yaml` 2.9.1 (ISC), pins `@xyflow/react` to 12.12.0, and
   runs its unit tests (vitest) in `npm run build`; the canvas loads lazily, outside the main
   bundle. A canvas change rewrites only the YAML it changes: other lines stay byte for byte. The
-  canvas takes the page's full width with an icon rail of step folders (`StepFactory.category()`,
-  returned as `category` by `GET /api/v1/steps`), a settings drawer, an overview map, **Fit** and
+  canvas takes the page's full width with an icon rail of node folders (`NodeFactory.category()`,
+  returned as `category` by `GET /api/v1/node-types`), a settings drawer, an overview map, **Fit** and
   **Readable size**. Undo also covers typing in the YAML tab and loading the latest version after a
-  save conflict, which now keeps your version one undo away; moving steps alone no longer makes
+  save conflict, which now keeps your version one undo away; moving nodes alone no longer makes
   **Run now** ask about unsaved changes.
 - **MySQL and MariaDB connector** (kinds `mysql` and `mariadb`), through MariaDB Connector/J
   3.5.10 (LGPL 2.1, allowed for that module only: ADR 0007; the licence's text now ships in the
@@ -362,7 +376,7 @@ details.
   `username`, `tls_mode` (`preferred` by default), `server_ca` and `tinyint1_as_boolean`, with
   kinds declared; no driver property can be set by people. Zero dates read as null and are
   counted; `TIME` reads as text. Writes: `create`, `append`, `upsert` (`ON DUPLICATE KEY UPDATE`)
-  and `replace` (an atomic `RENAME TABLE`), with `LOAD DATA LOCAL INFILE` for tables the step
+  and `replace` (an atomic `RENAME TABLE`), with `LOAD DATA LOCAL INFILE` for tables the node
   creates when the server allows it. The connection form shows their host, port and database once
   (`addressFields` is false for connectors whose own settings hold the host). Tests against
   MySQL 8.4.10 and MariaDB 11.4.12 run in CI's heavy-databases job.
@@ -509,7 +523,7 @@ details.
   `trust_server_certificate` (`true` or `false`, off by default) for test servers with a
   self-signed certificate. It passes `trustServerCertificate=true` to the driver as a connection
   property on every connection, scans, checks, rules and reads (`JdbcConnector.driverSettings`,
-  `driver.` settings of the reader step), and never edits the URL; a URL that also sets
+  `driver.` settings of the reader node), and never edits the URL; a URL that also sets
   `trustServerCertificate` is refused with the setting, and changing it needs the password again.
   The connection-failure hint names it instead of the URL property.
 - **Bulk import keeps semicolons** (docs/development.md): only list settings (`schemas`,
@@ -594,10 +608,10 @@ details.
 
 - **Pipelines you can run.** Build a pipeline that reads from your sources, changes the rows and
   writes the result to a table or file. Kilnmark checks it before it runs (every mistake with its
-  line, and a suggestion when a name is misspelt), runs its steps side by side within one memory
-  limit, and records what each step did and how it ended. A run that fails names the step where it
+  line, and a suggestion when a name is misspelt), runs its nodes side by side within one memory
+  limit, and records what each node did and how it ended. A run that fails names the node where it
   went wrong, and a run can be cancelled.
-- **Steps for changing rows.** Filter rows, compute new columns, pick and rename columns, look up
+- **Nodes for changing rows.** Filter rows, compute new columns, pick and rename columns, look up
   values in another input, total and count by group, combine inputs, remove duplicates, send rows
   down different paths and keep the first rows. Conditions and new columns are written in one
   expression language, checked against the columns before the pipeline runs, with the position of
@@ -608,30 +622,30 @@ details.
   pipeline writes is profiled as it is written and joins the catalogue with its columns and where
   it came from, so the next pipeline starts from what is known.
 - **The Pipelines page.** Under **Pipelines**, a YAML editor that checks as you type, a graph of
-  the steps with the columns leaving each, every saved version with who saved it and why, and each
-  run with what every step did and what was written.
+  the nodes with the columns leaving each, every saved version with who saved it and why, and each
+  run with what every node did and what was written.
 
 ### Details
 
 - **Pipelines run as graphs (engine, ADR 0022):** `KilnGraphRunner` runs a pipeline graph with
-  every step on its own virtual thread and a bounded row set per edge, inside one memory limit.
-  An output read by several steps gives each its own copy; a port such as union's `in*` takes many
-  inputs (`StepContext.inputs`, `RowSet.takeAny`); rows on an unconnected output are dropped
-  (`StepContext.emit`). A failure stops the whole run and names the step where it started; a run
-  in which every step waits on another fails after 120 seconds with a message naming them; run
-  results count the rows each step was given, per edge and per port, and say how each step ended
-  (finished, ended early, stopped by the engine, or failed). Steps can read the columns of an
-  input that sends no rows (`StepContext.inputSchema`). Scanning's linear runner now runs as
-  a graph too, and a step that stops before its input ends no longer leaves the step before it
+  every node on its own virtual thread and a bounded row set per edge, inside one memory limit.
+  An output read by several nodes gives each its own copy; a port such as union's `in*` takes many
+  inputs (`NodeContext.inputs`, `RowSet.takeAny`); rows on an unconnected output are dropped
+  (`NodeContext.emit`). A failure stops the whole run and names the node where it started; a run
+  in which every node waits on another fails after 120 seconds with a message naming them; run
+  results count the rows each node was given, per edge and per port, and say how each node ended
+  (finished, ended early, stopped by the engine, or failed). Nodes can read the columns of an
+  input that sends no rows (`NodeContext.inputSchema`). Scanning's linear runner now runs as
+  a graph too, and a node that stops before its input ends no longer leaves the node before it
   waiting.
 - **Pipeline YAML is read and checked** (`kilnmark: pipeline/v1`): every problem with its line and
-  column (unknown keys, step types and settings with suggestions, missing or doubled inputs,
-  loops), and each step's columns worked out before anything runs, without opening a connection.
+  column (unknown keys, node types and settings with suggestions, missing or doubled inputs,
+  loops), and each node's columns worked out before anything runs, without opening a connection.
   Settings that are text keep exactly what was written (`asset: 2024.10` stays `2024.10`);
   numbers with more than 1,000 digits, or a decimal point more than 1,000 places away, are refused.
   Read with SnakeYAML Engine 3.2 (Apache-2.0); anchors, aliases, tags, duplicate keys and files
   over 1,000,000 characters are refused.
-- **Pipeline steps and expressions** (new module `kiln-steps`): `filter`, `compute`, `select`,
+- **Pipeline nodes and expressions** (new module `kiln-nodes`): `filter`, `compute`, `select`,
   `lookup`, `aggregate`, `union`, `dedupe`, `route` and `limit`, each with its settings schema,
   checks and output columns for validation, and one expression language for conditions and
   computed columns: SQL-like operators, `case`, `cast`, SQL null rules, 22 functions and the
@@ -649,9 +663,9 @@ details.
   quiet, `union` reads whichever input has rows, and `limit` stops reading once it has its rows.
   Inputs that send no rows use the columns the pipeline check worked out, so an aggregate without
   `group_by` writes one row and union and lookup keep their declared columns.
-  Guide: **Pipeline steps and expressions**.
+  Guide: **Pipeline nodes and expressions**.
 - **Writing from pipelines** (docs/guide/writing-data.md): PostgreSQL, SQL Server, folder and S3
-  sources can now be written to by a pipeline's `write` step (`Connector.writer`, capability
+  sources can now be written to by a pipeline's `write` node (`Connector.writer`, capability
   `WRITE`). Tables: modes `create`, `append` (every input column checked against the table
   first, all mismatches named), `replace` (filled under a temporary name and swapped in one
   transaction, waiting at most `lock_timeout`; grants and the owner kept, indexes, constraints and
@@ -659,7 +673,7 @@ details.
   and row-level security unless `allow_dropping_row_security` is set) and `upsert` by `key`
   (PostgreSQL `ON CONFLICT`, which needs a unique index on the key, INCLUDE columns allowed; SQL
   Server `MERGE … WITH (HOLDLOCK)`). PostgreSQL loads with `COPY`;
-  SQL Server with batched inserts, bulk-copied into tables the step creates. One transaction per
+  SQL Server with batched inserts, bulk-copied into tables the node creates. One transaction per
   run, or `commit_every` rows (a failure then keeps the committed rows, and says so). The login's
   rights are checked first and a refusal names the grant to ask for. Files: CSV (RFC 4180, UTF-8,
   `delimiter`) and Parquet (Snappy, ZSTD, GZIP or none) to a path inside the source, written to a
@@ -683,17 +697,17 @@ details.
   column whose values are all NaN, or on 8-bit and unsigned integer, 256-bit decimal and large
   text columns, and reads dates, times and timestamps in any unit.
 - **Pipelines can be saved, checked and run** (`/api/v1/pipelines`, `/api/v1/pipeline-runs`,
-  `/api/v1/steps`, `/api/v1/lineage`): every version is kept with who saved it and why, saves use
+  `/api/v1/node-types`, `/api/v1/lineage`): every version is kept with who saved it and why, saves use
   `If-Match` on the latest version number (409 when someone saved since), and YAML is checked as
-  it is written, with problems by line and each step's columns. Runs are queued as jobs of kind
-  `pipeline`, run once by a worker, recorded step by step (how each step ended, rows in and out per
-  port, peak memory, error) and can be cancelled. The step catalogue includes kiln-steps'
+  it is written, with problems by line and each node's columns. Runs are queued as jobs of kind
+  `pipeline`, run once by a worker, recorded node by node (how each node ended, rows in and out per
+  port, peak memory, error) and can be cancelled. The node catalogue includes kiln-nodes'
   transforms. Viewers read; stewards edit and run.
-- **Reading and writing sources in pipelines:** the `read` step reads a saved source's table or
-  file; the `write` step writes to a source only when an admin has set its new **Allow writing**
+- **Reading and writing sources in pipelines:** the `read` node reads a saved source's table or
+  file; the `write` node writes to a source only when an admin has set its new **Allow writing**
   setting (`allow_writing`, off by default; stewards cannot change it). Allowed hosts and the
   role of whoever asked are checked again when a run starts, and no message carries a source's
-  secret. A write step takes exactly the settings its source's writer declares, written beside its
+  secret. A write node takes exactly the settings its source's writer declares, written beside its
   other settings and checked when the pipeline is, and nothing that says where or as whom to
   connect; the source's profiling settings (with key-like columns' sketches for relationship
   discovery) go with it, and a writer that could not profile leaves a note on the run. What a write
@@ -703,11 +717,11 @@ details.
   (migration V12; `kilnmark.pipelines.max-yaml-kb`, `memory-limit-mb`, `row-set-capacity` and
   `wait-for-target`). While a source allows writing, only admins change where it points, and a
   write's settings cannot redirect it. A pipeline runs once at a time, and one run at a time writes
-  each table or file. Viewers see that a step failed but not its message, which may quote the data;
+  each table or file. Viewers see that a node failed but not its message, which may quote the data;
   for runs touching columns marked sensitive, only admins see it.
 - **Pipelines page:** a list with Run now, and for each pipeline a YAML editor that checks as you
-  type (choosing a problem moves to its line), Save with a message, a graph of the steps with the
-  columns leaving each, versions and runs with a per-step breakdown. The guide "Building and
+  type (choosing a problem moves to its line), Save with a message, a graph of the nodes with the
+  columns leaving each, versions and runs with a per-node breakdown. The guide "Building and
   running a pipeline" (docs/guide/pipelines.md) walks through it.
 
 ## 0.0.3 (25 October 2026)
@@ -976,7 +990,7 @@ details.
 - **Fixed:** a schema whose name holds `_` (such as `a_b`) no longer picks up the columns of a
   same-named table in a schema it matches as a pattern (`axb`); PostgreSQL schemas named `sys` or
   `guest` are scanned.
-- **Fixed:** a read stopped early by a failing step now ends at once instead of reading the rest
+- **Fixed:** a read stopped early by a failing node now ends at once instead of reading the rest
   of the table.
 - **Files and object storage:** two new kinds of source. `files` scans a folder the server can
   read; `s3` scans a bucket on AWS or any S3-compatible store (VersityGW, MinIO, Ceph). CSV, TSV,
@@ -1175,7 +1189,7 @@ found.
   words.
 - **Web UI:** search from anywhere (Ctrl+K), sources with scan status, asset pages with every
   column's profile. WCAG 2.2 AA automated checks pass in light and dark themes.
-- **Kiln engine:** steps on virtual threads joined by bounded Arrow row sets, per-step memory
+- **Kiln engine:** nodes on virtual threads joined by bounded Arrow row sets, per-node memory
   accounting, back-pressure, clean failure and leak reporting.
 - **Platform:** Java 25 (ADR 0013), Business Source License 1.1 (ADR 0008), sign-in plan
   (ADR 0014). No sign-in yet: lab use only.

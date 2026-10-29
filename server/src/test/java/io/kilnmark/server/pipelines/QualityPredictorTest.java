@@ -26,7 +26,7 @@ import io.kilnmark.server.quality.Rule;
 import io.kilnmark.server.quality.RuleType;
 
 /**
- * Predicted quality, step by step (docs/guide/pipelines.md, "Predicted quality"): each step's rule
+ * Predicted quality, node by node (docs/guide/pipelines.md, "Predicted quality"): each node's rule
  * for carrying the catalogue's metadata through, what stays unknown, and that a write is scored
  * the way a run scores what it wrote. Synthetic profiles only; nothing is read.
  */
@@ -149,20 +149,20 @@ class QualityPredictorTest {
         return new PipelineCompilerPort.Column(name, kind);
     }
 
-    /** A plan, written as steps in order with each reading the one before unless {@code in} says otherwise. */
+    /** A plan, written as nodes in order with each reading the one before unless {@code in} says otherwise. */
     static final class P {
-        final List<QualityPredictor.PlanStep> steps = new ArrayList<>();
+        final List<QualityPredictor.PlanNode> nodes = new ArrayList<>();
         final List<QualityPredictor.PlanEdge> edges = new ArrayList<>();
         final Map<String, String> reads = new LinkedHashMap<>();
 
         P read(String id, String urn, List<PipelineCompilerPort.Column> columns) {
-            steps.add(new QualityPredictor.PlanStep(id, "read", Map.of(), Map.of("out", columns)));
+            nodes.add(new QualityPredictor.PlanNode(id, "read", Map.of(), Map.of("out", columns)));
             reads.put(id, urn);
             return this;
         }
 
-        P step(String id, String type, Map<String, Object> config, String... inputs) {
-            steps.add(new QualityPredictor.PlanStep(id, type, config, Map.of()));
+        P node(String id, String type, Map<String, Object> config, String... inputs) {
+            nodes.add(new QualityPredictor.PlanNode(id, type, config, Map.of()));
             for (String in : inputs) {
                 String[] parts = in.split(">");
                 String from = parts[0];
@@ -175,11 +175,11 @@ class QualityPredictorTest {
         }
 
         P write(String id, String from) {
-            return step(id, "write", Map.of("source", "wh", "table", "out." + id, "mode", "replace"), from);
+            return node(id, "write", Map.of("source", "wh", "table", "out." + id, "mode", "replace"), from);
         }
 
         QualityPredictor.Plan plan() {
-            return new QualityPredictor.Plan(steps, edges, reads);
+            return new QualityPredictor.Plan(nodes, edges, reads);
         }
     }
 
@@ -187,8 +187,8 @@ class QualityPredictorTest {
         return new QualityPredictor(f).predict(p.plan());
     }
 
-    static Long rows(QualityPredictor.Result r, String step, String port) {
-        return r.steps().stream().filter(s -> s.step().equals(step)).findFirst().orElseThrow().rows().get(port);
+    static Long rows(QualityPredictor.Result r, String node, String port) {
+        return r.nodes().stream().filter(s -> s.node().equals(node)).findFirst().orElseThrow().rows().get(port);
     }
 
     static double dim(QualityPredictor.Predicted p, Dimension d) {
@@ -233,7 +233,7 @@ class QualityPredictorTest {
     @Test
     void aRowLimitTakesTheFirstRowsAsLikeTheRest() {
         P p = new P().read("people", PEOPLE, PEOPLE_COLUMNS);
-        p.steps.set(0, new QualityPredictor.PlanStep("people", "read", Map.of("row_limit", 10L),
+        p.nodes.set(0, new QualityPredictor.PlanNode("people", "read", Map.of("row_limit", 10L),
             Map.of("out", PEOPLE_COLUMNS)));
         QualityPredictor.Result r = predict(people(), p.write("out", "people"));
         assertEquals(10L, r.output("out").rows());
@@ -245,7 +245,7 @@ class QualityPredictorTest {
     @Test
     void aNotNullFilterDropsTheKnownShare() {
         QualityPredictor.Result r = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("has-email", "filter", Map.of("condition", "email is not null"), "people")
+            .node("has-email", "filter", Map.of("condition", "email is not null"), "people")
             .write("out", "has-email").write("none", "has-email.rejected"));
         assertEquals(900L, rows(r, "has-email", "out"));
         assertEquals(100L, rows(r, "has-email", "rejected"));
@@ -256,10 +256,10 @@ class QualityPredictorTest {
     @Test
     void equalityUsesTheMostCommonValuesAndIsUnknownWithoutThem() {
         QualityPredictor.Result r = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("uk", "filter", Map.of("condition", "country in ('GB', 'IE')"), "people").write("out", "uk"));
+            .node("uk", "filter", Map.of("condition", "country in ('GB', 'IE')"), "people").write("out", "uk"));
         assertEquals(900L, rows(r, "uk", "out"));
         QualityPredictor.Result unknown = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("named", "filter", Map.of("condition", "name = 'Ann Lee'"), "people").write("out", "named"));
+            .node("named", "filter", Map.of("condition", "name = 'Ann Lee'"), "people").write("out", "named"));
         assertNull(rows(unknown, "named", "out"), "names are not among the most common values kept");
         assertNull(unknown.output("out").rows());
         assertTrue(unknown.output("out").unknown().stream().anyMatch(u -> u.contains("how many rows named keeps")),
@@ -271,9 +271,9 @@ class QualityPredictorTest {
     @Test
     void comparisonsUseTheQuantilesAndConditionsCombine() {
         QualityPredictor.Result r = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("early", "filter", Map.of("condition", "id <= 250 and email is not null"), "people")
-            .step("either", "filter", Map.of("condition", "id > 900 or email is null"), "people")
-            .step("odd", "filter", Map.of("condition", "upper(name) like 'A%'"), "people")
+            .node("early", "filter", Map.of("condition", "id <= 250 and email is not null"), "people")
+            .node("either", "filter", Map.of("condition", "id > 900 or email is null"), "people")
+            .node("odd", "filter", Map.of("condition", "upper(name) like 'A%'"), "people")
             .write("a", "early").write("b", "either").write("c", "odd"));
         assertEquals(Math.round(1000 * (249.0 / 999) * 0.9), rows(r, "early", "out"), 1);
         assertEquals(Math.round(1000 * (1 - (1 - 99.0 / 999 - 1e-12) * 0.9)), rows(r, "either", "out"), 2);
@@ -285,7 +285,7 @@ class QualityPredictorTest {
     @Test
     void computeTrimsFillsAndParses() {
         QualityPredictor.Result r = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("tidy", "compute", Map.of("columns", Map.of("name", "trim(name)", "email",
+            .node("tidy", "compute", Map.of("columns", Map.of("name", "trim(name)", "email",
                 "coalesce(email, 'unknown')", "joined", "parse_date(joined, 'yyyy-MM-dd')", "label",
                 "case when id > 5 then name else 'x' end")), "people")
             .write("out", "tidy").write("raw", "people"));
@@ -301,7 +301,7 @@ class QualityPredictorTest {
     @Test
     void standardisingDatesAddsUpTheShapesEachPatternReads() {
         QualityPredictor.Result r = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("dates", "compute", Map.of("columns", Map.of("joined", "coalesce(format_date(parse_date(joined, "
+            .node("dates", "compute", Map.of("columns", Map.of("joined", "coalesce(format_date(parse_date(joined, "
                 + "'yyyy-MM-dd'), 'yyyy-MM-dd'), format_date(parse_date(joined, 'dd/MM/yyyy'), 'yyyy-MM-dd'))")),
                 "people").write("out", "dates").write("raw", "people"));
         assertEquals(0.98, dim(r.output("out"), Dimension.COMPLETENESS), 1e-3,
@@ -312,7 +312,7 @@ class QualityPredictorTest {
     @Test
     void selectKeepsRenamesAndCasts() {
         QualityPredictor.Result r = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("slim", "select", Map.of("keep", List.of("id", "email"), "rename", Map.of("email", "mail")), "people")
+            .node("slim", "select", Map.of("keep", List.of("id", "email"), "rename", Map.of("email", "mail")), "people")
             .write("out", "slim"));
         assertEquals(0.95, dim(r.output("out"), Dimension.COMPLETENESS), 1e-3, "two columns, one 10% null");
     }
@@ -333,7 +333,7 @@ class QualityPredictorTest {
     static P lookup(String unmatched) {
         return new P().read("people", PEOPLE, PEOPLE_COLUMNS)
             .read("countries", COUNTRIES, List.of(col("code", "text"), col("label", "text")))
-            .step("named", "lookup", Map.of("on", Map.of("country", "code"), "unmatched", unmatched), "people>main",
+            .node("named", "lookup", Map.of("on", Map.of("country", "code"), "unmatched", unmatched), "people>main",
                 "countries>lookup")
             .write("out", "named").write("aside", "named.rejected");
     }
@@ -358,7 +358,7 @@ class QualityPredictorTest {
     @Test
     void anAggregateMakesOneRowPerGroupAndItsGroupsAreUnique() {
         QualityPredictor.Result r = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("by", "aggregate", Map.of("group_by", List.of("country"), "values", Map.of("n", "count(*)", "last",
+            .node("by", "aggregate", Map.of("group_by", List.of("country"), "values", Map.of("n", "count(*)", "last",
                 "max(id)", "odd", "case when count(*) > 1 then 1 end")), "people")
             .write("out", "by"));
         assertEquals(3L, rows(r, "by", "out"));
@@ -374,7 +374,7 @@ class QualityPredictorTest {
                 Set.of())));
         QualityPredictor.Result r = predict(f, new P().read("people", PEOPLE, PEOPLE_COLUMNS)
             .read("orders", ORDERS, List.of(col("email", "text")))
-            .step("both", "union", Map.of(), "people", "orders").write("out", "both"));
+            .node("both", "union", Map.of(), "people", "orders").write("out", "both"));
         assertEquals(2000L, rows(r, "both", "out"));
         // email: 5% null over both; the four people-only columns are null in half the rows.
         assertEquals((0.95 + 4 * 0.5) / 5, dim(r.output("out"), Dimension.COMPLETENESS), 1e-3);
@@ -385,10 +385,10 @@ class QualityPredictorTest {
     void dedupeKeepsOneRowPerKeyRouteSplitsAndLimitCaps() {
         Fake f = people();
         QualityPredictor.Result r = predict(f, new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("one", "dedupe", Map.of("key", List.of("email")), "people")
-            .step("whole", "dedupe", Map.of(), "people")
-            .step("split", "route", Map.of("routes", new LinkedHashMap<>(Map.of("gb", "country = 'GB'"))), "people")
-            .step("ten", "limit", Map.of("rows", 10L), "people")
+            .node("one", "dedupe", Map.of("key", List.of("email")), "people")
+            .node("whole", "dedupe", Map.of(), "people")
+            .node("split", "route", Map.of("routes", new LinkedHashMap<>(Map.of("gb", "country = 'GB'"))), "people")
+            .node("ten", "limit", Map.of("rows", 10L), "people")
             .write("a", "one").write("b", "whole").write("c", "split.gb").write("d", "split").write("e", "ten"));
         assertEquals(901L, rows(r, "one", "out"), "900 distinct emails and one row for the nulls");
         assertEquals(99L, rows(r, "one", "rejected"));
@@ -411,7 +411,7 @@ class QualityPredictorTest {
         f.rules.put(PEOPLE, List.of(rule(1, "email", RuleType.NOT_NULL, Dimension.COMPLETENESS,
             JSON.createObjectNode())));
         QualityPredictor.Result r = predict(f, new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("check", "gate", Map.of("on_fail", "quarantine", "rules", List.of(Map.of("type", "allowed_values",
+            .node("check", "gate", Map.of("on_fail", "quarantine", "rules", List.of(Map.of("type", "allowed_values",
                 "field", "country", "values", List.of("GB", "IE")))), "people")
             .write("good", "check").write("aside", "check.quarantine"));
         QualityPredictor.Predicted gate = r.output("check");
@@ -438,7 +438,7 @@ class QualityPredictorTest {
             rule(8, "id", RuleType.IN_RANGE, Dimension.ACCURACY, JSON.createObjectNode().put("max", 500))));
         f.last.put(PEOPLE, Map.of(7L, new QualityPredictor.LastResult(30, 1000, Rule.Status.FAIL)));
         QualityPredictor.Result r = predict(f, new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("check", "gate", Map.of("on_fail", "stop", "rules", List.of(
+            .node("check", "gate", Map.of("on_fail", "stop", "rules", List.of(
                 Map.of("type", "matches_pattern", "field", "email", "regex", regex.get("regex").asText()),
                 Map.of("type", "allowed_values", "field", "name", "values", List.of("x")))), "people")
             .write("good", "check"));
@@ -462,7 +462,7 @@ class QualityPredictorTest {
         bare.rules.put(PEOPLE, List.of(rule(7, "name", RuleType.UNIQUE, Dimension.UNIQUENESS, JSON.createObjectNode())));
         bare.last.put(PEOPLE, Map.of(7L, new QualityPredictor.LastResult(30, 1000, Rule.Status.FAIL)));
         QualityPredictor.Result fallback = predict(bare, new P().read("people", PEOPLE, List.of(col("name", "text")))
-            .step("check", "gate", Map.of("on_fail", "warn"), "people").write("good", "check"));
+            .node("check", "gate", Map.of("on_fail", "warn"), "people").write("good", "check"));
         QualityPredictor.PredictedRule last = fallback.output("check").gate().rules().get(0);
         assertEquals("its last result on the asset", last.basis());
         assertEquals(0.03, last.failingShare(), 1e-9);
@@ -472,15 +472,15 @@ class QualityPredictorTest {
     @Test
     void aGateWithNothingToCheckSaysSo() {
         QualityPredictor.Result r = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("check", "gate", Map.of(), "people").write("good", "check"));
+            .node("check", "gate", Map.of(), "people").write("good", "check"));
         assertNull(r.output("check").overall());
         assertTrue(r.output("check").unknown().get(0).contains("no enabled rules"), r.output("check").unknown().toString());
     }
 
     @Test
-    void anUnknownStepTypeIsUnknownDownstream() {
+    void anUnknownNodeTypeIsUnknownDownstream() {
         QualityPredictor.Result r = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("magic", "ai-enrich", Map.of(), "people").write("out", "magic"));
+            .node("magic", "ai-enrich", Map.of(), "people").write("out", "magic"));
         assertNull(r.output("out").overall());
         assertTrue(r.output("out").unknown().toString().contains("what magic sends on out"), r.output("out").unknown()
             .toString());
@@ -508,8 +508,8 @@ class QualityPredictorTest {
     void valuesAreWithheldFromCallersWhoMayNotSeeThem() {
         ProfileFacts all = people().facts.get(PEOPLE);
         P probe = new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("uk", "filter", Map.of("condition", "country in ('GB', 'IE')"), "people")
-            .step("low", "filter", Map.of("condition", "id <= 250"), "people")
+            .node("uk", "filter", Map.of("condition", "country in ('GB', 'IE')"), "people")
+            .node("low", "filter", Map.of("condition", "id <= 250"), "people")
             .write("a", "uk").write("b", "low");
         // A role that may not see data: neither most common values nor the spread are used.
         Fake viewer = people();
@@ -554,8 +554,8 @@ class QualityPredictorTest {
     void notLeavesOutTheRowsWhereTheTestIsNull() {
         QualityPredictor.Result r = predict(scored(), new P().read("orders", ORDERS, List.of(col("score", "float64"),
                 col("n", "int64")))
-            .step("low", "filter", Map.of("condition", "not (score > 50)"), "orders")
-            .step("filled", "filter", Map.of("condition", "not (score is null)"), "orders")
+            .node("low", "filter", Map.of("condition", "not (score > 50)"), "orders")
+            .node("filled", "filter", Map.of("condition", "not (score is null)"), "orders")
             .write("a", "low").write("b", "filled"));
         assertEquals(400L, rows(r, "low", "out"), "80% filled, half of them at most 50; the 20% empty are not kept");
         assertEquals(600L, rows(r, "low", "rejected"));
@@ -565,8 +565,8 @@ class QualityPredictorTest {
     @Test
     void boundsOnOneColumnMakeARangeAndOtherConditionsSayTheyAreTakenAsIndependent() {
         QualityPredictor.Result r = predict(people(), new P().read("people", PEOPLE, PEOPLE_COLUMNS)
-            .step("band", "filter", Map.of("condition", "id > 100 and id <= 300"), "people")
-            .step("both", "filter", Map.of("condition", "id <= 500 and email is not null"), "people")
+            .node("band", "filter", Map.of("condition", "id > 100 and id <= 300"), "people")
+            .node("both", "filter", Map.of("condition", "id <= 500 and email is not null"), "people")
             .write("a", "band").write("b", "both"));
         assertEquals(200L, rows(r, "band", "out"), "one range on id, not two shares multiplied");
         assertFalse(r.output("a").assumptions().toString().contains("independent"), r.output("a").assumptions().toString());
@@ -588,8 +588,8 @@ class QualityPredictorTest {
     void aNumberWrittenAnotherWayIsUnknownNotZero() {
         QualityPredictor.Result r = predict(scored(), new P().read("orders", ORDERS, List.of(col("score", "float64"),
                 col("n", "int64")))
-            .step("ten", "filter", Map.of("condition", "n = 10"), "orders")
-            .step("odd", "filter", Map.of("condition", "n = 10.50"), "orders")
+            .node("ten", "filter", Map.of("condition", "n = 10"), "orders")
+            .node("odd", "filter", Map.of("condition", "n = 10.50"), "orders")
             .write("a", "ten").write("b", "odd"));
         assertEquals(500L, rows(r, "ten", "out"));
         assertNull(rows(r, "odd", "out"), "no match among the common values of a number column is no answer");
@@ -601,7 +601,7 @@ class QualityPredictorTest {
         f.facts.put(ORDERS, new ProfileFacts(1, ORDERS, Instant.now(), null, null, false, List.of(),
             List.of(field("score", "float64", number(1000, 200, 800, linear(0, 100)), Set.of()))));
         QualityPredictor.Result r = predict(f, new P().read("orders", ORDERS, List.of(col("score", "float64")))
-            .step("by", "aggregate", Map.of("group_by", List.of("score")), "orders").write("a", "by"));
+            .node("by", "aggregate", Map.of("group_by", List.of("score")), "orders").write("a", "by"));
         assertNull(rows(r, "by", "out"));
         assertFalse(r.output("a").dimensions().containsKey("completeness"), r.output("a").dimensions().toString());
     }

@@ -6,7 +6,7 @@ kilnmark: pipeline/v1
 name: demo-supplier-feed
 description: The lab shop's supplier price feed, with repeated SKUs set aside.
 
-steps:
+nodes:
   - id: feed
     type: read
     source: lab-mariadb

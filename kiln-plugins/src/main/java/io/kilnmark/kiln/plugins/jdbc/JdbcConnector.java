@@ -16,7 +16,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetFilter;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.CatalogInfo;
@@ -561,17 +561,17 @@ public abstract class JdbcConnector implements Connector {
     }
 
     /**
-     * A connection for a pipeline's write step, with the source's user name and secret and the
+     * A connection for a pipeline's write node, with the source's user name and secret and the
      * driver properties writing needs ({@link #writeProperties}); the caller closes it.
      *
-     * @param bulk whether the step loads a table it created itself, which some drivers can load faster
+     * @param bulk whether the node loads a table it created itself, which some drivers can load faster
      */
     Connection connectForWrite(SourceConfig source, boolean bulk) throws SQLException {
         return connectWith(source, writeProperties(bulk));
     }
 
     /**
-     * The columns of an existing {@code table}, as a write step matches its input to them, or null
+     * The columns of an existing {@code table}, as a write node matches its input to them, or null
      * (the default) to read them from a prepared statement's description.
      */
     List<WritePlan.TargetColumn> targetColumns(Connection connection, SourceConfig source, TableName table)
@@ -639,7 +639,7 @@ public abstract class JdbcConnector implements Connector {
         return c;
     }
 
-    /** The step that reads a table; {@link JdbcTableInput}'s defaults unless a database reads differently. */
+    /** The node that reads a table; {@link JdbcTableInput}'s defaults unless a database reads differently. */
     protected JdbcTableInput tableInput() {
         return new JdbcTableInput();
     }
@@ -742,7 +742,7 @@ public abstract class JdbcConnector implements Connector {
         }
     }
 
-    /** The settings a write step to this database takes; see {@link #writer}. */
+    /** The settings a write node to this database takes; see {@link #writer}. */
     @Override
     public List<io.kilnmark.kiln.SettingSpec> writeOptions() {
         if (writeSql() == null) {
@@ -779,7 +779,7 @@ public abstract class JdbcConnector implements Connector {
     }
 
     /**
-     * A step writing to the table {@code write.target()} ({@code schema.table}) in mode
+     * A node writing to the table {@code write.target()} ({@code schema.table}) in mode
      * {@code create}, {@code append}, {@code replace} or {@code upsert} (with {@code key}); see
      * {@link JdbcTableOutput}. Further settings: {@code commit_every} (rows per transaction; a
      * failure then leaves the rows already committed), {@code batch_size}, {@code text_length}
@@ -788,12 +788,12 @@ public abstract class JdbcConnector implements Connector {
      * {@code profile_output} and {@code keep_values}; {@link #writeOptions()} lists them.
      */
     @Override
-    public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+    public io.kilnmark.kiln.Node writer(SourceConfig source, WriteOptions write) throws ConnectorException {
         return writer(source, write, writeSql());
     }
 
     /** {@link #writer(SourceConfig, WriteOptions)} with {@code sql}, for databases whose SQL depends on the write or the server. */
-    io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write, WriteSql sql) throws ConnectorException {
+    io.kilnmark.kiln.Node writer(SourceConfig source, WriteOptions write, WriteSql sql) throws ConnectorException {
         if (sql == null) {
             throw new ConnectorException(displayName() + " sources cannot be written to yet");
         }
@@ -830,7 +830,7 @@ public abstract class JdbcConnector implements Connector {
     }
 
     @Override
-    public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
+    public NodeSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
         Map<String, String> s = new HashMap<>();
         s.put("url", jdbcUrl(source));
         if (source.setting("username") != null) {
@@ -856,6 +856,6 @@ public abstract class JdbcConnector implements Connector {
             }
         }
         s.putAll(readSettings(source));
-        return new StepSpec("read", tableInput(), s);
+        return new NodeSpec("read", tableInput(), s);
     }
 }

@@ -25,13 +25,13 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.SettingSpec;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorContext;
 import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.graph.Edge;
-import io.kilnmark.kiln.graph.GraphStep;
+import io.kilnmark.kiln.graph.GraphNode;
 import io.kilnmark.kiln.graph.KilnGraphRunner;
 import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.graph.PortRef;
@@ -41,7 +41,7 @@ import io.kilnmark.server.auth.AccessRole;
 
 /**
  * The writers' contract as the server meets it (docs/design/pipelines.md, "What a write reports"):
- * a write step's settings come from each writer's {@code Connector.writeOptions()}, the source's
+ * a write node's settings come from each writer's {@code Connector.writeOptions()}, the source's
  * profiling settings travel in {@code WriteOptions.profiling}, and a profile failure on
  * {@code ROW_COUNT} becomes a note whose reason is held back. The shipped files writer is run end to
  * end.
@@ -67,25 +67,25 @@ class WriteContractTest {
         for (String kind : List.of("postgresql", "sqlserver", "files", "s3")) {
             s.connectors.put(kind, shipped(kind));
         }
-        Set<String> offered = keys(new WriteStepFactory(s).settings());
+        Set<String> offered = keys(new WriteNodeFactory(s).settings());
         assertTrue(offered.containsAll(Set.of("commit_every", "batch_size", "bulk_copy", "text_length", "keep_grants",
             "lock_timeout", "allow_dropping_row_security", "overwrite", "allow_unscanned", "delimiter", "compression",
             "profile_output", "keep_values")), offered.toString());
         for (String kind : List.of("postgresql", "sqlserver", "files", "s3")) {
             Connector c = s.connectors.get(kind);
-            assertEquals(keys(c.writeOptions()), WriteStepFactory.writerKeys(c),
+            assertEquals(keys(c.writeOptions()), WriteNodeFactory.writerKeys(c),
                 kind + ": exactly what its writer declares, nothing from a fallback list");
-            assertTrue(WriteStepFactory.writerKeys(c).containsAll(Set.of("profile_output", "keep_values")), kind);
+            assertTrue(WriteNodeFactory.writerKeys(c).containsAll(Set.of("profile_output", "keep_values")), kind);
         }
-        assertTrue(WriteStepFactory.writerKeys(s.connectors.get("files")).contains("delimiter"));
-        assertTrue(WriteStepFactory.writerKeys(s.connectors.get("s3")).contains("delimiter"));
-        assertTrue(WriteStepFactory.writerKeys(s.connectors.get("sqlserver")).contains("bulk_copy"));
-        assertFalse(WriteStepFactory.writerKeys(s.connectors.get("postgresql")).contains("bulk_copy"));
-        assertFalse(WriteStepFactory.writerKeys(s.connectors.get("files")).contains("commit_every"));
+        assertTrue(WriteNodeFactory.writerKeys(s.connectors.get("files")).contains("delimiter"));
+        assertTrue(WriteNodeFactory.writerKeys(s.connectors.get("s3")).contains("delimiter"));
+        assertTrue(WriteNodeFactory.writerKeys(s.connectors.get("sqlserver")).contains("bulk_copy"));
+        assertFalse(WriteNodeFactory.writerKeys(s.connectors.get("postgresql")).contains("bulk_copy"));
+        assertFalse(WriteNodeFactory.writerKeys(s.connectors.get("files")).contains("commit_every"));
         assertFalse(offered.contains("profile") || offered.contains("host") || offered.contains("bucket"));
 
         s.add("lake", "s3", Map.of("allow_writing", "true", "bucket", "lake"), null);
-        WriteStepFactory write = new WriteStepFactory(s);
+        WriteNodeFactory write = new WriteNodeFactory(s);
         assertEquals(List.of(), write.check(Map.of("source", "lake", "path", "out/a.csv", "delimiter", ";")));
         List<String> p = write.check(Map.of("source", "lake", "path", "out/a.csv", "commit_every", 10L));
         assertEquals(1, p.size(), p.toString());
@@ -147,7 +147,7 @@ class WriteContractTest {
         s.add("share", "files", Map.of("path", root.toString(), "allow_writing", "true"), null);
         s.profiling = Map.of("keep-values", "true", "examples", "5", "sample-size", "10", "sample-mode", "reservoir",
             "sample-seed", "1");
-        WriteStepFactory write = new WriteStepFactory(s);
+        WriteNodeFactory write = new WriteNodeFactory(s);
 
         List<MetadataEvent> events = run(write, Map.of("source", "share", "path", "out/people.csv", "delimiter", ";"));
         List<String> lines = Files.readAllLines(root.resolve("out/people.csv"), StandardCharsets.UTF_8);
@@ -173,20 +173,20 @@ class WriteContractTest {
             .collect(Collectors.toSet());
     }
 
-    /** Three people into the write step {@code config} describes, as a run does. */
-    private static List<MetadataEvent> run(WriteStepFactory write, Map<String, Object> config) throws Exception {
+    /** Three people into the write node {@code config} describes, as a run does. */
+    private static List<MetadataEvent> run(WriteNodeFactory write, Map<String, Object> config) throws Exception {
         RunContext ctx = new RunContext("people-out", 1, "jo", AccessRole.STEWARD);
-        Step step = ctx.run(() -> {
+        Node node = ctx.run(() -> {
             try {
                 return write.create(config);
-            } catch (StepException e) {
+            } catch (NodeException e) {
                 throw new IllegalStateException(e.getMessage(), e);
             }
         });
         PipelineGraph g = new PipelineGraph("people-out", List.of(
-            new GraphStep("people", new MemoryConnector.People(3, "t"), Map.of("token", "t", "asset-urn",
+            new GraphNode("people", new MemoryConnector.People(3, "t"), Map.of("token", "t", "asset-urn",
                 "urn:kilnmark:lab-db:crm.people")),
-            new GraphStep("out", step, config)),
+            new GraphNode("out", node, config)),
             List.of(new Edge(new PortRef("people", "out"), new PortRef("out", "in"))));
         List<MetadataEvent> events = new CopyOnWriteArrayList<>();
         RunResult r = new KilnGraphRunner(64L << 20, 4, Duration.ofSeconds(30)).run(g, events::add);

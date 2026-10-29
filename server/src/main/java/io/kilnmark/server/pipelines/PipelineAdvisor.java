@@ -24,24 +24,24 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.kilnmark.graph.Urn;
 import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.SettingSpec;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.StepFactories;
-import io.kilnmark.kiln.StepFactory;
-import io.kilnmark.kiln.steps.expr.ExprException;
-import io.kilnmark.kiln.steps.expr.Expression;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.NodeFactories;
+import io.kilnmark.kiln.NodeFactory;
+import io.kilnmark.kiln.nodes.expr.ExprException;
+import io.kilnmark.kiln.nodes.expr.Expression;
 import io.kilnmark.server.ai.AiException;
 import io.kilnmark.server.ai.ModelClient;
 import io.kilnmark.server.quality.Rule;
 
 /**
  * Suggestions for improving a pipeline's predicted quality (docs/design/data-quality.md section
- * 8): steps to add before a write, each with its predicted effect on that write's score. Kilnmark
+ * 8): nodes to add before a write, each with its predicted effect on that write's score. Kilnmark
  * finds candidates from the predicted metadata by rule, with no model: trim padded text, standardise
  * competing date formats, deduplicate on a key that repeats, drop rows whose key has no match in
  * the related asset, set aside rows outside a column's accepted patterns or without a key. When a
  * model is routed to {@code pipeline_suggestions}, it ranks and explains them and may add its own,
- * which are checked like the rest before they are shown: only step types the server has, settings
- * those steps take, and columns that reach that point.
+ * which are checked like the rest before they are shown: only node types the server has, settings
+ * those nodes take, and columns that reach that point.
  *
  * <p>What the model sees is metadata only, and only of sources whose {@code ai_egress} allows that
  * model ({@link Model#refusal}): asset and column names, kinds, shares (nulls, blanks, distinct
@@ -66,13 +66,13 @@ final class PipelineAdvisor {
         String chat(Records.Source source, ModelClient.ChatCall call);
     }
 
-    /** A step to add: its id, type, settings as YAML holds them, and inputs (port to {@code step[.port]}). */
-    record NewStep(String id, String type, Map<String, Object> settings, Map<String, String> inputs) {
+    /** A node to add: its id, type, settings as YAML holds them, and inputs (port to {@code node[.port]}). */
+    record NewNode(String id, String type, Map<String, Object> settings, Map<String, String> inputs) {
     }
 
     /**
-     * Where the steps go: the connection from {@code from} into {@code before}'s {@code port} is
-     * cut; the first new step reads {@code from}, and {@code before} then reads {@code through}.
+     * Where the nodes go: the connection from {@code from} into {@code before}'s {@code port} is
+     * cut; the first new node reads {@code from}, and {@code before} then reads {@code through}.
      */
     record Placement(String before, String port, String from, String through) {
     }
@@ -90,7 +90,7 @@ final class PipelineAdvisor {
     }
 
     /** {@code source} is {@code rules} (Kilnmark's own) or {@code ai}; {@code rank} orders the list. */
-    record Suggestion(String id, String kind, String title, String why, List<NewStep> steps, Placement placement,
+    record Suggestion(String id, String kind, String title, String why, List<NewNode> nodes, Placement placement,
                       Effect effect, String source) {
     }
 
@@ -105,13 +105,13 @@ final class PipelineAdvisor {
     record Advice(List<Suggestion> suggestions, AiStatus ai) {
     }
 
-    /** Step types a suggestion may add. */
+    /** Node types a suggestion may add. */
     static final Set<String> AI_TYPES = Set.of("compute", "filter", "select", "dedupe", "gate");
     static final Set<String> RULE_TYPES = Set.of("compute", "dedupe", "gate", "read", "lookup");
     static final int MAX_SUGGESTIONS = 12;
     static final int MAX_AI_ADDITIONS = 5;
     static final int MAX_WHY = 400;
-    static final Pattern STEP_ID = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
+    static final Pattern NODE_ID = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
     /** Names that say "key", as the automatic measures read them. */
     static final Pattern KEY_NAME = Pattern.compile(
         "(?:^|_)(?i:id|key|code|uuid|guid|ref)$|[a-z0-9](?:Id|ID|Key|Code|Uuid|UUID|Ref)$");
@@ -120,10 +120,10 @@ final class PipelineAdvisor {
 
     private final QualityPredictor predictor;
     private final QualityPredictor.Catalogue catalogue;
-    private final StepFactories factories;
+    private final NodeFactories factories;
     private final ObjectMapper json;
 
-    PipelineAdvisor(QualityPredictor.Catalogue catalogue, StepFactories factories, ObjectMapper json) {
+    PipelineAdvisor(QualityPredictor.Catalogue catalogue, NodeFactories factories, ObjectMapper json) {
         this.catalogue = catalogue;
         this.predictor = new QualityPredictor(catalogue);
         this.factories = factories;
@@ -137,10 +137,10 @@ final class PipelineAdvisor {
     Advice advise(QualityPredictor.Plan plan, Model model, AiStatus noModel, Function<String, Records.Source> sources) {
         QualityPredictor.Trace trace = predictor.trace(plan);
         Set<String> taken = new HashSet<>();
-        plan.steps().forEach(s -> taken.add(s.id()));
+        plan.nodes().forEach(s -> taken.add(s.id()));
         List<Suggestion> found = new ArrayList<>();
-        for (QualityPredictor.PlanStep w : plan.steps()) {
-            if (!WriteStepFactory.TYPE.equals(w.type())) {
+        for (QualityPredictor.PlanNode w : plan.nodes()) {
+            if (!WriteNodeFactory.TYPE.equals(w.type())) {
                 continue;
             }
             QualityPredictor.PlanEdge feeding = feeding(plan, w.id(), "in");
@@ -168,22 +168,22 @@ final class PipelineAdvisor {
             : s.effect().gain()).reversed();
     }
 
-    static QualityPredictor.PlanEdge feeding(QualityPredictor.Plan plan, String step, String port) {
+    static QualityPredictor.PlanEdge feeding(QualityPredictor.Plan plan, String node, String port) {
         for (QualityPredictor.PlanEdge e : plan.edges()) {
-            if (e.toStep().equals(step) && e.toPort().equals(port)) {
+            if (e.toNode().equals(node) && e.toPort().equals(port)) {
                 return e;
             }
         }
         return null;
     }
 
-    static String ref(String step, String port) {
-        return "out".equals(port) ? step : step + "." + port;
+    static String ref(String node, String port) {
+        return "out".equals(port) ? node : node + "." + port;
     }
 
     static String freshId(String base, Set<String> taken) {
         String clean = base.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]+", "-").replaceAll("^[^a-z]+", "");
-        clean = clean.isEmpty() ? "step" : clean.substring(0, Math.min(56, clean.length()));
+        clean = clean.isEmpty() ? "node" : clean.substring(0, Math.min(56, clean.length()));
         String id = clean;
         for (int n = 2; taken.contains(id); n++) {
             id = clean + "-" + n;
@@ -193,10 +193,10 @@ final class PipelineAdvisor {
 
     // ---- Kilnmark's own candidates ----
 
-    private List<Suggestion> candidates(QualityPredictor.Plan plan, QualityPredictor.PlanStep w,
+    private List<Suggestion> candidates(QualityPredictor.Plan plan, QualityPredictor.PlanNode w,
                                         QualityPredictor.PlanEdge feeding, QualityPredictor.Est est, Set<String> taken) {
         List<Suggestion> out = new ArrayList<>();
-        String from = ref(feeding.fromStep(), feeding.fromPort());
+        String from = ref(feeding.fromNode(), feeding.fromPort());
         Set<String> local = new HashSet<>(taken);
         // Trim: text columns with leading or trailing spaces.
         List<String> padded = est.cols.values().stream().filter(c -> c.text() && c.formats != null
@@ -207,7 +207,7 @@ final class PipelineAdvisor {
             padded.forEach(c -> columns.put(c, "trim(" + quote(c) + ")"));
             out.add(single("trim-" + w.id(), "trim", "Trim spaces from " + names(padded) + " before " + w.id(),
                 "Some values start or end with spaces, which counts against consistency.",
-                new NewStep(id, "compute", Map.of("columns", columns), Map.of("in", from)), w, from));
+                new NewNode(id, "compute", Map.of("columns", columns), Map.of("in", from)), w, from));
         }
         // Standardise dates written in several formats.
         for (QualityPredictor.Col c : est.cols.values()) {
@@ -234,11 +234,11 @@ final class PipelineAdvisor {
             out.add(single("dates-" + w.id() + "-" + c.name, "standardise_dates", "Standardise the date formats of "
                 + c.name + " before " + w.id(), "Its dates are written as " + String.join(" and ", formats) + "; they "
                 + "are rewritten as yyyy-MM-dd. Dates such as 01/02/2024 are read day first; values in no known "
-                + "format become empty.", new NewStep(id, "compute", Map.of("columns", Map.of(c.name, e.toString())),
+                + "format become empty.", new NewNode(id, "compute", Map.of("columns", Map.of(c.name, e.toString())),
                 Map.of("in", from)), w, from));
         }
         // Deduplicate on a key that repeats.
-        List<String> writeKey = WriteStepFactory.key(w.config());
+        List<String> writeKey = WriteNodeFactory.key(w.config());
         for (QualityPredictor.Col c : est.cols.values()) {
             boolean key = (writeKey != null && writeKey.size() == 1 && writeKey.get(0).equals(c.name))
                 || (est.key.size() == 1 && est.key.get(0).equals(c.name)) || KEY_NAME.matcher(c.name).find();
@@ -249,7 +249,7 @@ final class PipelineAdvisor {
             String id = freshId("dedupe", local);
             out.add(single("dedupe-" + w.id() + "-" + c.name, "dedupe", "Keep one row per " + c.name + " before "
                 + w.id(), "About " + percent(1 - c.distinct) + " of its values repeat; the first row of each is kept.",
-                new NewStep(id, "dedupe", Map.of("key", List.of(c.name)), Map.of("in", from)), w, from));
+                new NewNode(id, "dedupe", Map.of("key", List.of(c.name)), Map.of("in", from)), w, from));
         }
         // Drop rows whose key has no match in the related asset.
         for (QualityPredictor.Col c : est.cols.values()) {
@@ -275,13 +275,13 @@ final class PipelineAdvisor {
                 lookup.put("on", Map.of(c.name, l.toField()));
                 lookup.put("keep", List.of());
                 lookup.put("unmatched", "drop");
-                List<NewStep> steps = List.of(
-                    new NewStep(readId, "read", Map.of("source", target.source(), "asset", target.path()), Map.of()),
-                    new NewStep(lookupId, "lookup", lookup, Map.of("main", from, "lookup", readId)));
+                List<NewNode> nodes = List.of(
+                    new NewNode(readId, "read", Map.of("source", target.source(), "asset", target.path()), Map.of()),
+                    new NewNode(lookupId, "lookup", lookup, Map.of("main", from, "lookup", readId)));
                 out.add(new Suggestion("orphans-" + w.id() + "-" + c.name, "repair_orphans", "Drop rows whose "
                     + c.name + " has no match in " + target.path() + " before " + w.id(), "About "
                     + percent(l.orphanShare()) + " of its values have no match in " + target.path() + "." + l.toField()
-                    + " (from the stored relationship). A lookup keeps only the rows that match.", steps,
+                    + " (from the stored relationship). A lookup keeps only the rows that match.", nodes,
                     new Placement(w.id(), "in", from, lookupId), null, "rules"));
                 break;
             }
@@ -307,7 +307,7 @@ final class PipelineAdvisor {
             out.add(single("patterns-" + w.id() + "-" + c.name, "quarantine_patterns", "Set aside rows whose " + c.name
                 + " is outside its accepted patterns before " + w.id(), "About " + percent(outside) + " of its values "
                 + "are in shapes no steward accepted. A gate sends them to its quarantine port; connect it to keep them.",
-                new NewStep(id, "gate", gate(rule), Map.of("in", from)), w, from));
+                new NewNode(id, "gate", gate(rule), Map.of("in", from)), w, from));
         }
         for (QualityPredictor.Col c : est.cols.values()) {
             boolean key = (writeKey != null && writeKey.contains(c.name)) || est.key.contains(c.name)
@@ -322,7 +322,7 @@ final class PipelineAdvisor {
             out.add(single("missing-" + w.id() + "-" + c.name, "quarantine_missing", "Set aside rows without "
                 + c.name + " before " + w.id(), "About " + percent(c.nulls) + " of rows have no " + c.name + ". A gate "
                 + "sends them to its quarantine port; connect it to keep them.",
-                new NewStep(id, "gate", gate(rule), Map.of("in", from)), w, from));
+                new NewNode(id, "gate", gate(rule), Map.of("in", from)), w, from));
         }
         return out;
     }
@@ -335,9 +335,9 @@ final class PipelineAdvisor {
         return g;
     }
 
-    private static Suggestion single(String id, String kind, String title, String why, NewStep step,
-                                     QualityPredictor.PlanStep w, String from) {
-        return new Suggestion(id, kind, title, why, List.of(step), new Placement(w.id(), "in", from, step.id()), null,
+    private static Suggestion single(String id, String kind, String title, String why, NewNode node,
+                                     QualityPredictor.PlanNode w, String from) {
+        return new Suggestion(id, kind, title, why, List.of(node), new Placement(w.id(), "in", from, node.id()), null,
             "rules");
     }
 
@@ -395,8 +395,8 @@ final class PipelineAdvisor {
     // ---- trying a suggestion out ----
 
     /**
-     * The suggestion checked (only step types allowed, settings the step takes, columns that reach
-     * it, the step's own check) and its predicted effect on the write it goes before; null when it
+     * The suggestion checked (only node types allowed, settings the node takes, columns that reach
+     * it, the node's own check) and its predicted effect on the write it goes before; null when it
      * fails a check or is not predicted to help.
      */
     Suggestion tryOut(QualityPredictor.Plan plan, QualityPredictor.Trace trace, Suggestion s, QualityPredictor.Est at,
@@ -404,11 +404,11 @@ final class PipelineAdvisor {
         if (problem(s, at, allowed, plan) != null) {
             return null;
         }
-        List<QualityPredictor.PlanStep> added = new ArrayList<>();
+        List<QualityPredictor.PlanNode> added = new ArrayList<>();
         List<QualityPredictor.PlanEdge> edges = new ArrayList<>();
         Map<String, String> reads = new LinkedHashMap<>();
-        for (NewStep n : s.steps()) {
-            added.add(new QualityPredictor.PlanStep(n.id(), n.type(), n.settings(), Map.of()));
+        for (NewNode n : s.nodes()) {
+            added.add(new QualityPredictor.PlanNode(n.id(), n.type(), n.settings(), Map.of()));
             for (Map.Entry<String, String> in : n.inputs().entrySet()) {
                 String r = in.getValue();
                 int dot = r.lastIndexOf('.');
@@ -449,31 +449,31 @@ final class PipelineAdvisor {
         if (gain == null || (gain <= 0.0005 && (!unscored || note == null || gain < -0.0005))) {
             return null;
         }
-        return new Suggestion(s.id(), s.kind(), s.title(), s.why(), s.steps(), s.placement(), effect, s.source());
+        return new Suggestion(s.id(), s.kind(), s.title(), s.why(), s.nodes(), s.placement(), effect, s.source());
     }
 
     /** Why a suggestion cannot be shown, or null when it can. */
     String problem(Suggestion s, QualityPredictor.Est at, Set<String> allowed, QualityPredictor.Plan plan) {
-        if (s.steps().isEmpty() || s.placement() == null) {
-            return "no steps";
+        if (s.nodes().isEmpty() || s.placement() == null) {
+            return "no nodes";
         }
-        QualityPredictor.PlanStep before = plan.step(s.placement().before());
+        QualityPredictor.PlanNode before = plan.node(s.placement().before());
         if (before == null || feeding(plan, before.id(), s.placement().port()) == null) {
-            return "it goes before a step that is not there";
+            return "it goes before a node that is not there";
         }
         Set<String> ids = new HashSet<>();
-        plan.steps().forEach(x -> ids.add(x.id()));
+        plan.nodes().forEach(x -> ids.add(x.id()));
         Set<String> newIds = new HashSet<>();
-        for (NewStep n : s.steps()) {
-            if (n.id() == null || !STEP_ID.matcher(n.id()).matches() || ids.contains(n.id()) || !newIds.add(n.id())) {
-                return "step id " + n.id() + " cannot be used";
+        for (NewNode n : s.nodes()) {
+            if (n.id() == null || !NODE_ID.matcher(n.id()).matches() || ids.contains(n.id()) || !newIds.add(n.id())) {
+                return "node id " + n.id() + " cannot be used";
             }
             if (!allowed.contains(n.type())) {
-                return "a " + n.type() + " step cannot be suggested";
+                return "a " + n.type() + " node cannot be suggested";
             }
-            StepFactory f = factories.get(n.type()).orElse(null);
+            NodeFactory f = factories.get(n.type()).orElse(null);
             if (f == null) {
-                return "this server has no " + n.type() + " step";
+                return "this server has no " + n.type() + " node";
             }
             Set<String> keys = new HashSet<>();
             for (SettingSpec spec : f.settings()) {
@@ -481,7 +481,7 @@ final class PipelineAdvisor {
             }
             for (String k : n.settings().keySet()) {
                 if (!keys.contains(k)) {
-                    return "a " + n.type() + " step has no setting " + k;
+                    return "a " + n.type() + " node has no setting " + k;
                 }
             }
             List<String> problems;
@@ -498,7 +498,7 @@ final class PipelineAdvisor {
             }
             for (Map.Entry<String, String> in : n.inputs().entrySet()) {
                 if (!f.inputPorts().stream().map(p -> p.replace("*", "")).toList().contains(in.getKey())) {
-                    return "a " + n.type() + " step has no input " + in.getKey();
+                    return "a " + n.type() + " node has no input " + in.getKey();
                 }
             }
             String column = unknownColumn(n, at);
@@ -508,13 +508,13 @@ final class PipelineAdvisor {
             if (at.cols != null && !n.type().equals("lookup")) {
                 try {
                     f.outputSchema("out", Map.of("in", schema(at)), n.settings());
-                } catch (StepException | RuntimeException e) {
+                } catch (NodeException | RuntimeException e) {
                     return e.getMessage();
                 }
             }
         }
-        if (s.steps().stream().noneMatch(n -> n.id().equals(s.placement().through()))) {
-            return "it feeds " + s.placement().before() + " from no new step";
+        if (s.nodes().stream().noneMatch(n -> n.id().equals(s.placement().through()))) {
+            return "it feeds " + s.placement().before() + " from no new node";
         }
         return null;
     }
@@ -525,8 +525,8 @@ final class PipelineAdvisor {
         return new Schema(fields);
     }
 
-    /** A column a new step names that does not reach it, or null. */
-    static String unknownColumn(NewStep n, QualityPredictor.Est at) {
+    /** A column a new node names that does not reach it, or null. */
+    static String unknownColumn(NewNode n, QualityPredictor.Est at) {
         if (at.cols == null) {
             return null;
         }
@@ -600,14 +600,14 @@ final class PipelineAdvisor {
 
     static final String SYSTEM = """
         You help people improve the data quality of a pipeline in Kilnmark, a data integration tool. You are \
-        given the predicted metadata of the rows reaching each write step (column names, kinds, the share of \
+        given the predicted metadata of the rows reaching each write node (column names, kinds, the share of \
         empty values, distinct values, value shapes in which letters are A or a and digits 9, detected formats \
         and accepted shapes), each write's predicted quality score, and candidate improvements Kilnmark found. \
         All scores and shares are estimates from catalogue metadata. You never see values from the data. \
         Answer in JSON only, matching the schema. In "ranking", list candidate ids, most useful first. In \
         "explanations", give for some ids one or two plain sentences on why it helps, without inventing numbers. \
-        In "additional", suggest at most 5 further steps, each placed before a write step (its id in "before"), \
-        of type compute, filter, select, dedupe or gate, with "settings" as the step's YAML settings: compute \
+        In "additional", suggest at most 5 further nodes, each placed before a write node (its id in "before"), \
+        of type compute, filter, select, dedupe or gate, with "settings" as the node's YAML settings: compute \
         takes columns (name to expression), filter takes condition, select takes keep, drop, rename, dedupe takes \
         key (a list of columns), gate takes on_fail (quarantine) and rules (a list of {type, field, ...} with \
         type not_null, unique, allowed_values, matches_pattern or in_range). Use only columns listed for that \
@@ -645,12 +645,12 @@ final class PipelineAdvisor {
                 + " see its metadata (each source's AI rule), so the suggestions are Kilnmark's own.", model.name()));
         }
         ObjectNode payload = json.createObjectNode();
-        ArrayNode stepsNode = payload.putArray("steps");
+        ArrayNode nodesArray = payload.putArray("nodes");
         ArrayNode edgesNode = payload.putArray("connections");
         ArrayNode writes = payload.putArray("writes");
         Map<String, Set<String>> sent = new LinkedHashMap<>();
-        for (QualityPredictor.PlanStep w : plan.steps()) {
-            if (!WriteStepFactory.TYPE.equals(w.type())) {
+        for (QualityPredictor.PlanNode w : plan.nodes()) {
+            if (!WriteNodeFactory.TYPE.equals(w.type())) {
                 continue;
             }
             QualityPredictor.Est est = trace.arriving(plan, w.id(), "in");
@@ -679,7 +679,7 @@ final class PipelineAdvisor {
             }
             sent.put(w.id(), names);
         }
-        // The steps and connections leading to the writes shown, less the reads of sources it may not see.
+        // The nodes and connections leading to the writes shown, less the reads of sources it may not see.
         Set<String> visible = new LinkedHashSet<>();
         java.util.ArrayDeque<String> todo = new java.util.ArrayDeque<>(sent.keySet());
         while (!todo.isEmpty()) {
@@ -688,8 +688,8 @@ final class PipelineAdvisor {
                 continue;
             }
             for (QualityPredictor.PlanEdge e : plan.edges()) {
-                if (e.toStep().equals(id)) {
-                    todo.add(e.fromStep());
+                if (e.toNode().equals(id)) {
+                    todo.add(e.fromNode());
                 }
             }
         }
@@ -698,19 +698,19 @@ final class PipelineAdvisor {
                 visible.remove(r.getKey());
             }
         }
-        for (QualityPredictor.PlanStep s : plan.steps()) {
+        for (QualityPredictor.PlanNode s : plan.nodes()) {
             if (visible.contains(s.id())) {
-                stepsNode.addObject().put("id", s.id()).put("type", s.type());
+                nodesArray.addObject().put("id", s.id()).put("type", s.type());
             }
         }
-        plan.edges().stream().filter(e -> visible.contains(e.fromStep()) && visible.contains(e.toStep()))
-            .forEach(e -> edgesNode.add(ref(e.fromStep(), e.fromPort()) + " -> " + e.toStep() + "." + e.toPort()));
+        plan.edges().stream().filter(e -> visible.contains(e.fromNode()) && visible.contains(e.toNode()))
+            .forEach(e -> edgesNode.add(ref(e.fromNode(), e.fromPort()) + " -> " + e.toNode() + "." + e.toPort()));
         ArrayNode cands = payload.putArray("candidates");
         List<Suggestion> shareable = new ArrayList<>();
         for (Suggestion s : found) {
             Set<String> mine = sent.getOrDefault(s.placement().before(), Set.of());
-            // A step reading another asset names it (in its title too): only of a source the model may see.
-            boolean readsAllowed = s.steps().stream().filter(n -> n.type().equals("read"))
+            // A node reading another asset names it (in its title too): only of a source the model may see.
+            boolean readsAllowed = s.nodes().stream().filter(n -> n.type().equals("read"))
                 .allMatch(n -> allowed.containsKey(String.valueOf(n.settings().get("source"))));
             if (readsAllowed && columnsOf(s).stream().allMatch(mine::contains)) {
                 shareable.add(s);
@@ -755,14 +755,14 @@ final class PipelineAdvisor {
         for (Suggestion s : found) {
             String why = explained.get(s.id());
             merged.add(why == null || why.isBlank() ? s : new Suggestion(s.id(), s.kind(), s.title(), s.why() + " " + why,
-                s.steps(), s.placement(), s.effect(), s.source()));
+                s.nodes(), s.placement(), s.effect(), s.source()));
         }
         // The model's own, checked like the rest.
         int dropped = 0;
         int added = 0;
         Set<String> local = new HashSet<>(taken);
         for (Suggestion s : merged) {
-            s.steps().forEach(n -> local.add(n.id()));
+            s.nodes().forEach(n -> local.add(n.id()));
         }
         for (JsonNode a : reply.path("additional")) {
             if (added >= MAX_AI_ADDITIONS) {
@@ -776,7 +776,7 @@ final class PipelineAdvisor {
                 dropped++;
                 continue;
             }
-            local.add(tried.steps().get(0).id());
+            local.add(tried.nodes().get(0).id());
             merged.add(tried);
             added++;
         }
@@ -790,7 +790,7 @@ final class PipelineAdvisor {
         merged.sort(Comparator.comparingInt((Suggestion s) -> rank.getOrDefault(s.id(), Integer.MAX_VALUE))
             .thenComparing(byGain()));
         String message = model.name() + " ranked and explained the suggestions" + (added > 0 ? " and added "
-            + added : "") + (dropped > 0 ? "; " + dropped + " of its own were left out because they named a step or "
+            + added : "") + (dropped > 0 ? "; " + dropped + " of its own were left out because they named a node or "
             + "column that does not exist here, or would not help" : "") + "."
             + (refused.isEmpty() ? "" : " Sources whose AI rule does not allow it were not shown: "
             + String.join(", ", refused) + ".");
@@ -807,7 +807,7 @@ final class PipelineAdvisor {
         return e;
     }
 
-    /** A step the model suggested, as a suggestion to check; null when it is not even well formed. */
+    /** A node the model suggested, as a suggestion to check; null when it is not even well formed. */
     private Suggestion fromModel(JsonNode a, QualityPredictor.Plan plan, Set<String> taken,
                                  Map<String, Set<String>> sent) {
         String before = a.path("before").asText("");
@@ -827,11 +827,11 @@ final class PipelineAdvisor {
             return null;
         }
         String id = freshId(type, taken);
-        String from = ref(feeding.fromStep(), feeding.fromPort());
-        NewStep step = new NewStep(id, type, settings, Map.of("in", from));
+        String from = ref(feeding.fromNode(), feeding.fromPort());
+        NewNode node = new NewNode(id, type, settings, Map.of("in", from));
         String why = clean(a.path("why").asText(""));
         return new Suggestion("ai-" + id + "-" + before, "ai", title.length() > 200 ? title.substring(0, 200) : title,
-            why.isBlank() ? "Suggested by the model." : why, List.of(step), new Placement(before, "in", from, id), null,
+            why.isBlank() ? "Suggested by the model." : why, List.of(node), new Placement(before, "in", from, id), null,
             "ai");
     }
 
@@ -882,7 +882,7 @@ final class PipelineAdvisor {
     /** Every column a suggestion names, for checking it against what may be shown. */
     static Set<String> columnsOf(Suggestion s) {
         Set<String> out = new LinkedHashSet<>();
-        for (NewStep n : s.steps()) {
+        for (NewNode n : s.nodes()) {
             collectNames(n.type(), n.settings(), out);
         }
         return out;

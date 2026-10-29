@@ -14,9 +14,9 @@ import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
 import io.kilnmark.kiln.MetadataEvent;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
 import io.kilnmark.kiln.plugins.documents.Chunker;
 import io.kilnmark.kiln.plugins.documents.DocumentEvents;
 import io.kilnmark.kiln.plugins.documents.DocumentException;
@@ -34,14 +34,14 @@ import io.kilnmark.kiln.plugins.documents.TextExtractor;
  * rows ({@link DocumentEvents#CHUNK_SCHEMA}), and finally {@code ROW_COUNT} with the number of
  * chunks.
  *
- * <p>A document that cannot be read never fails the step: its event says {@code readable=false}
+ * <p>A document that cannot be read never fails the node: its event says {@code readable=false}
  * with the reason, and no chunks follow. With {@code keep-text=false} the profile is still worked
- * out from the text, but no chunk leaves the step.
+ * out from the text, but no chunk leaves the node.
  *
  * <p>Settings: {@code path}, {@code size}, {@code asset-urn}, {@code keep-text} (default true),
  * {@code owner}, {@code batch-size} (chunks per batch, default 256).
  */
-public final class DocumentInput implements Step {
+public final class DocumentInput implements Node {
 
     public static final String TYPE = "document-input";
 
@@ -73,7 +73,7 @@ public final class DocumentInput implements Step {
     }
 
     @Override
-    public void init(StepContext context) throws StepException {
+    public void init(NodeContext context) throws NodeException {
         path = context.setting("path");
         assetUrn = context.setting("asset-urn");
         size = Long.parseLong(context.setting("size", "-1"));
@@ -86,7 +86,7 @@ public final class DocumentInput implements Step {
         try {
             store = opener.open();
         } catch (IOException | RuntimeException e) {
-            throw new StepException("Cannot open the source to read " + path + ": " + e.getMessage(), e);
+            throw new NodeException("Cannot open the source to read " + path + ": " + e.getMessage(), e);
         }
     }
 
@@ -98,7 +98,7 @@ public final class DocumentInput implements Step {
     }
 
     @Override
-    public boolean process(StepContext context) throws StepException {
+    public boolean process(NodeContext context) throws NodeException {
         if (rows == null) {
             rows = new ArrayList<>();
             read(context);
@@ -136,7 +136,7 @@ public final class DocumentInput implements Step {
         } catch (InterruptedException e) {
             batch.close();
             Thread.currentThread().interrupt();
-            throw new StepException("Interrupted", e);
+            throw new NodeException("Interrupted", e);
         } catch (RuntimeException e) {
             batch.close();
             throw e;
@@ -149,7 +149,7 @@ public final class DocumentInput implements Step {
     }
 
     /** Reads the document and reports what it found; never throws for a bad document. */
-    private void read(StepContext context) throws StepException {
+    private void read(NodeContext context) throws NodeException {
         String name = path.substring(path.lastIndexOf('/') + 1);
         String format = DocumentTypes.extension(name);
         String type = DocumentTypes.mediaType(name);
@@ -185,7 +185,7 @@ public final class DocumentInput implements Step {
             return;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new StepException("Interrupted while reading " + path, e);
+            throw new NodeException("Interrupted while reading " + path, e);
         }
         Extraction.Part doc = x.document();
         List<Chunker.Chunk> chunks = keepText ? chunks(doc, limits) : List.of();
@@ -246,11 +246,11 @@ public final class DocumentInput implements Step {
         return a;
     }
 
-    private static void emit(StepContext context, String urn, Map<String, String> attrs) {
+    private static void emit(NodeContext context, String urn, Map<String, String> attrs) {
         context.metadata().emit(new MetadataEvent(urn, MetadataEvent.Kind.DOCUMENT, attrs, Instant.now()));
     }
 
-    private void finish(StepContext context) {
+    private void finish(NodeContext context) {
         context.metadata().emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.ROW_COUNT, Map.of("rows",
             Integer.toString(rows.size()), "complete", "true"), Instant.now()));
     }

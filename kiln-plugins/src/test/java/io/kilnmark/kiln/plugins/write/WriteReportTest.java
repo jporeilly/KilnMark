@@ -64,7 +64,7 @@ class WriteReportTest {
         List<MetadataEvent> events = report(true, "create", Map.of(), Map.of("keep-values", "false",
             "sketch-fields", "id"));
         assertTrue(events.stream().noneMatch(e -> e.kind() == MetadataEvent.Kind.SAMPLE),
-            "the source keeps no values, whatever the step says");
+            "the source keeps no values, whatever the node says");
         assertTrue(events.stream().filter(e -> e.kind() == MetadataEvent.Kind.PROFILE)
             .anyMatch(e -> "id".equals(e.attributes().get("field")) && e.attributes().containsKey("hll")),
             "the fields the source sketches are sketched");
@@ -72,8 +72,8 @@ class WriteReportTest {
         MetadataEvent sample = sampled.stream().filter(e -> e.kind() == MetadataEvent.Kind.SAMPLE).findFirst()
             .orElseThrow();
         assertEquals("row", sample.attributes().get("method"));
-        List<MetadataEvent> stepSaysNo = report(true, "create", Map.of("keep_values", false), Map.of());
-        assertTrue(stepSaysNo.stream().noneMatch(e -> e.kind() == MetadataEvent.Kind.SAMPLE));
+        List<MetadataEvent> nodeSaysNo = report(true, "create", Map.of("keep_values", false), Map.of());
+        assertTrue(nodeSaysNo.stream().noneMatch(e -> e.kind() == MetadataEvent.Kind.SAMPLE));
         List<MetadataEvent> off = report(true, "create", Map.of("profile_output", false), Map.of());
         assertEquals(List.of(MetadataEvent.Kind.SCHEMA, MetadataEvent.Kind.ROW_COUNT),
             off.stream().map(MetadataEvent::kind).toList());

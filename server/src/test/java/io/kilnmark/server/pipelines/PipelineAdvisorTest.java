@@ -18,14 +18,14 @@ import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.kilnmark.graph.store.Records;
-import io.kilnmark.kiln.StepFactories;
+import io.kilnmark.kiln.NodeFactories;
 import io.kilnmark.server.ai.AiException;
 import io.kilnmark.server.ai.EgressPolicy;
 import io.kilnmark.server.ai.ModelClient;
 
 /**
  * Suggestions from the predicted metadata: Kilnmark's own with no model, each with its predicted
- * effect; the model's ranking and additions, checked so a step type or column that does not exist
+ * effect; the model's ranking and additions, checked so a node type or column that does not exist
  * is dropped; each source's AI rule honoured, so nothing it does not allow (and never a value) reaches
  * the model; and a model that fails leaves Kilnmark's own suggestions.
  */
@@ -98,8 +98,8 @@ class PipelineAdvisorTest {
             .write("out", "people").write("pay", "payroll").plan();
     }
 
-    static StepFactories factories(FakeSources sources) {
-        return StepFactories.discover().register(new ReadStepFactory(sources)).register(new GateStepFactory(sources));
+    static NodeFactories factories(FakeSources sources) {
+        return NodeFactories.discover().register(new ReadNodeFactory(sources)).register(new GateNodeFactory(sources));
     }
 
     static FakeSources sources() {
@@ -135,18 +135,18 @@ class PipelineAdvisorTest {
         }
         PipelineAdvisor.Suggestion trim = a.suggestions().stream().filter(s -> s.kind().equals("trim")).findFirst()
             .orElseThrow();
-        assertEquals("compute", trim.steps().get(0).type());
-        assertEquals(Map.of("name", "trim(name)"), trim.steps().get(0).settings().get("columns"));
+        assertEquals("compute", trim.nodes().get(0).type());
+        assertEquals(Map.of("name", "trim(name)"), trim.nodes().get(0).settings().get("columns"));
         assertEquals(new PipelineAdvisor.Placement("out", "in", "people", "trim"), trim.placement());
         assertTrue(trim.effect().after() > trim.effect().before());
         PipelineAdvisor.Suggestion dates = a.suggestions().stream().filter(s -> s.kind().equals("standardise_dates"))
             .findFirst().orElseThrow();
-        assertTrue(String.valueOf(dates.steps().get(0).settings()).contains("parse_date(joined, 'dd/MM/yyyy')"),
-            dates.steps().get(0).settings().toString());
+        assertTrue(String.valueOf(dates.nodes().get(0).settings()).contains("parse_date(joined, 'dd/MM/yyyy')"),
+            dates.nodes().get(0).settings().toString());
         PipelineAdvisor.Suggestion orphans = a.suggestions().stream().filter(s -> s.kind().equals("repair_orphans"))
             .findFirst().orElseThrow();
-        assertEquals(List.of("read", "lookup"), orphans.steps().stream().map(PipelineAdvisor.NewStep::type).toList());
-        assertEquals(Map.of("main", "people", "lookup", "read-countries"), orphans.steps().get(1).inputs());
+        assertEquals(List.of("read", "lookup"), orphans.nodes().stream().map(PipelineAdvisor.NewNode::type).toList());
+        assertEquals(Map.of("main", "people", "lookup", "read-countries"), orphans.nodes().get(1).inputs());
         assertEquals(900L, orphans.effect().rowsAfter());
         assertTrue(orphans.effect().note().contains("100 rows with no match"), orphans.effect().note());
         // Best first: by predicted gain.
@@ -207,10 +207,10 @@ class PipelineAdvisorTest {
                 "settings": {"on_fail": "quarantine", "asset_rules": false, "rules": [{"type": "not_null", "field": "email"}]}},
                {"before": "out", "type": "compute", "title": "Trim a column that is not there",
                 "settings": {"columns": {"zzz2": "trim(zzz)"}}},
-               {"before": "out", "type": "enrich", "title": "A step type that does not exist", "settings": {}},
+               {"before": "out", "type": "enrich", "title": "A node type that does not exist", "settings": {}},
                {"before": "pay", "type": "gate", "title": "A column of a source it may not see",
                 "settings": {"on_fail": "quarantine", "rules": [{"type": "not_null", "field": "grade_code"}]}},
-               {"before": "nope", "type": "dedupe", "title": "Before a step that is not there", "settings": {"key": ["email"]}},
+               {"before": "nope", "type": "dedupe", "title": "Before a node that is not there", "settings": {"key": ["email"]}},
                {"before": "out", "type": "dedupe", "title": "A setting dedupe does not take",
                 "settings": {"key": ["email"], "colour": "red"}},
                {"before": "out", "type": "filter", "title": "An expression on a missing column",
@@ -222,7 +222,7 @@ class PipelineAdvisorTest {
             .toList();
         assertEquals(1, fromModel.size(), a.suggestions().toString());
         PipelineAdvisor.Suggestion gate = fromModel.get(0);
-        assertEquals("gate", gate.steps().get(0).type());
+        assertEquals("gate", gate.nodes().get(0).type());
         assertEquals("out", gate.placement().before());
         assertTrue(gate.effect().after() > gate.effect().before());
         assertTrue(a.ai().message().contains("added 1") && a.ai().message().contains("6 of its own were left out"),

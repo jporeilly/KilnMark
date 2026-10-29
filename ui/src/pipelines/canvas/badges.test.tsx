@@ -1,12 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ReactFlowProvider } from "@xyflow/react";
-import type { GateOutcome, PipelineStepQuality } from "../../api";
+import type { GateOutcome, PipelineNodeQuality } from "../../api";
 import type { PredictedQuality } from "../prediction";
-import { stepLabel } from "./insight";
+import { nodeLabel } from "./insight";
 import { BADGE_ROW, GAP_Y, NODE_WIDTH, NO_BADGES, autoLayout, labelWidth, makeRoom, nodeHeight, type EdgeLabel } from "./layout";
 import { readGraph } from "./model";
-import { StepNode, badgeRows, stepChips, type StepData } from "./StepNode";
+import { NodeCard, badgeRows, nodeChips, type NodeData } from "./NodeCard";
 
 // Jp's lab demo after a run: customers → tidy → check (gate) → clean, and check.quarantine → aside.
 const gate = (over: Partial<GateOutcome> = {}): GateOutcome => ({
@@ -23,8 +23,8 @@ const gate = (over: Partial<GateOutcome> = {}): GateOutcome => ({
   rules: [],
   ...over,
 });
-const measured = (overall: number, g: GateOutcome | null = null): PipelineStepQuality => ({
-  step: "check",
+const measured = (overall: number, g: GateOutcome | null = null): PipelineNodeQuality => ({
+  node: "check",
   role: g ? "gate" : "output",
   asset: null,
   measured: { overall, dimensions: {}, reasons: [] },
@@ -33,7 +33,7 @@ const measured = (overall: number, g: GateOutcome | null = null): PipelineStepQu
   gate: g,
 });
 const predicted = (overall: number | null, unknown: string[] = []): PredictedQuality => ({
-  step: "check",
+  node: "check",
   role: "gate",
   asset: null,
   overall,
@@ -46,9 +46,9 @@ const predicted = (overall: number | null, unknown: string[] = []): PredictedQua
 });
 const finished = { rowsIn: 5000, rowsOut: 5000, outcome: "finished", error: null };
 
-describe("the chips under a step", () => {
+describe("the chips under a node", () => {
   test("each kind in its own language: rows neutral, measured toned, predicted violet, gate text", () => {
-    const [first, score, estimate, counts] = stepChips({ problems: 0, run: finished, quality: measured(0.99, gate()), predicted: predicted(0.99) });
+    const [first, score, estimate, counts] = nodeChips({ problems: 0, run: finished, quality: measured(0.99, gate()), predicted: predicted(0.99) });
     expect(first).toEqual([{ kind: "rows", tone: "neutral", text: "5,000 rows out · Finished" }]);
     expect(score).toMatchObject([{ kind: "measured", tone: "good", text: "Quality 99% (Good)" }]);
     expect(estimate).toMatchObject([{ kind: "predicted", tone: "violet", text: "Predicted ≈ 99%", hidden: " (estimate)" }]);
@@ -57,22 +57,22 @@ describe("the chips under a step", () => {
   });
 
   test("the score's tone follows its word; predicted stays violet whatever its score", () => {
-    expect(stepChips({ problems: 0, run: null, quality: measured(0.85), predicted: predicted(0.5) })[1][0]).toMatchObject({ tone: "warn", text: "Quality 85% (Fair)" });
-    expect(stepChips({ problems: 0, run: null, quality: measured(0.5), predicted: null })[1][0]).toMatchObject({ tone: "bad", text: "Quality 50% (Poor)" });
-    expect(stepChips({ problems: 0, run: null, quality: null, predicted: predicted(0.5) })[2][0].tone).toBe("violet");
-    expect(stepChips({ problems: 0, run: null, quality: null, predicted: predicted(null) })[2][0].text).toBe("Predicted: unknown");
-    const unknown = stepChips({ problems: 0, run: null, quality: null, predicted: predicted(0.8, ["x"]) })[2][0];
+    expect(nodeChips({ problems: 0, run: null, quality: measured(0.85), predicted: predicted(0.5) })[1][0]).toMatchObject({ tone: "warn", text: "Quality 85% (Fair)" });
+    expect(nodeChips({ problems: 0, run: null, quality: measured(0.5), predicted: null })[1][0]).toMatchObject({ tone: "bad", text: "Quality 50% (Poor)" });
+    expect(nodeChips({ problems: 0, run: null, quality: null, predicted: predicted(0.5) })[2][0].tone).toBe("violet");
+    expect(nodeChips({ problems: 0, run: null, quality: null, predicted: predicted(null) })[2][0].text).toBe("Predicted: unknown");
+    const unknown = nodeChips({ problems: 0, run: null, quality: null, predicted: predicted(0.8, ["x"]) })[2][0];
     expect(unknown).toMatchObject({ text: "Predicted ≈ 80%", more: " · 1 unknown" });
     expect(unknown.title).toMatch(/1 thing it could not tell/);
   });
 
   test("a run's outcome takes a status tone only when it is not a success", () => {
-    const failed = stepChips({ problems: 0, run: { rowsIn: 10, rowsOut: null, outcome: "failed", error: "boom" }, quality: null, predicted: null })[0];
+    const failed = nodeChips({ problems: 0, run: { rowsIn: 10, rowsOut: null, outcome: "failed", error: "boom" }, quality: null, predicted: null })[0];
     expect(failed).toEqual([
       { kind: "rows", tone: "neutral", text: "10 rows in" },
       { kind: "outcome", tone: "bad", text: "Failed", title: "boom" },
     ]);
-    const early = stepChips({ problems: 2, run: { rowsIn: null, rowsOut: 3, outcome: "ended_early", error: null }, quality: null, predicted: null })[0];
+    const early = nodeChips({ problems: 2, run: { rowsIn: null, rowsOut: 3, outcome: "ended_early", error: null }, quality: null, predicted: null })[0];
     expect(early.map((c) => [c.kind, c.tone, c.text])).toEqual([
       ["problems", "bad", "2 problems"],
       ["rows", "neutral", "3 rows out"],
@@ -81,17 +81,17 @@ describe("the chips under a step", () => {
   });
 
   test("a gate that stopped the run: its score and counts say so", () => {
-    const [, score, , counts] = stepChips({ problems: 0, run: null, quality: measured(0.97, gate({ decision: "stopped" })), predicted: null });
+    const [, score, , counts] = nodeChips({ problems: 0, run: null, quality: measured(0.97, gate({ decision: "stopped" })), predicted: null });
     expect(score[0].tone).toBe("bad");
     expect(counts[0]).toMatchObject({ tone: "bad", text: "Stopped the run after 5,000 rows" });
   });
 
   test("rendered: each chip's kind, words and look, the estimate said for screen readers", () => {
-    const yaml = "kilnmark: pipeline/v1\nname: x\nsteps:\n  - id: check\n    type: gate\n    on_fail: quarantine\n";
+    const yaml = "kilnmark: pipeline/v1\nname: x\nnodes:\n  - id: check\n    type: gate\n    on_fail: quarantine\n";
     const r = readGraph(yaml);
     if (!r.ok) throw new Error("unreadable");
-    const data: StepData = {
-      step: r.graph.steps[0],
+    const data: NodeData = {
+      node: r.graph.nodes[0],
       kind: "gate",
       label: "Quality gate",
       summary: "quarantine",
@@ -106,7 +106,7 @@ describe("the chips under a step", () => {
     };
     const html = renderToStaticMarkup(
       <ReactFlowProvider>
-        <StepNode id="check" data={data} type="step" selected={false} dragging={false} zIndex={0} isConnectable={false} positionAbsoluteX={0} positionAbsoluteY={0} selectable deletable draggable />
+        <NodeCard id="check" data={data} type="node" selected={false} dragging={false} zIndex={0} isConnectable={false} positionAbsoluteX={0} positionAbsoluteY={0} selectable deletable draggable />
       </ReactFlowProvider>,
     );
     expect(html).toMatch(/class="km-chip km-chip--neutral cv-node-chip" data-kind="rows">.*5,000 rows out · Finished/);
@@ -121,7 +121,7 @@ describe("the chips under a step", () => {
   });
 });
 
-describe("a step's height", () => {
+describe("a node's height", () => {
   const gatePorts = { inputs: ["in"], outputs: ["out", "quarantine"] };
 
   test("grows by a fixed row per kind of chip shown", () => {
@@ -153,7 +153,7 @@ describe("making room for badges and labels", () => {
   const overlap = (a: { x: number; y: number }, ha: number, b: { x: number; y: number }, hb: number) =>
     a.x < b.x + NODE_WIDTH && b.x < a.x + NODE_WIDTH && a.y < b.y + hb && b.y < a.y + ha;
 
-  test("no two steps overlap, and the steps in a column keep their order", () => {
+  test("no two nodes overlap, and the nodes in a column keep their order", () => {
     const shown = makeRoom(saved, heights, labels);
     const ids = Object.keys(shown);
     for (const a of ids) for (const b of ids) if (a < b) expect(overlap(shown[a], heights[a as keyof typeof heights], shown[b], heights[b as keyof typeof heights]), `${a} and ${b}`).toBe(false);
@@ -174,7 +174,7 @@ describe("making room for badges and labels", () => {
   test("auto-layout uses the real heights and the labels' widths", () => {
     const yaml = `kilnmark: pipeline/v1
 name: demo
-steps:
+nodes:
   - id: check
     type: gate
   - id: clean
@@ -197,11 +197,11 @@ steps:
 describe("a write's header", () => {
   const w = (settings: Record<string, string>) => ({ type: "write", settings });
   test("says file or table from its own settings", () => {
-    expect(stepLabel(w({ path: "out/x.csv" }), "Write to a table or file")).toBe("Write to a file");
-    expect(stepLabel(w({ table: "crm.x" }), "Write to a table or file")).toBe("Write to a table");
-    expect(stepLabel(w({ target: "demo/customers-clean.csv" }), "Write to a table or file")).toBe("Write to a file");
-    expect(stepLabel(w({ target: "crm.customers_clean" }), "Write to a table or file")).toBe("Write to a table");
-    expect(stepLabel(w({}), "Write to a table or file")).toBe("Write to a table or file");
-    expect(stepLabel({ type: "gate", settings: {} }, "Quality gate")).toBe("Quality gate");
+    expect(nodeLabel(w({ path: "out/x.csv" }), "Write to a table or file")).toBe("Write to a file");
+    expect(nodeLabel(w({ table: "crm.x" }), "Write to a table or file")).toBe("Write to a table");
+    expect(nodeLabel(w({ target: "demo/customers-clean.csv" }), "Write to a table or file")).toBe("Write to a file");
+    expect(nodeLabel(w({ target: "crm.customers_clean" }), "Write to a table or file")).toBe("Write to a table");
+    expect(nodeLabel(w({}), "Write to a table or file")).toBe("Write to a table or file");
+    expect(nodeLabel({ type: "gate", settings: {} }, "Quality gate")).toBe("Quality gate");
   });
 });

@@ -16,10 +16,10 @@ import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.Schema;
 
 import io.kilnmark.kiln.MetadataEvent;
-import io.kilnmark.kiln.Step;
-import io.kilnmark.kiln.StepContext;
-import io.kilnmark.kiln.StepException;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.Node;
+import io.kilnmark.kiln.NodeContext;
+import io.kilnmark.kiln.NodeException;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
@@ -106,13 +106,13 @@ public final class MemoryConnector implements Connector {
     }
 
     @Override
-    public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
+    public NodeSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
         long rows = source.setting("rows") == null ? 2500 : Long.parseLong(source.setting("rows"));
         if (read.rowLimit() > 0) {
             rows = Math.min(rows, read.rowLimit());
         }
         String token = source.secret() == null ? "none" : source.secret();
-        return new StepSpec("read-" + asset.path(), new People(rows, token), Map.of("asset-urn", read.assetUrn(),
+        return new NodeSpec("read-" + asset.path(), new People(rows, token), Map.of("asset-urn", read.assetUrn(),
             "token", token));
     }
 
@@ -141,7 +141,7 @@ public final class MemoryConnector implements Connector {
     static volatile Map<String, String> lastProfiling = Map.of();
 
     @Override
-    public Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+    public Node writer(SourceConfig source, WriteOptions write) throws ConnectorException {
         if (write.target().contains("refuse")) {
             throw new ConnectorException("Cannot write there with password " + source.secret());
         }
@@ -152,7 +152,7 @@ public final class MemoryConnector implements Connector {
     }
 
     /** Reads {@code rows} people in batches of 1,000. */
-    static final class People implements Step {
+    static final class People implements Node {
         private final long rows;
         private final String token;
         private long sent;
@@ -168,14 +168,14 @@ public final class MemoryConnector implements Connector {
         }
 
         @Override
-        public void init(StepContext context) throws StepException {
+        public void init(NodeContext context) throws NodeException {
             if (!token.equals(context.settings().get("token"))) {
-                throw new StepException("The reader was not given its own settings");
+                throw new NodeException("The reader was not given its own settings");
             }
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             int n = (int) Math.min(1000, rows - sent);
             if (n <= 0) {
                 context.metadata().emit(new MetadataEvent(context.setting("asset-urn"), MetadataEvent.Kind.ROW_COUNT,
@@ -197,7 +197,7 @@ public final class MemoryConnector implements Connector {
                 context.output().put(root);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StepException("interrupted", e);
+                throw new NodeException("interrupted", e);
             }
             return true;
         }
@@ -208,7 +208,7 @@ public final class MemoryConnector implements Connector {
      * scrubbed). On success it reports as the writers' contract says (docs/design/pipelines.md,
      * section 5, "What a write reports").
      */
-    static final class Counter implements Step {
+    static final class Counter implements Node {
         private final String urn;
         private final boolean fail;
         private final String secret;
@@ -235,22 +235,22 @@ public final class MemoryConnector implements Connector {
         }
 
         @Override
-        public void init(StepContext context) {
+        public void init(NodeContext context) {
             WRITTEN.put(urn, new AtomicLong());
         }
 
         @Override
-        public boolean process(StepContext context) throws StepException {
+        public boolean process(NodeContext context) throws NodeException {
             VectorSchemaRoot b;
             try {
                 b = context.input().take(context.allocator());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new StepException("interrupted", e);
+                throw new NodeException("interrupted", e);
             }
             if (b == null) {
                 if (fail) {
-                    throw new StepException("The target refused the rows; password " + secret);
+                    throw new NodeException("The target refused the rows; password " + secret);
                 }
                 report(context);
                 return false;
@@ -266,7 +266,7 @@ public final class MemoryConnector implements Connector {
             return true;
         }
 
-        private void report(StepContext context) {
+        private void report(NodeContext context) {
             long rows = WRITTEN.get(urn).get();
             Instant now = Instant.now();
             if (mode.equals("append") || mode.equals("upsert")) {

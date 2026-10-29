@@ -12,13 +12,13 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 
-import io.kilnmark.kiln.StepFactories;
+import io.kilnmark.kiln.NodeFactories;
 import io.kilnmark.kiln.connect.Connectors;
 
 /**
  * The demo pipelines in lab/pipelines check clean against the lab as lab/sources.csv registers it,
  * with the columns a scan of the lab finds. The lab is never shipped: this only keeps its demos
- * working as the steps change.
+ * working as the nodes change.
  */
 class LabPipelinesTest {
 
@@ -52,20 +52,20 @@ class LabPipelinesTest {
     @Test
     void everyDemoPipelineChecksWithoutProblems() throws Exception {
         FakeSources sources = labSources();
-        StepFactories steps = StepFactories.discover().register(new ReadStepFactory(sources))
-            .register(new WriteStepFactory(sources)).register(new GateStepFactory(sources));
+        NodeFactories nodes = NodeFactories.discover().register(new ReadNodeFactory(sources))
+            .register(new WriteNodeFactory(sources)).register(new GateNodeFactory(sources));
         List<Path> files;
         try (Stream<Path> list = Files.list(lab().resolve("pipelines"))) {
             files = list.filter(p -> p.toString().endsWith(".yaml")).sorted().toList();
         }
         assertFalse(files.isEmpty(), "lab/pipelines has the demo pipelines");
         for (Path file : files) {
-            PipelineCompilerPort.Compilation c = new KilnPipelineCompiler().check(Files.readString(file), steps);
+            PipelineCompilerPort.Compilation c = new KilnPipelineCompiler().check(Files.readString(file), nodes);
             assertEquals(List.of(), c.problems(), file.getFileName().toString());
             assertTrue(c.name().startsWith("demo-"), file + ": demo pipelines are named demo-...");
-            for (PipelineCompilerPort.StepOutline step : c.steps()) {
-                if (!"sink".equals(step.kind())) {
-                    assertTrue(step.columns().get("out") != null, file + ": the columns leaving " + step.id()
+            for (PipelineCompilerPort.NodeOutline node : c.nodes()) {
+                if (!"sink".equals(node.kind())) {
+                    assertTrue(node.columns().get("out") != null, file + ": the columns leaving " + node.id()
                         + " are known");
                 }
             }

@@ -26,7 +26,7 @@ import org.junit.jupiter.api.TestInstance;
 
 import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.RunResult;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.connect.SourceConfig;
@@ -93,9 +93,9 @@ abstract class MySqlFamilyWriteTest {
 
     Rows.Collected read(String table) throws Exception {
         Rows.Collected c = new Rows.Collected();
-        StepSpec reader = db.connector().reader(source, db.connector().asset(source, table),
+        NodeSpec reader = db.connector().reader(source, db.connector().asset(source, table),
             new Connector.ReadOptions("urn:kilnmark:warehouse:" + table, 0, 1000));
-        RunResult r = Rows.run(reader, new StepSpec("collect", Rows.collector(c), Map.of()), Rows.events());
+        RunResult r = Rows.run(reader, new NodeSpec("collect", Rows.collector(c), Map.of()), Rows.events());
         assertTrue(r.succeeded(), r.error());
         return c;
     }

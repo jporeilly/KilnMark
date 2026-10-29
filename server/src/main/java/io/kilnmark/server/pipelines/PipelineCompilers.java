@@ -5,7 +5,7 @@ import java.util.Optional;
 
 import io.kilnmark.graph.store.GraphStore;
 import io.kilnmark.graph.store.Records;
-import io.kilnmark.kiln.StepFactories;
+import io.kilnmark.kiln.NodeFactories;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.Connectors;
 import io.kilnmark.kiln.graph.GraphRunner;
@@ -16,13 +16,13 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Produces;
 
 /**
- * Where the pipeline engine meets the server: the step catalogue, the compiler and the graph
+ * Where the pipeline engine meets the server: the node catalogue, the compiler and the graph
  * runner, each produced here and nowhere else.
  *
  * <ul>
  *   <li>{@link #compiler()}: kiln-core's {@code PipelineCompiler}, through {@link KilnPipelineCompiler}.</li>
  *   <li>{@link #runner}: kiln-core's {@code KilnGraphRunner}, inside {@code kilnmark.pipelines.memory-limit-mb}.</li>
- *   <li>{@link #steps}: every {@code StepFactory} on the class path (kiln-steps' transforms arrive
+ *   <li>{@link #nodes}: every {@code NodeFactory} on the class path (kiln-nodes' transforms arrive
  *       through {@code ServiceLoader}) plus the server's {@code read} and {@code write}.</li>
  * </ul>
  */
@@ -109,18 +109,18 @@ public class PipelineCompilers {
                 java.util.Map<String, String> s = new java.util.LinkedHashMap<>(quality.profileSettings(source,
                     connector, asset, urn));
                 // Key-like columns keep their distinct-value sketch, by the scan's own rule.
-                s.put(io.kilnmark.kiln.plugins.profile.ProfileStep.SKETCH_FIELDS,
+                s.put(io.kilnmark.kiln.plugins.profile.ProfileNode.SKETCH_FIELDS,
                     io.kilnmark.server.relations.RelationshipService.sketchFields(asset));
                 return s;
             }
         };
     }
 
-    // Singleton: StepFactories is a final class from kiln-core, which a client proxy cannot wrap.
+    // Singleton: NodeFactories is a final class from kiln-core, which a client proxy cannot wrap.
     @Produces
     @jakarta.inject.Singleton
-    StepFactories steps(PipelineSources sources) {
-        return StepFactories.discover().register(new ReadStepFactory(sources)).register(new WriteStepFactory(sources))
-            .register(new GateStepFactory(sources));
+    NodeFactories nodes(PipelineSources sources) {
+        return NodeFactories.discover().register(new ReadNodeFactory(sources)).register(new WriteNodeFactory(sources))
+            .register(new GateNodeFactory(sources));
     }
 }

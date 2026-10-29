@@ -1,12 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { PipelineProblem, PipelineValidation, Source, StepType, StepTypeSetting } from "../../api";
-import { arrivingColumns, defaultText, problemSetting, shownSettings, stepSummary } from "./insight";
-import type { GraphStep } from "./model";
+import type { PipelineProblem, PipelineValidation, Source, NodeType, NodeTypeSetting } from "../../api";
+import { arrivingColumns, defaultText, problemSetting, shownSettings, nodeSummary } from "./insight";
+import type { GraphNode } from "./model";
 import { SettingControl, type ControlContext } from "./SettingControls";
 import { categoryOf, Palette } from "./Palette";
 
-const spec = (key: string, kind: string, extra: Partial<StepTypeSetting> = {}): StepTypeSetting => ({
+const spec = (key: string, kind: string, extra: Partial<NodeTypeSetting> = {}): NodeTypeSetting => ({
   key,
   label: key.replace(/_/g, " "),
   kind,
@@ -31,10 +31,10 @@ const ctx = (over: Partial<ControlContext> = {}): ControlContext => ({
   sources: SOURCES,
   writing: false,
   assets: ["crm.customers", "crm.orders"],
-  stepType: "filter",
+  nodeType: "filter",
   ...over,
 });
-const html = (s: StepTypeSetting, value: unknown, over: Partial<ControlContext> = {}, problems: string[] = []) =>
+const html = (s: NodeTypeSetting, value: unknown, over: Partial<ControlContext> = {}, problems: string[] = []) =>
   renderToStaticMarkup(
     <SettingControl spec={s} id="t" value={value as never} onChange={() => {}} readOnly={false} problems={problems} context={ctx(over)} />,
   );
@@ -96,25 +96,25 @@ describe("each setting kind gets its control, with help and default", () => {
     // Unknown columns: typed instead.
     expect(html(spec("key", "columns"), [], { columns: { main: null, lookup: null } })).toContain('aria-label="Column to add to key"');
     // A lookup's keep names the lookup side's columns.
-    expect(html(spec("keep", "columns"), [], { side: "lookup", stepType: "lookup" })).toMatch(/<option value="id">id \(int64\)<\/option>/);
+    expect(html(spec("keep", "columns"), [], { side: "lookup", nodeType: "lookup" })).toMatch(/<option value="id">id \(int64\)<\/option>/);
   });
 
   test("COLUMN_MAP: pairs; a lookup's keys pick from main and lookup columns", () => {
-    const out = html(spec("on", "column_map"), { customer_id: "id" }, { stepType: "lookup" });
+    const out = html(spec("on", "column_map"), { customer_id: "id" }, { nodeType: "lookup" });
     expect(out).toContain("Main column 1");
     expect(out).toContain("Lookup column 1");
     expect(out).toMatch(/<option value="id" selected="">id \(int64\)<\/option>/);
-    const rename = html(spec("rename", "column_map"), { status: "state" }, { stepType: "select" });
+    const rename = html(spec("rename", "column_map"), { status: "state" }, { nodeType: "select" });
     expect(rename).toContain("New name 1");
     expect(rename).toContain('value="state"');
   });
 
   test("EXPRESSIONS and CONDITIONS: names and expressions in order", () => {
-    const out = html(spec("columns", "expressions"), { full_name: "a || b", email: "lower(email)" }, { stepType: "compute" });
+    const out = html(spec("columns", "expressions"), { full_name: "a || b", email: "lower(email)" }, { nodeType: "compute" });
     expect(out.indexOf("full_name")).toBeLessThan(out.indexOf("email"));
     expect(out).toContain("Expression 2");
     expect(out).toContain("Add a column");
-    const routes = html(spec("routes", "conditions"), { large: "amount > 1000" }, { stepType: "route" });
+    const routes = html(spec("routes", "conditions"), { large: "amount > 1000" }, { nodeType: "route" });
     expect(routes).toContain("Port 1");
     expect(routes).toContain("Condition 1");
     expect(routes).toContain("Add a route");
@@ -129,39 +129,39 @@ describe("each setting kind gets its control, with help and default", () => {
   });
 });
 
-const step = (over: Partial<GraphStep>): GraphStep => ({ id: "s", type: "filter", settings: {}, texts: {}, inputs: [], line: 1, keyLines: {}, ...over });
+const node = (over: Partial<GraphNode>): GraphNode => ({ id: "s", type: "filter", settings: {}, texts: {}, inputs: [], line: 1, keyLines: {}, ...over });
 
-describe("what the canvas says about steps", () => {
+describe("what the canvas says about nodes", () => {
   test("summaries", () => {
-    expect(stepSummary(step({ type: "read", settings: { source: "sales-db", asset: "crm.customers" } }))).toBe("sales-db · crm.customers");
-    expect(stepSummary(step({ type: "filter", settings: { condition: "a > 1" } }))).toBe("a > 1");
-    expect(stepSummary(step({ type: "compute", settings: { columns: { x: "1", y: "2" } } }))).toBe("x, y");
-    expect(stepSummary(step({ type: "lookup", settings: { on: { a: "b" } } }))).toBe("on a = b");
-    expect(stepSummary(step({ type: "write", settings: { source: "w", path: "x.csv", mode: "replace" } }))).toBe("w · x.csv · replace");
-    expect(stepSummary(step({ type: "read", settings: { source: "db", asset: 2024.1 }, texts: { asset: "2024.10" } }))).toBe("db · 2024.10");
+    expect(nodeSummary(node({ type: "read", settings: { source: "sales-db", asset: "crm.customers" } }))).toBe("sales-db · crm.customers");
+    expect(nodeSummary(node({ type: "filter", settings: { condition: "a > 1" } }))).toBe("a > 1");
+    expect(nodeSummary(node({ type: "compute", settings: { columns: { x: "1", y: "2" } } }))).toBe("x, y");
+    expect(nodeSummary(node({ type: "lookup", settings: { on: { a: "b" } } }))).toBe("on a = b");
+    expect(nodeSummary(node({ type: "write", settings: { source: "w", path: "x.csv", mode: "replace" } }))).toBe("w · x.csv · replace");
+    expect(nodeSummary(node({ type: "read", settings: { source: "db", asset: 2024.1 }, texts: { asset: "2024.10" } }))).toBe("db · 2024.10");
   });
 
   test("problems belong to their setting", () => {
-    const s = step({ id: "f", settings: { condition: "x" }, keyLines: { condition: 9, mode: 10 } });
-    const p = (message: string, line = 0): PipelineProblem => ({ line, column: 1, step: "f", message });
-    expect(problemSetting(p("Step f: condition: unknown column 'x' at 1"), s)).toBe("condition");
-    expect(problemSetting(p("Setting 'rows' of step f must be a number"), s)).toBe("rows");
-    expect(problemSetting(p("Step f (filter) needs the setting 'condition' (Condition)"), s)).toBe("condition");
-    expect(problemSetting(p("Step f (filter) has no setting 'colour': its settings are condition"), s)).toBe("colour");
+    const s = node({ id: "f", settings: { condition: "x" }, keyLines: { condition: 9, mode: 10 } });
+    const p = (message: string, line = 0): PipelineProblem => ({ line, column: 1, node: "f", message });
+    expect(problemSetting(p("Node f: condition: unknown column 'x' at 1"), s)).toBe("condition");
+    expect(problemSetting(p("Setting 'rows' of node f must be a number"), s)).toBe("rows");
+    expect(problemSetting(p("Node f (filter) needs the setting 'condition' (Condition)"), s)).toBe("condition");
+    expect(problemSetting(p("Node f (filter) has no setting 'colour': its settings are condition"), s)).toBe("colour");
     expect(problemSetting(p("Something on line ten", 10), s)).toBe("mode");
-    expect(problemSetting(p("Step f (filter) needs an input on in"), s)).toBeNull();
+    expect(problemSetting(p("Node f (filter) needs an input on in"), s)).toBeNull();
   });
 
   test("columns arriving at a port", () => {
     const check = {
-      steps: [
+      nodes: [
         { id: "a", type: "read", kind: "source", line: 1, inputs: [], outputs: ["out"], columns: { out: COLS } },
         { id: "b", type: "read", kind: "source", line: 2, inputs: [], outputs: ["out"], columns: { out: null } },
         { id: "j", type: "lookup", kind: "transform", line: 3, inputs: ["main", "lookup"], outputs: ["out"], columns: {} },
       ],
       edges: [
-        { fromStep: "a", fromPort: "out", toStep: "j", toPort: "main" },
-        { fromStep: "b", fromPort: "out", toStep: "j", toPort: "lookup" },
+        { fromNode: "a", fromPort: "out", toNode: "j", toPort: "main" },
+        { fromNode: "b", fromPort: "out", toNode: "j", toPort: "lookup" },
       ],
     } as unknown as PipelineValidation;
     expect(arrivingColumns(check, "j")?.map((c) => c.name)).toEqual(["customer_id", "status", "first name"]);
@@ -175,12 +175,12 @@ describe("what the canvas says about steps", () => {
       kind: "sink",
       settings: [spec("source", "source"), spec("target", "asset"), spec("table", "text"), spec("commit_every", "number"), spec("overwrite", "boolean")],
       writerSettings: { postgresql: ["commit_every"], s3: ["overwrite"] },
-    } as unknown as StepType;
-    const keys = (kind: string | null, settings = {}) => shownSettings(write, step({ type: "write", settings }), kind).specs.map((s) => s.key);
+    } as unknown as NodeType;
+    const keys = (kind: string | null, settings = {}) => shownSettings(write, node({ type: "write", settings }), kind).specs.map((s) => s.key);
     expect(keys("s3")).toEqual(["source", "target", "overwrite"]);
     expect(keys("postgresql")).toEqual(["source", "target", "commit_every"]);
     expect(keys(null)).toEqual(["source", "target"]);
-    expect(shownSettings(write, step({ type: "write" }), null).writerHidden).toBe(2);
+    expect(shownSettings(write, node({ type: "write" }), null).writerHidden).toBe(2);
     // A setting the YAML has is always shown, so it can be seen and removed.
     expect(keys("s3", { table: "a.b", commit_every: 5 })).toEqual(["source", "target", "table", "commit_every", "overwrite"]);
   });
@@ -192,12 +192,12 @@ describe("what the canvas says about steps", () => {
   });
 });
 
-describe("the step list", () => {
+describe("the node list", () => {
   const t = (type: string, kind: string, category?: string) =>
-    ({ type, kind, label: type, help: "", inputs: [], manyInputs: [], outputs: [], settings: [], category }) as unknown as StepType;
+    ({ type, kind, label: type, help: "", inputs: [], manyInputs: [], outputs: [], settings: [], category }) as unknown as NodeType;
   const types = [t("read", "source", "Read"), t("filter", "transform", "Filter and route"), t("route", "transform", "Filter and route"), t("compute", "transform", "Transform"), t("mystery", "transform")];
 
-  test("folders by category, in order, with counts; open folders show their steps", () => {
+  test("folders by category, in order, with counts; open folders show their nodes", () => {
     const out = renderToStaticMarkup(
       <Palette types={types} usedTypes={[]} readOnly={false} expanded onExpand={() => {}} onAdd={() => {}} searchRef={{ current: null }} hint="" />,
     );
@@ -206,7 +206,7 @@ describe("the step list", () => {
     expect(out).toContain('aria-expanded="false"');
     expect(out).toMatch(/<ul id="cv-folder-read" class="cv-type-list" hidden="">/);
     // The rail: a button per folder, named with its count, pointing at its folder in the docked list.
-    expect(out).toContain('aria-label="Filter and route (2): show in the step list"');
+    expect(out).toContain('aria-label="Filter and route (2): show in the node list"');
     expect(out).toContain('aria-controls="cv-folder-filter-and-route"');
     expect(out).not.toContain("cv-flyout");
   });

@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetFilter;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
@@ -275,7 +275,7 @@ public abstract class FileSourceConnector implements Connector {
     }
 
     @Override
-    public StepSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
+    public NodeSpec reader(SourceConfig source, AssetInfo asset, ReadOptions read) {
         if (FileInspector.KIND_DOCUMENT.equals(asset.kind())) {
             Map<String, String> d = new HashMap<>();
             d.put("path", file(asset));
@@ -293,7 +293,7 @@ public abstract class FileSourceConnector implements Connector {
                 d.put("note", "Its sheets could not be listed this time (" + asset.hints().get("sheets-problem")
                     + "); the sheets shown are from an earlier scan");
             }
-            return new StepSpec("read", new DocumentInput(() -> open(source)), d);
+            return new NodeSpec("read", new DocumentInput(() -> open(source)), d);
         }
         if (FileInspector.KIND_SHEET.equals(asset.kind())) {
             Map<String, String> d = new HashMap<>();
@@ -304,7 +304,7 @@ public abstract class FileSourceConnector implements Connector {
             d.put("asset-urn", read.assetUrn());
             d.put("row-limit", Long.toString(read.rowLimit()));
             d.put("batch-size", Integer.toString(read.batchSize()));
-            return new StepSpec("read", new SheetInput(() -> open(source),
+            return new NodeSpec("read", new SheetInput(() -> open(source),
                 asset.fields().stream().map(FileColumn::of).toList()), d);
         }
         Map<String, String> s = new HashMap<>();
@@ -325,7 +325,7 @@ public abstract class FileSourceConnector implements Connector {
         s.put("row-limit", Long.toString(read.rowLimit()));
         s.put("batch-size", Integer.toString(read.batchSize()));
         List<FileColumn> columns = asset.fields().stream().map(FileColumn::of).toList();
-        return new StepSpec("read", new FileInput(() -> open(source), columns), s);
+        return new NodeSpec("read", new FileInput(() -> open(source), columns), s);
     }
 
     /**
@@ -363,7 +363,7 @@ public abstract class FileSourceConnector implements Connector {
     }
 
     /**
-     * A step writing one CSV or Parquet file at {@code write.target()}, a path inside the source
+     * A node writing one CSV or Parquet file at {@code write.target()}, a path inside the source
      * (below an S3 source's prefix); see {@link FileTarget} for what is refused. Mode {@code create}
      * (or none) refuses an existing file unless the setting {@code overwrite} is true;
      * {@code replace} replaces it. Further settings: {@code overwrite}, {@code delimiter} (CSV),
@@ -372,7 +372,7 @@ public abstract class FileSourceConnector implements Connector {
      * {@code keep_values}.
      */
     @Override
-    public io.kilnmark.kiln.Step writer(SourceConfig source, WriteOptions write) throws ConnectorException {
+    public io.kilnmark.kiln.Node writer(SourceConfig source, WriteOptions write) throws ConnectorException {
         checkSettings(source);
         String mode = write.mode() == null || write.mode().isBlank() ? "create"
             : write.mode().strip().toLowerCase(java.util.Locale.ROOT);
@@ -410,7 +410,7 @@ public abstract class FileSourceConnector implements Connector {
     }
 
     /**
-     * The delimiter a CSV file is written with: the step's, else the source's own, else a comma.
+     * The delimiter a CSV file is written with: the node's, else the source's own, else a comma.
      * A CSV file must be one the source reads back as written, so refused: a delimiter other than
      * the source's, a source whose CSV files have no header row, and a source reading another
      * encoding than UTF-8, the one files are written in.
@@ -419,13 +419,13 @@ public abstract class FileSourceConnector implements Connector {
                                io.kilnmark.kiln.plugins.write.WriteSettings settings)
         throws ConnectorException {
         String own = source.setting("delimiter");
-        String step = settings.text("delimiter", null);
+        String node = settings.text("delimiter", null);
         if (!target.format().equals("csv")) {
-            return step;
+            return node;
         }
-        if (own != null && step != null && CsvEncoder.delimiter(own) != CsvEncoder.delimiter(step)) {
+        if (own != null && node != null && CsvEncoder.delimiter(own) != CsvEncoder.delimiter(node)) {
             throw new ConnectorException("delimiter: " + source.name() + " reads files delimited by '" + own
-                + "', so a file written with '" + step + "' would be read wrongly; leave delimiter out to use the "
+                + "', so a file written with '" + node + "' would be read wrongly; leave delimiter out to use the "
                 + "source's");
         }
         if ("false".equalsIgnoreCase(source.setting("header"))) {
@@ -438,7 +438,7 @@ public abstract class FileSourceConnector implements Connector {
             throw new ConnectorException("path: " + source.name() + " reads text files as " + encoding + ", and "
                 + "Kilnmark writes CSV in UTF-8; write Parquet, or to a source reading UTF-8");
         }
-        return step != null ? step : own;
+        return node != null ? node : own;
     }
 
     /** Where the store puts a written file: below an S3 source's prefix, as a folder or key path. */

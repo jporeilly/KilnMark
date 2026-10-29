@@ -25,7 +25,7 @@ import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.CatalogInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.SourceConfig;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.plugins.write.Rows;
 
@@ -150,9 +150,9 @@ class OracleLabSeedTest {
         assertEquals("decimal", kinds.get("WEIGHT_KG"));
         assertEquals("boolean", kinds.get("SIGNED_FOR"));
         Rows.Collected back = new Rows.Collected();
-        StepSpec read = db.connector().reader(reader, shipments,
+        NodeSpec read = db.connector().reader(reader, shipments,
             new Connector.ReadOptions("urn:kilnmark:lab:FREIGHT.SHIPMENTS", 0, 1000));
-        RunResult r = Rows.run(read, new StepSpec("collect", Rows.collector(back), Map.of()), Rows.events());
+        RunResult r = Rows.run(read, new NodeSpec("collect", Rows.collector(back), Map.of()), Rows.events());
         assertTrue(r.succeeded(), r.error());
         assertEquals(5000, back.rows.size());
         int weight = back.columns.stream().map(c -> c.name()).toList().indexOf("WEIGHT_KG");

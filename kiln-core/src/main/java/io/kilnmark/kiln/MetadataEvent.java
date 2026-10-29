@@ -5,18 +5,18 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * A fact a step observed about an asset, for example a schema, a row count or a
+ * A fact a node observed about an asset, for example a schema, a row count or a
  * field-to-field lineage link.
  *
  * @param assetUrn   the asset the fact is about, as a Kilnmark URN
  * @param kind       what kind of fact this is
  * @param attributes the fact's details
- * @param observedAt when the step observed it
+ * @param observedAt when the node observed it
  */
 public record MetadataEvent(String assetUrn, Kind kind, Map<String, String> attributes, Instant observedAt) {
 
     /**
-     * The kinds of fact a step can report. {@code DOCUMENT} is a document's profile (content type,
+     * The kinds of fact a node can report. {@code DOCUMENT} is a document's profile (content type,
      * pages, words, language, title, author, ...), reported once when its text has been read.
      * {@code SAMPLE} carries real values (sample rows and example values per value shape); whoever
      * stores it applies the source's controls on samples.

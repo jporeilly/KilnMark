@@ -1,4 +1,4 @@
-/* Pipelines: the list, the editor, the graph of steps and runs. Colours from tokens.css only. */
+/* Pipelines: the list, the editor, the graph of nodes and runs. Colours from tokens.css only. */
 
 .pl-head {
   display: flex;
@@ -210,14 +210,14 @@ button.pl-problem:hover {
   gap: 16px;
 }
 
-.pl-quality-step {
+.pl-quality-node {
   min-width: 0;
   overflow-wrap: anywhere;
   border-top: 1px solid var(--km-border);
   padding-top: 12px;
 }
 
-.pl-quality-step:first-child {
+.pl-quality-node:first-child {
   border-top: 0;
   padding-top: 0;
 }
@@ -258,12 +258,12 @@ button.pl-problem:hover {
   padding-left: 1.2em;
 }
 
-/* The graph of steps: boxes with ports; the columns show on hover and focus. */
+/* The graph of nodes: boxes with ports; the columns show on hover and focus. */
 .pl-frame {
   height: 420px;
 }
 
-.pl-step {
+.pl-node {
   width: 230px;
   background: var(--km-surface);
   color: var(--km-ink);
@@ -274,35 +274,35 @@ button.pl-problem:hover {
   position: relative;
 }
 
-.pl-step.pl-kind-source {
+.pl-node.pl-kind-source {
   border-top-color: var(--km-link);
 }
 
-.pl-step.pl-kind-sink {
+.pl-node.pl-kind-sink {
   border-top-color: var(--km-good);
 }
 
-.pl-step.pl-kind-gate {
+.pl-node.pl-kind-gate {
   border-top-color: var(--km-warn);
 }
 
-.pl-step.has-problem {
+.pl-node.has-problem {
   border-color: var(--km-bad);
   border-style: dashed;
 }
 
-.pl-step-head {
+.pl-node-head {
   display: grid;
   padding: 6px 10px;
   border-bottom: 1px solid var(--km-border);
 }
 
-.pl-step-id {
+.pl-node-id {
   font-weight: 700;
   font-size: 13px;
 }
 
-.pl-step-type {
+.pl-node-type {
   color: var(--km-muted);
 }
 
@@ -337,7 +337,7 @@ button.pl-problem:hover {
   border: 1px solid var(--km-surface);
 }
 
-.pl-step-columns {
+.pl-node-columns {
   display: none;
   position: absolute;
   left: 0;
@@ -352,9 +352,9 @@ button.pl-problem:hover {
   border-radius: 6px;
 }
 
-.react-flow__node:hover .pl-step-columns,
-.react-flow__node:focus .pl-step-columns,
-.react-flow__node:focus-visible .pl-step-columns {
+.react-flow__node:hover .pl-node-columns,
+.react-flow__node:focus .pl-node-columns,
+.react-flow__node:focus-visible .pl-node-columns {
   display: block;
 }
 
@@ -363,7 +363,7 @@ button.pl-problem:hover {
 }
 
 @media (forced-colors: active) {
-  .pl-step,
+  .pl-node,
   .pl-problem,
   .pl-editor {
     border-color: CanvasText;
@@ -444,7 +444,7 @@ main:has(.pl-wide) {
   cursor: pointer;
 }
 
-/* ---- A run's timeline (RunTimeline): one bar per step, on a shared time axis ---- */
+/* ---- A run's timeline (RunTimeline): one bar per node, on a shared time axis ---- */
 
 .pl-tl-chart {
   --pl-tl-name: 11rem;
@@ -476,7 +476,7 @@ main:has(.pl-wide) {
   min-width: 0;
 }
 
-.pl-tl-step {
+.pl-tl-node {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -609,7 +609,7 @@ main:has(.pl-wide) {
   margin-top: 12px;
 }
 
-/* A phone: the step's name sits above its bar. */
+/* A phone: the node's name sits above its bar. */
 @media (max-width: 640px) {
   .pl-tl-axis,
   .pl-tl-row {
@@ -746,7 +746,7 @@ main:has(.pl-wide) {
   background-image: repeating-linear-gradient(90deg, transparent 0 10px, rgb(255 255 255 / 0.35) 10px 12px);
 }
 
-.pl-tl-row.is-critical .pl-tl-step {
+.pl-tl-row.is-critical .pl-tl-node {
   font-weight: 700;
   text-decoration: underline dashed;
   text-underline-offset: 3px;
@@ -778,7 +778,7 @@ main:has(.pl-wide) {
   padding: 0 0 0 4px;
 }
 
-/* ---- Where each step spent its time (RunTimeSpent): a 100% bar per step, each part its own pattern ---- */
+/* ---- Where each node spent its time (RunTimeSpent): a 100% bar per node, each part its own pattern ---- */
 
 .pl-ts-limit {
   margin: 4px 0 12px;
@@ -862,7 +862,7 @@ main:has(.pl-wide) {
   border-radius: 2px;
 }
 
-/* ---- Rows a second through the run (RunRates): a line per step, a Held up band under it ---- */
+/* ---- Rows a second through the run (RunRates): a line per node, a Held up band under it ---- */
 
 .pl-rt-axis,
 .pl-rt-row {

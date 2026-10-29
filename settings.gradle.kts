@@ -13,7 +13,7 @@ plugins {
 
 rootProject.name = "kilnmark"
 
-include("kiln-core", "kiln-plugins", "kiln-steps", "graph", "server")
+include("kiln-core", "kiln-plugins", "kiln-nodes", "graph", "server")
 
 // Spikes: throwaway experiments, built only on request (./gradlew -Pspikes ...). Never shipped.
 if (providers.gradleProperty("spikes").isPresent) {

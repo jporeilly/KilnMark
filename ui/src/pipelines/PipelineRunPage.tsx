@@ -7,8 +7,8 @@ import {
   type AccessRole,
   rating,
   type PipelineRunDetail,
-  type PipelineStepQuality,
-  type PipelineStepRun,
+  type PipelineNodeQuality,
+  type PipelineNodeRun,
 } from "../api";
 import { Meter, StatusChip, type FillTone, type Tone } from "../components/ui";
 import {
@@ -38,7 +38,7 @@ const LIVE_STATE: Record<string, string> = {
   ended: "Ended",
 };
 
-const OUTCOME: Record<NonNullable<PipelineStepRun["outcome"]>, string> = {
+const OUTCOME: Record<NonNullable<PipelineNodeRun["outcome"]>, string> = {
   finished: "Finished",
   ended_early: "Ended early",
   stopped: "Stopped by the engine",
@@ -73,7 +73,7 @@ function ScoreChip({ score }: { score: number }) {
  * from the catalogue's metadata against what the run measured. The gap says where the metadata,
  * or the pipeline, needs attention.
  */
-function PredictedBeside({ q }: { q: PipelineStepQuality }) {
+function PredictedBeside({ q }: { q: PipelineNodeQuality }) {
   const rows = dimensionRows(q.measured, q.predicted);
   const gap = gapWords(q.measured, q.predicted);
   const unknown = q.prediction?.unknown ?? [];
@@ -82,7 +82,7 @@ function PredictedBeside({ q }: { q: PipelineStepQuality }) {
     <div className="pl-predicted">
       {gap && <p className="small pl-gap">{gap}</p>}
       {rows.length > 0 && (
-        <div className="table-scroll" role="region" aria-label={`Measured and predicted quality of ${q.step}`} tabIndex={0}>
+        <div className="table-scroll" role="region" aria-label={`Measured and predicted quality of ${q.node}`} tabIndex={0}>
           <table className="small pl-predicted-table">
             <thead>
               <tr>
@@ -140,13 +140,13 @@ function PredictedBeside({ q }: { q: PipelineStepQuality }) {
 }
 
 /** One write's or gate's measured quality: its score, each dimension and, for a gate, each rule. */
-function StepQuality({ q }: { q: PipelineStepQuality }) {
+function NodeQuality({ q }: { q: PipelineNodeQuality }) {
   const g = q.gate;
-  const h = `q-${q.step}`;
+  const h = `q-${q.node}`;
   return (
-    <li className="pl-quality-step" aria-labelledby={h}>
+    <li className="pl-quality-node" aria-labelledby={h}>
       <h3 id={h} className="pl-quality-head">
-        <span className="mono">{q.step}</span>
+        <span className="mono">{q.node}</span>
         <span className="small muted">{q.role === "gate" ? "Quality gate" : "Output"}</span>
         {q.measured ? <ScoreChip score={q.measured.overall} /> : <StatusChip tone="neutral">Not measured</StatusChip>}
         {q.predicted ? (
@@ -199,7 +199,7 @@ function StepQuality({ q }: { q: PipelineStepQuality }) {
         </ul>
       )}
       {g && g.rules.length > 0 && (
-        <div className="table-scroll" role="region" aria-label={`Rules checked by ${q.step}`} tabIndex={0}>
+        <div className="table-scroll" role="region" aria-label={`Rules checked by ${q.node}`} tabIndex={0}>
           <table className="small">
             <thead>
               <tr>
@@ -240,8 +240,8 @@ function StepQuality({ q }: { q: PipelineStepQuality }) {
 }
 
 /**
- * One pipeline run: its status and timings, a timeline of its steps, each step's rows in and out per
- * port, memory, time and error (while it runs, each step's rows so far and rate, and the step holding
+ * One pipeline run: its status and timings, a timeline of its nodes, each node's rows in and out per
+ * port, memory, time and error (while it runs, each node's rows so far and rate, and the node holding
  * it back), its log, what its writes wrote (linked to the catalogue) and the lineage recorded. Looks
  * again every two seconds until the run has finished, and says when its status changes.
  */
@@ -311,8 +311,8 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
   const workerEnd = detail.progress?.workerFinishedAt ? Date.parse(detail.progress.workerFinishedAt) : null;
   const runMs = origin != null && workerEnd != null ? Math.max(1, workerEnd - origin) : null;
   const clock = { fetchedAt };
-  const live = unfinished && detail.steps.length === 0 ? (detail.progress?.steps ?? []) : [];
-  const stepNames = detail.steps.length > 0 ? detail.steps.map((s) => s.step) : (detail.progress?.steps.map((s) => s.step) ?? []);
+  const live = unfinished && detail.nodes.length === 0 ? (detail.progress?.nodes ?? []) : [];
+  const nodeNames = detail.nodes.length > 0 ? detail.nodes.map((s) => s.node) : (detail.progress?.nodes.map((s) => s.node) ?? []);
   return (
     <>
       <p className="small">
@@ -384,7 +384,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
       </section>
 
       <section aria-labelledby="spent-h" className="panel">
-        <h2 id="spent-h">Where each step spent its time</h2>
+        <h2 id="spent-h">Where each node spent its time</h2>
         <RunTimeSpent detail={detail} clock={clock} />
       </section>
 
@@ -393,16 +393,16 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
         <RunRates detail={detail} clock={clock} tick={tick} />
       </section>
 
-      <section aria-labelledby="steps-h" className="panel">
-        <h2 id="steps-h">Steps</h2>
+      <section aria-labelledby="nodes-h" className="panel">
+        <h2 id="nodes-h">Nodes</h2>
         {live.length > 0 ? (
           <>
-            <p className="small muted">So far; the full record of each step is kept when the run ends.</p>
-            <div className="table-scroll" role="region" aria-label="Steps of the run so far" tabIndex={0}>
+            <p className="small muted">So far; the full record of each node is kept when the run ends.</p>
+            <div className="table-scroll" role="region" aria-label="Nodes of the run so far" tabIndex={0}>
               <table>
                 <thead>
                   <tr>
-                    <th scope="col">Step</th>
+                    <th scope="col">Node</th>
                     <th scope="col">Now</th>
                     <th scope="col">Rows in</th>
                     <th scope="col">Rows out</th>
@@ -411,12 +411,12 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
                 </thead>
                 <tbody>
                   {live.map((s) => (
-                    <tr key={s.step}>
+                    <tr key={s.node}>
                       <th scope="row">
-                        <span className="mono">{s.step}</span>
+                        <span className="mono">{s.node}</span>
                       </th>
                       <td>
-                        {detail.progress?.slowest === s.step ? (
+                        {detail.progress?.slowest === s.node ? (
                           <StatusChip tone="orange" kind="slowest">
                             Slowest
                           </StatusChip>
@@ -433,14 +433,14 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
               </table>
             </div>
           </>
-        ) : detail.steps.length === 0 ? (
-          <p className="muted">{unfinished ? "The steps are recorded when the run ends." : "No steps were recorded."}</p>
+        ) : detail.nodes.length === 0 ? (
+          <p className="muted">{unfinished ? "The nodes are recorded when the run ends." : "No nodes were recorded."}</p>
         ) : (
-          <div className="table-scroll" role="region" aria-label="Steps of the run" tabIndex={0}>
+          <div className="table-scroll" role="region" aria-label="Nodes of the run" tabIndex={0}>
             <table>
               <thead>
                 <tr>
-                  <th scope="col">Step</th>
+                  <th scope="col">Node</th>
                   <th scope="col">How it ended</th>
                   <th scope="col">Rows in</th>
                   <th scope="col">Rows out</th>
@@ -451,10 +451,10 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
                 </tr>
               </thead>
               <tbody>
-                {detail.steps.map((s) => (
-                  <tr key={s.step}>
+                {detail.nodes.map((s) => (
+                  <tr key={s.node}>
                     <th scope="row">
-                      <span className="mono">{s.step}</span>
+                      <span className="mono">{s.node}</span>
                       <div className="small muted">{s.type}</div>
                     </th>
                     <td>
@@ -502,7 +502,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
 
       <section aria-labelledby="log-h" className="panel">
         <h2 id="log-h">Log</h2>
-        <RunLogPanel runId={r.id} steps={stepNames} origin={origin} tick={tick} final={!unfinished} />
+        <RunLogPanel runId={r.id} nodes={nodeNames} origin={origin} tick={tick} final={!unfinished} />
       </section>
 
       {(detail.quality?.length ?? 0) > 0 && (
@@ -515,7 +515,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
           </p>
           <ul className="pl-quality">
             {detail.quality!.map((q) => (
-              <StepQuality key={q.step} q={q} />
+              <NodeQuality key={q.node} q={q} />
             ))}
           </ul>
         </section>
@@ -528,7 +528,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
         ) : (
           <ul className="pl-written">
             {detail.written.map((w) => (
-              <li key={w.step}>
+              <li key={w.node}>
                 {w.registered ? (
                   <a href={href.asset(w.urn)} className="mono">
                     {w.target}
@@ -536,7 +536,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
                 ) : (
                   <span className="mono">{w.target}</span>
                 )}{" "}
-                in {w.source} ({w.mode}), by step <span className="mono">{w.step}</span>: {formatNumber(w.rows)} rows.
+                in {w.source} ({w.mode}), by node <span className="mono">{w.node}</span>: {formatNumber(w.rows)} rows.
                 {!w.registered && <span className="muted"> Not in the catalogue.</span>}
               </li>
             ))}

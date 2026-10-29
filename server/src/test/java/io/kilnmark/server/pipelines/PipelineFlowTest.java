@@ -26,8 +26,8 @@ import io.restassured.path.json.JsonPath;
 import io.restassured.specification.RequestSpecification;
 
 /**
- * Pipelines end to end on PostgreSQL: allow_writing, the step catalogue, validation, saving
- * versions with If-Match, runs on a worker with kiln-core's graph runner, per-step records, written
+ * Pipelines end to end on PostgreSQL: allow_writing, the node catalogue, validation, saving
+ * versions with If-Match, runs on a worker with kiln-core's graph runner, per-node records, written
  * assets in the catalogue with lineage, cancelling, scrubbed errors and roles. Sources are the
  * in-memory test connector, so nothing outside the test is written.
  */
@@ -44,7 +44,7 @@ class PipelineFlowTest {
         kilnmark: pipeline/v1
         name: people-copy
         description: Synthetic people, copied.
-        steps:
+        nodes:
           - id: people
             type: read
             source: mem-src
@@ -138,40 +138,40 @@ class PipelineFlowTest {
 
     @Test
     @Order(2)
-    void theStepCatalogueListsTheServersSteps() {
-        JsonPath steps = as(viewer).get("/api/v1/steps").then().statusCode(200).extract().jsonPath();
-        assertTrue(steps.getList("type").containsAll(List.of("read", "write")), steps.prettify());
-        assertEquals("source", steps.getString("find { it.type == 'read' }.kind"));
-        assertEquals(List.of("source", "asset", "row_limit"), steps.getList("find { it.type == 'read' }.settings.key"));
+    void theNodeCatalogueListsTheServersNodes() {
+        JsonPath nodes = as(viewer).get("/api/v1/node-types").then().statusCode(200).extract().jsonPath();
+        assertTrue(nodes.getList("type").containsAll(List.of("read", "write")), nodes.prettify());
+        assertEquals("source", nodes.getString("find { it.type == 'read' }.kind"));
+        assertEquals(List.of("source", "asset", "row_limit"), nodes.getList("find { it.type == 'read' }.settings.key"));
         assertEquals(List.of("create", "append", "replace", "upsert"),
-            steps.getList("find { it.type == 'write' }.settings.find { it.key == 'mode' }.choices"));
-        // The writer settings each kind of source takes, for the canvas; other steps have none.
+            nodes.getList("find { it.type == 'write' }.settings.find { it.key == 'mode' }.choices"));
+        // The writer settings each kind of source takes, for the canvas; other nodes have none.
         assertEquals(List.of("fail", "break_profile", "delimiter"),
-            steps.getList("find { it.type == 'write' }.writerSettings.'" + MemoryConnector.KIND + "'"));
+            nodes.getList("find { it.type == 'write' }.writerSettings.'" + MemoryConnector.KIND + "'"));
         // Each type's palette folder.
-        assertEquals("Read", steps.getString("find { it.type == 'read' }.category"));
-        assertEquals("Write", steps.getString("find { it.type == 'write' }.category"));
-        assertEquals("Filter and route", steps.getString("find { it.type == 'filter' }.category"));
-        assertEquals("Combine", steps.getString("find { it.type == 'union' }.category"));
-        assertEquals("Quality", steps.getString("find { it.type == 'gate' }.category"));
-        assertEquals("gate", steps.getString("find { it.type == 'gate' }.kind"));
-        assertEquals(List.of("out", "quarantine"), steps.getList("find { it.type == 'gate' }.outputs"));
-        assertEquals("rules", steps.getString("find { it.type == 'gate' }.settings.find { it.key == 'rules' }.kind"));
-        Object readWriterSettings = steps.get("find { it.type == 'read' }.writerSettings");
+        assertEquals("Read", nodes.getString("find { it.type == 'read' }.category"));
+        assertEquals("Write", nodes.getString("find { it.type == 'write' }.category"));
+        assertEquals("Filter and route", nodes.getString("find { it.type == 'filter' }.category"));
+        assertEquals("Combine", nodes.getString("find { it.type == 'union' }.category"));
+        assertEquals("Quality", nodes.getString("find { it.type == 'gate' }.category"));
+        assertEquals("gate", nodes.getString("find { it.type == 'gate' }.kind"));
+        assertEquals(List.of("out", "quarantine"), nodes.getList("find { it.type == 'gate' }.outputs"));
+        assertEquals("rules", nodes.getString("find { it.type == 'gate' }.settings.find { it.key == 'rules' }.kind"));
+        Object readWriterSettings = nodes.get("find { it.type == 'read' }.writerSettings");
         assertEquals(null, readWriterSettings);
     }
 
     @Test
     @Order(3)
-    void validationGivesProblemsByLineAndEachStepsColumns() {
+    void validationGivesProblemsByLineAndEachNodesColumns() {
         as(viewer).body(Map.of("yaml", YAML)).post("/api/v1/pipelines/validate").then().statusCode(200)
             .body("valid", equalTo(true))
-            .body("steps.find { it.id == 'people' }.columns.out.name", equalTo(List.of("id", "name")))
-            .body("edges[0].fromStep", equalTo("people"));
+            .body("nodes.find { it.id == 'people' }.columns.out.name", equalTo(List.of("id", "name")))
+            .body("edges[0].fromNode", equalTo("people"));
         JsonPath bad = as(viewer).body(Map.of("yaml", YAML.replace("mode: replace", "mode: replace\n    colour: red")))
             .post("/api/v1/pipelines/validate").then().statusCode(200).body("valid", equalTo(false)).extract().jsonPath();
         assertEquals(16, bad.getInt("problems[0].line"));
-        assertEquals("out", bad.getString("problems[0].step"));
+        assertEquals("out", bad.getString("problems[0].node"));
         as(viewer).body(Map.of("yaml", YAML.replace("source: mem-out", "source: mem-src")))
             .post("/api/v1/pipelines/validate").then().statusCode(200)
             .body("problems.message", hasItems(containsString("mem-src is read-only")));
@@ -226,11 +226,11 @@ class PipelineFlowTest {
             .header("Location", containsString("/api/v1/pipeline-runs/")).body("status", equalTo("queued"))
             .body("version", equalTo(4)).extract().jsonPath().getLong("id");
         JsonPath run = waitForRun(firstRun, "succeeded");
-        assertEquals(2500L, run.getLong("steps.find { it.step == 'people' }.rowsOut"));
-        assertEquals(2500L, run.getLong("steps.find { it.step == 'out' }.rowsIn"));
-        assertEquals(2500L, run.getLong("steps.find { it.step == 'out' }.ports.in.in"));
-        assertEquals(List.of("finished", "finished"), run.getList("steps.outcome"));
-        assertEquals(2, run.getList("steps").size(), "the pipeline's two steps, and only those");
+        assertEquals(2500L, run.getLong("nodes.find { it.node == 'people' }.rowsOut"));
+        assertEquals(2500L, run.getLong("nodes.find { it.node == 'out' }.rowsIn"));
+        assertEquals(2500L, run.getLong("nodes.find { it.node == 'out' }.ports.in.in"));
+        assertEquals(List.of("finished", "finished"), run.getList("nodes.outcome"));
+        assertEquals(2, run.getList("nodes").size(), "the pipeline's two nodes, and only those");
         assertEquals(WRITE_URN, run.getString("written[0].urn"));
         assertTrue(run.getBoolean("written[0].registered"), run.prettify());
         assertEquals(List.of(READ_URN), run.getList("read"));
@@ -254,11 +254,11 @@ class PipelineFlowTest {
         as(viewer).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200).body("[0].id",
             equalTo((int) firstRun));
 
-        // Each step is timed, and the run kept its log and its last progress (V19).
-        for (String step : List.of("people", "out")) {
-            String at = "steps.find { it.step == '" + step + "' }.";
+        // Each node is timed, and the run kept its log and its last progress (V19).
+        for (String node : List.of("people", "out")) {
+            String at = "nodes.find { it.node == '" + node + "' }.";
             for (String time : List.of("startedAt", "firstRowAt", "lastRowAt", "finishedAt")) {
-                assertTrue(run.getString(at + time) != null, step + " " + time + ": " + run.prettify());
+                assertTrue(run.getString(at + time) != null, node + " " + time + ": " + run.prettify());
             }
             assertTrue(run.getLong(at + "durationMs") >= 0, run.prettify());
             assertTrue(run.getLong(at + "waitingForRowsMs") >= 0 && run.getLong(at + "heldUpMs") >= 0, run.prettify());
@@ -268,7 +268,7 @@ class PipelineFlowTest {
         assertFalse(run.prettify().contains("progressSeries"), "the run view stays small: rows a second are read on their own");
         JsonPath series = as(viewer).get("/api/v1/pipeline-runs/" + firstRun + "/series").then().statusCode(200).extract()
             .jsonPath();
-        assertEquals(List.of("people", "out"), series.getList("steps"), series.prettify());
+        assertEquals(List.of("people", "out"), series.getList("nodes"), series.prettify());
         assertEquals(1, series.getInt("stride"));
         List<Integer> times = series.getList("points.t", Integer.class);
         assertTrue(!times.isEmpty(), series.prettify());
@@ -276,18 +276,18 @@ class PipelineFlowTest {
             .statusCode(200).body("points.size()", equalTo(0));
         as(viewer).queryParam("after", "x").get("/api/v1/pipeline-runs/" + firstRun + "/series").then().statusCode(400);
         as(viewer).get("/api/v1/pipeline-runs/999999/series").then().statusCode(404);
-        assertEquals(2500L, run.getLong("progress.steps.find { it.step == 'out' }.rowsIn"), run.prettify());
-        assertEquals("ended", run.getString("progress.steps.find { it.step == 'out' }.state"));
+        assertEquals(2500L, run.getLong("progress.nodes.find { it.node == 'out' }.rowsIn"), run.prettify());
+        assertEquals("ended", run.getString("progress.nodes.find { it.node == 'out' }.state"));
         assertEquals(2500L, run.getLong("progress.edges[0].rows"));
         JsonPath log = as(viewer).get("/api/v1/pipeline-runs/" + firstRun + "/events").then().statusCode(200).extract()
             .jsonPath();
         List<String> kinds = log.getList("events.kind");
         assertEquals("run_started", kinds.getFirst(), log.prettify());
         assertEquals("run_ended", kinds.getLast(), log.prettify());
-        assertTrue(kinds.containsAll(List.of("step_started", "first_row_out", "first_row_in", "last_row_out",
-            "step_ended")), log.prettify());
-        as(viewer).queryParam("step", "out").get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
-            .statusCode(200).body("events.step", org.hamcrest.Matchers.everyItem(equalTo("out")));
+        assertTrue(kinds.containsAll(List.of("node_started", "first_row_out", "first_row_in", "last_row_out",
+            "node_ended")), log.prettify());
+        as(viewer).queryParam("node", "out").get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
+            .statusCode(200).body("events.node", org.hamcrest.Matchers.everyItem(equalTo("out")));
         as(viewer).queryParam("level", "warn").get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
             .statusCode(200).body("events.size()", equalTo(0));
         as(viewer).queryParam("level", "loud").get("/api/v1/pipeline-runs/" + firstRun + "/events").then()
@@ -436,7 +436,7 @@ class PipelineFlowTest {
 
     @Test
     @Order(9)
-    void failuresNameTheStepWithoutTheSecret() throws Exception {
+    void failuresNameTheNodeWithoutTheSecret() throws Exception {
         String failing = YAML.replace("mode: replace", "mode: replace\n    fail: true");
         as(steward).body(Map.of("yaml", failing, "message", "Make the write fail"))
             .put("/api/v1/pipelines/people-copy").then().statusCode(200);
@@ -445,8 +445,8 @@ class PipelineFlowTest {
         JsonPath run = waitForRun(id, "failed");
         String all = run.prettify();
         assertTrue(run.getString("run.error").contains("refused the rows"), all);
-        assertTrue(run.getString("steps.find { it.step == 'out' }.error").contains("refused the rows"), all);
-        assertEquals("failed", run.getString("steps.find { it.step == 'out' }.outcome"), all);
+        assertTrue(run.getString("nodes.find { it.node == 'out' }.error").contains("refused the rows"), all);
+        assertEquals("failed", run.getString("nodes.find { it.node == 'out' }.outcome"), all);
         assertFalse(all.contains(OUT_SECRET), all);
         assertFalse(all.contains(IN_SECRET), all);
         assertFalse(run.getBoolean("written[0].registered"), "a failed run catalogues nothing");
@@ -466,12 +466,12 @@ class PipelineFlowTest {
             for (String path : List.of("/api/v1/pipeline-runs/" + failed)) {
                 JsonPath v = as(viewer).get(path).then().statusCode(200).extract().jsonPath();
                 assertEquals("The run failed. " + PipelineService.FOR_STEWARDS, v.getString("run.error"));
-                assertEquals("This step failed. " + PipelineService.FOR_STEWARDS,
-                    v.getString("steps.find { it.step == 'out' }.error"));
+                assertEquals("This node failed. " + PipelineService.FOR_STEWARDS,
+                    v.getString("nodes.find { it.node == 'out' }.error"));
                 JsonPath st = as(steward).get(path).then().statusCode(200).extract().jsonPath();
                 assertEquals("The run failed. " + PipelineService.FOR_ADMINS, st.getString("run.error"));
-                assertEquals("This step failed. " + PipelineService.FOR_ADMINS,
-                    st.getString("steps.find { it.step == 'out' }.error"));
+                assertEquals("This node failed. " + PipelineService.FOR_ADMINS,
+                    st.getString("nodes.find { it.node == 'out' }.error"));
                 JsonPath ad = as(admin).get(path).then().statusCode(200).extract().jsonPath();
                 assertTrue(ad.getString("run.error").contains("refused the rows"), ad.prettify());
                 assertFalse(ad.prettify().contains(OUT_SECRET), "the secret stays out, even for admins");
@@ -479,7 +479,7 @@ class PipelineFlowTest {
             // The log's details are held back alike; its own words are not.
             String events = "/api/v1/pipeline-runs/" + failed + "/events";
             JsonPath vl = as(viewer).queryParam("level", "error").get(events).then().statusCode(200).extract().jsonPath();
-            assertTrue(vl.getList("events.text").contains("Step out failed"), vl.prettify());
+            assertTrue(vl.getList("events.text").contains("Node out failed"), vl.prettify());
             assertFalse(vl.prettify().contains("refused the rows"), vl.prettify());
             assertTrue(vl.getList("events.withheld").contains(PipelineService.FOR_STEWARDS), vl.prettify());
             String stl = as(steward).get(events).then().statusCode(200).extract().asString();
@@ -541,7 +541,7 @@ class PipelineFlowTest {
         description: Synthetic people, checked on the way.
         quality:
           min_score: 0.99
-        steps:
+        nodes:
           - id: people
             type: read
             source: mem-src
@@ -583,8 +583,8 @@ class PipelineFlowTest {
             .post("/api/v1/quality/rules").then().statusCode(201);
         as(viewer).body(Map.of("yaml", GATED)).post("/api/v1/pipelines/validate").then().statusCode(200)
             .body("valid", equalTo(true))
-            .body("steps.find { it.id == 'check' }.outputs", equalTo(List.of("out", "quarantine")))
-            .body("steps.find { it.id == 'check' }.columns.quarantine.name", equalTo(List.of("id", "name")));
+            .body("nodes.find { it.id == 'check' }.outputs", equalTo(List.of("out", "quarantine")))
+            .body("nodes.find { it.id == 'check' }.columns.quarantine.name", equalTo(List.of("id", "name")));
         // Settings problems point at the setting.
         JsonPath bad = as(viewer).body(Map.of("yaml", GATED.replace("max: 2000}", "max: 2000, colour: red}")))
             .post("/api/v1/pipelines/validate").then().statusCode(200).body("valid", equalTo(false)).extract()
@@ -606,7 +606,7 @@ class PipelineFlowTest {
                 "    input: first\n    source: mem-out\n    table: lab.people_checked");
         JsonPath stopped = as(viewer).body(Map.of("yaml", limited)).post("/api/v1/pipelines/validate").then()
             .statusCode(200).body("valid", equalTo(false)).extract().jsonPath();
-        assertEquals("first", stopped.getString("problems[0].step"), stopped.prettify());
+        assertEquals("first", stopped.getString("problems[0].node"), stopped.prettify());
         assertEquals(25, stopped.getInt("problems[0].line"), stopped.prettify());
         assertTrue(stopped.getString("problems[0].message").contains("a limit after the stop gate check ends the rows "
             + "early"), stopped.prettify());
@@ -620,17 +620,17 @@ class PipelineFlowTest {
         JsonPath predicted = as(steward).body(Map.of("yaml", GATED)).post("/api/v1/pipelines/predict").then()
             .statusCode(200).body("estimate", equalTo(true)).body("valid", equalTo(true)).extract().jsonPath();
         String said = predicted.prettify();
-        assertEquals(0.9, predicted.getDouble("outputs.find { it.step == 'check' }.overall"), 0.01, said);
-        assertEquals("quarantined", predicted.getString("outputs.find { it.step == 'check' }.gate.decision"), said);
-        assertEquals(2000, predicted.getInt("outputs.find { it.step == 'check' }.gate.rowsPassed"), 30, said);
-        assertEquals(500, predicted.getInt("outputs.find { it.step == 'check' }.gate.rowsQuarantined"), 30, said);
+        assertEquals(0.9, predicted.getDouble("outputs.find { it.node == 'check' }.overall"), 0.01, said);
+        assertEquals("quarantined", predicted.getString("outputs.find { it.node == 'check' }.gate.decision"), said);
+        assertEquals(2000, predicted.getInt("outputs.find { it.node == 'check' }.gate.rowsPassed"), 30, said);
+        assertEquals(500, predicted.getInt("outputs.find { it.node == 'check' }.gate.rowsQuarantined"), 30, said);
         assertEquals(List.of("profile", "quantiles"),
-            predicted.getList("outputs.find { it.step == 'check' }.gate.rules.basis"), said);
-        assertEquals(2500, predicted.getInt("steps.find { it.step == 'people' }.rows.out"), said);
+            predicted.getList("outputs.find { it.node == 'check' }.gate.rules.basis"), said);
+        assertEquals(2500, predicted.getInt("nodes.find { it.node == 'people' }.rows.out"), said);
         // tidy's case expression cannot be predicted: said, not guessed.
-        assertTrue(predicted.getList("outputs.find { it.step == 'good' }.unknown").toString()
+        assertTrue(predicted.getList("outputs.find { it.node == 'good' }.unknown").toString()
             .contains("name as tidy computes it"), said);
-        assertEquals(1.0, predicted.getDouble("outputs.find { it.step == 'good' }.dimensions.completeness"), 1e-6, said);
+        assertEquals(1.0, predicted.getDouble("outputs.find { it.node == 'good' }.dimensions.completeness"), 1e-6, said);
         as(viewer).body(Map.of()).post("/api/v1/pipelines/predict").then().statusCode(400);
         // A viewer may not see values: a bound or a value cannot be used to probe the spread through rows.
         String probe = GATED.replace("  - id: check\n", "  - id: low\n    type: filter\n    input: tidy\n"
@@ -638,16 +638,16 @@ class PipelineFlowTest {
             + "    on_fail");
         JsonPath byViewer = as(viewer).body(Map.of("yaml", probe)).post("/api/v1/pipelines/predict").then()
             .statusCode(200).body("valid", equalTo(true)).extract().jsonPath();
-        Object hiddenRows = byViewer.get("steps.find { it.step == 'low' }.rows.out");
+        Object hiddenRows = byViewer.get("nodes.find { it.node == 'low' }.rows.out");
         assertEquals(null, hiddenRows, byViewer.prettify());
         JsonPath bySteward = as(steward).body(Map.of("yaml", probe)).post("/api/v1/pipelines/predict").then()
             .statusCode(200).extract().jsonPath();
-        assertEquals(1000, bySteward.getInt("steps.find { it.step == 'low' }.rows.out"), 20, bySteward.prettify());
+        assertEquals(1000, bySteward.getInt("nodes.find { it.node == 'low' }.rows.out"), 20, bySteward.prettify());
 
         as(steward).body(Map.of("name", "people-gate", "yaml", GATED)).post("/api/v1/pipelines").then()
             .statusCode(201);
         as(viewer).get("/api/v1/pipelines/people-gate/versions/1/prediction").then().statusCode(200)
-            .body("outputs.step", hasItems("check", "good", "aside"));
+            .body("outputs.node", hasItems("check", "good", "aside"));
         as(viewer).get("/api/v1/pipelines/people-gate/versions/9/prediction").then().statusCode(404);
         long id = as(steward).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract().jsonPath()
             .getLong("id");
@@ -655,49 +655,49 @@ class PipelineFlowTest {
         String all = run.prettify();
         assertEquals(2000L, MemoryConnector.WRITTEN.get("urn:kilnmark:mem-out:lab.people_checked").get(), all);
         assertEquals(500L, MemoryConnector.WRITTEN.get("urn:kilnmark:mem-out:lab.people_aside").get(), all);
-        assertEquals(2000L, run.getLong("steps.find { it.step == 'check' }.ports.out.out"), all);
-        assertEquals(500L, run.getLong("steps.find { it.step == 'check' }.ports.out.quarantine"), all);
+        assertEquals(2000L, run.getLong("nodes.find { it.node == 'check' }.ports.out.out"), all);
+        assertEquals(500L, run.getLong("nodes.find { it.node == 'check' }.ports.out.quarantine"), all);
 
         // The gate: what it decided, its rules (the asset's and its own), its score.
-        assertEquals("gate", run.getString("quality.find { it.step == 'check' }.role"), all);
-        assertEquals(READ_URN, run.getString("quality.find { it.step == 'check' }.asset"), all);
-        assertEquals("quarantined", run.getString("quality.find { it.step == 'check' }.gate.decision"), all);
-        assertEquals(2500, run.getInt("quality.find { it.step == 'check' }.gate.rowsIn"), all);
-        assertEquals(500, run.getInt("quality.find { it.step == 'check' }.gate.rowsQuarantined"), all);
+        assertEquals("gate", run.getString("quality.find { it.node == 'check' }.role"), all);
+        assertEquals(READ_URN, run.getString("quality.find { it.node == 'check' }.asset"), all);
+        assertEquals("quarantined", run.getString("quality.find { it.node == 'check' }.gate.decision"), all);
+        assertEquals(2500, run.getInt("quality.find { it.node == 'check' }.gate.rowsIn"), all);
+        assertEquals(500, run.getInt("quality.find { it.node == 'check' }.gate.rowsQuarantined"), all);
         assertEquals(List.of("id present", "early ids"),
-            run.getList("quality.find { it.step == 'check' }.gate.rules.name"), all);
-        assertEquals(List.of("asset", "inline"), run.getList("quality.find { it.step == 'check' }.gate.rules.origin"),
+            run.getList("quality.find { it.node == 'check' }.gate.rules.name"), all);
+        assertEquals(List.of("asset", "inline"), run.getList("quality.find { it.node == 'check' }.gate.rules.origin"),
             all);
-        assertEquals(List.of("pass", "fail"), run.getList("quality.find { it.step == 'check' }.gate.rules.status"),
+        assertEquals(List.of("pass", "fail"), run.getList("quality.find { it.node == 'check' }.gate.rules.status"),
             all);
         // The verdict is in the run's log; the failing rules, with their counts, are its detail.
-        JsonPath verdict = as(Tokens.ADMIN).queryParam("step", "check").get("/api/v1/pipeline-runs/" + id + "/events")
+        JsonPath verdict = as(Tokens.ADMIN).queryParam("node", "check").get("/api/v1/pipeline-runs/" + id + "/events")
             .then().statusCode(200).extract().jsonPath();
         assertTrue(verdict.getString("events.find { it.kind == 'gate_verdict' }.text")
             .startsWith("Gate check quarantined 500 rows (early ids: "), verdict.prettify());
-        assertEquals(0.9, run.getDouble("quality.find { it.step == 'check' }.measured.overall"), 1e-6, all);
-        assertEquals(0.8, run.getDouble("quality.find { it.step == 'check' }.measured.dimensions.accuracy"), 1e-6,
+        assertEquals(0.9, run.getDouble("quality.find { it.node == 'check' }.measured.overall"), 1e-6, all);
+        assertEquals(0.8, run.getDouble("quality.find { it.node == 'check' }.measured.dimensions.accuracy"), 1e-6,
             all);
         // The prediction made as the run started, beside what it measured.
-        assertEquals(0.9, run.getDouble("quality.find { it.step == 'check' }.predicted.overall"), 0.01, all);
-        assertEquals(0.8, run.getDouble("quality.find { it.step == 'check' }.predicted.dimensions.accuracy"), 0.01,
+        assertEquals(0.9, run.getDouble("quality.find { it.node == 'check' }.predicted.overall"), 0.01, all);
+        assertEquals(0.8, run.getDouble("quality.find { it.node == 'check' }.predicted.dimensions.accuracy"), 0.01,
             all);
-        assertEquals(2000, run.getInt("quality.find { it.step == 'check' }.prediction.gate.rowsPassed"), 30, all);
-        assertEquals(1.0, run.getDouble("quality.find { it.step == 'good' }.predicted.dimensions.completeness"), 1e-6,
+        assertEquals(2000, run.getInt("quality.find { it.node == 'check' }.prediction.gate.rowsPassed"), 30, all);
+        assertEquals(1.0, run.getDouble("quality.find { it.node == 'good' }.predicted.dimensions.completeness"), 1e-6,
             all);
-        assertTrue(run.getList("quality.find { it.step == 'good' }.prediction.unknown").toString()
+        assertTrue(run.getList("quality.find { it.node == 'good' }.prediction.unknown").toString()
             .contains("name as tidy computes it"), all);
-        assertEquals(2000, run.getInt("quality.find { it.step == 'good' }.prediction.rows"), 30, all);
-        assertEquals(1L, sql("SELECT count(*) FROM kilnmark.pipeline_step_quality WHERE run_id = " + id
-            + " AND step_id = 'good' AND predicted IS NOT NULL AND measured IS NOT NULL AND predicted_detail IS NOT NULL"));
+        assertEquals(2000, run.getInt("quality.find { it.node == 'good' }.prediction.rows"), 30, all);
+        assertEquals(1L, sql("SELECT count(*) FROM kilnmark.pipeline_node_quality WHERE run_id = " + id
+            + " AND node_id = 'good' AND predicted IS NOT NULL AND measured IS NOT NULL AND predicted_detail IS NOT NULL"));
 
         // Each output, measured from the profile its writer made: 10% of the good rows have no name.
-        assertEquals("output", run.getString("quality.find { it.step == 'good' }.role"), all);
-        assertEquals(0.95, run.getDouble("quality.find { it.step == 'good' }.measured.dimensions.completeness"), 1e-6,
+        assertEquals("output", run.getString("quality.find { it.node == 'good' }.role"), all);
+        assertEquals(0.95, run.getDouble("quality.find { it.node == 'good' }.measured.dimensions.completeness"), 1e-6,
             all);
-        double good = run.getDouble("quality.find { it.step == 'good' }.measured.overall");
+        double good = run.getDouble("quality.find { it.node == 'good' }.measured.overall");
         assertTrue(good < 0.99 && good > 0.9, all);
-        assertTrue(run.getDouble("quality.find { it.step == 'aside' }.measured.overall") > 0, all);
+        assertTrue(run.getDouble("quality.find { it.node == 'aside' }.measured.overall") > 0, all);
         assertEquals(good, run.getDouble("run.qualityScore"), 1e-9, "the run's score is its lowest output's");
         assertEquals(0.99, run.getDouble("run.qualityThreshold"), 1e-9);
 
@@ -706,7 +706,7 @@ class PipelineFlowTest {
             + "AND dedupe_key = 'pipeline-quality:" + id + "'", 1);
         assertEquals(1, told);
         long named = sql("SELECT count(*) FROM kilnmark.notify_event WHERE kind = 'pipeline_low_quality' "
-            + "AND detail LIKE '%for what step good wrote%'");
+            + "AND detail LIKE '%for what node good wrote%'");
         assertEquals(1, named);
         as(viewer).get("/api/v1/pipelines/people-gate/runs").then().statusCode(200)
             .body("[0].qualityThreshold", equalTo(0.99f));
@@ -723,17 +723,17 @@ class PipelineFlowTest {
             + "on "), asAdmin.prettify());
         assertTrue(asAdmin.getString("run.error").contains("more than its limit of 0%"),
             asAdmin.prettify());
-        assertEquals("failed", failed.getString("steps.find { it.step == 'check' }.outcome"), failed.prettify());
-        assertEquals("stopped", failed.getString("quality.find { it.step == 'check' }.gate.decision"),
+        assertEquals("failed", failed.getString("nodes.find { it.node == 'check' }.outcome"), failed.prettify());
+        assertEquals("stopped", failed.getString("quality.find { it.node == 'check' }.gate.decision"),
             failed.prettify());
         assertEquals(3, failed.getList("quality").size(), "a failed run measures no output, but keeps its predictions");
-        Object unmeasured = failed.get("quality.find { it.step == 'good' }.measured");
+        Object unmeasured = failed.get("quality.find { it.node == 'good' }.measured");
         assertEquals(null, unmeasured, failed.prettify());
-        assertTrue(failed.getString("quality.find { it.step == 'good' }.note").contains("did not succeed"),
+        assertTrue(failed.getString("quality.find { it.node == 'good' }.note").contains("did not succeed"),
             failed.prettify());
-        assertEquals(1.0, failed.getDouble("quality.find { it.step == 'good' }.predicted.dimensions.completeness"),
+        assertEquals(1.0, failed.getDouble("quality.find { it.node == 'good' }.predicted.dimensions.completeness"),
             1e-6, failed.prettify());
-        assertEquals("stopped", failed.getString("quality.find { it.step == 'check' }.prediction.gate.decision"),
+        assertEquals("stopped", failed.getString("quality.find { it.node == 'check' }.prediction.gate.decision"),
             failed.prettify());
 
         // The engine itself fails: the predictions stay, none still saying the run has just started.
@@ -743,9 +743,9 @@ class PipelineFlowTest {
         JsonPath engine = waitForRun(broken, "failed");
         assertEquals(3, engine.getList("quality").size(), engine.prettify());
         assertFalse(engine.getList("quality.note").toString().contains("just started"), engine.prettify());
-        assertTrue(engine.getString("quality.find { it.step == 'good' }.note").contains("did not succeed"),
+        assertTrue(engine.getString("quality.find { it.node == 'good' }.note").contains("did not succeed"),
             engine.prettify());
-        assertEquals(1.0, engine.getDouble("quality.find { it.step == 'good' }.predicted.dimensions.completeness"),
+        assertEquals(1.0, engine.getDouble("quality.find { it.node == 'good' }.predicted.dimensions.completeness"),
             1e-6, engine.prettify());
         assertEquals(0, sql("SELECT count(*) FROM kilnmark.notify_event WHERE kind = 'pipeline_low_quality' "
             + "AND dedupe_key = 'pipeline-quality:" + strict + "'"));

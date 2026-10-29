@@ -23,7 +23,7 @@ import io.kilnmark.kiln.MetadataEvent;
 import io.kilnmark.kiln.Pipeline;
 import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.Runner;
-import io.kilnmark.kiln.StepSpec;
+import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.SourceConfig;
@@ -95,8 +95,8 @@ public class DocumentScan {
         boolean keepText = !"false".equalsIgnoreCase(source.setting("keep_text"));
         Set<String> read = ConcurrentHashMap.newKeySet();
         Map<String, List<DocumentRecords.Chunk>> chunks = new ConcurrentHashMap<>();
-        StepSpec reader = connector.reader(source, a, new Connector.ReadOptions(urn, 0, 256));
-        StepSpec sink = new StepSpec("store-text", new ChunkRows(
+        NodeSpec reader = connector.reader(source, a, new Connector.ReadOptions(urn, 0, 256));
+        NodeSpec sink = new NodeSpec("store-text", new ChunkRows(
             (u, c) -> chunks.computeIfAbsent(u, k -> new ArrayList<>()).add(c),
             () -> read.forEach(u -> documents.replaceChunks(u, keepText ? chunks.getOrDefault(u, List.of())
                 : List.of()))), Map.of());

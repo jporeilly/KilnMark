@@ -41,7 +41,7 @@ final class ColumnStats {
     private final FrequentItemsSketch<String> topText = new FrequentItemsSketch<>(64);
     private final FrequentLongsSketch topLongs = new FrequentLongsSketch(64);
 
-    /** Whether {@link #attributes()} carries the distinct-value sketch ({@link ProfileStep#SKETCH}). */
+    /** Whether {@link #attributes()} carries the distinct-value sketch ({@link ProfileNode#SKETCH}). */
     boolean keepSketch;
 
     ColumnStats(String field, Shape shape) {
@@ -143,7 +143,7 @@ final class ColumnStats {
         }
     }
 
-    /** The sketch behind {@code distinct}, for {@link ProfileStep#SKETCH}. */
+    /** The sketch behind {@code distinct}, for {@link ProfileNode#SKETCH}. */
     private String sketch() {
         return java.util.Base64.getEncoder().encodeToString(distinct.copyAs(TgtHllType.HLL_4).toCompactByteArray());
     }
@@ -166,7 +166,7 @@ final class ColumnStats {
         long d = Math.min(Math.round(distinct.getEstimate()), values());
         a.put("distinct", Long.toString(d));
         if (keepSketch && (shape == Shape.INTEGER || shape == Shape.NUMBER || shape == Shape.TEXT)) {
-            a.put(ProfileStep.SKETCH, sketch());
+            a.put(ProfileNode.SKETCH, sketch());
         }
         // Below a few thousand values the sketch keeps every hash, and its bounds meet the estimate.
         a.put("distinct_exact", Boolean.toString(

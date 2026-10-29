@@ -20,7 +20,7 @@ export function PredictedSection({ p, id }: { p: PredictedQuality; id: string })
     <section className="cv-section cv-predicted" aria-labelledby={id}>
       <h4 id={id}>Predicted quality {ESTIMATE}</h4>
       <p className="small">
-        {predictedWords(p)}, from the catalogue's metadata about what this step reads; no data was read. {rowsWords(p.rows)}.
+        {predictedWords(p)}, from the catalogue's metadata about what this node reads; no data was read. {rowsWords(p.rows)}.
       </p>
       {Object.keys(p.dimensions).length > 0 && (
         <ul className="small cv-quality-dims" aria-label="Predicted score per dimension">

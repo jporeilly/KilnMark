@@ -22,5 +22,5 @@ below is restated in Kilnmark's own terms, with the release it belongs to.
 | Lost-row check | Rows sent to a target that never landed there are named, not just counted | v0.3 |
 
 The same work showed traps worth designing around: an empty source that runs cleanly, a NULL in a
-metadata query changing a value's inferred type, and steps that silently ignore configuration.
-Kilnmark's step interface should fail loudly on each.
+metadata query changing a value's inferred type, and nodes that silently ignore configuration.
+Kilnmark's node interface should fail loudly on each.
