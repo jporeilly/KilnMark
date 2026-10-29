@@ -23,7 +23,14 @@ jobs:
 
       # Integration tests run against the same PostgreSQL image Kilnmark ships with.
       - name: Build the PostgreSQL image (AGE, pgvector)
-        run: docker build -t kilnmark-postgres:dev -f containers/postgres/Containerfile containers/postgres
+        shell: pwsh
+        run: |
+          # The same engine choice as build.ps1: podman first, then docker.
+          $engine = if (Get-Command podman -ErrorAction SilentlyContinue) { 'podman' }
+            elseif (Get-Command docker -ErrorAction SilentlyContinue) { 'docker' }
+            else { throw 'Neither podman nor docker is on the PATH.' }
+          & $engine build -t kilnmark-postgres:dev -f containers/postgres/Containerfile containers/postgres
+          if ($LASTEXITCODE -ne 0) { throw "$engine build failed with exit code $LASTEXITCODE" }
 
       - uses: actions/setup-java@v4
         with:
