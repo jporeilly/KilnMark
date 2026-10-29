@@ -60,8 +60,10 @@ it on a narrow screen), and close with its **×** or when nothing is selected.
   Quality, AI and Other, each with how many types it holds, and **Recently used** first with the
   last five types you added. The first button on the rail opens the whole list, with **Find a
   step** to search every folder at once (the folders with a match open by themselves); choose a
-  folder's icon on the rail to see just its steps beside it. Folders holding the steps your
-  pipeline uses start open, and Kilnmark remembers in this browser which folders you open.
+  folder's icon on the rail to open the list at that folder. The list sits beside the canvas, which
+  narrows to make room, so it never covers your steps (on a phone it opens over the canvas). Folders
+  holding the steps your pipeline uses start open, and Kilnmark remembers in this browser which
+  folders you open.
 - **Each step** shows its type, its id, a line summing up its settings, its input ports on the
   left and output ports on the right, and how many problems it has. Hover over a step, or move the
   focus to it, to see the columns leaving it.
@@ -193,7 +195,7 @@ list:
 | Shift+arrow keys | Move the step on the canvas |
 | Alt+arrow keys | Pan the canvas |
 | A | Open the step list at **Find a step**; type, Tab to the type and press Enter to add it after the selected step |
-| Arrow keys in the step list | Up and down through the folders and steps; Right opens a folder, Left closes it; Enter adds the step. On the rail, Right opens a folder's steps beside it |
+| Arrow keys in the step list | Up and down through the folders and steps; Right opens a folder, Left closes it; Enter adds the step. On the rail, Right opens the list at that folder |
 | C | **Connect to…**: a list of the steps this step can send rows to or read rows from |
 | Enter | Go to the step's settings |
 | Shift+F10 or the menu key | The step's menu: **Preview rows**, **Settings**, **Connect to…**, **Duplicate**, **Remove** |

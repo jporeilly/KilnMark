@@ -17,7 +17,6 @@ import {
   IconSum,
 } from "@tabler/icons-react";
 import type { StepType } from "../../api";
-import { useDismiss } from "../../components/ui";
 import { StepIcon } from "./StepNode";
 
 /** The folders, in order; a category the server names that is not here comes after them. */
@@ -112,10 +111,11 @@ function treeKeys(e: KeyboardEvent<HTMLElement>, root: HTMLElement | null, toggl
 }
 
 /**
- * The step types, in folders by category: an icon rail (a button per folder, opening a list of its
- * steps beside it) that expands into a tree with search. Folders are disclosure buttons; the arrow
- * keys move through the tree, Right and Left open and close a folder, Enter adds a step after the
- * selected one. Which folders are open is remembered in this browser.
+ * The step types, in folders by category: an icon rail (a button per folder) and, beside it, a list
+ * docked in its own column so it never covers the canvas. A folder's rail button opens the list with
+ * that folder open. In the list, folders are disclosure buttons; the arrow keys move through the
+ * tree, Right and Left open and close a folder, Enter adds a step after the selected one. Which
+ * folders are open is remembered in this browser.
  */
 export function Palette({
   types,
@@ -187,21 +187,23 @@ export function Palette({
     .filter((f) => f.types.length > 0 && !(q && f.name === RECENT));
   const tree = useRef<HTMLDivElement>(null);
 
-  // The rail's fly-out: one folder's steps beside the rail.
-  const [flyout, setFlyout] = useState<string | null>(null);
-  const flyPanel = useRef<HTMLDivElement>(null);
-  const flyTrigger = useRef<HTMLButtonElement | null>(null);
-  const railButtons = useRef<Record<string, HTMLButtonElement | null>>({});
-  const closeFly = useCallback((returnFocus: boolean) => {
-    setFlyout((f) => {
-      if (returnFocus && f) railButtons.current[f]?.focus();
-      return null;
-    });
-  }, []);
-  useDismiss(flyout != null, flyPanel, flyTrigger, closeFly);
+  // A folder's rail button: the list opens with that folder open, scrolled to and focused.
+  const [reveal, setReveal] = useState<{ folder: string } | null>(null);
+  const showFolder = (folder: string) => {
+    setSearch("");
+    toggle(folder, true);
+    onExpand(true);
+    setReveal({ folder });
+  };
   useEffect(() => {
-    if (flyout) flyPanel.current?.querySelector<HTMLElement>("button")?.focus();
-  }, [flyout]);
+    if (!reveal || !expanded) return;
+    const el = tree.current?.querySelector<HTMLElement>(`[data-tree-item="folder"][data-folder="${CSS.escape(reveal.folder)}"]`);
+    const list = el?.closest<HTMLElement>(".cv-palette-panel");
+    // Scrolls the list only: scrollIntoView would move the page too.
+    if (el && list) list.scrollTop += el.getBoundingClientRect().top - list.getBoundingClientRect().top - 8;
+    el?.focus({ preventScroll: true });
+    setReveal(null);
+  }, [reveal, expanded]);
 
   const stepButton = (t: StepType, folder: string) => (
     <button
@@ -217,10 +219,7 @@ export function Palette({
         e.dataTransfer.setData("application/x-kilnmark-step", t.type);
         e.dataTransfer.effectAllowed = "copy";
       }}
-      onClick={() => {
-        add(t.type);
-        if (flyout) setFlyout(null);
-      }}
+      onClick={() => add(t.type)}
     >
       <span className="cv-type-icon">
         <StepIcon type={t.type} kind={t.kind} />
@@ -243,13 +242,10 @@ export function Palette({
       if (f) {
         e.preventDefault();
         e.stopPropagation();
-        flyTrigger.current = e.target as HTMLButtonElement;
-        setFlyout(f);
+        showFolder(f);
       }
     }
   };
-
-  const flyFolder = folders.find((f) => f.name === flyout);
 
   return (
     <div className={`cv-palette${expanded ? " is-expanded" : ""}`}>
@@ -262,72 +258,32 @@ export function Palette({
           aria-controls="cv-palette-panel"
           aria-label={expanded ? "Hide the step list" : "Add a step: show the step list"}
           title={expanded ? "Hide the step list" : "Show the step list"}
-          onClick={() => {
-            setFlyout(null);
-            onExpand(!expanded);
-          }}
+          onClick={() => onExpand(!expanded)}
         >
           {expanded ? <IconLayoutSidebarLeftCollapse size={20} stroke={1.8} aria-hidden="true" /> : <IconLayoutSidebarLeftExpand size={20} stroke={1.8} aria-hidden="true" />}
         </button>
         <span className="cv-rail-sep" aria-hidden="true" />
         {folders.map((f) => {
           const Icon = ICONS[f.name] ?? IconBox;
+          const showing = expanded && !q && open.has(f.name);
           return (
             <button
               key={f.name}
               type="button"
-              ref={(el) => {
-                railButtons.current[f.name] = el;
-              }}
-              className={`cv-rail-button${flyout === f.name ? " is-open" : ""}`}
+              className={`cv-rail-button${showing ? " is-open" : ""}`}
               data-rail-item
               data-folder={f.name}
-              aria-label={`${f.name} (${f.types.length})`}
+              aria-label={`${f.name} (${f.types.length}): show in the step list`}
               title={`${f.name} (${f.types.length})`}
-              aria-expanded={flyout === f.name}
-              aria-controls={flyout === f.name ? "cv-flyout" : undefined}
+              aria-controls={expanded ? `cv-folder-${slug(f.name)}` : undefined}
               disabled={readOnly}
-              onClick={(e) => {
-                flyTrigger.current = e.currentTarget;
-                setFlyout(flyout === f.name ? null : f.name);
-              }}
+              onClick={() => showFolder(f.name)}
             >
               <Icon size={20} stroke={1.8} aria-hidden="true" />
             </button>
           );
         })}
       </nav>
-
-      {flyFolder && (
-        <div
-          id="cv-flyout"
-          ref={flyPanel}
-          className="cv-flyout"
-          role="group"
-          aria-label={`${flyFolder.name} steps`}
-          onKeyDown={(e) => {
-            const items = [...e.currentTarget.querySelectorAll<HTMLElement>("button")];
-            const i = items.indexOf(e.target as HTMLElement);
-            const to = e.key === "ArrowDown" ? i + 1 : e.key === "ArrowUp" ? i - 1 : null;
-            if (to != null) {
-              e.preventDefault();
-              e.stopPropagation();
-              items[(to + items.length) % items.length]?.focus();
-            } else if (e.key === "ArrowLeft") {
-              e.preventDefault();
-              e.stopPropagation();
-              closeFly(true);
-            }
-          }}
-        >
-          <h4 className="cv-group-title">{flyFolder.name}</h4>
-          <ul className="cv-type-list">
-            {flyFolder.types.map((t) => (
-              <li key={t.type}>{stepButton(t, flyFolder.name)}</li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       {expanded && (
         <section id="cv-palette-panel" className="cv-palette-panel" aria-labelledby="cv-palette-h">

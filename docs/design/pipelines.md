@@ -783,7 +783,9 @@ asset's previous profile.
   ignores the layout block.
 - **Room to work.** The canvas takes the page's full width and the window's height. The step list
   is an icon rail of folders (`StepFactory.category()`, from `GET /api/v1/steps`), expanding to a
-  searchable tree; the settings are a drawer over the canvas, open while a step is selected; a
+  searchable tree docked in a column of its own, so the canvas narrows rather than being covered (over
+  the canvas on a phone); a folder's rail button opens the tree at that folder. The settings are a
+  drawer over the canvas, open while a step is selected; a
   minimap shows large pipelines. **Fit** fits the whole pipeline into the part of the canvas not
   under the list or the drawer; **Readable size** never goes below a readable zoom.
 - **React Flow** (`@xyflow/react` 12.12.0, MIT) draws the canvas; the canvas, React Flow and
