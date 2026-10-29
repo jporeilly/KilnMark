@@ -30,6 +30,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [UI mockups](design/mockups.md): asset page, steward inbox, relationship explorer, pipeline designer
 - [Writing a connector](design/connectors.md): the connector interface, the reader and writer steps, registering and testing
 - [Pipelines](design/pipelines.md): graphs of steps, the YAML format, expressions, the step catalogue, running and recording
+- [Flows](design/flows.md): pipelines run in an order joined by paths (on success, on failure, always, or on a quality condition), conditions, how a flow runs and is recorded
 - [The assistant](design/assistant.md): a chat window that answers from knowledge domains, starting with the documentation
 - [Notifications](design/notifications.md): one event type, dedupe, masking per recipient, the email worker and the in-app feed's contract
 - [Lessons from earlier work](design/prior-work.md): ideas taken from an earlier Trusted Data Operations example, and the release each lands in

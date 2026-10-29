@@ -5,6 +5,28 @@ details.
 
 ## Unreleased
 
+### Details
+
+- **Flows, the engine** (development; V20; ADR 0026; docs/design/flows.md). A flow runs saved
+  pipelines in an order, joined by paths: on success, on failure, always, or on a condition over
+  what a step measured, such as `clean.quarantined_share < 0.02 and clean.score >= good`. Not yet
+  reachable from the API or the pages (flows are queued and cancelled through `FlowService` only);
+  the API, the run page with its Gantt chart and the canvas follow, and the user guide with them.
+  `FlowDefinition` (`flow/v1`: parameters, `run-pipeline` and `stop` steps, paths, `queue_timeout`,
+  checked with line and column and suggestions, loops refused), `FlowCondition` (a small language of
+  comparisons with SQL's three-valued logic and the quality words `good`, `fair`, `poor`; a condition
+  may read only steps that must have ended) and `FlowEngine` (the state machine that decides what
+  runs next; no threads, no database) are in kiln-core. `FlowStore` and `FlowService` (server) queue a
+  flow run as a job of kind `flow`; the worker only watches, holds no worker slot, and each
+  `run-pipeline` step queues an ordinary pipeline run as the person who started the flow, with their
+  role, linked by `pipeline_run.flow_run_id` and `flow_step`. A step whose pipeline is already running
+  waits, up to `queue_timeout` (30 minutes by default). A flow is tried once, like a pipeline; one
+  run of a flow at a time, and one worker watches at most 8 flows at a time. Flow steps never copy
+  why a pipeline failed or could not run (it can quote data or name fields). Saving, running and
+  cancelling take the steward role. Tests:
+  `FlowRunTest` runs flows on PostgreSQL for sequences, quality conditions, failure paths, waiting,
+  cancelling and stop steps.
+
 ## 0.0.8 (28 October 2026)
 
 ### What's new
