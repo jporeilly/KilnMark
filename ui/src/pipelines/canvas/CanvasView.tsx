@@ -336,7 +336,7 @@ function Canvas(props: CanvasProps) {
     const box = flowBox.current?.getBoundingClientRect();
     if (!box) return null;
     const stage = flowBox.current!.parentElement!;
-    const list = stage.querySelector<HTMLElement>(".cv-palette-panel, .cv-flyout")?.getBoundingClientRect();
+    const list = stage.querySelector<HTMLElement>(".cv-palette-panel")?.getBoundingClientRect();
     const drawer = stage.querySelector<HTMLElement>(".cv-drawer")?.getBoundingClientRect();
     const left = list && list.right > box.left ? list.right - box.left : 0;
     const right = drawer && drawer.left < box.right && getComputedStyle(stage.querySelector(".cv-drawer")!).position === "absolute" ? box.right - drawer.left : 0;

@@ -10,11 +10,13 @@
   margin: 0;
 }
 
-/* The stage: the icon rail, the canvas, and the drawers over it. */
+/* The stage: the step list (rail, and the docked list when open), the canvas, and the drawers over it. */
 .cv-stage {
   position: relative;
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
+  /* One row the stage's height, so a long step list scrolls inside it rather than stretching it. */
+  grid-template-rows: minmax(0, 1fr);
   gap: 8px;
   height: max(480px, calc(100vh - var(--km-topbar-h) - 150px));
 }
@@ -24,14 +26,20 @@
   font-size: var(--km-text-md);
 }
 
-/* ---- the step list: icon rail, fly-out and expanded tree ---- */
+/* ---- the step list: icon rail and, docked beside it, the tree ---- */
 
 .cv-palette {
   position: relative;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+  height: 100%;
 }
 
 .cv-rail {
+  width: 48px;
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -65,30 +73,17 @@
   background: var(--km-divider);
 }
 
-.cv-flyout,
+/* Docked: a column of its own, so the canvas narrows beside it rather than being covered. */
 .cv-palette-panel {
-  position: absolute;
-  top: 0;
-  left: 56px;
-  z-index: 20;
-  box-sizing: border-box;
-  background: var(--km-surface);
-  border: 1px solid var(--km-border-control);
-  border-radius: var(--km-radius-card);
-  box-shadow: var(--km-shadow-raised);
-  padding: 12px;
-}
-
-.cv-flyout {
-  width: 240px;
-  max-height: 100%;
-  overflow: auto;
-}
-
-.cv-palette-panel {
-  width: 272px;
+  width: 224px;
+  flex: none;
   height: 100%;
   overflow: auto;
+  box-sizing: border-box;
+  background: var(--km-surface);
+  border: 1px solid var(--km-border);
+  border-radius: var(--km-radius-card);
+  padding: 10px;
   display: grid;
   align-content: start;
   gap: 8px;
@@ -127,13 +122,24 @@
 }
 
 .cv-folders .cv-type-list {
-  margin: 2px 0 6px 22px;
+  margin: 2px 0 6px 14px;
+  gap: 4px;
 }
 
+.cv-folders .cv-type {
+  padding: 4px 6px;
+}
+
+/* On a phone there is no room to dock: the list opens over the canvas. */
 @media (max-width: 700px) {
-  .cv-palette-panel,
-  .cv-flyout {
+  .cv-palette-panel {
+    position: absolute;
+    top: 0;
+    left: 56px;
+    z-index: 20;
     width: min(272px, calc(100vw - 110px));
+    border-color: var(--km-border-control);
+    box-shadow: var(--km-shadow-raised);
   }
 }
 
@@ -944,8 +950,7 @@ button.cv-danger {
   .cv-flow,
   .cv-drawer,
   .cv-rail,
-  .cv-palette-panel,
-  .cv-flyout {
+  .cv-palette-panel {
     border-color: CanvasText;
   }
 

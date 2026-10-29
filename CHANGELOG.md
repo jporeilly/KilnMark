@@ -7,6 +7,10 @@ details.
 
 ### Details
 
+- **The step list sits beside the canvas.** On the pipeline canvas, the open step list now takes a
+  column of its own and the canvas narrows beside it, instead of opening over your steps. A folder's
+  icon on the rail opens the list at that folder, its steps shown under it; the separate pop-out
+  beside the rail is gone. On a phone the list still opens over the canvas.
 - **Flows, the engine** (development; V20; ADR 0026; docs/design/flows.md). A flow runs saved
   pipelines in an order, joined by paths: on success, on failure, always, or on a condition over
   what a step measured, such as `clean.quarantined_share < 0.02 and clean.score >= good`. Not yet

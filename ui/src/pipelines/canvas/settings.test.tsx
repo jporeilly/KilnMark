@@ -205,8 +205,18 @@ describe("the step list", () => {
     expect(folders).toEqual(["Read 1", "Filter and route 2", "Transform 1", "Other 1"]);
     expect(out).toContain('aria-expanded="false"');
     expect(out).toMatch(/<ul id="cv-folder-read" class="cv-type-list" hidden="">/);
-    // The rail: a button per folder, named with its count.
-    expect(out).toContain('aria-label="Filter and route (2)"');
+    // The rail: a button per folder, named with its count, pointing at its folder in the docked list.
+    expect(out).toContain('aria-label="Filter and route (2): show in the step list"');
+    expect(out).toContain('aria-controls="cv-folder-filter-and-route"');
+    expect(out).not.toContain("cv-flyout");
+  });
+
+  test("closed, the list is not drawn and the rail controls nothing", () => {
+    const out = renderToStaticMarkup(
+      <Palette types={types} usedTypes={[]} readOnly={false} expanded={false} onExpand={() => {}} onAdd={() => {}} searchRef={{ current: null }} hint="" />,
+    );
+    expect(out).not.toContain('class="cv-palette-panel"');
+    expect(out).not.toContain('aria-controls="cv-folder-');
   });
 
   test("a type the server gives no category goes by its kind", () => {
