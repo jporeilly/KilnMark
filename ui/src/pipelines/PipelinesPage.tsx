@@ -54,7 +54,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
     <>
       <div className="pl-head">
         <h1 tabIndex={-1}>Pipelines</h1>
-        {steward && (
+        {designer && (
           <a className="pl-link-button" href={href.newPipeline()}>
             New pipeline
           </a>
