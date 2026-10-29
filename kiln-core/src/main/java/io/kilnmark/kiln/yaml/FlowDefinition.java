@@ -29,7 +29,7 @@ import io.kilnmark.kiln.flow.FlowEngine;
  * @param connections  the connections in the order written
  * @param queueTimeout how long a node waits for a pipeline that is already running before it fails
  */
-public record FlowDefinition(String name, String description, List<Parameter> parameters, List<Node> nodes,
+public record FlowDefinition(String name, String description, List<Parameters.Parameter> parameters, List<Node> nodes,
                              List<Connection> connections, Duration queueTimeout) {
 
     /** The format this version reads. */
@@ -40,8 +40,18 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
     public static final String RUN_PIPELINE = "run-pipeline";
     /** The node type that ends the flow. */
     public static final String STOP = "stop";
+    /** The node type that sends a notification. */
+    public static final String NOTIFY = "notify";
+    /** The node type that waits a while. */
+    public static final String WAIT = "wait";
     /** The node types this version knows. */
-    public static final List<String> TYPES = List.of(RUN_PIPELINE, STOP);
+    public static final List<String> TYPES = List.of(RUN_PIPELINE, STOP, NOTIFY, WAIT);
+    /** How much a notify node's message matters, least first. */
+    public static final List<String> SEVERITIES = List.of("info", "low", "medium", "high");
+    /** Longest wait. */
+    public static final Duration MAX_WAIT = Duration.ofHours(24);
+    static final int MAX_TITLE = 200;
+    static final int MAX_MESSAGE = 2_000;
     /** What a node that runs a pipeline reports, for conditions, besides {@code status}. */
     public static final Map<String, FlowCondition.Type> PIPELINE_VALUES = Map.of(
         "score", FlowCondition.Type.NUMBER,
@@ -54,32 +64,37 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
     static final Duration MAX_QUEUE_TIMEOUT = Duration.ofHours(24);
     static final int MAX_NODES = 200;
     static final int MAX_CONNECTIONS = 1_000;
-    static final int MAX_PARAMETERS = 50;
 
     static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "parameters", "queue_timeout",
         "nodes", "connections", "layout");
     static final Set<String> NODE_KEYS = Set.of("id", "type");
     static final Map<String, Set<String>> TYPE_KEYS = Map.of(
-        RUN_PIPELINE, Set.of("pipeline", "version"),
-        STOP, Set.of("status", "message"));
+        RUN_PIPELINE, Set.of("pipeline", "version", "with"),
+        STOP, Set.of("status", "message"),
+        NOTIFY, Set.of("severity", "title", "message"),
+        WAIT, Set.of("for"));
     static final Set<String> CONNECTION_KEYS = Set.of("from", "to", "when");
-    static final Set<String> PARAMETER_KEYS = Set.of("type", "default", "description");
-    static final Set<String> RESERVED = Set.of("and", "or", "not", "true", "false", "good", "fair", "poor");
-    static final Pattern PARAMETER_NAME = Pattern.compile("[a-z][a-z0-9_]{0,63}");
     private static final Pattern DURATION = Pattern.compile("(\\d{1,6})\\s*(s|m|h)");
 
-    /** A parameter: its name, kind, default (null for none) and description. */
-    public record Parameter(String name, FlowCondition.Type type, Object defaultValue, String description,
-                            Position position) {
-    }
-
     /**
-     * One flow node. {@code pipeline} and {@code version} (null for the latest) are set for
-     * {@link #RUN_PIPELINE}; {@code status} ({@code succeeded} or {@code failed}) and {@code message}
-     * for {@link #STOP}.
+     * One flow node. {@code pipeline}, {@code version} (null for the latest) and {@code with} (the
+     * values given to the pipeline's parameters, as written: text, which may name ${...}, a number or
+     * true/false) are set for {@link #RUN_PIPELINE}; {@code status} ({@code succeeded} or
+     * {@code failed}) and {@code message} for {@link #STOP}; {@code severity}, {@code title} and
+     * {@code message} for {@link #NOTIFY}; {@code waitFor} for {@link #WAIT}.
      */
     public record Node(String id, String type, String pipeline, Integer version, String status, String message,
-                       Position position, Map<String, Position> keys) {
+                       Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
+                       String title, Duration waitFor) {
+
+        public Node {
+            with = with == null ? Map.of() : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(with));
+        }
+
+        /** A node of no type, or before its settings are read. */
+        static Node bare(String id, String type, Position position, Map<String, Position> keys) {
+            return new Node(id, type, null, null, null, null, position, keys, Map.of(), null, null, null);
+        }
 
         /** Where {@code key} is written, or where the node starts if it is not. */
         public Position at(String key) {
@@ -134,8 +149,8 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
     }
 
     /** The parameter with this name, or null. */
-    public Parameter parameter(String name) {
-        for (Parameter p : parameters) {
+    public Parameters.Parameter parameter(String name) {
+        for (Parameters.Parameter p : parameters) {
             if (p.name().equals(name)) {
                 return p;
             }
@@ -187,7 +202,9 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         }
         String description = text(top.entries().get("description"), "description", problems);
         Duration timeout = queueTimeout(top.entries().get("queue_timeout"), problems);
-        List<Parameter> parameters = parameters(top.entries().get("parameters"), problems);
+        List<Parameters.Parameter> parameters = Parameters.read(top.entries().get("parameters"), "flow", false, problems);
+        Set<String> names = new LinkedHashSet<>();
+        parameters.forEach(p -> names.add(p.name()));
 
         List<Node> nodes = new ArrayList<>();
         YamlReader.Entry nodesEntry = Renamed.entry(top, "nodes", "flow", problems);
@@ -203,7 +220,7 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         } else {
             Map<String, Position> ids = new HashMap<>();
             for (YamlReader.Node item : list.items()) {
-                Node s = node(item, ids, problems);
+                Node s = node(item, ids, names, problems);
                 if (s != null) {
                     nodes.add(s);
                 }
@@ -225,6 +242,7 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         }
         FlowDefinition def = new FlowDefinition(name, description, parameters, nodes, connections, timeout);
         loops(def, connectionsEntry, problems);
+        nodeValues(def, problems);
         return new Parsed(def, problems);
     }
 
@@ -252,83 +270,8 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         return d;
     }
 
-    private static List<Parameter> parameters(YamlReader.Entry e, List<Problem> problems) {
-        List<Parameter> out = new ArrayList<>();
-        if (e == null) {
-            return out;
-        }
-        if (!(e.value() instanceof YamlReader.Mapping m)) {
-            problems.add(Problem.at(e.value().position(), null,
-                "parameters is a mapping of names, such as parameters: { region: { type: text, default: EMEA } }"));
-            return out;
-        }
-        if (m.entries().size() > MAX_PARAMETERS) {
-            problems.add(Problem.at(m.position(), null, "A flow has at most " + MAX_PARAMETERS + " parameters"));
-            return out;
-        }
-        for (YamlReader.Entry p : m.entries().values()) {
-            if (RESERVED.contains(p.key())) {
-                problems.add(Problem.at(p.keyPosition(), null, "'" + p.key() + "' cannot be a parameter name: a condition "
-                    + "reads it as a word of the language (and, or, not, true, false, good, fair, poor)"));
-                continue;
-            }
-            if (!PARAMETER_NAME.matcher(p.key()).matches()) {
-                problems.add(Problem.at(p.keyPosition(), null, "The parameter name '" + Suggest.clip(p.key())
-                    + "' must start with a lower-case letter and use only a-z, 0-9 and _, up to 64 characters"));
-                continue;
-            }
-            if (!(p.value() instanceof YamlReader.Mapping spec)) {
-                problems.add(Problem.at(p.value().position(), null, "Parameter " + p.key()
-                    + " is a mapping with a type and, if you like, a default"));
-                continue;
-            }
-            for (YamlReader.Entry k : spec.entries().values()) {
-                if (!PARAMETER_KEYS.contains(k.key())) {
-                    problems.add(Problem.at(k.keyPosition(), null, "Parameter " + p.key() + " has no setting '"
-                        + Suggest.clip(k.key()) + "'" + Suggest.hint(k.key(), PARAMETER_KEYS)
-                        + ": it takes type, default and description"));
-                }
-            }
-            YamlReader.Entry t = spec.entries().get("type");
-            FlowCondition.Type type = null;
-            if (t != null && t.value().value() instanceof String ts) {
-                type = switch (ts.strip().toLowerCase()) {
-                    case "text" -> FlowCondition.Type.TEXT;
-                    case "number" -> FlowCondition.Type.NUMBER;
-                    case "boolean" -> FlowCondition.Type.BOOLEAN;
-                    default -> null;
-                };
-            }
-            if (type == null) {
-                problems.add(Problem.at(t == null ? spec.position() : t.value().position(), null, "Parameter " + p.key()
-                    + " needs a type: text, number or boolean"));
-                continue;
-            }
-            Object def = null;
-            YamlReader.Entry d = spec.entries().get("default");
-            if (d != null && d.value().value() != null) {
-                Object v = d.value().value();
-                boolean fits = switch (type) {
-                    case TEXT -> v instanceof String;
-                    case NUMBER -> v instanceof Number && !(v instanceof java.math.BigInteger)
-                        && !Double.isNaN(((Number) v).doubleValue()) && !Double.isInfinite(((Number) v).doubleValue());
-                    case BOOLEAN -> v instanceof Boolean;
-                };
-                if (!fits) {
-                    problems.add(Problem.at(d.value().position(), null, "The default of " + p.key() + " must be a "
-                        + type.name().toLowerCase()));
-                } else {
-                    def = type == FlowCondition.Type.NUMBER ? (Object) ((Number) v).doubleValue() : v;
-                }
-            }
-            YamlReader.Entry desc = spec.entries().get("description");
-            out.add(new Parameter(p.key(), type, def, desc == null ? null : text(desc, "description", problems),
-                p.keyPosition()));
-        }
-        return out;
-    }
-
-    private static Node node(YamlReader.Node item, Map<String, Position> ids, List<Problem> problems) {
+    private static Node node(YamlReader.Node item, Map<String, Position> ids, Set<String> names,
+                             List<Problem> problems) {
         if (!(item instanceof YamlReader.Mapping m)) {
             problems.add(Problem.at(item.position(), null, "Each node is a mapping starting with - id: …"));
             return null;
@@ -342,6 +285,10 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
             problems.add(Problem.at(idEntry.value().position(), null,
                 "A node id is a word such as nightly-load, not a number, list or mapping"));
             return null;
+        }
+        if ("vars".equals(id)) {
+            problems.add(Problem.at(idEntry.value().position(), id, "A node cannot be called vars: ${vars.name} "
+                + "reads a server variable"));
         }
         if (!PipelineCompiler.NODE_ID.matcher(id).matches()) {
             problems.add(Problem.at(idEntry.value().position(), Suggest.clip(id), PipelineCompiler.badId(id)));
@@ -361,15 +308,15 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         String type = typeEntry == null ? null : text(typeEntry, "type", problems);
         if (typeEntry == null) {
             problems.add(Problem.at(m.position(), id, "Node " + id + " needs a type: " + String.join(" or ", TYPES)));
-            return new Node(id, null, null, null, null, null, m.position(), keys);
+            return Node.bare(id, null, m.position(), keys);
         }
         if (type != null && !TYPES.contains(type)) {
             problems.add(Problem.at(typeEntry.value().position(), id, "Unknown node type '" + Suggest.clip(type) + "'"
                 + Suggest.hint(type, TYPES) + ": a flow node is " + String.join(" or ", TYPES)));
-            return new Node(id, null, null, null, null, null, m.position(), keys);
+            return Node.bare(id, null, m.position(), keys);
         }
         if (type == null) {
-            return new Node(id, null, null, null, null, null, m.position(), keys);
+            return Node.bare(id, null, m.position(), keys);
         }
         Set<String> allowed = TYPE_KEYS.get(type);
         for (YamlReader.Entry e : m.entries().values()) {
@@ -403,7 +350,26 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
                         + "to run the pipeline's latest"));
                 }
             }
-            return new Node(id, type, pipeline, version, null, null, m.position(), keys);
+            Map<String, Object> with = with(m.entries().get("with"), id, names, problems);
+            return new Node(id, type, pipeline, version, null, null, m.position(), keys, with, null, null, null);
+        }
+        if (type.equals(NOTIFY)) {
+            return notifyNode(id, m, keys, names, problems);
+        }
+        if (type.equals(WAIT)) {
+            YamlReader.Entry f = m.entries().get("for");
+            Duration d = null;
+            if (f == null) {
+                problems.add(Problem.at(m.position(), id, "Node " + id + " needs for: how long to wait, such as 10m"));
+            } else {
+                d = duration(f);
+                if (d == null || d.isZero() || d.compareTo(MAX_WAIT) > 0) {
+                    problems.add(Problem.at(f.value().position(), id, "for is a time such as 10m, 90s or 2h, more than "
+                        + "nothing and at most 24h"));
+                    d = null;
+                }
+            }
+            return new Node(id, type, null, null, null, null, m.position(), keys, Map.of(), null, null, d);
         }
         String status = "failed";
         YamlReader.Entry s = m.entries().get("status");
@@ -418,7 +384,102 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
         }
         YamlReader.Entry msg = m.entries().get("message");
         String message = msg == null ? null : text(msg, "message", problems);
-        return new Node(id, type, null, null, status, message, m.position(), keys);
+        return new Node(id, type, null, null, status, message, m.position(), keys, Map.of(), null, null, null);
+    }
+
+    /**
+     * A run-pipeline node's {@code with:}: a value for each pipeline parameter it sets, as written. Text
+     * may name the flow's parameters and server variables; which parameters the pipeline takes, and of
+     * what kind, is for the server to check.
+     */
+    private static Map<String, Object> with(YamlReader.Entry e, String id, Set<String> names, List<Problem> problems) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (e == null) {
+            return out;
+        }
+        if (!(e.value() instanceof YamlReader.Mapping m)) {
+            problems.add(Problem.at(e.value().position(), id, "with is a mapping of the pipeline's parameters to "
+                + "values, such as with: { region: EMEA, limit: \"${limit}\" }"));
+            return out;
+        }
+        for (YamlReader.Entry p : m.entries().values()) {
+            if (!Parameters.NAME.matcher(p.key()).matches()) {
+                problems.add(Problem.at(p.keyPosition(), id, "'" + Suggest.clip(p.key()) + "' is not a parameter name"));
+                continue;
+            }
+            if (!(p.value() instanceof YamlReader.Scalar sc) || sc.value() == null) {
+                problems.add(Problem.at(p.value().position(), id, "with: " + p.key() + " is one value: text, a number "
+                    + "or true/false"));
+                continue;
+            }
+            Object v = sc.value() instanceof String ? sc.written() : sc.value();
+            if (v instanceof String t) {
+                String wrong = Parameters.unknownName(t, names, true);
+                if (wrong != null) {
+                    problems.add(Problem.at(p.value().position(), id, "with: " + p.key() + " " + wrong));
+                    continue;
+                }
+            } else if (v instanceof Number n) {
+                v = n.doubleValue();
+            }
+            out.put(p.key(), v);
+        }
+        return out;
+    }
+
+    private static Node notifyNode(String id, YamlReader.Mapping m, Map<String, Position> keys, Set<String> names,
+                                   List<Problem> problems) {
+        String severity = "info";
+        YamlReader.Entry s = m.entries().get("severity");
+        if (s != null) {
+            String t = s.value().value() instanceof String str ? str.strip().toLowerCase() : null;
+            if (SEVERITIES.contains(t)) {
+                severity = t;
+            } else {
+                problems.add(Problem.at(s.value().position(), id, "severity is " + String.join(", ", SEVERITIES)));
+            }
+        }
+        String title = words(m.entries().get("title"), "title", MAX_TITLE, id, names, problems);
+        if (!m.entries().containsKey("title")) {
+            problems.add(Problem.at(m.position(), id, "Node " + id + " needs a title: one line, the notification's subject"));
+        }
+        String message = words(m.entries().get("message"), "message", MAX_MESSAGE, id, names, problems);
+        return new Node(id, NOTIFY, null, null, null, message, m.position(), keys, Map.of(), severity, title, null);
+    }
+
+    /** A notification's words, which may name the flow's parameters and server variables. */
+    private static String words(YamlReader.Entry e, String key, int max, String id, Set<String> names,
+                                List<Problem> problems) {
+        String t = e == null ? null : text(e, key, problems);
+        if (t == null) {
+            return null;
+        }
+        if (t.length() > max) {
+            problems.add(Problem.at(e.value().position(), id, key + " is at most " + String.format("%,d", max)
+                + " characters"));
+            return null;
+        }
+        String wrong = Parameters.unknownName(t, names, true);
+        if (wrong != null) {
+            problems.add(Problem.at(e.value().position(), id, key + " " + wrong));
+            return null;
+        }
+        return t;
+    }
+
+    /** A time such as 30m, 90s or 2h, or null. */
+    private static Duration duration(YamlReader.Entry e) {
+        var m = e.value() instanceof YamlReader.Scalar sc && sc.value() != null
+            ? DURATION.matcher(sc.written().strip().toLowerCase()) : null;
+        if (m == null || !m.matches()) {
+            return null;
+        }
+        long n = Long.parseLong(m.group(1));
+        return switch (m.group(2)) {
+            case "s" -> Duration.ofSeconds(n);
+            case "m" -> Duration.ofMinutes(n);
+            default -> Duration.ofHours(n);
+        };
     }
 
     private static final Pattern PIPELINE_NAME = Pattern.compile("[a-z][a-z0-9-]{0,62}");
@@ -427,7 +488,7 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
     private record RawConnection(String from, String to, String when, YamlReader.Node whenNode, Position position) {
     }
 
-    private static void connectionItems(YamlReader.Sequence list, Map<String, Node> byId, List<Parameter> parameters,
+    private static void connectionItems(YamlReader.Sequence list, Map<String, Node> byId, List<Parameters.Parameter> parameters,
                                   List<Connection> out, List<Problem> problems) {
         List<RawConnection> raw = new ArrayList<>();
         for (YamlReader.Node item : list.items()) {
@@ -507,12 +568,114 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
     }
 
     /**
+     * The type of a node's value as ${node.field} names it ({@code status} for any node; {@code score},
+     * {@code quarantined_share}, {@code rows_written} and {@code duration_s} for a run-pipeline node), or
+     * null when there is no such value.
+     */
+    public static FlowCondition.Type nodeValueType(FlowDefinition def, String name) {
+        int dot = name.indexOf('.');
+        if (dot < 1) {
+            return null;
+        }
+        Node n = def.node(name.substring(0, dot));
+        String field = name.substring(dot + 1);
+        if (n == null) {
+            return null;
+        }
+        if (field.equals("status")) {
+            return FlowCondition.Type.TEXT;
+        }
+        return RUN_PIPELINE.equals(n.type()) ? PIPELINE_VALUES.get(field) : null;
+    }
+
+    /**
+     * The nodes that have always run, and ended, whenever {@code id} runs. A node runs when one of the
+     * connections into it is taken, and a taken connection's node ran; so these are the nodes on every
+     * way in: for each connection in, its node and the nodes always run before that one, in common.
+     * A node a branch may skip is not among them.
+     */
+    public static Set<String> before(FlowDefinition def, String id) {
+        return before(def, id, new java.util.HashMap<>(), new HashSet<>());
+    }
+
+    private static Set<String> before(FlowDefinition def, String id, Map<String, Set<String>> memo, Set<String> busy) {
+        Set<String> known = memo.get(id);
+        if (known != null) {
+            return known;
+        }
+        if (!busy.add(id)) {
+            return Set.of(); // a loop, reported on its own
+        }
+        Set<String> common = null;
+        for (Connection c : def.connections()) {
+            if (!c.to().equals(id)) {
+                continue;
+            }
+            Set<String> way = new LinkedHashSet<>(before(def, c.from(), memo, busy));
+            way.add(c.from());
+            if (common == null) {
+                common = way;
+            } else {
+                common.retainAll(way);
+            }
+        }
+        Set<String> out = common == null ? Set.of() : common;
+        busy.remove(id);
+        memo.put(id, out);
+        return out;
+    }
+
+    /**
+     * Checks the node values that with: and notify name (${clean.rows_written}): the node must have ended
+     * before this one starts, and have such a value.
+     */
+    private static void nodeValues(FlowDefinition def, List<Problem> problems) {
+        for (Node n : def.nodes()) {
+            List<String> texts = new ArrayList<>();
+            n.with().values().forEach(v -> {
+                if (v instanceof String t) {
+                    texts.add(t);
+                }
+            });
+            if (NOTIFY.equals(n.type())) {
+                if (n.title() != null) {
+                    texts.add(n.title());
+                }
+                if (n.message() != null) {
+                    texts.add(n.message());
+                }
+            }
+            Set<String> before = null;
+            for (String t : texts) {
+                for (String name : Parameters.names(t)) {
+                    if (name.startsWith(Parameters.VARS) || name.indexOf('.') < 1) {
+                        continue; // parameters and variables are checked where written
+                    }
+                    String other = name.substring(0, name.indexOf('.'));
+                    before = before == null ? before(def, n.id()) : before;
+                    String why = !before.contains(other)
+                        ? " names " + name + ", but node " + Suggest.clip(other) + " has not always run when "
+                            + n.id() + " starts: only nodes on every way into " + n.id() + " can be read, as a branch "
+                            + "may skip the others"
+                        : nodeValueType(def, name) == null
+                            ? " names " + name + ", which " + other + " does not report: a node reports status, and a "
+                                + "run-pipeline node score, quarantined_share, rows_written and duration_s"
+                            : null;
+                    if (why != null) {
+                        problems.add(Problem.at(n.position(), n.id(), "Node " + n.id() + why));
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Reads a connection's condition. It may read the parameters, and the values of the node it leaves
      * and of nodes before that one (a node that has not ended when the connection is decided has nothing
      * to report).
      */
     private static FlowCondition condition(String text, Position at, String from, Map<String, Node> byId,
-                                           List<Parameter> parameters, Map<String, Set<String>> before,
+                                           List<Parameters.Parameter> parameters, Map<String, Set<String>> before,
                                            List<Problem> problems) {
         Set<String> upstream = new LinkedHashSet<>();
         upstream.add(from);
@@ -526,8 +689,10 @@ public record FlowDefinition(String name, String description, List<Parameter> pa
             }
         }
         Map<String, FlowCondition.Type> types = new LinkedHashMap<>();
-        for (Parameter p : parameters) {
-            types.put(p.name(), p.type());
+        for (Parameters.Parameter p : parameters) {
+            if (!p.list()) {
+                types.put(p.name(), p.type()); // a list is for in (...) in pipelines, not for conditions
+            }
         }
         for (String id : upstream) {
             Node s = byId.get(id);

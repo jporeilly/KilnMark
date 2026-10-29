@@ -1477,7 +1477,9 @@ export type NotificationKindId =
   | "drift"
   | "connection_failed"
   | "pipeline_failed"
-  | "pipeline_low_quality";
+  | "pipeline_low_quality"
+  | "flow_failed"
+  | "flow_notice";
 /** The feed itself (items, unread count, marking read) is in src/notifications/api.ts, shared with the shell's bell. */
 export type NotificationSeverity = "high" | "medium" | "low" | "info";
 export type EmailStatus = "sent" | "queued" | "failed" | "skipped";

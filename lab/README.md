@@ -112,12 +112,20 @@ in Kilnmark are kept. The bash script needs `python3`.
 | `customers-clean.yaml` | `demo-customers-clean` | `postgres`, `s3` | A quality gate setting failing rows aside (`on_fail: quarantine`), measured quality per output; change it to `stop` to see a gate stop a run |
 | `customer-spend.yaml` | `demo-customer-spend` | `postgres`, `s3` | Aggregate, lookup and route, two reads feeding one pipeline, Parquet and CSV output |
 | `supplier-feed.yaml` | `demo-supplier-feed` | `mariadb`, `s3` | A gate on another database: `unique` quarantining repeated keys in a table with no primary key |
+| `orders-by-status.yaml` | `demo-orders-by-status` | `mariadb`, `s3` | Parameters: a text list in a filter (`status in ${statuses}`), a number, and a text naming the file written. Run it with other values through the API: `{"parameters": {"statuses": ["shipped", "delivered"], "label": "both"}}` |
 
-All three read sources that `lab/sources.csv` registers and write only to the `lab-warehouse`
+All four read sources that `lab/sources.csv` registers and write only to the `lab-warehouse`
 bucket, under `demo/`. They need the sources scanned first, so that Kilnmark knows their columns.
 `LabPipelinesTest` (server tests) checks each file against the lab's columns, so a change to the
 nodes that would break a demo fails the build. Add a demo by putting a file here whose `name`
 starts with `demo-`.
+
+`lab/flows/nightly-customers.yaml` (`demo-nightly-customers`) runs three of them as a flow: it cleans
+the customers, carries on to the spend report only if quality holds (else a `notify` node tells the
+stewards and the flow stops), then pulls the orders, inheriting `statuses` from the flow and given
+`label` with `with:`, and ends with a notice naming how many customers were cleaned. The same test
+checks it against the demo pipelines. Flows cannot be added through the API until the flows API
+comes (F3).
 
 ## Start just what you need
 

@@ -2,6 +2,7 @@ package io.kilnmark.server.pipelines;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -26,7 +27,7 @@ public final class PipelineViews {
     }
 
     /** {@code POST .../runs}: the version to run; the latest when left out. */
-    public record RunRequest(Integer version) {
+    public record RunRequest(Integer version, Map<String, Object> parameters) {
     }
 
     /**

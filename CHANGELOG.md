@@ -7,6 +7,22 @@ details.
 
 ### Details
 
+- **Parameters and server variables** (V22; docs/guide/pipelines.md, "Parameters and server
+  variables"). A pipeline declares `parameters:` (text, number, boolean, text list, number list, each
+  with a default) and uses them as `${name}`; a server variable is a value of the server, set by
+  stewards and admins through `/api/v1/variables` (every change kept, names that look like
+  credentials refused, `KILNMARK_VAR_<NAME>` seeds one at start-up) and written `${vars.name}`. A
+  value only ever fills a value: in an expression as a literal (`status in ${statuses}` becomes
+  `status in ('delivered', 'shipped')`; a number as a decimal; never inside quotes or joined to a
+  name), in where a write goes only as part of the last name beside text the pipeline writes
+  (`orders/${label}.csv`, letters, digits, `_` and `-`), in a number or true/false setting as the
+  whole value, and never in a source, asset, column, choice or another node. `POST /api/v1/pipelines/{name}/runs` takes `parameters`; each pipeline and flow
+  run keeps its parameters and the server's variables as they were when it was queued. Flows pass
+  values on: `with:` on `run-pipeline`, a flow parameter inherited by a pipeline parameter of the
+  same name, and an earlier node's values (`${clean.rows_written}`). New flow nodes: `notify` (a
+  `flow_notice` notification, in the app and by email) and `wait` (up to 24h); a flow run that fails
+  posts `flow_failed`. Lab: `demo-orders-by-status` and the flow `demo-nightly-customers`, checked
+  against the lab.
 - **Steps are now called nodes** (V21). The boxes on a pipeline canvas are **nodes**, and in a flow
   the line joining two flow nodes is a **connection**. Pipeline and flow YAML list `nodes:`, and
   flows list `connections:`; files with the old `steps:` and `paths:` keys are still read (saved

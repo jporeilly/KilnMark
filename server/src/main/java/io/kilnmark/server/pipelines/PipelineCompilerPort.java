@@ -18,16 +18,19 @@ public interface PipelineCompilerPort {
     /**
      * Checks a pipeline without creating any node: the YAML, every node's settings (through its
      * factory's {@code check}), the edges and ports, and each node's output columns where its
-     * factory can tell ({@code outputSchema}).
+     * factory can tell ({@code outputSchema}). {@code parameters} are the run's values (empty: the
+     * defaults) and {@code variables} the server's, which {@code ${...}} reads.
      */
-    Compilation check(String yaml, NodeFactories factories);
+    Compilation check(String yaml, NodeFactories factories, Map<String, Object> parameters,
+                      Map<String, Object> variables);
 
     /**
      * Checks a pipeline and, when it has no problems, creates every node (through its factory's
      * {@code create}) and returns the graph to run in {@link Compilation#graph()}. Called by the
      * worker inside {@link RunContext#run}, so server node factories know whose run it is.
      */
-    Compilation compile(String yaml, NodeFactories factories);
+    Compilation compile(String yaml, NodeFactories factories, Map<String, Object> parameters,
+                        Map<String, Object> variables);
 
     /**
      * One problem, in plain words. {@code line} and {@code column} count from 1, or are 0 when the

@@ -466,4 +466,178 @@ class FlowRunTest {
             run.parameters());
         waitForFlow(run.id(), "succeeded");
     }
+
+    // ---- F2: parameters, server variables, with:, notify and wait ----
+
+    @Inject
+    io.kilnmark.server.Db db;
+
+    private long count(String query, Object... args) {
+        return db.tx(c -> {
+            try (java.sql.PreparedStatement ps = c.prepareStatement(query)) {
+                for (int i = 0; i < args.length; i++) {
+                    ps.setObject(i + 1, args[i]);
+                }
+                try (java.sql.ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    return rs.getLong(1);
+                }
+            }
+        });
+    }
+
+    /** Writes to lab.fl_<suffix>_<area>: a parameter and a server variable name the table. */
+    static final String PARAM = COPY.replace("name: fl-copy", "name: fl-param")
+        .replace("description: Synthetic people, copied.", """
+            description: Synthetic people, copied to a table a parameter names.
+            parameters:
+              suffix: { type: text, default: base }""")
+        .replace("table: lab.fl_copy", "table: lab.fl_${suffix}_${vars.area}");
+
+    @Test
+    @Order(10)
+    void stewardsKeepServerVariablesAndEveryChangeIsKept() {
+        as(steward).body(Map.of("type", "text", "value", "north", "description", "Where the lab is"))
+            .put("/api/v1/variables/area").then().statusCode(200).body("value", org.hamcrest.Matchers.equalTo("north"));
+        as(steward).body(Map.of("type", "number", "value", 3)).put("/api/v1/variables/batch").then().statusCode(200);
+        as(steward).body(Map.of("type", "number", "value", 4)).put("/api/v1/variables/batch").then().statusCode(200);
+        assertEquals(List.of("area", "batch"), as(steward).get("/api/v1/variables").then().statusCode(200).extract()
+            .jsonPath().getList("name"));
+        List<Object> after = as(steward).get("/api/v1/variables/batch/changes").then().statusCode(200).extract()
+            .jsonPath().getList("after");
+        assertEquals(2, after.size());
+        assertEquals(4, ((Number) after.get(0)).intValue(), "newest first");
+        as(steward).delete("/api/v1/variables/batch").then().statusCode(204);
+        assertEquals(3, as(steward).get("/api/v1/variables/batch/changes").then().statusCode(200).extract().jsonPath()
+            .getList("after").size(), "the changes outlive the variable");
+        // Never a secret, never the wrong kind, and viewers neither read nor write them.
+        assertTrue(as(steward).body(Map.of("type", "text", "value", "x")).put("/api/v1/variables/db_password").then()
+            .statusCode(400).extract().jsonPath().getString("error").contains("looks like a credential"));
+        as(steward).body(Map.of("type", "number", "value", "lots")).put("/api/v1/variables/n").then().statusCode(400);
+        as(viewer).get("/api/v1/variables").then().statusCode(403);
+        as(viewer).body(Map.of("type", "text", "value", "x")).put("/api/v1/variables/v").then().statusCode(403);
+        // An admin can do whatever a steward can.
+        as(Tokens.ADMIN).body(Map.of("type", "boolean", "value", true)).put("/api/v1/variables/by_admin").then()
+            .statusCode(200);
+        as(Tokens.ADMIN).get("/api/v1/variables/by_admin/changes").then().statusCode(200);
+        as(Tokens.ADMIN).delete("/api/v1/variables/by_admin").then().statusCode(204);
+        FlowStore.Run byAdmin = flows.queueRun("fl-sequence", null, Map.of(), "admin", AccessRole.ADMIN);
+        try {
+            waitForFlow(byAdmin.id(), "succeeded");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        }
+    }
+
+    @Test
+    @Order(11)
+    void aPipelineRunTakesParametersAndKeepsTheValuesItStartedWith() throws Exception {
+        as(steward).body(Map.of("name", "fl-param", "yaml", PARAM)).post("/api/v1/pipelines").then().statusCode(201);
+        long id = as(steward).body(Map.of("parameters", Map.of("suffix", "emea"))).post("/api/v1/pipelines/fl-param/runs")
+            .then().statusCode(202).extract().jsonPath().getLong("id");
+        PipelineStore.Run run = await("pipeline run " + id, () -> pipelineStore.run(id).orElseThrow(),
+            PipelineStore.Run::finished);
+        assertEquals("succeeded", run.status(), run.error());
+        assertTrue(run.result().contains("lab.fl_emea_north"), run.result());
+        assertTrue(run.parameters().replace(" ", "").contains("\"suffix\":\"emea\""), run.parameters());
+        assertTrue(run.variables().replace(" ", "").contains("\"area\":\"north\""), run.variables());
+        // A value that would leave its part of the name, an unknown parameter, a wrong kind.
+        as(steward).body(Map.of("parameters", Map.of("suffix", "../x"))).post("/api/v1/pipelines/fl-param/runs")
+            .then().statusCode(409);
+        assertTrue(as(steward).body(Map.of("parameters", Map.of("colour", "red"))).post("/api/v1/pipelines/fl-param/runs")
+            .then().statusCode(400).extract().jsonPath().getString("error").contains("has no parameter 'colour'"));
+        // A run never chooses the table a write replaces: a parameter is only part of a name the pipeline writes.
+        String whole = PARAM.replace("name: fl-param", "name: fl-whole").replace("table: lab.fl_${suffix}_${vars.area}",
+            "table: \"${suffix}\"");
+        as(steward).body(Map.of("name", "fl-whole", "yaml", whole)).post("/api/v1/pipelines").then().statusCode(201);
+        assertTrue(as(steward).body(Map.of("parameters", Map.of("suffix", "payroll")))
+            .post("/api/v1/pipelines/fl-whole/runs").then().statusCode(409).extract().jsonPath().getString("error")
+            .contains("is only parameters"));
+    }
+
+    @Test
+    @Order(12)
+    void aFlowPassesItsParametersNodeValuesAndNotices() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-passing
+            parameters:
+              suffix: { type: text, default: flow }
+            nodes:
+              - { id: copy, type: run-pipeline, pipeline: fl-copy }
+              - { id: named, type: run-pipeline, pipeline: fl-param }
+              - { id: given, type: run-pipeline, pipeline: fl-param, with: { suffix: "n${copy.rows_written}" } }
+              - { id: pause, type: wait, for: 1s }
+              - id: tell
+                type: notify
+                severity: low
+                title: "Copied ${copy.rows_written} rows into lab.fl_${suffix}_${vars.area}"
+            connections:
+              - { from: copy, to: named }
+              - { from: named, to: given }
+              - { from: given, to: pause }
+              - { from: pause, to: tell }
+            """);
+        FlowStore.Run run = start("fl-passing", Map.of());
+        waitForFlow(run.id(), "succeeded");
+        PipelineStore.Run named = pipelineStore.flowNodeRun(run.id(), "named").orElseThrow();
+        assertTrue(named.result().contains("lab.fl_flow_north"), "inherited from the flow: " + named.result());
+        PipelineStore.Run given = pipelineStore.flowNodeRun(run.id(), "given").orElseThrow();
+        assertTrue(given.result().contains("lab.fl_n2500_north"), "with: and a node value: " + given.result());
+        assertEquals("Waited 1 seconds", node(run.id(), "pause").message());
+        assertEquals("Sent: Copied 2500 rows into lab.fl_flow_north", node(run.id(), "tell").message());
+        await("the notice", () -> count("SELECT count(*) FROM kilnmark.notify_event WHERE kind = 'flow_notice' "
+            + "AND title = ? AND severity = 'low'", "Copied 2500 rows into lab.fl_flow_north"), n -> n == 1L);
+    }
+
+    @Test
+    @Order(13)
+    void savingChecksWithAgainstThePipelinesParameters() {
+        String flow = """
+            kilnmark: flow/v1
+            name: fl-wrong-with
+            parameters:
+              suffix: { type: number, default: 1 }
+            nodes:
+              - { id: a, type: run-pipeline, pipeline: fl-param, with: { colour: red } }
+            """;
+        List<String> problems = flows.validate(flow).problems().stream().map(io.kilnmark.kiln.yaml.Problem::message)
+            .toList();
+        assertTrue(problems.stream().anyMatch(m -> m.contains("the parameter 'colour', which it does not take: it "
+            + "takes suffix")), problems.toString());
+        assertTrue(problems.stream().anyMatch(m -> m.contains("passes the flow's suffix (a number) to fl-param, which "
+            + "takes a text")), problems.toString());
+        List<String> vars = flows.validate(flow.replace("with: { colour: red }", "with: { suffix: \"${vars.nope}\" }"))
+            .problems().stream().map(io.kilnmark.kiln.yaml.Problem::message).toList();
+        assertTrue(vars.stream().anyMatch(m -> m.contains("server variable 'nope', which is not set")), vars.toString());
+    }
+
+    @Test
+    @Order(14)
+    void cancellingAFlowStopsItsWaitAndAFailedFlowIsTold() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-waiting
+            nodes:
+              - { id: pause, type: wait, for: 10m }
+            """);
+        FlowStore.Run run = start("fl-waiting", Map.of());
+        await("the wait", () -> node(run.id(), "pause"), n -> n != null && "running".equals(n.status()));
+        flows.cancel(run.id(), "tester", AccessRole.STEWARD);
+        waitForFlow(run.id(), "cancelled");
+        assertEquals("cancelled", node(run.id(), "pause").status());
+        assertEquals("Stopped waiting: the flow was stopped", node(run.id(), "pause").message());
+
+        save("""
+            kilnmark: flow/v1
+            name: fl-told
+            nodes:
+              - { id: broken, type: run-pipeline, pipeline: fl-broken }
+            """);
+        FlowStore.Run failed = start("fl-told", Map.of());
+        waitForFlow(failed.id(), "failed");
+        await("the failure notice", () -> count("SELECT count(*) FROM kilnmark.notify_event WHERE kind = 'flow_failed' "
+            + "AND dedupe_key = 'flow:fl-told'"), n -> n == 1L);
+    }
 }

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -60,6 +61,77 @@ class FlowDefinitionTest {
     private static String with(String from, String to) {
         assertTrue(GOOD.contains(from), "test bug: " + from);
         return GOOD.replace(from, to);
+    }
+
+    private static final String MORE = """
+        kilnmark: flow/v1
+        name: more
+        parameters:
+          region: { type: text, default: EMEA }
+          statuses: { type: text list, default: [delivered] }
+        nodes:
+          - id: clean
+            type: run-pipeline
+            pipeline: demo-customers-clean
+            with: { region: "${region}", note: "for ${vars.team}", limit: 5, dry: true }
+          - id: pause
+            type: wait
+            for: 10m
+          - id: tell
+            type: notify
+            severity: medium
+            title: "Clean wrote ${clean.rows_written} rows for ${region}"
+            message: Status ${clean.status}
+        connections:
+          - { from: clean, to: pause }
+          - { from: pause, to: tell }
+        """;
+
+    @Test
+    void readsWithNotifyAndWait() {
+        FlowDefinition.Parsed p = FlowDefinition.parse(MORE);
+        assertTrue(p.valid(), p.problems().toString());
+        FlowDefinition d = p.definition();
+        assertEquals(Map.of("region", "${region}", "note", "for ${vars.team}", "limit", 5.0, "dry", true),
+            d.node("clean").with());
+        assertEquals(Duration.ofMinutes(10), d.node("pause").waitFor());
+        FlowDefinition.Node tell = d.node("tell");
+        assertEquals("medium", tell.severity());
+        assertEquals("Clean wrote ${clean.rows_written} rows for ${region}", tell.title());
+        assertEquals(java.util.Set.of("clean", "pause"), FlowDefinition.before(d, "tell"));
+        assertTrue(d.parameter("statuses").list());
+    }
+
+    @Test
+    void aNodeCannotBeCalledVars() {
+        assertTrue(firstProblem(MORE.replace("id: pause", "id: vars").replace("to: pause", "to: vars")
+            .replace("from: pause", "from: vars")).contains("cannot be called vars"));
+    }
+
+    @Test
+    void checksWithNotifyAndWait() {
+        assertTrue(firstProblem(MORE.replace("for: 10m", "for: 2d")).contains("for is a time"));
+        assertTrue(firstProblem(MORE.replace("for: 10m", "for: 25h")).contains("at most 24h"));
+        assertTrue(firstProblem(MORE.replace("severity: medium", "severity: urgent")).contains("info, low, medium, high"));
+        assertTrue(firstProblem(MORE.replace("    title: \"Clean wrote ${clean.rows_written} rows for ${region}\"\n", ""))
+            .contains("needs a title"));
+        assertTrue(firstProblem(MORE.replace("\"${region}\", note", "\"${regon}\", note"))
+            .contains("names the parameter 'regon', which is not declared (did you mean 'region'?)"));
+        // A node value must come from a node that has always ended first, and be one it reports.
+        assertTrue(firstProblem(MORE.replace("${clean.rows_written}", "${tell.rows_written}"))
+            .contains("has not always run when tell starts"));
+        // A branch may skip a node: only nodes on every way in can be read.
+        assertTrue(firstProblem(MORE.replace("  - { from: clean, to: pause }",
+            "  - { from: clean, to: pause, when: failure }\n  - { from: clean, to: tell, when: success }")
+            .replace("message: Status ${clean.status}", "message: Paused ${pause.status}"))
+            .contains("node pause has not always run when tell starts"));
+        assertTrue(firstProblem(MORE.replace("${clean.rows_written}", "${pause.rows_written}"))
+            .contains("which pause does not report"));
+        assertTrue(firstProblem(MORE.replace("limit: 5,", "limit: [5],")).contains("is one value"));
+        // A list parameter is for in (...) in a pipeline, not for a condition.
+        assertTrue(FlowDefinition.parse(MORE.replace("  - { from: clean, to: pause }",
+                "  - { from: clean, to: pause, when: \"statuses = 'x'\" }")).problems().stream()
+            .anyMatch(x -> x.message().contains("Unknown value 'statuses'")));
     }
 
     @Test
@@ -127,7 +199,7 @@ class FlowDefinitionTest {
         assertTrue(firstProblem(with("status: failed", "status: maybe")).contains("succeeded or failed"));
         assertTrue(firstProblem(with("queue_timeout: 45m", "queue_timeout: soon")).contains("queue_timeout"));
         assertTrue(firstProblem(with("queue_timeout: 45m", "queue_timeout: 48h")).contains("at most 24h"));
-        assertTrue(firstProblem(with("{ type: text, default: EMEA }", "{ type: text, default: 5 }")).contains("must be a text"));
+        assertTrue(firstProblem(with("{ type: text, default: EMEA }", "{ type: text, default: [5] }")).contains("must be text"));
         assertTrue(firstProblem(with("limit_share: { type: number", "limit_share: { type: numbr")).contains("needs a type"));
         assertTrue(firstProblem(with("from: clean, to: spend", "from: clean, to: spnd")).contains("which is not a node"));
         assertTrue(firstProblem(with("from: clean, to: spend", "from: clean, to: clean")).contains("back to itself"));

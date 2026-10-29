@@ -2,6 +2,7 @@ package io.kilnmark.server.api;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Map;
 
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
@@ -319,7 +320,8 @@ public class PipelineResource {
         @APIResponse(responseCode = "409", description = "The version has problems that stop it running")})
     public Response run(@PathParam("name") String name, PipelineViews.RunRequest body) {
         AccessRole role = identity.hasRole(AccessRole.ADMIN_ROLE) ? AccessRole.ADMIN : AccessRole.STEWARD;
-        PipelineViews.RunSummary run = pipelines.queueRun(name, body == null ? null : body.version(), who(), role);
+        PipelineViews.RunSummary run = pipelines.queueRun(name, body == null ? null : body.version(),
+            body == null || body.parameters() == null ? Map.of() : body.parameters(), who(), role);
         return Response.accepted(run).location(URI.create("/api/v1/pipeline-runs/" + run.id())).build();
     }
 

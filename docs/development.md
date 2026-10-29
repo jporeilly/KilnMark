@@ -133,7 +133,9 @@ password before starting Kilnmark (see .env.example)`. It builds
 `localhost/kilnmark-postgres:<version>` and `localhost/kilnmark-server:<version>` (the server image
 from the release's `server` folder, through the Containerfile's `APP_DIR` argument) and starts
 them. Optional settings: `KILNMARK_PORT`, `KILNMARK_DB_PORT` (the database is published on this
-machine only; Kilnmark reaches it inside the stack) and `KILNMARK_SOURCES_HOST_MAP`. Nothing is
+machine only; Kilnmark reaches it inside the stack), `KILNMARK_SOURCES_HOST_MAP` and
+`KILNMARK_VAR_<NAME>`, which sets the server variable `<name>` as text when the server starts, unless
+it is set already (see the guide's "Parameters and server variables"). Nothing is
 scanned until a source is added. For folder sources, uncomment the
 example volume and mount the customer's folder at `/srv/files`; there is no default folder. The
 AI profiles work as described in [AI models](#ai-models).

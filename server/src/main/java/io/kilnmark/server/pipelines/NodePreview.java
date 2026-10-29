@@ -148,7 +148,8 @@ final class NodePreview {
                 + id + " needs " + reads + ". Preview a node nearer the start.");
         }
         String name = d.name() == null || d.name().isBlank() ? "preview" : d.name();
-        return new Plan(new PipelineDefinition(name, d.description(), clamp(sub, caps.memoryMb()), d.quality()), id,
+        return new Plan(new PipelineDefinition(name, d.description(), clamp(sub, caps.memoryMb()), d.quality(),
+            d.parameters()), id,
             chosen.type());
     }
 

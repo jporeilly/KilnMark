@@ -107,6 +107,14 @@ public class PipelinePreviews {
     /** Previews answered while their nodes were still stopping, not yet ended. */
     private final AtomicInteger stopping = new AtomicInteger();
 
+    /** The server's variables (${vars.name}); null in tests that build previews by hand. */
+    @Inject
+    io.kilnmark.server.variables.VariableService variables;
+
+    private Map<String, Object> variables() {
+        return variables == null ? Map.of() : variables.snapshot();
+    }
+
     @Inject
     public PipelinePreviews(NodeFactories nodes, PipelineStore store, PipelineSources sources, KilnmarkConfig config) {
         this(nodes, store, sources, Limits.of(config));
@@ -200,12 +208,15 @@ public class PipelinePreviews {
     }
 
     /** What is worked out before anything connects. */
-    private record Prepared(NodePreview.Plan plan, PipelineCompilerPort.Compilation checked, String port) {
+    private record Prepared(NodePreview.Plan plan, PipelineCompilerPort.Compilation checked, String port,
+                            Map<String, Object> variables) {
     }
 
     private Prepared prepare(String yaml, String node, String port, Viewer viewer) {
         NodePreview.Plan plan = NodePreview.plan(yaml, node, limits.caps());
-        PipelineCompilerPort.Compilation checked = KilnPipelineCompiler.compile(plan.definition(), nodes, false);
+        Map<String, Object> variables = variables();
+        PipelineCompilerPort.Compilation checked = KilnPipelineCompiler.compile(plan.definition(), nodes, false,
+            variables);
         if (!checked.valid()) {
             throw new IllegalArgumentException("Fix the pipeline before previewing " + plan.node() + ": "
                 + problems(checked.problems()));
@@ -218,7 +229,7 @@ public class PipelinePreviews {
         } catch (NodePreview.Refused e) {
             throw PipelineService.fail(Response.Status.FORBIDDEN, e.getMessage());
         }
-        return new Prepared(plan, checked, out);
+        return new Prepared(plan, checked, out, variables);
     }
 
     /** One preview's work on its own thread: create the nodes, wait for the go-ahead, run them. */
@@ -293,7 +304,7 @@ public class PipelinePreviews {
     private void work(Job job, RunContext context, Prepared p, int rows, String who, long started) {
         try {
             PipelineCompilerPort.Compilation c = context.run(() -> KilnPipelineCompiler.compile(p.plan().definition(),
-                nodes, true));
+                nodes, true, p.variables()));
             job.created.complete(c);
             PipelineGraph graph = c.graph();
             if (graph == null) {

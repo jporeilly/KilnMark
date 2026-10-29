@@ -1,0 +1,36 @@
+# Demo 4: parameters (lab only, never shipped).
+# Needs the lab's mariadb and s3 demo sources, imported from lab/sources.csv and scanned.
+# Keeps the shop's orders in the statuses asked for and writes the columns wanted to a file named
+# after the run. Run it as it is (delivered orders), or give it other values: statuses is a list,
+# so ["shipped", "delivered"] keeps both.
+kilnmark: pipeline/v1
+name: demo-orders-by-status
+description: Lab shop orders in the statuses asked for, with the columns wanted.
+
+parameters:
+  statuses: { type: text list, default: [delivered], description: The order statuses to keep }
+  label: { type: text, default: delivered, description: Names the file written }
+  min_fee: { type: number, default: 0, description: Only orders with at least this shipping fee }
+
+nodes:
+  - id: orders
+    type: read
+    source: lab-mariadb
+    asset: shop.orders
+
+  - id: wanted
+    type: filter
+    input: orders
+    condition: "status in ${statuses} and shipping_fee >= ${min_fee}"
+
+  - id: columns
+    type: select
+    input: wanted
+    keep: [order_id, customer_id, ordered_at, status, shipping_fee]
+
+  - id: out
+    type: write
+    input: columns
+    source: lab-warehouse
+    path: demo/orders/${label}.csv
+    mode: replace

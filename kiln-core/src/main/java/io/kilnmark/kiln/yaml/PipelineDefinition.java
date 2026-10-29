@@ -20,13 +20,16 @@ import java.util.Set;
  * @param description what it does, or null
  * @param nodes       the nodes in the order written
  * @param quality     the pipeline's quality settings ({@code quality:}), or null when it has none
+ * @param parameters  what it takes ({@code parameters:}), each with a default, in the order written
  */
-public record PipelineDefinition(String name, String description, List<NodeDefinition> nodes, Quality quality) {
+public record PipelineDefinition(String name, String description, List<NodeDefinition> nodes, Quality quality,
+                                 List<Parameters.Parameter> parameters) {
 
     /** The format this version reads. */
     public static final String FORMAT = "pipeline/v1";
 
-    static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "quality", "nodes", "layout");
+    static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "parameters", "quality",
+        "nodes", "layout");
     static final Set<String> QUALITY_KEYS = Set.of("min_score");
 
     /**
@@ -39,11 +42,17 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
 
     public PipelineDefinition {
         nodes = List.copyOf(nodes);
+        parameters = parameters == null ? List.of() : List.copyOf(parameters);
     }
 
     /** A pipeline without quality settings. */
     public PipelineDefinition(String name, String description, List<NodeDefinition> nodes) {
         this(name, description, nodes, null);
+    }
+
+    /** A pipeline without parameters. */
+    public PipelineDefinition(String name, String description, List<NodeDefinition> nodes, Quality quality) {
+        this(name, description, nodes, quality, List.of());
     }
 
     /**
@@ -177,7 +186,7 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
             if (!TOP_LEVEL_KEYS.contains(e.key()) && !Renamed.isOld(e.key(), TOP_LEVEL_KEYS)) {
                 problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + Suggest.clip(e.key()) + "'"
                     + Suggest.hint(e.key(), TOP_LEVEL_KEYS)
-                    + ": a pipeline has kilnmark, name, description, quality, nodes and layout"));
+                    + ": a pipeline has kilnmark, name, description, parameters, quality, nodes and layout"));
             }
         }
         String name = text(top.entries().get("name"), "name", null, problems);
@@ -186,6 +195,8 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
         }
         String description = text(top.entries().get("description"), "description", null, problems);
         Quality quality = quality(top.entries().get("quality"), problems);
+        List<Parameters.Parameter> parameters = Parameters.read(top.entries().get("parameters"), "pipeline", true,
+            problems);
 
         List<NodeDefinition> nodes = new ArrayList<>();
         YamlReader.Entry nodesEntry = Renamed.entry(top, "nodes", "pipeline", problems);
@@ -205,7 +216,7 @@ public record PipelineDefinition(String name, String description, List<NodeDefin
                 }
             }
         }
-        return new Parsed(new PipelineDefinition(name, description, nodes, quality), problems);
+        return new Parsed(new PipelineDefinition(name, description, nodes, quality, parameters), problems);
     }
 
     /** The {@code quality:} mapping: {@code min_score}, a share from 0 to 1. Null when absent or wrong. */

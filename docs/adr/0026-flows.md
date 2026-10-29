@@ -50,7 +50,11 @@ queue"), so "job" cannot also be the name of what orchestrates pipelines.
   `pipeline_run` to the flow run and step that started it (`flow_step`). V21 renames them to
   `flow_node_run` and `flow_node`.
 - Pipelines gain optional parameters in a later step, so a flow can pass values down; a parameter
-  may fill a setting's value but never choose a node type, a source or where to connect.
+  may fill a setting's value but never choose a node type, a source or where to connect. Built in
+  F2 (V22), with **server variables** beside them: values of the server, not of a pipeline, written
+  `${vars.name}`, so one YAML runs unchanged on a test server and a live one. Parameters are inputs a
+  pipeline or flow declares and each run may change; variables are the environment, set by stewards
+  and admins, and never secrets. Runs keep the values they started with.
 - A condition can read only the nodes that must have ended before its connection is decided, so it
   can never depend on a node that has not run.
 - The flow format and the condition language are part of what users write; changing them in a way

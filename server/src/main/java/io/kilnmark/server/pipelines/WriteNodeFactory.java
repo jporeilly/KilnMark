@@ -86,8 +86,10 @@ public final class WriteNodeFactory implements NodeFactory {
         SettingSpec.required("source", "Source", SettingSpec.Kind.SOURCE, "The saved source to write to"),
         SettingSpec.optional("target", "Table or file", SettingSpec.Kind.ASSET, null,
             "A table as schema.table, or a path inside the source for files"),
-        SettingSpec.optional("table", "Table", SettingSpec.Kind.TEXT, null, "Another name for target, for a table"),
-        SettingSpec.optional("path", "File path", SettingSpec.Kind.TEXT, null, "Another name for target, for a file"),
+        SettingSpec.optional("table", "Table", SettingSpec.Kind.TEXT, null, "Another name for target, for a table")
+            .withParameters(SettingSpec.Parameters.NAME_PART_ONLY),
+        SettingSpec.optional("path", "File path", SettingSpec.Kind.TEXT, null, "Another name for target, for a file")
+            .withParameters(SettingSpec.Parameters.NAME_PART_ONLY),
         SettingSpec.choice("mode", "Mode", false, "create", "create fails if it exists; append adds rows; replace "
             + "swaps in the new rows at the end; upsert updates rows with the same key and adds the rest", MODES),
         SettingSpec.optional("key", "Key columns", SettingSpec.Kind.COLUMNS, null,

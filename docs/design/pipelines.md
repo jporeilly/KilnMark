@@ -301,6 +301,38 @@ nodes:
   silently.
 - The server registers `read` and `write` itself; the compiler works with any `NodeFactories`.
 
+### Parameters and server variables (decisions)
+
+Built with flows' F2 (CHANGELOG; the guide's "Parameters and server variables" is the user's view).
+
+- **Two kinds of value.** A *parameter* is declared in the YAML (`parameters:`; `text`, `number`,
+  `boolean`, `text list`, `number list`; a pipeline's each with a default) and given per run. A
+  *server variable* belongs to the server (V22 `variable`, every change kept in `variable_change`),
+  is set by stewards and admins through `/api/v1/variables`, and is written `${vars.name}`. A
+  default may be a variable (`default: "${vars.region}"`, `Parameters.VarRef`). Variables are never
+  secrets: names that look like a credential are refused. `KILNMARK_VAR_<NAME>` seeds one at
+  start-up, as text, unless it exists.
+- **`Parameters` (kiln-core)** declares, resolves (given value, else default; unknown names and wrong
+  kinds refused) and fills `${name}`. `PipelineCompiler.compile(yaml, parameters, variables)` fills
+  each node's settings before checking them, by the setting's kind: an expression or expression map
+  gets the value as a literal (text quoted with `''` doubled, a list as `('a', 'b')`, a negative
+  number as a decimal, in brackets when negative; `${...}` inside quotes, or touching a letter,
+  digit, `_`, `.` or `(`, is a problem, so a value never joins a name or a call); text gets it only
+  if it is letters, digits, spaces, `_`, `-` and `.` (never `..`, never a list); a number or boolean
+  setting takes one as its whole value. Every other kind (source, asset, columns, choice, URL, rules,
+  column map) refuses one. A setting can narrow that (`SettingSpec.parameters()`): the write node's
+  `table` and `path` are `NAME_PART_ONLY` (a value only in the last name, after the last `/` or `\`,
+  beside text the pipeline writes, and only `[A-Za-z0-9_-]`), and the gate's `rules_from` is `NONE`;
+  so a value never chooses what a node reads or writes, nor another node. `$${` is a plain `${`. A pipeline that declares no parameter and names no
+  variable keeps `${...}` as text, as before.
+- **The filled definition is the compiled one** (`Compiled.definition()`): what reads it afterwards
+  (where a write goes, lineage, profiling) sees the values, never `${...}`.
+- **Runs keep their values.** `pipeline_run.parameters` (defaults filled in) and
+  `pipeline_run.variables` (all the server's variables when the run was queued) are what the run
+  compiles with, however the variables change before it starts. Queueing resolves and checks the
+  values first: a wrong value is a 400, a version that does not check with them a 409.
+- **SQL**, when nodes take SQL of their own: a value goes in as a bound parameter, never as text.
+
 ## 3. Expressions
 
 `filter`, `compute`, `aggregate`, `route` and later the gate use one small expression language,

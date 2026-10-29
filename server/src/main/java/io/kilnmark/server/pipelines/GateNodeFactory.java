@@ -97,7 +97,8 @@ public final class GateNodeFactory implements NodeFactory {
             SettingSpec.optional("asset_rules", "Check the asset's rules", SettingSpec.Kind.BOOLEAN, true,
                 "Checks the enabled quality rules of the table or file read upstream"),
             SettingSpec.optional("rules_from", "Rules of read node", SettingSpec.Kind.TEXT, null,
-                "When rows come from more than one read node: the id of the one whose asset's rules to check"),
+                "When rows come from more than one read node: the id of the one whose asset's rules to check")
+                .withParameters(SettingSpec.Parameters.NONE),
             SettingSpec.optional("rules", "Rules", SettingSpec.Kind.RULES, null,
                 "Rules for this pipeline only, each with a type, a column and its own settings"),
             SettingSpec.optional("min_score", "Lowest score", SettingSpec.Kind.NUMBER, null,

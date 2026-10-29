@@ -36,7 +36,7 @@ public class FlowStore {
     /** {@code parameters} is a JSON object of the values the run started with. */
     public record Run(long id, String flow, int version, String status, String requestedBy, String requestedRole,
                       Instant requestedAt, Instant startedAt, Instant finishedAt, boolean cancelRequested, String error,
-                      String parameters) {
+                      String parameters, String variables) {
 
         public boolean finished() {
             return !status.equals("queued") && !status.equals("running");
@@ -212,7 +212,8 @@ public class FlowStore {
     // ---- runs ----
 
     private static final String RUN_COLUMNS = "r.id, r.flow, r.version, r.status, r.requested_by, r.requested_role, "
-        + "r.requested_at, r.started_at, r.finished_at, r.cancel_requested, r.error, r.parameters::text";
+        + "r.requested_at, r.started_at, r.finished_at, r.cancel_requested, r.error, r.parameters::text, "
+        + "r.variables::text";
 
     private static Instant at(ResultSet rs, int i) throws SQLException {
         Timestamp t = rs.getTimestamp(i);
@@ -221,7 +222,7 @@ public class FlowStore {
 
     private static Run run(ResultSet rs) throws SQLException {
         return new Run(rs.getLong(1), rs.getString(2), rs.getInt(3), rs.getString(4), rs.getString(5), rs.getString(6),
-            at(rs, 7), at(rs, 8), at(rs, 9), rs.getBoolean(10), rs.getString(11), rs.getString(12));
+            at(rs, 7), at(rs, 8), at(rs, 9), rs.getBoolean(10), rs.getString(11), rs.getString(12), rs.getString(13));
     }
 
     /**
@@ -229,7 +230,7 @@ public class FlowStore {
      *
      * @throws Busy when the flow has a run queued or running
      */
-    public Run queueRun(String flow, int version, String by, String role, String parameters) {
+    public Run queueRun(String flow, int version, String by, String role, String parameters, String variables) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.flow WHERE name = ? FOR UPDATE")) {
                 ps.setString(1, flow);
@@ -246,12 +247,14 @@ public class FlowStore {
             }
             long id;
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.flow_run (flow, version, "
-                + "requested_by, requested_role, parameters) VALUES (?, ?, ?, ?, ?::jsonb) RETURNING id")) {
+                + "requested_by, requested_role, parameters, variables) VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb) "
+                + "RETURNING id")) {
                 ps.setString(1, flow);
                 ps.setInt(2, version);
                 ps.setString(3, by);
                 ps.setString(4, role);
                 ps.setString(5, parameters);
+                ps.setString(6, variables);
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     id = rs.getLong(1);
@@ -409,7 +412,7 @@ public class FlowStore {
      * Marks failed the runs whose job failed without the run finishing (its worker stopped), so
      * they do not stay running for ever. Returns how many.
      */
-    public int failOrphanedRuns() {
+    public List<Run> failOrphanedRuns() {
         return db.tx(c -> {
             // Nodes of those runs still marked running will never end: say so.
             try (PreparedStatement ps = c.prepareStatement("""
@@ -427,8 +430,19 @@ public class FlowStore {
                         || 'the flow again; check what the pipelines it had started had written first.'
                 FROM kilnmark.job j
                 WHERE j.kind = 'flow' AND j.status IN ('failed', 'done')
-                  AND (j.payload ->> 'flowRunId')::bigint = r.id AND r.status IN ('queued', 'running')""")) {
-                return ps.executeUpdate();
+                  AND (j.payload ->> 'flowRunId')::bigint = r.id AND r.status IN ('queued', 'running')
+                RETURNING r.id""")) {
+                List<Long> ids = new ArrayList<>();
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        ids.add(rs.getLong(1));
+                    }
+                }
+                List<Run> out = new ArrayList<>();
+                for (long id : ids) {
+                    findRun(c, id).ifPresent(out::add);
+                }
+                return out;
             }
         });
     }
