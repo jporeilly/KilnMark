@@ -26,7 +26,7 @@ nodes:
   - name: write
     type: graph-writer
 
-hops:
+connections:
   - harvest -> sample
   - sample -> profile
   - profile -> write

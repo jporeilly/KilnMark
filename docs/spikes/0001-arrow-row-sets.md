@@ -63,8 +63,8 @@ On a 2-CPU cloud container, Java 25, 10 million rows of six columns (`spikeRun`)
 3. **Write our own JDBC-to-Arrow reader.** Arrow's JDBC adapter was slower than a plain reader,
    and failed on PostgreSQL's unconstrained `NUMERIC` (`scale must equal that in the Arrow
    vector: 2 != 0`) unless told each column's precision. It also turns `timestamptz` into
-   milliseconds. The engine needs a type-mapping layer per database dialect anyway (from Kettle
-   10.2's dialects), so the reader belongs there, with the adapter as a reference only.
+   milliseconds. The engine needs a type-mapping layer per database dialect anyway (from
+   Apache-licensed dialects), so the reader belongs there, with the adapter as a reference only.
 4. **Each node owns its memory.** Batches move between nodes by transferring buffers into the
    receiving node's allocator, so the engine can report and limit memory per node.
 

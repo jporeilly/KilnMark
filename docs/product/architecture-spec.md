@@ -4,13 +4,13 @@ Oct 22, 2026 · @James O'Reilly
 
 ## Vision and scope
 
-Build one engine that both **knows** your data and **acts** on it: Kettle's streaming, plugin-based execution model fused with Data Optimizer's rules-driven, metadata-triggered actions, with AI woven through discovery, enrichment and stewardship.
+Build one engine that both **knows** your data and **acts** on it: a streaming, plugin-based execution model fused with rules-driven, metadata-triggered actions, with AI woven through discovery, enrichment and stewardship.
 
-**Name:** the product is **Kilnmark** and its execution engine is **Kiln**. A kiln is the heat that does the work (a nod to Kettle); a hallmark is the assay office's stamp certifying metal is genuine, which is what the trust score does for data.
+**Name:** the product is **Kilnmark** and its execution engine is **Kiln**. A kiln is the heat that does the work; a hallmark is the assay office's stamp certifying metal is genuine, which is what the trust score does for data.
 
 **Purpose: Trusted Data Operations.** The engine exists to answer three questions about any asset, continuously: *what is it* (ingest and catalog), *what is in it* (profile and discover), and *can I trust and use it* (trust score, policy, lineage). Catalog features and data discovery are one product, not two: every ingest automatically profiles, discovers and scores, and every score can trigger an operation.
 
-Today these live in separate products. PDI moves and transforms data but keeps little memory of what it touched. Data Catalog and Data Optimizer hold rich metadata and rules, but execute a fixed set of actions (tag, move, purge, rehydrate). The engine closes that gap: every scan, profile and pipeline run writes to one metadata graph, and every rule can fire any pipeline as its action.
+Today these live in separate products. ETL tools move and transform data but keep little memory of what they touched. Catalogs and data optimizers hold rich metadata and rules, but execute a fixed set of actions (tag, move, purge, rehydrate). The engine closes that gap: every scan, profile and pipeline run writes to one metadata graph, and every rule can fire any pipeline as its action.
 
 **In scope for v1**
 
@@ -41,31 +41,31 @@ The 2026 market has converged on one idea: the catalog is now a context layer th
 | Unity Catalog | Open source (Apache 2.0) | One namespace for tables, files and ML models, with governance where compute runs | [Atlan](https://atlan.com/know/purview-vs-databricks-unity-catalog/), [Microsoft Learn](https://learn.microsoft.com/en-us/training/modules/explore-azure-databricks/05-data-governance-using-unity-catalog-and-microsoft-purview) |
 | Microsoft Purview | Commercial | Estate-wide Data Map that scans other catalogs (e.g. Unity) rather than duplicating them | [Microsoft Learn](https://learn.microsoft.com/en-us/training/modules/explore-azure-databricks/05-data-governance-using-unity-catalog-and-microsoft-purview) |
 | Komprise | Commercial | Global metadatabase across silos; Python plugins for custom metadata extraction; tiering with no rehydration penalty; what-if cost projection | [Komprise](https://www.komprise.com/resource/know-first/), [IBM](https://www.ibm.com/products/komprise) |
-| Pentaho Data Optimizer | Commercial | Rule definitions compiled to queries over scanned metadata; glossary terms as data temperature driving tier, purge and rehydrate | [Pentaho docs](https://docs.pentaho.com/pdc-admin/pdc-10.2-admin/pdc-manage-rules-cp-ag/pdc-manage-metadata-rules-cp) |
+| Commercial data optimizers | Commercial | Rule definitions compiled to queries over scanned metadata; glossary terms as data temperature driving tier, purge and rehydrate | Vendor documentation |
 
-**What the engine takes from the field:** an MCP server and natural-language querying (DataHub), a lean deployment footprint (OpenMetadata), active bi-directional metadata (Atlan), usage signals as first-class metadata (Alation), AI that works from metadata before touching data (CLAIRE), pluggable extractors in Python (Komprise), what-if cost simulation before a rule runs (Komprise), and term-driven rules (Data Optimizer).
+**What the engine takes from the field:** an MCP server and natural-language querying (DataHub), a lean deployment footprint (OpenMetadata), active bi-directional metadata (Atlan), usage signals as first-class metadata (Alation), AI that works from metadata before touching data (CLAIRE), pluggable extractors in Python (Komprise), what-if cost simulation before a rule runs (Komprise), and term-driven rules (data optimizers).
 
 ## Core capabilities
 
-Seven capabilities, each tagged with where it comes from: Kettle (K), Data Optimizer (DO), or the wider market (M).
+Seven capabilities, each tagged with where it comes from: streaming ETL engines (E), data optimizers and catalogs (DO), or the wider market (M).
 
 | Capability | What it does | Heritage |
 | --- | --- | --- |
 | Harvest | Connectors scan schemas, files and object stores into the graph; incremental by change markers | K (nodes as plugins), M |
 | Profile | Column stats, patterns, cardinality, nulls, sample values, computed in-stream during harvest | K (row streaming) |
-| Classify | Dictionaries, regex patterns, rules and LLM classifiers with a confidence score per hit | DO / PDC, M (CLAIRE, DataHub) |
-| Govern | Glossary, ownership, stewardship tasks, certification, policies | DO / PDC, M (Collibra) |
+| Classify | Dictionaries, regex patterns, rules and LLM classifiers with a confidence score per hit | DO, M (CLAIRE, DataHub) |
+| Govern | Glossary, ownership, stewardship tasks, certification, policies | DO, M (Collibra) |
 | Act | Rules match assets and fire actions: tag, tier, purge, rehydrate, or run any pipeline | DO + K |
 | Trace | Lineage from engine runs, OpenLineage events and parsed SQL, down to column level | K, M (OpenMetadata) |
 | Converse | Natural-language search, AI descriptions, agent access via MCP | M (DataHub, Atlan) |
 
-The differentiator is **Act**: in other catalogs, actions are a short fixed list. Here an action is a pipeline, so anything Kettle can do (move, mask, copy, load, call an API, rebuild a mart) becomes a governed, metadata-triggered operation that writes its own lineage back.
+The differentiator is **Act**: in other catalogs, actions are a short fixed list. Here an action is a pipeline, so anything an ETL pipeline can do (move, mask, copy, load, call an API, rebuild a mart) becomes a governed, metadata-triggered operation that writes its own lineage back.
 
 ## Architecture
 
 &#91;embedded content: engine architecture · 5 layers\]
 
-Consumers reach everything through one API; the four services submit work to a single Kettle-style engine, which reads and moves data at the sources and writes every result back to the metadata graph. Services also read the graph directly. Everything ships as Docker Compose on one VM for v1, with remote workers deployed next to the data when needed.
+Consumers reach everything through one API; the four services submit work to a single streaming engine, which reads and moves data at the sources and writes every result back to the metadata graph. Services also read the graph directly. Everything ships as Docker Compose on one VM for v1, with remote workers deployed next to the data when needed.
 
 ## Deployment: one image, many roles
 
@@ -77,7 +77,7 @@ Kilnmark is a modular monolith built into **one container image** that starts in
 
 **Why this is the efficient choice**
 
-- **No broker, no service mesh.** Workers pull jobs from a PostgreSQL queue (`SELECT … FOR UPDATE SKIP LOCKED`); events use the outbox. The only network hops are client to API, worker to PostgreSQL, and API to the optional AI sidecar over gRPC
+- **No broker, no service mesh.** Workers pull jobs from a PostgreSQL queue (`SELECT … FOR UPDATE SKIP LOCKED`); events use the outbox. The only network calls are client to API, worker to PostgreSQL, and API to the optional AI sidecar over gRPC
 - **Stateless roles.** All state lives in PostgreSQL, so any pod can die and be replaced; workers scale on queue depth
 - **Remote workers dial out.** A worker deployed next to on-prem data connects outbound to the API, so no inbound firewall rules are needed
 - **Air-gapped ready.** One offline bundle (images plus Helm chart plus Compose file), no calls home, licence file checked locally
@@ -121,22 +121,22 @@ Store metadata as a typed property graph with an append-only change log: every f
 
 **Graph store behind an interface.** All graph access goes through a `GraphStore` interface, so a Neo4j adapter can be added later for very large estates or customers who already run it. Neo4j Community is GPLv3 and Enterprise is AGPLv3 or commercial ([Neo4j repo](https://github.com/F-22/neo4j)), so it stays an optional adapter rather than something Kilnmark bundles.
 
-## Execution engine and connector framework (Kettle heritage)
+## Execution engine and connector framework
 
-Keep Kettle's proven model, rebuilt clean: a pipeline is a graph of steps, each step runs on its own worker, and rows stream between steps through bounded buffers. Harvesting, profiling and actions all run on this one engine.
+Keep the proven model of streaming ETL engines, rebuilt clean: a pipeline is a graph of nodes, each node runs on its own worker, and rows stream between nodes through bounded buffers. Harvesting, profiling and actions all run on this one engine.
 
-**What to keep from Kettle**
+**What to keep from streaming ETL engines**
 
 - **Nodes as plugins.** One interface (`init`, `processRow`, `dispose`) for every source, transform and sink, discovered at start-up from a plugins folder
 - **Row sets with back-pressure.** Bounded queues between nodes; a slow sink throttles the source instead of exhausting memory
-- **Step copies.** Run N copies of a CPU- or latency-bound step in parallel, as PDI does for lookups and scripts
+- **Node copies.** Run N copies of a CPU- or latency-bound node in parallel, for lookups and scripts
 - **Flows over pipelines.** A flow orchestrates pipelines with success/failure connections; the rules engine submits flows
 - **Metadata injection.** Build pipelines at runtime from graph metadata, so one template can harvest or move a thousand assets
-- **Remote workers.** A remote worker agent that runs near the data and reports back, giving the agent-affinity model PDC uses
+- **Remote workers.** A remote worker agent that runs near the data and reports back, giving an agent-affinity model
 
 **What to change**
 
-- **Pipelines as code.** YAML/JSON definitions in Git, versioned and diffable, instead of XML `.ktr` files
+- **Pipelines as code.** YAML/JSON definitions in Git, versioned and diffable, instead of XML files
 - **Metadata side-channel.** Every node emits schema, row counts and field-level lineage as it runs, so the engine writes the graph without extra scanning
 - **Polyglot plugins.** Java/Kotlin for core nodes; a Python SDK for extractors and AI nodes (Komprise KAPPA pattern)
 - **Incremental by default.** Connectors track change markers (modified time, ETag, CDC offset, schema hash) and only re-harvest what moved
@@ -148,7 +148,7 @@ Keep Kettle's proven model, rebuilt clean: a pipeline is a graph of steps, each 
 Classification runs as a cascade from cheapest to most expensive, and stops as soon as confidence clears the threshold. Most columns never reach the LLM.
 
 1. **Metadata only** — column and table names, types, comments matched against dictionaries and embeddings (CLAIRE pattern: no data read)
-2. **Pattern and dictionary** — regex and value lists over a sample, as PDC Data Identification methods do
+2. **Pattern and dictionary** — regex and value lists over a sample, as catalogs' data identification methods do
 3. **Statistical** — cardinality, length distribution, format entropy, checksum validity (Luhn, IBAN, NHS number)
 4. **Small model** — a local embedding or classifier model on Ollama for ambiguous columns
 5. **LLM** — only for what is still unresolved, given profile stats and a masked sample, never raw rows
@@ -172,9 +172,9 @@ Discovery goes beyond labelling columns: it finds what is sensitive, how assets 
 | Duplicates and ROT | Redundant, obsolete and trivial copies; near-duplicate files and tables | Content hashes, schema fingerprints, last-access and owner checks |
 | Similar assets | "Other tables like this one" across sources | Embeddings of schema plus profile; feeds glossary suggestions |
 | Drift | Schema change, distribution shift, volume anomalies between scans | Compare profile versions and sketches |
-| Usage | Who reads what, how often, which queries | Query logs and access logs, as PDC's usage observation does for MSSQL, Snowflake and Oracle |
+| Usage | Who reads what, how often, which queries | Query logs and access logs, as catalogs' usage observation does for MSSQL, Snowflake and Oracle |
 
-**Trust score** (0 to 100, recomputed on every scan and event), extending PDC's model of quality, ratings, verified lineage and glossary coverage:
+**Trust score** (0 to 100, recomputed on every scan and event), extending the common catalog model of quality, ratings, verified lineage and glossary coverage:
 
 | Factor | Signal |
 | --- | --- |
@@ -211,11 +211,11 @@ query {
 }
 ```
 
-**From trust to operations:** trust and sensitivity are rule criteria like any other attribute. Examples: block publishing a data product below a threshold (PDC's Marketplace-ready check), quarantine a file when PII appears in an unclassified share, or open a steward task when trust drops after a drift event. [Pentaho docs: trust score](https://docs.pentaho.com/pdc-use/ldc-explore-your-data-cp/pdc-processing-data), [data products](https://docs.pentaho.com/pdc-use/pdc-collections)
+**From trust to operations:** trust and sensitivity are rule criteria like any other attribute. Examples: block publishing a data product below a threshold (a marketplace-ready check), quarantine a file when PII appears in an unclassified share, or open a steward task when trust drops after a drift event.
 
-## Rules and actions engine (Data Optimizer heritage)
+## Rules and actions engine
 
-A rule is criteria plus actions, compiled to a query over the graph and executed as a job. This keeps Data Optimizer's two-stage pattern (define once, apply to any source) and widens the action list to any pipeline.
+A rule is criteria plus actions, compiled to a query over the graph and executed as a job. This keeps the data optimizers' two-stage pattern (define once, apply to any source) and widens the action list to any pipeline.
 
 **Rule definition** (source-agnostic, versioned in Git):
 
@@ -245,7 +245,7 @@ mode: dry-run
 - **Stub or link on move** — leave a stub or a resolvable link so access survives tiering; rehydrate on demand
 - **Full audit** — every RuleRun records matches, actions, outcomes and the lineage it produced
 
-**Temperature as a computed term:** a scheduled rule scores each asset from last access, access frequency (Usage), size and cost per TB, then applies Boiling to Frozen. Tiering rules key off the term, exactly as the Data Optimizer tiering workflow does.
+**Temperature as a computed term:** a scheduled rule scores each asset from last access, access frequency (Usage), size and cost per TB, then applies Boiling to Frozen. Tiering rules key off the term, as data optimizers' tiering workflows do.
 
 ## AI layer
 
@@ -267,7 +267,7 @@ AI runs in two directions, as Informatica frames it: AI builds the catalog, and 
 
 - **Natural-language search** — hybrid keyword (PostgreSQL full-text) and vector (pgvector) search, re-ranked by usage and certification
 - **Ask the catalog** — chat that answers "where is customer churn data and can I use it?" with cited assets, owners and policies
-- **MCP server** — tools such as `search_assets`, `get_lineage`, `propose_term`, `dry_run_rule`, `run_pipeline`, so Claude or any agent can read the graph and act within policy (you've done this already with PDC-Insights)
+- **MCP server** — tools such as `search_assets`, `get_lineage`, `propose_term`, `dry_run_rule`, `run_pipeline`, so Claude or any agent can read the graph and act within policy
 - **Context packs** — export a governed slice of the graph (definitions, joins, certified metrics) for agents to ground on, like Atlan Context Studio
 
 **Agentic stewardship:** a steward agent works the queue overnight: drafts descriptions, proposes classifications, reconciles drift, and leaves a morning digest. Humans approve in batches.
@@ -279,7 +279,7 @@ AI runs in two directions, as Informatica frames it: AI builds the catalog, and 
 Lineage comes from three sources, ranked by trust: engine runs (exact), OpenLineage events from other tools (reported), and parsed SQL or AI inference (derived).
 
 - **Engine runs** — each node knows its input and output fields, so column-level lineage is emitted as a by-product of execution, not reverse-engineered
-- **OpenLineage in and out** — accept events from Airflow, Spark, dbt and PDI's OpenLineage plugin; emit the engine's own runs as OpenLineage so Marquez or any consumer can display them
+- **OpenLineage in and out** — accept events from Airflow, Spark, dbt and other ETL tools' OpenLineage plugins; emit the engine's own runs as OpenLineage so Marquez or any consumer can display them
 - **SQL parsing** — parse view definitions and query logs (Apache Calcite) for column lineage across warehouses
 - **Inferred** — AI-proposed links, shown dashed and never used for propagation until approved
 
@@ -399,15 +399,15 @@ Not a box-and-wire flow editor with a pop-up dialog per node. The designer shoul
 - **AI drafts, people approve.** Describe a pipeline in plain English for a draft; explain a node; suggest a fix for an error
 - **Review like code.** Comments, version history, and an approval step before a pipeline goes live
 
-Delivery: a read-only canvas in v0.3 that shows and runs built-in pipelines and Kettle imports with live data; full editing after v0.5.
+Delivery: a read-only canvas in v0.3 that shows and runs built-in pipelines and imported jobs with live data; full editing after v0.5.
 
 ## Tech stack
 
-One opinionated stack that runs in Docker Compose on a single VM, matching how your PDC lab tooling is deployed today.
+One opinionated stack that runs in Docker Compose on a single VM, matching a typical single-VM lab deployment.
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Execution engine | Java 21 or Kotlin, virtual threads | Kettle lineage, JDBC ecosystem, cheap per-step workers |
+| Execution engine | Java 21 or Kotlin, virtual threads | JDBC ecosystem, cheap per-node workers |
 | Plugin SDKs | Java (core), Python via gRPC (extractors, AI) | Fast core, easy community plugins |
 | API and rules service | Java on Quarkus, same image as the engine | Rules compile straight into engine jobs; Python only in the AI sidecar |
 | System of record | PostgreSQL 18 + Apache AGE + JSONB + pgvector | Cypher graph, SQL, attributes and embeddings in one DB; Neo4j adapter optional |
@@ -420,13 +420,13 @@ One opinionated stack that runs in Docker Compose on a single VM, matching how y
 | UI | React + TypeScript | Lineage graph via React Flow |
 | Packaging | Docker Compose; Helm later | One-line install like Glossary Generator |
 
-**Why Java for the engine core:** every database vendor ships a JDBC driver, so connector breadth comes almost free; the big-data formats (Parquet, Iceberg, ORC, Avro, HDFS) are Java-first; Java 21 virtual threads give each step its own cheap worker, exactly Kettle's model without thread-count limits; and DataHub's backend and OpenMetadata's server are Java too, so the patterns are proven at catalog scale.
+**Why Java for the engine core:** every database vendor ships a JDBC driver, so connector breadth comes almost free; the big-data formats (Parquet, Iceberg, ORC, Avro, HDFS) are Java-first; Java 21 virtual threads give each node its own cheap worker, the streaming-engine model without thread-count limits; and DataHub's backend and OpenMetadata's server are Java too, so the patterns are proven at catalog scale.
 
-**Modernise the row format:** use Apache Arrow columnar batches between steps instead of Kettle's per-row objects. Profiling and sketches run much faster on columns, and Arrow passes zero-copy to the Python sidecar.
+**Modernise the row format:** use Apache Arrow columnar batches between nodes instead of per-row objects. Profiling and sketches run much faster on columns, and Arrow passes zero-copy to the Python sidecar.
 
 | Option | Verdict |
 | --- | --- |
-| Java 21 / Kotlin + Arrow | Recommended core: drivers, formats, Kettle heritage |
+| Java 21 / Kotlin + Arrow | Recommended core: drivers, formats, streaming-engine model |
 | Python | Use as a sidecar (gRPC + Arrow) for AI, LLM calls and community extractors; too slow for in-stream profiling at volume |
 | Rust (DataFusion) | Fastest raw execution, but a thin driver and connector ecosystem; consider later for hot profiling kernels |
 | Go | Easy single-binary deploys, weak database and format libraries |
@@ -454,35 +454,21 @@ Kilnmark ships as two services: **PostgreSQL** (with AGE and pgvector as in-data
 
 **Optional connector plugins** (separate JARs, off by default, no services): Apache Iceberg for table-format metadata, Hadoop client for HDFS, Kafka client for topic metadata.
 
-### Kettle heritage: independent engine, optional Kettle fork
+### Heritage: an independent engine, selective borrowing
 
-Kilnmark is fully independent: no runtime dependency on Apache Hop, Pentaho or any other engine. Hop is not used.
+Kilnmark is fully independent: no runtime dependency on another ETL engine or vendor product.
 
-**Can Kettle be forked?** Yes, but only from the Apache 2.0 era. Pentaho moved Kettle from LGPL to Apache 2.0 with release 4.3 in 2012 ([PCWorld](https://www.pcworld.com/article/474003/pentaho_open_sources_big_data_integration_tools_under_apache_20.html)). Reading the [pentaho-kettle repository](https://github.com/pentaho/pentaho-kettle) on 24 October 2026:
-
-| Release line | Licence | Usable for Kilnmark? |
-| --- | --- | --- |
-| 4.3 to 10.2 | Apache 2.0 (LICENSE.txt and source headers) | Yes, with attribution and NOTICE |
-| 10.3 "Developer Edition" onward, including current 11.1 | Business Source License 1.1, no additional use grant: non-production use only; each version converts to Apache 2.0 four years after publication | No, not for production use |
-
-**Rules if any Kettle code is used**
-
-- Base only on a tagged 10.2 (or earlier) release; never pull a later commit, file or fix
-- Keep the original Apache headers and add a NOTICE; never use the names Kettle, PDI or Pentaho for the product or its parts
-- Use public source only; nothing from internal builds, private repositories or knowledge of unreleased work
-- Audit third-party and Pentaho library dependencies in the forked code for their own licences
-
-**Options**
+**Options considered**
 
 | Option | Gains | Costs |
 | --- | --- | --- |
 | 1. Clean-room Kiln | Lean, Arrow-native, fully owned, nothing to untangle | Starts with a handful of nodes |
-| 2. Full fork of Kettle 10.2 | Hundreds of steps and job entries; runs existing .ktr/.kjb files | Inherits OSGi/Karaf, the SWT designer, older Java and years of debt; Hop needed about two years and a team to modernise a similar fork; frozen at a 2024 codebase |
-| 3. Clean Kiln plus selective Kettle borrowing (chosen) | Lean core; reuse proven Apache-licensed pieces where they save time, such as database dialects, value types and specific step logic; a .ktr/.kjb importer converts supported steps to Kiln pipelines | Each borrowed class needs adapting to Kiln's interfaces; the importer covers a subset of steps |
+| 2. Full fork of an older open-source ETL engine | Hundreds of nodes; runs existing jobs | Inherits an old plugin container, a desktop designer, older Java and years of debt; such forks have taken a team years to modernise |
+| 3. Clean Kiln plus selective borrowing of Apache-licensed code (chosen) | Lean core; reuse proven pieces where they save time, such as database dialects and value types; an importer converts supported existing jobs to Kiln pipelines | Each borrowed class needs adapting to Kiln's interfaces; the importer covers a subset |
 
-**Why option 3:** Kilnmark's own steps are metadata-focused (harvest, profile, discover, act), so most of Kettle's ETL steps aren't needed. Borrowing a few proven parts saves time without importing the platform, and an importer still gives former PDI customers a path for their existing jobs.
+**Why option 3:** Kilnmark's own nodes are metadata-focused (harvest, profile, discover, act), so most of a general ETL tool's nodes aren't needed. Borrowing a few proven parts saves time without importing a platform, and an importer still gives teams a path for their existing jobs.
 
-**Decided (24 October 2026):** a clean Kiln engine, borrowing Apache-licensed Kettle 10.2 code where it saves time, with every borrowed file recorded in a provenance log. The .ktr/.kjb importer lands in v0.3 alongside the read-only canvas.
+**Decided (24 October 2026):** a clean Kiln engine, borrowing Apache-licensed code only where it saves time, with every borrowed file keeping its licence header and recorded in the provenance log ([ADR 0006](../adr/0006-clean-engine-borrowed-code.md) and [provenance.md](../legal/provenance.md) hold the licence facts and rules). The importer lands in v0.3 alongside the read-only canvas.
 
 **Avoid: platforms that bring their own estate**
 
@@ -507,15 +493,15 @@ Ingest, profile and discovery come first because every later phase depends on a 
 
 Owning this outright depends less on the code than on where the ideas and code come from. Settle these before writing any engine code. This is not legal advice; an employment or IP lawyer should confirm.
 
-- **Employment IP clause** — as a Pentaho employee, your contract very likely assigns inventions related to the employer's business to the employer, possibly including work done in your own time. A metadata engine overlapping PDC, PDI and Data Optimizer sits squarely in that zone. Get a written carve-out or agreement before starting if you want it to be yours.
-- **Data Optimizer is proprietary** — reuse only concepts described in public documentation (rule definitions, temperature terms, tiering workflow); never internal code, designs or non-public material. Keep a clean-room log of sources.
-- **Kettle licence** — Kettle/PDI community code was historically Apache 2.0; confirm the licence of the exact version you would borrow from, since Pentaho's community licensing has changed over time. Reimplementing the architecture from scratch avoids the question entirely.
+- **Employment IP clause** — an employment contract may assign inventions related to the employer's business to the employer, possibly including work done in your own time. Check it, and get a written carve-out or agreement before starting if the product overlaps the employer's.
+- **Commercial products are proprietary** — reuse only concepts described in public documentation (rule definitions, temperature terms, tiering workflow); never internal code, designs or non-public material. Keep a clean-room log of sources.
+- **Borrowed code's licence** — confirm the licence of the exact version any code is borrowed from, since open-source projects change licences over time ([ADR 0006](../adr/0006-clean-engine-borrowed-code.md)). Reimplementing from scratch avoids the question entirely.
 - **Market features** — features and patterns (MCP servers, active metadata, propagation) aren't protectable as ideas; copying UI, docs or code is. DataHub, OpenMetadata and Unity Catalog code is Apache 2.0 and can be studied or reused with attribution.
 - **Your licence choice** — decide early: proprietary, open core (Apache core plus commercial AI and enterprise features), or BSL-style. This shapes contributor agreements from the first commit.
 
 **Open questions**
 
-- [ ] Decided: a standalone product, separate from any Pentaho product. Plan and scope live in the companion plan doc.
+- [ ] Decided: a standalone product, separate from any other vendor's product. Plan and scope live in the companion plan doc.
 - [ ] Decided: Kilnmark (product) and Kiln (engine). Trademark (UK IPO, USPTO, classes 9 and 42) and domain checks still to do.
 - [ ] Decided: Quarkus, one image with api, scheduler and worker roles.
 - [x] Decided: the first sources are PostgreSQL, S3-compatible object storage and local files, then SQL Server. The reference lab uses VersityGW for S3 (ADR 0015); MinIO is supported as a customer's store but not used in the lab.

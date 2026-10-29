@@ -4,7 +4,7 @@ Status: Accepted, 24 October 2026
 
 ## Decision
 
-Kilnmark is a modern data integration engine in the Kettle tradition that knows the quality of
+Kilnmark is a modern data integration engine in the streaming-ETL tradition that knows the quality of
 the data it moves. It is not a data catalogue.
 
 - **Kilnmark keeps the metadata pipelines need:** sources, containers, assets, fields,

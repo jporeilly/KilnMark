@@ -4,8 +4,8 @@ Status: Accepted (22 October 2026)
 
 ## Decision
 
-Kilnmark is a standalone product, independent of any Pentaho product. It uses no Pentaho code,
-APIs, file formats or lab data, except Apache-licensed Kettle 10.2 code under ADR 0006.
+Kilnmark is a standalone product, independent of any other vendor's product. It uses no other
+vendor's code, APIs, file formats or lab data, except Apache-licensed code under ADR 0006.
 Integration with other catalogs comes later and only through open standards (OpenLineage,
 JSON-LD, CSV).
 
