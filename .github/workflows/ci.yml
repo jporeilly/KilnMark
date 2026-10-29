@@ -31,6 +31,16 @@ jobs:
             else { throw 'Neither podman nor docker is on the PATH.' }
           & $engine build -t kilnmark-postgres:dev -f containers/postgres/Containerfile containers/postgres
           if ($LASTEXITCODE -ne 0) { throw "$engine build failed with exit code $LASTEXITCODE" }
+          # Testcontainers talks to Docker, which keeps its own image store: copy the image across when
+          # Docker is installed, so the integration tests can start it.
+          if ($engine -ne 'docker' -and (Get-Command docker -ErrorAction SilentlyContinue)) {
+            $tar = Join-Path $env:RUNNER_TEMP 'kilnmark-postgres.tar'
+            & podman save -o $tar kilnmark-postgres:dev
+            if ($LASTEXITCODE -ne 0) { throw "podman save failed with exit code $LASTEXITCODE" }
+            & docker load -i $tar
+            if ($LASTEXITCODE -ne 0) { throw "docker load failed with exit code $LASTEXITCODE" }
+            Remove-Item $tar
+          }
 
       - uses: actions/setup-java@v4
         with:
