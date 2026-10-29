@@ -235,6 +235,12 @@ worker is running, scans stay `queued`.
 | `kilnmark.worker.max-attempts` | `3` | Tries before a job and its run are marked failed |
 | `kilnmark.worker.shutdown-timeout` | `30s` | On shutdown, how long running scans may take before they are requeued |
 
+Pipeline runs are jobs of kind `pipeline`, tried once (they hold a lock of their own, not a source's).
+Flow runs are jobs of kind `flow` (docs/design/flows.md), also tried once; a flow only decides which
+pipeline runs next, so its job holds **no** worker slot: the pipeline runs it queues need the slots, and
+a flow holding one could fill every slot while waiting for runs that never start. "Job" is this queue;
+what orchestrates pipelines is called a flow.
+
 Workers wake at once on a PostgreSQL notification and poll as a fallback. A source has at most
 one scan waiting or running: asking for another returns the one in progress. While a worker scans
 a source it holds a lock on that source, so two scans of one source never overlap. If a worker

@@ -715,7 +715,7 @@ asset's previous profile.
   its output queue's fill (Held up), the run's warnings, errors and gates starting to quarantine
   marked on the time axis, each point readable by pointer or keyboard, and a table. Each step's
   share of the run is in the steps table. The Gantt chart (with its critical path) is kept in the
-  code for flows, not shown on pipeline runs.
+  code for flows (docs/design/flows.md), not shown on pipeline runs.
 - **API.** The run view adds each step's times and waits and `progress`; it stays small however
   long the run, as rows a second are read on their own: `GET /api/v1/pipeline-runs/{id}/series?after=`
   gives the steps, the stride and the points after `after` ms (the page reads only the new ones while
@@ -895,4 +895,5 @@ or not (`POST /api/v1/pipelines/preview` {yaml, step, port?, rows?}; for a saved
   pipeline's `quality.min_score` and `pipeline_low_quality` (done; docs/guide/pipelines.md,
   "Quality gates"); predicted scores beside the measured ones and suggestions (done;
   docs/guide/pipelines.md, "Predicted quality"); then version diffs.
-- Later: scheduling, parameters, the importer, push-down to SQL.
+- Flows, which run pipelines in an order joined by paths, are in [flows.md](flows.md). Later:
+  scheduling (which starts flows), parameters, the importer, push-down to SQL.

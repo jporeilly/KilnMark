@@ -21,9 +21,9 @@ import jakarta.inject.Singleton;
 @Singleton
 public class HoldingGraphRunner implements GraphRunner {
 
-    static volatile boolean hold;
+    public static volatile boolean hold;
     /** When set, the next run fails in the engine with this message. */
-    static volatile String failWith;
+    public static volatile String failWith;
     static final AtomicReference<PipelineGraph> LAST = new AtomicReference<>();
 
     private final GraphRunner real = new KilnGraphRunner(256L << 20, 4);

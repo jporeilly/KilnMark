@@ -449,7 +449,7 @@ public class JobQueue {
                         AND l.objid = ((j.payload ->> 'sourceId')::bigint % ?)::oid)
                   AND NOT EXISTS (
                       SELECT 1 FROM pg_locks l
-                      WHERE j.kind = 'pipeline' AND l.locktype = 'advisory' AND l.objsubid = 2 AND l.granted
+                      WHERE j.kind IN ('pipeline', 'flow') AND l.locktype = 'advisory' AND l.objsubid = 2 AND l.granted
                         AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
                         AND l.classid = ?::bigint::oid
                         AND l.objid = (j.id % ?)::oid)

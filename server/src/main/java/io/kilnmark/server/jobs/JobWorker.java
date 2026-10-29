@@ -130,6 +130,9 @@ public class JobWorker {
                 LOG.infof("Recovered jobs left by a stopped worker: %d queued again, %d failed", r.requeued(),
                     r.failed());
             }
+            if (flows != null) {
+                flows.failOrphanedRuns();
+            }
             if (pipelines != null) {
                 pipelines.failOrphanedRuns();
             }
@@ -137,6 +140,10 @@ public class JobWorker {
             LOG.warnf("Could not check for jobs left by a stopped worker: %s. Will try again shortly.", e.getMessage());
         }
     }
+
+    /** Flows one worker watches at the same time; they hold no worker slot (see {@link #poll}). */
+    static final int MAX_FLOWS = 8;
+    private final java.util.concurrent.Semaphore flowSlots = new java.util.concurrent.Semaphore(MAX_FLOWS);
 
     private void poll() {
         Duration every = config.worker().pollInterval();
@@ -154,11 +161,27 @@ public class JobWorker {
                 }
                 if (job.isPresent()) {
                     JobQueue.Job j = job.get();
+                    // A flow only watches the pipeline runs it queued, and those need slots of their own: it
+                    // must not hold one, or flows could fill every slot and wait for runs that never start.
+                    boolean light = io.kilnmark.server.flows.FlowStore.JOB_KIND.equals(j.kind());
+                    if (light) {
+                        slots.release();
+                        // Each flow holds a database connection for its lock while it watches: a few at a time,
+                        // or flows could take every connection and starve the pipeline runs they wait for.
+                        if (!flowSlots.tryAcquire()) {
+                            queue.release(j, Duration.ofSeconds(5), null);
+                            continue;
+                        }
+                    }
                     Thread.ofVirtual().name("kilnmark-job-" + j.id()).start(() -> {
                         try {
                             execute(j);
                         } finally {
-                            slots.release();
+                            if (light) {
+                                flowSlots.release();
+                            } else {
+                                slots.release();
+                            }
                         }
                     });
                 } else {
@@ -177,10 +200,18 @@ public class JobWorker {
     @jakarta.inject.Inject
     io.kilnmark.server.pipelines.PipelineService pipelines;
 
+    /** Runs jobs of kind {@value io.kilnmark.server.flows.FlowStore#JOB_KIND}. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.flows.FlowService flows;
+
     /** Runs one claimed job while holding its source's scan lock (a pipeline job: its own lock). */
     void execute(JobQueue.Job job) {
         if (io.kilnmark.server.pipelines.PipelineStore.JOB_KIND.equals(job.kind())) {
-            executePipeline(job);
+            executeLocked(job, "Pipeline", (id, lease, stop) -> pipelines.execute(id, lease, stop));
+            return;
+        }
+        if (io.kilnmark.server.flows.FlowStore.JOB_KIND.equals(job.kind())) {
+            executeLocked(job, "Flow", (id, lease, stop) -> flows.execute(id, lease, stop));
             return;
         }
         boolean qualityJob = io.kilnmark.server.quality.QualityService.JOB_KIND.equals(job.kind()) && job.sourceId() >= 0;
@@ -229,12 +260,18 @@ public class JobWorker {
         }
     }
 
+    /** What a job that holds a lock of its own runs: the job's id, its lease, and whether the worker is stopping. */
+    @FunctionalInterface
+    private interface LockedRun {
+        ScanService.Result run(long jobId, JobQueue.ScanLease lease, java.util.function.BooleanSupplier stop);
+    }
+
     /**
-     * Runs a pipeline job while holding its own lock (no source lock: runs of a pipeline may read
+     * Runs a pipeline or flow job while holding its own lock (no source lock: runs of a pipeline may read
      * sources being scanned). A pipeline job is tried once; a run stopped by shutdown is marked
      * failed rather than repeated, since its writes may have begun.
      */
-    private void executePipeline(JobQueue.Job job) {
+    private void executeLocked(JobQueue.Job job, String what, LockedRun body) {
         Optional<JobQueue.ScanLease> lease;
         try {
             lease = queue.lockPipelineJob(job.id());
@@ -249,18 +286,18 @@ public class JobWorker {
         AtomicBoolean cancelled = new AtomicBoolean();
         running.put(job.id(), new Execution(job, lease.get(), cancelled));
         try {
-            ScanService.Result result = pipelines.execute(job.id(), lease.get(), cancelled::get);
+            ScanService.Result result = body.run(job.id(), lease.get(), cancelled::get);
             if (lost.remove(job.id()) != null) {
-                LOG.warnf("Pipeline job %d lost its lock while running", job.id());
+                LOG.warnf("%s job %d lost its lock while running", what, job.id());
             } else {
                 queue.complete(job, result.note());
             }
         } catch (RuntimeException e) {
             // Not the exception's text or trace: a source's secret could be in it.
-            LOG.errorf("Pipeline job %d failed with %s", job.id(), e.getClass().getName());
+            LOG.errorf("%s job %d failed with %s", what, job.id(), e.getClass().getName());
             if (lost.remove(job.id()) == null) {
-                queue.retryOrFail(job, "The pipeline job failed (" + e.getClass().getSimpleName() + "); the run "
-                    + "says why");
+                queue.retryOrFail(job, "The " + what.toLowerCase() + " job failed (" + e.getClass().getSimpleName()
+                    + "); the run says why");
             }
         } finally {
             running.remove(job.id());

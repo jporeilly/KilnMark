@@ -344,6 +344,14 @@ public class PipelineStore {
      * @throws Busy while a run of the pipeline is queued or running
      */
     public Run queueRun(String name, int version, String by, String role) {
+        return queueRun(name, version, by, role, null, null);
+    }
+
+    /**
+     * As {@link #queueRun(String, int, String, String)}, for a run a flow starts: the run says which
+     * flow run and step started it ({@code flowRunId} null for a run someone asked for).
+     */
+    public Run queueRun(String name, int version, String by, String role, Long flowRunId, String flowStep) {
         return db.tx(c -> {
             // One run of a pipeline at a time: the pipeline's row is locked while checking.
             try (PreparedStatement ps = c.prepareStatement(
@@ -362,11 +370,17 @@ public class PipelineStore {
             }
             long id;
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_run (pipeline, version, "
-                + "requested_by, requested_role) VALUES (?, ?, ?, ?) RETURNING id")) {
+                + "requested_by, requested_role, flow_run_id, flow_step) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")) {
                 ps.setString(1, name);
                 ps.setInt(2, version);
                 ps.setString(3, by);
                 ps.setString(4, role);
+                if (flowRunId == null) {
+                    ps.setNull(5, Types.BIGINT);
+                } else {
+                    ps.setLong(5, flowRunId);
+                }
+                ps.setString(6, flowStep);
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     id = rs.getLong(1);
@@ -381,6 +395,60 @@ public class PipelineStore {
                 ps.execute();
             }
             return findRun(c, id).orElseThrow();
+        });
+    }
+
+    /**
+     * What a flow reads from a finished pipeline run: how it ended, and the values its conditions
+     * can use. {@code score} is the lowest measured score of what the run wrote and
+     * {@code quarantinedShare} the largest share of rows any of its gates set aside; either is null
+     * when nothing was measured.
+     */
+    public record FlowReport(String status, Long rowsWritten, Double score, Double quarantinedShare,
+                             Double durationSeconds) {
+    }
+
+    /** The report on one run, or empty if there is no such run. */
+    public Optional<FlowReport> flowReport(long runId) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("""
+                SELECT r.status, (r.result ->> 'rowsWritten')::bigint, (r.result -> 'quality' ->> 'score')::double precision,
+                       EXTRACT(EPOCH FROM (r.finished_at - r.started_at))::double precision,
+                       (SELECT max((q.gate ->> 'rowsQuarantined')::numeric / nullif((q.gate ->> 'rowsIn')::numeric, 0))
+                          FROM kilnmark.pipeline_step_quality q
+                         WHERE q.run_id = r.id AND q.role = 'gate' AND q.gate IS NOT NULL)::double precision
+                FROM kilnmark.pipeline_run r WHERE r.id = ?""")) {
+                ps.setLong(1, runId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return Optional.<FlowReport>empty();
+                    }
+                    String status = rs.getString(1);
+                    long rows = rs.getLong(2);
+                    Long rowsWritten = rs.wasNull() ? null : rows;
+                    double score = rs.getDouble(3);
+                    Double scoreV = rs.wasNull() ? null : score;
+                    double secs = rs.getDouble(4);
+                    Double secsV = rs.wasNull() ? null : secs;
+                    double share = rs.getDouble(5);
+                    Double shareV = rs.wasNull() ? null : share;
+                    return Optional.of(new FlowReport(status, rowsWritten, scoreV, shareV, secsV));
+                }
+            }
+        });
+    }
+
+    /** The run a flow step started, if it has started one (a flow step runs its pipeline once). */
+    public Optional<Run> flowStepRun(long flowRunId, String flowStep) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS
+                + " FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ? AND r.flow_step = ?")) {
+                ps.setLong(1, flowRunId);
+                ps.setString(2, flowStep);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? Optional.of(run(rs, 1)) : Optional.<Run>empty();
+                }
+            }
         });
     }
 

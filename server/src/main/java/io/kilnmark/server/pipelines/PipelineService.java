@@ -496,15 +496,7 @@ public class PipelineService {
      * sources may have changed since it was saved: one with problems cannot run.
      */
     public PipelineViews.RunSummary queueRun(String name, Integer version, String by, AccessRole role) {
-        PipelineStore.Pipeline p = find(name);
-        int n = version == null ? p.latestVersion() : version;
-        PipelineStore.Version v = store.version(name, n).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
-            name + " has no version " + n));
-        PipelineViews.Validation check = validate(v.yaml(), name);
-        if (!check.valid()) {
-            throw fail(Response.Status.CONFLICT, "Version " + n + " of " + name + " cannot run until its problems are "
-                + "fixed: " + firstProblems(check.problems()));
-        }
+        int n = runnableVersion(name, version);
         PipelineStore.Run run;
         try {
             run = store.queueRun(name, n, by, role.id());
@@ -514,6 +506,40 @@ public class PipelineService {
         }
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s", run.id(), name, n, by);
         return summary(run, null); // just queued: no error yet
+    }
+
+    /**
+     * Queues a run for a step of a flow (docs/design/flows.md): the same checks as {@link #queueRun}, and
+     * the run records which flow run and step started it. A run of the pipeline already queued or running
+     * is not an error here: the flow waits and asks again.
+     *
+     * @throws PipelineStore.Busy when the pipeline has a run queued or running
+     * @throws WebApplicationException (404, 409) when the pipeline or version is missing or cannot run
+     */
+    public PipelineStore.Run queueRunForFlow(String name, Integer version, String by, AccessRole role,
+                                             long flowRunId, String flowStep) {
+        int n = runnableVersion(name, version);
+        PipelineStore.Run run = store.queueRun(name, n, by, role.id(), flowRunId, flowStep);
+        LOG.infof("Run %d of pipeline %s (version %d) queued by %s for step %s of flow run %d", run.id(), name, n, by,
+            flowStep, flowRunId);
+        return run;
+    }
+
+    /**
+     * The version to run (the latest by default), checked again now, since sources may have changed
+     * since it was saved: one with problems cannot run.
+     */
+    private int runnableVersion(String name, Integer version) {
+        PipelineStore.Pipeline p = find(name);
+        int n = version == null ? p.latestVersion() : version;
+        PipelineStore.Version v = store.version(name, n).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
+            name + " has no version " + n));
+        PipelineViews.Validation check = validate(v.yaml(), name);
+        if (!check.valid()) {
+            throw fail(Response.Status.CONFLICT, "Version " + n + " of " + name + " cannot run until its problems are "
+                + "fixed: " + firstProblems(check.problems()));
+        }
+        return n;
     }
 
     private static String firstProblems(List<PipelineCompilerPort.Problem> problems) {
