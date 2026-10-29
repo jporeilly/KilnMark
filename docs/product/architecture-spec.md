@@ -130,9 +130,9 @@ Keep Kettle's proven model, rebuilt clean: a pipeline is a graph of steps, each 
 - **Steps as plugins.** One interface (`init`, `processRow`, `dispose`) for every source, transform and sink, discovered at start-up from a plugins folder
 - **Row sets with back-pressure.** Bounded queues between steps; a slow sink throttles the source instead of exhausting memory
 - **Step copies.** Run N copies of a CPU- or latency-bound step in parallel, as PDI does for lookups and scripts
-- **Jobs over transformations.** A job orchestrates pipelines with success/failure hops; the rules engine submits jobs
+- **Flows over pipelines.** A flow orchestrates pipelines with success/failure paths; the rules engine submits flows
 - **Metadata injection.** Build pipelines at runtime from graph metadata, so one template can harvest or move a thousand assets
-- **Remote workers.** A Carte-style worker agent that runs near the data and reports back, giving the agent-affinity model PDC uses
+- **Remote workers.** A remote worker agent that runs near the data and reports back, giving the agent-affinity model PDC uses
 
 **What to change**
 
