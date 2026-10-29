@@ -41,6 +41,10 @@ import jakarta.ws.rs.WebApplicationException;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class FlowRunTest {
 
+    /** Made-up credentials for the in-memory test connector, as PipelineFlowTest has. */
+    static final String IN_SECRET = "fl-in-token-41";
+    static final String OUT_SECRET = "fl-out-token-97";
+
     static final String COPY = """
         kilnmark: pipeline/v1
         name: fl-copy
@@ -155,10 +159,10 @@ class FlowRunTest {
         steward = token("flow-steward", "steward");
         viewer = token("flow-viewer", "viewer");
         admin().contentType(ContentType.JSON).body(Map.of("name", "fl-src", "kind", MemoryConnector.KIND,
-            "settings", Map.of("rows", "2500"), "password", "fl-in-secret-41")).post("/api/v1/sources")
+            "settings", Map.of("rows", "2500"), "password", IN_SECRET)).post("/api/v1/sources")
             .then().statusCode(201);
         admin().contentType(ContentType.JSON).body(Map.of("name", "fl-out", "kind", MemoryConnector.KIND,
-            "settings", Map.of(), "password", "fl-out-secret-97")).post("/api/v1/sources").then().statusCode(201);
+            "settings", Map.of(), "password", OUT_SECRET)).post("/api/v1/sources").then().statusCode(201);
         as(Tokens.ADMIN).body(Map.of("settings", Map.of("allow_writing", "true"))).put("/api/v1/sources/fl-out")
             .then().statusCode(200);
         long scan = as(steward).post("/api/v1/sources/fl-src/scans").then().statusCode(202).extract().jsonPath()
