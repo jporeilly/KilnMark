@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, kilnmark-heavy]
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +46,7 @@ jobs:
 
   # Integration tests against heavy databases, apart so the main build stays quick.
   heavy-databases:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, kilnmark-heavy]
     steps:
       - uses: actions/checkout@v4
 
