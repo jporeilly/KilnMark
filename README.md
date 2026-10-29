@@ -3,9 +3,12 @@
 On-prem trusted-data engine: it finds, profiles and scores every data asset, then acts on what it
 finds. **Kiln** is its execution engine.
 
-Status: version 0.0.2, the first working slice. Register PostgreSQL sources (one at a time or
-imported from a file), scan them, search tables, views and columns, and open an asset page with
-every column's profile. No sign-in yet: lab use only.
+Status: version 0.0.8. Register sources (PostgreSQL, SQL Server, MySQL, MariaDB, Oracle, folders,
+S3 and any database with a JDBC driver), scan them, search tables, views and columns, and open an
+asset page with every column's profile and quality score. Build pipelines that read, transform and
+write data, with quality gates on the way. Sign in with an API token; a token has one of four roles:
+viewer, steward (runs pipelines), designer (builds pipelines, adds sources, sees sensitive values)
+or admin (Settings and tokens).
 
 ## Quick start
 
