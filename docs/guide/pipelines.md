@@ -74,9 +74,11 @@ lines it changes in the YAML, so your comments, layout and every other setting s
 they were, and a change to the YAML redraws the canvas. Kilnmark remembers which tab you used last.
 
 The canvas uses the page's full width. On the left is the node list, which **Nodes** in the canvas
-toolbar hides and shows again; the pipeline fills the rest, with an overview in its corner for finding your way
-around a large one. The selected node's settings open in a panel over the right of the canvas (below
-it on a narrow screen), and close with its **×** or when nothing is selected.
+toolbar hides and shows again; the pipeline fills the rest, with an overview in its corner for
+finding your way around a large one. A click selects a node, so you can move it without anything
+opening. To open its settings, double-click it, or select it and press Enter: they open in a panel
+over the right of the canvas (below it on a narrow screen), follow the node you select while open,
+and close with their **×** or when nothing is selected. A node you add opens its settings at once.
 
 ### Adding and connecting nodes
 
@@ -229,7 +231,7 @@ list:
 | A | Open the node list at **Find a node**; type, Tab to the type and press Enter to add it after the selected node |
 | Arrow keys in the node list | Up and down through the folders and nodes; Right opens a folder, Left closes it; Enter adds the node |
 | C | **Connect to…**: a list of the nodes this node can send rows to or read rows from |
-| Enter | Go to the node's settings |
+| Enter | Open the node's settings and go to them (a double-click does the same) |
 | Shift+F10 or the menu key | The node's menu: **Preview rows**, **Settings**, **Connect to…**, **Duplicate**, **Remove** |
 | Delete or Backspace | Remove the node (or a connection you clicked) |
 | Ctrl+D | Duplicate the node |

@@ -13,6 +13,10 @@ details.
   it, so a route's routes (or a filter's kept and rejected rows) reach their nodes without crossing.
   The pipelines guide says what solid and dashed connections are, and that one output feeding
   several nodes gives each of them every row (route, filter and gates are how rows are split).
+  A click on a node now only selects it, so it can be moved without its settings opening; a
+  double-click or Enter opens them (and a node just added opens them at once). A node's preview
+  scrolls inside a box that fits the screen, both ways, with the column names kept in view and
+  smaller text.
 - **The samples ship, and Add samples maps them to your sources.** The samples in `samples/` no
   longer name the lab's sources: they name three placeholders, `crm-db` and `shop-db` (databases)
   and `files` (file storage they write to), and their comments no longer mention the lab. The
