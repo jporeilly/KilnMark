@@ -1,0 +1,41 @@
+# Union: rows of several inputs together (sample: lab only, never shipped).
+# Appends the 2023 customer archive to today's customers, matching columns by name, and marks
+# where each row came from.
+# Look for: input: [a, b] takes several inputs on one port.
+kilnmark: pipeline/v1
+name: sample-union
+description: Current and archived CRM customers in one file.
+
+nodes:
+  - id: current
+    type: read
+    source: lab-db
+    asset: crm.customers
+
+  - id: archived
+    type: read
+    source: lab-db
+    asset: crm.customers_archive_2023
+
+  - id: current_marked
+    type: compute
+    input: current
+    columns:
+      came_from: "'current'"
+
+  - id: archived_marked
+    type: compute
+    input: archived
+    columns:
+      came_from: "'archive 2023'"
+
+  - id: everyone
+    type: union
+    input: [current_marked, archived_marked]
+
+  - id: out
+    type: write
+    input: everyone
+    source: lab-warehouse
+    path: samples/combine/customers_all.csv
+    mode: replace

@@ -1,0 +1,28 @@
+# Compute: new and tidied columns (sample: lab only, never shipped).
+# Adds a full name, tidies the email and works out a rough age, from the lab's CRM customers.
+# Look for: the expressions; the node's columns on the canvas show each new column's type.
+kilnmark: pipeline/v1
+name: sample-compute
+description: CRM customers with a full name, a tidy email and a rough age.
+
+nodes:
+  - id: customers
+    type: read
+    source: lab-db
+    asset: crm.customers
+
+  - id: tidy
+    type: compute
+    input: customers
+    columns:
+      full_name: "trim(first_name) || ' ' || trim(last_name)"
+      email: "lower(trim(email))"
+      age_years: "date_part('year', today()) - date_part('year', date_of_birth)"
+      postcode_area: "upper(regex_replace(postcode, '^([A-Za-z]+).*$', '$1'))"
+
+  - id: out
+    type: write
+    input: tidy
+    source: lab-warehouse
+    path: samples/transform/customers_tidy.csv
+    mode: replace

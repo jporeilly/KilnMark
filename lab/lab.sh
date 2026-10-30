@@ -12,6 +12,7 @@
 #   ./lab/lab.sh sources                  where lab/sources.csv is, and how to import it
 #   ./lab/lab.sh driver oracle [--yes]    download Oracle's JDBC driver (its licence is shown first)
 #   ./lab/lab.sh pipelines                add the demo pipelines in lab/pipelines to a running Kilnmark
+#   ./lab/lab.sh samples                  add the sample pipelines in samples/ to a running Kilnmark
 #
 # Uses podman if it is on the PATH, otherwise docker. Needs no administrator rights. Works with
 # the bash 3.2 that macOS ships.
@@ -381,15 +382,21 @@ cmd_driver() {
     fi
 }
 
-# Adds each demo pipeline in lab/pipelines to a running Kilnmark through its API. Needs an admin or
-# steward token in KILNMARK_ADMIN_TOKEN (or KILNMARK_TOKEN); KILNMARK_URL defaults to
-# http://localhost:8780. A pipeline that is already there is left as it is.
+# Adds each pipeline in a folder (lab/pipelines, or samples/ and its subfolders) to a running
+# Kilnmark through its API. Needs an admin or steward token in KILNMARK_ADMIN_TOKEN (or
+# KILNMARK_TOKEN); KILNMARK_URL defaults to http://localhost:8780. A pipeline that is already there
+# is left as it is. Flows are skipped: they cannot be added until the flows API comes.
 cmd_pipelines() {
+    local folder=$1 command=$2
     local url=${KILNMARK_URL:-http://localhost:8780} token=${KILNMARK_TOKEN:-${KILNMARK_ADMIN_TOKEN:-}} file body code
     [ -n "$token" ] || die "set KILNMARK_ADMIN_TOKEN (or KILNMARK_TOKEN) to an admin or steward token first."
     command -v python3 >/dev/null 2>&1 || die "this needs python3, to send each file's YAML as JSON."
-    for file in "$LAB_DIR"/pipelines/*.yaml; do
-        body=$(python3 -c 'import json,os,sys; y=open(sys.argv[1]).read(); n=[l.split(":",1)[1].strip() for l in y.splitlines() if l.startswith("name:")][0]; print(json.dumps({"name": n, "yaml": y, "message": "Added by lab/lab.sh pipelines"}))' "$file")
+    while IFS= read -r file; do
+        if grep -q '^kilnmark: *flow/' "$file"; then
+            echo "Skipped  $(basename "$file") (a flow: flows are added once the flows API comes)"
+            continue
+        fi
+        body=$(python3 -c 'import json,os,sys; y=open(sys.argv[1], encoding="utf-8").read(); n=[l.split(":",1)[1].strip() for l in y.splitlines() if l.startswith("name:")][0]; print(json.dumps({"name": n, "yaml": y, "message": "Added by lab/lab.sh " + sys.argv[2]}))' "$file" "$command")
         code=$(printf '%s' "$body" | curl -s -o /dev/null -w '%{http_code}' -X POST "$url/api/v1/pipelines" \
             -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data-binary @-) || code=000
         case "$code" in
@@ -399,7 +406,7 @@ cmd_pipelines() {
             000) die "could not reach Kilnmark at $url: is it running?" ;;
             *) die "Kilnmark answered $code for $(basename "$file")." ;;
         esac
-    done
+    done < <(find "$folder" -name '*.yaml' -type f | sort)
     echo "Open Pipelines in Kilnmark ($url) to see them."
 }
 
@@ -420,7 +427,8 @@ case "$command" in
     logs) cmd_logs "$@" ;;
     sources) cmd_sources ;;
     driver) cmd_driver "$@" ;;
-    pipelines) cmd_pipelines ;;
+    pipelines) cmd_pipelines "$LAB_DIR/pipelines" pipelines ;;
+    samples) cmd_pipelines "$LAB_DIR/../samples" samples ;;
     help|-h|--help) usage ;;
     *) usage >&2; echo >&2; die "unknown command '$command'." ;;
 esac

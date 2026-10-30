@@ -1,0 +1,27 @@
+# Quality gate: stop the run (sample: lab only, never shipped).
+# Stops before anything is written if any order has a shipping fee above 50: the write after the
+# gate never starts. Raise max to 100 and run it again to see it pass.
+# Look for: on_fail: stop (the default) and how the failed run names the rule.
+kilnmark: pipeline/v1
+name: sample-gate-stop
+description: Orders with sane shipping fees, or nothing.
+
+nodes:
+  - id: orders
+    type: read
+    source: lab-mariadb
+    asset: shop.orders
+
+  - id: check
+    type: gate
+    input: orders
+    on_fail: stop
+    rules:
+      - {name: sane shipping fee, type: in_range, field: shipping_fee, min: 0, max: 50}
+
+  - id: out
+    type: write
+    input: check
+    source: lab-warehouse
+    path: samples/quality/orders_checked.csv
+    mode: replace

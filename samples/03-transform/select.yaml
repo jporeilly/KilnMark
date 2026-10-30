@@ -1,0 +1,27 @@
+# Select: keep, rename, order and retype columns (sample: lab only, never shipped).
+# Keeps the shop customer columns wanted, renames two, puts the key first and makes the code text.
+# Look for: keep or drop first, then cast, then rename, then order.
+kilnmark: pipeline/v1
+name: sample-select
+description: Shop customers, shaped.
+
+nodes:
+  - id: customers
+    type: read
+    source: lab-mariadb
+    asset: shop.customers
+
+  - id: shape
+    type: select
+    input: customers
+    keep: [customer_id, customer_code, first_name, last_name, loyalty_tier, created_at]
+    cast: { customer_id: utf8 }
+    rename: { loyalty_tier: tier, created_at: joined_at }
+    order: [customer_code]
+
+  - id: out
+    type: write
+    input: shape
+    source: lab-warehouse
+    path: samples/transform/customers_shaped.csv
+    mode: replace

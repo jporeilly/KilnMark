@@ -21,7 +21,8 @@ The server needs PostgreSQL with Apache AGE and pgvector; `podman compose up --b
 (Docker works too). The root `compose.yaml` is the developer setup; customers install from the
 release folder, which has its own `compose.yaml` and never the reference lab
 ([ADR 0024](docs/adr/0024-the-lab-is-not-the-product.md)).
-See the [development guide](docs/development.md).
+To install on a clean machine, see [INSTALL.md](INSTALL.md); for everything else, the
+[development guide](docs/development.md).
 
 ## Layout
 
@@ -35,6 +36,7 @@ See the [development guide](docs/development.md).
 | `sidecar-python/` | AI sidecar (from v0.4) |
 | `containers/` | PostgreSQL and server images (Containerfiles) |
 | `lab/` | Reference lab with synthetic data, for development, tests and demos only: never shipped |
+| `samples/` | Example pipelines and flows on the lab, one idea each, sorted by what they show: never shipped |
 | `pipelines/` | Built-in pipeline definitions |
 | `tests/regression/` | End-to-end suite against the lab |
 | `docs/` | All documentation |
