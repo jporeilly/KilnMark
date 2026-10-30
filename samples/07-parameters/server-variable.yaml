@@ -1,0 +1,30 @@
+# Server variables: values of the server (sample: lab only, never shipped).
+# Names its file after the server variable sample_region, so the same YAML writes EMEA files on
+# one server and APAC files on another. Set the variable first (a steward or admin):
+#   PUT /api/v1/variables/sample_region   {"type": "text", "value": "EMEA"}
+# The parameter region takes the variable's value unless a run gives another.
+# Look for: ${vars.sample_region} as a parameter's default, and ${region} in the path.
+kilnmark: pipeline/v1
+name: sample-server-variable
+description: Gold customers, in a file named after the server's region.
+
+parameters:
+  region: { type: text, default: "${vars.sample_region}", description: The region the file is for }
+
+nodes:
+  - id: customers
+    type: read
+    source: lab-mariadb
+    asset: shop.customers
+
+  - id: gold
+    type: filter
+    input: customers
+    condition: "loyalty_tier = 'gold'"
+
+  - id: out
+    type: write
+    input: gold
+    source: lab-warehouse
+    path: samples/parameters/gold_customers_${region}.csv
+    mode: replace

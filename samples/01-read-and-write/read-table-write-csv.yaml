@@ -1,0 +1,19 @@
+# Read a table, write a CSV file (sample: lab only, never shipped).
+# Reads the lab's accounts table and writes every row to a CSV file in the lab warehouse bucket.
+# Look for: the run's rows read and written, and the file's own page in the catalogue after the next scan.
+kilnmark: pipeline/v1
+name: sample-read-write-csv
+description: Every lab account, as a CSV file.
+
+nodes:
+  - id: accounts
+    type: read
+    source: lab-db
+    asset: crm.accounts
+
+  - id: out
+    type: write
+    input: accounts
+    source: lab-warehouse
+    path: samples/read-and-write/accounts.csv
+    mode: replace          # create (the default) fails if the file exists; replace swaps it in

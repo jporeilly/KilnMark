@@ -7,6 +7,12 @@ details.
 
 ### Details
 
+- **Samples and an install guide.** `samples/` holds 17 small pipelines and 2 flows, one idea each,
+  sorted by what they show (read and write, filter and route, transform, combine, aggregate,
+  quality, parameters, flows), on the reference lab's data; `lab/lab.sh samples` (or `lab.ps1`)
+  adds them to a running Kilnmark. Like the lab, they are never shipped. `LabPipelinesTest` checks
+  every sample against the lab's columns and every flow against the sample pipelines.
+  `INSTALL.md` says how to install on a clean machine: a release, or from source with the lab.
 - **Parameters and server variables** (V22; docs/guide/pipelines.md, "Parameters and server
   variables"). A pipeline declares `parameters:` (text, number, boolean, text list, number list, each
   with a default) and uses them as `${name}`; a server variable is a value of the server, set by

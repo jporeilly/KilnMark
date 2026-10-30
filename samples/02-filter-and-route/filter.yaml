@@ -1,0 +1,32 @@
+# Filter: keep some rows, set the rest aside (sample: lab only, never shipped).
+# Keeps active gold and platinum shop customers; the others go to a second file through the
+# filter's rejected output.
+# Look for: the two outputs (out and rejected) and how many rows each received.
+kilnmark: pipeline/v1
+name: sample-filter
+description: Active gold and platinum customers, and everyone else.
+
+nodes:
+  - id: customers
+    type: read
+    source: lab-mariadb
+    asset: shop.customers
+
+  - id: best
+    type: filter
+    input: customers
+    condition: "is_active and loyalty_tier in ('gold', 'platinum')"
+
+  - id: kept
+    type: write
+    input: best
+    source: lab-warehouse
+    path: samples/filter-and-route/best_customers.csv
+    mode: replace
+
+  - id: others
+    type: write
+    input: best.rejected
+    source: lab-warehouse
+    path: samples/filter-and-route/other_customers.csv
+    mode: replace

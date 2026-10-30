@@ -1,0 +1,41 @@
+# Route: send rows different ways (sample: lab only, never shipped).
+# Each order line goes to the first route it meets: large lines, bulk lines, or (meeting none) the
+# out output.
+# Look for: each route's name is an output port; the order the routes are written in decides.
+kilnmark: pipeline/v1
+name: sample-route
+description: Order lines by size.
+
+nodes:
+  - id: lines
+    type: read
+    source: lab-mariadb
+    asset: shop.order_lines
+
+  - id: by_size
+    type: route
+    input: lines
+    routes:
+      large: "quantity * unit_price >= 200"
+      bulk: "quantity >= 5"
+
+  - id: large
+    type: write
+    input: by_size.large
+    source: lab-warehouse
+    path: samples/filter-and-route/large_lines.csv
+    mode: replace
+
+  - id: bulk
+    type: write
+    input: by_size.bulk
+    source: lab-warehouse
+    path: samples/filter-and-route/bulk_lines.csv
+    mode: replace
+
+  - id: rest
+    type: write
+    input: by_size
+    source: lab-warehouse
+    path: samples/filter-and-route/other_lines.csv
+    mode: replace

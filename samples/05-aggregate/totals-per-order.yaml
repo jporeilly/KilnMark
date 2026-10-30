@@ -1,0 +1,29 @@
+# Aggregate: one row per group (sample: lab only, never shipped).
+# Totals each order's lines: how many lines, how many items and what they are worth.
+# Look for: group_by and values; without group_by everything becomes one row.
+kilnmark: pipeline/v1
+name: sample-aggregate
+description: Each shop order's lines, items and value.
+
+nodes:
+  - id: lines
+    type: read
+    source: lab-mariadb
+    asset: shop.order_lines
+
+  - id: per_order
+    type: aggregate
+    input: lines
+    group_by: [order_id]
+    values:
+      lines: "count(*)"
+      items: "sum(quantity)"
+      order_value: "sum(quantity * unit_price)"
+      products: "count_distinct(product_id)"
+
+  - id: out
+    type: write
+    input: per_order
+    source: lab-warehouse
+    path: samples/aggregate/order_totals.csv
+    mode: replace

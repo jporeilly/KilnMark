@@ -1,0 +1,37 @@
+# Parameters: values given per run (sample: lab only, never shipped).
+# Keeps the shop orders in the statuses asked for (a list), above a shipping fee (a number), and
+# names the file after the run (text). Run it as it is, or with values through the API:
+#   POST /api/v1/pipelines/sample-orders-by-status/runs
+#   {"parameters": {"statuses": ["shipped", "delivered"], "min_fee": 5, "label": "both"}}
+# Look for: status in ${statuses} becomes status in ('delivered'); a value only ever fills a value.
+kilnmark: pipeline/v1
+name: sample-orders-by-status
+description: Shop orders in the statuses asked for.
+
+parameters:
+  statuses: { type: text list, default: [delivered], description: The order statuses to keep }
+  min_fee: { type: number, default: 0, description: Only orders with at least this shipping fee }
+  label: { type: text, default: delivered, description: Names the file written }
+
+nodes:
+  - id: orders
+    type: read
+    source: lab-mariadb
+    asset: shop.orders
+
+  - id: wanted
+    type: filter
+    input: orders
+    condition: "status in ${statuses} and shipping_fee >= ${min_fee}"
+
+  - id: columns
+    type: select
+    input: wanted
+    keep: [order_id, customer_id, ordered_at, status, shipping_fee]
+
+  - id: out
+    type: write
+    input: columns
+    source: lab-warehouse
+    path: samples/parameters/orders_${label}.csv
+    mode: replace

@@ -1,0 +1,29 @@
+# Quality gate: warn only (sample: lab only, never shipped).
+# Checks the supplier feed for repeated SKUs and odd prices but lets every row through: what
+# failed is recorded with the run.
+# Look for: on_fail: warn; the run succeeds and its page lists what failed.
+kilnmark: pipeline/v1
+name: sample-gate-warn
+description: Supplier feed, checked but not stopped.
+
+nodes:
+  - id: feed
+    type: read
+    source: lab-mariadb
+    asset: stock.supplier_feed
+
+  - id: check
+    type: gate
+    input: feed
+    on_fail: warn
+    rules:
+      - {name: one row per SKU, type: unique, field: sku}
+      - {name: positive price, type: in_range, field: cost_price, min: 0.01}
+      - {name: SKU shape, type: matches_pattern, field: sku, regex: "^[A-Z]{2,4}-[0-9]+$"}
+
+  - id: out
+    type: write
+    input: check
+    source: lab-warehouse
+    path: samples/quality/supplier_feed_checked.csv
+    mode: replace

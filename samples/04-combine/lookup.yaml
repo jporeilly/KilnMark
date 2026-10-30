@@ -1,0 +1,38 @@
+# Lookup: add columns from another input (sample: lab only, never shipped).
+# Adds each order's customer name and loyalty tier; orders with no customer go to rejected.
+# Look for: inputs: main and lookup; the lookup side is read in full first.
+kilnmark: pipeline/v1
+name: sample-lookup
+description: Shop orders with their customer's name and tier.
+
+nodes:
+  - id: orders
+    type: read
+    source: lab-mariadb
+    asset: shop.orders
+
+  - id: customers
+    type: read
+    source: lab-mariadb
+    asset: shop.customers
+
+  - id: named
+    type: lookup
+    inputs: { main: orders, lookup: customers }
+    on: { customer_id: customer_id }
+    keep: [first_name, last_name, loyalty_tier]
+    unmatched: rejected
+
+  - id: out
+    type: write
+    input: named
+    source: lab-warehouse
+    path: samples/combine/orders_named.csv
+    mode: replace
+
+  - id: no_customer
+    type: write
+    input: named.rejected
+    source: lab-warehouse
+    path: samples/combine/orders_without_customer.csv
+    mode: replace

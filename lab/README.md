@@ -63,7 +63,8 @@ instead of `$env:`.
 
    **Pipelines** now lists `demo-customers-clean`, `demo-customer-spend` and `demo-supplier-feed`
    (see [Demo pipelines](#demo-pipelines)). To add one by hand instead, choose **New pipeline**, open the
-   **YAML** tab and paste the file.
+   **YAML** tab and paste the file. `.\lab\lab.ps1 samples` adds the
+   [samples](../samples/README.md) too: small pipelines, one idea each, sorted by what they show.
 
 6. **Run the quality gate.** Open `demo-customers-clean`. On the **Canvas** tab, it reads
    `crm.customers`, tidies the emails, checks every row at the gate **check**, and writes the rows
@@ -149,6 +150,7 @@ then only the demo sources you want:
 | `sources` | Where `lab/sources.csv` is, and how to import it |
 | `driver oracle` | Downloads Oracle's JDBC driver after showing its licence, checks it and copies it into a running Kilnmark (see [Oracle](#oracle)) |
 | `pipelines` | Adds the demo pipelines in `lab/pipelines` to a running Kilnmark (see [Demo pipelines](#demo-pipelines)) |
+| `samples` | Adds the sample pipelines in `samples/` to a running Kilnmark (see [samples/README.md](../samples/README.md)); flows are skipped until the flows API comes |
 
 Demo sources: `postgres`, `s3`, `sqlserver`, `mariadb`, `oracle`, `mail` and `files` (nothing to start: Kilnmark reads the
 share from disk). An unknown name lists the right ones. The scripts use Podman if it is on the

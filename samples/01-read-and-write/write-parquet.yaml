@@ -1,0 +1,20 @@
+# Write Parquet (sample: lab only, never shipped).
+# Reads the invoices and writes them as a Parquet file: columnar, typed and compressed.
+# Look for: format: parquet; the profile of what was written (Quality of what a run writes).
+kilnmark: pipeline/v1
+name: sample-write-parquet
+description: Lab invoices as Parquet.
+
+nodes:
+  - id: invoices
+    type: read
+    source: lab-db
+    asset: billing.invoices
+
+  - id: out
+    type: write
+    input: invoices
+    source: lab-warehouse
+    path: samples/read-and-write/invoices.parquet
+    format: parquet
+    mode: replace

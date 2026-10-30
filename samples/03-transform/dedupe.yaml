@@ -1,0 +1,38 @@
+# Dedupe: one row per key (sample: lab only, never shipped).
+# Keeps the first customer for each email address (tidied first, so case and spaces do not hide
+# a repeat); the repeats go to their own file.
+# Look for: the rejected output holds every repeat after the first.
+kilnmark: pipeline/v1
+name: sample-dedupe
+description: One CRM customer per email address.
+
+nodes:
+  - id: customers
+    type: read
+    source: lab-db
+    asset: crm.customers
+
+  - id: keyed
+    type: compute
+    input: customers
+    columns:
+      email_key: "lower(trim(email))"
+
+  - id: one_each
+    type: dedupe
+    input: keyed
+    key: [email_key]
+
+  - id: out
+    type: write
+    input: one_each
+    source: lab-warehouse
+    path: samples/transform/customers_one_per_email.csv
+    mode: replace
+
+  - id: repeats
+    type: write
+    input: one_each.rejected
+    source: lab-warehouse
+    path: samples/transform/customers_repeats.csv
+    mode: replace
