@@ -15,9 +15,9 @@ to a source you have saved:
 | `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) | filter, route, select, lookup, both aggregates, warn and stop gates, both parameter samples |
 | `files` | File storage the samples write to, under `samples/`; it must allow writing | every pipeline |
 
-A placeholder you do not map skips the samples that use it. A sample whose tables your source does
-not have is saved as a draft with problems, which say what is missing: open it and change what it
-reads.
+A placeholder you do not map skips the samples that use it. Each sample is checked against what
+Kilnmark has scanned of your sources, so scan them first: a table a sample reads that the scan did
+not find saves it as a draft, with problems saying what is missing. Open it and change what it reads.
 
 ## Adding them
 

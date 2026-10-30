@@ -54,10 +54,11 @@ public class SampleResource {
     @Operation(summary = "Add the samples", description = "Adds every sample pipeline whose placeholders are all given "
         + "a saved source in sources, such as {\"sources\": {\"crm-db\": \"my-postgres\", \"files\": \"my-bucket\"}}. "
         + "A placeholder left out skips the samples that use it. A sample whose name is taken is left as it is; one "
-        + "that checks with problems (a table the source does not have, a source that does not allow writing) is "
-        + "saved as a draft. Flows are skipped until the flows API comes. Role: steward.")
+        + "that checks with problems (a table the source's scan did not find, a source that does not allow writing) is "
+        + "saved as a draft; one that cannot be saved at all is reported as failed, with why, and the rest are still "
+        + "added. Flows are skipped until the flows API comes. Role: steward.")
     @APIResponses({
-        @APIResponse(responseCode = "200", description = "What happened to each sample: added, exists or skipped"),
+        @APIResponse(responseCode = "200", description = "What happened to each sample: added, exists, skipped or failed"),
         @APIResponse(responseCode = "400", description = "No source chosen, a name that is not a placeholder, or a "
             + "source that is not saved"),
         @APIResponse(responseCode = "401", description = "Not signed in"),

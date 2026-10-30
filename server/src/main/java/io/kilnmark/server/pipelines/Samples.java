@@ -54,8 +54,8 @@ public class Samples {
                          String yaml) {
     }
 
-    /** {@code source: <name>} as a node's setting, the name in group 2, optionally quoted. */
-    private static final Pattern SOURCE_LINE =
+    /** {@code source: <name>} as a node's setting, the name in group 3, optionally quoted (group 2). */
+    static final Pattern SOURCE_LINE =
         Pattern.compile("(?m)^(\\s*(?:-\\s+)?source:\\s*)([\"']?)([A-Za-z0-9_.-]+)\\2(\\s*(?:#.*)?)$");
 
     private final PipelineService pipelines;
@@ -108,11 +108,22 @@ public class Samples {
         StringBuilder out = new StringBuilder();
         while (m.find()) {
             String to = mapping.get(m.group(3));
-            String line = to == null ? m.group() : m.group(1) + m.group(2) + to + m.group(2) + m.group(4);
+            String quote = m.group(2).isEmpty() && needsQuotes(to) ? "\"" : m.group(2);
+            String line = to == null ? m.group() : m.group(1) + quote + to + quote + m.group(4);
             m.appendReplacement(out, Matcher.quoteReplacement(line));
         }
         m.appendTail(out);
         return out.toString();
+    }
+
+    /** YAML would read a source called null, true, no, on or 123 as something other than text. */
+    private static final Pattern PLAIN_TEXT = Pattern.compile("[A-Za-z][A-Za-z0-9_-]*");
+    private static final Set<String> YAML_WORDS = Set.of("null", "true", "false", "yes", "no", "on", "off", "y",
+        "n");
+
+    static boolean needsQuotes(String name) {
+        return name != null && (!PLAIN_TEXT.matcher(name).matches() || YAML_WORDS.contains(name.toLowerCase(
+            java.util.Locale.ROOT)));
     }
 
     private static String topLevel(String yaml, String key) {
@@ -135,7 +146,7 @@ public class Samples {
     public record AddRequest(Map<String, String> sources) {
     }
 
-    /** What happened to one sample: added, exists (left as it is) or skipped, and why. */
+    /** What happened to one sample: added, exists (left as it is), skipped or failed, and why. */
     public record Outcome(String name, String file, String outcome, String reason, Boolean valid) {
     }
 
@@ -198,14 +209,24 @@ public class Samples {
                 out.add(new Outcome(s.name(), s.file(), "added", null, valid));
                 added++;
             } catch (WebApplicationException e) {
-                if (e.getResponse().getStatus() != Response.Status.CONFLICT.getStatusCode()) {
-                    throw e;
+                if (e.getResponse().getStatus() == Response.Status.CONFLICT.getStatusCode()) {
+                    out.add(new Outcome(s.name(), s.file(), "exists", "already there: left as it is", null));
+                } else {
+                    out.add(failed(s, e.getResponse().getEntity() instanceof io.kilnmark.server.api.ApiError a
+                        ? a.error() : e.getMessage(), e));
                 }
-                out.add(new Outcome(s.name(), s.file(), "exists", "already there: left as it is", null));
+            } catch (RuntimeException e) {
+                // One sample that cannot be saved does not stop the others; what was added is reported.
+                out.add(failed(s, e.getMessage(), e));
             }
         }
         LOG.infof("%d sample pipeline(s) added by %s", added, by);
         return new AddResult(out, added);
+    }
+
+    private static Outcome failed(Sample s, String reason, Exception e) {
+        LOG.warnf(e, "Sample %s could not be added", s.name());
+        return new Outcome(s.name(), s.file(), "failed", reason == null ? "it could not be saved" : reason, null);
     }
 
     private static String read(String resource) {

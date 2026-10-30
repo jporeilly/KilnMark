@@ -184,13 +184,15 @@ class LabPipelinesTest {
     void theSamplesNameOnlyPlaceholders() throws Exception {
         List<String> placeholders = Samples.PLACEHOLDERS.stream().map(Samples.Placeholder::name).toList();
         assertEquals(new java.util.HashSet<>(placeholders), labMapping().keySet());
-        java.util.regex.Pattern source = java.util.regex.Pattern.compile("(?m)^\\s*(?:-\\s+)?source:\\s*(\\S+)");
         java.util.regex.Pattern lab = java.util.regex.Pattern.compile("(?i)(?<![a-z])lab(?![a-z])");
         for (Path file : yaml(repo().resolve("samples"))) {
             String text = Files.readString(file);
-            java.util.regex.Matcher m = source.matcher(text);
+            // Every source line is one the mapping rewrites, and names a placeholder.
+            assertEquals(text.lines().filter(l -> l.strip().matches("(- +)?source:.*")).count(),
+                Samples.SOURCE_LINE.matcher(text).results().count(), file + ": a source line the mapping misses");
+            java.util.regex.Matcher m = Samples.SOURCE_LINE.matcher(text);
             while (m.find()) {
-                assertTrue(placeholders.contains(m.group(1)), file + ": source " + m.group(1) + " is not a placeholder");
+                assertTrue(placeholders.contains(m.group(3)), file + ": source " + m.group(3) + " is not a placeholder");
             }
             assertFalse(lab.matcher(text).find(), file + ": mentions the lab, but the samples ship");
             assertEquals(Samples.sourcesOf(text).isEmpty(), isFlow(file), file + ": a pipeline names placeholders");

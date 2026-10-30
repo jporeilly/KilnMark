@@ -60,7 +60,8 @@ sources by placeholders rather than real sources:
 3. Choose **Add samples**. The dialog lists what happened to each: added, already here (a sample
    whose name is taken is left as it is, so your changes are kept), or not added and why.
 
-A sample whose tables your source does not have is saved as a draft with problems: open it and
+Each sample is checked against what Kilnmark has scanned of your sources, so scan them first: a
+table a sample reads that the scan did not find saves it as a draft with problems. Open it and
 change its `asset` to one of yours, or its columns. The sample flows are not added yet; they are
 in the release's `samples` folder to read. Through the API, `GET /api/v1/samples` lists the
 placeholders and samples, and `POST /api/v1/samples` with

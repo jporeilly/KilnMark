@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import type { SamplePlaceholder, Source } from "../api";
-import { chosenSources, sourceGroups, sourceLabel } from "./AddSamples";
+import type { SampleInfo, SamplePlaceholder, Source } from "../api";
+import { addable, chosenSources, sourceGroups, sourceLabel } from "./AddSamples";
 
 const source = (name: string, category: string, over: Partial<Source> = {}): Source =>
   ({ name, displayName: name, category, kind: "x", settings: {}, assets: 0, formats: {}, ...over }) as Source;
@@ -24,5 +24,14 @@ describe("Add samples", () => {
 
   test("leaves out placeholders not given a source", () => {
     expect(chosenSources({ "crm-db": "pg", "shop-db": "", files: "bucket" })).toEqual({ "crm-db": "pg", files: "bucket" });
+  });
+
+  test("counts only the samples whose every placeholder has a source", () => {
+    const sample = (name: string, sources: string[], type: SampleInfo["type"] = "pipeline"): SampleInfo => ({
+      file: `${name}.yaml`, name, type, description: null, sources, exists: false,
+    });
+    const all = [sample("a", ["crm-db", "files"]), sample("b", ["shop-db", "files"]), sample("f", [], "flow")];
+    expect(addable(all, { "crm-db": "pg" })).toEqual([]);
+    expect(addable(all, { "crm-db": "pg", files: "bucket" }).map((s) => s.name)).toEqual(["a"]);
   });
 });

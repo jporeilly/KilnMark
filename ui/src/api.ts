@@ -1419,7 +1419,7 @@ export type SampleCatalogue = { placeholders: SamplePlaceholder[]; samples: Samp
 export type SampleOutcome = {
   name: string;
   file: string;
-  outcome: "added" | "exists" | "skipped";
+  outcome: "added" | "exists" | "skipped" | "failed";
   reason: string | null;
   valid: boolean | null;
 };

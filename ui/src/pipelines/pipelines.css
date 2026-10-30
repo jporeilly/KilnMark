@@ -21,6 +21,14 @@
   overflow-y: auto;
 }
 
+.pl-samples .field {
+  margin-bottom: 14px;
+}
+
+.pl-samples .buttons {
+  margin-top: 16px;
+}
+
 .pl-sample-results {
   max-height: 50vh;
   overflow-y: auto;

@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { api, samplesApi, type SampleCatalogue, type SampleOutcome, type SamplePlaceholder, type Source } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { api, samplesApi, type SampleCatalogue, type SampleInfo, type SampleOutcome, type SamplePlaceholder, type Source } from "../api";
 import { href } from "../router";
 
 /** The sources to offer for a placeholder: those of its kind first, then the rest. */
@@ -14,6 +14,11 @@ export function sourceGroups(p: SamplePlaceholder, sources: Source[]): { fitting
 export function sourceLabel(p: SamplePlaceholder, s: Source): string {
   const name = s.displayName !== s.name ? `${s.displayName} (${s.name})` : s.name;
   return p.category === "files" && s.settings.allow_writing !== "true" ? `${name}, does not allow writing` : name;
+}
+
+/** The sample pipelines that would be added: those whose every placeholder has a source. */
+export function addable(samples: SampleInfo[], picks: Record<string, string>): SampleInfo[] {
+  return samples.filter((s) => s.type === "pipeline" && s.sources.every((p) => picks[p]));
 }
 
 /** The placeholders given a source, as the API takes them; one left unset is left out. */
@@ -34,38 +39,53 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [results, setResults] = useState<SampleOutcome[] | null>(null);
+  const close = useRef<HTMLButtonElement>(null);
+  // Each opening of the dialog: answers to an earlier opening's requests are dropped.
+  const opening = useRef(0);
 
   const open = async () => {
+    const mine = ++opening.current;
     setError(null);
     setResults(null);
     setPicks({});
+    setCatalogue(null);
+    setAdding(false);
     dialog.current?.showModal();
     try {
       const [c, s] = await Promise.all([samplesApi.list(), api.sources()]);
+      if (mine !== opening.current) return;
       setCatalogue(c);
       setSources([...s].sort((a, b) => a.name.localeCompare(b.name)));
     } catch (e) {
-      setError((e as Error).message);
+      if (mine === opening.current) setError((e as Error).message);
     }
   };
 
   const add = async () => {
+    const mine = opening.current;
     setAdding(true);
     setError(null);
     try {
       const r = await samplesApi.add(chosenSources(picks));
+      if (mine !== opening.current) return;
       setResults(r.samples.filter((s) => !(s.outcome === "skipped" && s.reason?.startsWith("a flow"))));
-      onAdded();
     } catch (e) {
-      setError((e as Error).message);
+      if (mine === opening.current) setError((e as Error).message);
     } finally {
-      setAdding(false);
+      // Some samples may have been added even when the request failed part way.
+      onAdded();
+      if (mine === opening.current) setAdding(false);
     }
   };
 
+  // The Add button goes when the results come: keep the focus in the dialog.
+  useEffect(() => {
+    if (results) close.current?.focus();
+  }, [results]);
+
   const pipelines = catalogue?.samples.filter((s) => s.type === "pipeline") ?? [];
   const flows = catalogue?.samples.filter((s) => s.type === "flow") ?? [];
-  const chosen = Object.keys(chosenSources(picks)).length;
+  const toAdd = addable(pipelines, picks);
   const added = results?.filter((r) => r.outcome === "added") ?? [];
 
   return (
@@ -86,13 +106,14 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
             {catalogue === null && !error && <p role="status">Loading…</p>}
             {catalogue?.placeholders.map((p) => {
               const using = pipelines.filter((s) => s.sources.includes(p.name)).length;
+              const all = pipelines.length > 0 && using === pipelines.length;
               const { fitting, others } = sourceGroups(p, sources);
               return (
                 <div className="field" key={p.name}>
                   <label htmlFor={`sample-src-${p.name}`}>
                     <span className="mono">{p.name}</span>{" "}
                     <span className="muted small">
-                      ({using} {using === 1 ? "sample" : "samples"})
+                      ({all ? "every sample writes here" : `${using} ${using === 1 ? "sample" : "samples"}`})
                     </span>
                   </label>
                   <select
@@ -139,14 +160,14 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
               </p>
             )}
             <p className="hint">
-              A sample whose tables your source does not have is saved with problems, as a draft: open it to change
-              what it reads.
+              Each sample is checked against what Kilnmark has scanned of your sources: a table it reads that the scan
+              did not find saves it as a draft with problems. Open it to change what it reads.
             </p>
           </>
         )}
         {results && (
-          <div role="status">
-            <p>
+          <div>
+            <p role="status">
               {added.length === 0
                 ? "No samples were added."
                 : `Added ${added.length} ${added.length === 1 ? "sample" : "samples"}.`}
@@ -159,6 +180,7 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
                   {r.outcome === "added" && (r.valid ? "added" : <span className="pl-bad">added as a draft, with problems</span>)}
                   {r.outcome === "exists" && "already here, left as it is"}
                   {r.outcome === "skipped" && <span className="muted">not added: {r.reason}</span>}
+                  {r.outcome === "failed" && <span className="pl-bad">could not be added: {r.reason}</span>}
                 </li>
               ))}
             </ul>
@@ -171,11 +193,15 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
         )}
         <div className="buttons">
           {!results && (
-            <button type="button" className="primary" onClick={add} disabled={adding || chosen === 0}>
-              {adding ? "Adding…" : "Add samples"}
+            <button type="button" className="primary" onClick={add} disabled={adding || toAdd.length === 0}>
+              {adding
+                ? "Adding…"
+                : toAdd.length === 0
+                  ? "Add samples"
+                  : `Add ${toAdd.length} ${toAdd.length === 1 ? "sample" : "samples"}`}
             </button>
           )}
-          <button type="button" onClick={() => dialog.current?.close()}>
+          <button type="button" ref={close} onClick={() => dialog.current?.close()}>
             {results ? "Close" : "Cancel"}
           </button>
         </div>

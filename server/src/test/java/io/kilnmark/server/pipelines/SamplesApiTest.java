@@ -122,5 +122,9 @@ class SamplesApiTest {
         assertTrue(out.contains("  - source: \"bucket\"   # quoted\n"), out);
         assertTrue(out.contains("asset: crm.files") && out.contains("path: files/crm-db.csv"), out);
         assertEquals(List.of("crm-db", "files"), Samples.sourcesOf(yaml));
+        // A source name YAML would read as something other than text is quoted.
+        out = Samples.withSources(yaml, Map.of("crm-db", "null", "files", "123"));
+        assertTrue(out.contains("    source: \"null\"\n") && out.contains("  - source: \"123\"   # quoted\n"), out);
+        assertTrue(Samples.withSources(yaml, Map.of("crm-db", "On")).contains("    source: \"On\"\n"));
     }
 }
