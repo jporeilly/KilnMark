@@ -93,8 +93,16 @@ it on a narrow screen), and close with its **×** or when nothing is selected.
   focus to it, to see the columns leaving it.
 - **Connect nodes** by dragging from an output port to an input port. A connection Kilnmark cannot
   make is refused with the reason: a node reading from itself, a loop, or an input that already
-  reads from another node (combine rows with a union node instead). Lines for ports other than
-  `out` are dashed and labelled.
+  reads from another node (combine rows with a union node instead). A solid line leaves a node's
+  main output, `out`; a line from any other output (a filter's or lookup's `rejected`, a gate's
+  `quarantine`, a route's named routes) is dashed and labelled with that output's name.
+- **One output feeding several nodes gives each of them every row.** Connect a node's `out` to an
+  aggregate and to a write, and the aggregate totals all the rows while the write writes all of
+  them. Rows are never shared out between the nodes. To send different rows different ways, say
+  which way each goes: a **route** node sends each row down the first route whose condition it
+  meets (and the rest through `out`), a **filter** keeps the rows meeting its condition and sends
+  the others through `rejected`, and a quality gate can set failing rows aside through
+  `quarantine`.
 - **Remove a connection** with **Disconnect** beside it in the settings of the node it feeds, or
   click it and press Delete.
 - **Move** a node by dragging it. **Auto-layout** lays the nodes out again from left to right.
