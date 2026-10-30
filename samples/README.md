@@ -27,6 +27,7 @@ preview a node, and choose **Run now**.
 | --- | --- | --- |
 | `01-read-and-write` | `sample-read-write-csv` | Read a table, write a CSV file (`mode: replace`) |
 | | `sample-write-parquet` | Write Parquet (`format: parquet`) |
+| | `sample-read-columns-where` | Read only some columns and rows: `columns`, `where`, and who applies it |
 | `02-filter-and-route` | `sample-filter` | Keep rows meeting a condition; the rest through `rejected` |
 | | `sample-route` | Send rows different ways, the first route that fits winning |
 | | `sample-limit` | Pass on the first rows only, and stop reading early |
@@ -40,7 +41,7 @@ preview a node, and choose **Run now**.
 | `06-quality` | `sample-gate-quarantine` | A quality gate setting failing rows aside, with a threshold |
 | | `sample-gate-warn` | A gate that only records what failed |
 | | `sample-gate-stop` | A gate that stops the run before anything is written (it is meant to) |
-| `07-parameters` | `sample-orders-by-status` | Parameters: a text list in `status in ${statuses}`, a number, a label in the file name |
+| `07-parameters` | `sample-orders-by-status` | Parameters: a text list in the read node's `where: status in ${statuses}`, a number, a label in the file name |
 | | `sample-server-variable` | A server variable (`${vars.sample_region}`) as a parameter's default |
 | `08-flows` | `sample-quality-decides` | A flow: a condition on what a gate set aside decides what runs next; notify and stop |
 | | `sample-passing-values` | A flow passing values on: inheritance by name, `with:`, a node's value, wait and notify |

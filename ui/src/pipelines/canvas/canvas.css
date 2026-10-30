@@ -764,6 +764,45 @@ p.cv-field-problems {
   padding-left: 8px;
 }
 
+/* What a check says about a node that does not stop a run: who applies a read's where, say. */
+.cv-node-notes {
+  margin: 0;
+  padding: 6px 8px 6px 22px;
+  border-left: 4px solid var(--km-border-control);
+  background: var(--km-tint-slate-bg);
+  color: var(--km-tint-slate-fg);
+  border-radius: 4px;
+  font-size: var(--km-text-sm);
+}
+
+/* A read node's columns: one box per column of the table. */
+.cv-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--km-border-control);
+  border-radius: 4px;
+}
+
+.cv-checklist label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.cv-field .cv-checklist input {
+  width: auto;
+  flex: none;
+}
+
+.cv-chip-param {
+  background: var(--km-tint-violet-bg);
+  color: var(--km-tint-violet-fg);
+}
+
 .cv-column-buttons {
   display: flex;
   flex-wrap: wrap;

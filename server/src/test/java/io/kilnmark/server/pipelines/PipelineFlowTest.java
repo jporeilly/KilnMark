@@ -142,7 +142,7 @@ class PipelineFlowTest {
         JsonPath nodes = as(viewer).get("/api/v1/node-types").then().statusCode(200).extract().jsonPath();
         assertTrue(nodes.getList("type").containsAll(List.of("read", "write")), nodes.prettify());
         assertEquals("source", nodes.getString("find { it.type == 'read' }.kind"));
-        assertEquals(List.of("source", "asset", "row_limit"), nodes.getList("find { it.type == 'read' }.settings.key"));
+        assertEquals(List.of("source", "asset", "columns", "where", "row_limit"), nodes.getList("find { it.type == 'read' }.settings.key"));
         assertEquals(List.of("create", "append", "replace", "upsert"),
             nodes.getList("find { it.type == 'write' }.settings.find { it.key == 'mode' }.choices"));
         // The writer settings each kind of source takes, for the canvas; other nodes have none.
@@ -808,5 +808,60 @@ class PipelineFlowTest {
             Tokens.admin().contentType(ContentType.JSON).body(route).put("/api/v1/ai/features/pipeline_suggestions");
             fake.clear();
         }
+    }
+
+    /**
+     * The read node's columns and where (docs/design/pipelines.md, "The read node's columns and
+     * where"): the memory source reads every row, so Kilnmark applies where, and the row limit
+     * counts the rows kept.
+     */
+    @Test
+    @Order(14)
+    void aReadKeepsTheColumnsAndRowsAsked() throws Exception {
+        String yaml = """
+            kilnmark: pipeline/v1
+            name: people-some
+            parameters:
+              max_id: { type: number, default: 200 }
+            nodes:
+              - id: people
+                type: read
+                source: mem-src
+                asset: lab.people
+                columns: [name, id]
+                where: "id <= ${max_id} and name like 'Person 1%'"
+                row_limit: 50
+
+              - id: out
+                type: write
+                input: people
+                source: mem-out
+                table: lab.people_some
+                mode: replace
+            """;
+        as(viewer).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/validate").then().statusCode(200)
+            .body("valid", equalTo(true))
+            .body("nodes.find { it.id == 'people' }.columns.out.name", equalTo(List.of("name", "id")))
+            .body("notes.message", hasItems(containsString("where is applied by Kilnmark as the rows arrive")));
+        as(viewer).body(Map.of("yaml", yaml.replace("[name, id]", "[name, nope]"))).post("/api/v1/pipelines/validate")
+            .then().statusCode(200).body("valid", equalTo(false))
+            .body("problems.message", hasItems(containsString("'nope' is not a column")));
+        as(viewer).body(Map.of("yaml", yaml.replace("\"id <= ${max_id} and name like 'Person 1%'\"", "id + 1")))
+            .post("/api/v1/pipelines/validate").then().statusCode(200).body("valid", equalTo(false));
+
+        as(steward).body(Map.of("name", "people-some", "yaml", yaml)).post("/api/v1/pipelines").then().statusCode(201);
+        String urn = "urn:kilnmark:mem-out:lab.people_some";
+        // ids 1, 10-19 and 100-199 start "Person 1": 111 rows, of which the first 50
+        JsonPath run = waitForRun(as(steward).post("/api/v1/pipelines/people-some/runs").then().statusCode(202)
+            .extract().jsonPath().getLong("id"), "succeeded");
+        assertEquals(50L, run.getLong("nodes.find { it.node == 'people' }.rowsOut"), run.prettify());
+        assertEquals(50L, MemoryConnector.WRITTEN.get(urn).get());
+
+        // A smaller value, with no row limit reached: ids 1 and 10-19.
+        as(steward).body(Map.of("parameters", Map.of("max_id", 19))).post("/api/v1/pipelines/people-some/runs")
+            .then().statusCode(202);
+        JsonPath fewer = waitForRun(as(steward).get("/api/v1/pipelines/people-some/runs").then().statusCode(200)
+            .extract().jsonPath().getLong("[0].id"), "succeeded");
+        assertEquals(11L, fewer.getLong("nodes.find { it.node == 'people' }.rowsOut"), fewer.prettify());
     }
 }

@@ -37,6 +37,7 @@ import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
+import io.kilnmark.kiln.connect.ReadFilter;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.profile.ProfileNode;
 
@@ -326,6 +327,37 @@ class SqlServerIngestTest {
         MetadataEvent rows = rowCount(read(assets.get("crm.customers"), 1000));
         assertEquals("1000", rows.attributes().get("rows"));
         assertEquals("false", rows.attributes().get("complete"));
+    }
+
+    @Test
+    void aNarrowedReadSelectsTheColumnsAndBindsTheValues() throws Exception {
+        AssetInfo customers = assets.get("crm.customers");
+        assertTrue(CONNECTOR.narrowsReads(source, customers));
+        ReadFilter filter = new ReadFilter.And(List.of(
+            new ReadFilter.Between("customer_id", 1L, 400L, false),
+            new ReadFilter.In("segment", List.of("premier", "x' OR '1'='1"), false),
+            new ReadFilter.Compare("opted_in", "=", true)));
+        NodeSpec reader = CONNECTOR.reader(source, customers, new Connector.ReadOptions(URN, 0, 4096,
+            List.of("customer_id", "place"), filter));
+        String query = reader.settings().get("query");
+        assertTrue(query.startsWith("SELECT [customer_id], [place].ToString() AS [place] FROM [crm].[customers] "
+            + "WHERE ([customer_id] BETWEEN ? AND ? AND [segment] IN (?, ?) AND [opted_in] = ?)"), query);
+        assertTrue(!query.contains("premier") && !query.contains("OR '1'"), "values are bound, never written in");
+        List<MetadataEvent> events = new CopyOnWriteArrayList<>();
+        RunResult r = new Runner(128L << 20, 2).run(new Pipeline("narrowed", List.of(reader,
+            new NodeSpec("profile", new ProfileNode(), Map.of("asset-urn", URN)))), events::add);
+        assertTrue(r.succeeded(), r.error());
+        long expected;
+        try (Connection c = DriverManager.getConnection(source.setting("url"), DB.getUsername(), DB.getPassword());
+             Statement s = c.createStatement();
+             ResultSet rs = s.executeQuery("SELECT COUNT(*) FROM crm.customers WHERE customer_id BETWEEN 1 AND 400 "
+                 + "AND segment = 'premier' AND opted_in = 1")) {
+            rs.next();
+            expected = rs.getLong(1);
+        }
+        assertTrue(expected > 0);
+        assertEquals(Long.toString(expected), rowCount(events).attributes().get("rows"));
+        assertEquals(2, profile(events).size(), "only the columns chosen");
     }
 
     @Test

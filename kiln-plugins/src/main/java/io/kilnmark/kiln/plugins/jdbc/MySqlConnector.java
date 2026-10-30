@@ -587,8 +587,29 @@ public class MySqlConnector extends JdbcConnector {
     }
 
     private String select(String columns, String schema, String table, long rowLimit) {
+        return select(columns, schema, table, null, rowLimit);
+    }
+
+    private String select(String columns, String schema, String table, String where, long rowLimit) {
         return "SELECT " + columns + " FROM " + quote(schema) + "." + quote(table)
-            + (rowLimit > 0 ? " LIMIT " + rowLimit : "");
+            + (where == null ? "" : " WHERE " + where) + (rowLimit > 0 ? " LIMIT " + rowLimit : "");
+    }
+
+    /** The character and text types and enum; not json or the spatial types read as text. */
+    @Override
+    protected boolean comparesAsText(String baseType) {
+        return baseType.endsWith("text") || baseType.equals("enum") || super.comparesAsText(baseType);
+    }
+
+    @Override
+    protected String selectSql(AssetInfo asset, long rowLimit, boolean explicit, String where) {
+        String columns = explicit || asset.fields().stream().anyMatch(MySqlConnector::spatial)
+            ? asset.fields().stream().map(f -> spatial(f)
+                ? "ST_AsText(" + quote(f.name()) + (product == Product.MYSQL ? ", 'axis-order=long-lat'" : "") + ") AS "
+                    + quote(f.name())
+                : quote(f.name())).collect(Collectors.joining(", "))
+            : "*";
+        return select(columns, asset.hints().get("schema"), asset.hints().get("table"), where, rowLimit);
     }
 
     private static boolean spatial(AssetInfo.FieldInfo f) {

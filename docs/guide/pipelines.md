@@ -253,6 +253,40 @@ The `read` node takes `source` (a saved source's name) and `asset`: a table or v
 `schema.table`, or a file's path inside the source. `row_limit` reads only the first rows, which
 is handy while you try a pipeline out; 0 reads them all.
 
+`columns` and `where` read only what you need:
+
+```yaml
+  - id: orders
+    type: read
+    source: lab-mariadb
+    asset: shop.orders
+    columns: [order_id, customer_id, status, shipping_fee]   # in this order; leave out to read all
+    where: "status in ${statuses} and shipping_fee >= ${min_fee}"
+```
+
+- `columns` lists the columns kept, in the order you want them. On the canvas, tick them in the
+  read node's **Columns** list, which shows each column of the table with its type; the order you
+  tick them in is the order they come out.
+- `where` is a condition, written as in a `filter` node. It may use any column of the table, chosen
+  or not, and the pipeline's parameters as `${name}`. The canvas offers both as buttons under the
+  box. A parameter's value always goes in as a value, never as part of a name.
+- With `where`, `row_limit` counts the rows that meet the condition.
+- **Who does the work.** For a database table, Kilnmark asks the database to do as much of the
+  `where` as it safely can, so fewer rows travel; each value is sent separately from the SQL (bound),
+  never written into it. Kilnmark then checks every row against the whole condition anyway, so the
+  rows are the same whichever does the work, even where the database compares text differently
+  (ignoring case, say). Text compared with `=`, `in` or `like`, numbers, dates and true/false go to
+  the database; functions such as `lower(...)`, date-times (time zones differ) and arithmetic stay with
+  Kilnmark. So do columns the database stores differently from how Kilnmark reads them, such as
+  JSON, spatial or uuid columns read as text. Files, and sources added through a generic JDBC
+  driver, read every row and Kilnmark applies `where`.
+- The read node's note, under its settings on the canvas and with the check's notes on the YAML
+  tab, says which: "applied by the database while reading", "applied in part by the database"
+  (naming what Kilnmark does), or "applied by Kilnmark as the rows arrive".
+
+`samples/01-read-and-write/read-columns-where.yaml` and `samples/07-parameters/orders-by-status.yaml`
+show both.
+
 ### Writing
 
 The `write` node takes `source` and where to write: `table` for a database, `path` for a file

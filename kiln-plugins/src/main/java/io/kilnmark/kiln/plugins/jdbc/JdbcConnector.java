@@ -22,6 +22,7 @@ import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.CatalogInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
+import io.kilnmark.kiln.connect.ReadFilter;
 import io.kilnmark.kiln.connect.RelationshipInfo;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.connect.UrlHosts;
@@ -212,6 +213,125 @@ public abstract class JdbcConnector implements Connector {
     }
 
     /**
+     * SQL reading {@code asset}, only its {@link AssetInfo#fields()} when {@code explicit}, only rows
+     * meeting {@code where} (SQL with {@code ?} for each value) when not null, and at most
+     * {@code rowLimit} rows when above 0; null when this database's reader cannot narrow a read, so the
+     * read node narrows what arrives instead. Databases that can override this.
+     */
+    protected String selectSql(AssetInfo asset, long rowLimit, boolean explicit, String where) {
+        return explicit || where != null ? null : selectSql(asset, rowLimit);
+    }
+
+    /** Whether this database's driver binds true/false to its boolean columns. */
+    protected boolean bindsBooleans() {
+        return true;
+    }
+
+    @Override
+    public boolean comparesAsRead(String kind, String sourceType) {
+        String t = sourceType == null ? "" : sourceType.toLowerCase(Locale.ROOT);
+        int paren = t.indexOf('(');
+        String base = (paren < 0 ? t : t.substring(0, paren)).trim();
+        return switch (kind == null ? "" : kind) {
+            case "text" -> comparesAsText(base);
+            case "boolean" -> base.equals("bool") || base.equals("boolean") || base.equals("bit");
+            default -> true;
+        };
+    }
+
+    /**
+     * Whether a column of this source type (lower case, without its size) is stored as text, so the
+     * database compares it with a text value as Kilnmark does. By default the character types.
+     */
+    protected boolean comparesAsText(String baseType) {
+        return baseType.contains("char");
+    }
+
+    @Override
+    public boolean narrowsReads(SourceConfig source, AssetInfo asset) {
+        return asset.hints().containsKey("table")
+            && selectSql(asset, 0, true, "1 = 1") != null;
+    }
+
+    /**
+     * {@code filter} as SQL with {@code ?} for each value, the values added to {@code values} in order;
+     * null when none of it can be written for this database. What cannot be written is left out of an
+     * and (so the read only lets more rows through, which the read node then drops) and makes an or or a
+     * not unwritable as a whole.
+     */
+    protected String whereSql(ReadFilter filter, List<Object> values) {
+        return whereSql(filter, values, false);
+    }
+
+    /**
+     * {@code whole}: every part must be written, as under a not, where leaving a part of an and out
+     * would let fewer rows through rather than more.
+     */
+    private String whereSql(ReadFilter filter, List<Object> values, boolean whole) {
+        int mark = values.size();
+        String sql = switch (filter) {
+            case ReadFilter.And a -> {
+                List<String> parts = new ArrayList<>();
+                for (ReadFilter f : a.all()) {
+                    String p = whereSql(f, values, whole);
+                    if (p != null) {
+                        parts.add(p);
+                    } else if (whole) {
+                        parts = null;
+                        break;
+                    }
+                }
+                yield parts == null || parts.isEmpty() ? null
+                    : parts.size() == 1 ? parts.get(0) : "(" + String.join(" AND ", parts) + ")";
+            }
+            case ReadFilter.Or o -> {
+                List<String> parts = new ArrayList<>();
+                for (ReadFilter f : o.any()) {
+                    String p = whereSql(f, values, whole);
+                    if (p == null) {
+                        parts = null;
+                        break;
+                    }
+                    parts.add(p);
+                }
+                yield parts == null ? null : "(" + String.join(" OR ", parts) + ")";
+            }
+            case ReadFilter.Not n -> {
+                String inner = whereSql(n.condition(), values, true);
+                yield inner == null ? null : "(NOT " + inner + ")";
+            }
+            case ReadFilter.Compare c -> bindable(c.value())
+                ? quote(c.column()) + " " + c.op() + " " + bind(c.value(), values) : null;
+            case ReadFilter.In in -> {
+                if (!in.values().stream().allMatch(this::bindable)) {
+                    yield null;
+                }
+                List<String> marks = new ArrayList<>();
+                in.values().forEach(v -> marks.add(bind(v, values)));
+                yield quote(in.column()) + (in.negated() ? " NOT IN (" : " IN (") + String.join(", ", marks) + ")";
+            }
+            case ReadFilter.Between b -> bindable(b.low()) && bindable(b.high())
+                ? quote(b.column()) + (b.negated() ? " NOT BETWEEN " : " BETWEEN ") + bind(b.low(), values) + " AND "
+                    + bind(b.high(), values) : null;
+            case ReadFilter.IsNull n -> quote(n.column()) + (n.negated() ? " IS NOT NULL" : " IS NULL");
+            case ReadFilter.Like l -> quote(l.column()) + " LIKE " + bind(l.pattern(), values);
+        };
+        if (sql == null) {
+            values.subList(mark, values.size()).clear(); // what was bound for a part left out
+        }
+        return sql;
+    }
+
+    private boolean bindable(Object v) {
+        return !(v instanceof Boolean) || bindsBooleans();
+    }
+
+    private static String bind(Object v, List<Object> values) {
+        values.add(v);
+        return "?";
+    }
+
+    /**
      * The tables and views {@code filter} keeps (its schemas, every user schema when it names
      * none, and its patterns). By default standard JDBC metadata; override to add what the driver
      * does not report, such as comments.
@@ -275,6 +395,13 @@ public abstract class JdbcConnector implements Connector {
      */
     protected String explain(SQLException e) {
         return e.getMessage();
+    }
+
+    /** {@code asset} with only the named fields, in the asset's own order. */
+    private static AssetInfo withFields(AssetInfo asset, List<String> names) {
+        List<AssetInfo.FieldInfo> fields = asset.fields().stream().filter(f -> names.contains(f.name())).toList();
+        return new AssetInfo(asset.path(), asset.kind(), asset.container(), asset.name(), asset.description(), fields,
+            asset.primaryKey(), asset.bounded(), asset.readable(), asset.hints());
     }
 
     /** Quotes an identifier the standard way; override for databases that differ. */
@@ -840,13 +967,25 @@ public abstract class JdbcConnector implements Connector {
             s.put("password", source.secret());
         }
         driverSettings(source).forEach((k, v) -> s.put(JdbcTableInput.DRIVER_PREFIX + k, String.valueOf(v)));
-        s.put("query", selectSql(asset, read.rowLimit()));
+        String narrowed = null;
+        List<Object> values = new ArrayList<>();
+        if (!read.columns().isEmpty() || read.filter() != null) {
+            AssetInfo only = read.columns().isEmpty() ? asset : withFields(asset, read.columns());
+            String where = read.filter() == null ? null : whereSql(read.filter(), values);
+            narrowed = selectSql(only, read.rowLimit(), !read.columns().isEmpty(), where);
+            if (narrowed == null) {
+                values.clear(); // this database reads everything; the read node narrows what arrives
+            }
+        }
+        s.put("query", narrowed != null ? narrowed : selectSql(asset, read.rowLimit()));
+        JdbcTableInput.putValues(s, values);
         s.put("label", asset.path());
         s.put("asset-urn", read.assetUrn());
         s.put("row-limit", Long.toString(read.rowLimit()));
         s.put("batch-size", Integer.toString(read.batchSize()));
         String above = source.setting(TABLE_SAMPLE_ABOVE);
-        if (above != null && !asset.bounded() && read.rowLimit() <= 0 && asset.hints().containsKey("table")) {
+        if (above != null && narrowed == null && !asset.bounded() && read.rowLimit() <= 0
+            && asset.hints().containsKey("table")) {
             String estimate = estimateRowsSql(asset);
             String clause = tableSampleClause(JdbcTableInput.PERCENT);
             if (estimate != null && clause != null) {

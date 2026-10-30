@@ -264,8 +264,22 @@ public final class SqlServerConnector extends JdbcConnector {
     }
 
     private String select(String columns, String schema, String table, long rowLimit) {
+        return select(columns, schema, table, null, rowLimit);
+    }
+
+    private String select(String columns, String schema, String table, String where, long rowLimit) {
         return "SELECT " + (rowLimit > 0 ? "TOP (" + rowLimit + ") " : "") + columns + " FROM " + quote(schema) + "."
-            + quote(table);
+            + quote(table) + (where == null ? "" : " WHERE " + where);
+    }
+
+    @Override
+    protected String selectSql(AssetInfo asset, long rowLimit, boolean explicit, String where) {
+        String columns = explicit || asset.fields().stream().anyMatch(SqlServerConnector::readThroughToString)
+            ? asset.fields().stream()
+                .map(f -> readThroughToString(f) ? quote(f.name()) + ".ToString() AS " + quote(f.name()) : quote(f.name()))
+                .collect(Collectors.joining(", "))
+            : "*";
+        return select(columns, asset.hints().get("schema"), asset.hints().get("table"), where, rowLimit);
     }
 
     private static boolean readThroughToString(AssetInfo.FieldInfo field) {

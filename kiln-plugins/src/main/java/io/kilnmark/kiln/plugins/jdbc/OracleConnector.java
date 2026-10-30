@@ -450,8 +450,29 @@ public class OracleConnector extends JdbcConnector {
     }
 
     private String select(String columns, String schema, String table, long rowLimit) {
+        return select(columns, schema, table, null, rowLimit);
+    }
+
+    private String select(String columns, String schema, String table, String where, long rowLimit) {
         return "SELECT " + columns + " FROM " + quote(schema) + "." + quote(table)
-            + (rowLimit > 0 ? " FETCH FIRST " + rowLimit + " ROWS ONLY" : "");
+            + (where == null ? "" : " WHERE " + where) + (rowLimit > 0 ? " FETCH FIRST " + rowLimit + " ROWS ONLY" : "");
+    }
+
+    @Override
+    protected String selectSql(AssetInfo asset, long rowLimit, boolean explicit, String where) {
+        String columns = explicit || asset.fields().stream().anyMatch(f -> special(f) != null)
+            ? asset.fields().stream().map(f -> {
+                String how = special(f);
+                return how == null ? quote(f.name()) : how + " AS " + quote(f.name());
+            }).collect(Collectors.joining(", "))
+            : "*";
+        return select(columns, asset.hints().get("schema"), asset.hints().get("table"), where, rowLimit);
+    }
+
+    /** Oracle has no boolean column before 23ai, and drivers differ on binding one: left to the read node. */
+    @Override
+    protected boolean bindsBooleans() {
+        return false;
     }
 
     /** The optimiser's row count from the last statistics; none without statistics, so the table is read in full. */

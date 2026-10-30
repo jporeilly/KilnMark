@@ -16,6 +16,8 @@ export type ControlContext = {
   /** Tables and files of the node's source, for the asset picker. */
   assets: string[] | null;
   nodeType: string | null;
+  /** The parameters the pipeline declares, offered as `${name}` in expressions. */
+  parameters?: string[];
 };
 
 export type ControlProps = {
@@ -300,6 +302,20 @@ function ColumnButtons({ columns, onPick, label }: { columns: PipelineColumn[] |
   );
 }
 
+/** Buttons that put a parameter, as `${name}`, into an expression at the caret. */
+function ParameterButtons({ names, onPick, label }: { names: string[]; onPick: (word: string) => void; label: string }) {
+  if (names.length === 0) return null;
+  return (
+    <div className="cv-column-buttons" role="group" aria-label={label}>
+      {names.map((n) => (
+        <button key={n} type="button" className="cv-chip cv-chip-param mono" onClick={() => onPick(`\${${n}}`)} title="A parameter: its value goes in as a value">
+          {`\${${n}}`}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const quoteColumn = (name: string) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`);
 
 function insertAt(el: HTMLTextAreaElement | HTMLInputElement | null, current: string, word: string): { text: string; caret: number } {
@@ -316,6 +332,15 @@ function ExpressionControl(p: ControlProps) {
   const { draft, setDraft, focusProps } = useDraft(outside);
   const area = useRef<HTMLTextAreaElement>(null);
   const cols = p.context.columns.main;
+  const insert = (word: string) => {
+    const { text, caret } = insertAt(area.current, draft, word);
+    setDraft(text);
+    p.onChange(text);
+    requestAnimationFrame(() => {
+      area.current?.focus();
+      area.current?.setSelectionRange(caret, caret);
+    });
+  };
   return (
     <Field spec={p.spec} id={p.id} problems={p.problems}>
       {(describedBy, invalid) => (
@@ -337,19 +362,10 @@ function ExpressionControl(p: ControlProps) {
             }}
           />
           {!p.readOnly && (
-            <ColumnButtons
-              columns={cols}
-              label={`Insert a column into ${p.spec.label}`}
-              onPick={(name) => {
-                const { text, caret } = insertAt(area.current, draft, quoteColumn(name));
-                setDraft(text);
-                p.onChange(text);
-                requestAnimationFrame(() => {
-                  area.current?.focus();
-                  area.current?.setSelectionRange(caret, caret);
-                });
-              }}
-            />
+            <>
+              <ColumnButtons columns={cols} label={`Insert a column into ${p.spec.label}`} onPick={(name) => insert(quoteColumn(name))} />
+              <ParameterButtons names={p.context.parameters ?? []} label={`Insert a parameter into ${p.spec.label}`} onPick={insert} />
+            </>
           )}
         </>
       )}
@@ -443,6 +459,57 @@ function ColumnControl(p: ControlProps) {
           invalid={invalid}
           onChange={(v) => p.onChange(v === "" ? undefined : v)}
         />
+      )}
+    </Field>
+  );
+}
+
+/**
+ * A read node's columns: one box per column of the table, in the table's order, with its type.
+ * None ticked reads them all; ticking adds a column at the end, so the order is the order chosen.
+ */
+function ColumnChecklist(p: ControlProps & { columns: PipelineColumn[] }) {
+  const chosen = asList(p.value);
+  const missing = chosen.filter((c) => !p.columns.some((x) => x.name === c));
+  const toggle = (name: string, on: boolean) => {
+    const next = on ? [...chosen, name] : chosen.filter((c) => c !== name);
+    p.onChange(next.length ? next : undefined);
+  };
+  return (
+    <Field spec={p.spec} id={p.id} problems={p.problems} group>
+      {(describedBy, invalid) => (
+        <>
+          <p className="small muted" id={`${p.id}-state`}>
+            {chosen.length === 0 ? "None ticked: every column is read." : `${chosen.length} of ${p.columns.length} read, in this order: ${chosen.join(", ")}.`}
+          </p>
+          <ul className="cv-checklist" id={p.id} aria-describedby={`${describedBy} ${p.id}-state`} aria-invalid={invalid || undefined}>
+            {p.columns.map((c) => {
+              const at = chosen.indexOf(c.name);
+              return (
+                <li key={c.name}>
+                  <label>
+                    <input type="checkbox" checked={at >= 0} disabled={p.readOnly} onChange={(e) => toggle(c.name, e.target.checked)} />
+                    <span className="mono">{c.name}</span> <span className="small muted">{c.type}</span>
+                    {at >= 0 && chosen.length > 1 && <span className="small muted"> · {at + 1}</span>}
+                  </label>
+                </li>
+              );
+            })}
+            {missing.map((c) => (
+              <li key={c}>
+                <label>
+                  <input type="checkbox" checked disabled={p.readOnly} onChange={() => toggle(c, false)} />
+                  <span className="mono">{c}</span> <span className="small pl-bad">not a column of the table</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          {!p.readOnly && chosen.length > 0 && (
+            <button type="button" className="cv-mini" onClick={() => p.onChange(undefined)}>
+              Read every column
+            </button>
+          )}
+        </>
       )}
     </Field>
   );
@@ -1040,7 +1107,11 @@ export function SettingControl(p: ControlProps) {
     case "column":
       return <ColumnControl {...p} />;
     case "columns":
-      return <ColumnsControl {...p} />;
+      return p.context.nodeType === "read" && p.context.columns.main?.length ? (
+        <ColumnChecklist {...p} columns={p.context.columns.main} />
+      ) : (
+        <ColumnsControl {...p} />
+      );
     case "rules":
       return <RulesControl {...p} />;
     default:

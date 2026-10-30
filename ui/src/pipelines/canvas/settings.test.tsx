@@ -99,6 +99,29 @@ describe("each setting kind gets its control, with help and default", () => {
     expect(html(spec("keep", "columns"), [], { side: "lookup", nodeType: "lookup" })).toMatch(/<option value="id">id \(int64\)<\/option>/);
   });
 
+  test("A read node's COLUMNS: a box per column of the table, ticked in the order chosen", () => {
+    const none = html(spec("columns", "columns"), undefined, { nodeType: "read" });
+    expect(none).toContain("None ticked: every column is read.");
+    expect((none.match(/type="checkbox"/g) ?? []).length).toBe(3);
+    const two = html(spec("columns", "columns"), ["status", "customer_id"], { nodeType: "read" });
+    expect(two).toContain("2 of 3 read, in this order: status, customer_id.");
+    expect((two.match(/checked=""/g) ?? []).length).toBe(2);
+    expect(two).toContain("Read every column");
+    // A column the table does not have stays visible, to be unticked.
+    expect(html(spec("columns", "columns"), ["gone"], { nodeType: "read" })).toContain("not a column of the table");
+    // The table's columns not known yet: the plain list, typed.
+    expect(html(spec("columns", "columns"), [], { nodeType: "read", columns: { main: null, lookup: null } })).toContain(
+      'aria-label="Column to add to columns"',
+    );
+  });
+
+  test("EXPRESSION: the pipeline's parameters are offered as ${name}", () => {
+    const out = html(spec("where", "expression"), "status = ", { nodeType: "read", parameters: ["status_wanted"] });
+    expect(out).toContain('aria-label="Insert a parameter into where"');
+    expect(out).toContain("${status_wanted}");
+    expect(html(spec("where", "expression"), "", { nodeType: "read" })).not.toContain("Insert a parameter");
+  });
+
   test("COLUMN_MAP: pairs; a lookup's keys pick from main and lookup columns", () => {
     const out = html(spec("on", "column_map"), { customer_id: "id" }, { nodeType: "lookup" });
     expect(out).toContain("Main column 1");

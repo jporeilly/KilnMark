@@ -1,9 +1,11 @@
 package io.kilnmark.server.pipelines;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.apache.arrow.vector.types.pojo.Schema;
 
@@ -17,6 +19,9 @@ import io.kilnmark.kiln.NodeSpec;
 import io.kilnmark.kiln.connect.AssetInfo;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.ConnectorException;
+import io.kilnmark.kiln.nodes.ReadShaping;
+import io.kilnmark.kiln.nodes.expr.ExprException;
+import io.kilnmark.kiln.nodes.expr.PushDown;
 
 /**
  * The {@code read} node: a table, view or file of a saved source, read with its connector's
@@ -72,8 +77,13 @@ public final class ReadNodeFactory implements NodeFactory {
             SettingSpec.required("source", "Source", SettingSpec.Kind.SOURCE, "The saved source to read from"),
             SettingSpec.required("asset", "Table or file", SettingSpec.Kind.ASSET,
                 "A table or view as schema.table, or a file's path inside the source"),
+            SettingSpec.optional("columns", "Columns", SettingSpec.Kind.COLUMNS, null,
+                "Only these columns, in this order; all of them when left out. A database reads only these"),
+            SettingSpec.optional("where", "Where", SettingSpec.Kind.EXPRESSION, null,
+                "Only the rows meeting this condition, such as status = 'delivered'. A database applies what it "
+                    + "can while reading, with each value bound; Kilnmark checks every row that arrives"),
             SettingSpec.optional("row_limit", "Row limit", SettingSpec.Kind.NUMBER, 0,
-                "Reads at most this many rows; 0 reads them all. Handy while trying a pipeline out"));
+                "Reads at most this many rows (after where); 0 reads them all. Handy while trying a pipeline out"));
     }
 
     @Override
@@ -129,7 +139,8 @@ public final class ReadNodeFactory implements NodeFactory {
     }
 
     @Override
-    public Schema outputSchema(String port, Map<String, Schema> inputs, Map<String, Object> config) {
+    public Schema outputSchema(String port, Map<String, Schema> inputs, Map<String, Object> config)
+        throws NodeException {
         String source = PipelineSources.text(config, "source");
         String asset = PipelineSources.text(config, "asset");
         if (source == null || asset == null) {
@@ -137,15 +148,119 @@ public final class ReadNodeFactory implements NodeFactory {
         }
         // The asset as written, or as the catalogue writes a file's path (# and % escaped), so a path
         // picked from the catalogue and one typed as on disk both find its columns.
+        Schema all = assetSchema(source, asset);
+        if (all == null) {
+            return null; // not scanned yet: columns and where are checked when the run reads the asset
+        }
+        try {
+            return ReadShaping.outputSchema(all, columns(config), where(config));
+        } catch (ExprException e) {
+            String m = e.getMessage();
+            throw new NodeException(m.startsWith("columns:") ? m : "where: " + m, e);
+        }
+    }
+
+    /** The asset's columns as the catalogue records them, or null when it has not been scanned. */
+    private Schema assetSchema(String source, String asset) {
+        List<Records.FieldDetail> fields = assetFields(source, asset);
+        return fields == null ? null : ArrowKinds.schema(fields);
+    }
+
+    private List<Records.FieldDetail> assetFields(String source, String asset) {
+        // The asset as written, or as the catalogue writes a file's path (# and % escaped), so a path
+        // picked from the catalogue and one typed as on disk both find its columns.
         for (String path : List.of(asset, escapedFilePath(asset))) {
             String urn = PipelineSources.urn(source, path);
-            Optional<Schema> s = urn == null ? Optional.empty() : sources.asset(urn).filter(a -> !a.fields().isEmpty())
-                .map(a -> ArrowKinds.schema(a.fields()));
-            if (s.isPresent()) {
-                return s.get();
+            Optional<List<Records.FieldDetail>> f = urn == null ? Optional.empty()
+                : sources.asset(urn).map(Records.AssetDetail::fields).filter(l -> !l.isEmpty());
+            if (f.isPresent()) {
+                return f.get();
             }
         }
         return null;
+    }
+
+    /**
+     * Where a read's condition is applied, for the pipeline's check: by the database while reading, in
+     * part, or by Kilnmark as rows arrive. A note, never a problem: the rows are the same either way.
+     */
+    @Override
+    public List<String> notes(Map<String, Schema> inputs, Map<String, Object> config) {
+        String where = where(config);
+        String source = PipelineSources.text(config, "source");
+        String asset = PipelineSources.text(config, "asset");
+        if (where == null || source == null || asset == null) {
+            return List.of();
+        }
+        List<Records.FieldDetail> fields = assetFields(source, asset);
+        if (fields == null) {
+            return List.of();
+        }
+        Optional<Connector> connector = narrowing(source);
+        if (connector.isEmpty()) {
+            return List.of("where is applied by Kilnmark as the rows arrive: this kind of source reads every row");
+        }
+        Set<String> compared = new HashSet<>();
+        for (Records.FieldDetail f : fields) {
+            if (connector.get().comparesAsRead(f.kind(), f.sourceType())) {
+                compared.add(f.name());
+            }
+        }
+        try {
+            PushDown.Split split = PushDown.split(where, ArrowKinds.schema(fields), compared::contains);
+            if (split.whole()) {
+                return List.of("where is applied by the database while reading, with each value bound");
+            }
+            if (split.filter() != null) {
+                return List.of("where is applied in part by the database while reading; Kilnmark does the rest "
+                    + "as rows arrive (" + String.join("; ", split.kept()) + ")");
+            }
+            return List.of("where is applied by Kilnmark as the rows arrive, not by the database ("
+                + String.join("; ", split.kept()) + ")");
+        } catch (ExprException e) {
+            return List.of(); // reported as a problem
+        }
+    }
+
+    /** The source's connector when its reads can be narrowed at the source (a database table, not a file). */
+    private Optional<Connector> narrowing(String sourceName) {
+        Optional<Connector> c = sources.source(sourceName).flatMap(s -> sources.connector(s.kind()));
+        if (c.isEmpty()) {
+            return Optional.empty();
+        }
+        AssetInfo table = new AssetInfo("s.t", "table", "s", "t", null, List.of(), List.of(), false, true,
+            Map.of("schema", "s", "table", "t"));
+        try {
+            return c.get().narrowsReads(null, table) ? c : Optional.empty();
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** The columns of {@code asset} the source compares as Kilnmark reads them. */
+    private static java.util.function.Predicate<String> compared(Connector connector, AssetInfo asset) {
+        Set<String> names = new HashSet<>();
+        for (AssetInfo.FieldInfo f : asset.fields()) {
+            if (connector.comparesAsRead(f.kind(), f.sourceType())) {
+                names.add(f.name());
+            }
+        }
+        return names::contains;
+    }
+
+    /** The chosen columns, or empty for all of them. */
+    static List<String> columns(Map<String, Object> config) {
+        Object v = config.get("columns");
+        if (!(v instanceof List<?> l)) {
+            return List.of();
+        }
+        return l.stream().map(String::valueOf).toList();
+    }
+
+    /** The condition, or null. */
+    static String where(Map<String, Object> config) {
+        String w = PipelineSources.text(config, "where");
+        return w == null || w.isBlank() ? null : w;
     }
 
     /**
@@ -199,14 +314,35 @@ public final class ReadNodeFactory implements NodeFactory {
         }
         String urn = PipelineSources.urn(source, asset.path());
         run.read(source, path, urn);
+        List<String> columns = columns(config);
+        String where = where(config);
+        long limit = Math.max(0, rowLimit(config));
+        Connector.ReadOptions options = new Connector.ReadOptions(urn, limit, BATCH_ROWS);
+        if (!columns.isEmpty() || where != null) {
+            Schema all = ArrowKinds.schemaOf(asset.fields());
+            try {
+                ReadShaping.outputSchema(all, columns, where); // the asset may have changed since the check
+                PushDown.Split split = where == null || !r.connector().narrowsReads(r.config(), asset) ? null
+                    : PushDown.split(where, all, compared(r.connector(), asset));
+                // With a condition, the source's limit would count rows Kilnmark may still drop, unless the
+                // source keeps exactly what Kilnmark keeps: otherwise the read node counts them, and stops
+                // the read when it has enough.
+                long sourceLimit = where == null || (split != null && split.keepsExactly()) ? limit : 0;
+                options = new Connector.ReadOptions(urn, sourceLimit, BATCH_ROWS,
+                    ReadShaping.needed(all, columns, where), split == null ? null : split.filter());
+            } catch (ExprException e) {
+                String m = e.getMessage();
+                throw new NodeException((m.startsWith("columns:") ? "" : "where: ") + m, e);
+            }
+        }
         NodeSpec spec;
         try {
-            spec = r.connector().reader(r.config(), asset, new Connector.ReadOptions(urn, Math.max(0, rowLimit(config)),
-                BATCH_ROWS));
+            spec = r.connector().reader(r.config(), asset, options);
         } catch (RuntimeException e) {
             throw new NodeException("Cannot read " + path + " from " + source + ": " + run.scrub(String.valueOf(
                 e.getMessage())));
         }
-        return new WithSettings(spec.node(), spec.settings());
+        Node reader = new WithSettings(spec.node(), spec.settings());
+        return columns.isEmpty() && where == null ? reader : new ShapedRead(reader, new ReadShaping(where, columns, limit));
     }
 }

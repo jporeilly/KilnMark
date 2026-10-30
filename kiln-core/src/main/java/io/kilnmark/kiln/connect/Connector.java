@@ -386,8 +386,40 @@ public interface Connector {
         // most connectors keep nothing between reads
     }
 
-    /** How much of an asset to read. {@code rowLimit} 0 reads everything. */
-    record ReadOptions(String assetUrn, long rowLimit, int batchSize) {
+    /**
+     * How much of an asset to read. {@code rowLimit} 0 reads everything. {@code columns}, when not
+     * empty, are the only columns the read needs, in the asset's own names; {@code filter}, when not
+     * null, narrows the read to rows that may meet the read node's condition. A connector that cannot
+     * do either reads everything, and the read node narrows what arrives (see {@link #narrowsReads}).
+     */
+    record ReadOptions(String assetUrn, long rowLimit, int batchSize, List<String> columns, ReadFilter filter) {
+
+        public ReadOptions {
+            columns = columns == null ? List.of() : List.copyOf(columns);
+        }
+
+        /** Every column and row. */
+        public ReadOptions(String assetUrn, long rowLimit, int batchSize) {
+            this(assetUrn, rowLimit, batchSize, List.of(), null);
+        }
+    }
+
+    /**
+     * Whether {@link #reader} reads only {@link ReadOptions#columns()} and applies
+     * {@link ReadOptions#filter()} at the source for this asset. The read node narrows what arrives
+     * either way; this says only whether the source does the work.
+     */
+    default boolean narrowsReads(SourceConfig source, AssetInfo asset) {
+        return false;
+    }
+
+    /**
+     * Whether the source compares a column of this kind and source type as Kilnmark reads it, so a
+     * {@link ReadFilter} may name it. A column read as text but stored otherwise (JSON, spatial, uuid)
+     * or read as true/false but stored as a number is not: the source would compare something else.
+     */
+    default boolean comparesAsRead(String kind, String sourceType) {
+        return true;
     }
 
     /**

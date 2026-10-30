@@ -158,4 +158,21 @@ class LabPipelinesTest {
             SAMPLE_VARIABLES);
         checkFlows(repo().resolve("samples"), "sample-", samples);
     }
+
+    /** What each read sample says it shows: who applies its where (docs/guide/pipelines.md, the read node). */
+    @Test
+    void theReadSamplesSayWhoAppliesTheirCondition() throws Exception {
+        FakeSources sources = labSources();
+        NodeFactories nodes = NodeFactories.discover().register(new ReadNodeFactory(sources))
+            .register(new WriteNodeFactory(sources));
+        Map<String, String> expected = Map.of(
+            "01-read-and-write/read-columns-where.yaml", "where is applied in part by the database",
+            "07-parameters/orders-by-status.yaml", "where is applied by the database while reading");
+        for (var e : expected.entrySet()) {
+            String text = Files.readString(repo().resolve("samples").resolve(e.getKey()));
+            PipelineCompilerPort.Compilation c = new KilnPipelineCompiler().check(text, nodes, Map.of(), Map.of());
+            assertTrue(c.notes().stream().anyMatch(n -> n.message().contains(e.getValue())),
+                e.getKey() + ": " + c.notes());
+        }
+    }
 }
