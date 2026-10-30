@@ -68,6 +68,52 @@ export function autoLayout(graph: Graph, catalogue: Catalogue, sizes?: LayoutSiz
     const n = g.node(s.id);
     out[s.id] = { x: Math.round(n.x - n.width / 2), y: Math.round(n.y - n.height / 2) };
   }
+  return inPortOrder(graph, catalogue, out, (id) => heightOf(graph, catalogue, sizes, id));
+}
+
+/**
+ * Each column stacked in the order of the ports feeding it, so connections do not cross: dagre
+ * orders a column by the nodes before it, not by which of their outputs a connection leaves from,
+ * so a route's large, bulk and out (top to bottom on the node) can reach their targets the other
+ * way up. A node is placed by where its inputs leave their nodes, on average; one fed by nothing
+ * keeps its place. Columns go left to right, so a column moved is what the next one follows. A
+ * column already in that order is left as dagre drew it.
+ */
+export function inPortOrder(
+  graph: Graph,
+  catalogue: Catalogue,
+  at: Record<string, Point>,
+  height: (id: string) => number,
+): Record<string, Point> {
+  const out: Record<string, Point> = {};
+  for (const [id, p] of Object.entries(at)) out[id] = { ...p };
+  const nodes = new Map(graph.nodes.map((s) => [s.id, s]));
+  // Where a connection leaves its node: the middle of its output port.
+  const leaves = (from: string, port: string) => {
+    const s = nodes.get(from);
+    const i = s ? Math.max(0, portsOf(s, catalogue).outputs.indexOf(port)) : 0;
+    return out[from].y + HEAD + PORT * (i + 0.5);
+  };
+  const columns = new Map<number, string[]>();
+  for (const id of Object.keys(out)) columns.set(out[id].x, [...(columns.get(out[id].x) ?? []), id]);
+  for (const x of [...columns.keys()].sort((a, b) => a - b)) {
+    const column = columns.get(x)!;
+    if (column.length < 2) continue;
+    const byY = [...column].sort((a, b) => out[a].y - out[b].y);
+    const key = (id: string) => {
+      const feeds = graph.edges.filter((e) => e.to === id && out[e.from] && out[e.from].x < x);
+      return feeds.length ? feeds.reduce((sum, e) => sum + leaves(e.from, e.fromPort), 0) / feeds.length
+        : out[id].y + height(id) / 2;
+    };
+    const keys = new Map(byY.map((id) => [id, key(id)]));
+    const ordered = [...byY].sort((a, b) => keys.get(a)! - keys.get(b)! || out[a].y - out[b].y);
+    if (ordered.every((id, i) => id === byY[i])) continue;
+    let y = out[byY[0]].y;
+    for (const id of ordered) {
+      out[id] = { x, y };
+      y += height(id) + GAP_Y;
+    }
+  }
   return out;
 }
 
