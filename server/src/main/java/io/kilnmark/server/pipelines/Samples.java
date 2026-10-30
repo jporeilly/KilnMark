@@ -72,15 +72,15 @@ public class Samples {
     public static final String SAMPLE_DATA = "sample-data";
     /** The pipeline that copies the sample data into a database. */
     public static final String SETUP = "sample-tables";
-    /** The tables the samples read, as group.table: the sample data's folder and file, and the lab's. */
+    /** The tables the samples read, as group.table: the sample data's folder and file. */
     public static final List<String> TABLES = List.of("crm.customers", "crm.customers_archive_2023", "crm.accounts",
         "billing.transactions", "billing.invoices", "shop.customers", "shop.orders", "shop.order_lines",
         "stock.products", "stock.supplier_feed");
     /** A schema to create the sample tables in: a plain name, so it needs no quoting anywhere. */
     private static final Pattern SCHEMA = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,62}");
-    /** {@code asset: group.table} for one of {@link #TABLES}, with the group and table in groups 2 and 3. */
-    private static final Pattern ASSET_LINE =
-        Pattern.compile("(?m)^(\\s*(?:-\\s+)?asset:\\s*)(crm|billing|shop|stock)\\.([a-z0-9_]+)(\\s*(?:#.*)?)$");
+    /** {@code asset: group.table} for one of {@link #TABLES}, optionally quoted: group and table in groups 3 and 4. */
+    private static final Pattern ASSET_LINE = Pattern.compile(
+        "(?m)^(\\s*(?:-\\s+)?asset:\\s*)([\"']?)(crm|billing|shop|stock)\\.([a-z0-9_]+)\\2(\\s*(?:#.*)?)$");
 
     /** The server variable the sample sample-server-variable reads, and the value the starter pack gives it. */
     public static final String REGION_VARIABLE = "sample_region";
@@ -163,8 +163,9 @@ public class Samples {
         Matcher m = ASSET_LINE.matcher(yaml);
         StringBuilder out = new StringBuilder();
         while (m.find()) {
-            String line = TABLES.contains(m.group(2) + "." + m.group(3))
-                ? m.group(1) + tableIn(schema, m.group(2) + "." + m.group(3)) + m.group(4) : m.group();
+            String table = m.group(3) + "." + m.group(4);
+            String line = TABLES.contains(table)
+                ? m.group(1) + m.group(2) + tableIn(schema, table) + m.group(2) + m.group(5) : m.group();
             m.appendReplacement(out, Matcher.quoteReplacement(line));
         }
         m.appendTail(out);
@@ -252,9 +253,25 @@ public class Samples {
             existing.contains(SETUP) ? tables(sights) : null);
     }
 
+    /** The {@value #SETUP} pipeline, or null when there is none. */
+    private PipelineViews.PipelineDetail existingSetup(Sights sights) {
+        try {
+            return pipelines.get(SETUP, sights);
+        } catch (WebApplicationException e) {
+            if (e.getResponse().getStatus() == Response.Status.NOT_FOUND.getStatusCode()) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
     /** Where the {@value #SETUP} pipeline writes, read from its latest version; null if it cannot be told. */
     private Tables tables(Sights sights) {
-        PipelineViews.PipelineDetail d = pipelines.get(SETUP, sights);
+        PipelineViews.PipelineDetail d = existingSetup(sights);
+        return d == null ? null : tables(d);
+    }
+
+    private static Tables tables(PipelineViews.PipelineDetail d) {
         String yaml = d.latest() == null ? "" : d.latest().yaml();
         Matcher write = Pattern.compile("(?m)^\\s*source:\\s*(\\S+)\\s*\\n\\s*table:\\s*([A-Za-z0-9_]+)\\.")
             .matcher(yaml);
@@ -264,9 +281,14 @@ public class Samples {
     /**
      * Saves the {@value #SETUP} pipeline, copying the sample data into {@code schema} of the
      * database {@code source}, and queues a run of it. The database must be a saved database source
-     * that allows writing; the sample data's own source is added first if it is not there (it reads
-     * only Kilnmark's own files), and so is the server variable {@value #REGION_VARIABLE} that one
-     * sample reads, if it is not set. Running it again replaces the tables.
+     * that allows writing. Running it again replaces the tables; it is refused while the tables are
+     * being created, and when a pipeline called {@value #SETUP} is there that is not one this wrote
+     * (someone's own, or one changed since), which it would otherwise overwrite.
+     *
+     * <p>The sample data's own source is added first if it is not there, and so is the server
+     * variable {@value #REGION_VARIABLE} that one sample reads, if it is not set. Adding a source is
+     * otherwise for admins; this one is let through for stewards because it has no settings, no
+     * secret and reads only Kilnmark's own files (ADR 0024).
      */
     public TablesResult createTables(TablesRequest body, String by, AccessRole role, Sights sights) {
         String name = body == null || body.source() == null ? "" : body.source().strip();
@@ -287,9 +309,25 @@ public class Samples {
             throw new IllegalArgumentException("schema: the schema to create the tables in, such as public or dbo: "
                 + "letters, digits and _, starting with a letter or _");
         }
+        PipelineViews.PipelineDetail existing = existingSetup(sights);
+        if (existing != null) {
+            PipelineViews.RunSummary last = existing.lastRun();
+            if (last != null && List.of("queued", "running").contains(last.status())) {
+                throw PipelineService.fail(Response.Status.CONFLICT, "The sample tables are being created now (run "
+                    + last.id() + "): wait for it to finish");
+            }
+            Tables was = tables(existing);
+            if (was == null || existing.latest() == null
+                || !setupYaml(was.source(), was.schema()).equals(existing.latest().yaml())) {
+                throw PipelineService.fail(Response.Status.CONFLICT, "A pipeline called " + SETUP + " is here that "
+                    + "Kilnmark did not write, or that has been changed since: rename or delete it to create the "
+                    + "sample tables again");
+            }
+        }
         if (sources.source(SAMPLE_DATA).isEmpty()) {
             try {
-                store.addSource(new Records.NewSource(SAMPLE_DATA, SAMPLE_DATA, Map.of(), null, "Kilnmark sample data"));
+                store.addSource(new Records.NewSource(SAMPLE_DATA, SAMPLE_DATA, Map.of(), null,
+                    "Kilnmark sample data"));
                 LOG.infof("Source %s added for the sample tables, by %s", SAMPLE_DATA, by);
             } catch (RuntimeException e) {
                 if (sources.source(SAMPLE_DATA).isEmpty()) {
@@ -307,13 +345,12 @@ public class Samples {
         }
         String yaml = setupYaml(name, schema);
         String message = "The sample tables, in " + name + "." + schema;
-        try {
+        if (existing == null) {
             pipelines.create(new PipelineViews.NewPipeline(SETUP, "Sample tables", null, yaml, message), by);
-        } catch (WebApplicationException e) {
-            if (e.getResponse().getStatus() != Response.Status.CONFLICT.getStatusCode()) {
-                throw e;
-            }
-            pipelines.save(SETUP, null, new PipelineViews.PipelineChange(yaml, message, null, null), by, sights);
+        } else {
+            // Saved over the version read above only: one saved since is not overwritten (409).
+            pipelines.save(SETUP, existing.latestVersion(), new PipelineViews.PipelineChange(yaml, message, null, null),
+                by, sights);
         }
         PipelineViews.RunSummary run = pipelines.queueRun(SETUP, null, by, role);
         LOG.infof("Sample tables requested in %s.%s by %s: run %d", name, schema, by, run.id());

@@ -11,7 +11,8 @@ The quickest way to try them: on the **Pipelines** page, choose **Add samples**,
 (both must allow writing), and choose **Add the starter pack**. Kilnmark then:
 
 1. creates the sample tables in that schema, from its own sample data, with a pipeline called
-   `sample-tables` (run it again to put them back as they were);
+   `sample-tables` (run it again to put them back as they were; adding the starter pack again is
+   refused while they are being created, or once that pipeline has been changed);
 2. adds every sample, reading those tables and writing its files to the file source;
 3. sets the server variable `sample_region` to `EMEA` if it is not set, for
    `sample-server-variable`.
@@ -126,7 +127,11 @@ It writes `samples/parameters/orders_both.csv`. A value only ever fills a value:
 Put a file in the folder for what it shows, name it `sample-...`, read only from `crm-db` and
 `shop-db` and write only to `files` under `samples/`, and start it with what it shows and what to
 look for. The samples ship, so they never name the lab or a lab source; if a sample needs a new
-placeholder, add it to `Samples.PLACEHOLDERS` (server) and to `lab/sample-sources.csv`.
+placeholder, add it to `Samples.PLACEHOLDERS` (server) and to `lab/sample-sources.csv`. Read only
+the tables in `data/`; if a sample needs rows of a new shape, or a new table, change
+`data/generate.py` and run it (a new table also goes in `Samples.TABLES`).
 `LabPipelinesTest` (server tests) checks every sample, mapped to the lab's sources, against the
-lab's columns, and every flow against the sample pipelines, so a sample that stops working fails
-the build; `checkProductOnly` fails the release if a shipped sample names the lab.
+lab's columns, and every flow against the sample pipelines; `SampleTablesTest` checks every sample
+against the sample data's own columns, and `SampleTablesApiTest` runs them on it. So a sample that
+stops working fails the build; `checkProductOnly` fails the release if a shipped sample, or the
+sample data, names the lab.

@@ -18,6 +18,9 @@ import dev.hardwood.InputFile;
  */
 final class BundledFileStore implements FileStore {
 
+    /** The files read so far, by resource: they never change while the server runs. */
+    private static final java.util.Map<String, byte[]> READ = new java.util.concurrent.ConcurrentHashMap<>();
+
     /** When the bundled files last changed: never, as far as a scan is concerned. */
     private static final Instant BUILT = Instant.EPOCH;
 
@@ -74,7 +77,13 @@ final class BundledFileStore implements FileStore {
         if (!paths.contains(path)) {
             throw new IOException("There is no file " + path + " in Kilnmark's sample data");
         }
-        byte[] b = bytes(root + path);
+        byte[] b = READ.get(root + path);
+        if (b == null) {
+            b = bytes(root + path);
+            if (b != null) {
+                READ.put(root + path, b);
+            }
+        }
         if (b == null) {
             throw new IOException("Kilnmark's sample data is missing " + path + " from this build");
         }

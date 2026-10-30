@@ -35,14 +35,14 @@ customer_id,first_name,last_name,email,phone,date_of_birth,postcode,ni_number,se
 34,Ivan,Singh,ivan.singh34@example.com,07377 758935,1969-07-31,CF2 8UW,QQ908406A,Business,true,2022-10-17T11:46:23+00:00
 35,  Orla ,Sutton,ORLA.SUTTON35@EXAMPLE.COM,07512 932105,1958-10-24,OX19 9HG,QQ478806B,Student,true,2021-04-25T10:54:46+00:00
 36,Bea,Walsh,bea.walsh36@example.com,07753 497537,1967-09-14,LS5 5BJ,QQ129446B,Business,true,2025-10-29T19:01:37+00:00
-37,Ivan,Owen,ivan.owen37@example.com,07684 482867,1972-04-09,BS17 6HY,QQ517863B,Student,true,2024-06-23T14:11:36+00:00
+37,Ivan,Owen,,07684 482867,1972-04-09,BS17 6HY,QQ517863B,Student,true,2024-06-23T14:11:36+00:00
 38,Ravi,Green,ravi.green38@example.com,07834 611808,2002-08-08,BN6 3XY,QQ741695A,Retail,false,2025-01-31T14:25:42+00:00
 39,Quinn,Irwin,quinn.irwin39@example.com,07560 252426,1986-06-19,E2 5LA,QQ417175B,Business,false,2026-02-12T11:15:00+00:00
 40,Maya,Walsh,maya.walsh40@example.com,07559 120764,1985-01-08,G6 6XW,QQ216869C,Student,true,2022-09-22T19:26:09+00:00
 41,Yara,Irwin,yara.irwin41@example.com,07165 641156,1971-09-23,OX6 6EW,QQ378532B,Student,false,2022-08-21T10:17:16+00:00
 42,Ravi,Adams,ravi.adams42@example.com,07927 139474,1996-02-23,M3 6DQ,QQ844439D,Student,true,2022-10-06T08:45:11+00:00
 43,Quinn,Jones,quinn.jones43@example.com,07492 631091,1964-08-06,OX17 7NH,QQ687804C,Retail,false,2025-07-23T13:32:29+00:00
-44,Quinn,Reid,,07351 935316,1964-03-01,CF8 4GJ,QQ739875D,Premier,true,2025-03-25T10:37:15+00:00
+44,Quinn,Reid,quinn.reid44@example.com,07351 935316,1964-03-01,CF8 4GJ,QQ739875D,Premier,true,2025-03-25T10:37:15+00:00
 45,Priya,Hughes,priya.hughes45@example.com,07366 853445,2004-03-14,BN8 8ZP,QQ451747A,Student,false,2021-05-06T13:05:37+00:00
 46,Gus,Moore,gus.moore46@example.com,07899 146352,1965-11-02,B3 1HY,QQ591356B,Premier,true,2025-01-08T20:51:50+00:00
 47,Wren,Baker,wren.baker47@example.com,07288 958050,1962-02-25,YO4 2XY,QQ608586B,Business,true,2023-05-16T16:11:11+00:00
@@ -68,7 +68,7 @@ customer_id,first_name,last_name,email,phone,date_of_birth,postcode,ni_number,se
 67,Orla,Clarke,orla.clarke67@example.com,07133 291435,1976-09-19,LS3 8EJ,QQ549931B,Business,false,2025-11-24T08:46:39+00:00
 68,Zoe,Reid,zoe.reid68@example.com,07842 635146,1966-12-15,N18 5QS,QQ750107D,Retail,false,2026-08-15T12:55:06+00:00
 69,  Wren ,Ward,WREN.WARD69@EXAMPLE.COM,07619 690096,1955-01-18,BN4 7WR,QQ475341B,Business,true,2026-07-17T19:59:34+00:00
-70,Jade,Clarke,jade.clarke70@example.com,07757 607273,1986-05-07,N12 7FR,QQ911261A,Student,false,2024-12-12T20:57:38+00:00
+70,Jade,Clarke,,07757 607273,1986-05-07,N12 7FR,QQ911261A,Student,false,2024-12-12T20:57:38+00:00
 71,Cara,Dixon,cara.dixon71@example.com,07273 332674,1970-01-02,BN19 4FD,QQ453417C,Retail,true,2023-07-21T14:40:19+00:00
 72,Amir,Hughes,amir.hughes72@example.com,07178 287905,1998-12-03,BS9 3PZ,QQ168780A,Unknown,false,2026-02-19T16:49:05+00:00
 73,Maya,Turner,maya.turner73@example.com,07310 337882,1960-01-09,EH16 2XX,QQ990302C,Retail,true,2022-02-19T20:54:32+00:00
@@ -82,7 +82,7 @@ customer_id,first_name,last_name,email,phone,date_of_birth,postcode,ni_number,se
 81,Hana,Turner,hana.turner81@example.com,07336 828388,1967-08-07,N4 5YL,QQ845962D,Retail,true,2022-08-24T12:09:21+00:00
 82,Isla,Dixon,isla.dixon82@example.com,07249 741319,1956-08-27,CF15 7RE,QQ935335C,Business,true,2024-08-15T18:46:22+00:00
 83,Dina,Smith,dina.smith83@example.com,07283 818298,1994-06-12,LS6 2TS,QQ734689B,Student,true,2025-02-19T11:21:37+00:00
-84,Hana,Patel,,07743 778548,1987-01-19,N19 1BR,QQ269355C,Business,true,2023-06-18T08:12:16+00:00
+84,Hana,Patel,hana.patel84@example.com,07743 778548,1987-01-19,N19 1BR,QQ269355C,Business,true,2023-06-18T08:12:16+00:00
 85,Wren,Reid,wren.reid85@example.com,07877 734473,1954-02-01,YO15 5DW,QQ590129A,Business,true,2021-10-28T16:35:32+00:00
 86,  Hana ,Ward,HANA.WARD86@EXAMPLE.COM,07314 707339,1969-09-24,CF6 1TS,QQ201785D,Premier,true,2024-03-21T20:20:17+00:00
 87,Cara,Moore,cara.moore87@example.com,07753 572891,1960-04-05,OX9 2QF,QQ104297B,Student,true,2022-06-17T19:05:26+00:00
@@ -101,7 +101,7 @@ customer_id,first_name,last_name,email,phone,date_of_birth,postcode,ni_number,se
 100,Noah,Stone,noah.stone100@example.com,07626 152503,1995-06-06,YO1 2TF,QQ333677C,Premier,false,2022-04-09T18:34:43+00:00
 101,Yara,Nash,yara.nash101@example.com,07184 739105,1994-03-31,B2 5RT,QQ958192D,Retail,true,2025-06-20T18:23:09+00:00
 102,Maya,Stone,maya.stone102@example.com,07752 782282,1959-05-18,E3 4ED,QQ389839D,Retail,false,2026-07-22T08:35:05+00:00
-103,  Ada ,Stone,ADA.STONE103@EXAMPLE.COM,07264 451485,1959-01-22,NE5 7TZ,QQ758108C,Student,false,2023-08-04T19:08:55+00:00
+103,  Ada ,Stone,,07264 451485,1959-01-22,NE5 7TZ,QQ758108C,Student,false,2023-08-04T19:08:55+00:00
 104,Jack,Clarke,jack.clarke104@example.com,07594 233341,2000-11-05,EH3 9GZ,QQ483199A,Student,false,2024-09-10T18:12:37+00:00
 105,Isla,Evans,isla.evans105@example.com,07746 917496,1988-12-09,B19 8EQ,QQ540974B,Retail,true,2024-05-30T17:41:07+00:00
 106,Kira,Evans,kira.evans106@example.com,07540 349524,1982-09-03,B12 8DA,QQ655215A,Business,true,2024-11-28T18:16:58+00:00
@@ -122,7 +122,7 @@ customer_id,first_name,last_name,email,phone,date_of_birth,postcode,ni_number,se
 121,Wren,Dixon,wren.dixon121@example.com,07122 997930,1961-05-12,E4 8XX,QQ489708B,Retail,false,2025-11-12T20:18:47+00:00
 122,Cole,Lowe,cole.lowe122@example.com,07383 481704,1966-08-17,CB7 7LZ,QQ768692B,Business,false,2024-09-17T20:03:20+00:00
 123,Jade,Patel,jade.patel123@example.com,07975 650808,2002-12-26,E17 2YH,QQ506133C,Business,true,2023-01-29T15:57:37+00:00
-124,Finn,Jones,,07103 199050,1960-03-14,E8 5WZ,QQ633860C,Premier,false,2026-07-14T10:23:23+00:00
+124,Finn,Jones,finn.jones124@example.com,07103 199050,1960-03-14,E8 5WZ,QQ633860C,Premier,false,2026-07-14T10:23:23+00:00
 125,Priya,Stone,priya.stone125@example.com,07893 886613,1972-04-13,B9 7QG,QQ820662D,Retail,true,2024-03-16T09:40:29+00:00
 126,Maya,Smith,maya.smith126@example.com,07189 496575,1967-01-21,G10 3ZU,QQ593682A,Student,true,2025-08-08T19:01:39+00:00
 127,Sara,Sutton,sara.sutton127@example.com,07220 126772,1997-04-20,SW3 9JD,QQ266493D,Business,true,2022-08-02T10:45:44+00:00
@@ -134,7 +134,7 @@ customer_id,first_name,last_name,email,phone,date_of_birth,postcode,ni_number,se
 133,Finn,Walsh,finn.walsh133@example.com,07444 369706,1955-07-15,NE13 2QN,QQ806327D,Retail,true,2021-12-10T13:12:03+00:00
 134,Ben,Nash,ben.nash134@example.com,07554 692597,1983-11-19,CF3 1ST,QQ496767C,Student,true,2023-01-07T10:10:42+00:00
 135,Uma,Hughes,uma.hughes135@example.com,07685 937767,1964-10-14,G4 5NB,QQ855533B,Business,false,2022-12-31T13:24:25+00:00
-136,Wren,Patel,wren.patel136@example.com,07266 401788,1970-03-12,LS7 1PE,QQ359862D,Retail,false,2026-07-20T17:13:29+00:00
+136,Wren,Patel,,07266 401788,1970-03-12,LS7 1PE,QQ359862D,Retail,false,2026-07-20T17:13:29+00:00
 137,  Priya ,Hale,PRIYA.HALE137@EXAMPLE.COM,07952 751808,2003-06-01,BN16 1DE,QQ431447D,Retail,false,2025-02-01T13:39:48+00:00
 138,Ivan,Shaw,ivan.shaw138@example.com,07673 783887,2003-03-10,NE7 2NG,QQ213710A,Student,false,2024-12-21T20:58:39+00:00
 139,Hugo,Baker,hugo.baker139@example.com,07535 398960,1988-03-23,M18 2DP,QQ579356A,Student,false,2021-08-29T10:36:04+00:00
@@ -162,12 +162,12 @@ customer_id,first_name,last_name,email,phone,date_of_birth,postcode,ni_number,se
 161,Dev,Baker,dev.baker161@example.com,07274 575191,1973-06-18,BS5 3YB,QQ234947D,Business,true,2025-05-07T16:07:18+00:00
 162,Cole,Evans,cole.evans162@example.com,07477 139418,1978-04-29,N1 4XX,QQ725672A,Retail,true,2022-03-12T15:44:04+00:00
 163,Cole,Lowe,cole.lowe163@example.com,07641 328428,1984-09-22,CB12 9UB,QQ735138A,Business,false,2024-04-03T18:57:03+00:00
-164,Tom,Walsh,,07126 126721,1974-08-10,M2 4HP,QQ694114B,Business,false,2025-04-01T15:06:21+00:00
+164,Tom,Walsh,tom.walsh164@example.com,07126 126721,1974-08-10,M2 4HP,QQ694114B,Business,false,2025-04-01T15:06:21+00:00
 165,Ella,Singh,ella.singh165@example.com,07952 795964,1984-10-19,SW10 1GG,QQ454548B,Business,false,2024-09-23T20:25:06+00:00
 166,Hugo,Lowe,hugo.lowe166@example.com,07158 861501,1971-01-22,NE12 5NT,QQ779639D,Student,true,2021-03-08T12:09:50+00:00
 167,Vik,Hughes,vik.hughes167@example.com,07872 469684,1984-01-15,N1 6PR,QQ591475D,Business,true,2024-11-30T15:30:42+00:00
 168,Cole,Lowe,cole.lowe168@example.com,07708 406779,1996-08-15,YO12 9RE,QQ404912B,Student,false,2022-02-06T13:30:27+00:00
-169,Grace,Smith,grace.smith169@example.com,07546 779494,1970-12-21,BN15 7EE,QQ612729D,Business,true,2022-06-11T13:56:43+00:00
+169,Grace,Smith,,07546 779494,1970-12-21,BN15 7EE,QQ612729D,Business,true,2022-06-11T13:56:43+00:00
 170,Xander,Stone,xander.stone170@example.com,07268 480182,1979-11-02,B13 9WZ,QQ521132C,Business,false,2022-07-29T13:28:21+00:00
 171,  Tom ,Khan,TOM.KHAN171@EXAMPLE.COM,07564 705839,1975-09-14,B19 8JB,QQ391014D,Student,true,2024-04-16T08:52:21+00:00
 172,Bea,Irwin,bea.irwin172@example.com,07983 250883,1966-05-12,SW10 4SL,QQ800045C,Business,true,2023-02-06T14:38:41+00:00
@@ -200,17 +200,17 @@ customer_id,first_name,last_name,email,phone,date_of_birth,postcode,ni_number,se
 199,Gus,Turner,gus.turner199@example.com,07715 831039,1990-11-02,N19 9YD,QQ611936C,Premier,true,2026-03-05T17:57:27+00:00
 200,Hana,Baker,hana.baker200@example.com,07848 538722,1983-05-22,M3 7WS,QQ392095D,Student,true,2021-04-16T15:16:22+00:00
 201,Jack,Patel, Jack.Patel6@Example.Com ,07800 721086,2004-11-16,NE7 2HY,QQ954631A,Retail,false,2023-01-26T17:47:33+00:00
-202,Leo,Khan, Leo.Khan26@Example.Com ,07820 707087,1995-10-24,G17 7QU,QQ969936A,Business,true,2021-08-04T16:24:43+00:00
-203,Gus,Moore, Gus.Moore46@Example.Com ,07305 195645,1999-10-16,CB12 9ER,QQ243017D,Business,true,2021-05-05T19:28:04+00:00
-204,Ella,Baker,,07802 316151,1978-10-22,N18 7TA,QQ734920B,Business,true,2024-10-15T08:49:50+00:00
-205,Hana,Ward, Hana.Ward86@Example.Com ,07517 693907,1984-08-03,EH16 9AX,QQ270492B,Retail,false,2022-10-21T15:22:45+00:00
-206,Kira,Evans, Kira.Evans106@Example.Com ,07638 976414,1977-02-15,N4 9YL,QQ543404A,Retail,true,2021-07-29T17:06:09+00:00
-207,Maya,Smith, Maya.Smith126@Example.Com ,07656 671804,1972-06-22,LS11 6QR,QQ472982A,Business,false,2022-05-14T20:33:14+00:00
-208,Amir,Singh, Amir.Singh146@Example.Com ,07365 477619,1954-09-15,LS14 2YL,QQ771618A,Premier,false,2021-10-10T12:56:39+00:00
-209,Hugo,Lowe, Hugo.Lowe166@Example.Com ,07318 249664,1995-02-04,CF11 2RD,QQ310155C,Business,true,2021-01-31T14:27:55+00:00
-210,Jack,Young, Jack.Young186@Example.Com ,07532 242309,2003-12-17,YO6 5BY,QQ491273C,Retail,false,2023-08-11T08:07:49+00:00
-211,Kira,Evans,  Kira.Evans106@Example.Com  ,07799 161460,2005-12-04,B11 7QN,QQ616632C,Retail,false,2026-06-04T17:07:39+00:00
-212,Amir,Green, Amir.Green226@Example.Com ,07593 551231,2003-01-21,NE15 8XB,QQ966559C,Business,true,2021-01-17T10:13:43+00:00
+202,Wren,Sutton, Wren.Sutton23@Example.Com ,07820 707087,1995-10-24,G17 7QU,QQ969936A,Business,true,2021-08-04T16:24:43+00:00
+203,Maya,Walsh, Maya.Walsh40@Example.Com ,07305 195645,1999-10-16,CB12 9ER,QQ243017D,Business,true,2021-05-05T19:28:04+00:00
+204,Gus,Nash, Gus.Nash57@Example.Com ,07802 316151,1978-10-22,N18 7TA,QQ734920B,Business,true,2024-10-15T08:49:50+00:00
+205,Tom,Evans, Tom.Evans74@Example.Com ,07517 693907,1984-08-03,EH16 9AX,QQ270492B,Retail,false,2022-10-21T15:22:45+00:00
+206,Kira,Reid, Kira.Reid91@Example.Com ,07638 976414,1977-02-15,N4 9YL,QQ543404A,Retail,true,2021-07-29T17:06:09+00:00
+207,Ivan,Smith, Ivan.Smith108@Example.Com ,07656 671804,1972-06-22,LS11 6QR,QQ472982A,Business,false,2022-05-14T20:33:14+00:00
+208,Priya,Stone, Priya.Stone125@Example.Com ,07365 477619,1954-09-15,LS14 2YL,QQ771618A,Premier,false,2021-10-10T12:56:39+00:00
+209,Sara,Scott, Sara.Scott142@Example.Com ,07318 249664,1995-02-04,CF11 2RD,QQ310155C,Business,true,2021-01-31T14:27:55+00:00
+210,Wren,Hale, Wren.Hale159@Example.Com ,07532 242309,2003-12-17,YO6 5BY,QQ491273C,Retail,false,2023-08-11T08:07:49+00:00
+211,Ivan,Shaw, Ivan.Shaw176@Example.Com ,07799 161460,2005-12-04,B11 7QN,QQ616632C,Retail,false,2026-06-04T17:07:39+00:00
+212,Yara,Stone, Yara.Stone193@Example.Com ,07593 551231,2003-01-21,NE15 8XB,QQ966559C,Business,true,2021-01-17T10:13:43+00:00
 213,Ravi,Shaw,ravi.shaw213@example.com,07755 620682,1978-12-15,CB17 4UR,QQ587996B,Student,false,2022-08-24T13:49:26+00:00
 214,Jade,Hale,jade.hale214@example.com,07379 710541,1981-05-18,CB8 7SB,QQ483787A,Retail,false,2021-12-19T14:02:05+00:00
 215,Dina,Moore,dina.moore215@example.com,07465 139996,1953-06-16,M15 5HL,QQ881493A,Business,true,2023-04-20T14:50:27+00:00

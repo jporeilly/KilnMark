@@ -59,7 +59,9 @@ source that allow writing:
 3. Choose **Add the starter pack**.
 
 Kilnmark creates the sample tables in that schema (`crm_customers`, `shop_orders` and so on) with a
-pipeline called `sample-tables`, which you can open and run again to put them back as they were. It
+pipeline called `sample-tables`, which you can open and run again to put them back as they were.
+Adding the starter pack again recreates the tables too, but not while they are being created, and
+not over a `sample-tables` pipeline that has been changed (rename or delete it first). It
 adds every sample, reading those tables, and sets the server variable `sample_region` to `EMEA` if it
 is not set, since one sample reads it. The dialog lists each sample, with a link to the run creating
 the tables. Every sample can then run. The sample data's own read-only source, **Kilnmark sample

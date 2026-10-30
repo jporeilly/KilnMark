@@ -92,12 +92,12 @@ def crm():
         people[i][1] = "  " + people[i][1] + " "
         people[i][3] = people[i][3].upper()
     # The same person twice under another id (dedupe): the email differs only in case and spaces.
-    for k, i in enumerate(range(5, 240, 20)):
+    for k, i in enumerate(range(5, 200, 17)):
         twin = people[i]
         people[200 + k][1:4] = [twin[1].strip(), twin[2], " " + twin[3].title() + " "]
     # Missing emails and unknown segments: the quarantine gate sets them aside. Under 5% of the rows,
     # so the sample flow that checks the share carries on.
-    for i in range(3, 240, 40):
+    for i in range(3, 200, 33):
         people[i][3] = ""
     for i, bad in zip(range(11, 240, 60), ["VIP", "Unknown", "retail", "Staff"]):
         people[i][8] = bad

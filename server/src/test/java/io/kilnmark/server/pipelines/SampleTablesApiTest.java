@@ -125,6 +125,19 @@ class SampleTablesApiTest {
         JsonPath made = as(steward).body(Map.of("source", "e2e-db", "schema", SCHEMA))
             .post("/api/v1/samples/tables").then().statusCode(200).extract().jsonPath();
         assertEquals(Samples.SETUP, made.getString("pipeline"));
+
+        // The samples, added at once, as the starter pack adds them: before the tables are there.
+        JsonPath added = as(steward).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
+            "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
+            .extract().jsonPath();
+        assertEquals(18, added.getInt("added"), added.prettify());
+        // All of them can run: the starter pack also set the server variable one of them reads.
+        assertEquals(List.of(true), added.getList("samples.findAll { it.outcome == 'added' }.valid").stream()
+            .distinct().toList(), added.prettify());
+        String yaml = as(steward).get("/api/v1/pipelines/sample-limit").then().statusCode(200).extract()
+            .jsonPath().getString("latest.yaml");
+        assertTrue(yaml.contains("asset: " + SCHEMA + ".billing_transactions"), yaml);
+
         JsonPath setup = waitForRun(steward, made.getLong("run.id"));
         assertEquals("succeeded", setup.getString("run.status"), setup.prettify());
         assertEquals(240, count(SCHEMA + ".crm_customers"));
@@ -144,18 +157,6 @@ class SampleTablesApiTest {
         assertEquals("succeeded", again.getString("run.status"));
         assertEquals(240, count(SCHEMA + ".crm_customers"));
 
-        // The samples, reading the sample tables.
-        JsonPath added = as(steward).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
-            "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
-            .extract().jsonPath();
-        assertEquals(18, added.getInt("added"), added.prettify());
-        // All of them can run: the starter pack also set the server variable one of them reads.
-        assertEquals(List.of(true), added.getList("samples.findAll { it.outcome == 'added' }.valid").stream()
-            .distinct().toList(), added.prettify());
-        String yaml = as(steward).get("/api/v1/pipelines/sample-limit").then().statusCode(200).extract()
-            .jsonPath().getString("latest.yaml");
-        assertTrue(yaml.contains("asset: " + SCHEMA + ".billing_transactions"), yaml);
-
         JsonPath limit = waitForRun(steward, as(steward).body(Map.of()).post("/api/v1/pipelines/sample-limit/runs")
             .then().statusCode(202).extract().jsonPath().getLong("id"));
         assertEquals("succeeded", limit.getString("run.status"), limit.prettify());
@@ -166,5 +167,14 @@ class SampleTablesApiTest {
         JsonPath stop = waitForRun(steward, as(steward).body(Map.of()).post("/api/v1/pipelines/sample-gate-stop/runs")
             .then().statusCode(202).extract().jsonPath().getLong("id"));
         assertEquals("failed", stop.getString("run.status"), stop.prettify());
+
+        // A sample-tables pipeline someone has changed is not written over.
+        int version = as(steward).get("/api/v1/pipelines/" + Samples.SETUP).then().statusCode(200).extract()
+            .jsonPath().getInt("latestVersion");
+        String changed = Samples.setupYaml("e2e-db", SCHEMA) + "# mine now\n";
+        as(steward).header("If-Match", "\"" + version + "\"").body(Map.of("yaml", changed, "message", "Mine"))
+            .put("/api/v1/pipelines/" + Samples.SETUP).then().statusCode(200);
+        as(steward).body(Map.of("source", "e2e-db", "schema", SCHEMA)).post("/api/v1/samples/tables").then()
+            .statusCode(409).body("error", containsString("has been changed since"));
     }
 }

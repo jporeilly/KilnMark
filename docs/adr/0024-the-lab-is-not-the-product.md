@@ -30,7 +30,9 @@ each connector) is for **development, testing and demos only**.
 - **The sample data is the product's own, not the lab's** (30 October 2026). The tables the samples
   read ship as synthetic data generated for Kilnmark (`samples/data/generate.py`), with the columns
   the samples use; none of the lab's data is copied into it, and it never mentions the lab. The
-  starter pack copies it into a database of the person's choosing.
+  starter pack copies it into a database of the person's choosing. Adding a source is otherwise
+  for admins; the sample data's own source (`sample-data`, no settings, no secret, reading only
+  Kilnmark's own files) is the one exception, added by the starter pack for a steward too.
 
 The release build enforces this: `./gradlew release` runs `checkProductOnly`
 (`gradle/product-only.gradle.kts`), which fails when the release folder holds a lab, tests or docs

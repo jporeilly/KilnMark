@@ -14,6 +14,9 @@ describe("Add samples", () => {
     expect(sourceGroups(crm, all).fitting.map((s) => s.name)).toEqual(["pg", "maria"]);
     expect(sourceGroups(crm, all).others.map((s) => s.name)).toEqual(["bucket"]);
     expect(sourceGroups(files, all).fitting.map((s) => s.name)).toEqual(["bucket"]);
+    // Kilnmark's own sample data can be read, never written: it is not offered.
+    const withData = [...all, source("sample-data", "files", { kind: "sample-data" })];
+    expect(sourceGroups(files, withData).fitting.map((s) => s.name)).toEqual(["bucket"]);
   });
 
   test("says when a file source does not allow writing", () => {

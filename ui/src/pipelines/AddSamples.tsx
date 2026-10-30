@@ -33,11 +33,15 @@ export function fileTargets(sources: Source[]): Source[] {
   return sources.filter((s) => s.category === "files" && s.settings.allow_writing === "true");
 }
 
-/** The sources to offer for a placeholder: those of its kind first, then the rest. */
+/** The source kind of Kilnmark's own sample data: read-only, so never somewhere to write. */
+export const SAMPLE_DATA_KIND = "sample-data";
+
+/** The sources to offer for a placeholder: those of its kind first, then the rest; never the sample data. */
 export function sourceGroups(p: SamplePlaceholder, sources: Source[]): { fitting: Source[]; others: Source[] } {
+  const usable = sources.filter((s) => s.kind !== SAMPLE_DATA_KIND);
   return {
-    fitting: sources.filter((s) => s.category === p.category),
-    others: sources.filter((s) => s.category !== p.category),
+    fitting: usable.filter((s) => s.category === p.category),
+    others: usable.filter((s) => s.category !== p.category),
   };
 }
 
@@ -104,9 +108,11 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
       const sorted = [...s].sort((a, b) => a.name.localeCompare(b.name));
       setCatalogue(c);
       setSources(sorted);
-      const first = tableTargets(sorted)[0];
-      setTarget(c.tables?.source ?? first?.name ?? "");
-      setSchema(c.tables?.schema ?? defaultSchema(first));
+      // Where the tables were made, if that database can still have them; else the first that can.
+      const targets = tableTargets(sorted);
+      const was = c.tables && targets.some((x) => x.name === c.tables!.source) ? c.tables : null;
+      setTarget(was?.source ?? targets[0]?.name ?? "");
+      setSchema(was?.schema ?? defaultSchema(targets[0]));
       setFilesTo(fileTargets(sorted)[0]?.name ?? "");
       if (c.tables && sorted.some((x) => x.name === c.tables!.source)) readTables(c.tables);
     } catch (e) {
@@ -152,11 +158,16 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
     setAdding(true);
     setError(null);
     try {
-      const r = await samplesApi.createTables(target, schema.trim());
-      if (mine !== opening.current) return;
-      setCreated(r.run);
-      readTables({ source: r.source, schema: r.schema });
-      await addWith(mine, { "crm-db": r.source, "shop-db": r.source, files: filesTo }, r.schema);
+      // Tables already being created in this opening (adding the samples failed after): not again.
+      let made = created && tables ? tables : null;
+      if (!made) {
+        const r = await samplesApi.createTables(target, schema.trim());
+        if (mine !== opening.current) return;
+        setCreated(r.run);
+        made = { source: r.source, schema: r.schema };
+        readTables(made);
+      }
+      await addWith(mine, { "crm-db": made.source, "shop-db": made.source, files: filesTo }, made.schema);
     } catch (e) {
       if (mine === opening.current) setError((e as Error).message);
     } finally {
