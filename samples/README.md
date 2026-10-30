@@ -1,22 +1,46 @@
 # Samples
 
-Small pipelines and flows, one idea each, sorted by what they show. They run on the reference
-lab's synthetic data and write only to the lab's warehouse bucket, under `samples/`. Like the lab,
-they are never shipped: they are for learning and demonstrating Kilnmark on a developer machine.
+Small pipelines and flows, one idea each, sorted by what they show. They ship with Kilnmark as
+templates: the server bundles them, and the release has them in its `samples` folder. They write
+only under `samples/` in the file storage they are given.
 
-## Before you start
+## Sources: placeholders
 
-1. Start the lab and add its sources, as [lab/README.md](../lab/README.md) describes:
-   `./lab/lab.sh start all` (Windows: `.\lab\lab.ps1 start all`), import `lab/sources.csv` under
-   **Sources**, and let the scans of `lab-db` and `lab-mariadb` finish, so Kilnmark knows their
-   columns.
-2. For `07-parameters/server-variable.yaml`, set the server variable it reads (as a steward or admin):
-   `PUT /api/v1/variables/sample_region` with `{"type": "text", "value": "EMEA"}`. Without it, that
-   sample is saved as a draft whose problem says the variable is not set.
-3. Add the samples to Kilnmark. With `KILNMARK_ADMIN_TOKEN` (or `KILNMARK_TOKEN`) set to an admin or
-   steward token, run `./lab/lab.sh samples` (Windows: `.\lab\lab.ps1 samples`). A sample already
-   there is left as it is, so your changes are kept. The flows in `08-flows` are skipped until the
-   flows API comes; read them, and run them through the API once it does.
+The samples never name a real source. They name three placeholders, and adding them maps each one
+to a source you have saved:
+
+| Placeholder | Stands for | Used by |
+| --- | --- | --- |
+| `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) | read and write, limit, compute, dedupe, union, quarantine gate |
+| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) | filter, route, select, lookup, both aggregates, warn and stop gates, both parameter samples |
+| `files` | File storage the samples write to, under `samples/`; it must allow writing | every pipeline |
+
+A placeholder you do not map skips the samples that use it. A sample whose tables your source does
+not have is saved as a draft with problems, which say what is missing: open it and change what it
+reads.
+
+## Adding them
+
+- **In Kilnmark:** on the **Pipelines** page, choose **Add samples** (stewards and admins), pick one
+  of your saved sources for each placeholder, and choose **Add samples**. Through the API:
+  `GET /api/v1/samples` lists the placeholders and samples, and `POST /api/v1/samples` with
+  `{"sources": {"crm-db": "my-database", "shop-db": "my-other-database", "files": "my-bucket"}}` adds
+  them.
+- **With the reference lab** (from source, see [lab/README.md](../lab/README.md)): start the lab
+  (`./lab/lab.sh start all`, Windows `.\lab\lab.ps1 start all`), import `lab/sources.csv` under
+  **Sources** and let the scans of `lab-db` and `lab-mariadb` finish. Then, with
+  `KILNMARK_ADMIN_TOKEN` (or `KILNMARK_TOKEN`) set to an admin or steward token, run
+  `./lab/lab.sh samples` (Windows: `.\lab\lab.ps1 samples`). It maps the placeholders to the lab's
+  sources as [lab/sample-sources.csv](../lab/sample-sources.csv) says: `crm-db` to `lab-db`,
+  `shop-db` to `lab-mariadb` and `files` to `lab-warehouse`.
+
+Either way, a sample already there is left as it is, so your changes are kept. The flows in
+`08-flows` are skipped until the flows API comes; read them, and run them through the API once it
+does.
+
+For `07-parameters/server-variable.yaml`, set the server variable it reads (as a steward or admin):
+`PUT /api/v1/variables/sample_region` with `{"type": "text", "value": "EMEA"}`. Without it, that
+sample is saved as a draft whose problem says the variable is not set.
 
 Then open **Pipelines**: every sample is named `sample-...`. Open one, look at it on the canvas,
 preview a node, and choose **Run now**.
@@ -65,7 +89,10 @@ It writes `samples/parameters/orders_both.csv`. A value only ever fills a value:
 
 ## Adding a sample
 
-Put a file in the folder for what it shows, name it `sample-...`, read only lab sources and write
-only to `lab-warehouse` under `samples/`, and start it with what it shows and what to look for.
-`LabPipelinesTest` (server tests) checks every sample against the lab's columns, and every flow
-against the sample pipelines, so a sample that stops working fails the build.
+Put a file in the folder for what it shows, name it `sample-...`, read only from `crm-db` and
+`shop-db` and write only to `files` under `samples/`, and start it with what it shows and what to
+look for. The samples ship, so they never name the lab or a lab source; if a sample needs a new
+placeholder, add it to `Samples.PLACEHOLDERS` (server) and to `lab/sample-sources.csv`.
+`LabPipelinesTest` (server tests) checks every sample, mapped to the lab's sources, against the
+lab's columns, and every flow against the sample pipelines, so a sample that stops working fails
+the build; `checkProductOnly` fails the release if a shipped sample names the lab.

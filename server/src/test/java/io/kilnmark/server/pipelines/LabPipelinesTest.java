@@ -21,8 +21,10 @@ import io.kilnmark.kiln.yaml.PipelineDefinition;
 
 /**
  * The demo pipelines and flows in lab/ and the samples in samples/ check clean against the lab as
- * lab/sources.csv registers it, with the columns a scan of the lab finds. Neither is ever shipped:
- * this only keeps them working as the nodes change.
+ * lab/sources.csv registers it, with the columns a scan of the lab finds. The demos never ship; the
+ * samples do, naming their sources by placeholders, which are mapped to the lab's sources here as
+ * lab/sample-sources.csv says (as lab.sh samples maps them). This keeps both working as the nodes
+ * change.
  */
 class LabPipelinesTest {
 
@@ -31,6 +33,20 @@ class LabPipelinesTest {
 
     private static Path repo() {
         return Path.of(System.getProperty("user.dir")).getParent();
+    }
+
+    /** Placeholder to lab source, from lab/sample-sources.csv. */
+    static Map<String, String> labMapping() throws Exception {
+        Map<String, String> out = new HashMap<>();
+        List<String> lines = Files.readAllLines(repo().resolve("lab/sample-sources.csv"));
+        assertEquals("placeholder,lab_source", lines.get(0).strip());
+        for (String line : lines.subList(1, lines.size())) {
+            if (!line.isBlank()) {
+                String[] cols = line.strip().split(",");
+                out.put(cols[0], cols[1]);
+            }
+        }
+        return out;
     }
 
     private static FakeSources labSources() {
@@ -82,9 +98,12 @@ class LabPipelinesTest {
         return Files.readString(file).contains("kilnmark: flow/v1");
     }
 
-    /** Every pipeline under {@code dir} checks clean, is named {@code prefix...} and has known columns. */
-    private static Map<String, PipelineDefinition> checkPipelines(Path dir, String prefix, Map<String, Object> vars)
-        throws Exception {
+    /**
+     * Every pipeline under {@code dir}, with its source names mapped as {@code mapping} says, checks
+     * clean, is named {@code prefix...} and has known columns.
+     */
+    private static Map<String, PipelineDefinition> checkPipelines(Path dir, String prefix, Map<String, Object> vars,
+                                                                  Map<String, String> mapping) throws Exception {
         FakeSources sources = labSources();
         NodeFactories nodes = NodeFactories.discover().register(new ReadNodeFactory(sources))
             .register(new WriteNodeFactory(sources)).register(new GateNodeFactory(sources));
@@ -93,7 +112,7 @@ class LabPipelinesTest {
             if (isFlow(file)) {
                 continue;
             }
-            String text = Files.readString(file);
+            String text = Samples.withSources(Files.readString(file), mapping);
             PipelineCompilerPort.Compilation c = new KilnPipelineCompiler().check(text, nodes, Map.of(), vars);
             assertEquals(List.of(), c.problems(), file.toString());
             assertTrue(c.name().startsWith(prefix), file + ": named " + prefix + "...");
@@ -148,15 +167,34 @@ class LabPipelinesTest {
 
     @Test
     void everyDemoPipelineAndFlowChecksWithoutProblems() throws Exception {
-        Map<String, PipelineDefinition> demos = checkPipelines(repo().resolve("lab/pipelines"), "demo-", Map.of());
+        Map<String, PipelineDefinition> demos = checkPipelines(repo().resolve("lab/pipelines"), "demo-", Map.of(),
+            Map.of());
         checkFlows(repo().resolve("lab/flows"), "demo-", demos);
     }
 
     @Test
     void everySampleChecksWithoutProblems() throws Exception {
         Map<String, PipelineDefinition> samples = checkPipelines(repo().resolve("samples"), "sample-",
-            SAMPLE_VARIABLES);
+            SAMPLE_VARIABLES, labMapping());
         checkFlows(repo().resolve("samples"), "sample-", samples);
+    }
+
+    /** The samples ship: they name only the placeholders, every one of which the lab maps, and never the lab. */
+    @Test
+    void theSamplesNameOnlyPlaceholders() throws Exception {
+        List<String> placeholders = Samples.PLACEHOLDERS.stream().map(Samples.Placeholder::name).toList();
+        assertEquals(new java.util.HashSet<>(placeholders), labMapping().keySet());
+        java.util.regex.Pattern source = java.util.regex.Pattern.compile("(?m)^\\s*(?:-\\s+)?source:\\s*(\\S+)");
+        java.util.regex.Pattern lab = java.util.regex.Pattern.compile("(?i)(?<![a-z])lab(?![a-z])");
+        for (Path file : yaml(repo().resolve("samples"))) {
+            String text = Files.readString(file);
+            java.util.regex.Matcher m = source.matcher(text);
+            while (m.find()) {
+                assertTrue(placeholders.contains(m.group(1)), file + ": source " + m.group(1) + " is not a placeholder");
+            }
+            assertFalse(lab.matcher(text).find(), file + ": mentions the lab, but the samples ship");
+            assertEquals(Samples.sourcesOf(text).isEmpty(), isFlow(file), file + ": a pipeline names placeholders");
+        }
     }
 
     /** What each read sample says it shows: who applies its where (docs/guide/pipelines.md, the read node). */
@@ -169,7 +207,8 @@ class LabPipelinesTest {
             "01-read-and-write/read-columns-where.yaml", "where is applied in part by the database",
             "07-parameters/orders-by-status.yaml", "where is applied by the database while reading");
         for (var e : expected.entrySet()) {
-            String text = Files.readString(repo().resolve("samples").resolve(e.getKey()));
+            String text = Samples.withSources(Files.readString(repo().resolve("samples").resolve(e.getKey())),
+                labMapping());
             PipelineCompilerPort.Compilation c = new KilnPipelineCompiler().check(text, nodes, Map.of(), Map.of());
             assertTrue(c.notes().stream().anyMatch(n -> n.message().contains(e.getValue())),
                 e.getKey() + ": " + c.notes());

@@ -1,4 +1,4 @@
-# Parameters: values given per run (sample: lab only, never shipped).
+# Parameters: values given per run (a Kilnmark sample).
 # Reads the shop orders in the statuses asked for (a list), above a shipping fee (a number), and
 # names the file after the run (text). Run it as it is, or with values through the API:
 #   POST /api/v1/pipelines/sample-orders-by-status/runs
@@ -17,7 +17,7 @@ parameters:
 nodes:
   - id: orders
     type: read
-    source: lab-mariadb
+    source: shop-db
     asset: shop.orders
     columns: [order_id, customer_id, ordered_at, status, shipping_fee]
     where: "status in ${statuses} and shipping_fee >= ${min_fee}"
@@ -25,6 +25,6 @@ nodes:
   - id: out
     type: write
     input: orders
-    source: lab-warehouse
+    source: files
     path: samples/parameters/orders_${label}.csv
     mode: replace

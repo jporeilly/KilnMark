@@ -23,7 +23,7 @@ Choose **Pipelines** in the navigation. The list shows each pipeline with its de
 latest version (and whether that version has problems), and its last run with its status in
 words: Queued, Running, Succeeded, Failed or Cancelled.
 
-Stewards see **Run now** beside each pipeline, and **New pipeline** at the top.
+Stewards see **Run now** beside each pipeline, and **Add samples** and **New pipeline** at the top.
 
 ## Starting a new pipeline
 
@@ -40,6 +40,31 @@ it with a source's name. To start from nothing instead, choose **Start with an e
 3. Build it on the canvas (see [Building on the canvas](#building-on-the-canvas)) or change its
    YAML (see below), watching the problems list under both.
 4. Choose **Save pipeline**.
+
+## Adding the samples
+
+Kilnmark comes with samples: small pipelines, one idea each, such as reading some columns and
+rows, filtering and routing, lookups, totals, quality gates and parameters. Each is named
+`sample-...` and starts with comments on what it shows and what to look for. They name their
+sources by placeholders rather than real sources:
+
+| Placeholder | Stands for |
+| --- | --- |
+| `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) |
+| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) |
+| `files` | File storage the samples write to, under `samples/`; an admin must turn on **Allow writing** for it |
+
+1. On the **Pipelines** page, choose **Add samples** (stewards and admins).
+2. For each placeholder, choose one of your saved sources, or leave it as **Don't add the samples
+   that use it**. The dialog says how many samples use each.
+3. Choose **Add samples**. The dialog lists what happened to each: added, already here (a sample
+   whose name is taken is left as it is, so your changes are kept), or not added and why.
+
+A sample whose tables your source does not have is saved as a draft with problems: open it and
+change its `asset` to one of yours, or its columns. The sample flows are not added yet; they are
+in the release's `samples` folder to read. Through the API, `GET /api/v1/samples` lists the
+placeholders and samples, and `POST /api/v1/samples` with
+`{"sources": {"crm-db": "my-database", "files": "my-bucket"}}` adds them.
 
 ## Building on the canvas
 
@@ -284,8 +309,8 @@ is handy while you try a pipeline out; 0 reads them all.
   tab, says which: "applied by the database while reading", "applied in part by the database"
   (naming what Kilnmark does), or "applied by Kilnmark as the rows arrive".
 
-In the source repository, `samples/01-read-and-write/read-columns-where.yaml` and `samples/07-parameters/orders-by-status.yaml`
-show both.
+The samples `sample-read-columns-where` and `sample-orders-by-status` show both (see
+[Adding the samples](#adding-the-samples)).
 
 ### Writing
 

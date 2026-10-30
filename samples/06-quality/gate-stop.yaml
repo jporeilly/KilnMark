@@ -1,4 +1,4 @@
-# Quality gate: stop the run (sample: lab only, never shipped).
+# Quality gate: stop the run (a Kilnmark sample).
 # Stops before anything is written if any order has a shipping fee above 50: the write after the
 # gate never starts. Raise max to 100 and run it again to see it pass.
 # Look for: on_fail: stop (the default) and how the failed run names the rule.
@@ -9,7 +9,7 @@ description: Orders with sane shipping fees, or nothing.
 nodes:
   - id: orders
     type: read
-    source: lab-mariadb
+    source: shop-db
     asset: shop.orders
 
   - id: check
@@ -22,6 +22,6 @@ nodes:
   - id: out
     type: write
     input: check
-    source: lab-warehouse
+    source: files
     path: samples/quality/orders_checked.csv
     mode: replace

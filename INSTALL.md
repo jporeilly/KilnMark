@@ -34,6 +34,10 @@ On Windows and macOS, start the Podman machine once per boot: `podman machine st
 4. Open http://localhost:8780 and sign in with the admin token from `.env`. Under **API tokens**,
    make a permanent admin token for yourself and keep it safe.
 5. Add a source under **Sources**: nothing is scanned until you do.
+6. To try the samples, small pipelines that show one idea each, choose **Add samples** on the
+   **Pipelines** page and pick one of your saved sources for each placeholder they use (`crm-db`,
+   `shop-db`, `files`); see [samples/README.md](samples/README.md). They are also in the release's
+   `samples` folder to read.
 
 ## B. From source, with the reference lab and the samples
 
@@ -53,10 +57,11 @@ On Windows and macOS, start the Podman machine once per boot: `podman machine st
    **Rewrite host names for this server**, **Test each connection** and **Queue a scan**, and press
    **Import**. Wait until the scans of `lab-db`, `lab-bucket` and `lab-mariadb` have finished.
 5. Add the examples: `./lab/lab.sh samples` (Windows: `.\lab\lab.ps1 samples`) adds the
-   [samples](samples/README.md), sorted by what they show, and `./lab/lab.sh pipelines` the lab's
-   demo pipelines. Open **Pipelines**, pick one, and choose **Run now**.
+   [samples](samples/README.md), sorted by what they show, with their placeholders mapped to the lab's
+   sources, and `./lab/lab.sh pipelines` the lab's demo pipelines. Open **Pipelines**, pick one, and
+   choose **Run now**.
 6. To make a release for A: `./gradlew release` (Windows: `gradlew.bat release`). The release holds
-   the product only, never the lab or the samples.
+   the product only, never the lab; the samples ship, naming their sources by placeholders.
 
 ## Check it works
 

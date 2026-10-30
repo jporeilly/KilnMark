@@ -1,14 +1,14 @@
-# Limit: the first rows only (sample: lab only, never shipped).
+# Limit: the first rows only (a Kilnmark sample).
 # Passes on the first 100 transactions and stops the read once it has them.
 # Look for: the run reads far fewer than the 100,000 rows the table holds.
 kilnmark: pipeline/v1
 name: sample-limit
-description: The first 100 lab transactions.
+description: The first 100 billing transactions.
 
 nodes:
   - id: transactions
     type: read
-    source: lab-db
+    source: crm-db
     asset: billing.transactions
 
   - id: first
@@ -19,6 +19,6 @@ nodes:
   - id: out
     type: write
     input: first
-    source: lab-warehouse
+    source: files
     path: samples/filter-and-route/first_transactions.csv
     mode: replace

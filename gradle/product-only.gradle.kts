@@ -9,8 +9,9 @@
 //              any lab-<name>), no labadmin, no path into lab/ (lab/files, lab/sources.csv, ...)
 //   ports      no lab-only port: localhost:5433, :9020 or :3307, or a 5433:5432, 9020:7070 or 3307:3306
 //              mapping
-//   words      the shipped compose.yaml, everything under containers/ and the bundled guides do not
-//              mention the lab at all (the word "lab")
+//   words      the shipped compose.yaml, everything under containers/, the bundled guides and the
+//              samples (samples/ and kilnmark/samples/ in the jar) do not mention the lab at all (the
+//              word "lab"); the samples name their sources by placeholders
 //   changelog  the bundled changelog's "What's new" sections, written for customers, do not either;
 //              its details may describe lab changes, and the UI bundle that carries them is let off
 //              for exactly that text
@@ -123,7 +124,7 @@ class ProductOnly(private val root: java.io.File, allowFile: java.io.File) {
             when {
                 isOwnJar(path) -> entries(f) { name, text -> checkEntry("$path!/$name", name, text) }
                 f.name.endsWith(".jar") -> {}   // third-party libraries and Quarkus's generated code
-                path == "compose.yaml" || path.startsWith("containers/") -> {
+                path == "compose.yaml" || path.startsWith("containers/") || path.startsWith("samples/") -> {
                     val text = f.readText(Charsets.ISO_8859_1)
                     scan(path, text, names + word, corpus = false)
                     if (path == "compose.yaml") secretDefaults(path, text)
@@ -198,7 +199,8 @@ class ProductOnly(private val root: java.io.File, allowFile: java.io.File) {
             problems += "$where: only the user guides and the changelog are bundled as documentation"
         }
         when {
-            name.startsWith("kilnmark/docs/guide/") -> scan(where, text, names + word, corpus = false)
+            name.startsWith("kilnmark/docs/guide/") || name.startsWith("kilnmark/samples/") ->
+                scan(where, text, names + word, corpus = false)
             name == "kilnmark/docs/CHANGELOG.md" -> {}   // checked in changelog()
             name == "application.properties" ->
                 // %dev and %test may use the lab; production defaults (no profile, or one naming prod) may not.

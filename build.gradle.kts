@@ -70,6 +70,11 @@ tasks.register<Sync>("assembleRelease") {
         into("containers")
         exclude("compose.release.yaml", "release.env.example")
     }
+    // The samples, as templates to read or add through the API (the server also bundles them).
+    from("samples") {
+        include("**/*.yaml")
+        into("samples")
+    }
     from("LICENSE", "NOTICE")
     // The full text of licences NOTICE names, such as the LGPL of the MySQL and MariaDB driver.
     from("config/licenses") { into("licenses") }

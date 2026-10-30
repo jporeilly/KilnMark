@@ -150,7 +150,7 @@ then only the demo sources you want:
 | `sources` | Where `lab/sources.csv` is, and how to import it |
 | `driver oracle` | Downloads Oracle's JDBC driver after showing its licence, checks it and copies it into a running Kilnmark (see [Oracle](#oracle)) |
 | `pipelines` | Adds the demo pipelines in `lab/pipelines` to a running Kilnmark (see [Demo pipelines](#demo-pipelines)) |
-| `samples` | Adds the sample pipelines in `samples/` to a running Kilnmark (see [samples/README.md](../samples/README.md)); flows are skipped until the flows API comes |
+| `samples` | Adds the sample pipelines in `samples/` to a running Kilnmark, their placeholder sources mapped to the lab's as `sample-sources.csv` says (see [samples/README.md](../samples/README.md)); flows are skipped until the flows API comes |
 
 Demo sources: `postgres`, `s3`, `sqlserver`, `mariadb`, `oracle`, `mail` and `files` (nothing to start: Kilnmark reads the
 share from disk). An unknown name lists the right ones. The scripts use Podman if it is on the

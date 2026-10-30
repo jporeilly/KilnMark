@@ -1,4 +1,4 @@
-# Lookup: add columns from another input (sample: lab only, never shipped).
+# Lookup: add columns from another input (a Kilnmark sample).
 # Adds each order's customer name and loyalty tier; orders with no customer go to rejected.
 # Look for: inputs: main and lookup; the lookup side is read in full first.
 kilnmark: pipeline/v1
@@ -8,12 +8,12 @@ description: Shop orders with their customer's name and tier.
 nodes:
   - id: orders
     type: read
-    source: lab-mariadb
+    source: shop-db
     asset: shop.orders
 
   - id: customers
     type: read
-    source: lab-mariadb
+    source: shop-db
     asset: shop.customers
 
   - id: named
@@ -26,13 +26,13 @@ nodes:
   - id: out
     type: write
     input: named
-    source: lab-warehouse
+    source: files
     path: samples/combine/orders_named.csv
     mode: replace
 
   - id: no_customer
     type: write
     input: named.rejected
-    source: lab-warehouse
+    source: files
     path: samples/combine/orders_without_customer.csv
     mode: replace

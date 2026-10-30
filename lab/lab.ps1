@@ -374,16 +374,32 @@ function Invoke-Driver([string[]]$Given) {
 # Kilnmark through its API. Needs an admin or steward token in $env:KILNMARK_ADMIN_TOKEN (or
 # $env:KILNMARK_TOKEN); $env:KILNMARK_URL defaults to http://localhost:8780. A pipeline that is
 # already there is left as it is. Flows are skipped: they cannot be added until the flows API comes.
-function Invoke-Pipelines([string]$Folder, [string]$Command) {
+# The samples name their sources by placeholders (crm-db, shop-db, files); a mapping file
+# (lab\sample-sources.csv) replaces each with its lab source, as the server's Add samples does with
+# the person's own.
+function Invoke-Pipelines([string]$Folder, [string]$Command, [string]$Mapping = '') {
     $url = if ($env:KILNMARK_URL) { $env:KILNMARK_URL.TrimEnd('/') } else { 'http://localhost:8780' }
     $token = if ($env:KILNMARK_TOKEN) { $env:KILNMARK_TOKEN } else { $env:KILNMARK_ADMIN_TOKEN }
     if (-not $token) { Fail 'set $env:KILNMARK_ADMIN_TOKEN (or $env:KILNMARK_TOKEN) to an admin or steward token first.' }
+    $to = @{}
+    if ($Mapping) {
+        foreach ($row in (Import-Csv -Path $Mapping)) { $to[$row.placeholder] = $row.lab_source }
+    }
+    $sourceLine = '(?m)^(\s*(?:-\s+)?source:\s*)(["'']?)([A-Za-z0-9_.-]+)\2(\s*(?:#.*)?)$'
     $files = Get-ChildItem -Path $Folder -Filter '*.yaml' -Recurse | Sort-Object FullName
     foreach ($f in $files) {
         $yaml = [System.IO.File]::ReadAllText($f.FullName)
         if ($yaml -match '(?m)^kilnmark:\s*flow/') {
             Write-Host "Skipped  $($f.Name) (a flow: flows are added once the flows API comes)"
             continue
+        }
+        if ($to.Count -gt 0) {
+            $yaml = [regex]::Replace($yaml, $sourceLine, {
+                param($m)
+                $name = $m.Groups[3].Value
+                if ($to.ContainsKey($name)) { $name = $to[$name] }
+                $m.Groups[1].Value + $m.Groups[2].Value + $name + $m.Groups[2].Value + $m.Groups[4].Value
+            })
         }
         $nameLine = ($yaml -split "`r?`n") | Where-Object { $_ -match '^name:' } | Select-Object -First 1
         $name = ($nameLine -replace '^name:\s*', '').Trim()
@@ -424,7 +440,10 @@ switch ($Command) {
     'sources' { Invoke-Sources }
     'driver' { Invoke-Driver $Names }
     'pipelines' { Invoke-Pipelines (Join-Path -Path $LabDir -ChildPath 'pipelines') 'pipelines' }
-    'samples' { Invoke-Pipelines (Join-Path -Path (Split-Path -Path $LabDir -Parent) -ChildPath 'samples') 'samples' }
+    'samples' {
+        Invoke-Pipelines (Join-Path -Path (Split-Path -Path $LabDir -Parent) -ChildPath 'samples') 'samples' `
+            (Join-Path -Path $LabDir -ChildPath 'sample-sources.csv')
+    }
     { @('help', '-h', '--help', '-?') -contains $_ } { Show-Usage }
     default {
         Show-Usage
