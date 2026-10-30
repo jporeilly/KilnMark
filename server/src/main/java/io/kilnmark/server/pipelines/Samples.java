@@ -324,21 +324,7 @@ public class Samples {
                     + "sample tables again");
             }
         }
-        if (sources.source(SAMPLE_DATA).isEmpty()) {
-            try {
-                store.addSource(new Records.NewSource(SAMPLE_DATA, SAMPLE_DATA, Map.of(), null,
-                    "Kilnmark sample data"));
-                LOG.infof("Source %s added for the sample tables, by %s", SAMPLE_DATA, by);
-            } catch (RuntimeException e) {
-                if (sources.source(SAMPLE_DATA).isEmpty()) {
-                    throw e;
-                }
-                // added by someone else at the same moment
-            }
-        } else if (!SAMPLE_DATA.equals(sources.source(SAMPLE_DATA).get().kind())) {
-            throw new IllegalArgumentException("A source called " + SAMPLE_DATA + " already exists but is not "
-                + "Kilnmark's sample data: rename or remove it first");
-        }
+        ensureSampleData(by);
         if (!variables.snapshot().containsKey(REGION_VARIABLE)) {
             variables.set(REGION_VARIABLE, "text", REGION, "The region the sample sample-server-variable names its "
                 + "file after; set by the starter pack", by, role);
@@ -355,6 +341,40 @@ public class Samples {
         PipelineViews.RunSummary run = pipelines.queueRun(SETUP, null, by, role);
         LOG.infof("Sample tables requested in %s.%s by %s: run %d", name, schema, by, run.id());
         return new TablesResult(SETUP, run, name, schema);
+    }
+
+    /**
+     * The sample data's own source, added if it is not there: it has no settings and no secret and
+     * reads only Kilnmark's own files, so stewards may have it added (ADR 0024). A source of that
+     * name that is something else is refused, never replaced.
+     */
+    private void ensureSampleData(String by) {
+        if (sources.source(SAMPLE_DATA).isEmpty()) {
+            try {
+                store.addSource(new Records.NewSource(SAMPLE_DATA, SAMPLE_DATA, Map.of(), null,
+                    "Kilnmark sample data"));
+                LOG.infof("Source %s added for the samples, by %s", SAMPLE_DATA, by);
+            } catch (RuntimeException e) {
+                if (sources.source(SAMPLE_DATA).isEmpty()) {
+                    throw e;
+                }
+                // added by someone else at the same moment
+            }
+        } else if (!SAMPLE_DATA.equals(sources.source(SAMPLE_DATA).get().kind())) {
+            throw new IllegalArgumentException("A source called " + SAMPLE_DATA + " already exists but is not "
+                + "Kilnmark's sample data: rename or remove it first");
+        }
+    }
+
+    /** Whether a sample reads Kilnmark's sample data itself (the volume sample does). */
+    static boolean readsSampleData(String yaml) {
+        Matcher m = SOURCE_LINE.matcher(yaml);
+        while (m.find()) {
+            if (SAMPLE_DATA.equals(m.group(3))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -392,6 +412,11 @@ public class Samples {
         }
         List<Outcome> out = new ArrayList<>();
         int added = 0;
+        boolean dataNeeded = bundled().stream().anyMatch(s -> "pipeline".equals(s.type()) && readsSampleData(s.yaml())
+            && s.sources().stream().allMatch(mapping::containsKey));
+        if (dataNeeded) {
+            ensureSampleData(by);
+        }
         for (Sample s : bundled()) {
             if ("flow".equals(s.type())) {
                 out.add(new Outcome(s.name(), s.file(), "skipped", "a flow: flows are added once the flows API comes",

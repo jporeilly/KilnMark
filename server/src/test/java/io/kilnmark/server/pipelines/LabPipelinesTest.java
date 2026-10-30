@@ -85,6 +85,18 @@ class LabPipelinesTest {
             "discontinued:boolean");
         s.asset("urn:kilnmark:lab-mariadb:stock.supplier_feed", "sku:text", "supplier:text", "cost_price:decimal",
             "lead_time_days:int16", "in_stock:boolean", "received_on:date");
+        // Kilnmark's own sample data, which the volume sample reads directly, wherever it runs.
+        s.connectors.put("sample-data", all.get("sample-data").orElseThrow());
+        s.add(Samples.SAMPLE_DATA, "sample-data", Map.of(), null);
+        try {
+            for (io.kilnmark.kiln.connect.AssetInfo a : all.get("sample-data").orElseThrow()
+                .catalog(new io.kilnmark.kiln.connect.SourceConfig(Samples.SAMPLE_DATA, "sample-data", Map.of(), null))) {
+                s.asset("urn:kilnmark:" + Samples.SAMPLE_DATA + ":" + a.path(), a.fields().stream()
+                    .map(f -> f.name() + ":" + f.kind()).toArray(String[]::new));
+            }
+        } catch (io.kilnmark.kiln.connect.ConnectorException e) {
+            throw new AssertionError(e);
+        }
         return s;
     }
 
@@ -192,7 +204,9 @@ class LabPipelinesTest {
                 Samples.SOURCE_LINE.matcher(text).results().count(), file + ": a source line the mapping misses");
             java.util.regex.Matcher m = Samples.SOURCE_LINE.matcher(text);
             while (m.find()) {
-                assertTrue(placeholders.contains(m.group(3)), file + ": source " + m.group(3) + " is not a placeholder");
+                // A placeholder, or Kilnmark's own sample data (which ships, and is the same everywhere).
+                assertTrue(placeholders.contains(m.group(3)) || Samples.SAMPLE_DATA.equals(m.group(3)),
+                    file + ": source " + m.group(3) + " is not a placeholder");
             }
             assertFalse(lab.matcher(text).find(), file + ": mentions the lab, but the samples ship");
             assertEquals(Samples.sourcesOf(text).isEmpty(), isFlow(file), file + ": a pipeline names placeholders");

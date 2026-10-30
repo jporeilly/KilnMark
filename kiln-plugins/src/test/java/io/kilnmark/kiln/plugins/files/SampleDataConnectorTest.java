@@ -35,9 +35,9 @@ class SampleDataConnectorTest {
         List<AssetInfo> assets = connector.catalog(source);
         assertEquals(List.of("billing/invoices.csv", "billing/transactions.csv", "crm/accounts.csv",
             "crm/customers.csv", "crm/customers_archive_2023.csv", "shop/customers.csv", "shop/order_lines.csv",
-            "shop/orders.csv", "stock/products.csv", "stock/supplier_feed.csv"),
+            "shop/orders.csv", "stock/products.csv", "stock/supplier_feed.csv", "volume/sales.csv"),
             assets.stream().map(AssetInfo::path).sorted().toList());
-        assertEquals(List.of("billing", "crm", "shop", "stock"),
+        assertEquals(List.of("billing", "crm", "shop", "stock", "volume"),
             connector.containers(source).stream().map(Connector.ContainerInfo::name).sorted().toList());
         assertEquals("files", connector.category());
         assertEquals(List.of(), connector.validate(source));
@@ -62,6 +62,47 @@ class SampleDataConnectorTest {
         assertEquals("boolean", kinds(byPath.get("shop/customers.csv")).get("is_active"));
         assertTrue(kinds(byPath.get("stock/products.csv")).get("list_price").startsWith("decimal"));
         assertEquals("date", kinds(byPath.get("stock/supplier_feed.csv")).get("received_on"));
+    }
+
+    @Test
+    void theLargeTableIsWrittenAsItIsRead() throws Exception {
+        AssetInfo sales = connector.catalog(source).stream().filter(a -> a.path().equals(VolumeSales.PATH))
+            .findFirst().orElseThrow();
+        Map<String, String> k = kinds(sales);
+        assertEquals("int64", k.get("sale_id"));
+        assertEquals("timestamp", k.get("sold_at"));
+        assertEquals("text", k.get("sku"));
+        assertTrue(k.get("unit_price").startsWith("decimal"), k.toString());
+        // Every row the same width, as many as it says, the size it says, every SKU a sample product's.
+        java.util.Set<String> skus = new java.util.HashSet<>();
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(
+            Thread.currentThread().getContextClassLoader().getResourceAsStream("kilnmark/sample-data/stock/products.csv"),
+            java.nio.charset.StandardCharsets.UTF_8))) {
+            r.readLine();
+            r.lines().forEach(l -> skus.add(l.split(",")[1]));
+        }
+        long rows = 0;
+        long bytes = 0;
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(VolumeSales.open(),
+            java.nio.charset.StandardCharsets.US_ASCII), 1 << 16)) {
+            bytes += r.readLine().length() + 1;
+            String line;
+            String last = "";
+            while ((line = r.readLine()) != null) {
+                rows++;
+                bytes += line.length() + 1;
+                String[] f = line.split(",");
+                if (rows % 997 == 1) {
+                    assertTrue(skus.contains(f[3]), f[3]);
+                    assertTrue(f[1].compareTo(last) >= 0, "in time order");
+                    last = f[1];
+                }
+            }
+        }
+        assertEquals(VolumeSales.ROWS, rows);
+        assertEquals(VolumeSales.size(), bytes);
+        assertEquals(60, java.util.stream.IntStream.rangeClosed(1, 60).mapToObj(VolumeSales::sku)
+            .filter(skus::contains).count());
     }
 
     @Test
