@@ -73,8 +73,8 @@ The **Canvas** and **YAML** tabs show the same pipeline: a change on the canvas 
 lines it changes in the YAML, so your comments, layout and every other setting stay exactly as
 they were, and a change to the YAML redraws the canvas. Kilnmark remembers which tab you used last.
 
-The canvas uses the page's full width. On the left is a narrow rail with a button per folder of
-node types; the pipeline fills the rest, with an overview in its corner for finding your way
+The canvas uses the page's full width. On the left is the node list, which **Nodes** in the canvas
+toolbar hides and shows again; the pipeline fills the rest, with an overview in its corner for finding your way
 around a large one. The selected node's settings open in a panel over the right of the canvas (below
 it on a narrow screen), and close with its **×** or when nothing is selected.
 
@@ -84,10 +84,8 @@ it on a narrow screen), and close with its **×** or when nothing is selected.
   selected, the new node is added after it and reads from it.
 - **The node list** is in folders: Read, Write, Filter and route, Transform, Combine, Aggregate,
   Quality, AI and Other, each with how many types it holds, and **Recently used** first with the
-  last five types you added. The first button on the rail opens the whole list, with **Find a
-  node** to search every folder at once (the folders with a match open by themselves); choose a
-  folder's icon on the rail to open the list at that folder. The list sits beside the canvas, which
-  narrows to make room, so it never covers your nodes (on a phone it opens over the canvas). Folders
+  last five types you added. **Find a node** searches every folder at once (the folders with a
+  match open by themselves). The list sits beside the canvas, which narrows to make room, so it never covers your nodes (on a phone it opens over the canvas). Folders
   holding the nodes your pipeline uses start open, and Kilnmark remembers in this browser which
   folders you open.
 - **Each node** shows its type, its id, a line summing up its settings, its input ports on the
@@ -221,7 +219,7 @@ list:
 | Shift+arrow keys | Move the node on the canvas |
 | Alt+arrow keys | Pan the canvas |
 | A | Open the node list at **Find a node**; type, Tab to the type and press Enter to add it after the selected node |
-| Arrow keys in the node list | Up and down through the folders and nodes; Right opens a folder, Left closes it; Enter adds the node. On the rail, Right opens the list at that folder |
+| Arrow keys in the node list | Up and down through the folders and nodes; Right opens a folder, Left closes it; Enter adds the node |
 | C | **Connect to…**: a list of the nodes this node can send rows to or read rows from |
 | Enter | Go to the node's settings |
 | Shift+F10 or the menu key | The node's menu: **Preview rows**, **Settings**, **Connect to…**, **Duplicate**, **Remove** |

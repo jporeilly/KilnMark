@@ -222,24 +222,23 @@ describe("the node list", () => {
 
   test("folders by category, in order, with counts; open folders show their nodes", () => {
     const out = renderToStaticMarkup(
-      <Palette types={types} usedTypes={[]} readOnly={false} expanded onExpand={() => {}} onAdd={() => {}} searchRef={{ current: null }} hint="" />,
+      <Palette types={types} usedTypes={[]} readOnly={false} expanded onAdd={() => {}} searchRef={{ current: null }} hint="" />,
     );
     const folders = [...out.matchAll(/data-folder="([^"]+)"[^>]*>.*?<span>([^<]+) <span class="cv-count">\((\d+)\)/g)].map((m) => `${m[2]} ${m[3]}`);
     expect(folders).toEqual(["Read 1", "Filter and route 2", "Transform 1", "Other 1"]);
     expect(out).toContain('aria-expanded="false"');
     expect(out).toMatch(/<ul id="cv-folder-read" class="cv-type-list" hidden="">/);
-    // The rail: a button per folder, named with its count, pointing at its folder in the docked list.
-    expect(out).toContain('aria-label="Filter and route (2): show in the node list"');
     expect(out).toContain('aria-controls="cv-folder-filter-and-route"');
-    expect(out).not.toContain("cv-flyout");
+    // Only the list: no rail of folder buttons beside it.
+    expect(out).not.toContain("cv-rail");
+    expect(out).not.toContain("show in the node list");
   });
 
-  test("closed, the list is not drawn and the rail controls nothing", () => {
+  test("hidden, nothing is drawn", () => {
     const out = renderToStaticMarkup(
-      <Palette types={types} usedTypes={[]} readOnly={false} expanded={false} onExpand={() => {}} onAdd={() => {}} searchRef={{ current: null }} hint="" />,
+      <Palette types={types} usedTypes={[]} readOnly={false} expanded={false} onAdd={() => {}} searchRef={{ current: null }} hint="" />,
     );
-    expect(out).not.toContain('class="cv-palette-panel"');
-    expect(out).not.toContain('aria-controls="cv-folder-');
+    expect(out).toBe("");
   });
 
   test("a type the server gives no category goes by its kind", () => {

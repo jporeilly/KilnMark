@@ -10,7 +10,7 @@
   margin: 0;
 }
 
-/* The stage: the node list (rail, and the docked list when open), the canvas, and the drawers over it. */
+/* The stage: the node list (docked when shown), the canvas, and the drawers over it. */
 .cv-stage {
   position: relative;
   display: grid;
@@ -26,7 +26,7 @@
   font-size: var(--km-text-md);
 }
 
-/* ---- the node list: icon rail and, docked beside it, the tree ---- */
+/* ---- the node list: the tree, docked beside the canvas ---- */
 
 .cv-palette {
   position: relative;
@@ -37,40 +37,13 @@
   height: 100%;
 }
 
-.cv-rail {
-  width: 48px;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 0;
-  height: 100%;
-  box-sizing: border-box;
-  border: 1px solid var(--km-border);
-  border-radius: var(--km-radius-card);
-  background: var(--km-surface);
-  overflow-y: auto;
+/* The canvas keeps its column while the node list is hidden. */
+.cv-stage > .cv-flow {
+  grid-column: 2;
 }
 
-.cv-rail-button {
-  width: 36px;
-  height: 36px;
-  min-height: 36px;
-  padding: 0;
-  flex: none;
-}
-
-.cv-rail-button.is-open,
-.cv-rail-button[aria-expanded="true"] {
-  background: var(--km-accent-tint);
-  border-color: var(--km-accent);
-}
-
-.cv-rail-sep {
-  width: 24px;
-  height: 1px;
-  background: var(--km-divider);
+.cv-stage.no-list {
+  column-gap: 0;
 }
 
 /* Docked: a column of its own, so the canvas narrows beside it rather than being covered. */
@@ -135,9 +108,9 @@
   .cv-palette-panel {
     position: absolute;
     top: 0;
-    left: 56px;
+    left: 0;
     z-index: 20;
-    width: min(272px, calc(100vw - 110px));
+    width: min(272px, calc(100vw - 54px));
     border-color: var(--km-border-control);
     box-shadow: var(--km-shadow-raised);
   }
@@ -651,10 +624,6 @@
     grid-template-rows: 440px auto;
   }
 
-  .cv-rail {
-    height: 440px;
-  }
-
   .cv-drawer {
     position: static;
     grid-column: 1 / -1;
@@ -988,7 +957,6 @@ button.cv-danger {
   .cv-type,
   .cv-flow,
   .cv-drawer,
-  .cv-rail,
   .cv-palette-panel {
     border-color: CanvasText;
   }

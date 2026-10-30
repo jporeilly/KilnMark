@@ -21,6 +21,8 @@ import {
   IconFocus2,
   IconKeyboard,
   IconLayoutDistributeHorizontal,
+  IconLayoutSidebarLeftCollapse,
+  IconLayoutSidebarLeftExpand,
   IconPlug,
   IconSparkles,
   IconTextSize,
@@ -166,7 +168,7 @@ function Canvas(props: CanvasProps) {
   const [sources, setSources] = useState<Source[] | null>(null);
   const [announce, setAnnounce] = useState("");
   const [refusal, setRefusal] = useState<string | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(true);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [connectFor, setConnectFor] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
@@ -230,8 +232,8 @@ function Canvas(props: CanvasProps) {
   const graph = read.ok ? read.graph : (props.memory.lastGood ?? null);
   const broken = !read.ok;
   const readOnly = lockedByPage || broken || types == null;
-  // An empty canvas opens the node list; otherwise it waits in the rail. (A saved pipeline is empty
-  // text until it has loaded, which is not an empty canvas.)
+  // An empty canvas opens the node list, even if it was hidden. (A saved pipeline is empty text
+  // until it has loaded, which is not an empty canvas.)
   const nodeCount = graph?.nodes.length ?? -1;
   const loaded = yaml.trim() !== "" && types != null;
   useEffect(() => {
@@ -1005,6 +1007,22 @@ function Canvas(props: CanvasProps) {
         </p>
       )}
       <div className="cv-toolbar" ref={toolbar} role="group" aria-label="Canvas tools">
+        <button
+          type="button"
+          className={`cv-tool${paletteOpen ? " is-on" : ""}`}
+          aria-pressed={paletteOpen}
+          aria-controls="cv-palette-panel"
+          title={paletteOpen ? "Hide the node list" : "Show the node list"}
+          onClick={() => setPaletteOpen((o) => !o)}
+        >
+          {paletteOpen ? (
+            <IconLayoutSidebarLeftCollapse size={18} stroke={1.8} aria-hidden="true" />
+          ) : (
+            <IconLayoutSidebarLeftExpand size={18} stroke={1.8} aria-hidden="true" />
+          )}
+          Nodes
+        </button>
+        <span className="cv-tool-sep" aria-hidden="true" />
         <button type="button" className="cv-tool" onClick={undo} disabled={readOnly || !props.canUndo}>
           <IconArrowBackUp size={18} stroke={1.8} aria-hidden="true" />
           Undo
@@ -1061,13 +1079,12 @@ function Canvas(props: CanvasProps) {
         )}
       </div>
 
-      <div className={`cv-stage${selectedNode || suggestOpen ? " has-drawer" : ""}`}>
+      <div className={`cv-stage${selectedNode || suggestOpen ? " has-drawer" : ""}${paletteOpen ? "" : " no-list"}`}>
         <Palette
           types={types}
           usedTypes={graph?.nodes.map((s) => s.type ?? "") ?? []}
           readOnly={readOnly}
           expanded={paletteOpen}
-          onExpand={setPaletteOpen}
           onAdd={(type) => add(type)}
           searchRef={searchBox}
           hint={
