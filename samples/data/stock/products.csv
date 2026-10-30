@@ -1,0 +1,61 @@
+product_id,sku,name,category,tags,attributes,launch_year,list_price,discontinued
+1,KIT-1001,Kettle,Kitchen,gift,"{""colour"": ""green"", ""weight_kg"": 3.2}",2017,174.63,false
+2,KIT-1002,Kettle Large,Kitchen,sale,"{""colour"": ""white"", ""weight_kg"": 4.7}",2020,86.91,false
+3,KIT-1003,Pan,Kitchen,,"{""colour"": ""green"", ""weight_kg"": 5.4}",2018,23.30,false
+4,KIT-1004,Pan Large,Kitchen,sale,"{""colour"": ""blue"", ""weight_kg"": 7.1}",2023,139.95,false
+5,KIT-1005,Knife Set,Kitchen,,"{""colour"": ""green"", ""weight_kg"": 5.9}",2018,54.62,false
+6,KIT-1006,Knife Set Large,Kitchen,new,"{""colour"": ""green"", ""weight_kg"": 1.5}",2025,12.42,false
+7,KIT-1007,Toaster,Kitchen,,"{""colour"": ""black"", ""weight_kg"": 4.2}",2022,54.64,false
+8,KIT-1008,Toaster Large,Kitchen,bestseller;eco,"{""colour"": ""grey"", ""weight_kg"": 3.6}",2021,46.07,false
+9,KIT-1009,Mixing Bowl,Kitchen,eco;bestseller,"{""colour"": ""white"", ""weight_kg"": 7.7}",2026,42.38,false
+10,KIT-1010,Mixing Bowl Large,Kitchen,eco;sale,"{""colour"": ""white"", ""weight_kg"": 4.1}",2019,122.19,false
+11,GAR-1011,Trowel,Garden,,"{""colour"": ""grey"", ""weight_kg"": 2.0}",2015,50.02,false
+12,GAR-1012,Trowel Large,Garden,,"{""colour"": ""black"", ""weight_kg"": 1.7}",2017,148.75,false
+13,GAR-1013,Hose,Garden,eco,"{""colour"": ""grey"", ""weight_kg"": 4.2}",2020,82.61,false
+14,GAR-1014,Hose Large,Garden,sale,"{""colour"": ""green"", ""weight_kg"": 2.8}",2025,114.29,false
+15,GAR-1015,Planter,Garden,gift,"{""colour"": ""white"", ""weight_kg"": 2.5}",2017,110.85,false
+16,GAR-1016,Planter Large,Garden,sale;new,"{""colour"": ""white"", ""weight_kg"": 2.0}",2020,149.31,false
+17,GAR-1017,Shears,Garden,sale;new,"{""colour"": ""blue"", ""weight_kg"": 6.4}",2019,54.27,true
+18,GAR-1018,Shears Large,Garden,sale,"{""colour"": ""grey"", ""weight_kg"": 3.9}",2026,147.32,false
+19,GAR-1019,Bird Feeder,Garden,,"{""colour"": ""black"", ""weight_kg"": 0.6}",2018,133.30,false
+20,GAR-1020,Bird Feeder Large,Garden,,"{""colour"": ""grey"", ""weight_kg"": 7.4}",2016,172.08,false
+21,OFF-1021,Desk Lamp,Office,,"{""colour"": ""black"", ""weight_kg"": 2.2}",2025,30.78,false
+22,OFF-1022,Desk Lamp Large,Office,new,"{""colour"": ""black"", ""weight_kg"": 0.9}",2022,25.71,false
+23,OFF-1023,Stapler,Office,,"{""colour"": ""black"", ""weight_kg"": 5.0}",2021,36.65,false
+24,OFF-1024,Stapler Large,Office,gift,"{""colour"": ""black"", ""weight_kg"": 3.4}",2021,32.45,false
+25,OFF-1025,Notebook,Office,eco,"{""colour"": ""white"", ""weight_kg"": 8.0}",2016,70.74,false
+26,OFF-1026,Notebook Large,Office,eco,"{""colour"": ""blue"", ""weight_kg"": 1.3}",2016,114.11,false
+27,OFF-1027,Chair Mat,Office,gift,"{""colour"": ""blue"", ""weight_kg"": 3.1}",2020,175.55,false
+28,OFF-1028,Chair Mat Large,Office,new,"{""colour"": ""black"", ""weight_kg"": 7.5}",2020,43.49,true
+29,OFF-1029,Pen Pot,Office,sale,"{""colour"": ""blue"", ""weight_kg"": 1.6}",2020,153.53,false
+30,OFF-1030,Pen Pot Large,Office,,"{""colour"": ""black"", ""weight_kg"": 7.2}",2019,38.71,false
+31,OUT-1031,Tent,Outdoor,bestseller;new,"{""colour"": ""blue"", ""weight_kg"": 6.4}",2019,91.84,false
+32,OUT-1032,Tent Large,Outdoor,,"{""colour"": ""grey"", ""weight_kg"": 0.9}",2020,153.64,false
+33,OUT-1033,Lantern,Outdoor,sale;new,"{""colour"": ""green"", ""weight_kg"": 5.7}",2016,172.27,false
+34,OUT-1034,Lantern Large,Outdoor,gift;bestseller,"{""colour"": ""blue"", ""weight_kg"": 5.3}",2016,19.52,false
+35,OUT-1035,Flask,Outdoor,eco;new,"{""colour"": ""blue"", ""weight_kg"": 7.2}",2025,44.65,false
+36,OUT-1036,Flask Large,Outdoor,,"{""colour"": ""blue"", ""weight_kg"": 6.0}",2021,28.33,false
+37,OUT-1037,Rucksack,Outdoor,eco,"{""colour"": ""green"", ""weight_kg"": 3.9}",2016,112.15,false
+38,OUT-1038,Rucksack Large,Outdoor,eco;sale,"{""colour"": ""white"", ""weight_kg"": 0.8}",2016,102.91,false
+39,OUT-1039,Camp Stool,Outdoor,gift,"{""colour"": ""white"", ""weight_kg"": 3.8}",2020,163.58,false
+40,OUT-1040,Camp Stool Large,Outdoor,,"{""colour"": ""white"", ""weight_kg"": 6.3}",2021,116.74,false
+41,LIG-1041,Bulb Pack,Lighting,,"{""colour"": ""green"", ""weight_kg"": 1.8}",2017,52.82,true
+42,LIG-1042,Bulb Pack Large,Lighting,gift;bestseller,"{""colour"": ""blue"", ""weight_kg"": 3.3}",2023,108.90,false
+43,LIG-1043,Floor Lamp,Lighting,eco,"{""colour"": ""green"", ""weight_kg"": 5.8}",2020,23.01,false
+44,LIG-1044,Floor Lamp Large,Lighting,new;eco,"{""colour"": ""blue"", ""weight_kg"": 7.9}",2018,115.44,false
+45,LIG-1045,Fairy Lights,Lighting,new;sale,"{""colour"": ""blue"", ""weight_kg"": 0.2}",2022,114.33,false
+46,LIG-1046,Fairy Lights Large,Lighting,gift,"{""colour"": ""green"", ""weight_kg"": 4.6}",2016,80.51,false
+47,LIG-1047,Wall Light,Lighting,gift;sale,"{""colour"": ""white"", ""weight_kg"": 3.5}",2019,154.26,false
+48,LIG-1048,Wall Light Large,Lighting,gift;sale,"{""colour"": ""black"", ""weight_kg"": 1.3}",2017,90.85,false
+49,LIG-1049,Night Light,Lighting,,"{""colour"": ""green"", ""weight_kg"": 1.1}",2025,35.91,false
+50,LIG-1050,Night Light Large,Lighting,,"{""colour"": ""black"", ""weight_kg"": 2.9}",2022,76.61,false
+51,STO-1051,Crate,Storage,,"{""colour"": ""white"", ""weight_kg"": 6.2}",2016,75.55,false
+52,STO-1052,Crate Large,Storage,,"{""colour"": ""black"", ""weight_kg"": 7.4}",2026,24.70,false
+53,STO-1053,Shelf Unit,Storage,bestseller;gift,"{""colour"": ""blue"", ""weight_kg"": 4.4}",2024,137.59,false
+54,STO-1054,Shelf Unit Large,Storage,sale;bestseller,"{""colour"": ""grey"", ""weight_kg"": 5.1}",2017,134.07,false
+55,STO-1055,Box Set,Storage,,"{""colour"": ""white"", ""weight_kg"": 6.5}",2017,136.17,false
+56,STO-1056,Box Set Large,Storage,eco,"{""colour"": ""black"", ""weight_kg"": 0.4}",2018,30.46,false
+57,STO-1057,Hook Rail,Storage,,"{""colour"": ""green"", ""weight_kg"": 4.8}",2022,4.46,true
+58,STO-1058,Hook Rail Large,Storage,bestseller,"{""colour"": ""black"", ""weight_kg"": 3.8}",2022,4.86,false
+59,STO-1059,Basket,Storage,gift,"{""colour"": ""black"", ""weight_kg"": 2.6}",2022,43.97,false
+60,STO-1060,Basket Large,Storage,eco;bestseller,"{""colour"": ""green"", ""weight_kg"": 0.1}",2023,119.91,false

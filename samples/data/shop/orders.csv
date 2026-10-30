@@ -1,0 +1,701 @@
+order_id,customer_id,ordered_at,status,channel,gift_wrap,shipping_fee,notes
+1,53,2025-12-10 15:54:18,shipped,app,false,2.99,
+2,70,2025-10-08 08:38:21,delivered,phone,false,3.95,
+3,32,2026-08-06 13:25:17,delivered,web,false,0.00,
+4,4,2025-12-10 18:51:30,shipped,web,false,3.95,
+5,151,2025-10-17 11:40:03,shipped,store,false,12.00,
+6,5,2026-04-14 17:33:24,delivered,phone,false,4.99,
+7,158,2025-11-25 15:21:08,cancelled,web,false,3.95,Leave with neighbour
+8,177,2026-05-24 09:28:34,cancelled,phone,false,12.00,Gift for a friend
+9,100,2026-07-26 13:23:47,delivered,app,false,4.99,
+10,97,2025-10-11 16:05:06,delivered,store,false,9.99,
+11,183,2025-10-06 20:21:40,delivered,app,false,7.50,
+12,51,2025-06-22 18:59:01,shipped,web,false,3.95,Leave with neighbour
+13,5,2026-03-30 11:12:14,shipped,app,false,7.50,Leave with neighbour
+14,48,2025-08-09 12:25:41,processing,phone,false,0.00,
+15,107,2026-09-18 11:57:04,returned,app,false,4.99,
+16,113,2025-09-28 17:39:35,shipped,web,false,9.99,
+17,41,2025-11-11 09:22:22,returned,store,false,0.00,Call on arrival
+18,86,2025-10-09 18:29:00,cancelled,web,false,3.95,
+19,64,2025-07-30 19:02:21,shipped,web,false,4.99,Gift for a friend
+20,159,2025-07-16 20:09:24,shipped,phone,false,0.00,
+21,125,2025-12-31 11:13:46,delivered,web,true,2.99,Call on arrival
+22,103,2026-09-21 16:14:55,delivered,app,false,4.99,Call on arrival
+23,112,2025-11-14 14:32:32,delivered,web,false,3.95,Gift for a friend
+24,102,2026-03-12 11:32:30,delivered,phone,false,3.95,Gift for a friend
+25,72,2025-07-11 19:04:51,processing,app,false,2.99,
+26,10,2026-01-07 19:43:39,delivered,phone,false,0.00,
+27,132,2025-11-25 15:38:50,delivered,web,false,12.00,
+28,23,2026-05-17 12:18:45,processing,web,false,9.99,Call on arrival
+29,87,2025-10-11 19:52:34,delivered,app,false,4.99,
+30,126,2026-04-11 12:17:40,delivered,phone,false,4.99,
+31,172,2026-05-16 11:18:14,processing,store,false,12.00,
+32,20,2026-08-20 15:29:02,shipped,phone,false,2.99,
+33,115,2025-10-23 19:09:14,delivered,phone,false,7.50,
+34,41,2025-08-19 20:25:31,cancelled,web,false,3.95,Leave with neighbour
+35,155,2025-07-30 16:51:40,shipped,phone,false,3.95,Gift for a friend
+36,101,2025-11-24 10:02:16,shipped,store,false,12.00,
+37,81,2025-12-09 11:17:34,delivered,app,false,2.99,
+38,99,2026-07-28 19:28:12,shipped,web,false,12.00,
+39,134,2026-01-17 19:56:54,delivered,web,false,4.99,
+40,135,2026-09-05 19:48:34,shipped,web,true,7.50,Call on arrival
+41,77,2026-09-14 20:57:04,delivered,web,false,3.95,
+42,184,2026-09-27 17:26:54,delivered,store,false,2.99,
+43,57,2026-05-28 14:02:09,cancelled,app,true,12.00,
+44,171,2025-07-12 15:41:08,delivered,phone,false,3.95,
+45,93,2025-11-29 15:03:25,processing,phone,false,7.50,Leave with neighbour
+46,105,2026-03-14 14:43:20,cancelled,store,false,4.99,
+47,168,2026-04-19 19:49:45,cancelled,web,false,12.00,Leave with neighbour
+48,171,2026-06-25 18:18:44,delivered,phone,false,7.50,Leave with neighbour
+49,173,2026-05-14 15:21:35,shipped,store,false,0.00,
+50,84,2026-07-30 10:46:55,cancelled,web,false,12.00,
+51,52,2026-02-20 16:55:00,cancelled,phone,false,9.99,
+52,98,2026-09-26 15:31:55,delivered,store,false,12.00,Leave with neighbour
+53,36,2026-04-28 11:17:07,processing,phone,false,0.00,
+54,47,2025-08-01 12:17:01,shipped,web,false,0.00,Call on arrival
+55,109,2026-04-06 20:00:27,delivered,app,false,12.00,Gift for a friend
+56,126,2025-07-20 09:31:50,delivered,phone,false,0.00,
+57,120,2025-10-05 14:59:05,delivered,store,false,4.99,
+58,90,2026-04-24 18:14:32,delivered,store,false,0.00,Call on arrival
+59,25,2026-02-21 08:03:48,delivered,app,false,12.00,
+60,124,2026-02-07 11:48:38,delivered,app,false,4.99,
+61,143,2026-04-10 19:55:13,shipped,app,false,7.50,Leave with neighbour
+62,92,2025-09-17 11:26:19,returned,phone,false,12.00,
+63,159,2026-03-20 17:41:51,shipped,app,false,3.95,
+64,908,2025-11-26 20:47:24,delivered,app,false,4.99,
+65,20,2025-11-22 08:14:39,delivered,store,false,9.99,Leave with neighbour
+66,131,2025-09-24 09:55:48,processing,app,false,0.00,
+67,101,2026-05-22 11:52:56,returned,app,false,2.99,Gift for a friend
+68,95,2026-04-12 18:59:59,shipped,app,false,9.99,
+69,29,2026-07-11 15:56:16,returned,store,false,2.99,Call on arrival
+70,132,2025-10-21 09:16:14,delivered,store,true,9.99,Call on arrival
+71,40,2025-12-30 16:30:17,returned,web,false,4.99,Leave with neighbour
+72,156,2026-07-31 12:01:31,shipped,phone,false,0.00,
+73,196,2026-02-21 15:00:51,delivered,phone,false,12.00,
+74,38,2026-02-28 12:52:59,delivered,app,true,9.99,Gift for a friend
+75,177,2026-06-20 12:14:37,delivered,web,false,3.95,Leave with neighbour
+76,52,2026-03-30 18:14:18,cancelled,app,false,4.99,
+77,52,2026-02-18 09:02:29,delivered,app,false,7.50,Leave with neighbour
+78,36,2026-07-16 08:19:08,delivered,store,false,3.95,
+79,76,2026-08-23 19:03:00,shipped,web,false,12.00,Call on arrival
+80,120,2026-08-11 14:14:12,delivered,phone,false,0.00,
+81,160,2026-09-23 11:14:41,shipped,app,false,7.50,
+82,95,2026-03-19 15:48:07,delivered,store,false,2.99,
+83,51,2026-05-21 08:35:25,delivered,phone,false,12.00,Gift for a friend
+84,44,2026-06-14 09:15:48,delivered,phone,false,2.99,Leave with neighbour
+85,125,2025-09-30 16:59:50,shipped,web,false,7.50,
+86,191,2025-06-12 10:44:44,shipped,web,false,0.00,
+87,89,2025-08-06 19:08:17,cancelled,web,false,9.99,
+88,123,2026-09-08 10:33:21,delivered,store,false,7.50,
+89,58,2026-06-02 20:38:15,processing,store,false,12.00,Gift for a friend
+90,105,2025-09-06 13:41:38,returned,web,false,9.99,
+91,123,2025-07-14 08:09:19,delivered,app,false,3.95,Gift for a friend
+92,57,2025-08-10 13:31:36,delivered,app,true,12.00,
+93,62,2026-04-25 08:33:30,delivered,app,false,2.99,
+94,55,2025-08-14 16:14:52,delivered,app,true,9.99,
+95,44,2025-08-11 16:13:53,delivered,app,false,0.00,Call on arrival
+96,59,2025-08-14 12:29:52,shipped,app,false,0.00,Leave with neighbour
+97,59,2025-07-02 19:54:49,cancelled,app,true,7.50,Call on arrival
+98,164,2026-01-14 08:44:45,shipped,store,false,12.00,Call on arrival
+99,187,2026-04-21 10:25:18,shipped,phone,false,9.99,
+100,101,2026-02-25 09:14:50,shipped,web,false,4.99,
+101,18,2026-03-30 11:42:03,delivered,phone,true,0.00,Call on arrival
+102,132,2026-02-04 10:50:27,delivered,app,false,3.95,
+103,152,2026-05-02 16:23:20,delivered,store,false,9.99,Leave with neighbour
+104,2,2026-04-03 09:17:20,shipped,phone,false,4.99,Call on arrival
+105,78,2025-08-31 13:16:20,returned,phone,false,12.00,
+106,81,2025-07-28 13:13:26,processing,phone,false,3.95,
+107,160,2025-08-20 20:31:41,delivered,web,false,4.99,
+108,157,2026-01-06 12:55:07,processing,store,true,9.99,
+109,96,2025-06-13 14:03:01,delivered,store,false,9.99,Call on arrival
+110,8,2025-12-08 10:22:09,processing,web,false,7.50,
+111,91,2025-09-02 08:50:08,delivered,app,false,2.99,
+112,134,2026-03-03 16:53:49,shipped,app,false,7.50,Call on arrival
+113,73,2025-09-21 14:37:49,delivered,store,false,7.50,Gift for a friend
+114,5,2026-06-30 18:57:02,shipped,app,false,4.99,
+115,69,2026-07-10 10:58:14,shipped,app,false,9.99,
+116,89,2025-08-27 18:51:22,delivered,app,false,2.99,Gift for a friend
+117,49,2025-12-30 13:32:47,shipped,phone,false,9.99,
+118,110,2026-08-05 10:48:49,delivered,phone,false,3.95,
+119,18,2026-04-01 10:56:54,cancelled,web,false,9.99,
+120,28,2025-09-26 17:09:03,delivered,web,false,0.00,
+121,56,2026-03-18 10:50:35,processing,phone,false,4.99,
+122,140,2025-06-20 18:05:23,delivered,web,false,3.95,
+123,44,2026-02-17 18:56:03,shipped,app,false,0.00,
+124,35,2026-04-23 20:56:42,delivered,phone,false,75.00,Call on arrival
+125,15,2026-08-31 16:47:29,delivered,web,false,2.99,
+126,38,2025-09-02 18:59:41,delivered,web,true,0.00,
+127,41,2025-10-29 09:13:29,delivered,web,false,0.00,
+128,135,2025-06-05 19:12:42,shipped,app,false,2.99,Gift for a friend
+129,120,2025-09-22 17:15:33,delivered,app,false,9.99,Call on arrival
+130,39,2026-01-28 17:54:17,returned,app,true,3.95,
+131,67,2025-10-13 09:36:49,delivered,app,false,12.00,Gift for a friend
+132,63,2026-09-04 10:52:35,delivered,phone,false,9.99,
+133,943,2026-06-20 17:11:05,shipped,web,false,7.50,Gift for a friend
+134,134,2025-08-09 14:44:13,shipped,phone,false,12.00,
+135,33,2025-10-25 19:44:35,delivered,web,false,3.95,
+136,180,2026-04-30 16:48:38,processing,web,false,0.00,Gift for a friend
+137,138,2025-12-20 16:10:26,delivered,store,false,7.50,
+138,49,2025-09-08 14:17:22,shipped,app,false,12.00,
+139,177,2025-10-09 10:12:57,delivered,app,false,7.50,Gift for a friend
+140,86,2025-06-07 14:41:29,cancelled,app,false,3.95,
+141,920,2025-07-11 15:55:26,delivered,phone,false,4.99,
+142,61,2026-04-05 19:00:46,returned,store,false,2.99,
+143,137,2025-10-31 14:02:50,delivered,app,false,3.95,Gift for a friend
+144,183,2025-06-05 16:43:52,delivered,web,false,9.99,
+145,65,2026-08-13 12:13:26,delivered,phone,false,7.50,
+146,118,2026-03-15 15:19:57,cancelled,app,false,4.99,
+147,22,2025-10-05 13:27:56,processing,phone,true,12.00,
+148,20,2025-06-09 19:14:51,processing,web,true,12.00,
+149,150,2025-12-15 12:28:55,returned,phone,false,2.99,
+150,171,2025-09-12 12:23:46,delivered,store,false,2.99,
+151,186,2026-05-22 18:32:34,processing,store,true,4.99,
+152,83,2025-07-22 18:02:46,processing,store,false,12.00,
+153,35,2026-04-08 08:07:51,processing,web,false,7.50,
+154,159,2026-03-28 15:45:10,delivered,web,false,3.95,
+155,177,2025-08-14 09:01:03,processing,app,false,3.95,
+156,193,2026-02-24 14:46:30,delivered,app,false,3.95,Call on arrival
+157,17,2026-05-14 16:00:21,delivered,web,false,4.99,
+158,126,2026-03-21 10:21:35,processing,store,false,3.95,Leave with neighbour
+159,100,2025-07-01 10:27:54,cancelled,app,false,0.00,Call on arrival
+160,14,2026-08-09 16:26:34,returned,phone,false,2.99,
+161,62,2026-09-30 19:34:00,processing,phone,false,2.99,
+162,158,2026-03-02 11:39:09,cancelled,web,false,0.00,
+163,109,2026-01-30 13:57:31,delivered,web,false,9.99,Call on arrival
+164,174,2026-08-26 11:00:35,delivered,web,false,12.00,Call on arrival
+165,115,2026-08-14 11:06:32,cancelled,web,false,4.99,Leave with neighbour
+166,7,2025-11-04 15:05:38,processing,web,false,12.00,
+167,8,2025-12-30 16:21:28,cancelled,phone,false,12.00,
+168,80,2025-06-12 13:58:49,shipped,store,false,7.50,
+169,175,2025-08-09 17:50:54,delivered,phone,false,9.99,Call on arrival
+170,39,2026-06-21 15:18:18,delivered,phone,false,12.00,
+171,169,2025-10-15 20:25:24,delivered,phone,true,3.95,Leave with neighbour
+172,105,2025-07-06 20:44:47,processing,store,false,9.99,
+173,159,2026-03-01 13:50:57,delivered,web,false,0.00,
+174,106,2025-06-12 19:54:52,delivered,web,false,7.50,
+175,200,2026-08-16 09:44:07,processing,web,false,7.50,
+176,31,2026-06-06 17:42:41,processing,web,false,12.00,
+177,11,2025-11-18 18:16:56,delivered,web,false,9.99,
+178,64,2026-08-09 10:28:02,shipped,phone,false,9.99,Gift for a friend
+179,87,2025-11-19 14:48:46,delivered,app,false,12.00,Gift for a friend
+180,52,2025-11-10 12:42:45,delivered,web,false,3.95,
+181,73,2025-09-10 20:26:12,delivered,store,false,2.99,
+182,188,2026-07-01 19:46:32,cancelled,web,false,2.99,
+183,150,2025-06-13 20:53:09,returned,app,true,7.50,
+184,134,2026-06-23 13:46:11,delivered,app,true,0.00,Call on arrival
+185,99,2025-12-14 11:39:42,delivered,phone,false,9.99,Call on arrival
+186,114,2026-04-02 17:11:01,shipped,store,false,12.00,
+187,112,2025-10-07 09:08:14,shipped,store,false,12.00,
+188,113,2025-07-26 20:18:24,delivered,web,false,9.99,
+189,120,2025-10-06 11:29:45,delivered,app,true,12.00,Leave with neighbour
+190,73,2026-05-22 09:29:47,shipped,web,false,12.00,Gift for a friend
+191,59,2025-10-27 14:02:44,cancelled,phone,false,0.00,Gift for a friend
+192,199,2025-12-10 20:05:43,delivered,phone,false,2.99,
+193,5,2026-01-05 16:07:09,delivered,phone,true,4.99,Call on arrival
+194,61,2026-03-05 19:54:12,delivered,app,false,4.99,
+195,146,2026-02-13 18:52:21,shipped,store,false,4.99,
+196,135,2026-01-13 08:25:45,returned,store,false,2.99,
+197,118,2026-05-24 13:47:39,shipped,phone,false,4.99,
+198,54,2025-06-12 15:58:32,shipped,app,false,12.00,
+199,195,2025-11-11 19:44:39,delivered,web,true,3.95,
+200,29,2025-09-08 19:15:57,delivered,phone,false,3.95,
+201,3,2025-12-01 11:05:39,shipped,phone,false,7.50,
+202,54,2025-11-01 16:48:50,processing,store,false,3.95,
+203,9,2026-06-05 16:01:56,shipped,app,false,7.50,
+204,153,2026-07-15 13:23:44,delivered,phone,false,2.99,
+205,49,2025-06-11 15:25:02,delivered,store,false,12.00,
+206,73,2025-12-09 13:19:12,delivered,web,false,12.00,
+207,83,2025-07-15 20:20:43,delivered,store,true,4.99,
+208,119,2025-07-08 09:09:53,delivered,web,false,0.00,
+209,111,2025-11-26 16:11:56,cancelled,phone,false,9.99,Leave with neighbour
+210,130,2025-11-24 19:01:49,returned,app,false,9.99,Call on arrival
+211,139,2026-03-07 18:50:16,shipped,phone,false,3.95,Call on arrival
+212,140,2026-09-27 18:19:27,shipped,web,false,9.99,
+213,39,2025-12-12 14:14:12,delivered,web,false,12.00,
+214,76,2025-07-21 20:04:21,processing,phone,false,0.00,Leave with neighbour
+215,79,2026-04-28 13:48:34,processing,store,false,2.99,
+216,191,2026-05-29 10:16:04,returned,app,false,2.99,Leave with neighbour
+217,91,2026-06-10 11:01:44,shipped,web,false,2.99,
+218,58,2025-09-03 15:40:08,cancelled,store,false,12.00,
+219,111,2026-05-19 19:11:32,delivered,phone,false,9.99,Gift for a friend
+220,144,2025-10-29 12:50:46,processing,app,false,3.95,Gift for a friend
+221,193,2026-02-03 12:52:01,delivered,store,false,9.99,
+222,89,2025-06-10 14:19:11,processing,store,false,0.00,Call on arrival
+223,37,2026-02-26 08:13:17,cancelled,store,false,12.00,Call on arrival
+224,122,2026-06-11 17:45:47,delivered,web,false,7.50,
+225,55,2025-06-12 19:31:28,delivered,app,false,0.00,
+226,100,2026-08-10 14:19:11,delivered,web,false,3.95,Gift for a friend
+227,51,2026-08-19 17:33:08,shipped,store,false,12.00,Leave with neighbour
+228,198,2025-12-01 16:39:32,delivered,web,false,3.95,Leave with neighbour
+229,152,2026-08-19 20:52:00,delivered,store,false,7.50,
+230,64,2026-08-13 20:40:41,shipped,phone,false,9.99,
+231,64,2026-03-16 19:58:08,processing,store,false,9.99,
+232,9,2026-05-10 08:58:03,shipped,app,true,7.50,Leave with neighbour
+233,184,2025-07-14 10:47:13,delivered,web,true,4.99,Call on arrival
+234,135,2025-08-29 15:12:18,delivered,phone,false,3.95,
+235,931,2026-04-08 13:38:14,delivered,store,false,9.99,
+236,118,2026-06-25 11:13:54,delivered,store,false,12.00,
+237,89,2026-01-13 18:05:20,processing,store,false,0.00,Call on arrival
+238,121,2026-06-14 12:15:27,delivered,app,true,9.99,
+239,922,2026-04-10 14:51:56,delivered,store,false,0.00,
+240,14,2025-10-05 18:04:15,shipped,store,false,0.00,Gift for a friend
+241,78,2025-08-20 10:42:13,shipped,phone,true,3.95,
+242,76,2025-09-11 09:26:19,processing,web,false,4.99,
+243,110,2026-02-26 09:14:02,shipped,web,false,0.00,
+244,110,2025-06-26 17:40:34,delivered,web,false,2.99,
+245,199,2025-06-04 12:34:50,shipped,app,false,2.99,Call on arrival
+246,115,2026-01-15 18:21:24,processing,app,false,12.00,Call on arrival
+247,130,2025-08-26 09:49:12,returned,phone,false,12.00,
+248,92,2026-04-26 20:06:24,delivered,app,false,3.95,
+249,4,2025-08-30 08:44:11,returned,web,false,2.99,
+250,159,2025-08-31 10:23:54,delivered,app,false,7.50,
+251,189,2025-12-28 10:28:30,cancelled,web,false,7.50,
+252,192,2026-04-25 08:20:23,processing,web,false,7.50,Leave with neighbour
+253,80,2026-07-03 20:51:24,shipped,web,false,9.99,
+254,94,2025-06-19 16:35:02,processing,web,true,0.00,Leave with neighbour
+255,123,2025-11-07 14:23:12,delivered,store,false,9.99,
+256,78,2025-06-08 11:16:35,returned,web,true,3.95,Gift for a friend
+257,127,2026-08-26 11:04:34,delivered,web,false,7.50,
+258,182,2025-10-16 15:06:15,processing,phone,false,0.00,
+259,107,2026-05-15 11:00:47,shipped,web,false,12.00,Leave with neighbour
+260,198,2026-03-23 19:07:57,delivered,phone,false,3.95,Leave with neighbour
+261,153,2025-09-08 10:34:10,processing,phone,false,12.00,
+262,12,2026-04-09 14:28:20,cancelled,app,false,2.99,Call on arrival
+263,44,2025-08-06 15:43:51,delivered,web,false,3.95,
+264,117,2026-01-18 15:31:24,cancelled,app,false,7.50,
+265,115,2026-03-03 19:49:17,delivered,web,false,9.99,
+266,5,2026-07-29 14:55:02,delivered,app,false,4.99,
+267,44,2025-07-11 08:36:01,shipped,app,false,12.00,Gift for a friend
+268,66,2026-08-19 20:05:11,delivered,web,false,2.99,
+269,58,2026-01-01 20:32:34,delivered,web,true,3.95,Call on arrival
+270,192,2025-09-17 19:16:10,processing,phone,false,9.99,
+271,86,2025-07-06 12:21:35,delivered,phone,false,3.95,
+272,109,2026-01-20 14:39:29,cancelled,store,false,3.95,Gift for a friend
+273,105,2026-08-06 12:29:31,shipped,web,false,7.50,
+274,103,2025-11-23 08:39:38,shipped,phone,false,3.95,
+275,93,2026-06-26 16:37:55,processing,app,true,7.50,Gift for a friend
+276,115,2026-07-24 08:44:44,shipped,app,false,0.00,
+277,14,2026-06-16 14:49:59,cancelled,web,false,12.00,
+278,145,2026-04-07 17:03:17,returned,web,false,9.99,
+279,162,2025-06-05 15:13:04,returned,web,false,4.99,Leave with neighbour
+280,56,2025-12-29 17:53:26,processing,app,false,7.50,Leave with neighbour
+281,5,2026-07-24 20:19:47,shipped,web,false,4.99,Leave with neighbour
+282,183,2025-11-29 18:08:32,delivered,web,false,3.95,
+283,160,2025-11-14 10:08:40,processing,web,false,2.99,
+284,15,2025-06-18 16:58:18,processing,web,false,0.00,Call on arrival
+285,81,2026-05-10 08:31:33,delivered,app,false,2.99,
+286,153,2025-07-15 20:52:11,delivered,web,false,12.00,
+287,94,2025-06-20 19:52:50,shipped,web,false,3.95,
+288,23,2025-10-05 15:11:06,processing,web,false,3.95,Leave with neighbour
+289,184,2026-04-15 17:56:03,shipped,phone,false,0.00,
+290,183,2026-07-25 10:41:00,shipped,app,false,12.00,
+291,22,2025-09-30 14:49:34,delivered,web,false,4.99,Gift for a friend
+292,19,2025-12-14 17:04:36,processing,web,false,3.95,
+293,138,2026-04-28 19:05:34,processing,web,false,7.50,Call on arrival
+294,197,2025-11-04 17:17:02,shipped,store,false,9.99,
+295,186,2026-06-12 08:37:57,delivered,app,false,7.50,Gift for a friend
+296,24,2026-02-27 17:30:10,delivered,phone,false,3.95,
+297,100,2026-07-06 12:56:13,processing,app,false,4.99,
+298,198,2026-02-11 11:18:07,delivered,web,false,0.00,
+299,62,2025-08-16 13:34:49,processing,phone,false,0.00,
+300,13,2026-04-05 10:52:28,delivered,app,false,9.99,
+301,75,2026-04-10 14:34:15,processing,phone,false,12.00,Gift for a friend
+302,5,2026-09-09 11:44:40,delivered,app,false,4.99,Leave with neighbour
+303,901,2025-10-03 08:45:36,delivered,web,false,12.00,
+304,154,2026-05-09 13:21:22,processing,phone,false,2.99,
+305,61,2026-03-16 12:41:45,delivered,app,false,2.99,Leave with neighbour
+306,30,2026-05-24 12:53:10,delivered,app,true,2.99,Gift for a friend
+307,54,2025-10-10 14:38:54,shipped,app,false,4.99,
+308,181,2026-07-19 20:32:50,delivered,store,false,9.99,Leave with neighbour
+309,64,2026-01-14 11:25:25,processing,store,false,9.99,
+310,181,2026-07-23 17:37:53,delivered,app,false,4.99,
+311,160,2026-09-10 09:45:56,delivered,phone,false,9.99,
+312,150,2026-09-06 10:07:08,delivered,store,false,7.50,
+313,92,2025-08-02 20:14:50,shipped,phone,false,0.00,
+314,47,2025-11-03 10:51:40,cancelled,store,false,4.99,
+315,14,2025-10-20 16:50:31,delivered,store,true,2.99,
+316,65,2025-06-27 14:47:39,shipped,app,false,12.00,Gift for a friend
+317,137,2026-05-23 09:55:19,delivered,phone,false,0.00,
+318,179,2026-03-02 13:28:19,processing,store,false,3.95,Call on arrival
+319,124,2026-02-23 16:08:34,shipped,phone,false,7.50,
+320,132,2025-10-06 08:58:38,shipped,app,false,7.50,
+321,116,2026-02-03 16:28:59,shipped,phone,false,7.50,Call on arrival
+322,116,2025-12-31 11:30:37,processing,web,false,3.95,
+323,173,2025-09-22 13:19:03,shipped,web,false,2.99,Leave with neighbour
+324,51,2025-08-29 12:27:07,delivered,phone,false,9.99,Call on arrival
+325,130,2026-04-24 13:51:18,delivered,phone,false,3.95,Leave with neighbour
+326,188,2026-04-14 15:12:09,processing,app,false,9.99,Leave with neighbour
+327,25,2026-05-22 10:54:46,shipped,app,false,4.99,Call on arrival
+328,142,2025-09-20 18:37:59,cancelled,app,false,2.99,
+329,3,2025-08-17 11:06:27,shipped,web,false,7.50,Leave with neighbour
+330,149,2025-12-23 12:33:59,returned,phone,true,2.99,
+331,69,2026-05-25 14:34:11,shipped,app,false,2.99,
+332,112,2026-02-15 14:57:28,shipped,web,false,9.99,Gift for a friend
+333,106,2026-09-19 19:40:37,delivered,web,true,4.99,
+334,76,2026-04-02 20:15:59,shipped,phone,false,2.99,
+335,99,2026-02-04 13:53:53,shipped,store,false,2.99,Leave with neighbour
+336,51,2025-07-14 16:19:36,shipped,app,false,12.00,
+337,119,2025-08-30 10:07:47,delivered,store,false,2.99,
+338,84,2025-08-30 08:43:06,shipped,store,false,2.99,
+339,174,2026-04-04 14:06:38,delivered,web,false,2.99,
+340,73,2026-09-16 15:29:20,delivered,app,false,0.00,Leave with neighbour
+341,138,2026-07-31 16:28:29,delivered,web,false,9.99,
+342,197,2026-05-02 13:33:59,delivered,web,false,0.00,Gift for a friend
+343,180,2026-04-13 20:43:12,delivered,web,false,7.50,Call on arrival
+344,158,2026-04-27 20:59:39,delivered,store,false,9.99,
+345,5,2026-05-01 17:32:54,delivered,phone,false,3.95,
+346,197,2025-08-28 08:57:56,processing,web,false,2.99,Leave with neighbour
+347,5,2026-05-28 12:37:31,delivered,phone,false,0.00,
+348,127,2026-05-15 15:49:31,cancelled,web,false,7.50,Call on arrival
+349,115,2025-09-20 18:55:39,delivered,app,true,7.50,
+350,915,2026-07-13 08:31:59,shipped,web,false,0.00,
+351,12,2026-08-05 12:07:17,delivered,phone,false,3.95,
+352,118,2025-12-01 16:58:03,delivered,app,false,2.99,
+353,161,2026-08-16 09:36:12,delivered,web,false,2.99,
+354,27,2026-08-25 14:53:26,delivered,web,false,0.00,
+355,86,2025-06-12 13:16:29,delivered,store,false,12.00,Call on arrival
+356,99,2026-05-22 19:04:58,processing,phone,false,12.00,
+357,144,2025-06-28 11:57:42,delivered,web,false,9.99,Leave with neighbour
+358,178,2026-01-26 13:34:48,returned,app,false,2.99,Leave with neighbour
+359,27,2025-11-07 09:32:25,delivered,app,false,0.00,Leave with neighbour
+360,122,2026-05-10 10:56:38,returned,phone,false,4.99,
+361,73,2025-12-05 15:17:45,delivered,store,false,0.00,
+362,3,2026-07-16 08:54:26,cancelled,web,false,2.99,Leave with neighbour
+363,33,2025-10-30 20:26:11,processing,store,false,0.00,
+364,165,2025-11-16 17:10:14,processing,app,false,4.99,Leave with neighbour
+365,4,2026-07-02 13:50:03,returned,web,false,12.00,
+366,195,2025-06-03 17:03:12,delivered,phone,true,9.99,
+367,119,2026-02-02 18:47:56,shipped,web,true,12.00,
+368,63,2026-03-06 17:26:35,shipped,store,false,2.99,
+369,183,2025-11-01 09:59:58,delivered,store,false,7.50,
+370,152,2026-04-07 17:33:03,shipped,app,false,12.00,Leave with neighbour
+371,173,2026-05-06 12:13:04,shipped,app,false,2.99,
+372,149,2026-08-25 17:21:52,cancelled,app,false,12.00,Leave with neighbour
+373,146,2026-02-09 18:35:57,returned,phone,false,0.00,
+374,167,2025-09-12 20:34:29,delivered,web,false,3.95,
+375,191,2026-04-19 15:16:43,shipped,app,false,2.99,Leave with neighbour
+376,102,2026-05-19 17:43:29,delivered,store,false,7.50,
+377,149,2025-07-07 18:34:59,delivered,phone,false,0.00,Gift for a friend
+378,176,2026-07-29 17:02:17,processing,app,false,4.99,
+379,133,2026-07-23 18:20:09,cancelled,app,false,12.00,
+380,141,2026-04-15 10:04:08,delivered,phone,false,4.99,
+381,103,2025-08-07 09:55:04,cancelled,store,true,4.99,
+382,96,2025-07-11 20:16:52,delivered,app,false,2.99,
+383,118,2026-07-30 17:38:19,returned,app,true,12.00,
+384,137,2026-04-26 09:41:33,shipped,web,false,2.99,
+385,150,2025-06-13 20:46:25,shipped,store,false,2.99,Call on arrival
+386,145,2026-05-24 14:32:57,shipped,phone,false,9.99,Leave with neighbour
+387,166,2026-08-12 15:26:11,processing,web,false,0.00,
+388,1,2025-06-06 09:48:55,shipped,store,false,0.00,
+389,9,2025-07-13 09:12:37,processing,phone,false,7.50,Gift for a friend
+390,106,2025-11-23 20:34:14,delivered,web,false,4.99,Gift for a friend
+391,101,2025-12-22 16:38:48,processing,phone,false,4.99,Leave with neighbour
+392,102,2026-02-06 15:50:26,delivered,app,false,9.99,
+393,169,2025-06-19 20:29:57,delivered,app,false,2.99,Call on arrival
+394,49,2026-07-27 17:56:50,delivered,app,false,4.99,
+395,12,2025-09-13 10:43:50,cancelled,web,false,9.99,
+396,5,2025-11-10 15:33:19,delivered,phone,false,3.95,
+397,78,2026-09-06 08:16:59,delivered,store,false,12.00,
+398,180,2026-05-08 11:32:44,shipped,phone,false,2.99,
+399,45,2025-08-20 14:39:33,delivered,app,false,0.00,
+400,6,2026-01-15 08:34:13,delivered,phone,false,3.95,
+401,945,2026-06-25 08:56:30,cancelled,phone,false,7.50,
+402,193,2026-05-01 11:48:14,processing,phone,false,7.50,
+403,191,2025-11-02 11:19:49,shipped,phone,false,4.99,
+404,35,2025-10-28 09:06:23,shipped,web,false,12.00,
+405,176,2026-04-12 20:43:44,delivered,phone,true,2.99,
+406,100,2026-08-03 09:42:15,delivered,web,false,0.00,Gift for a friend
+407,35,2026-05-27 20:24:21,cancelled,web,false,7.50,Gift for a friend
+408,102,2026-06-03 13:23:49,processing,phone,false,12.00,
+409,23,2026-01-15 11:23:07,processing,app,false,4.99,
+410,116,2026-03-08 17:09:51,delivered,web,false,3.95,Leave with neighbour
+411,84,2026-06-29 17:16:24,shipped,app,false,0.00,Call on arrival
+412,173,2025-11-19 15:46:20,delivered,web,false,0.00,Leave with neighbour
+413,23,2026-03-16 13:20:16,delivered,app,false,9.99,
+414,15,2025-12-09 15:50:08,cancelled,app,false,9.99,Leave with neighbour
+415,1,2025-08-02 08:40:23,delivered,phone,true,4.99,Gift for a friend
+416,901,2026-03-06 17:50:54,cancelled,app,false,4.99,Gift for a friend
+417,44,2026-08-07 19:44:34,delivered,app,false,3.95,
+418,66,2025-07-11 20:00:42,shipped,web,false,4.99,Gift for a friend
+419,50,2026-08-24 11:44:31,delivered,store,true,7.50,
+420,186,2025-08-11 16:04:33,shipped,store,false,3.95,Call on arrival
+421,88,2025-09-11 10:51:43,delivered,web,false,4.99,Call on arrival
+422,123,2025-07-03 12:18:39,delivered,app,false,9.99,
+423,4,2026-01-16 09:37:50,processing,phone,true,2.99,
+424,87,2026-08-22 17:37:46,shipped,web,false,3.95,
+425,40,2026-02-05 09:04:42,shipped,app,false,0.00,
+426,103,2025-08-02 08:57:33,delivered,app,false,3.95,Leave with neighbour
+427,197,2025-10-31 10:41:00,delivered,phone,false,0.00,Gift for a friend
+428,67,2026-09-24 17:23:56,shipped,app,false,4.99,
+429,93,2025-12-01 10:53:04,shipped,app,false,3.95,
+430,49,2025-11-19 11:06:09,shipped,web,false,7.50,Call on arrival
+431,161,2026-08-08 17:16:05,delivered,app,false,12.00,Call on arrival
+432,42,2026-03-03 17:02:00,processing,web,true,3.95,Gift for a friend
+433,44,2026-01-25 12:36:53,shipped,web,false,0.00,
+434,46,2026-07-17 17:18:01,delivered,phone,false,9.99,
+435,2,2026-04-08 12:14:43,processing,web,false,2.99,
+436,95,2025-06-11 19:32:33,delivered,store,false,3.95,
+437,33,2026-07-17 09:33:57,delivered,web,true,3.95,
+438,67,2026-03-07 18:56:09,delivered,store,true,7.50,
+439,148,2025-11-27 12:02:37,processing,store,false,12.00,
+440,116,2026-01-18 08:55:34,shipped,app,true,9.99,
+441,180,2026-08-12 11:09:14,delivered,phone,false,7.50,
+442,124,2026-02-12 16:28:08,processing,web,false,7.50,Leave with neighbour
+443,1,2025-10-23 16:47:36,delivered,web,false,9.99,
+444,21,2026-02-14 12:07:34,processing,store,false,0.00,
+445,125,2025-08-13 19:43:48,shipped,phone,false,9.99,Gift for a friend
+446,10,2026-07-17 15:36:41,cancelled,web,false,7.50,
+447,1,2025-11-26 20:20:28,shipped,phone,false,4.99,
+448,97,2026-08-08 14:36:47,shipped,store,false,9.99,
+449,183,2026-05-08 14:57:27,processing,web,false,4.99,
+450,10,2026-08-25 13:59:58,returned,phone,false,0.00,
+451,26,2025-09-14 09:56:33,shipped,app,false,2.99,Leave with neighbour
+452,138,2025-10-26 18:39:25,shipped,web,false,2.99,
+453,47,2026-04-09 14:24:41,delivered,web,false,9.99,
+454,141,2026-01-06 12:35:56,processing,store,false,12.00,
+455,133,2026-07-20 14:55:12,delivered,store,false,12.00,
+456,119,2026-03-12 08:01:34,shipped,phone,true,2.99,
+457,185,2026-09-08 20:40:09,delivered,store,false,-1.00,
+458,88,2025-12-16 10:55:58,processing,app,false,7.50,Leave with neighbour
+459,66,2026-05-27 08:40:14,delivered,app,false,4.99,Leave with neighbour
+460,84,2025-06-04 19:55:13,shipped,phone,false,2.99,Gift for a friend
+461,20,2026-04-25 19:33:12,returned,web,false,9.99,Call on arrival
+462,67,2025-11-05 16:35:40,shipped,web,false,4.99,
+463,33,2025-08-08 16:34:21,delivered,web,false,2.99,
+464,186,2025-06-02 15:24:06,delivered,store,false,0.00,Call on arrival
+465,22,2026-05-07 19:53:32,processing,app,true,2.99,
+466,124,2025-10-30 17:32:29,cancelled,phone,false,2.99,Leave with neighbour
+467,6,2026-03-27 19:33:04,delivered,store,false,4.99,Call on arrival
+468,107,2025-12-08 17:40:16,shipped,web,false,2.99,
+469,144,2026-05-22 13:24:45,delivered,phone,false,7.50,
+470,167,2026-07-26 20:12:01,delivered,store,false,7.50,
+471,50,2026-03-16 20:44:03,delivered,phone,false,2.99,
+472,102,2025-07-02 09:58:25,shipped,app,false,2.99,
+473,148,2026-06-08 09:28:44,returned,app,false,2.99,Call on arrival
+474,62,2025-09-21 14:43:02,cancelled,store,true,3.95,
+475,199,2025-10-28 10:45:21,shipped,phone,false,3.95,
+476,77,2026-05-27 10:54:20,returned,store,false,0.00,
+477,110,2025-06-22 17:08:49,delivered,store,false,0.00,Leave with neighbour
+478,27,2026-06-12 16:36:23,shipped,app,true,9.99,Gift for a friend
+479,198,2026-07-08 15:56:14,returned,store,false,2.99,Leave with neighbour
+480,26,2026-02-01 09:21:36,cancelled,store,false,2.99,
+481,26,2026-07-07 10:02:47,delivered,phone,false,2.99,
+482,84,2026-03-06 16:21:52,delivered,app,false,9.99,
+483,40,2026-01-26 17:04:22,shipped,phone,false,4.99,Leave with neighbour
+484,86,2025-06-04 18:13:01,delivered,store,false,2.99,
+485,146,2026-03-09 10:24:26,shipped,phone,false,0.00,
+486,150,2026-09-10 09:18:37,delivered,web,false,7.50,
+487,126,2025-09-17 20:34:09,processing,phone,false,4.99,
+488,7,2025-06-27 19:39:31,delivered,store,false,0.00,
+489,17,2026-05-09 10:22:50,shipped,web,false,3.95,
+490,28,2026-02-18 08:38:05,delivered,phone,false,9.99,
+491,196,2026-05-11 08:06:18,delivered,store,false,9.99,
+492,68,2026-07-18 14:15:20,returned,phone,false,3.95,Leave with neighbour
+493,187,2026-02-05 17:23:37,delivered,web,false,4.99,Call on arrival
+494,100,2026-03-15 16:57:31,returned,app,false,0.00,Leave with neighbour
+495,29,2026-07-19 16:11:25,processing,phone,false,0.00,
+496,54,2026-02-23 10:55:22,shipped,store,false,4.99,Leave with neighbour
+497,14,2026-07-12 10:47:33,shipped,app,false,7.50,Gift for a friend
+498,6,2026-01-09 19:16:01,delivered,web,false,9.99,
+499,69,2026-07-15 15:08:12,processing,store,false,9.99,
+500,92,2025-06-05 10:32:12,delivered,store,false,9.99,
+501,70,2026-05-23 13:26:48,delivered,app,false,12.00,
+502,84,2026-08-09 14:10:20,shipped,web,false,9.99,
+503,49,2025-07-06 08:59:27,shipped,phone,false,3.95,
+504,177,2025-12-31 16:09:02,shipped,store,false,7.50,Leave with neighbour
+505,32,2025-12-16 20:41:57,shipped,app,false,9.99,
+506,8,2026-08-11 10:37:03,delivered,phone,false,0.00,
+507,15,2025-07-12 12:43:04,shipped,store,false,3.95,Call on arrival
+508,77,2025-07-27 11:03:07,delivered,web,false,12.00,Gift for a friend
+509,119,2026-07-17 11:01:49,cancelled,store,false,4.99,
+510,159,2026-07-02 11:25:25,cancelled,app,false,4.99,
+511,135,2026-08-26 20:15:30,returned,app,false,7.50,
+512,101,2026-04-16 11:23:26,delivered,phone,false,12.00,
+513,108,2026-09-11 20:32:01,delivered,app,false,4.99,
+514,91,2025-10-31 13:24:35,cancelled,web,false,2.99,Leave with neighbour
+515,159,2025-09-07 13:50:56,cancelled,web,false,3.95,
+516,51,2026-01-13 09:28:44,returned,app,false,4.99,
+517,72,2026-07-29 11:04:56,delivered,phone,false,3.95,
+518,27,2026-06-27 11:38:06,delivered,app,false,4.99,
+519,39,2026-01-07 20:54:57,shipped,app,false,3.95,
+520,126,2026-05-27 19:17:50,delivered,phone,false,2.99,
+521,85,2026-07-22 18:56:11,delivered,store,true,2.99,Leave with neighbour
+522,127,2026-07-30 19:41:27,delivered,web,false,9.99,
+523,59,2026-08-23 20:36:40,processing,web,false,0.00,
+524,85,2026-07-11 20:28:44,returned,store,false,3.95,Gift for a friend
+525,160,2026-03-26 18:45:34,delivered,store,false,3.95,Leave with neighbour
+526,98,2025-07-13 19:04:28,delivered,app,false,4.99,
+527,162,2025-07-16 08:38:00,delivered,store,false,9.99,Gift for a friend
+528,174,2026-09-08 10:52:38,processing,store,false,4.99,
+529,13,2025-11-12 11:16:27,shipped,store,false,2.99,
+530,190,2025-10-31 13:51:37,delivered,web,false,0.00,Leave with neighbour
+531,153,2025-06-13 17:36:45,processing,store,false,0.00,
+532,104,2025-11-02 14:10:35,shipped,store,false,0.00,
+533,193,2026-06-03 17:44:02,processing,store,false,0.00,
+534,80,2025-06-24 17:09:58,delivered,phone,false,12.00,
+535,169,2026-04-19 17:42:01,shipped,store,false,12.00,Call on arrival
+536,56,2025-08-07 18:07:55,delivered,store,false,9.99,Leave with neighbour
+537,45,2026-07-18 08:10:09,processing,app,false,9.99,
+538,182,2025-09-11 20:42:37,returned,phone,false,9.99,Leave with neighbour
+539,73,2025-08-13 09:18:46,delivered,app,false,7.50,Gift for a friend
+540,156,2025-06-08 09:33:56,delivered,web,false,2.99,
+541,35,2026-02-15 17:55:42,delivered,store,false,0.00,
+542,34,2025-12-25 08:43:56,cancelled,app,false,2.99,
+543,182,2026-07-13 12:17:30,delivered,phone,false,0.00,Leave with neighbour
+544,149,2025-06-16 17:37:25,cancelled,web,false,9.99,Call on arrival
+545,31,2025-12-28 14:16:28,delivered,store,false,2.99,
+546,138,2026-07-07 18:14:33,delivered,app,true,7.50,
+547,148,2025-09-11 11:09:24,delivered,app,false,4.99,Leave with neighbour
+548,72,2026-09-14 17:53:45,delivered,app,false,3.95,Gift for a friend
+549,5,2026-07-01 17:29:27,delivered,store,false,4.99,
+550,32,2025-09-29 09:15:59,cancelled,phone,false,12.00,
+551,3,2026-09-13 08:12:01,shipped,app,false,12.00,Gift for a friend
+552,145,2026-05-09 19:16:50,delivered,store,false,7.50,
+553,944,2026-08-19 14:51:04,delivered,app,false,3.95,
+554,173,2026-02-24 14:56:17,shipped,app,false,9.99,
+555,44,2025-12-21 14:59:22,shipped,app,false,9.99,Gift for a friend
+556,199,2025-11-28 16:41:09,shipped,store,false,4.99,
+557,150,2026-06-06 16:51:13,delivered,phone,false,0.00,Call on arrival
+558,166,2025-08-19 20:47:35,shipped,store,false,3.95,Gift for a friend
+559,187,2026-03-01 10:57:11,processing,web,false,9.99,Gift for a friend
+560,102,2025-07-06 16:37:47,processing,store,false,3.95,
+561,72,2026-03-24 10:54:09,returned,store,false,12.00,
+562,156,2025-09-03 08:40:37,delivered,app,false,0.00,Call on arrival
+563,17,2026-06-09 20:31:40,processing,phone,false,7.50,Leave with neighbour
+564,81,2025-08-26 17:24:56,delivered,web,false,9.99,
+565,166,2026-07-08 19:00:17,processing,app,false,3.95,
+566,48,2025-12-07 18:21:00,delivered,store,true,3.95,
+567,19,2025-08-05 08:36:43,shipped,web,false,9.99,Call on arrival
+568,76,2026-07-23 16:40:46,processing,phone,false,3.95,
+569,89,2025-07-02 19:27:03,shipped,web,false,7.50,Leave with neighbour
+570,139,2025-07-13 17:43:06,shipped,phone,false,12.00,
+571,119,2026-02-12 09:44:37,delivered,web,false,3.95,Call on arrival
+572,189,2026-03-24 09:10:12,delivered,store,false,12.00,Call on arrival
+573,139,2025-09-01 17:34:30,delivered,store,false,9.99,Call on arrival
+574,185,2026-02-19 20:46:02,shipped,phone,false,2.99,
+575,93,2026-02-20 09:38:35,cancelled,store,false,9.99,
+576,192,2026-09-10 10:27:26,delivered,web,false,4.99,
+577,85,2025-10-10 09:45:11,shipped,app,false,4.99,
+578,180,2026-03-25 09:57:32,delivered,app,false,9.99,Leave with neighbour
+579,70,2025-10-14 18:33:16,shipped,store,true,7.50,Gift for a friend
+580,195,2025-11-19 15:15:58,delivered,web,false,0.00,
+581,146,2026-07-10 15:13:43,processing,web,false,4.99,
+582,95,2025-06-08 16:49:35,processing,phone,false,12.00,Call on arrival
+583,177,2025-12-27 09:22:44,shipped,store,false,9.99,
+584,158,2025-08-20 10:44:24,cancelled,store,false,2.99,
+585,36,2026-03-05 14:41:55,delivered,web,false,7.50,
+586,19,2026-09-10 12:01:30,delivered,store,true,12.00,
+587,93,2025-12-16 15:31:29,processing,store,false,7.50,
+588,126,2026-02-04 15:35:15,delivered,app,false,3.95,
+589,165,2025-06-30 09:44:29,cancelled,store,false,0.00,
+590,192,2025-12-15 10:11:09,shipped,app,false,0.00,
+591,135,2025-09-20 09:24:25,cancelled,app,false,9.99,Gift for a friend
+592,114,2026-01-12 08:36:05,shipped,store,false,2.99,
+593,180,2026-06-30 15:31:21,delivered,web,false,0.00,
+594,29,2026-02-21 15:51:49,processing,app,false,4.99,
+595,108,2026-09-17 14:13:31,processing,store,false,12.00,
+596,182,2026-09-27 13:42:06,delivered,store,false,4.99,
+597,58,2025-06-07 11:00:59,shipped,store,false,0.00,
+598,102,2026-08-13 09:48:40,delivered,web,false,2.99,
+599,22,2025-08-24 20:32:54,shipped,store,false,4.99,
+600,46,2025-11-18 13:48:45,processing,phone,false,9.99,
+601,120,2025-10-17 13:42:43,shipped,web,false,7.50,
+602,11,2026-05-12 15:43:25,shipped,app,false,0.00,Call on arrival
+603,32,2026-01-07 11:05:13,delivered,app,true,0.00,Call on arrival
+604,182,2026-03-14 17:57:11,shipped,phone,false,2.99,Gift for a friend
+605,170,2025-09-06 12:19:59,returned,phone,false,12.00,
+606,38,2026-03-19 13:17:17,delivered,app,false,4.99,
+607,163,2025-09-08 19:05:42,returned,web,true,9.99,
+608,25,2025-06-07 19:33:58,processing,app,false,7.50,
+609,28,2026-01-21 12:33:49,shipped,web,false,2.99,
+610,105,2026-03-01 15:05:10,shipped,web,true,7.50,
+611,40,2026-02-16 16:27:33,shipped,app,false,12.00,
+612,61,2026-04-03 20:09:54,shipped,store,false,0.00,Leave with neighbour
+613,95,2025-07-30 13:16:09,delivered,phone,false,3.95,Call on arrival
+614,181,2025-09-29 14:22:45,processing,app,false,4.99,Leave with neighbour
+615,943,2025-06-09 12:24:43,delivered,store,false,9.99,
+616,92,2025-07-21 13:24:47,delivered,web,false,12.00,
+617,81,2026-08-17 10:05:01,shipped,phone,false,9.99,
+618,102,2026-02-20 13:21:14,processing,phone,false,4.99,
+619,937,2026-05-02 14:58:53,shipped,app,false,12.00,Gift for a friend
+620,38,2025-12-08 10:01:26,shipped,store,true,2.99,
+621,91,2025-06-05 16:46:50,delivered,store,true,2.99,
+622,22,2026-04-14 13:56:58,delivered,phone,false,2.99,
+623,11,2026-05-24 19:48:24,processing,app,false,4.99,
+624,70,2026-05-18 15:08:31,delivered,web,false,7.50,
+625,148,2025-08-13 13:28:22,shipped,web,false,4.99,
+626,48,2025-11-01 09:31:49,shipped,phone,true,12.00,
+627,86,2026-01-21 20:06:18,cancelled,app,false,9.99,
+628,59,2025-09-22 13:11:23,shipped,web,false,0.00,
+629,104,2026-08-05 17:00:57,processing,store,false,0.00,
+630,58,2026-07-19 17:55:36,returned,phone,false,0.00,
+631,165,2025-10-07 08:57:39,delivered,app,false,2.99,Leave with neighbour
+632,128,2026-03-17 19:06:54,processing,app,false,12.00,Gift for a friend
+633,159,2025-10-15 11:01:38,delivered,app,false,4.99,
+634,164,2026-02-02 14:45:43,shipped,phone,false,0.00,
+635,165,2026-06-06 16:30:27,delivered,web,false,0.00,
+636,160,2026-06-06 12:45:44,cancelled,phone,false,3.95,
+637,44,2026-08-07 13:39:27,delivered,phone,false,7.50,Gift for a friend
+638,5,2025-08-31 18:48:07,shipped,store,false,7.50,Call on arrival
+639,84,2025-10-10 19:53:05,returned,web,false,2.99,Leave with neighbour
+640,26,2025-11-04 18:37:38,delivered,store,false,2.99,
+641,163,2025-09-26 10:49:49,delivered,app,false,2.99,Leave with neighbour
+642,18,2025-08-23 12:45:54,delivered,store,false,4.99,
+643,53,2025-07-12 17:24:07,cancelled,store,false,9.99,Leave with neighbour
+644,5,2025-08-30 19:26:46,delivered,phone,false,12.00,
+645,99,2025-09-20 20:53:06,processing,store,false,3.95,
+646,99,2025-10-04 09:47:27,processing,web,false,9.99,
+647,16,2026-03-10 08:56:24,delivered,store,false,0.00,
+648,136,2026-08-17 08:03:14,processing,app,false,12.00,
+649,139,2026-03-21 12:21:35,delivered,store,false,9.99,Call on arrival
+650,61,2026-07-14 19:12:14,delivered,app,false,2.99,Leave with neighbour
+651,67,2025-06-03 14:17:50,returned,phone,false,0.00,
+652,137,2026-03-05 20:33:11,delivered,store,false,2.99,Gift for a friend
+653,102,2025-12-13 09:18:32,returned,phone,false,2.99,
+654,104,2026-08-26 17:44:07,returned,web,false,7.50,Gift for a friend
+655,174,2026-02-01 09:01:41,delivered,phone,false,12.00,Call on arrival
+656,58,2026-09-17 16:18:26,delivered,app,false,12.00,Call on arrival
+657,15,2026-09-01 11:51:50,shipped,app,false,3.95,
+658,118,2026-04-10 14:27:39,delivered,phone,false,2.99,
+659,30,2026-08-15 20:41:45,shipped,store,false,7.50,
+660,34,2026-01-27 08:29:00,shipped,store,false,2.99,
+661,118,2025-07-03 15:54:33,delivered,store,false,4.99,Leave with neighbour
+662,165,2026-08-15 13:05:52,delivered,store,false,2.99,
+663,132,2025-09-23 18:10:25,processing,phone,false,9.99,
+664,92,2025-09-08 12:00:59,delivered,phone,false,9.99,
+665,150,2026-03-26 19:25:44,shipped,store,false,7.50,
+666,31,2026-09-02 20:10:17,delivered,web,false,12.00,
+667,196,2026-05-29 09:21:00,shipped,phone,false,3.95,Leave with neighbour
+668,97,2025-10-24 15:55:25,delivered,phone,false,4.99,
+669,68,2025-11-02 19:40:58,delivered,app,false,9.99,Gift for a friend
+670,65,2026-01-04 12:42:22,delivered,app,false,9.99,
+671,151,2025-11-22 16:30:45,delivered,web,false,12.00,
+672,162,2025-10-19 17:54:30,cancelled,phone,true,9.99,
+673,60,2026-08-25 16:41:41,delivered,web,false,9.99,
+674,83,2026-03-20 17:20:41,delivered,app,false,4.99,
+675,195,2025-08-31 09:58:05,delivered,store,false,3.95,
+676,184,2025-08-03 10:33:47,delivered,phone,false,9.99,
+677,141,2026-01-14 11:11:30,returned,web,false,0.00,
+678,196,2025-12-06 11:37:57,returned,web,false,2.99,Call on arrival
+679,108,2026-04-09 12:07:10,delivered,app,false,2.99,
+680,108,2025-07-22 09:59:26,shipped,phone,false,0.00,
+681,4,2025-10-26 13:49:39,delivered,store,false,0.00,
+682,125,2025-10-10 13:28:36,cancelled,web,false,0.00,
+683,25,2025-12-22 16:07:11,cancelled,store,false,7.50,
+684,66,2026-02-22 19:26:48,shipped,phone,false,7.50,
+685,60,2026-08-22 19:31:49,returned,app,false,9.99,
+686,174,2026-02-21 14:14:32,processing,web,false,4.99,
+687,122,2026-07-17 12:00:48,processing,web,false,12.00,
+688,76,2026-04-18 13:05:12,delivered,phone,false,3.95,Leave with neighbour
+689,143,2026-03-02 14:25:30,shipped,phone,false,3.95,
+690,192,2025-11-21 09:40:34,returned,store,true,12.00,Call on arrival
+691,105,2026-09-08 12:44:35,delivered,app,false,9.99,
+692,154,2025-10-30 17:56:48,delivered,phone,false,7.50,
+693,89,2026-06-28 10:06:48,delivered,web,false,12.00,
+694,48,2026-06-16 14:38:32,processing,store,false,3.95,
+695,169,2026-06-30 10:30:22,delivered,web,false,3.95,Gift for a friend
+696,189,2025-12-13 18:36:43,delivered,web,false,12.00,Call on arrival
+697,96,2026-01-15 13:55:24,processing,app,true,12.00,Gift for a friend
+698,151,2025-08-16 15:41:47,processing,web,false,0.00,Gift for a friend
+699,927,2025-07-19 15:15:10,delivered,app,true,3.95,
+700,6,2026-02-27 12:46:06,shipped,app,false,4.99,

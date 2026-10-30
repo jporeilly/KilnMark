@@ -29,6 +29,35 @@
   margin-top: 16px;
 }
 
+.pl-sample-tables {
+  margin: 0 0 16px;
+  padding: 10px 14px 4px;
+  border: 1px solid var(--km-border);
+  border-radius: var(--km-radius-control);
+}
+
+.pl-sample-tables legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.pl-sample-tables .field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.pl-sample-tables .field-row .field {
+  flex: 1 1 140px;
+  margin-bottom: 8px;
+}
+
+.pl-sample-tables .pl-sample-tables-go {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
 .pl-sample-results {
   max-height: 50vh;
   overflow-y: auto;

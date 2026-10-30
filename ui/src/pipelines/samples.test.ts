@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { SampleInfo, SamplePlaceholder, Source } from "../api";
-import { addable, chosenSources, sourceGroups, sourceLabel } from "./AddSamples";
+import { addable, chosenSources, defaultSchema, fileTargets, sourceGroups, sourceLabel, tableTargets } from "./AddSamples";
 
 const source = (name: string, category: string, over: Partial<Source> = {}): Source =>
   ({ name, displayName: name, category, kind: "x", settings: {}, assets: 0, formats: {}, ...over }) as Source;
@@ -33,5 +33,23 @@ describe("Add samples", () => {
     const all = [sample("a", ["crm-db", "files"]), sample("b", ["shop-db", "files"]), sample("f", [], "flow")];
     expect(addable(all, { "crm-db": "pg" })).toEqual([]);
     expect(addable(all, { "crm-db": "pg", files: "bucket" }).map((s) => s.name)).toEqual(["a"]);
+  });
+
+  test("the sample tables go in a database that allows writing, in its first schema or its kind's usual one", () => {
+    const pg = source("pg", "databases", { kind: "postgresql", settings: { allow_writing: "true" } });
+    const ms = source("ms", "databases", { kind: "sqlserver", settings: { allow_writing: "true", schemas: "sales; hr" } });
+    const ro = source("ro", "databases", { kind: "postgresql" });
+    expect(tableTargets([pg, ms, ro, source("bucket", "files", { settings: { allow_writing: "true" } })]).map((s) => s.name))
+      .toEqual(["pg", "ms"]);
+    expect(defaultSchema(pg)).toBe("public");
+    expect(defaultSchema(ms)).toBe("sales");
+    expect(defaultSchema(source("my", "databases", { kind: "mysql" }))).toBe("");
+    expect(defaultSchema(undefined)).toBe("");
+  });
+
+  test("the starter pack writes its files to a file source that allows writing", () => {
+    const ok = source("bucket", "files", { settings: { allow_writing: "true" } });
+    expect(fileTargets([ok, source("share", "files"), source("pg", "databases", { settings: { allow_writing: "true" } })])
+      .map((s) => s.name)).toEqual(["bucket"]);
   });
 });

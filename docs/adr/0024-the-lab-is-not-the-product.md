@@ -27,6 +27,10 @@ each connector) is for **development, testing and demos only**.
   `files`), never a lab source, and the server bundles them for **Add samples**, which maps each
   placeholder to one of the person's sources. Which lab source each placeholder means lives only in
   `lab/sample-sources.csv`, which `lab.sh samples` and the tests read.
+- **The sample data is the product's own, not the lab's** (30 October 2026). The tables the samples
+  read ship as synthetic data generated for Kilnmark (`samples/data/generate.py`), with the columns
+  the samples use; none of the lab's data is copied into it, and it never mentions the lab. The
+  starter pack copies it into a database of the person's choosing.
 
 The release build enforces this: `./gradlew release` runs `checkProductOnly`
 (`gradle/product-only.gradle.kts`), which fails when the release folder holds a lab, tests or docs
