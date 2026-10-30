@@ -258,7 +258,7 @@ is handy while you try a pipeline out; 0 reads them all.
 ```yaml
   - id: orders
     type: read
-    source: lab-mariadb
+    source: sales-db
     asset: shop.orders
     columns: [order_id, customer_id, status, shipping_fee]   # in this order; leave out to read all
     where: "status in ${statuses} and shipping_fee >= ${min_fee}"
@@ -284,7 +284,7 @@ is handy while you try a pipeline out; 0 reads them all.
   tab, says which: "applied by the database while reading", "applied in part by the database"
   (naming what Kilnmark does), or "applied by Kilnmark as the rows arrive".
 
-`samples/01-read-and-write/read-columns-where.yaml` and `samples/07-parameters/orders-by-status.yaml`
+In the source repository, `samples/01-read-and-write/read-columns-where.yaml` and `samples/07-parameters/orders-by-status.yaml`
 show both.
 
 ### Writing
