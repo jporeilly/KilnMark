@@ -29,7 +29,11 @@ public enum NotificationKind {
     PIPELINE_FAILED("Pipeline run failed", "A pipeline run fails", Repeat.OPENS),
     /** A pipeline run succeeded, but the quality of what it wrote is below its threshold. */
     PIPELINE_LOW_QUALITY("Pipeline quality below threshold", "A pipeline run succeeds but what it wrote scores "
-        + "below the pipeline's quality threshold", Repeat.ONCE);
+        + "below the pipeline's quality threshold", Repeat.ONCE),
+    /** A flow run failed (docs/design/flows.md). */
+    FLOW_FAILED("Flow run failed", "A flow run fails", Repeat.OPENS),
+    /** A flow's notify node sent its message. */
+    FLOW_NOTICE("Flow notice", "A flow's notify node sends a message", Repeat.ONCE);
 
     /** How repeats of one problem are handled. */
     public enum Repeat {

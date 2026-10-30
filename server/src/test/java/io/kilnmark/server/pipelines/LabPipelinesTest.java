@@ -44,6 +44,8 @@ class LabPipelinesTest {
             "marketing_opt_in:boolean", "created_at:timestamp_tz");
         s.asset("urn:kilnmark:lab-db:billing.transactions", "txn_id:int64", "account_id:int64", "customer_id:int64",
             "amount:decimal", "currency:text", "txn_at:timestamp_tz", "merchant:text", "card_last4:text");
+        s.asset("urn:kilnmark:lab-mariadb:shop.orders", "order_id:int64", "customer_id:int64", "ordered_at:timestamp",
+            "status:text", "channel:text", "gift_wrap:boolean", "shipping_fee:decimal", "notes:text");
         s.asset("urn:kilnmark:lab-mariadb:stock.supplier_feed", "sku:text", "supplier:text", "cost_price:decimal",
             "lead_time_days:int16", "in_stock:boolean", "received_on:date");
         return s;
@@ -67,6 +69,51 @@ class LabPipelinesTest {
                 if (!"sink".equals(node.kind())) {
                     assertTrue(node.columns().get("out") != null, file + ": the columns leaving " + node.id()
                         + " are known");
+                }
+            }
+        }
+    }
+
+    /**
+     * The demo flows in lab/flows read without problems, run only demo pipelines, give them only the
+     * parameters they take, and pass on (by name) only parameters of the kind the pipeline takes.
+     */
+    @Test
+    void everyDemoFlowFitsTheDemoPipelines() throws Exception {
+        Map<String, io.kilnmark.kiln.yaml.PipelineDefinition> pipelines = new java.util.HashMap<>();
+        try (Stream<Path> list = Files.list(lab().resolve("pipelines"))) {
+            for (Path file : list.filter(p -> p.toString().endsWith(".yaml")).toList()) {
+                io.kilnmark.kiln.yaml.PipelineDefinition d = io.kilnmark.kiln.yaml.PipelineDefinition
+                    .parse(Files.readString(file)).definition();
+                pipelines.put(d.name(), d);
+            }
+        }
+        List<Path> files;
+        try (Stream<Path> list = Files.list(lab().resolve("flows"))) {
+            files = list.filter(p -> p.toString().endsWith(".yaml")).sorted().toList();
+        }
+        assertFalse(files.isEmpty(), "lab/flows has the demo flows");
+        for (Path file : files) {
+            io.kilnmark.kiln.yaml.FlowDefinition.Parsed parsed = io.kilnmark.kiln.yaml.FlowDefinition
+                .parse(Files.readString(file));
+            assertEquals(List.of(), parsed.problems(), file.getFileName().toString());
+            io.kilnmark.kiln.yaml.FlowDefinition flow = parsed.definition();
+            assertTrue(flow.name().startsWith("demo-"), file + ": demo flows are named demo-...");
+            for (io.kilnmark.kiln.yaml.FlowDefinition.Node n : flow.nodes()) {
+                if (!io.kilnmark.kiln.yaml.FlowDefinition.RUN_PIPELINE.equals(n.type())) {
+                    continue;
+                }
+                io.kilnmark.kiln.yaml.PipelineDefinition p = pipelines.get(n.pipeline());
+                assertTrue(p != null, file + ": node " + n.id() + " runs " + n.pipeline() + ", not in lab/pipelines");
+                for (String key : n.with().keySet()) {
+                    assertTrue(p.parameters().stream().anyMatch(x -> x.name().equals(key)),
+                        file + ": " + n.pipeline() + " takes no parameter " + key);
+                }
+                for (io.kilnmark.kiln.yaml.Parameters.Parameter x : p.parameters()) {
+                    io.kilnmark.kiln.yaml.Parameters.Parameter mine = flow.parameter(x.name());
+                    if (mine != null && !n.with().containsKey(x.name())) {
+                        assertEquals(x.kind(), mine.kind(), file + ": " + x.name() + " passed to " + n.pipeline());
+                    }
                 }
             }
         }

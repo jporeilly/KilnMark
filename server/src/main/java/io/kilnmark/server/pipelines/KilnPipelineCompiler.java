@@ -25,21 +25,39 @@ import io.kilnmark.kiln.yaml.PipelineDefinition;
 final class KilnPipelineCompiler implements PipelineCompilerPort {
 
     @Override
-    public Compilation check(String yaml, NodeFactories factories) {
-        return map(new PipelineCompiler(factories).compile(yaml), factories, false);
+    public Compilation check(String yaml, NodeFactories factories, Map<String, Object> parameters,
+                             Map<String, Object> variables) {
+        return map(new PipelineCompiler(factories).compile(yaml, parameters, variables), factories, false);
     }
 
     @Override
-    public Compilation compile(String yaml, NodeFactories factories) {
-        return map(new PipelineCompiler(factories).compile(yaml), factories, true);
+    public Compilation compile(String yaml, NodeFactories factories, Map<String, Object> parameters,
+                               Map<String, Object> variables) {
+        return map(new PipelineCompiler(factories).compile(yaml, parameters, variables), factories, true);
+    }
+
+    /** {@link #check(String, NodeFactories, Map, Map)} with the defaults and no server variables. */
+    Compilation check(String yaml, NodeFactories factories) {
+        return check(yaml, factories, Map.of(), Map.of());
+    }
+
+    /** {@link #compile(String, NodeFactories, Map, Map)} with the defaults and no server variables. */
+    Compilation compile(String yaml, NodeFactories factories) {
+        return compile(yaml, factories, Map.of(), Map.of());
+    }
+
+    /** {@link #compile(PipelineDefinition, NodeFactories, boolean, Map)} with no server variables. */
+    static Compilation compile(PipelineDefinition definition, NodeFactories factories, boolean create) {
+        return compile(definition, factories, create, Map.of());
     }
 
     /**
      * Checks a pipeline built in code (a preview's cut-down pipeline) and, with {@code create},
      * creates its nodes as {@link #compile} does: called inside {@link RunContext#run} then.
      */
-    static Compilation compile(PipelineDefinition definition, NodeFactories factories, boolean create) {
-        return map(new PipelineCompiler(factories).compile(definition), factories, create);
+    static Compilation compile(PipelineDefinition definition, NodeFactories factories, boolean create,
+                               Map<String, Object> variables) {
+        return map(new PipelineCompiler(factories).compile(definition, null, variables), factories, create);
     }
 
     private static Compilation map(Compiled c, NodeFactories factories, boolean create) {

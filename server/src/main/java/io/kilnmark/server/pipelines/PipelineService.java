@@ -33,6 +33,8 @@ import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.graph.GraphRunner;
 import io.kilnmark.kiln.graph.PipelineGraph;
 import io.kilnmark.kiln.plugins.write.WriteReport;
+import io.kilnmark.kiln.yaml.Parameters;
+import io.kilnmark.kiln.yaml.PipelineDefinition;
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.api.ApiError;
 import io.kilnmark.server.auth.AccessRole;
@@ -94,6 +96,10 @@ public class PipelineService {
 
     @Inject
     io.kilnmark.server.ai.EgressPolicy egress;
+
+    /** The server's variables (${vars.name}); null in tests that build the service by hand. */
+    @Inject
+    io.kilnmark.server.variables.VariableService variables;
 
 
     @Inject
@@ -164,7 +170,7 @@ public class PipelineService {
      */
     public PipelineViews.Validation validate(String yaml, String expectedName) {
         checkSize(yaml);
-        PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes);
+        PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes, Map.of(), variables());
         List<PipelineCompilerPort.Problem> problems = new ArrayList<>(c.problems());
         if (expectedName != null && c.name() != null && !c.name().equals(expectedName)) {
             problems.add(0, new PipelineCompilerPort.Problem(lineOf(yaml, "name"), 1, null, "name: this pipeline is "
@@ -214,7 +220,7 @@ public class PipelineService {
      */
     public PredictionViews.Prediction predict(String yaml, Sights sights) {
         checkSize(yaml);
-        PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes);
+        PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes, Map.of(), variables());
         PredictionCatalogue.Remembering catalogue = predictions.open(sights);
         QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
         return PredictionViews.of(new QualityPredictor(catalogue).predict(plan), c.valid());
@@ -280,7 +286,7 @@ public class PipelineService {
      */
     public PredictionViews.Advice suggest(String yaml, boolean useAi, String caller, Sights sights) {
         checkSize(yaml);
-        PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes);
+        PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes, Map.of(), variables());
         PredictionCatalogue.Remembering catalogue = predictions.open(sights);
         QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
         PipelineAdvisor advisor = new PipelineAdvisor(catalogue, nodes, json);
@@ -496,10 +502,22 @@ public class PipelineService {
      * sources may have changed since it was saved: one with problems cannot run.
      */
     public PipelineViews.RunSummary queueRun(String name, Integer version, String by, AccessRole role) {
-        int n = runnableVersion(name, version);
+        return queueRun(name, version, Map.of(), by, role);
+    }
+
+    /**
+     * As {@link #queueRun(String, Integer, String, AccessRole)}, with values for the pipeline's
+     * parameters (the others take their defaults). The run records them and the server's variables as
+     * they are now, and reads those however the variables change before it runs.
+     */
+    public PipelineViews.RunSummary queueRun(String name, Integer version, Map<String, Object> parameters, String by,
+                                             AccessRole role) {
+        Map<String, Object> vars = variables();
+        RunnableVersion checked = runnableVersion(name, version, parameters, vars);
+        int n = checked.version();
         PipelineStore.Run run;
         try {
-            run = store.queueRun(name, n, by, role.id());
+            run = store.queueRun(name, n, by, role.id(), null, null, writeJson(checked.parameters()), writeJson(vars));
         } catch (PipelineStore.Busy e) {
             throw fail(Response.Status.CONFLICT, "A run of " + name + " is already queued or running. Wait for it to "
                 + "finish, or cancel it, then run the pipeline again.");
@@ -517,29 +535,73 @@ public class PipelineService {
      * @throws WebApplicationException (404, 409) when the pipeline or version is missing or cannot run
      */
     public PipelineStore.Run queueRunForFlow(String name, Integer version, String by, AccessRole role,
-                                             long flowRunId, String flowNode) {
-        int n = runnableVersion(name, version);
-        PipelineStore.Run run = store.queueRun(name, n, by, role.id(), flowRunId, flowNode);
+                                             long flowRunId, String flowNode, Map<String, Object> parameters,
+                                             Map<String, Object> variables) {
+        RunnableVersion checked = runnableVersion(name, version, parameters, variables);
+        int n = checked.version();
+        PipelineStore.Run run = store.queueRun(name, n, by, role.id(), flowRunId, flowNode,
+            writeJson(checked.parameters()), writeJson(variables));
         LOG.infof("Run %d of pipeline %s (version %d) queued by %s for node %s of flow run %d", run.id(), name, n, by,
             flowNode, flowRunId);
         return run;
     }
 
+    /** A version that can run, and its parameters' values for the run, defaults filled in. */
+    private record RunnableVersion(int version, Map<String, Object> parameters) {
+    }
+
     /**
-     * The version to run (the latest by default), checked again now, since sources may have changed
-     * since it was saved: one with problems cannot run.
+     * The version to run (the latest by default), checked again now with the run's parameters and
+     * variables, since sources may have changed since it was saved: one with problems cannot run.
+     * A wrong parameter value is the caller's mistake (400); a version with problems is a 409.
      */
-    private int runnableVersion(String name, Integer version) {
+    private RunnableVersion runnableVersion(String name, Integer version, Map<String, Object> parameters,
+                                     Map<String, Object> vars) {
         PipelineStore.Pipeline p = find(name);
         int n = version == null ? p.latestVersion() : version;
         PipelineStore.Version v = store.version(name, n).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
             name + " has no version " + n));
-        PipelineViews.Validation check = validate(v.yaml(), name);
-        if (!check.valid()) {
-            throw fail(Response.Status.CONFLICT, "Version " + n + " of " + name + " cannot run until its problems are "
-                + "fixed: " + firstProblems(check.problems()));
+        PipelineDefinition def = PipelineDefinition.parse(v.yaml()).definition();
+        Map<String, Object> values;
+        try {
+            values = Parameters.resolve(name, def == null ? List.of() : def.parameters(), parameters, vars);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("parameters: " + e.getMessage());
         }
-        return n;
+        checkSize(v.yaml());
+        PipelineCompilerPort.Compilation c = compiler.check(v.yaml(), nodes, values, vars);
+        if (!c.valid() || c.name() == null || !c.name().equals(name)) {
+            List<PipelineCompilerPort.Problem> problems = c.problems().isEmpty() ? validate(v.yaml(), name).problems()
+                : c.problems();
+            throw fail(Response.Status.CONFLICT, "Version " + n + " of " + name + " cannot run until its problems are "
+                + "fixed: " + firstProblems(problems));
+        }
+        return new RunnableVersion(n, values);
+    }
+
+    /** The server's variables now, as a run reads them; none in tests without them. */
+    private Map<String, Object> variables() {
+        return variables == null ? Map.of() : variables.snapshot();
+    }
+
+    private String writeJson(Map<String, Object> values) {
+        try {
+            return json.writeValueAsString(values == null ? Map.of() : values);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("could not record a run's values", e);
+        }
+    }
+
+    private Map<String, Object> jsonMap(String text) {
+        try {
+            Map<String, Object> m = json.readValue(text == null ? "{}" : text,
+                new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {
+                });
+            m.replaceAll((k, v) -> v instanceof Number num ? num.doubleValue() : v);
+            return m;
+        } catch (JsonProcessingException e) {
+            return null; // the caller fails the run
+        }
     }
 
     private static String firstProblems(List<PipelineCompilerPort.Problem> problems) {
@@ -923,7 +985,16 @@ public class PipelineService {
             if (stopped(id, shutdown, null)) {
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
-            c = context.run(() -> compiler.compile(v.yaml(), nodes));
+            Map<String, Object> runParameters = jsonMap(run.parameters());
+            Map<String, Object> runVariables = jsonMap(run.variables());
+            if (runParameters == null || runVariables == null) {
+                // Never run on defaults in place of the values the run was started with.
+                ended(log, "failed", "The pipeline could not start: the values it was started with could not be read");
+                store.finishRun(id, "failed", "The pipeline could not start: the values it was started with could not "
+                    + "be read", null);
+                return new ScanService.Result(ScanService.Outcome.FINISHED, null);
+            }
+            c = context.run(() -> compiler.compile(v.yaml(), nodes, runParameters, runVariables));
             if (!c.valid() || c.graph() == null) {
                 ended(log, "failed", "The pipeline could not start: " + firstProblems(c.problems()));
                 store.finishRun(id, "failed", context.scrub("The pipeline could not start: "

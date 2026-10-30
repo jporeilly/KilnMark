@@ -14,9 +14,25 @@ import java.util.Objects;
  * @param defaultValue the value used when it is left out, or null
  * @param help         one sentence on what it does
  * @param choices      the allowed values for {@link Kind#CHOICE}, else empty
+ * @param parameters   what ${...} may do in it (docs/design/pipelines.md, "Parameters and server
+ *                     variables"): by default what its kind allows
  */
 public record SettingSpec(String key, String label, Kind kind, boolean required, Object defaultValue, String help,
-                          List<String> choices) {
+                          List<String> choices, Parameters parameters) {
+
+    /** What a parameter or server variable may do in a setting. */
+    public enum Parameters {
+        /** What the setting's kind allows: a value in text, an expression, a number or true/false. */
+        BY_KIND,
+        /**
+         * Only part of the last name, beside text the pipeline fixes, and only letters, digits, _ and -:
+         * for a setting naming where a node writes, so a value never chooses the table or folder
+         * ({@code orders/${label}.csv}, {@code sales.orders_${region}}).
+         */
+        NAME_PART_ONLY,
+        /** None: the setting names something a run must not choose, such as another node. */
+        NONE
+    }
 
     /** Kinds of setting value. */
     public enum Kind {
@@ -59,18 +75,24 @@ public record SettingSpec(String key, String label, Kind kind, boolean required,
         Objects.requireNonNull(kind, "kind");
         help = help == null ? "" : help;
         choices = choices == null ? List.of() : List.copyOf(choices);
+        parameters = parameters == null ? Parameters.BY_KIND : parameters;
+    }
+
+    /** This setting, with what a parameter may do in it. */
+    public SettingSpec withParameters(Parameters what) {
+        return new SettingSpec(key, label, kind, required, defaultValue, help, choices, what);
     }
 
     public static SettingSpec required(String key, String label, Kind kind, String help) {
-        return new SettingSpec(key, label, kind, true, null, help, List.of());
+        return new SettingSpec(key, label, kind, true, null, help, List.of(), null);
     }
 
     public static SettingSpec optional(String key, String label, Kind kind, Object defaultValue, String help) {
-        return new SettingSpec(key, label, kind, false, defaultValue, help, List.of());
+        return new SettingSpec(key, label, kind, false, defaultValue, help, List.of(), null);
     }
 
     public static SettingSpec choice(String key, String label, boolean required, String defaultValue, String help,
                                      List<String> choices) {
-        return new SettingSpec(key, label, Kind.CHOICE, required, defaultValue, help, choices);
+        return new SettingSpec(key, label, Kind.CHOICE, required, defaultValue, help, choices, null);
     }
 }

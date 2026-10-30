@@ -58,14 +58,23 @@ public final class PipelineCompiler {
         this.factories = Objects.requireNonNull(factories, "factories");
     }
 
-    /** Reads and checks a pipeline's YAML. */
+    /** Reads and checks a pipeline's YAML, its parameters taking their defaults. */
     public Compiled compile(String yaml) {
+        return compile(yaml, null, null);
+    }
+
+    /**
+     * Reads and checks a pipeline's YAML for a run with these parameter values (null or empty: the
+     * defaults) and the server's variables ({@code ${vars.name}}; null or empty: none). Each
+     * {@code ${...}} is put in before the settings are checked, so the checks see what the run gets.
+     */
+    public Compiled compile(String yaml, Map<String, Object> parameters, Map<String, Object> variables) {
         Set<String> inputProblems = new HashSet<>();
         PipelineDefinition.Parsed parsed = PipelineDefinition.parse(yaml, inputProblems);
         if (parsed.definition() == null) {
             return new Compiled(null, parsed.problems(), List.of(), Map.of(), Map.of(), List.of(), Map.of(), Map.of());
         }
-        return new Check(parsed.definition(), parsed.problems(), inputProblems, false).run();
+        return new Check(parsed.definition(), parsed.problems(), inputProblems, false, parameters, variables).run();
     }
 
     /**
@@ -73,8 +82,14 @@ public final class PipelineCompiler {
      * (pattern and uniqueness) and that each node has a type.
      */
     public Compiled compile(PipelineDefinition definition) {
+        return compile(definition, null, null);
+    }
+
+    /** As {@link #compile(PipelineDefinition)}, with parameter values and the server's variables. */
+    public Compiled compile(PipelineDefinition definition, Map<String, Object> parameters,
+                            Map<String, Object> variables) {
         Objects.requireNonNull(definition, "definition");
-        return new Check(definition, List.of(), Set.of(), true).run();
+        return new Check(definition, List.of(), Set.of(), true, parameters, variables).run();
     }
 
     /** The problem with a node id that does not match {@link #NODE_ID}. */
@@ -107,11 +122,17 @@ public final class PipelineCompiler {
         private final Map<String, Map<String, Object>> configs = new LinkedHashMap<>();
         /** The columns arriving on each node's input ports, where known. */
         private final Map<String, Map<String, Schema>> inputSchemas = new LinkedHashMap<>();
+        /**
+         * What ${...} reads: the run's parameters and the server's variables (vars.name). Null when the
+         * pipeline declares no parameters and names no variable, so ${...} is plain text as before.
+         */
+        private final Map<String, Object> values;
 
         Check(PipelineDefinition definition, List<Problem> parseProblems, Set<String> inputProblems,
-              boolean checkDefinition) {
+              boolean checkDefinition, Map<String, Object> given, Map<String, Object> variables) {
             this.definition = definition;
             this.problems = new ArrayList<>(parseProblems);
+            this.values = values(definition, given == null ? Map.of() : given, variables == null ? Map.of() : variables);
             badInputs.addAll(inputProblems); // already reported while reading: not also "needs an input"
             if (checkDefinition && (definition.name() == null || definition.name().isBlank())) {
                 problems.add(Problem.at(Position.START, null, "The pipeline needs a name"));
@@ -140,7 +161,8 @@ public final class PipelineCompiler {
         }
 
         Compiled run() {
-            for (NodeDefinition s : list) {
+            for (int i = 0; i < list.size(); i++) {
+                NodeDefinition s = list.get(i);
                 if (s.type() == null) {
                     broken.add(s.id());
                     continue;
@@ -152,7 +174,14 @@ public final class PipelineCompiler {
                     continue;
                 }
                 factoryOf.put(s.id(), f);
-                settings(s, f);
+                NodeDefinition filled = filled(s, f);
+                if (filled == null) {
+                    broken.add(s.id()); // a parameter could not be put in: reported
+                    continue;
+                }
+                list.set(i, filled);
+                nodes.put(s.id(), filled);
+                settings(filled, f);
             }
             for (NodeDefinition s : list) {
                 inputs(s);
@@ -165,7 +194,24 @@ public final class PipelineCompiler {
             if (order != null) {
                 sharedUpstream();
             }
-            return new Compiled(definition, problems, notes, schemas, factoryOf, edges, configs, inputSchemas);
+            return new Compiled(filledDefinition(), problems, notes, schemas, factoryOf, edges, configs, inputSchemas);
+        }
+
+        /**
+         * The pipeline as this run gets it: each node with its parameters and variables put in, so whatever
+         * reads the definition afterwards (where a write goes, lineage) sees the real names.
+         */
+        private PipelineDefinition filledDefinition() {
+            if (values == null) {
+                return definition;
+            }
+            List<NodeDefinition> filled = new ArrayList<>();
+            Set<String> seen = new HashSet<>();
+            for (NodeDefinition n : definition.nodes()) {
+                filled.add(seen.add(n.id()) ? nodes.getOrDefault(n.id(), n) : n); // a repeated id keeps its text
+            }
+            return new PipelineDefinition(definition.name(), definition.description(), filled, definition.quality(),
+                definition.parameters());
         }
 
         private String unknownType(String type) {
@@ -181,6 +227,165 @@ public final class PipelineCompiler {
         /** A node's settings as its factory receives them (as written, if they could not be checked). */
         private Map<String, Object> config(NodeDefinition s) {
             return configs.getOrDefault(s.id(), s.config());
+        }
+
+        // ---- parameters and server variables ----
+
+        /**
+         * The values ${...} takes: each parameter as given, else its default, and each server variable
+         * as vars.name. Null when the pipeline declares no parameters and names no variable (then
+         * ${...} is text, as before parameters), or when a value is missing or wrong, which is reported.
+         */
+        private Map<String, Object> values(PipelineDefinition d, Map<String, Object> given,
+                                           Map<String, Object> variables) {
+            boolean namesVariable = d.nodes().stream().anyMatch(n -> namesVariable(n.configText()));
+            if (d.parameters().isEmpty() && !namesVariable) {
+                if (!given.isEmpty()) {
+                    problems.add(Problem.at(Position.START, null, "The pipeline takes no parameters, but the run gives "
+                        + String.join(", ", given.keySet().stream().map(Suggest::clip).toList())));
+                }
+                return null;
+            }
+            try {
+                return Parameters.scope(Parameters.resolve("The pipeline", d.parameters(), given, variables), variables);
+            } catch (IllegalArgumentException e) {
+                if (!given.isEmpty() || d.parameters().stream().allMatch(p -> p.defaultValue() != null)) {
+                    problems.add(Problem.at(Position.START, null, "Parameters: " + e.getMessage()));
+                }
+                return null; // a missing default is reported where it is written
+            }
+        }
+
+        /**
+         * The node with each ${name} in its settings put in, as the setting's kind allows; null after
+         * reporting why one could not be. Only text, expression, number and true/false settings take a
+         * value: never a node's type, inputs, source, asset, columns or choices.
+         */
+        private NodeDefinition filled(NodeDefinition s, NodeFactory f) {
+            if (values == null) {
+                return s;
+            }
+            Map<String, SettingSpec> specs = new LinkedHashMap<>();
+            f.settings().forEach(spec -> specs.put(spec.key(), spec));
+            Map<String, Object> config = new LinkedHashMap<>(s.config());
+            Map<String, Object> text = new LinkedHashMap<>(s.configText());
+            boolean ok = true;
+            for (String key : s.config().keySet()) {
+                Object written = s.configText().get(key);
+                SettingSpec spec = specs.get(key);
+                if (spec == null || !mentions(written)) {
+                    continue; // an unknown setting is reported as such
+                }
+                String wrong = fill(spec, written, key, config, text);
+                if (wrong != null) {
+                    problems.add(Problem.at(s.at(key), s.id(), "Setting '" + key + "' of node " + s.id() + " " + wrong));
+                    ok = false;
+                }
+            }
+            return ok ? new NodeDefinition(s.id(), s.type(), s.inputs(), config, s.position(), s.keys(), text) : null;
+        }
+
+        /** Puts the values into one setting; what is wrong, or null. */
+        private String fill(SettingSpec spec, Object written, String key, Map<String, Object> config,
+                            Map<String, Object> text) {
+            if (spec.parameters() == SettingSpec.Parameters.NONE) {
+                return "cannot take a parameter: it names something a run must not choose";
+            }
+            if (spec.parameters() == SettingSpec.Parameters.NAME_PART_ONLY) {
+                if (!(written instanceof String w)) {
+                    return "must be a single value";
+                }
+                Parameters.Filled r = Parameters.fill(w, values, Parameters.Use.TARGET_PART);
+                if (r.problem() != null) {
+                    return r.problem();
+                }
+                config.put(key, r.text());
+                text.put(key, r.text());
+                return null;
+            }
+            switch (spec.kind()) {
+                case TEXT, EXPRESSION -> {
+                    if (!(written instanceof String w)) {
+                        return "must be a single value";
+                    }
+                    Parameters.Filled r = Parameters.fill(w, values, spec.kind() == SettingSpec.Kind.TEXT
+                        ? Parameters.Use.NAME_PART : Parameters.Use.EXPRESSION);
+                    if (r.problem() != null) {
+                        return r.problem();
+                    }
+                    config.put(key, r.text());
+                    text.put(key, r.text());
+                    return null;
+                }
+                case EXPRESSIONS, CONDITIONS -> {
+                    if (!(written instanceof Map<?, ?> m)) {
+                        return "must be a mapping of names to expressions";
+                    }
+                    Map<String, Object> out = new LinkedHashMap<>();
+                    for (Map.Entry<?, ?> e : m.entrySet()) {
+                        Object v = e.getValue();
+                        if (v instanceof String w && (Parameters.refers(w) || w.contains("$${"))) {
+                            Parameters.Filled r = Parameters.fill(w, values, Parameters.Use.EXPRESSION);
+                            if (r.problem() != null) {
+                                return "(" + Suggest.clip(String.valueOf(e.getKey())) + ") " + r.problem();
+                            }
+                            v = r.text();
+                        }
+                        out.put(String.valueOf(e.getKey()), v);
+                    }
+                    config.put(key, out);
+                    text.put(key, out);
+                    return null;
+                }
+                case NUMBER, BOOLEAN -> {
+                    String name = written instanceof String w ? Parameters.whole(w) : null;
+                    if (name == null) {
+                        return "takes a parameter only as its whole value, such as " + key + ": ${name}";
+                    }
+                    if (!values.containsKey(name)) {
+                        return Parameters.unknown(name, values.keySet());
+                    }
+                    Object v = values.get(name);
+                    boolean number = spec.kind() == SettingSpec.Kind.NUMBER;
+                    if (number ? !(v instanceof Double) : !(v instanceof Boolean)) {
+                        return "is " + (number ? "a number" : "true or false") + ", but " + name + " is not";
+                    }
+                    Object typed = v;
+                    if (v instanceof Double d) {
+                        typed = d == Math.rint(d) && Math.abs(d) < 9.0e15 ? (Object) (long) d.doubleValue()
+                            : BigDecimal.valueOf(d);
+                    }
+                    config.put(key, typed);
+                    text.put(key, v instanceof Double d ? Parameters.numberText(d) : String.valueOf(v));
+                    return null;
+                }
+                default -> {
+                    return "cannot take a parameter: parameters fill text, expression, number and true/false "
+                        + "settings, never a source, asset, column, choice or address";
+                }
+            }
+        }
+
+        /** Whether a setting as written names a parameter or variable, at any depth. */
+        private boolean mentions(Object written) {
+            if (written instanceof String w) {
+                return Parameters.refers(w) || w.contains("$${");
+            }
+            if (written instanceof Map<?, ?> m) {
+                return m.values().stream().anyMatch(this::mentions);
+            }
+            return written instanceof List<?> l && l.stream().anyMatch(this::mentions);
+        }
+
+        /** Whether settings as written name a server variable, at any depth. */
+        private boolean namesVariable(Object written) {
+            if (written instanceof String w) {
+                return Parameters.refersToVariable(w);
+            }
+            if (written instanceof Map<?, ?> m) {
+                return m.values().stream().anyMatch(this::namesVariable);
+            }
+            return written instanceof List<?> l && l.stream().anyMatch(this::namesVariable);
         }
 
         // ---- settings ----

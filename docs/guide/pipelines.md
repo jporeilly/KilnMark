@@ -278,6 +278,97 @@ route and limit) are described in [Pipeline nodes and expressions](pipeline-node
 gate is described below. The node
 catalogue (`GET /api/v1/node-types`) lists every type this server has, with the settings each takes.
 
+## Parameters and server variables
+
+A pipeline can take values when it runs, so one pipeline serves many runs: the orders in a status,
+the rows since a date, a file named after the run. There are two kinds of value, written in two ways:
+
+| | Parameter | Server variable |
+| --- | --- | --- |
+| What it is | An input the pipeline (or a flow) declares, like a function's argument | A value of the server, the same for every pipeline and flow on it |
+| Where it is set | In the YAML: `parameters:`, each with a type and a default | On the server, by a steward or admin (`/api/v1/variables`) |
+| Written as | `${status}` | `${vars.target_schema}` |
+| Changes | With each run: whoever runs it, or the flow running it, can give another value | When the environment does: a new schema, another bucket |
+| Kinds | text, number, boolean, text list, number list | text, number, boolean |
+
+The same YAML runs unchanged on a test server and on the live one: each server holds its own
+variables, and each run its own parameter values.
+
+### Declaring parameters
+
+```yaml
+parameters:
+  statuses: { type: text list, default: [delivered], description: The order statuses to keep }
+  min_fee:  { type: number, default: 0 }
+  label:    { type: text, default: "${vars.default_label}" }
+nodes:
+  - id: wanted
+    type: filter
+    input: orders
+    condition: "status in ${statuses} and shipping_fee >= ${min_fee}"
+  - id: out
+    type: write
+    input: wanted
+    source: warehouse
+    path: orders/${label}.csv
+```
+
+- Every pipeline parameter has a default, so the pipeline also runs on its own. A default may be a
+  server variable, as `label`'s is: the variable's value, unless the run gives another.
+- Names start with a lower-case letter and use a-z, 0-9 and `_`. `and`, `or`, `not`, `true`,
+  `false`, `good`, `fair` and `poor` are taken.
+- Inside `{ }`, write a value that is `${...}` in quotes: YAML reads `{` as the start of a mapping.
+
+### Where a value can go, and how it goes in
+
+A parameter fills a value, never anything else. It can never choose what a node reads or writes
+to: not a node's type, its inputs, its source, its table or file to read, its columns or a choice,
+nor another node (`rules_from`).
+
+| Setting | How the value goes in | Example |
+| --- | --- | --- |
+| An expression (`condition`, `columns` of compute, `routes`, ...) | As a value of the expression language: text in quotes, a number as a decimal, a list as `('a', 'b')` | `status in ${statuses}` becomes `status in ('delivered')` |
+| Where a write goes (`table`, `path`) | As part of the last name only, beside text the pipeline writes there, holding only letters, digits, `_` and `-`: the pipeline fixes the schema or folder and the rest of the name | `orders/${label}.csv`, `sales.orders_${region}` (not `${table}`, `${folder}/x.csv` or a value with `.` or `/`) |
+| Other text (`delimiter`, ...) | As text, holding only letters, digits, spaces, `_`, `-` and `.` (never `..`) | `delimiter: ${sep}` |
+| A number or true/false (`rows`, `max_failing_share`, `strict`, ...) | As the whole value | `rows: ${limit}` |
+
+- In an expression, write `${status}` without quotes: it goes in quoted already, and quoting it
+  again is a problem. A value can never become part of the expression: `x' or 1=1` is compared
+  as that text. Nor can it join a name: `amount_${year}` is a problem (put a space or an operator
+  between them), so a value never chooses a column.
+- A number goes into an expression as a decimal (`10` as `10.0`), so what the expression works out
+  has the same type whatever the value. Numbers have at most 15 digits before the point and 30 in
+  all; a list has at most 200 values (and an expression, lists included, at most 10,000 characters).
+- `$${` writes a plain `${`. A pipeline with no parameters that names no server variable keeps
+  `${...}` as plain text, as before.
+- Everything is checked with the values the run will get: a wrong kind (a number where text is
+  compared), an unknown name (with the closest suggested) or a value that does not fit is a problem
+  before anything runs.
+
+### Running with values
+
+Choose **Run now** to run with the defaults. Through the API, give values in the run's body:
+
+```
+POST /api/v1/pipelines/orders-by-status/runs
+{ "parameters": { "statuses": ["shipped", "delivered"], "label": "both" } }
+```
+
+A run keeps the values it started with, its parameters and the server variables as they were when
+it was queued, and uses those however the variables change before it runs. A value of the wrong
+kind, or a parameter the pipeline does not take, is refused at once.
+
+### Server variables
+
+Stewards and admins set them with `PUT /api/v1/variables/{name}` (`{ "type": "text", "value":
+"sales_prod", "description": "..." }`) and delete them with `DELETE`; everyone with the steward role
+can list them. Every change is kept, with who made it and when, also after a variable is deleted
+(`GET /api/v1/variables/{name}/changes`). A Settings page for them follows with the flows pages.
+
+Server variables are never secrets: they are shown to stewards and recorded with every run. A name
+that looks like a credential (`password`, `token`, `secret`, `api_key` and the like) is refused.
+Passwords and keys belong in a source, which holds them encrypted.
+
 ## Quality gates
 
 A `gate` node checks the rows passing through it against quality rules, in the same pass that moves
@@ -541,7 +632,8 @@ version again first, since a source may have changed, then queues the run for a 
 appears under **Runs** as Queued, then Running.
 
 A run uses the version that was latest when you asked, even if someone saves another while it
-waits.
+waits. A pipeline with parameters runs with their defaults; see
+[Parameters and server variables](#parameters-and-server-variables) to give other values.
 
 To stop a run, open it and choose **Cancel run**. A queued run is cancelled at once; a running one
 stops within a few seconds. Rows already written stay written.

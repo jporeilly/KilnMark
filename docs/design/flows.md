@@ -1,8 +1,8 @@
 # Flows
 
-Status: design, 29 October 2026. Round 4. Slice F1 (the engine, storage and the service) is built;
-the rest (parameters passed to pipelines, notify and wait nodes, the API, the pages and the canvas)
-is marked **planned** below. ADR 0026 records the decision.
+Status: design, 29 October 2026. Round 4. Slices F1 (the engine, storage and the service) and F2
+(parameters passed to pipelines, server variables, notify and wait nodes) are built; the rest (the
+API, the pages and the canvas) is marked **planned** below. ADR 0026 records the decision.
 
 A pipeline moves and checks data. A **flow** runs pipelines in an order, and decides what runs next
 from how each ended and what it measured: carry on only if the gate set aside under 2% of the rows
@@ -29,6 +29,15 @@ nodes:
   - id: spend
     type: run-pipeline
     pipeline: demo-customer-spend
+    with: { region: "${region}", label: "nightly" }   # values for the pipeline's parameters
+  - id: tell
+    type: notify                # in the app and by email, to whoever follows flow notices
+    severity: medium            # info (the default), low, medium or high
+    title: "Clean set aside ${clean.quarantined_share} of the customers"
+    message: The spend report did not run.
+  - id: later
+    type: wait
+    for: 10m                    # up to 24h
   - id: halt
     type: stop
     status: failed             # how the flow counts: failed (the default) or succeeded
@@ -40,14 +49,16 @@ connections:
 layout: { ... }                # where the canvas draws each node; ignored when running
 ```
 
-- Node types in F1: `run-pipeline` (a saved pipeline, by name and optionally version) and `stop` (ends
-  the flow). `notify` and `wait` are **planned** (F2).
+- Node types: `run-pipeline` (a saved pipeline, by name and optionally version, with `with:` for its
+  parameters), `stop` (ends the flow), `notify` (sends a notice) and `wait` (waits a while).
 - A connection has `from`, `to` and `when`: `success` (the default), `failure`, `always` or a
   condition.
 - Flows written before the rename use `steps:` and `paths:` for these lists; the reader still
   accepts both.
 - Names follow pipelines' (`[a-z][a-z0-9-]{0,62}`), node ids `[a-z][a-z0-9_-]{0,63}`; parameters
-  `[a-z][a-z0-9_]{0,63}` of type `text`, `number` or `boolean`, up to 50. At most 200 nodes and
+  `[a-z][a-z0-9_]{0,63}` of type `text`, `number`, `boolean`, `text list` or `number list`, up to 50
+  (pipelines.md, "Parameters and server variables"; a flow's may have no default, and a run must then
+  give the value; a list parameter is for a pipeline's `in (...)`, never a condition). At most 200 nodes and
   1,000 connections. The YAML reader is the pipelines' (SnakeYAML Engine, YAML 1.2, no anchors or
   tags), and unknown keys are errors with the line, so typing mistakes are caught.
 - Checked when saved, without opening anything: the format line, keys (with the closest suggested),
@@ -134,6 +145,31 @@ clean.status = 'failed' or (clean.rows_written = 0 and region != 'APAC')
 6. When a run ends (or its worker stops cleanly), every node of the version has a row: nodes that
    never ran are recorded as skipped.
 
+### Values passed on (F2)
+
+- **What `${...}` reads in a flow:** the flow's parameters (`${region}`), server variables
+  (`${vars.target_schema}`) and the values of nodes that have always run when this one starts: the
+  nodes on every way into it (for each connection in, its node and the nodes always run before that
+  one, in common; a branch may skip the others, so they cannot be read): `${clean.status}`, and for a
+  `run-pipeline` node `${clean.rows_written}`, `score`, `quarantined_share` and `duration_s`. Checked
+  when saved. A value nothing measured (a score with no rules) has none: `with:` then fails the node,
+  saying so, and a notice reads it as "unknown". A node cannot be called `vars`.
+- **A pipeline parameter's value, first match wins:** the node's `with:`; else the flow's parameter of
+  the same name (inherited, when both declare it: the server checks they are of one kind); else the
+  pipeline's default, which may be a server variable. A `with:` value that is exactly one `${name}`
+  keeps that value's kind (a number, a list); any other text has the values put in as words. The
+  server checks `with:` against the pipeline's parameters when the flow is saved and again when it
+  runs.
+- **A flow run keeps its values:** `flow_run.parameters` and `flow_run.variables` (all the server's
+  variables when it was queued). The pipeline runs it starts get the same variables, so one flow run
+  reads one set of them throughout.
+- **`notify`** posts a `flow_notice` notification (in the app and by email, to whoever follows that
+  kind, at the node's severity) with the run's values put in its title and message, and ends at once.
+  A flow run that fails posts `flow_failed`, told once until a run of the flow succeeds. Both name the
+  flow's own words, never a pipeline's error.
+- **`wait`** holds no worker slot and no pipeline: it ends after `for`, or as cancelled when the flow
+  is cancelled or stopped. If the worker stops while it waits, the run fails like any other.
+
 ## 4. Storage (V20, renamed in V21)
 
 `flow` and `flow_version` as `pipeline` and `pipeline_version` (latest version, never-changed
@@ -142,7 +178,8 @@ versions, drafts with their problems); `flow_run` (status `queued`, `running`, `
 with); `flow_node_run` (status including `skipped`; when it started and ended; the pipeline run it
 started; a message; what it reported, as JSON); `pipeline_run.flow_run_id` and `flow_node`. A unique
 index allows one queued or running run per flow. V20 named them `flow_step_run`, `step_id` and
-`flow_step`; V21 renamed them to the names above.
+`flow_step`; V21 renamed them to the names above. V22 adds `flow_run.variables` and
+`pipeline_run.parameters` and `variables`, and the server variables (`variable`, `variable_change`).
 
 ## 5. Who may do what
 
@@ -159,13 +196,16 @@ index allows one queued or running run per flow. V20 named them `flow_step_run`,
 
 ## 6. Planned
 
-- **F2.** Parameters passed down: `parameters:` on pipelines too, `with:` on `run-pipeline`, `${name}`
-  in setting values (a parameter fills a setting's value only, never a node type, a source or an
-  address); `notify` (in-app and email to a steward group) and `wait` nodes; a lab flow checked against
-  the lab like the demo pipelines.
+- **F2, built.** Parameters on pipelines, server variables, `with:`, inheritance by name, node
+  values, `notify` and `wait`, the lab flow (`lab/flows`, checked with the demo pipelines).
+- **Next: the read node's `columns:` and `where:`**, done by the database (a value as a bound
+  parameter), with lab examples.
+- **F2b.** Projects (`${project.x}`, values and variables scoped to a project), pipeline `outputs:`
+  (values a run works out, such as the latest date it wrote, read by later nodes) and a `run-flow`
+  node that gives a child flow its parameters.
 - **F3.** API (`/api/v1/flows`, `/api/v1/flow-runs`, validate, versions with `If-Match`, run, cancel)
   and the run page with a Gantt chart: a bar per flow node, coloured by status, skipped nodes hatched,
   each linked to its pipeline run (the Gantt component kept for this, see pipelines.md section 5).
 - **F4.** The flow canvas: flow nodes as boxes, connections as labelled edges, a connection
   inspector, a live run overlay; editing as text patches as the pipeline canvas does.
-- Not in this plan: calling a flow from a flow, a SQL check node, retries of a node.
+- Not in this plan: a SQL check node, retries of a node.

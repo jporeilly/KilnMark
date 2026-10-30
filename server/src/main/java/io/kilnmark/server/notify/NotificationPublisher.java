@@ -264,6 +264,42 @@ public class NotificationPublisher {
         }
     }
 
+    // ---- flows ----
+
+    /**
+     * A flow run ended. A failed run is told once until a run of the flow succeeds; other endings tell
+     * nothing. {@code message} is the flow's own words (a stop node's message, which node failed), never
+     * a pipeline's error, which can quote data.
+     */
+    public void flowRunFinished(String flow, long runId, String status, String message) {
+        try {
+            String key = "flow:" + flow;
+            if ("failed".equals(status)) {
+                publish(new NotificationEvent(NotificationKind.FLOW_FAILED, Severity.HIGH, null, "Run " + runId + " of flow "
+                    + flow + " failed", message == null ? "The flow run failed." : message, null, null, null, null, key,
+                    null));
+            } else if ("succeeded".equals(status)) {
+                clear(key);
+            }
+        } catch (RuntimeException ex) {
+            LOG.warnf(ex, "Could not tell of an event (%s)", "flowRunFinished");
+        }
+    }
+
+    /**
+     * A flow's notify node: its title and message, as the flow wrote them (with the run's parameters and
+     * the server's variables put in), at its severity ({@code info}, {@code low}, {@code medium} or
+     * {@code high}). Each run's node is told once.
+     */
+    public void flowNotice(String flow, long runId, String node, String severity, String title, String message) {
+        try {
+            publish(new NotificationEvent(NotificationKind.FLOW_NOTICE, Severity.valueOf(severity.toUpperCase(Locale.ROOT)),
+                null, title, message, null, null, null, null, "flow-notice:" + runId + ":" + node, null));
+        } catch (RuntimeException ex) {
+            LOG.warnf(ex, "Could not tell of an event (%s)", "flowNotice");
+        }
+    }
+
     // ---- wording ----
 
     static String rows(long failing, long total) {

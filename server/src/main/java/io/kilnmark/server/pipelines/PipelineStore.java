@@ -36,7 +36,7 @@ public class PipelineStore {
     /** {@code result} is JSON or null; {@code assets} a JSON array of the URNs the run reads and writes. */
     public record Run(long id, String pipeline, int version, String status, String requestedBy, String requestedRole,
                       Instant requestedAt, Instant startedAt, Instant finishedAt, boolean cancelRequested, String error,
-                      String result, String assets) {
+                      String result, String assets, String parameters, String variables) {
 
         public boolean finished() {
             return !status.equals("queued") && !status.equals("running");
@@ -327,14 +327,14 @@ public class PipelineStore {
 
     private static final String RUN_COLUMNS = "r.id, r.pipeline, r.version, r.status, r.requested_by, "
         + "r.requested_role, r.requested_at, r.started_at, r.finished_at, r.cancel_requested, r.error, r.result, "
-        + "r.assets";
+        + "r.assets, r.parameters::text, r.variables::text";
 
     private static Run run(ResultSet rs, int from) throws SQLException {
         int i = from;
         return new Run(rs.getLong(i), rs.getString(i + 1), rs.getInt(i + 2), rs.getString(i + 3), rs.getString(i + 4),
             rs.getString(i + 5), Db.instant(rs.getTimestamp(i + 6)), Db.instant(rs.getTimestamp(i + 7)),
             Db.instant(rs.getTimestamp(i + 8)), rs.getBoolean(i + 9), rs.getString(i + 10), rs.getString(i + 11),
-            rs.getString(i + 12));
+            rs.getString(i + 12), rs.getString(i + 13), rs.getString(i + 14));
     }
 
     /**
@@ -344,14 +344,17 @@ public class PipelineStore {
      * @throws Busy while a run of the pipeline is queued or running
      */
     public Run queueRun(String name, int version, String by, String role) {
-        return queueRun(name, version, by, role, null, null);
+        return queueRun(name, version, by, role, null, null, "{}", "{}");
     }
 
     /**
-     * As {@link #queueRun(String, int, String, String)}, for a run a flow starts: the run says which
-     * flow run and node started it ({@code flowRunId} null for a run someone asked for).
+     * As {@link #queueRun(String, int, String, String)}, with the values the run starts with: its
+     * {@code parameters} and the server's {@code variables} now (JSON objects), which it reads however
+     * they change; and, for a run a flow starts, which flow run and node started it ({@code flowRunId}
+     * null for a run someone asked for).
      */
-    public Run queueRun(String name, int version, String by, String role, Long flowRunId, String flowNode) {
+    public Run queueRun(String name, int version, String by, String role, Long flowRunId, String flowNode,
+                        String parameters, String variables) {
         return db.tx(c -> {
             // One run of a pipeline at a time: the pipeline's row is locked while checking.
             try (PreparedStatement ps = c.prepareStatement(
@@ -370,7 +373,8 @@ public class PipelineStore {
             }
             long id;
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_run (pipeline, version, "
-                + "requested_by, requested_role, flow_run_id, flow_node) VALUES (?, ?, ?, ?, ?, ?) RETURNING id")) {
+                + "requested_by, requested_role, flow_run_id, flow_node, parameters, variables) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb) RETURNING id")) {
                 ps.setString(1, name);
                 ps.setInt(2, version);
                 ps.setString(3, by);
@@ -381,6 +385,8 @@ public class PipelineStore {
                     ps.setLong(5, flowRunId);
                 }
                 ps.setString(6, flowNode);
+                ps.setString(7, parameters == null ? "{}" : parameters);
+                ps.setString(8, variables == null ? "{}" : variables);
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     id = rs.getLong(1);

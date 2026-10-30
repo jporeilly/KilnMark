@@ -1,0 +1,51 @@
+# Demo flow (lab only, never shipped).
+# Needs the demo pipelines in lab/pipelines saved on the server first (lab.sh pipelines).
+# Cleans the customers, then carries on to the spend report only if the gate set aside less than
+# limit_share of them and what was written scored Good; otherwise it tells the stewards and stops.
+# Then it pulls the orders in the statuses asked for: statuses is passed to demo-orders-by-status
+# because both declare it (a parameter of the same name is inherited), and label is given with with:.
+kilnmark: flow/v1
+name: demo-nightly-customers
+description: Clean customers, publish spend only if quality holds, then pull the orders asked for.
+queue_timeout: 30m
+
+parameters:
+  limit_share: { type: number, default: 0.2, description: The largest share of customers that may be set aside }
+  statuses: { type: text list, default: [delivered, shipped] }
+
+nodes:
+  - id: clean
+    type: run-pipeline
+    pipeline: demo-customers-clean
+
+  - id: spend
+    type: run-pipeline
+    pipeline: demo-customer-spend
+
+  - id: orders
+    type: run-pipeline
+    pipeline: demo-orders-by-status
+    with: { label: nightly }
+
+  - id: too-many
+    type: notify
+    severity: medium
+    title: "Customers clean set aside more than ${limit_share} of the rows"
+    message: "Score ${clean.score}, share set aside ${clean.quarantined_share}. The spend report did not run."
+
+  - id: halt
+    type: stop
+    status: failed
+    message: Too many customers were set aside
+
+  - id: done
+    type: notify
+    title: "Nightly customers: ${clean.rows_written} customers cleaned, orders pulled"
+
+connections:
+  - { from: clean, to: spend, when: "clean.quarantined_share < limit_share and clean.score >= good" }
+  - { from: clean, to: too-many, when: "clean.quarantined_share >= limit_share" }
+  - { from: clean, to: halt, when: failure }
+  - { from: too-many, to: halt }
+  - { from: spend, to: orders }
+  - { from: orders, to: done }

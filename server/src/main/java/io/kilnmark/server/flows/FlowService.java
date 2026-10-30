@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -21,14 +22,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.kilnmark.kiln.flow.FlowEngine;
 import io.kilnmark.kiln.yaml.FlowCondition;
 import io.kilnmark.kiln.yaml.FlowDefinition;
+import io.kilnmark.kiln.yaml.Parameters;
+import io.kilnmark.kiln.yaml.PipelineDefinition;
 import io.kilnmark.kiln.yaml.Position;
 import io.kilnmark.kiln.yaml.Problem;
 import io.kilnmark.server.api.ApiError;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.jobs.JobQueue;
+import io.kilnmark.server.notify.NotificationPublisher;
 import io.kilnmark.server.pipelines.PipelineService;
 import io.kilnmark.server.pipelines.PipelineStore;
 import io.kilnmark.server.scan.ScanService;
+import io.kilnmark.server.variables.VariableService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.WebApplicationException;
@@ -56,6 +61,14 @@ public class FlowService {
 
     /** How often a running flow looks at its nodes. */
     volatile long pollMillis = 500;
+
+    /** Notifications: notify nodes and failed runs; null in tests that build the service by hand. */
+    @Inject
+    NotificationPublisher notifications;
+
+    /** The server's variables (${vars.name}); null in tests that build the service by hand. */
+    @Inject
+    VariableService variables;
 
     @Inject
     public FlowService(FlowStore store, PipelineService pipelines, PipelineStore pipelineStore, ObjectMapper json) {
@@ -98,7 +111,9 @@ public class FlowService {
         List<Problem> problems = new ArrayList<>(parsed.problems());
         FlowDefinition def = parsed.definition();
         if (def != null) {
+            Map<String, Object> vars = variables();
             for (FlowDefinition.Node s : def.nodes()) {
+                variablesSet(s, vars, problems);
                 if (!FlowDefinition.RUN_PIPELINE.equals(s.type()) || s.pipeline() == null) {
                     continue;
                 }
@@ -111,11 +126,110 @@ public class FlowService {
                     Position v = s.at("version");
                     problems.add(new Problem(v.line(), v.column(), s.id(), "Node " + s.id() + " runs version "
                         + s.version() + " of " + s.pipeline() + ", which has only " + p.get().latestVersion()));
+                } else {
+                    int n = s.version() == null ? p.get().latestVersion() : s.version();
+                    pipelineStore.version(s.pipeline(), n).ifPresent(v -> withProblems(def, s,
+                        PipelineDefinition.parse(v.yaml()).definition(), vars, problems));
                 }
             }
         }
         problems.sort(Problem.BY_POSITION);
         return new Validation(problems.isEmpty() && def != null, def == null ? null : def.name(), problems);
+    }
+
+    /**
+     * What is wrong with a run-pipeline node's {@code with:} against the parameters of the pipeline it
+     * runs: a parameter the pipeline does not take, or a value of another kind.
+     */
+    private static void withProblems(FlowDefinition def, FlowDefinition.Node s, PipelineDefinition pipeline,
+                                     Map<String, Object> vars, List<Problem> problems) {
+        if (pipeline == null) {
+            return;
+        }
+        Map<String, Parameters.Parameter> takes = new LinkedHashMap<>();
+        pipeline.parameters().forEach(p -> takes.put(p.name(), p));
+        Position at = s.at("with");
+        for (Parameters.Parameter p : pipeline.parameters()) {
+            Parameters.Parameter mine = def.parameter(p.name());
+            if (!s.with().containsKey(p.name()) && mine != null && !mine.kind().equals(p.kind())) {
+                problems.add(new Problem(s.position().line(), s.position().column(), s.id(), "Node " + s.id()
+                    + " passes the flow's " + p.name() + " (a " + mine.kind() + ") to " + s.pipeline() + ", which takes "
+                    + "a " + p.kind() + " for it: give it with: or rename one of them"));
+            }
+        }
+        for (Map.Entry<String, Object> e : s.with().entrySet()) {
+            Parameters.Parameter p = takes.get(e.getKey());
+            if (p == null) {
+                problems.add(new Problem(at.line(), at.column(), s.id(), "Node " + s.id() + " gives " + s.pipeline()
+                    + " the parameter '" + e.getKey() + "', which it does not take" + (takes.isEmpty()
+                    ? ": it takes none" : ": it takes " + String.join(", ", takes.keySet()))));
+                continue;
+            }
+            String given = kindOf(e.getValue(), def, vars);
+            if (given != null && !given.equals(p.kind())) {
+                problems.add(new Problem(at.line(), at.column(), s.id(), "Node " + s.id() + " gives " + e.getKey()
+                    + " a " + given + " value, but " + s.pipeline() + " takes a " + p.kind() + " for it"));
+            }
+        }
+    }
+
+    /**
+     * The kind of a with: value, as a parameter's type is written (text, number, boolean, text list,
+     * number list): its own, or that of the one parameter, variable or node value it is; null if unknown.
+     */
+    private static String kindOf(Object v, FlowDefinition def, Map<String, Object> vars) {
+        if (v instanceof Double) {
+            return "number";
+        }
+        if (v instanceof Boolean) {
+            return "boolean";
+        }
+        String whole = Parameters.whole((String) v);
+        if (whole == null) {
+            return "text"; // text, or text with values put in
+        }
+        if (whole.startsWith(Parameters.VARS)) {
+            Object value = vars.get(whole.substring(Parameters.VARS.length()));
+            return value instanceof Double ? "number" : value instanceof Boolean ? "boolean" : value == null ? null
+                : "text";
+        }
+        Parameters.Parameter p = def.parameter(whole);
+        if (p != null) {
+            return p.kind();
+        }
+        FlowCondition.Type reported = FlowDefinition.nodeValueType(def, whole);
+        return reported == null ? null : reported.name().toLowerCase(Locale.ROOT);
+    }
+
+    /** A problem for each server variable a node names that is not set on this server. */
+    private static void variablesSet(FlowDefinition.Node s, Map<String, Object> vars, List<Problem> problems) {
+        List<String> texts = new ArrayList<>();
+        s.with().values().forEach(v -> {
+            if (v instanceof String t) {
+                texts.add(t);
+            }
+        });
+        if (s.title() != null) {
+            texts.add(s.title());
+        }
+        if (s.message() != null) {
+            texts.add(s.message());
+        }
+        for (String t : texts) {
+            for (String name : Parameters.names(t)) {
+                if (name.startsWith(Parameters.VARS) && !vars.containsKey(name.substring(Parameters.VARS.length()))) {
+                    problems.add(new Problem(s.position().line(), s.position().column(), s.id(), "Node " + s.id()
+                        + " names the server variable '" + name.substring(Parameters.VARS.length())
+                        + "', which is not set on this server"));
+                    return;
+                }
+            }
+        }
+    }
+
+    /** The server's variables now; none in tests without them. */
+    private Map<String, Object> variables() {
+        return variables == null ? Map.of() : variables.snapshot();
     }
 
     /**
@@ -169,9 +283,11 @@ public class FlowService {
         }
     }
 
-    /** Marks failed the runs whose worker stopped; called by workers. */
+    /** Marks failed the runs whose worker stopped, and tells of each; called by workers. */
     public int failOrphanedRuns() {
-        return store.failOrphanedRuns();
+        List<FlowStore.Run> failed = store.failOrphanedRuns();
+        failed.forEach(r -> told(r.flow(), r.id(), "failed", r.error()));
+        return failed.size();
     }
 
     public Optional<FlowStore.Flow> find(String name) {
@@ -203,9 +319,10 @@ public class FlowService {
                 + "fixed: " + String.join("; ", first.stream().map(p -> "line " + p.line() + ": " + p.message()).toList()));
         }
         FlowDefinition def = FlowDefinition.parse(v.yaml()).definition();
-        Map<String, Object> resolved = resolveParameters(def, parameters);
+        Map<String, Object> vars = variables();
+        Map<String, Object> resolved = resolveParameters(def, parameters, vars);
         try {
-            return store.queueRun(name, n, by, role.id(), json.writeValueAsString(resolved));
+            return store.queueRun(name, n, by, role.id(), json.writeValueAsString(resolved), json.writeValueAsString(vars));
         } catch (FlowStore.Busy e) {
             throw fail(Response.Status.CONFLICT, "A run of " + name + " is already queued or running. Wait for it to "
                 + "finish, or cancel it, then run the flow again.");
@@ -216,37 +333,16 @@ public class FlowService {
 
     /** The values a run starts with: each parameter as given or by default, checked against its type. */
     static Map<String, Object> resolveParameters(FlowDefinition def, Map<String, Object> given) {
-        Map<String, Object> in = given == null ? Map.of() : given;
-        for (String key : in.keySet()) {
-            if (def.parameter(key) == null) {
-                throw new IllegalArgumentException("parameters: " + def.name() + " has no parameter '"
-                    + (key.length() > 80 ? key.substring(0, 80) : key) + "'"
-                    + (def.parameters().isEmpty() ? "" : "; it takes "
-                    + String.join(", ", def.parameters().stream().map(FlowDefinition.Parameter::name).toList())));
-            }
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        for (FlowDefinition.Parameter p : def.parameters()) {
-            Object v = in.containsKey(p.name()) ? in.get(p.name()) : p.defaultValue();
-            if (v == null) {
-                throw new IllegalArgumentException("parameters: " + p.name() + " needs a value (it has no default)");
-            }
-            out.put(p.name(), typed(p, v));
-        }
-        return out;
+        return resolveParameters(def, given, Map.of());
     }
 
-    private static Object typed(FlowDefinition.Parameter p, Object v) {
-        boolean fits = switch (p.type()) {
-            case TEXT -> v instanceof String s && s.length() <= 1_000;
-            case NUMBER -> v instanceof Number n && !Double.isNaN(n.doubleValue()) && !Double.isInfinite(n.doubleValue());
-            case BOOLEAN -> v instanceof Boolean;
-        };
-        if (!fits) {
-            throw new IllegalArgumentException("parameters: " + p.name() + " must be a "
-                + p.type().name().toLowerCase() + (p.type() == FlowCondition.Type.TEXT ? " of at most 1,000 characters" : ""));
+    static Map<String, Object> resolveParameters(FlowDefinition def, Map<String, Object> given,
+                                                 Map<String, Object> vars) {
+        try {
+            return Parameters.resolve(def.name(), def.parameters(), given, vars);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("parameters: " + e.getMessage());
         }
-        return p.type() == FlowCondition.Type.NUMBER ? (Object) ((Number) v).doubleValue() : v;
     }
 
     public Optional<FlowStore.Run> run(long id) {
@@ -283,7 +379,7 @@ public class FlowService {
 
     /** Runs the flow run behind job {@code jobId}; called by a worker. */
     public ScanService.Result execute(long jobId, JobQueue.ScanLease lease, BooleanSupplier shutdown) {
-        store.failOrphanedRuns();
+        failOrphanedRuns();
         Optional<Long> runId = store.runForJob(jobId);
         if (runId.isEmpty()) {
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Job " + jobId + " names no flow run");
@@ -308,8 +404,9 @@ public class FlowService {
         } catch (RuntimeException e) {
             // Not the exception's text: it could quote anything. The class is enough for the log.
             LOG.errorf("Flow run %d failed with %s", id, e.getClass().getName());
-            store.finishRun(id, "failed", "The flow could not be run to the end: an internal error. "
-                + "Look at the server's log.");
+            String why = "The flow could not be run to the end: an internal error. Look at the server's log.";
+            store.finishRun(id, "failed", why);
+            told(run.flow(), id, "failed", why);
         }
         return new ScanService.Result(ScanService.Outcome.FINISHED, null);
     }
@@ -323,6 +420,10 @@ public class FlowService {
         private final Map<String, Instant> waitingSince = new HashMap<>();
         private final Set<String> cancelAsked = new HashSet<>();
         private boolean nodeWasCancelled;
+        /** What ${...} reads: the run's parameters and the variables it started with (vars.name). */
+        private Map<String, Object> scope = Map.of();
+        private Map<String, Object> runVariables = Map.of();
+        private final Map<String, List<String>> declared = new HashMap<>();
 
         Execution(FlowStore.Run run, BooleanSupplier shutdown) {
             this.run = run;
@@ -334,11 +435,22 @@ public class FlowService {
             FlowDefinition.Parsed parsed = version == null ? null : FlowDefinition.parse(version.yaml());
             FlowDefinition def = parsed == null ? null : parsed.definition();
             if (def == null || !parsed.problems().isEmpty()) {
-                store.finishRun(run.id(), "failed", "The flow could not start: version " + run.version() + " of "
-                    + run.flow() + " no longer reads as a flow");
+                String why = "The flow could not start: version " + run.version() + " of " + run.flow()
+                    + " no longer reads as a flow";
+                store.finishRun(run.id(), "failed", why);
+                told(run.flow(), run.id(), "failed", why);
                 return;
             }
             Map<String, Object> params = readParameters(run.parameters());
+            runVariables = readParameters(run.variables());
+            if (params == null || runVariables == null) {
+                // Never run on defaults in place of the values the run was started with.
+                String why = "The flow could not start: the values it was started with could not be read";
+                store.finishRun(run.id(), "failed", why);
+                told(run.flow(), run.id(), "failed", why);
+                return;
+            }
+            scope = Parameters.scope(params, runVariables);
             List<String> ids = def.nodes().stream().map(FlowDefinition.Node::id).toList();
             FlowEngine engine = new FlowEngine(ids, def.engineConnections(), params);
             AccessRole role = role(run.requestedRole());
@@ -357,8 +469,10 @@ public class FlowService {
                         save(def, s, "failed", prId, Instant.now(), "The worker running this flow stopped", Map.of());
                     }
                     recordSkipped(def);
-                    store.finishRun(run.id(), "failed", "The worker running this flow was stopped before it finished. "
-                        + "Run it again; check what the pipelines it had started had written first.");
+                    String why = "The worker running this flow was stopped before it finished. Run it again; check "
+                        + "what the pipelines it had started had written first.";
+                    store.finishRun(run.id(), "failed", why);
+                    told(run.flow(), run.id(), "failed", why);
                     return;
                 }
                 if (!cancelling && store.cancelRequested(run.id())) {
@@ -427,8 +541,111 @@ public class FlowService {
                 save(def, node, "succeeded", null, now, s.message(), Map.of());
                 return;
             }
+            if (FlowDefinition.NOTIFY.equals(s.type())) {
+                String title = words(engine, s.title());
+                String message = s.message() == null ? null : words(engine, s.message());
+                if (notifications != null) {
+                    notifications.flowNotice(run.flow(), run.id(), node, s.severity(), title, message);
+                }
+                engine.finish(node, FlowEngine.State.SUCCEEDED, Map.of());
+                save(def, node, "succeeded", null, now, "Sent: " + title, Map.of());
+                return;
+            }
+            if (FlowDefinition.WAIT.equals(s.type())) {
+                save(def, node, "running", null, null, "Waiting " + pretty(s.waitFor()), Map.of());
+                return;
+            }
             save(def, node, "running", null, null, null, Map.of());
             tryQueue(def, engine, s, role);
+        }
+
+        /** A notification's words with the run's values put in; a name without one stays as written. */
+        private String words(FlowEngine engine, String text) {
+            Map<String, Object> values = scopeNow(engine);
+            for (String name : Parameters.names(text)) {
+                values.putIfAbsent(name, "unknown"); // nothing measured it, or its node did not report it
+            }
+            Parameters.Filled f = Parameters.fill(text, values, Parameters.Use.WORDS);
+            return f.problem() == null ? f.text() : text;
+        }
+
+        /**
+         * What ${...} reads as a node starts: the run's parameters and variables, and each node that has
+         * ended by then as node.status and the values it reported (node.rows_written, ...).
+         */
+        private Map<String, Object> scopeNow(FlowEngine engine) {
+            Map<String, Object> out = new LinkedHashMap<>(scope);
+            for (String n : started.keySet()) {
+                FlowEngine.State st = engine.state(n);
+                if (st == FlowEngine.State.SUCCEEDED || st == FlowEngine.State.FAILED || st == FlowEngine.State.CANCELLED) {
+                    out.put(n + ".status", st.name().toLowerCase(Locale.ROOT));
+                    engine.results(n).forEach((k, v) -> {
+                        if (v != null) {
+                            out.put(n + "." + k, v);
+                        }
+                    });
+                }
+            }
+            return out;
+        }
+
+        /**
+         * The values a run-pipeline node gives its pipeline: each as written, with the run's parameters and
+         * variables put in (a value that is one ${name} keeps that value's kind).
+         */
+        private Map<String, Object> withValues(FlowEngine engine, FlowDefinition def, FlowDefinition.Node s) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            Map<String, Object> scope = scopeNow(engine);
+            // A pipeline parameter the node does not set takes the flow's parameter of the same name, if any.
+            for (String name : pipelineParameters(s)) {
+                if (!s.with().containsKey(name) && def.parameter(name) != null && this.scope.containsKey(name)) {
+                    out.put(name, this.scope.get(name));
+                }
+            }
+            for (Map.Entry<String, Object> e : s.with().entrySet()) {
+                Object v = e.getValue();
+                if (v instanceof String t) {
+                    String whole = Parameters.whole(t);
+                    if (whole != null && scope.containsKey(whole)) {
+                        v = scope.get(whole);
+                    } else {
+                        Parameters.Filled f = Parameters.fill(t, scope, Parameters.Use.WORDS);
+                        if (f.problem() != null) {
+                            // A node value is missing when nothing measured it (a score with no rules).
+                            throw new IllegalArgumentException(e.getKey() + " " + f.problem()
+                                .replace("which is not declared", "which has no value in this run"));
+                        }
+                        v = f.text();
+                    }
+                }
+                out.put(e.getKey(), v);
+            }
+            return out;
+        }
+
+        /**
+         * The parameters the pipeline a node runs declares (that version's, or its latest), read once
+         * per node and run: a node waiting for a busy pipeline asks again and again.
+         */
+        private List<String> pipelineParameters(FlowDefinition.Node s) {
+            return declared.computeIfAbsent(s.id(), k -> pipelineStore.pipeline(s.pipeline())
+                .flatMap(p -> pipelineStore.version(s.pipeline(), s.version() == null ? p.latestVersion() : s.version()))
+                .map(v -> PipelineDefinition.parse(v.yaml()).definition())
+                .map(d -> d.parameters().stream().map(Parameters.Parameter::name).toList())
+                .orElse(List.of()));
+        }
+
+        /** The values a node gives its pipeline, as name=value, for its message. */
+        private String valuesText(FlowEngine engine, FlowDefinition def, FlowDefinition.Node s) {
+            try {
+                List<String> out = new ArrayList<>();
+                withValues(engine, def, s).forEach((k, v) -> out.add(k + "=" + (v instanceof Double d
+                    ? Parameters.numberText(d) : v)));
+                String text = String.join(", ", out);
+                return text.isEmpty() ? "the defaults" : text.length() > 300 ? text.substring(0, 300) + "…" : text;
+            } catch (IllegalArgumentException e) {
+                return "values that could not be worked out";
+            }
         }
 
         /** Queues the node's pipeline run, or notes that it must wait for the pipeline's current one. */
@@ -440,7 +657,7 @@ public class FlowService {
             }
             try {
                 PipelineStore.Run queued = pipelines.queueRunForFlow(s.pipeline(), s.version(), run.requestedBy(), role,
-                    run.id(), s.id());
+                    run.id(), s.id(), withValues(engine, def, s), runVariables);
                 pipelineRuns.put(s.id(), queued.id());
                 waitingSince.remove(s.id());
                 save(def, s.id(), "running", queued.id(), null, null, Map.of());
@@ -455,7 +672,20 @@ public class FlowService {
                     save(def, s.id(), "running", null, null, "Waiting for " + s.pipeline()
                         + " to finish its current run", Map.of());
                 }
+            } catch (IllegalArgumentException e) {
+                // The flow's own values were wrong for the pipeline: the flow's words, never the data's.
+                end(def, engine, s.id(), FlowEngine.State.FAILED, null, "The pipeline " + s.pipeline()
+                    + " could not be run with these values: " + e.getMessage(), Map.of());
             } catch (WebApplicationException e) {
+                boolean refused = e.getResponse().getStatus() == Response.Status.CONFLICT.getStatusCode();
+                if (refused && (!s.with().isEmpty() || !pipelineParameters(s).isEmpty())) {
+                    // No run exists to say why: name the values, which are the flow's own, so it can be checked
+                    // on the pipeline's page with them.
+                    end(def, engine, s.id(), FlowEngine.State.FAILED, null, "The pipeline " + s.pipeline()
+                        + " has problems with these values (" + valuesText(engine, def, s) + "); check it with them "
+                        + "on its page", Map.of());
+                    return;
+                }
                 // Why can name sources and fields the flow's readers may not see: the pipeline's own page says.
                 end(def, engine, s.id(), FlowEngine.State.FAILED, null, "The pipeline " + s.pipeline()
                     + " could not be run; its page says why", Map.of());
@@ -467,6 +697,15 @@ public class FlowService {
                 return;
             }
             FlowDefinition.Node s = def.node(node);
+            if (FlowDefinition.WAIT.equals(s.type())) {
+                if (cancelling || engine.halted()) {
+                    end(def, engine, node, FlowEngine.State.CANCELLED, null, "Stopped waiting: the flow was stopped",
+                        Map.of());
+                } else if (Duration.between(started.get(node), Instant.now()).compareTo(s.waitFor()) >= 0) {
+                    end(def, engine, node, FlowEngine.State.SUCCEEDED, null, "Waited " + pretty(s.waitFor()), Map.of());
+                }
+                return;
+            }
             Long prId = pipelineRuns.get(node);
             if (prId == null) {
                 if (cancelling || engine.halted()) {
@@ -548,6 +787,7 @@ public class FlowService {
                 default -> store.finishRun(run.id(), "failed", failure(def, engine));
             }
             LOG.infof("Flow run %d of %s %s", run.id(), run.flow(), outcome.name().toLowerCase());
+            store.run(run.id()).ifPresent(r -> told(run.flow(), run.id(), r.status(), r.error()));
         }
 
         /** Nodes that never ran are recorded, so a run shows every node of its version. */
@@ -575,17 +815,28 @@ public class FlowService {
         }
     }
 
+    /** Tells of a run's end: a failed run notifies, a run that succeeds clears that. */
+    private void told(String flow, long runId, String status, String message) {
+        if (notifications != null) {
+            notifications.flowRunFinished(flow, runId, status, message);
+        }
+    }
+
     private static String pretty(Duration d) {
         long m = d.toMinutes();
         return m >= 1 && d.toSeconds() % 60 == 0 ? m + " minutes" : d.toSeconds() + " seconds";
     }
 
+    /** Stored values (JSON), numbers as Doubles; null when they cannot be read. */
     private Map<String, Object> readParameters(String text) {
         try {
-            return json.readValue(text == null ? "{}" : text, new TypeReference<LinkedHashMap<String, Object>>() {
-            });
+            Map<String, Object> m = json.readValue(text == null ? "{}" : text,
+                new TypeReference<LinkedHashMap<String, Object>>() {
+                });
+            m.replaceAll((k, v) -> v instanceof Number n ? n.doubleValue() : v);
+            return m;
         } catch (JsonProcessingException e) {
-            return Map.of();
+            return null;
         }
     }
 
