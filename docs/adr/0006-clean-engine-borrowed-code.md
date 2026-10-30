@@ -1,4 +1,4 @@
-# 0006 Clean engine, selective Kettle 10.2 code, no Apache Hop
+# 0006 Clean engine, selective borrowing of Apache-licensed code
 
 Status: Accepted (24 October 2026)
 

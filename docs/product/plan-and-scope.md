@@ -2,7 +2,7 @@
 
 Oct 22, 2026 · @James O'Reilly
 
-A standalone product, independent of any existing Pentaho product. First milestone: **v0.1.0 Foundation** — ingest, profile and search metadata from databases, files and object storage on a Kettle-style Java engine, in about 12 weeks.
+A standalone product, independent of any other vendor's product. First milestone: **v0.1.0 Foundation** — ingest, profile and search metadata from databases, files and object storage on a streaming Java engine, in about 12 weeks.
 
 > **Direction, 24 October:** pipeline-first, not a catalogue ([ADR 0021](../adr/0021-pipeline-first.md)). Phases after v0.1 are re-planned around trusted pipelines; see docs/design/data-quality.md.
 
@@ -14,8 +14,8 @@ v0.1 proves the core loop: point the engine at a source, and it ingests metadata
 
 **Product boundary**
 
-- Standalone: no code, APIs, file formats or lab data from Pentaho products; integrations with any catalog (including PDC) come later through open standards only (OpenLineage, JSON-LD, CSV)
-- Built clean-room from public concepts; Kettle and Data Optimizer are design inspiration, not dependencies
+- Standalone: no code, APIs, file formats or lab data from other vendors' products; integrations with any catalog come later through open standards only (OpenLineage, JSON-LD, CSV)
+- Built clean-room from public concepts; streaming ETL engines and data optimizers are design inspiration, not dependencies
 
 **v0.1 in scope**
 
@@ -59,7 +59,7 @@ Each sprint builds on the last: graph before engine, engine before connectors, c
 
 | # | Task | Sprint | Workstream | Status |
 | --- | --- | --- | --- | --- |
-| 1 | Mono-repo, licence file, contribution rules, NOTICE and provenance log for Kettle 10.2 code | S0 | Platform | Not started |
+| 1 | Mono-repo, licence file, contribution rules, NOTICE and provenance log for borrowed Apache-licensed code | S0 | Platform | Not started |
 | 2 | CI: build, tests, one multi-arch image with role flags (api, scheduler, worker) | S0 | Platform | Not started |
 | 3 | Docker Compose with two services: PostgreSQL (AGE, pgvector) and the Kilnmark server | S0 | Platform | Not started |
 | 4 | Reference lab: sample database, S3-compatible bucket (VersityGW), file share, synthetic data | S0 | Platform | Not started |
@@ -72,7 +72,7 @@ Each sprint builds on the last: graph before engine, engine before connectors, c
 | 11 | Arrow row sets with back-pressure | S2 | Engine | Not started |
 | 12 | YAML pipeline format and validator | S2 | Engine | Not started |
 | 13 | Local runner, flow connections, run records, PostgreSQL job queue (SKIP LOCKED) | S2 | Engine | Not started |
-| 14 | JDBC connector: PostgreSQL, SQL Server (database dialects adapted from Kettle 10.2) | S3 | Connectors | Not started |
+| 14 | JDBC connector: PostgreSQL, SQL Server (database dialects adapted from Apache-licensed code) | S3 | Connectors | Not started |
 | 15 | File connector: CSV, Parquet, JSON | S3 | Connectors | Not started |
 | 16 | S3-compatible object storage connector | S3 | Connectors | Not started |
 | 17 | Change markers for incremental ingest | S3 | Connectors | Not started |
@@ -91,11 +91,11 @@ Later phases follow the architecture spec's roadmap; each gets its own detailed 
 | Phase | Delivers | Exit gate |
 | --- | --- | --- |
 | v0.2 Discover and classify | Classification tiers 1 to 3, PII, keys, duplicates, drift, relationship discovery, GraphQL API, trust score, glossary, steward workflow, OIDC sign-in | Discovery results reproducible on the reference lab |
-| v0.3 Act | Rules engine, dry run and what-if, temperature terms, tier/purge/rehydrate, pipelines as actions, Kettle .ktr/.kjb importer, read-only pipeline canvas | Dry run matches the real run |
+| v0.3 Act | Rules engine, dry run and what-if, temperature terms, tier/purge/rehydrate, pipelines as actions, an importer for existing jobs, read-only pipeline canvas | Dry run matches the real run |
 | v0.4 AI | Auto-descriptions, LLM tier, natural-language search, MCP server, steward agent | No AI output lands without approval |
 | v0.5 Lineage and scale | OpenLineage in and out, SQL parsing, propagation, Remote workers, optional Kafka connector, Helm | Full regression green, then v1.0 |
 
-Integration with other catalogs, PDC included, arrives only through open standards in v0.5 or later.
+Integration with other catalogs arrives only through open standards in v0.5 or later.
 
 ## Engineering setup
 
@@ -148,6 +148,6 @@ kilnmark/
 - [ ] Where the repo lives: private GitHub org under your own account
 - [ ] Weekly capacity, so sprint estimates can be calibrated
 
-* [ ] Decided: clean Kiln engine borrowing Apache-licensed Kettle 10.2 code where useful, with a provenance log; .ktr/.kjb importer in v0.3. No Hop
+* [ ] Decided: clean Kiln engine borrowing Apache-licensed code where useful, with a provenance log ([ADR 0006](../adr/0006-clean-engine-borrowed-code.md)); an importer for existing jobs in v0.3
 
 - [ ] Do on-prem customers need a non-Docker install (Java plus their own PostgreSQL, run as a systemd service)? If so, will their DBAs allow the AGE and pgvector extensions? Ask prospects; decide before v0.2
