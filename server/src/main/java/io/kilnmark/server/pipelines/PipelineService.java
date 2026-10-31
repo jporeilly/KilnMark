@@ -1402,7 +1402,7 @@ public class PipelineService {
      * Marks follow the data: every column this write writes that was made from a column marked
      * sensitive upstream (passed on, renamed, looked up or worked out from it; see
      * {@link NodePreview#marked}) is marked on the written asset, before it is catalogued, so it is
-     * masked there for everyone but admins as it was where it came from. When the written columns
+     * masked there for everyone but designers as it was where it came from. When the written columns
      * cannot be told before the run, those catalogued are used.
      */
     private void carryMarks(PipelineExecution.WriteTarget w, PipelineCompilerPort.Compilation c, RunContext context,
