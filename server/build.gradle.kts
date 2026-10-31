@@ -155,6 +155,27 @@ val bundleDocs by tasks.registering(Sync::class) {
 }
 sourceSets["main"].resources.srcDir(bundleDocs)
 
+// The samples (samples/*/*.yaml), which ship as templates: served by GET /api/v1/samples and added
+// with the person's own sources (io.kilnmark.server.pipelines.Samples). Copied under kilnmark/samples
+// with a list of them, as the guides are.
+val samplesDir = rootProject.layout.projectDirectory.dir("samples")
+val samplesResources = layout.buildDirectory.dir("generated/samples-resources")
+val bundleSamples by tasks.registering(Sync::class) {
+    description = "Copies samples/**/*.yaml into the server's resources."
+    from(samplesDir) {
+        include("**/*.yaml")
+        into("kilnmark/samples")
+    }
+    into(samplesResources)
+    val listFile = samplesResources.map { it.file("kilnmark/samples/samples.list").asFile }
+    val sampleFiles = samplesDir.asFileTree.matching { include("**/*.yaml") }.elements
+        .map { files -> files.map { it.asFile.relativeTo(samplesDir.asFile).invariantSeparatorsPath }.sorted() }
+    doLast {
+        listFile.get().writeText(sampleFiles.get().joinToString("\n", postfix = "\n"))
+    }
+}
+sourceSets["main"].resources.srcDir(bundleSamples)
+
 tasks.named<ProcessResources>("processResources") {
     dependsOn(buildUi)
     from(uiOut) {

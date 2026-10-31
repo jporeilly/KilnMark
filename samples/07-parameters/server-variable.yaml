@@ -1,4 +1,4 @@
-# Server variables: values of the server (sample: lab only, never shipped).
+# Server variables: values of the server (a Kilnmark sample).
 # Names its file after the server variable sample_region, so the same YAML writes EMEA files on
 # one server and APAC files on another. Set the variable first (a steward or admin):
 #   PUT /api/v1/variables/sample_region   {"type": "text", "value": "EMEA"}
@@ -14,7 +14,7 @@ parameters:
 nodes:
   - id: customers
     type: read
-    source: lab-mariadb
+    source: shop-db
     asset: shop.customers
 
   - id: gold
@@ -25,6 +25,6 @@ nodes:
   - id: out
     type: write
     input: gold
-    source: lab-warehouse
+    source: files
     path: samples/parameters/gold_customers_${region}.csv
     mode: replace

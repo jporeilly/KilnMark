@@ -1,4 +1,4 @@
-# Select: keep, rename, order and retype columns (sample: lab only, never shipped).
+# Select: keep, rename, order and retype columns (a Kilnmark sample).
 # Keeps the shop customer columns wanted, renames two, puts the key first and makes the code text.
 # Look for: keep or drop first, then cast, then rename, then order.
 kilnmark: pipeline/v1
@@ -8,7 +8,7 @@ description: Shop customers, shaped.
 nodes:
   - id: customers
     type: read
-    source: lab-mariadb
+    source: shop-db
     asset: shop.customers
 
   - id: shape
@@ -22,6 +22,6 @@ nodes:
   - id: out
     type: write
     input: shape
-    source: lab-warehouse
+    source: files
     path: samples/transform/customers_shaped.csv
     mode: replace

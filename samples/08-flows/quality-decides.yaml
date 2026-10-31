@@ -1,4 +1,4 @@
-# Flow: quality decides what runs next (sample: lab only, never shipped).
+# Flow: quality decides what runs next (a Kilnmark sample).
 # Runs the quarantine gate sample; carries on to the order totals only if under limit_share of the
 # customers were set aside, else tells the stewards and stops. A failure also stops it.
 # Look for: conditions on what a node measured (check.quarantined_share), notify and stop.

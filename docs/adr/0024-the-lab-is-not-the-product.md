@@ -22,14 +22,19 @@ each connector) is for **development, testing and demos only**.
   `lab/sources.csv`, and test resources that use it.
 - **The changelog may say what changed in the lab** in its details, since it describes the
   repository, but its "What's new" sections are for customers and do not mention the lab.
+- **The samples ship, the lab's mapping does not** (30 October 2026). The pipelines and flows in
+  `samples/` are product templates: they name their sources by placeholders (`crm-db`, `shop-db`,
+  `files`), never a lab source, and the server bundles them for **Add samples**, which maps each
+  placeholder to one of the person's sources. Which lab source each placeholder means lives only in
+  `lab/sample-sources.csv`, which `lab.sh samples` and the tests read.
 
 The release build enforces this: `./gradlew release` runs `checkProductOnly`
 (`gradle/product-only.gradle.kts`), which fails when the release folder holds a lab, tests or docs
 folder, or when the shipped `compose.yaml`, anything under the release's `containers/`, Kilnmark's
-own jars (classes, the UI bundle, `application.properties` outside `%dev` and `%test`) or the
-bundled guides name a lab source (any `lab-<name>`, `labadmin`), a path into `lab/` or a lab-only
-port (5433, 9020). The compose file, the Containerfiles, the guides and "What's new" may not
-mention the lab at all. Justified exceptions are listed, each with its reason, in
+own jars (classes, the UI bundle, `application.properties` outside `%dev` and `%test`), the
+bundled guides or the samples name a lab source (any `lab-<name>`, `labadmin`), a path into `lab/` or a lab-only
+port (5433, 9020). The compose file, the Containerfiles, the guides, the samples and "What's new"
+may not mention the lab at all. Justified exceptions are listed, each with its reason, in
 `config/product-only-allow.txt`. CI runs `release` on every push and pull request.
 
 ## Why

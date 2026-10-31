@@ -385,9 +385,11 @@ cmd_driver() {
 # Adds each pipeline in a folder (lab/pipelines, or samples/ and its subfolders) to a running
 # Kilnmark through its API. Needs an admin or steward token in KILNMARK_ADMIN_TOKEN (or
 # KILNMARK_TOKEN); KILNMARK_URL defaults to http://localhost:8780. A pipeline that is already there
-# is left as it is. Flows are skipped: they cannot be added until the flows API comes.
+# is left as it is. Flows are skipped: they cannot be added until the flows API comes. The samples
+# name their sources by placeholders (crm-db, shop-db, files); a mapping file (lab/sample-sources.csv)
+# replaces each with its lab source, as the server's Add samples does with the person's own.
 cmd_pipelines() {
-    local folder=$1 command=$2
+    local folder=$1 command=$2 mapping=${3:-}
     local url=${KILNMARK_URL:-http://localhost:8780} token=${KILNMARK_TOKEN:-${KILNMARK_ADMIN_TOKEN:-}} file body code
     [ -n "$token" ] || die "set KILNMARK_ADMIN_TOKEN (or KILNMARK_TOKEN) to an admin or steward token first."
     command -v python3 >/dev/null 2>&1 || die "this needs python3, to send each file's YAML as JSON."
@@ -396,7 +398,18 @@ cmd_pipelines() {
             echo "Skipped  $(basename "$file") (a flow: flows are added once the flows API comes)"
             continue
         fi
-        body=$(python3 -c 'import json,os,sys; y=open(sys.argv[1], encoding="utf-8").read(); n=[l.split(":",1)[1].strip() for l in y.splitlines() if l.startswith("name:")][0]; print(json.dumps({"name": n, "yaml": y, "message": "Added by lab/lab.sh " + sys.argv[2]}))' "$file" "$command")
+        body=$(python3 - "$file" "$command" "$mapping" <<'PY'
+import csv, json, re, sys
+y = open(sys.argv[1], encoding="utf-8").read()
+if sys.argv[3]:
+    with open(sys.argv[3], encoding="utf-8", newline="") as f:
+        to = {r["placeholder"]: r["lab_source"] for r in csv.DictReader(f)}
+    line = re.compile(r"^(\s*(?:-\s+)?source:\s*)([\x22\x27]?)([A-Za-z0-9_.-]+)\2(\s*(?:#.*)?)$", re.M)
+    y = line.sub(lambda m: m.group(1) + m.group(2) + to.get(m.group(3), m.group(3)) + m.group(2) + m.group(4), y)
+n = [l.split(":", 1)[1].strip() for l in y.splitlines() if l.startswith("name:")][0]
+print(json.dumps({"name": n, "yaml": y, "message": "Added by lab/lab.sh " + sys.argv[2]}))
+PY
+)
         code=$(printf '%s' "$body" | curl -s -o /dev/null -w '%{http_code}' -X POST "$url/api/v1/pipelines" \
             -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data-binary @-) || code=000
         case "$code" in
@@ -428,7 +441,7 @@ case "$command" in
     sources) cmd_sources ;;
     driver) cmd_driver "$@" ;;
     pipelines) cmd_pipelines "$LAB_DIR/pipelines" pipelines ;;
-    samples) cmd_pipelines "$LAB_DIR/../samples" samples ;;
+    samples) cmd_pipelines "$LAB_DIR/../samples" samples "$LAB_DIR/sample-sources.csv" ;;
     help|-h|--help) usage ;;
     *) usage >&2; echo >&2; die "unknown command '$command'." ;;
 esac

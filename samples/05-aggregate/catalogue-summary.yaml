@@ -1,14 +1,14 @@
-# Aggregate: a whole-table summary (sample: lab only, never shipped).
+# Aggregate: a whole-table summary (a Kilnmark sample).
 # Summarises the product catalogue by category: how many products, the price range and its width.
 # Look for: a value can be any expression over the group, such as max(x) - min(x).
 kilnmark: pipeline/v1
 name: sample-catalogue-summary
-description: Lab products by category.
+description: Products by category.
 
 nodes:
   - id: products
     type: read
-    source: lab-mariadb
+    source: shop-db
     asset: stock.products
 
   - id: by_category
@@ -24,6 +24,6 @@ nodes:
   - id: out
     type: write
     input: by_category
-    source: lab-warehouse
+    source: files
     path: samples/aggregate/products_by_category.csv
     mode: replace

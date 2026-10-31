@@ -1404,6 +1404,37 @@ export type NodeType = {
   category?: string;
 };
 
+/** A source name the bundled samples use in place of a real source, and what it stands for. */
+export type SamplePlaceholder = { name: string; category: string; description: string };
+/** One bundled sample; exists: a pipeline of its name is already there. */
+export type SampleInfo = {
+  file: string;
+  name: string;
+  type: "pipeline" | "flow";
+  description: string | null;
+  sources: string[];
+  exists: boolean;
+};
+export type SampleCatalogue = { placeholders: SamplePlaceholder[]; samples: SampleInfo[] };
+export type SampleOutcome = {
+  name: string;
+  file: string;
+  outcome: "added" | "exists" | "skipped" | "failed";
+  reason: string | null;
+  valid: boolean | null;
+};
+
+/** The samples that ship with Kilnmark (GET/POST /api/v1/samples). */
+export const samplesApi = {
+  list: () => call<SampleCatalogue>("/api/v1/samples"),
+  /** sources: placeholder to saved source; a placeholder left out skips the samples that use it. */
+  add: (sources: Record<string, string>) =>
+    call<{ samples: SampleOutcome[]; added: number }>("/api/v1/samples", {
+      method: "POST",
+      body: JSON.stringify({ sources }),
+    }),
+};
+
 const pipe = (name: string) => `/api/v1/pipelines/${encodeURIComponent(name)}`;
 
 export const pipelinesApi = {

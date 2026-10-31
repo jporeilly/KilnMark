@@ -1,4 +1,4 @@
-# Quality gate: warn only (sample: lab only, never shipped).
+# Quality gate: warn only (a Kilnmark sample).
 # Checks the supplier feed for repeated SKUs and odd prices but lets every row through: what
 # failed is recorded with the run.
 # Look for: on_fail: warn; the run succeeds and its page lists what failed.
@@ -9,7 +9,7 @@ description: Supplier feed, checked but not stopped.
 nodes:
   - id: feed
     type: read
-    source: lab-mariadb
+    source: shop-db
     asset: stock.supplier_feed
 
   - id: check
@@ -24,6 +24,6 @@ nodes:
   - id: out
     type: write
     input: check
-    source: lab-warehouse
+    source: files
     path: samples/quality/supplier_feed_checked.csv
     mode: replace

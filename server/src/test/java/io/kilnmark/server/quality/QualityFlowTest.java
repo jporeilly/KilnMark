@@ -421,7 +421,9 @@ class QualityFlowTest {
         assertEquals(CUSTOMERS, body.get("asset").asText());
         assertEquals(40, body.get("failing").asLong());
         JsonPath issues = as(viewer).get("/api/v1/quality/issues").then().statusCode(200).extract().jsonPath();
-        assertTrue(issues.getList("ruleId").stream().anyMatch(id -> ((Number) id).longValue() == rules.get("email")),
+        // Drift issues have no rule; other tests' scans may have opened some.
+        assertTrue(issues.getList("ruleId").stream().anyMatch(id -> id != null
+                && ((Number) id).longValue() == rules.get("email")),
             "an open task for the failing rule");
         assertEquals(0, count("SELECT count(*) FROM kilnmark.quality_issue WHERE rule_id = " + rules.get("postcode")),
             "a rule without the task action opens no task");

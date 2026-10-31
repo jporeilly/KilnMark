@@ -7,6 +7,19 @@ details.
 
 ### Details
 
+- **The samples ship, and Add samples maps them to your sources.** The samples in `samples/` no
+  longer name the lab's sources: they name three placeholders, `crm-db` and `shop-db` (databases)
+  and `files` (file storage they write to), and their comments no longer mention the lab. The
+  server bundles them (`kilnmark/samples` in its jar, listed in `samples.list`) and the release has
+  them in its `samples` folder. `GET /api/v1/samples` lists the placeholders and samples (viewers);
+  `POST /api/v1/samples` adds every sample pipeline whose placeholders are all given a saved source
+  (stewards and admins), leaving one already there as it is and skipping flows until the flows API
+  comes. **Add samples** on the Pipelines page asks which of your sources each placeholder means,
+  the sources of the right kind first, and lists what happened to each sample. `lab.sh samples`
+  and `lab.ps1 samples` map the placeholders to the lab's sources from `lab/sample-sources.csv`,
+  and `LabPipelinesTest` checks every sample through the same mapping, and that the samples name
+  only placeholders. `checkProductOnly` now also fails the release if a shipped sample mentions the
+  lab. ADR 0024 records the change.
 - **The read node's `columns` and `where`** (docs/guide/pipelines.md, "Reading"). A read node keeps
   only the columns chosen, in that order, and the rows meeting `where`, an expression that may use
   the pipeline's parameters (`status in ${statuses}`); `row_limit` counts the rows kept. For
@@ -20,7 +33,7 @@ details.
 - **Samples and an install guide.** `samples/` holds 18 small pipelines and 2 flows, one idea each,
   sorted by what they show (read and write, filter and route, transform, combine, aggregate,
   quality, parameters, flows), on the reference lab's data; `lab/lab.sh samples` (or `lab.ps1`)
-  adds them to a running Kilnmark. Like the lab, they are never shipped. `LabPipelinesTest` checks
+  adds them to a running Kilnmark. (They now ship: see the entry above.) `LabPipelinesTest` checks
   every sample against the lab's columns and every flow against the sample pipelines.
   `INSTALL.md` says how to install on a clean machine: a release, or from source with the lab.
 - **Parameters and server variables** (V22; docs/guide/pipelines.md, "Parameters and server

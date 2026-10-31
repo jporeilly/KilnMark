@@ -4,6 +4,7 @@ import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { RunStatus } from "./RunStatus";
+import { AddSamples } from "./AddSamples";
 import "./pipelines.css";
 
 /** Every pipeline: what it does, its latest version, its last run, and Run now for stewards. */
@@ -54,9 +55,12 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
       <div className="pl-head">
         <h1 tabIndex={-1}>Pipelines</h1>
         {steward && (
-          <a className="pl-link-button" href={href.newPipeline()}>
-            New pipeline
-          </a>
+          <div className="pl-head-actions">
+            <AddSamples onAdded={load} />
+            <a className="pl-link-button" href={href.newPipeline()}>
+              New pipeline
+            </a>
+          </div>
         )}
       </div>
       <p className="lead">
@@ -79,7 +83,8 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
             No pipelines yet.{" "}
             {steward ? (
               <>
-                Choose <strong>New pipeline</strong> to start from a template that uses your sources.
+                Choose <strong>New pipeline</strong> to start from a template that uses your sources, or{" "}
+                <strong>Add samples</strong> for small pipelines that show one idea each.
               </>
             ) : (
               "Stewards add them."

@@ -1,4 +1,4 @@
-# Aggregate: one row per group (sample: lab only, never shipped).
+# Aggregate: one row per group (a Kilnmark sample).
 # Totals each order's lines: how many lines, how many items and what they are worth.
 # Look for: group_by and values; without group_by everything becomes one row.
 kilnmark: pipeline/v1
@@ -8,7 +8,7 @@ description: Each shop order's lines, items and value.
 nodes:
   - id: lines
     type: read
-    source: lab-mariadb
+    source: shop-db
     asset: shop.order_lines
 
   - id: per_order
@@ -24,6 +24,6 @@ nodes:
   - id: out
     type: write
     input: per_order
-    source: lab-warehouse
+    source: files
     path: samples/aggregate/order_totals.csv
     mode: replace

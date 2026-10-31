@@ -1,4 +1,4 @@
-# Filter: keep some rows, set the rest aside (sample: lab only, never shipped).
+# Filter: keep some rows, set the rest aside (a Kilnmark sample).
 # Keeps active gold and platinum shop customers; the others go to a second file through the
 # filter's rejected output.
 # Look for: the two outputs (out and rejected) and how many rows each received.
@@ -9,7 +9,7 @@ description: Active gold and platinum customers, and everyone else.
 nodes:
   - id: customers
     type: read
-    source: lab-mariadb
+    source: shop-db
     asset: shop.customers
 
   - id: best
@@ -20,13 +20,13 @@ nodes:
   - id: kept
     type: write
     input: best
-    source: lab-warehouse
+    source: files
     path: samples/filter-and-route/best_customers.csv
     mode: replace
 
   - id: others
     type: write
     input: best.rejected
-    source: lab-warehouse
+    source: files
     path: samples/filter-and-route/other_customers.csv
     mode: replace

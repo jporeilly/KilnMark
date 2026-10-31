@@ -1,4 +1,4 @@
-# Flow: values passed on (sample: lab only, never shipped).
+# Flow: values passed on (a Kilnmark sample).
 # statuses is inherited by sample-orders-by-status (both declare it); label is given with with:,
 # built from the flow's own parameter; a wait spaces the runs out; the notice reads what an earlier
 # node reported.

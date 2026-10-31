@@ -1,4 +1,4 @@
-# Quality gate: set failing rows aside (sample: lab only, never shipped).
+# Quality gate: set failing rows aside (a Kilnmark sample).
 # Checks CRM customers on the way: rows with no email or an unknown segment go to quarantine, the
 # rest to the clean file. More than 20% failing would stop the run.
 # Look for: on_fail: quarantine, the quarantine output, and the run's quality chips.
@@ -9,7 +9,7 @@ description: CRM customers checked; failing rows set aside.
 nodes:
   - id: customers
     type: read
-    source: lab-db
+    source: crm-db
     asset: crm.customers
 
   - id: check
@@ -24,13 +24,13 @@ nodes:
   - id: clean
     type: write
     input: check
-    source: lab-warehouse
+    source: files
     path: samples/quality/customers_clean.csv
     mode: replace
 
   - id: aside
     type: write
     input: check.quarantine
-    source: lab-warehouse
+    source: files
     path: samples/quality/customers_aside.csv
     mode: replace

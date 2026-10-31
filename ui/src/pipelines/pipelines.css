@@ -8,6 +8,33 @@
   gap: 12px;
 }
 
+.pl-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.pl-samples {
+  max-width: 600px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.pl-samples .field {
+  margin-bottom: 14px;
+}
+
+.pl-samples .buttons {
+  margin-top: 16px;
+}
+
+.pl-sample-results {
+  max-height: 50vh;
+  overflow-y: auto;
+  padding-left: 1.2em;
+}
+
 .pl-link-button {
   display: inline-flex;
   align-items: center;
