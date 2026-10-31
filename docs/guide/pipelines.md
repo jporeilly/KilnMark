@@ -811,5 +811,13 @@ Kilnmark also records the lineage: the written asset came from the assets the pi
 kept even if the pipeline is later deleted, so the next pipeline that reads the written table
 starts from what is known about it.
 
+**Marks follow the data.** A column the run writes from a column marked sensitive is marked
+sensitive where it is written too, whoever ran it: a column passed on or renamed, looked up, or
+worked out from one (a computed column, an aggregate's value or group). So it is masked there for
+everyone but admins, as it was where it came from, even before the written table is catalogued. A
+column made only from unmarked columns is not marked. Only an admin can clear a mark. For the same
+reason, only an admin can point a folder source, or a bucket source using the server's own
+credentials, at files that a source with marked columns already reads.
+
 Messages never include a source's password, and pipelines connect only to the hosts your
 administrator allows.

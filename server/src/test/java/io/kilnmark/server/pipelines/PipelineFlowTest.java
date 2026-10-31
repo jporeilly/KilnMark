@@ -868,4 +868,61 @@ class PipelineFlowTest {
             .extract().jsonPath().getLong("[0].id"), "succeeded");
         assertEquals(11L, fewer.getLong("nodes.find { it.node == 'people' }.rowsOut"), fewer.prettify());
     }
+
+    /**
+     * Marks follow the data: a column written from a column marked sensitive is marked where it is
+     * written, passed on or worked out from it, before the written asset is catalogued; a column made
+     * from nothing marked is not; and an admin clears a carried mark as any other.
+     */
+    @Test
+    @Order(15)
+    void marksFollowTheDataToWhatAPipelineWrites() throws Exception {
+        as(designer).body(Map.of("field", "name", "sensitive", true))
+            .put("/api/v1/quality/asset/sensitive?urn=" + READ_URN).then().statusCode(204);
+        String yaml = """
+            kilnmark: pipeline/v1
+            name: people-marked
+            nodes:
+              - id: people
+                type: read
+                source: mem-src
+                asset: lab.people
+              - id: worked
+                type: compute
+                input: people
+                columns:
+                  greeting: "'hello ' || name"
+                  twice: "id * 2"
+              - id: out
+                type: write
+                input: worked
+                source: mem-out
+                table: lab.people_marked
+                mode: replace
+            """;
+        as(designer).body(Map.of("name", "people-marked", "yaml", yaml)).post("/api/v1/pipelines").then()
+            .statusCode(201).body("latest.valid", equalTo(true));
+        long id = as(designer).body(Map.of()).post("/api/v1/pipelines/people-marked/runs").then().statusCode(202)
+            .extract().jsonPath().getLong("id");
+        waitForRun(id, "succeeded");
+        String urn = "urn:kilnmark:mem-out:lab.people_marked";
+        java.util.Set<String> carried = new java.util.TreeSet<>();
+        try (java.sql.Connection c = db.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement(
+            "SELECT name FROM kilnmark.sensitive_column WHERE asset_urn = ?")) {
+            ps.setString(1, urn);
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    carried.add(rs.getString(1));
+                }
+            }
+        }
+        assertEquals(java.util.Set.of("greeting", "name"), carried, "name passed on, greeting worked out from it");
+        // Only an admin clears it, as any mark; the mark on what was read stays.
+        as(designer).body(Map.of("field", "greeting", "sensitive", false))
+            .put("/api/v1/quality/asset/sensitive?urn=" + urn).then().statusCode(403);
+        as(Tokens.ADMIN).body(Map.of("field", "greeting", "sensitive", false))
+            .put("/api/v1/quality/asset/sensitive?urn=" + urn).then().statusCode(204);
+        as(Tokens.ADMIN).body(Map.of("field", "name", "sensitive", false))
+            .put("/api/v1/quality/asset/sensitive?urn=" + READ_URN).then().statusCode(204);
+    }
 }

@@ -1269,6 +1269,7 @@ public class PipelineService {
                 return false;
             }
             store.saveLineage(context.pipeline(), context.runId(), w.node(), w.inputs(), w.urn());
+            carryMarks(w, c, context, notes);
             // A scan ending now would mark an asset it did not see as removed: catalogue under the
             // source's scan lock, or leave it to the next scan.
             boolean locked;
@@ -1388,6 +1389,66 @@ public class PipelineService {
     private static void infoNote(ArrayNode notes, String text, String detail) {
         note(notes, text, detail);
         ((ObjectNode) notes.get(notes.size() - 1)).put("level", "info");
+    }
+
+    /** Marks of sensitive columns, for marks that follow the data (unset in tests that build this by hand). */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.QualityStore qualityStore;
+
+    /**
+     * Marks follow the data: every column this write writes that was made from a column marked
+     * sensitive upstream (passed on, renamed, looked up or worked out from it; see
+     * {@link NodePreview#marked}) is marked on the written asset, before it is catalogued, so it is
+     * masked there for everyone but admins as it was where it came from. When the written columns
+     * cannot be told before the run, those catalogued are used.
+     */
+    private void carryMarks(PipelineExecution.WriteTarget w, PipelineCompilerPort.Compilation c, RunContext context,
+                            ArrayNode notes) {
+        if (qualityStore == null) {
+            return;
+        }
+        Map<String, java.util.Set<String>> readMarks = PipelinePreviews.readMarks(c, context, qualityStore::sensitive);
+        if (readMarks.values().stream().allMatch(java.util.Set::isEmpty)) {
+            return;
+        }
+        NodePreview.Hidden marked = NodePreview.marked(c, readMarks, w.node());
+        if (!marked.any()) {
+            return;
+        }
+        List<String> written = writtenColumns(w, c);
+        java.util.Set<String> carried = new java.util.LinkedHashSet<>();
+        for (String name : written) {
+            if (marked.hides(name)) {
+                carried.add(name);
+            }
+        }
+        if (written.isEmpty()) {
+            // not known before the run: what it named, by name (all of it when nothing can be followed)
+            carried.addAll(marked.names());
+        }
+        String from = readMarks.entrySet().stream().filter(e -> !e.getValue().isEmpty()).map(Map.Entry::getKey)
+            .findFirst().map(id -> PipelinePreviews.readUrnsOf(c.configs().getOrDefault(id, Map.of()), context)
+                .stream().findFirst().orElse(id)).orElse("");
+        qualityStore.carry(w.urn(), carried, from, context.pipeline(), context.runId());
+        if (marked.all() && written.isEmpty()) {
+            note(notes, w.node() + ": it wrote columns made from columns marked sensitive in ways Kilnmark could not "
+                + "follow; scan " + w.source() + " and mark the written columns sensitive", null);
+        }
+    }
+
+    /** The columns arriving at a write node, as the check knew them; empty when not known. */
+    private static List<String> writtenColumns(PipelineExecution.WriteTarget w, PipelineCompilerPort.Compilation c) {
+        for (PipelineCompilerPort.EdgeOutline e : c.edges()) {
+            if (!e.toNode().equals(w.node())) {
+                continue;
+            }
+            for (PipelineCompilerPort.NodeOutline n : c.nodes()) {
+                if (n.id().equals(e.fromNode()) && n.columns() != null && n.columns().get(e.fromPort()) != null) {
+                    return n.columns().get(e.fromPort()).stream().map(PipelineCompilerPort.Column::name).toList();
+                }
+            }
+        }
+        return List.of();
     }
 
     /**

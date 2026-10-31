@@ -71,7 +71,7 @@ class WithheldTextTest {
                 + "('" + BOOK + "', 0, 'Pay sheet: zanzibarite earns 91000', 0, 34), "
                 + "('" + MAIL + "', 0, 'Offer for zanzibarite at the attached rates', 0, 43), "
                 + "('" + OPEN + "', 0, 'Readme about zanzibarite onboarding', 0, 35)",
-            "INSERT INTO kilnmark.sensitive_column (asset_urn, name) VALUES ('" + SHEET + "', 'salary'), "
+            "INSERT INTO kilnmark.column_mark (asset_urn, name) VALUES ('" + SHEET + "', 'salary'), "
                 + "('" + ATTACHED_SHEET + "', 'rate')");
         steward = admin().contentType(ContentType.JSON).body(Map.of("name", "withheld-steward", "role", "steward"))
             .post("/api/v1/tokens").then().statusCode(201).extract().jsonPath().getString("token");

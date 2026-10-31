@@ -363,6 +363,89 @@ final class NodePreview {
         return out.getOrDefault(node, Hidden.NONE);
     }
 
+    /**
+     * The columns of {@code node}'s output, or arriving at it for a write, made from columns marked
+     * sensitive, worked out from what each read reads marked ({@code readMarks}, by read node id). For
+     * marks that follow the data (a write carries them to what it writes): unlike {@link #hidden} it
+     * never refuses. A column passed on, renamed or looked up keeps its mark; a value worked out from
+     * a marked column (a computed column, an aggregate's value or group) is marked; and after a node
+     * whose columns cannot be followed (one of a kind this does not know), everything is, if anything
+     * marked went into it.
+     */
+    static Hidden marked(PipelineCompilerPort.Compilation c, Map<String, Set<String>> readMarks, String node) {
+        Map<String, PipelineCompilerPort.NodeOutline> nodes = new LinkedHashMap<>();
+        c.nodes().forEach(s -> nodes.putIfAbsent(s.id(), s));
+        Map<String, Hidden> out = new HashMap<>();
+        for (String id : order(nodes.keySet(), c.edges())) {
+            Map<String, Hidden> in = new HashMap<>();
+            Hidden any = Hidden.NONE;
+            for (PipelineCompilerPort.EdgeOutline e : c.edges()) {
+                if (e.toNode().equals(id)) {
+                    Hidden h = out.getOrDefault(e.fromNode(), Hidden.NONE);
+                    in.merge(e.toPort(), h, Hidden::plus);
+                    any = any.plus(h);
+                }
+            }
+            out.put(id, marking(nodes.get(id).type(), c.configs().getOrDefault(id, Map.of()), in, any,
+                readMarks.getOrDefault(id, Set.of())));
+        }
+        return out.getOrDefault(node, Hidden.NONE);
+    }
+
+    /** What one node passes on marked, given what arrives marked. */
+    private static Hidden marking(String type, Map<String, Object> config, Map<String, Hidden> in, Hidden any,
+                                  Set<String> read) {
+        Hidden main = in.getOrDefault("in", any);
+        switch (type == null ? "" : type) {
+            case "read" -> {
+                return Hidden.of(read);
+            }
+            case "compute" -> {
+                Set<String> now = new HashSet<>(main.names());
+                texts(config.get("columns")).forEach((name, expr) -> {
+                    if (main.touches(refs(expr))) {
+                        now.add(name);
+                    }
+                });
+                return main.all() ? Hidden.ALL : Hidden.of(now);
+            }
+            case "select" -> {
+                if (main.all()) {
+                    return Hidden.ALL;
+                }
+                Set<String> now = new HashSet<>(main.names());
+                texts(config.get("rename")).forEach((from, to) -> {
+                    if (main.hides(from) && to != null) {
+                        now.add(to);
+                    }
+                });
+                return Hidden.of(now);
+            }
+            case "aggregate" -> {
+                if (main.all()) {
+                    return Hidden.ALL;
+                }
+                Set<String> now = new HashSet<>();
+                list(config.get("group_by")).stream().filter(main::hides).forEach(now::add);
+                texts(config.get("values")).forEach((name, expr) -> {
+                    if (main.touches(refs(expr))) {
+                        now.add(name);
+                    }
+                });
+                return Hidden.of(now);
+            }
+            case "lookup" -> {
+                return in.getOrDefault("main", Hidden.NONE).plus(in.getOrDefault("lookup", Hidden.NONE));
+            }
+            case "filter", "route", "dedupe", "gate", "limit", "union", "write" -> {
+                return any;
+            }
+            default -> {
+                return any.any() ? Hidden.ALL : Hidden.NONE;
+            }
+        }
+    }
+
     /** What one node hides on its outputs, given what arrives hidden; refuses a node looking inside one. */
     private static Hidden through(String id, String type, Map<String, Object> config, Map<String, Hidden> in,
                                   Hidden any, Set<String> read, Set<String> gateFields) {

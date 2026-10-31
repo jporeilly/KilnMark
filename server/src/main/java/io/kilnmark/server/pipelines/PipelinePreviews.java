@@ -459,20 +459,35 @@ public class PipelinePreviews {
      */
     private static Map<String, Set<String>> readHidden(PipelineCompilerPort.Compilation c, RunContext context,
                                                        Viewer viewer) {
-        Map<String, Set<String>> out = new HashMap<>();
         if (viewer.mayUnmask()) {
-            return out;
+            return new HashMap<>();
         }
+        return readMarks(c, context, viewer::marks);
+    }
+
+    /**
+     * For each read node, the columns marked sensitive in what it reads (any of the URNs it may be
+     * catalogued under), and the first such asset ({@code firstMarked}, when given), as {@code marksOf}
+     * gives them.
+     */
+    static Map<String, Set<String>> readMarks(PipelineCompilerPort.Compilation c, RunContext context,
+                                              java.util.function.Function<String, Set<String>> marksOf) {
+        Map<String, Set<String>> out = new HashMap<>();
         for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
             if (!ReadNodeFactory.TYPE.equals(s.type())) {
                 continue;
             }
             Map<String, Object> config = c.configs().getOrDefault(s.id(), Map.of());
             Set<String> marks = new LinkedHashSet<>();
-            readUrns(config, context).forEach(u -> marks.addAll(viewer.marks(u)));
+            readUrns(config, context).forEach(u -> marks.addAll(marksOf.apply(u)));
             out.put(s.id(), marks);
         }
         return out;
+    }
+
+    /** The URNs a read node may be catalogued under, for marks and messages. */
+    static Set<String> readUrnsOf(Map<String, Object> readConfig, RunContext context) {
+        return readUrns(readConfig, context);
     }
 
     private static Set<String> readUrns(Map<String, Object> readConfig, RunContext context) {

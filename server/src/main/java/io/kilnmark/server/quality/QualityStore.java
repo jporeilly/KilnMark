@@ -382,15 +382,20 @@ public class QualityStore {
      */
     public boolean setSensitive(String urn, String field, boolean sensitive) {
         if (!sensitive) {
-            return update("DELETE FROM kilnmark.sensitive_column WHERE asset_urn = ? AND name = ?", ps -> {
+            // An admin's decision: the mark a steward set and the one a pipeline carried here both go.
+            int carried = update("DELETE FROM kilnmark.carried_mark WHERE asset_urn = ? AND name = ?", ps -> {
                 ps.setString(1, urn);
                 ps.setString(2, field);
-            }) == 1 || query("SELECT 1 FROM kilnmark.field WHERE asset_urn = ? AND name = ?", ps -> {
+            });
+            return update("DELETE FROM kilnmark.column_mark WHERE asset_urn = ? AND name = ?", ps -> {
+                ps.setString(1, urn);
+                ps.setString(2, field);
+            }) == 1 || carried == 1 || query("SELECT 1 FROM kilnmark.field WHERE asset_urn = ? AND name = ?", ps -> {
                 ps.setString(1, urn);
                 ps.setString(2, field);
             }, rs -> 1).size() == 1;
         }
-        return update("INSERT INTO kilnmark.sensitive_column (asset_urn, name) SELECT asset_urn, name "
+        return update("INSERT INTO kilnmark.column_mark (asset_urn, name) SELECT asset_urn, name "
             + "FROM kilnmark.field WHERE asset_urn = ? AND name = ? ON CONFLICT DO NOTHING", ps -> {
                 ps.setString(1, urn);
                 ps.setString(2, field);
@@ -414,9 +419,35 @@ public class QualityStore {
             ps -> ps.setString(1, source), rs -> 1).isEmpty();
     }
 
+    /**
+     * Marks carried to {@code urn} by a pipeline's write: columns it wrote from columns marked
+     * sensitive upstream ({@code from}, the first such asset read). Kept apart from the marks
+     * stewards set, and kept when the asset is removed and found again; an admin clears them as any
+     * mark.
+     */
+    public void carry(String urn, java.util.Collection<String> names, String from, String pipeline, Long runId) {
+        if (names.isEmpty()) {
+            return;
+        }
+        for (String name : names) {
+            update("INSERT INTO kilnmark.carried_mark (asset_urn, name, from_urn, pipeline, run_id) VALUES (?, ?, ?, ?, ?) "
+                + "ON CONFLICT (asset_urn, name) DO NOTHING", ps -> {
+                    ps.setString(1, urn);
+                    ps.setString(2, name);
+                    ps.setString(3, from);
+                    ps.setString(4, pipeline);
+                    if (runId == null) {
+                        ps.setNull(5, java.sql.Types.BIGINT);
+                    } else {
+                        ps.setLong(5, runId);
+                    }
+                });
+        }
+    }
+
     /** A column renamed from {@code from} to {@code to} keeps its mark under both names. */
     public void carrySensitive(String urn, String from, String to) {
-        update("INSERT INTO kilnmark.sensitive_column (asset_urn, name) SELECT asset_urn, ? "
+        update("INSERT INTO kilnmark.column_mark (asset_urn, name) SELECT DISTINCT asset_urn, ? "
             + "FROM kilnmark.sensitive_column WHERE asset_urn = ? AND name = ? ON CONFLICT DO NOTHING", ps -> {
                 ps.setString(1, to);
                 ps.setString(2, urn);

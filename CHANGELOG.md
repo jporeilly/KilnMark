@@ -7,6 +7,15 @@ details.
 
 ### Details
 
+- **Marks follow the data** (V25). A column a pipeline writes from a column marked sensitive is
+  marked on what it writes: passed on, renamed, looked up or worked out from one (a computed column,
+  an aggregate's value or group), followed through the pipeline as previews already follow it, for
+  every run whoever asked for it. These marks are recorded as the run writes, before the written
+  asset is catalogued, and stay when it is removed and found again (`carried_mark`; the stewards'
+  own marks are now `column_mark`, and `sensitive_column` is a view of both). Only admins clear a
+  mark, as before, and only admins may point a folder source, or a bucket source on the server's own
+  credentials, at files a source with marked columns already reads. Before this, copying a marked
+  column elsewhere and previewing the copy showed its values.
 - **A designer role, between steward and admin** (V24). Designers build: they add, change,
   preview and delete pipelines and flows, add, import, change and delete sources, turn on writing
   and change where a writable source points, write custom SQL rules, set server variables and add
