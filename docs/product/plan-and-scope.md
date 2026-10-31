@@ -116,6 +116,10 @@ Also needed, not yet scheduled:
   (classify, extract, summarise, embed, generate), nodes for prompts, memory and tools, and agents
   that choose the next step in a flow. They must keep ADR 0012 and ADR 0016: local models by default,
   one egress gate, columns marked sensitive never sent to a model, and people approve what AI changes.
+- **Building agents.** People create their own agents: a model, instructions, tools, memory and
+  limits, saved and versioned like a pipeline or flow. Their tools are Kilnmark's own actions
+  (search, read a source, run a pipeline or flow, check quality), under the caller's role and the
+  same masking, so an agent can do no more than the person who runs it.
 
 ## Engineering setup
 
