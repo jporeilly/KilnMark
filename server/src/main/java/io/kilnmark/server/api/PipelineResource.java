@@ -69,13 +69,13 @@ public class PipelineResource {
     @Operation(summary = "Add a pipeline", description = "Saves a new pipeline with its YAML as version 1. Names are a "
         + "small letter followed by small letters, digits and dashes, at most 63 characters, and cannot change. A "
         + "pipeline with problems is saved as a draft (valid false) and cannot run until they are fixed. The ETag is "
-        + "the latest version, to send back in If-Match when saving the next. Role: steward.")
+        + "the latest version, to send back in If-Match when saving the next. Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "201", description = "Added; the body is the pipeline with its version and problems"),
         @APIResponse(responseCode = "400", description = "No YAML, a name that cannot be used, or YAML over the size "
             + "limit"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward"),
+        @APIResponse(responseCode = "403", description = "Not a designer"),
         @APIResponse(responseCode = "409", description = "A pipeline with that name exists")})
     public Response create(PipelineViews.NewPipeline body) {
         PipelineViews.PipelineDetail d = pipelines.create(body, who());
@@ -127,12 +127,12 @@ public class PipelineResource {
         + "write, each with its predicted effect (an estimate) and where it goes. Kilnmark's own come from the "
         + "metadata with no model; when a model is set for pipeline suggestions and ai is not false, it ranks, "
         + "explains and adds to them, seeing only the metadata of sources whose AI rule allows it, never values. "
-        + "A model that is off, refused or failing leaves Kilnmark's own, and ai says why. Role: steward.")
+        + "A model that is off, refused or failing leaves Kilnmark's own, and ai says why. Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The suggestions, best first"),
         @APIResponse(responseCode = "400", description = "No YAML, or YAML over the size limit"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward")})
+        @APIResponse(responseCode = "403", description = "Not a designer")})
     public PredictionViews.Advice suggest(PredictionViews.SuggestRequest body) {
         if (body == null) {
             throw new IllegalArgumentException("Send {\"yaml\": \"...\"}");
@@ -151,14 +151,14 @@ public class PipelineResource {
         + "needing a write, or a node that could change anything, is refused. Read live and never kept. For all but "
         + "admins, columns marked sensitive may only pass through unchanged and are masked; a preview in which any "
         + "node looks at their values (an expression, a key, a cast or a gate's rule) is refused. At most 30 "
-        + "seconds and 50 nodes; one preview per person at a time, six a minute. Role: steward.")
+        + "seconds and 50 nodes; one preview per person at a time, six a minute. Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The rows"),
         @APIResponse(responseCode = "400", description = "No YAML or node, YAML over the size limit or with problems "
             + "in the part that would run, an unknown node or port, rows out of range, or a node that cannot run in "
             + "a preview"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward, or a node would look at the values of a "
+        @APIResponse(responseCode = "403", description = "Not a designer, or a node would look at the values of a "
             + "column marked sensitive"),
         @APIResponse(responseCode = "422", description = "The preview ran but could not give rows: a node failed, "
             + "it took too long, or a source could not be reached"),
@@ -177,13 +177,13 @@ public class PipelineResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Preview a node of a version", description = "As POST /api/v1/pipelines/preview, for a saved "
-        + "version: send node, and port and rows if wanted. Role: steward.")
+        + "version: send node, and port and rows if wanted. Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The rows"),
         @APIResponse(responseCode = "400", description = "No node, an unknown node or port, rows out of range, or a "
             + "node that cannot run in a preview"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward, or a node would look at the values of a "
+        @APIResponse(responseCode = "403", description = "Not a designer, or a node would look at the values of a "
             + "column marked sensitive"),
         @APIResponse(responseCode = "404", description = "No such pipeline or version"),
         @APIResponse(responseCode = "422", description = "The preview ran but could not give rows"),
@@ -217,13 +217,13 @@ public class PipelineResource {
     @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Save a new version", description = "Saves the YAML as the pipeline's next version, with a "
         + "message saying what changed; earlier versions stay as they were. With If-Match set to the latest version "
-        + "as you read it (the ETag), the save is refused (409) when someone has saved another since. Role: steward.")
+        + "as you read it (the ETag), the save is refused (409) when someone has saved another since. Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "Saved; the body is the pipeline with the new version"),
         @APIResponse(responseCode = "400", description = "No YAML, YAML over the size limit, or an If-Match that is "
             + "not a version number"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward"),
+        @APIResponse(responseCode = "403", description = "Not a designer"),
         @APIResponse(responseCode = "404", description = "No such pipeline"),
         @APIResponse(responseCode = "409", description = "Someone else saved a version after the one in If-Match")})
     public Response save(@PathParam("name") String name, @HeaderParam("If-Match") String ifMatch,
@@ -238,11 +238,11 @@ public class PipelineResource {
     @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Delete a pipeline", description = "Deletes the pipeline with its versions and runs. What its "
         + "runs wrote, and the lineage they recorded, stay in the catalogue. Refused while a run is queued or running. "
-        + "Role: steward.")
+        + "Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "204", description = "Deleted"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward"),
+        @APIResponse(responseCode = "403", description = "Not a designer"),
         @APIResponse(responseCode = "404", description = "No such pipeline"),
         @APIResponse(responseCode = "409", description = "A run is queued or running")})
     public Response delete(@PathParam("name") String name) {

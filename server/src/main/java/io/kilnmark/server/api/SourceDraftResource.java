@@ -37,18 +37,7 @@ public class SourceDraftResource {
 
     /** The form as a draft, refused (403) to all but admins for kinds only admins set up. */
     private SourceService.Draft draft(SourceForm form, Records.Source saved) {
-        // before the form is checked: checking a URL already hands it to the driver
-        String kind = saved != null ? saved.kind() : form == null || form.kind() == null || form.kind().isBlank()
-            ? "postgresql" : form.kind().trim();
-        java.util.Map<String, String> settings = form == null || form.settings() == null ? java.util.Map.of()
-            : SourceService.settings(form.settings());
-        boolean admin = identity.hasRole(AccessRole.ADMIN_ROLE);
-        try {
-            SourceService.adminOnlyKind(sources.connector(kind), saved, settings, admin);
-        } catch (IllegalArgumentException e) {
-            // an unknown kind: the draft says so
-        }
-        return sources.draft(form, saved, false);
+        return sources.draft(form, saved, false, identity.hasRole(AccessRole.ADMIN_ROLE));
     }
 
     /** A bulk import's follow-up tests and scans, row by row, for the web UI to poll. */

@@ -55,10 +55,18 @@ class DesignerRoleTest {
                 .put("/api/v1/sources/roles-src").then().statusCode(403);
             as(designer).body(Map.of("settings", Map.of("rows", "10", "allow_writing", "true")))
                 .put("/api/v1/sources/roles-src").then().statusCode(200).body("settings.allow_writing", equalTo("true"));
-            // Admin-only kinds stay with admins.
-            as(designer).body(Map.of("name", "roles-jdbc", "kind", "jdbc", "settings",
-                Map.of("url", "jdbc:h2:mem:x"))).post("/api/v1/sources").then().statusCode(403)
-                .body("error", containsString("Only admins"));
+            // Admin-only kinds stay with admins, however the kind is written, in the form and in an import.
+            for (String kind : List.of("jdbc", "jdbc ", " jdbc")) {
+                as(designer).body(Map.of("name", "roles-jdbc", "kind", kind, "settings",
+                    Map.of("url", "jdbc:h2:mem:x"))).post("/api/v1/sources").then().statusCode(403)
+                    .body("error", containsString("Only admins"));
+                as(designer).body(Map.of("name", "roles-jdbc", "kind", kind, "settings",
+                    Map.of("url", "jdbc:h2:mem:x"))).post("/api/v1/drafts/test").then().statusCode(403);
+            }
+            Tokens.as(designer).contentType("text/csv").body("name,kind,url\nroles-jdbc,jdbc ,jdbc:h2:mem:x\n")
+                .post("/api/v1/sources/import").then().statusCode(422)
+                .body("rows[0].error", containsString("Only admins"));
+            admin().get("/api/v1/sources/roles-jdbc").then().statusCode(404);
 
             // Pipelines: designers add them; stewards run them but cannot add, change or delete them.
             as(steward).body(Map.of("name", "roles-p", "yaml", YAML.formatted("roles-p"))).post("/api/v1/pipelines")

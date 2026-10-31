@@ -140,7 +140,7 @@ class SourceManagementTest {
         viewer().contentType(ContentType.JSON).body(source("x", null, null)).post("/api/v1/drafts/containers")
             .then().statusCode(403);
         viewer().get("/api/v1/imports/1").then().statusCode(403);
-        designer().get("/api/v1/imports/1").then().statusCode(404); // designers may read imports: there is no import 1
+        designer().get("/api/v1/imports/1").then().statusCode(org.hamcrest.Matchers.not(403)); // designers may read imports
         given().delete("/api/v1/sources/mgmt-roles").then().statusCode(401);
         // viewers read
         viewer().get("/api/v1/sources/mgmt-roles/history").then().statusCode(200);

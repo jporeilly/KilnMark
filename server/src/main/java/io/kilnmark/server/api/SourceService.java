@@ -133,11 +133,14 @@ public class SourceService {
      * stored secret, unless the form changes a setting that decides where the secret goes (the
      * connector's {@link Connector#secretScope()}): then the password must be entered again, so a
      * stored secret is never sent somewhere new. {@code checkName} is false for checks of unsaved
-     * forms, which may not have a name yet.
+     * forms, which may not have a name yet. {@code admin}: whether the caller is an admin; for anyone
+     * else, a kind only admins set up (generic JDBC) is refused (403) here, on the kind as it is read
+     * below and before anything in the form is checked, since checking a URL already hands it to the
+     * driver. Every path that makes or changes a source comes through here.
      *
      * @throws IllegalArgumentException with the first problem, for a 400 answer
      */
-    Draft draft(SourceForm form, Records.Source existing, boolean checkName) {
+    Draft draft(SourceForm form, Records.Source existing, boolean checkName, boolean admin) {
         if (form == null) {
             throw new IllegalArgumentException("Send the source as JSON");
         }
@@ -148,6 +151,7 @@ public class SourceService {
         }
         String kind = existing != null ? existing.kind() : sentKind == null ? "postgresql" : sentKind;
         Connector connector = connector(kind);
+        adminOnlyKind(connector, existing, form.settings() == null ? Map.of() : settings(form.settings()), admin);
         String name = form.name() == null || form.name().isBlank()
             ? existing != null ? existing.name() : null : form.name().trim();
         if (existing != null && !name.equals(existing.name())) {

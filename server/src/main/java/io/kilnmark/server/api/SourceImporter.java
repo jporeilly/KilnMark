@@ -137,7 +137,7 @@ public class SourceImporter {
 
     /** The import as version 1 ran it: check every row, create all or nothing. */
     public Report run(List<Row> rows, boolean dryRun) {
-        return run(rows, new Options(dryRun, false, false, false, false, true), "import");
+        return run(rows, new Options(dryRun, false, false, false, false, false), "import");
     }
 
     public Report run(List<Row> rows, Options options, String who) {
@@ -212,8 +212,15 @@ public class SourceImporter {
 
     /** A check that refuses with a response (403), as a failed row, like any other row the import cannot apply. */
     private static void asRow(Runnable check) {
-        try {
+        asRow(() -> {
             check.run();
+            return null;
+        });
+    }
+
+    private static <T> T asRow(java.util.function.Supplier<T> work) {
+        try {
+            return work.get();
         } catch (jakarta.ws.rs.WebApplicationException e) {
             throw new IllegalArgumentException(e.getResponse().getEntity() instanceof ApiError a ? a.error()
                 : e.getMessage());
@@ -251,13 +258,10 @@ public class SourceImporter {
             }
         }
         String password = password(r);
-        // Admin-only kinds (generic JDBC) are refused before the rest of the row is checked.
         if (existing == null) {
-            asRow(() -> SourceService.adminOnlyKind(connector, null, row, admin));
-        }
-        if (existing == null) {
-            SourceService.Draft d = sources.draft(new SourceForm(r.name(), rowKind, row, password, null, null,
-                r.displayName()), null, true);
+            // admin-only kinds (generic JDBC) are refused in the draft, before the rest of the row is checked
+            SourceService.Draft d = asRow(() -> sources.draft(new SourceForm(r.name(), rowKind, row, password, null,
+                null, r.displayName()), null, true, admin));
             RowResult res = new RowResult(r.line(), r.name(), "created", null, notes);
             return new Plan(res, new Records.NewSource(r.name(), kind, d.config().settings(),
                 d.newSecret() == null ? null : secrets.seal(d.newSecret()), d.displayName()), null, null, d);
@@ -265,9 +269,8 @@ public class SourceImporter {
         Map<String, String> merged = merge(existing.settings(), row, present, notes);
         String displayName = present.contains("display_name") ? r.displayName()
             : existing.displayName().equals(existing.name()) ? null : existing.displayName();
-        SourceService.Draft d = sources.draft(new SourceForm(r.name(), rowKind, merged, password, null, null,
-            displayName), existing, true);
-        asRow(() -> SourceService.adminOnlyKind(d.connector(), existing, d.config().settings(), admin));
+        SourceService.Draft d = asRow(() -> sources.draft(new SourceForm(r.name(), rowKind, merged, password, null,
+            null, displayName), existing, true, admin));
         if (!admin) {
             asRow(() -> sources.readingUnchangedOrAdmin(existing, d.config().settings(),
                 "change how this source is read"));

@@ -92,15 +92,8 @@ public class SourceResource {
         if (body == null || body.name() == null) {
             throw new IllegalArgumentException("Send the source as JSON with at least a name");
         }
-        // Admin-only kinds (generic JDBC) are refused before anything else is checked.
-        try {
-            SourceService.adminOnlyKind(sources.connector(body.kind() == null ? "postgresql" : body.kind()), null,
-                body.settings() == null ? java.util.Map.of() : body.settings(), identity.hasRole(AccessRole.ADMIN_ROLE));
-        } catch (IllegalArgumentException e) {
-            // an unknown kind: the draft says so
-        }
         SourceService.Draft d = sources.draft(new SourceForm(body.name(), body.kind(), body.settings(),
-            body.password(), null, null, body.displayName()), null, true);
+            body.password(), null, null, body.displayName()), null, true, identity.hasRole(AccessRole.ADMIN_ROLE));
         if (store.source(d.config().name()).isPresent()) {
             throw ApiError.of(Response.Status.CONFLICT, "A source called " + d.config().name() + " already exists");
         }
@@ -132,9 +125,7 @@ public class SourceResource {
         // Who may change where a writable source points is decided before the form is checked, so a
         // steward is told no (403) rather than asked to re-enter the password for a change they may not make.
         SourceService.whereUnchangedOrAdmin(existing, SourceService.settings(form.settings()), designer);
-        SourceService.adminOnlyKind(sources.connector(existing.kind()), existing,
-            SourceService.settings(form.settings()), admin);
-        SourceService.Draft d = sources.draft(form, existing, true);
+        SourceService.Draft d = sources.draft(form, existing, true, admin);
         sources.readingUnchangedOrAdmin(existing, d.config().settings(), "change how this source is read");
         byte[] secret = d.replaceSecret() && d.newSecret() != null ? secrets.seal(d.newSecret()) : null;
         Records.Source s = conflicts(() -> store.updateSource(existing.id(), new Records.SourceChange(d.displayName(),
