@@ -61,6 +61,25 @@ use rather than keeping one of their own:
 - **Logged.** Each run of a SQL action and each query read is in the run's record with who asked,
   and turning `allow_sql` on is logged like turning on writing.
 
+## What ships with it
+
+The nodes alone are not the feature. Each shape ships with its samples, its templates and its
+docs in the same release:
+
+- **Samples**, in `samples/`, one idea each, as the others: a `read` with a query (a join across
+  two sample tables, with a bound `${since}` value), a flow whose `sql` action truncates a staging
+  table before a load and rebuilds an index after it, and a custom rule on the same gate. Each
+  names what it shows and what to look for, and the starter pack adds them with the rest.
+- **Templates**, for **New pipeline** and the migration templates of the audit: "incremental load
+  with a high-water mark" (query read with a bound value), "truncate and reload staging" (sql
+  action, then run-pipeline), and "load with a procedure after it". A template names the source
+  settings it needs (`allow_sql` on, a limited login) in its header comments.
+- **Docs**: the pipelines guide (the `read` node's `query`, with what is refused and why), the
+  flows guide (the `sql` action, its connections and `rows_affected`), the quality-rules guide (custom
+  SQL now behind `allow_sql`), the sources guide (`allow_sql` and the login a SQL source should have),
+  and docs/design/pipelines.md and flows.md for the design. The release notes say that
+  `kilnmark.quality.custom-sql` is retired and what replaces it.
+
 ## Consequences
 
 - Migrations can import the most common input and the most common job entries, instead of
