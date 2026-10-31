@@ -58,6 +58,7 @@ class DocumentFlowTest {
                 }
             }
             Files.writeString(ROOT.resolve("meta/private-note.txt"), "The quarterly zebra census is kept private.\n");
+            Files.writeString(ROOT.resolve("meta-od/private-note.txt"), "The quarterly zebra census is kept private.\n");
             Files.writeString(ROOT.resolve("docs/offices.txt"), "Our offices are in İSTANBUL, İzmir and Ankara. "
                 + "The İstanbul office opens first.\n");
         } catch (IOException e) {
