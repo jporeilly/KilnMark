@@ -63,11 +63,15 @@ class SampleTablesTest {
     @Test
     void theTablesAreTheSampleDataAndWhatTheSamplesRead() throws Exception {
         assertEquals(Samples.TABLES.stream().sorted().toList(),
-            sampleData().stream().map(a -> a.path().replace(".csv", "").replace('/', '.')).sorted().toList());
+            sampleData().stream().map(a -> a.path().replace(".csv", "").replace('/', '.'))
+                .filter(t -> !t.startsWith("volume.")).sorted().toList());
         for (Samples.Sample sample : Samples.bundled()) {
             java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?m)^\\s*asset:\\s*(\\S+)")
                 .matcher(sample.yaml());
             while (m.find()) {
+                if (m.group(1).contains("/")) {
+                    continue; // a file of the sample data itself, read directly (the volume sample)
+                }
                 assertTrue(Samples.TABLES.contains(m.group(1)), sample.file() + " reads " + m.group(1)
                     + ", which is not in the sample data");
             }
@@ -96,7 +100,7 @@ class SampleTablesTest {
             }
             checked++;
         }
-        assertEquals(18, checked);
+        assertEquals(19, checked);
     }
 
     @Test

@@ -47,6 +47,9 @@ Kilnmark comes with samples: small pipelines, one idea each, such as reading som
 rows, filtering and routing, lookups, totals, quality gates and parameters. Each is named
 `sample-...` and starts with comments on what it shows and what to look for. Kilnmark also comes
 with sample data for them to read: made-up customers, accounts, transactions, orders and products.
+One sample, `sample-volume`, reads four million made-up sales, enough for a run of several seconds:
+run it and open the run's page to see where each node spent its time, how many rows a second went
+through, and which node held the others up.
 
 ### The starter pack
 

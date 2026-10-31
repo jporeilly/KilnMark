@@ -31,6 +31,10 @@ messy and repeated emails, missing emails and unknown segments for the quarantin
 orders whose customer is not there, two shipping fees out of range for the gate that stops, and
 repeated or badly shaped SKUs for the gate that warns.
 
+One table is large: `volume/sales.csv`, four million made-up till sales (about 216 MB of CSV). It is
+not stored: Kilnmark writes it as it is read, from a fixed seed, so it is the same on every read and
+adds nothing to the download. The volume sample reads it directly from the `sample-data` source.
+
 Kilnmark reads them through a built-in, read-only source kind, **Kilnmark sample data**
 (`sample-data`); the starter pack adds a source of that kind, called `sample-data`. In a database the
 tables are named `<group>_<table>` in the one schema chosen (`crm_customers`, `shop_orders`, ...), so
@@ -104,6 +108,7 @@ preview a node, and choose **Run now**.
 | | `sample-server-variable` | A server variable (`${vars.sample_region}`) as a parameter's default |
 | `08-flows` | `sample-quality-decides` | A flow: a condition on what a gate set aside decides what runs next; notify and stop |
 | | `sample-passing-values` | A flow passing values on: inheritance by name, `with:`, a node's value, wait and notify |
+| `09-volume` | `sample-volume` | Four million rows through a compute, a lookup, a route and an aggregate, long enough to see where a run's time goes: the run's page shows each node's time, rows per second and which node held the others up |
 
 Each file starts with what it shows and what to look for. The
 [pipelines guide](../docs/guide/pipelines.md) and

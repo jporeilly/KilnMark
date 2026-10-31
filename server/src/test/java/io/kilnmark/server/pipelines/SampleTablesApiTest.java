@@ -130,7 +130,7 @@ class SampleTablesApiTest {
         JsonPath added = as(steward).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
             "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
             .extract().jsonPath();
-        assertEquals(18, added.getInt("added"), added.prettify());
+        assertEquals(19, added.getInt("added"), added.prettify());
         // All of them can run: the starter pack also set the server variable one of them reads.
         assertEquals(List.of(true), added.getList("samples.findAll { it.outcome == 'added' }.valid").stream()
             .distinct().toList(), added.prettify());
@@ -162,6 +162,14 @@ class SampleTablesApiTest {
         assertEquals("succeeded", limit.getString("run.status"), limit.prettify());
         assertEquals(100, limit.getLong("run.rowsWritten"));
         assertTrue(Files.exists(out.resolve("samples/filter-and-route/first_transactions.csv")));
+
+        // The volume sample: four million rows from the sample data itself, totalled and the large lines set
+        // apart, in one run.
+        JsonPath volume = waitForRun(steward, as(steward).body(Map.of()).post("/api/v1/pipelines/sample-volume/runs")
+            .then().statusCode(202).extract().jsonPath().getLong("id"));
+        assertEquals("succeeded", volume.getString("run.status"), volume.prettify());
+        assertTrue(Files.exists(out.resolve("samples/volume/takings_by_category_and_channel.csv")));
+        assertTrue(volume.getLong("run.rowsWritten") > 24, volume.prettify());
 
         // The gate that is meant to stop does: two shipping fees are out of range.
         JsonPath stop = waitForRun(steward, as(steward).body(Map.of()).post("/api/v1/pipelines/sample-gate-stop/runs")
