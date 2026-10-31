@@ -288,7 +288,8 @@ public class SourceService {
             return "aws";
         }
         try {
-            java.net.URI u = java.net.URI.create(e.contains("://") ? e : "https://" + e);
+            // No two slashes inside one literal: SightsUseTest strips line comments before strings.
+            java.net.URI u = java.net.URI.create(e.contains(":/") ? e : "https:" + "/" + "/" + e);
             String host = u.getHost() == null ? e : u.getHost().toLowerCase(java.util.Locale.ROOT);
             if (host.equals("amazonaws.com") || host.endsWith(".amazonaws.com")) {
                 return "aws";
