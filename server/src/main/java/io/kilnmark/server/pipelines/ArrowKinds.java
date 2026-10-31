@@ -24,6 +24,14 @@ final class ArrowKinds {
     private ArrowKinds() {
     }
 
+    /** The columns a connector describes, as the engine reads them. */
+    static Schema schemaOf(List<io.kilnmark.kiln.connect.AssetInfo.FieldInfo> fields) {
+        List<Field> out = new ArrayList<>();
+        fields.stream().sorted(java.util.Comparator.comparingInt(io.kilnmark.kiln.connect.AssetInfo.FieldInfo::position))
+            .forEach(f -> out.add(new Field(f.name(), new FieldType(f.nullable(), type(f.kind()), null), null)));
+        return new Schema(out);
+    }
+
     /** The columns of a catalogued asset as an Arrow schema, for a read node's output. */
     static Schema schema(List<Records.FieldDetail> fields) {
         List<Field> out = new ArrayList<>();

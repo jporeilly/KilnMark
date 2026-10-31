@@ -793,6 +793,13 @@ public final class PipelineCompiler {
                     broken.add(id);
                 } else {
                     known.put(id, mine);
+                    try {
+                        for (String note : f.notes(inputs, config(s))) {
+                            notes.add(Problem.at(s.position(), id, "Node " + id + ": " + note));
+                        }
+                    } catch (RuntimeException e) {
+                        // a note is a help, never a reason to fail the check
+                    }
                 }
             }
             skipped.forEach((origin, after) -> notes.add(Problem.at(nodes.get(origin).position(), origin,

@@ -7,7 +7,17 @@ details.
 
 ### Details
 
-- **Samples and an install guide.** `samples/` holds 17 small pipelines and 2 flows, one idea each,
+- **The read node's `columns` and `where`** (docs/guide/pipelines.md, "Reading"). A read node keeps
+  only the columns chosen, in that order, and the rows meeting `where`, an expression that may use
+  the pipeline's parameters (`status in ${statuses}`); `row_limit` counts the rows kept. For
+  PostgreSQL, MySQL, MariaDB, SQL Server and Oracle tables, the database applies as much of `where`
+  as is safe (text by `=`, `in` and `like`; numbers, dates, true/false; `and`, `or`, `not`) with
+  every value bound, never written into the SQL; Kilnmark always applies the whole condition as
+  well, so the rows are the same whichever does the work. The node's note says which. On the
+  canvas, the read node lists the table's columns with their types to tick, and the Where box
+  offers columns and `${parameters}` as buttons; each node's notes now show under its settings.
+  Samples: `sample-read-columns-where`, and `sample-orders-by-status` now filters in its read node.
+- **Samples and an install guide.** `samples/` holds 18 small pipelines and 2 flows, one idea each,
   sorted by what they show (read and write, filter and route, transform, combine, aggregate,
   quality, parameters, flows), on the reference lab's data; `lab/lab.sh samples` (or `lab.ps1`)
   adds them to a running Kilnmark. Like the lab, they are never shipped. `LabPipelinesTest` checks

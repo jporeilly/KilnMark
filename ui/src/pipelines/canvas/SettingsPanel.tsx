@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { PipelineProblem, PipelineNodeQuality, PipelineValidation, Source, NodeType } from "../../api";
+import { api, type PipelineColumn, type PipelineProblem, type PipelineNodeQuality, type PipelineValidation, type Source, type NodeType } from "../../api";
 import { dimensionWord, percent, RULE_STATUS_WORDS, nodeQualityWords } from "../quality";
 import type { PredictedQuality } from "../prediction";
 import { PredictedSection } from "./PredictedSection";
@@ -44,6 +44,38 @@ function useAssets(source: string | null): string[] | null {
   return source && state?.source === source ? state.assets : null;
 }
 
+/** Kept a minute, so a table scanned again shows its new columns without reloading the page. */
+const columnCache = new Map<string, { at: number; columns: Promise<PipelineColumn[] | null> }>();
+const COLUMNS_KEPT_MS = 60_000;
+
+/** The columns of a table or file as the catalogue knows them, in order: for a read node's choices. */
+function columnsOf(urn: string): Promise<PipelineColumn[] | null> {
+  const kept = columnCache.get(urn);
+  if (kept && Date.now() - kept.at < COLUMNS_KEPT_MS) return kept.columns;
+  const columns = api
+    .asset(urn)
+    .then((a) => [...a.fields].sort((x, y) => x.position - y.position).map((f) => ({ name: f.name, type: f.kind })))
+    .catch(() => {
+      columnCache.delete(urn); // not scanned yet, say: try again next time
+      return null;
+    });
+  columnCache.set(urn, { at: Date.now(), columns });
+  return columns;
+}
+
+function useAssetColumns(urn: string | null): PipelineColumn[] | null {
+  const [state, setState] = useState<{ urn: string; columns: PipelineColumn[] | null } | null>(null);
+  useEffect(() => {
+    if (!urn) return;
+    let live = true;
+    void columnsOf(urn).then((columns) => live && setState({ urn, columns }));
+    return () => {
+      live = false;
+    };
+  }, [urn]);
+  return urn && state?.urn === urn ? state.columns : null;
+}
+
 /**
  * The selected node's settings, generated from its type's settings schema: one control per
  * setting kind, each with its help, default and the problems validation found in it. Above them,
@@ -60,6 +92,7 @@ export function SettingsPanel({
   run,
   quality = null,
   predicted = null,
+  parameters = [],
   onSetting,
   onRename,
   onDisconnect,
@@ -79,6 +112,8 @@ export function SettingsPanel({
   quality?: PipelineNodeQuality | null;
   /** The node's predicted quality as the pipeline stands, for writes and gates (an estimate). */
   predicted?: PredictedQuality | null;
+  /** The parameters the pipeline declares, offered as `${name}` in expressions. */
+  parameters?: string[];
   onSetting: (key: string, value: Value | undefined, kind: string) => void;
   onRename: (to: string) => string | null;
   onDisconnect: (edge: GraphEdge) => void;
@@ -100,8 +135,11 @@ export function SettingsPanel({
   const extra = Object.keys(node.settings).filter((k) => !known.has(k));
   const assets = useAssets(sourceName);
   const ports = portsOf(node, catalogue);
+  // A read node has nothing arriving: its columns and where name the table's own columns.
+  const assetName = typeof node.settings.asset === "string" ? node.settings.asset : null;
+  const tableColumns = useAssetColumns(node.type === "read" && sourceName && assetName ? `urn:kilnmark:${sourceName}:${assetName}` : null);
   const columns = {
-    main: arrivingColumns(check, node.id, node.type === "lookup" ? "main" : undefined),
+    main: node.type === "read" ? tableColumns : arrivingColumns(check, node.id, node.type === "lookup" ? "main" : undefined),
     lookup: node.type === "lookup" ? arrivingColumns(check, node.id, "lookup") : null,
   };
   const bySetting = new Map<string, string[]>();
@@ -112,6 +150,7 @@ export function SettingsPanel({
     else general.push(p);
   }
   const outline = check?.nodes.find((s) => s.id === node.id);
+  const notes = check?.notes.filter((n) => n.node === node.id) ?? [];
   const base = `cv-set-${node.id}`;
 
   const rename = () => {
@@ -244,9 +283,17 @@ export function SettingsPanel({
                 writing: type.kind === "sink",
                 assets: spec.kind === "asset" ? assets : null,
                 nodeType: node.type,
+                parameters,
               }}
             />
           ))}
+          {notes.length > 0 && (
+            <ul className="cv-node-notes" aria-label={`Notes on ${node.id}`}>
+              {notes.map((n, i) => (
+                <li key={i}>{n.message.replace(`Node ${node.id}: `, "")}</li>
+              ))}
+            </ul>
+          )}
           {writerHidden > 0 && (
             <p className="hint">
               {sourceName

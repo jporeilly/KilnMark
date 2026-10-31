@@ -326,6 +326,38 @@ abstract class MySqlFamilyIngestTest {
         assertTrue(read > 500 && read < 6000, "about 2,000 of 20,000 rows: " + read);
     }
 
+    /**
+     * A narrowed read: the columns asked for, and the server applies the filter with each value bound.
+     * The rows read are what the server itself finds for the same condition (its collation ignores case,
+     * so 'N7' finds 'n7' too: the read node then drops what Kilnmark's own comparison does not keep).
+     */
+    @Test
+    void aNarrowedReadSelectsTheColumnsAndBindsTheValues() throws Exception {
+        AssetInfo numbers = assets.get("kt_shop.numbers");
+        assertTrue(db.connector().narrowsReads(source, numbers));
+        io.kilnmark.kiln.connect.ReadFilter filter = new io.kilnmark.kiln.connect.ReadFilter.And(List.of(
+            new io.kilnmark.kiln.connect.ReadFilter.Between("n", 100L, 199L, false),
+            new io.kilnmark.kiln.connect.ReadFilter.In("label", List.of("n3", "N7", "x' OR '1'='1"), false)));
+        NodeSpec reader = db.connector().reader(source, numbers, new Connector.ReadOptions(URN, 0, 4096,
+            List.of("n"), filter));
+        assertEquals("SELECT `n` FROM `kt_shop`.`numbers` WHERE (`n` BETWEEN ? AND ? AND `label` IN (?, ?, ?))",
+            reader.settings().get("query"));
+        List<MetadataEvent> events = new CopyOnWriteArrayList<>();
+        RunResult r = new Runner(128L << 20, 2).run(new Pipeline("narrowed", List.of(reader,
+            new NodeSpec("profile", new ProfileNode(), Map.of("asset-urn", URN)))), events::add);
+        assertTrue(r.succeeded(), r.error());
+        long expected;
+        try (var c = db.connector().connect(source); var s = c.createStatement();
+             var rs = s.executeQuery("SELECT COUNT(*) FROM kt_shop.numbers WHERE n BETWEEN 100 AND 199 "
+                 + "AND label IN ('n3', 'N7')")) {
+            rs.next();
+            expected = rs.getLong(1);
+        }
+        assertEquals(20, expected, "the server ignores case");
+        assertEquals(Long.toString(expected), rowCount(events).attributes().get("rows"));
+        assertEquals(1, events.stream().filter(e -> e.kind() == MetadataEvent.Kind.PROFILE).count(), "only n");
+    }
+
     @Test
     void aRowLimitReadsASampleAndSaysSo() throws Exception {
         MetadataEvent rows = rowCount(profiled(source, assets.get("kt_shop.numbers"), 1000));

@@ -221,6 +221,53 @@ class PostgresIngestTest {
         assertEquals("text", profile.get("profile").get("shape")); // jsonb read as text
     }
 
+    /**
+     * A narrowed read: only the columns asked for, and the database applies the filter with each value
+     * bound. The rows read are exactly those PostgreSQL finds for the same condition.
+     */
+    @Test
+    void aNarrowedReadSelectsTheColumnsAndBindsTheValues() throws Exception {
+        PostgresConnector pg = new PostgresConnector();
+        SourceConfig source = source(Map.of());
+        io.kilnmark.kiln.connect.AssetInfo customers = pg.asset(source, "crm.customers");
+        assertTrue(pg.narrowsReads(source, customers));
+        io.kilnmark.kiln.connect.ReadFilter filter = new io.kilnmark.kiln.connect.ReadFilter.And(List.of(
+            new io.kilnmark.kiln.connect.ReadFilter.In("segment", List.of("Premier", "Business"), false),
+            new io.kilnmark.kiln.connect.ReadFilter.Compare("limit_gbp", ">=", new java.math.BigDecimal("500.25")),
+            new io.kilnmark.kiln.connect.ReadFilter.Compare("opted_in", "=", true),
+            new io.kilnmark.kiln.connect.ReadFilter.Compare("born", "<", java.time.LocalDate.of(1990, 1, 1)),
+            // a value that would be SQL if it were written into the text: bound, it is only a value
+            new io.kilnmark.kiln.connect.ReadFilter.Or(List.of(
+                new io.kilnmark.kiln.connect.ReadFilter.IsNull("email", true),
+                new io.kilnmark.kiln.connect.ReadFilter.Compare("email", "=", "x' OR '1'='1")))));
+        NodeSpec reader = pg.reader(source, customers, new Connector.ReadOptions(URN, 0, 1024,
+            List.of("customer_id", "segment", "limit_gbp"), filter));
+        String sql = reader.settings().get("query");
+        assertEquals("SELECT \"customer_id\", \"segment\", \"limit_gbp\" FROM \"crm\".\"customers\" WHERE (\"segment\" IN "
+            + "(?, ?) AND \"limit_gbp\" >= ? AND \"opted_in\" = ? AND \"born\" < ? AND (\"email\" IS NOT NULL OR "
+            + "\"email\" = ?))", sql);
+        assertTrue(!sql.contains("Premier") && !sql.contains("1'='1"), "values are bound, never in the SQL");
+
+        List<MetadataEvent> events = new CopyOnWriteArrayList<>();
+        RunResult r = new Runner(64L << 20, 2).run(new Pipeline("narrowed", List.of(reader,
+            new NodeSpec("profile", new ProfileNode(), Map.of("asset-urn", URN)))), events::add);
+        assertTrue(r.succeeded(), r.error());
+        long expected;
+        try (Connection c = DriverManager.getConnection(PG.getJdbcUrl(), PG.getUsername(), PG.getPassword());
+             Statement s = c.createStatement();
+             java.sql.ResultSet rs = s.executeQuery("SELECT count(*) FROM crm.customers WHERE segment IN ('Premier', "
+                 + "'Business') AND limit_gbp >= 500.25 AND opted_in AND born < date '1990-01-01' AND email IS NOT NULL")) {
+            rs.next();
+            expected = rs.getLong(1);
+        }
+        assertTrue(expected > 0, "the test data has such rows");
+        MetadataEvent rows = events.stream().filter(e -> e.kind() == MetadataEvent.Kind.ROW_COUNT).findFirst()
+            .orElseThrow();
+        assertEquals(Long.toString(expected), rows.attributes().get("rows"), "only the matching rows are read");
+        assertEquals(3, events.stream().filter(e -> e.kind() == MetadataEvent.Kind.PROFILE).count(),
+            "only the three columns asked for");
+    }
+
     @Test
     void aRowLimitReadsASampleAndSaysSo() throws Exception {
         List<MetadataEvent> events = new CopyOnWriteArrayList<>();

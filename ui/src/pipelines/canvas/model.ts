@@ -45,6 +45,8 @@ export type Graph = {
   nodes: GraphNode[];
   edges: GraphEdge[];
   positions: Record<string, Point>;
+  /** The names of the parameters the pipeline declares, for `${name}` in its settings. */
+  parameters: string[];
 };
 
 export type ReadResult = { ok: true; graph: Graph } | { ok: false; error: string; line: number };
@@ -205,8 +207,10 @@ export function readGraph(text: string, catalogue: Catalogue = new Map()): ReadR
       if (Number.isFinite(x) && Number.isFinite(y)) positions[id] = { x, y };
     }
   }
+  const declared = doc.get("parameters", true);
+  const parameters = isMap(declared) ? declared.items.map((p) => scalarText(p.key)).filter((k): k is string => !!k) : [];
   const top = (k: string) => scalarText(doc.get(k, true));
-  return { ok: true, graph: { name: top("name"), description: top("description"), nodes, edges, positions } };
+  return { ok: true, graph: { name: top("name"), description: top("description"), nodes, edges, positions, parameters } };
 }
 
 // ---- checks ----

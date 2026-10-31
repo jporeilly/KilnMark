@@ -2,6 +2,7 @@ package io.kilnmark.kiln.plugins.jdbc;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -129,6 +130,59 @@ public final class JdbcTableInput implements Node {
      * SQL has no portable row limit; the query then reads the whole table.
      */
     public static final String MAX_ROWS = "max-rows";
+    /**
+     * Settings: the values of a narrowed read's {@code ?}s, as {@code value.1}, {@code value.2}, ...
+     * each {@code type:value} with type one of long, decimal, double, boolean, text, date.
+     */
+    static final String VALUE_PREFIX = "value.";
+
+    /** Puts each value of a narrowed read into {@code settings}, in order. */
+    static void putValues(Map<String, String> settings, List<Object> values) {
+        for (int i = 0; i < values.size(); i++) {
+            Object v = values.get(i);
+            String type = switch (v) {
+                case Long l -> "long";
+                case Integer n -> "long";
+                case java.math.BigDecimal d -> "decimal";
+                case Double d -> "double";
+                case Boolean b -> "boolean";
+                case java.time.LocalDate d -> "date";
+                case String t -> "text";
+                default -> throw new IllegalArgumentException("a read cannot bind a " + v.getClass().getSimpleName());
+            };
+            settings.put(VALUE_PREFIX + (i + 1), type + ":" + v);
+        }
+    }
+
+    /** The values {@link #putValues} put into {@code settings}, in order. */
+    static List<Object> values(Map<String, String> settings) {
+        List<Object> out = new ArrayList<>();
+        for (int i = 1; settings.containsKey(VALUE_PREFIX + i); i++) {
+            String s = settings.get(VALUE_PREFIX + i);
+            int colon = s.indexOf(':');
+            String v = s.substring(colon + 1);
+            out.add(switch (s.substring(0, colon)) {
+                case "long" -> Long.parseLong(v);
+                case "decimal" -> new java.math.BigDecimal(v);
+                case "double" -> Double.parseDouble(v);
+                case "boolean" -> Boolean.parseBoolean(v);
+                case "date" -> java.time.LocalDate.parse(v);
+                default -> v;
+            });
+        }
+        return out;
+    }
+
+    private static void bind(PreparedStatement p, int i, Object v) throws SQLException {
+        switch (v) {
+            case Long l -> p.setLong(i, l);
+            case java.math.BigDecimal d -> p.setBigDecimal(i, d);
+            case Double d -> p.setDouble(i, d);
+            case Boolean b -> p.setBoolean(i, b);
+            case java.time.LocalDate d -> p.setDate(i, java.sql.Date.valueOf(d));
+            default -> p.setString(i, String.valueOf(v));
+        }
+    }
 
     private String samplePercent;
     private long estimatedRows = -1;
@@ -178,11 +232,21 @@ public final class JdbcTableInput implements Node {
             if (context.settings().containsKey(ISOLATION)) {
                 connection.setTransactionIsolation(Integer.parseInt(context.setting(ISOLATION)));
             }
-            statement = connection.createStatement();
-            if (context.settings().containsKey(SAMPLE_ABOVE)) {
-                sql = sampled(context, sql);
+            List<Object> values = values(context.settings());
+            if (values.isEmpty()) {
+                statement = connection.createStatement();
+                if (context.settings().containsKey(SAMPLE_ABOVE)) {
+                    sql = sampled(context, sql);
+                }
+                sql = reading.query(connection, sql, context.settings());
+            } else {
+                // A narrowed read: each value bound, never written into the SQL.
+                PreparedStatement prepared = connection.prepareStatement(sql);
+                statement = prepared; // closed with the read, even if binding fails
+                for (int i = 0; i < values.size(); i++) {
+                    bind(prepared, i + 1, values.get(i));
+                }
             }
-            sql = reading.query(connection, sql, context.settings());
             int fetch = batchSize;
             if (context.settings().containsKey(MAX_ROWS)) {
                 int max = (int) Math.min(Integer.MAX_VALUE, Long.parseLong(context.setting(MAX_ROWS)));
@@ -190,7 +254,7 @@ public final class JdbcTableInput implements Node {
                 fetch = Math.min(fetch, Math.max(1, max)); // JDBC: the fetch size may not exceed the row limit
             }
             statement.setFetchSize(fetch);
-            rows = statement.executeQuery(sql);
+            rows = statement instanceof PreparedStatement p ? p.executeQuery() : statement.executeQuery(sql);
             ResultSetMetaData md = rows.getMetaData();
             columns = new ArrayList<>(md.getColumnCount());
             List<Field> fields = new ArrayList<>(md.getColumnCount());

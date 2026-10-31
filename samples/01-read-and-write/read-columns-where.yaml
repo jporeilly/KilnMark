@@ -1,0 +1,24 @@
+# Read only the columns and rows wanted (sample: lab only, never shipped).
+# Reads five columns of the lab's customers, only Premier and Business customers who opted in to
+# marketing and whose last name starts with S, and writes them to a CSV file.
+# Look for: the note under the read node. The database applies the segment and opt-in part while
+# reading, with each value bound rather than written into the SQL; Kilnmark applies lower(...), a
+# function the database is not asked to run, as the rows arrive. The rows are the same either way.
+kilnmark: pipeline/v1
+name: sample-read-columns-where
+description: Premier and Business customers who opted in, five columns.
+
+nodes:
+  - id: customers
+    type: read
+    source: lab-db
+    asset: crm.customers
+    columns: [customer_id, first_name, last_name, segment, created_at]   # in this order; the rest are not read
+    where: "segment in ('Premier', 'Business') and marketing_opt_in and lower(last_name) like 's%'"
+
+  - id: out
+    type: write
+    input: customers
+    source: lab-warehouse
+    path: samples/read-and-write/opted_in_customers.csv
+    mode: replace

@@ -2,6 +2,8 @@ package io.kilnmark.kiln.plugins.jdbc;
 
 import java.util.Set;
 
+import io.kilnmark.kiln.connect.AssetInfo;
+
 /** PostgreSQL, and databases that speak its protocol. */
 public final class PostgresConnector extends JdbcConnector {
 
@@ -37,6 +39,19 @@ public final class PostgresConnector extends JdbcConnector {
     @Override
     protected String selectSql(String schema, String table, long rowLimit) {
         return "SELECT * FROM " + quote(schema) + "." + quote(table) + (rowLimit > 0 ? " LIMIT " + rowLimit : "");
+    }
+
+    /** text, and the character types; not uuid, json, enums or numbers without a precision read as text. */
+    @Override
+    protected boolean comparesAsText(String baseType) {
+        return baseType.equals("text") || super.comparesAsText(baseType);
+    }
+
+    @Override
+    protected String selectSql(AssetInfo asset, long rowLimit, boolean explicit, String where) {
+        String columns = explicit ? String.join(", ", asset.fields().stream().map(f -> quote(f.name())).toList()) : "*";
+        return "SELECT " + columns + " FROM " + quote(asset.hints().get("schema")) + "." + quote(asset.hints().get("table"))
+            + (where == null ? "" : " WHERE " + where) + (rowLimit > 0 ? " LIMIT " + rowLimit : "");
     }
 
     /** pgjdbc's connect, login and socket timeouts, in seconds. */

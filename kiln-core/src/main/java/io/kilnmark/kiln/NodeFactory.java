@@ -76,4 +76,13 @@ public interface NodeFactory {
         throws NodeException {
         return null;
     }
+
+    /**
+     * Notes on how the node will do its work, given its settings and the columns arriving, for the
+     * pipeline's check: things worth knowing that are not problems, such as which part of a read's
+     * condition the source applies. Called only when the node's settings and columns check clean.
+     */
+    default List<String> notes(Map<String, Schema> inputs, Map<String, Object> config) {
+        return List.of();
+    }
 }

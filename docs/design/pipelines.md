@@ -333,6 +333,47 @@ Built with flows' F2 (CHANGELOG; the guide's "Parameters and server variables" i
   values first: a wrong value is a 400, a version that does not check with them a 409.
 - **SQL**, when nodes take SQL of their own: a value goes in as a bound parameter, never as text.
 
+### The read node's columns and where (decisions)
+
+The guide's "Reading" is the user's view.
+
+- **Settings.** `columns` (the columns kept, in that order; none means all) and `where` (an
+  expression, so `${...}` fills it as a literal, as above). `row_limit` counts the rows kept after
+  `where`. The node's output columns are the chosen ones (`ReadShaping.outputSchema`); an unknown or
+  repeated column, or a `where` that is not true or false, is a problem when the pipeline is
+  checked.
+- **The same rows wherever the condition runs.** The read node always applies the whole `where`
+  itself as rows arrive (`ShapedRead` around the connector's reader, `ReadShaping`). What a
+  database is asked to do is only ever a *superset*: it may send rows Kilnmark then drops, never
+  drop a row Kilnmark would keep. So a database's collation (a case-insensitive `=`), its handling
+  of time zones or its functions can never change the result, only how many rows travel.
+- **What is pushed (`PushDown`, kiln-nodes).** A column compared with a value (`=`, `<>`, `<`,
+  `<=`, `>`, `>=`, `between`, `in`, `is null`, `like`, a boolean column on its own), with `and`,
+  `or` and `not`. Text only with `=`, `in` and a `like` without `\` or `[` (SQL Server reads `[a]`
+  as a set of characters), and never under `not`, since a database may compare text differently.
+  No timestamps (time zones), functions, arithmetic or column-to-column comparisons. An `and` may
+  leave parts out (the database then sends more); an `or` or a `not` goes whole or not at all, and
+  the SQL under a `not` is written whole or not at all too. The parts left out are named in the
+  node's note.
+- **Only columns stored as they are read** (`Connector.comparesAsRead(kind, sourceType)`). A
+  column read as text but stored otherwise (JSON, spatial, uuid, a Postgres enum, an Oracle CLOB or
+  a `NUMBER` without precision) or read as true/false but stored as a number (MySQL `tinyint(1)`)
+  is never compared by the database: it would compare something else, dropping rows or failing.
+  JDBC decides by the source type: the character types, plus `text` on PostgreSQL and the text
+  types and `enum` on MySQL and MariaDB; `bool`, `boolean` and `bit` for true/false.
+- **`ReadFilter` (kiln-core)** is the condition in no database's syntax. `ReadOptions` carries it
+  with the columns needed (those chosen plus those `where` reads). A connector says whether it can
+  narrow a read (`narrowsReads`); generic JDBC and files cannot, and read everything.
+- **SQL (`JdbcConnector.whereSql`, each dialect's `selectSql`).** Names quoted as each database
+  quotes them; every value a bound `?` through a `PreparedStatement`, never written into the SQL.
+  The values travel to the reader node in its settings with their types (`value.N`,
+  `type:value`). A database that cannot bind a kind of value (Oracle, true/false) leaves that part
+  of an `and` to Kilnmark. With `where`, the database's own row limit is used only when it keeps
+  exactly what Kilnmark keeps (the whole condition, no text: `Split.keepsExactly`); otherwise
+  Kilnmark counts the rows it keeps and stops the read when it has enough.
+- **Notes.** `NodeFactory.notes` lets a node add notes to a check; the read node says whether the
+  database applies `where`, applies part of it (and what it leaves), or not at all.
+
 ## 3. Expressions
 
 `filter`, `compute`, `aggregate`, `route` and later the gate use one small expression language,

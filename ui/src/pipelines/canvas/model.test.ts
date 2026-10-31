@@ -162,6 +162,12 @@ nodes:
     const g = graph(BILLING + "layout:\n  customers: { x: 40, y: 120 }\n  nobody: { x: 1, y: 2 }\n");
     expect(g.positions.customers).toEqual({ x: 40, y: 120 });
   });
+
+  test("the parameters declared are known, for ${name} in settings", () => {
+    expect(graph(BILLING).parameters).toEqual([]);
+    const g = graph(BILLING.replace("nodes:", "parameters:\n  statuses: { type: text list }\n  min_fee: { type: number }\nnodes:"));
+    expect(g.parameters).toEqual(["statuses", "min_fee"]);
+  });
 });
 
 describe("round trips keep every setting and comment", () => {
