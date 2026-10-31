@@ -507,7 +507,7 @@ class PipelineFlowTest {
             as(steward).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
                 .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_DESIGNERS));
             as(admin).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
-                .body("[0].error", containsString("refused the rows"));
+                .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_DESIGNERS));
             as(viewer).get("/api/v1/pipelines").then().statusCode(200)
                 .body("find { it.name == 'people-copy' }.lastRun.error",
                     equalTo("The run failed. " + PipelineService.FOR_STEWARDS));
@@ -530,8 +530,8 @@ class PipelineFlowTest {
                 + PipelineService.FOR_DESIGNERS));
             as(designer).get(path).then().statusCode(200).body("notes", hasItems(note
                 + " (cannot profile a column of maps (test))"));
-            as(admin).get(path).then().statusCode(200).body("notes", hasItems(note
-                + " (cannot profile a column of maps (test))"));
+            as(admin).get(path).then().statusCode(200).body("notes", hasItems(note + ". "
+                + PipelineService.FOR_DESIGNERS));
         } finally {
             as(admin).body(Map.of("field", "name", "sensitive", false)).queryParam("urn", READ_URN)
                 .put("/api/v1/quality/asset/sensitive").then().statusCode(204);
