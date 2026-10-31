@@ -76,7 +76,7 @@ public class SampleResource {
     private void requireOffered() {
         if (!settings.samplesOffered()) {
             throw ApiError.of(Response.Status.FORBIDDEN, "The samples are not offered on this server: an admin turns "
-                + "them on under Settings, Samples");
+                + "them on under Settings, Administration");
         }
     }
 

@@ -101,6 +101,7 @@ function SamplesSwitch() {
   const change = async (to: boolean) => {
     setSaving(true);
     setError(null);
+    setSaid("");
     try {
       const o = await samplesApi.setOffered(to);
       setOffered(o.offered);
