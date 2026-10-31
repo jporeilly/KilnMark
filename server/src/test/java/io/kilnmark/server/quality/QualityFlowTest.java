@@ -826,29 +826,29 @@ class QualityFlowTest {
         assertEquals("http://127.0.0.1:47391/hooks/quality", admin().get("/api/v1/quality/rules/" + rules.get("email"))
             .then().statusCode(200).extract().jsonPath().getString("rule.actions.webhook"), "the stored webhook is kept");
 
-        // Previews of settings not saved are for admins; the saved settings preview, masked.
+        // Source forms are for designers, who see sensitive values and so may preview other reading
+        // settings of a source with marks; stewards neither preview nor change a source.
         Map<String, String> saved = new HashMap<>(Map.of("url", url, "username", "qa_reader", "schemas", "qa",
             "sample_rows", "200", "table_sample_above_rows", "10000"));
         Map<String, String> changed = new HashMap<>(saved);
         changed.put("schemas", "qa,public");
+        String designer = token("quality-designer", "designer");
         as(steward).contentType(ContentType.JSON).queryParam("asset", "qa.Customers")
-            .body(Map.of("source", "quality-db", "name", "quality-db", "kind", "postgresql", "settings", changed))
-            .post("/api/v1/drafts/preview").then().statusCode(403).body("error", containsString("admin"));
-        JsonPath same = as(steward).contentType(ContentType.JSON).queryParam("asset", "qa.Customers")
             .body(Map.of("source", "quality-db", "name", "quality-db", "kind", "postgresql", "settings", saved))
+            .post("/api/v1/drafts/preview").then().statusCode(403);
+        JsonPath other = as(designer).contentType(ContentType.JSON).queryParam("asset", "qa.Customers")
+            .body(Map.of("source", "quality-db", "name", "quality-db", "kind", "postgresql", "settings", changed))
             .post("/api/v1/drafts/preview").then().statusCode(200).extract().jsonPath();
-        int col = same.getList("columns.name").indexOf("quantity");
-        List<List<String>> rows = same.getList("rows");
-        assertTrue(col >= 0 && rows.stream().allMatch(r -> r.get(col) == null || r.get(col).equals("••••")));
+        int col = other.getList("columns.name").indexOf("quantity");
+        List<List<String>> rows = other.getList("rows");
+        assertTrue(col >= 0 && rows.stream().anyMatch(r -> r.get(col) != null && !r.get(col).equals("••••")),
+            other.prettify());
 
-        // A source with marks: stewards may not change how it is read (other names would escape the marks),
-        // but may still describe it; admins may change anything.
-        as(steward).contentType(ContentType.JSON).body(Map.of("name", "quality-db", "kind", "postgresql",
-            "settings", changed)).put("/api/v1/sources/quality-db").then().statusCode(403)
-            .body("error", containsString("marked sensitive"));
         Map<String, String> described = new HashMap<>(saved);
         described.put("description", "The quality test database");
         as(steward).contentType(ContentType.JSON).body(Map.of("name", "quality-db", "kind", "postgresql",
+            "settings", described)).put("/api/v1/sources/quality-db").then().statusCode(403);
+        as(designer).contentType(ContentType.JSON).body(Map.of("name", "quality-db", "kind", "postgresql",
             "settings", described)).put("/api/v1/sources/quality-db").then().statusCode(200);
     }
 
