@@ -817,7 +817,8 @@ sensitive where it is written too, whoever ran it and however the run ended: a c
 or renamed, looked up, or worked out from one (a computed column, an aggregate's value or group).
 So it is masked there for stewards and viewers, as it was where it came from, even before the
 written table is catalogued. A column made only from unmarked columns is not marked. When a node
-works on marked columns in a way Kilnmark cannot follow, every column it writes is marked. Marks
+works on marked columns in a way Kilnmark cannot follow, every column it writes is marked, also
+columns it adds later; that mark is cleared as a whole, not one column at a time. Marks
 match column names ignoring case. Where a source, table or path comes from a parameter, the marks
 land on what the run actually wrote with the values it used. Only an admin
 can clear a mark. A path a write writes to is written as the source lists it (`/` between

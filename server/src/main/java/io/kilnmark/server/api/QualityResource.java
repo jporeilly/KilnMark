@@ -292,6 +292,13 @@ public class QualityResource {
         if (!body.sensitive() && !identity.hasRole(AccessRole.ADMIN_ROLE)) {
             throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can stop treating a column as sensitive.");
         }
+        // "every column" also covers columns not catalogued yet, so one column cannot be taken out of it
+        if (!body.sensitive() && !body.field().equals(QualityStore.EVERY_COLUMN)
+            && sights.marks(urn).contains(QualityStore.EVERY_COLUMN)) {
+            throw ApiError.of(Response.Status.CONFLICT, "Every column of " + urn + " is marked sensitive, because a "
+                + "pipeline wrote it from marked columns in a way Kilnmark could not follow. Clear that mark first "
+                + "(field \"*\"), then mark again the columns that stay sensitive.");
+        }
         if (!store.setSensitive(urn, body.field(), body.sensitive())) {
             throw ApiError.of(Response.Status.NOT_FOUND, urn + " has no field called " + body.field());
         }

@@ -937,12 +937,17 @@ class PipelineFlowTest {
             .statusCode(200).extract().jsonPath().getList("sensitive");
         assertFalse(listed.contains("*"), listed.toString());
         assertTrue(listed.containsAll(java.util.List.of("id", "greeting", "name")), listed.toString());
+        // It covers columns not catalogued yet too, so one column cannot be taken out of it; it is
+        // cleared as a whole, and the other marks stay.
         as(Tokens.ADMIN).body(Map.of("field", "ID", "sensitive", false))
+            .put("/api/v1/quality/asset/sensitive?urn=" + urn).then().statusCode(409);
+        as(Tokens.ADMIN).body(Map.of("field", "*", "sensitive", false))
             .put("/api/v1/quality/asset/sensitive?urn=" + urn).then().statusCode(204);
         listed = as(Tokens.ADMIN).queryParam("urn", urn).get("/api/v1/quality/asset").then().statusCode(200)
             .extract().jsonPath().getList("sensitive");
-        assertFalse(listed.stream().anyMatch("id"::equalsIgnoreCase), listed.toString());
-        assertTrue(listed.containsAll(java.util.List.of("greeting", "name")), listed.toString());
+        assertEquals(java.util.List.of("greeting", "name"), listed.stream().sorted().toList());
+        as(Tokens.ADMIN).body(Map.of("field", "nowhere", "sensitive", false))
+            .put("/api/v1/quality/asset/sensitive?urn=" + urn).then().statusCode(404);
         // Only an admin clears it, as any mark; the mark on what was read stays.
         as(designer).body(Map.of("field", "greeting", "sensitive", false))
             .put("/api/v1/quality/asset/sensitive?urn=" + urn).then().statusCode(403);
