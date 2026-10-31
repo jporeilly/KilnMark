@@ -131,7 +131,8 @@ public class QualityResource {
             e.remove("reason");
             o.set("evidence", Masking.evidence(e, m.field(), sight));
         }));
-        out.set("sensitive", json.valueToTree(sensitive));
+        out.set("sensitive", json.valueToTree(sensitive.stream()
+            .filter(s -> !s.equals(QualityStore.EVERY_COLUMN)).toList()));
         List<QualityStore.Accepted> accepted = store.accepted(urn);
         out.set("accepted", json.valueToTree(accepted));
         JsonNode examples = data && quality.samplesAllowed(urn)

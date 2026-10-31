@@ -926,6 +926,23 @@ class PipelineFlowTest {
             }
         }
         assertEquals(java.util.Set.of("greeting", "name"), carried, "name passed on, greeting worked out from it");
+        // An "every column" mark lists as the catalogued columns, and clearing one keeps the others.
+        try (java.sql.Connection c = db.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement(
+            "INSERT INTO kilnmark.carried_mark (asset_urn, name, from_urn, pipeline) VALUES (?, '*', ?, 'people-marked')")) {
+            ps.setString(1, urn);
+            ps.setString(2, READ_URN);
+            ps.executeUpdate();
+        }
+        java.util.List<String> listed = as(Tokens.ADMIN).queryParam("urn", urn).get("/api/v1/quality/asset").then()
+            .statusCode(200).extract().jsonPath().getList("sensitive");
+        assertFalse(listed.contains("*"), listed.toString());
+        assertTrue(listed.containsAll(java.util.List.of("id", "greeting", "name")), listed.toString());
+        as(Tokens.ADMIN).body(Map.of("field", "ID", "sensitive", false))
+            .put("/api/v1/quality/asset/sensitive?urn=" + urn).then().statusCode(204);
+        listed = as(Tokens.ADMIN).queryParam("urn", urn).get("/api/v1/quality/asset").then().statusCode(200)
+            .extract().jsonPath().getList("sensitive");
+        assertFalse(listed.stream().anyMatch("id"::equalsIgnoreCase), listed.toString());
+        assertTrue(listed.containsAll(java.util.List.of("greeting", "name")), listed.toString());
         // Only an admin clears it, as any mark; the mark on what was read stays.
         as(designer).body(Map.of("field", "greeting", "sensitive", false))
             .put("/api/v1/quality/asset/sensitive?urn=" + urn).then().statusCode(403);

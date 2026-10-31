@@ -114,6 +114,7 @@ class MaskingTest {
     void marksMatchIgnoringCaseAndEveryColumnMasksAll() {
         Masking.Sight lower = new Masking.Sight(true, Set.of("postcode"), false);
         assertFalse(lower.values("PostCode"));
+        assertTrue(lower.sensitive().contains("POSTCODE"), "the copy a Sight keeps still ignores case");
         assertTrue(lower.values("town"));
         Masking.Sight every = new Masking.Sight(true, Set.of(QualityStore.EVERY_COLUMN), false);
         assertFalse(every.values("town"));

@@ -33,7 +33,7 @@ public final class Masking {
      */
     public record Sight(boolean data, Set<String> sensitive, boolean unmasked) {
         public Sight {
-            sensitive = sensitive == null ? Set.of() : Set.copyOf(sensitive);
+            sensitive = QualityStore.marks(sensitive);
         }
 
         /**

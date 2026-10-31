@@ -373,6 +373,15 @@ public class QualityStore {
         return new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
     }
 
+    /** A fixed copy of {@code marks} that still compares names ignoring case (Set.copyOf would not). */
+    public static Set<String> marks(java.util.Collection<String> marks) {
+        Set<String> out = names();
+        if (marks != null) {
+            out.addAll(marks);
+        }
+        return java.util.Collections.unmodifiableSet(out);
+    }
+
     /** Columns marked sensitive, for several assets at once. */
     public Map<String, Set<String>> sensitive(java.util.Collection<String> urns) {
         Map<String, Set<String>> out = new HashMap<>();
@@ -400,12 +409,27 @@ public class QualityStore {
      */
     public boolean setSensitive(String urn, String field, boolean sensitive) {
         if (!sensitive) {
-            // An admin's decision: the mark a steward set and the one a pipeline carried here both go.
-            int carried = update("DELETE FROM kilnmark.carried_mark WHERE asset_urn = ? AND name = ?", ps -> {
+            // An admin's decision: the mark a steward set and the one a pipeline carried here both go,
+            // whatever their case. An "every column" mark first becomes a mark on each catalogued
+            // column, so clearing one column leaves the others marked.
+            update("INSERT INTO kilnmark.carried_mark (asset_urn, name, from_urn, pipeline, run_id, carried_at) "
+                + "SELECT f.asset_urn, f.name, m.from_urn, m.pipeline, m.run_id, m.carried_at FROM kilnmark.field f "
+                + "JOIN kilnmark.carried_mark m ON m.asset_urn = f.asset_urn AND m.name = ? "
+                + "WHERE f.asset_urn = ? ON CONFLICT DO NOTHING", ps -> {
+                    ps.setString(1, EVERY_COLUMN);
+                    ps.setString(2, urn);
+                });
+            if (!field.equals(EVERY_COLUMN)) {
+                update("DELETE FROM kilnmark.carried_mark WHERE asset_urn = ? AND name = ?", ps -> {
+                    ps.setString(1, urn);
+                    ps.setString(2, EVERY_COLUMN);
+                });
+            }
+            int carried = update("DELETE FROM kilnmark.carried_mark WHERE asset_urn = ? AND lower(name) = lower(?)", ps -> {
                 ps.setString(1, urn);
                 ps.setString(2, field);
             });
-            return update("DELETE FROM kilnmark.column_mark WHERE asset_urn = ? AND name = ?", ps -> {
+            return update("DELETE FROM kilnmark.column_mark WHERE asset_urn = ? AND lower(name) = lower(?)", ps -> {
                 ps.setString(1, urn);
                 ps.setString(2, field);
             }) == 1 || carried == 1 || query("SELECT 1 FROM kilnmark.field WHERE asset_urn = ? AND name = ?", ps -> {

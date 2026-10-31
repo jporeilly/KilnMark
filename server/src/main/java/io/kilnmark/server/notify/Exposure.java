@@ -17,7 +17,7 @@ public record Exposure(Set<String> marks, boolean sourceMarked) {
     public static final Exposure NONE = new Exposure(Set.of(), false);
 
     public Exposure {
-        marks = marks == null ? Set.of() : Set.copyOf(marks);
+        marks = io.kilnmark.server.quality.QualityStore.marks(marks);
     }
 
     /**
