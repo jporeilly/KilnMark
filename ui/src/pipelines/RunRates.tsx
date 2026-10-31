@@ -92,20 +92,25 @@ function Spark({ line, span }: { line: RateLine; span: number }) {
  * rows aside marked on the time axis. A table says the same.
  */
 export function RunRates({ detail, clock, tick }: { detail: PipelineRunDetail; clock?: Clock; tick: number }) {
-  const [series, setSeries] = useState<PipelineProgressSeries | null>(null);
-  const [marks, setMarks] = useState<PipelineRunEvent[]>([]);
   const id = detail.run.id;
+  // Kept with the run they are for: the same page can go on to another run, whose points must never
+  // be added to the last one's (its nodes would be shown under the other run's names).
+  const [loaded, setLoaded] = useState<{ run: number; series: PipelineProgressSeries } | null>(null);
+  const [loadedMarks, setLoadedMarks] = useState<{ run: number; events: PipelineRunEvent[] } | null>(null);
+  const series = loaded?.run === id ? loaded.series : null;
+  const marks = loadedMarks?.run === id ? loadedMarks.events : [];
   // The points since the last look; all of them the first time, or when the run's points were merged.
   useEffect(() => {
     let live = true;
     const after = series?.points.at(-1)?.t;
+    const keep = (s: PipelineProgressSeries) => live && setLoaded({ run: id, series: s });
     pipelinesApi
       .series(id, after)
       .then((next) => {
         if (!live) return;
-        if (series == null || after == null) return setSeries(next);
-        if (next.stride !== series.stride) return pipelinesApi.series(id).then((all) => live && setSeries(all));
-        setSeries((old) => (old ? { ...old, points: [...old.points, ...next.points.filter((p) => p.t > after)] } : next));
+        if (series == null || after == null) return keep(next);
+        if (next.stride !== series.stride) return pipelinesApi.series(id).then(keep);
+        keep({ ...series, points: [...series.points, ...next.points.filter((p) => p.t > after)] });
       })
       .catch(() => {});
     return () => {
@@ -117,7 +122,7 @@ export function RunRates({ detail, clock, tick }: { detail: PipelineRunDetail; c
     let live = true;
     pipelinesApi
       .events(id, { level: "warn", limit: 200 })
-      .then((page) => live && setMarks(page.events))
+      .then((page) => live && setLoadedMarks({ run: id, events: page.events }))
       .catch(() => {});
     return () => {
       live = false;
