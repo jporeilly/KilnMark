@@ -5,6 +5,30 @@ details.
 
 ## Unreleased
 
+## 0.0.9 (31 October 2026)
+
+### What's new
+
+- **Samples, and a starter pack to run them on.** Kilnmark comes with small pipelines that show one
+  idea each, such as filtering, routing, lookups, totals, quality gates and parameters, and with
+  made-up data for them. On the Pipelines page, **Add samples**, then **Add the starter pack**: it
+  creates the sample tables in a database of yours and adds every sample, ready to run. Or point the
+  samples at your own sources. One sample runs four million rows, so you can watch where a run's time
+  goes. Admins can turn the samples off under Settings.
+- **Read only what you need.** A read node can name the columns it wants and a `where` condition,
+  which can use the pipeline's parameters. For PostgreSQL, MySQL, MariaDB, SQL Server and Oracle
+  tables the database does as much of the filtering as is safe, with every value bound, so fewer rows
+  travel.
+- **Parameters and server variables.** A pipeline can declare parameters (text, numbers, true or
+  false, and lists) with defaults, and take other values for a run through the API. Server variables
+  are values of the server, such as a schema or a region, that every pipeline can use.
+- **A calmer canvas.** The node list sits beside the canvas, with **Nodes** in the toolbar to hide it.
+  A click selects a node so you can move it, and a double-click opens its settings. Connections no
+  longer cross where a node's outputs feed several nodes, and a node's preview scrolls within the
+  screen with the column names kept in view.
+- **Steps are now called nodes**, and the lines between them connections, everywhere in Kilnmark.
+  Pipelines written with `steps:` still read.
+
 ### Details
 
 - **Samples can be turned off.** Admins have **Offer the samples** under Settings, Administration
