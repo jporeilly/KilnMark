@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, IconTile, PageHeader, type Tint } from "../components/ui";
-import { allows, type AccessRole } from "../api";
+import { allows, samplesApi, type AccessRole } from "../api";
 import { useProductName } from "../components/Brand";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
@@ -76,9 +76,70 @@ export function SettingsPage({ role }: { role: AccessRole }) {
               </li>
             ))}
           </ul>
+          <SamplesSwitch />
         </section>
       )}
     </>
+  );
+}
+
+/**
+ * Whether this server offers the samples: Add samples on the Pipelines page, the starter pack and
+ * Kilnmark's sample data. Pipelines already added from them stay when they are turned off.
+ */
+function SamplesSwitch() {
+  const [offered, setOffered] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [said, setSaid] = useState("");
+  useEffect(() => {
+    samplesApi
+      .offered()
+      .then((o) => setOffered(o.offered))
+      .catch((e: Error) => setError(e.message));
+  }, []);
+  const change = async (to: boolean) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const o = await samplesApi.setOffered(to);
+      setOffered(o.offered);
+      setSaid(o.offered ? "The samples are offered." : "The samples are no longer offered.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="panel samples-switch">
+      <h3 id="samples-switch-h">Samples</h3>
+      <p>
+        <label>
+          <input
+            type="checkbox"
+            checked={offered ?? false}
+            disabled={offered === null || saving}
+            aria-describedby="samples-switch-hint"
+            onChange={(e) => change(e.target.checked)}
+          />{" "}
+          Offer the samples
+        </label>
+      </p>
+      <p id="samples-switch-hint" className="hint">
+        Add samples on the Pipelines page, the starter pack and Kilnmark&apos;s sample data: small pipelines that show
+        one idea each, for learning. Turn them off on a server that should hold your own pipelines only; any already
+        added stay.
+      </p>
+      <p role="status" className="small">
+        {said}
+      </p>
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

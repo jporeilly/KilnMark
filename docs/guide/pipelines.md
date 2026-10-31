@@ -51,6 +51,10 @@ One sample, `sample-volume`, reads four million made-up sales, enough for a run 
 run it and open the run's page to see where each node spent its time, how many rows a second went
 through, and which node held the others up.
 
+An admin can stop offering the samples on a server that should hold its own pipelines only: under
+**Settings**, **Administration**, clear **Offer the samples**. **Add samples** then leaves the
+Pipelines page, and the samples' API refuses; pipelines already added from them stay.
+
 ### The starter pack
 
 The quickest way to try the samples, with nothing of your own to prepare but a database and a file

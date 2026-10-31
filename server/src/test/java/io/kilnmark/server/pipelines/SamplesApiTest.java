@@ -110,6 +110,27 @@ class SamplesApiTest {
     }
 
     @Test
+    void anAdminCanStopOfferingTheSamples() {
+        String steward = token("samples-off-steward", "steward");
+        String viewer = token("samples-off-viewer", "viewer");
+        as(viewer).get("/api/v1/samples/offered").then().statusCode(200).body("offered", equalTo(true));
+        as(steward).body(Map.of("offered", false)).put("/api/v1/samples/offered").then().statusCode(403);
+        try {
+            as(Tokens.ADMIN).body(Map.of("offered", false)).put("/api/v1/samples/offered").then().statusCode(200)
+                .body("offered", equalTo(false));
+            as(viewer).get("/api/v1/samples/offered").then().statusCode(200).body("offered", equalTo(false));
+            as(viewer).get("/api/v1/samples").then().statusCode(403).body("error", containsString("not offered"));
+            as(steward).body(Map.of("sources", Map.of("files", "x"))).post("/api/v1/samples").then().statusCode(403);
+            as(steward).body(Map.of("source", "x", "schema", "public")).post("/api/v1/samples/tables").then()
+                .statusCode(403);
+            as(Tokens.ADMIN).body(Map.of()).put("/api/v1/samples/offered").then().statusCode(400);
+        } finally {
+            as(Tokens.ADMIN).body(Map.of("offered", true)).put("/api/v1/samples/offered").then().statusCode(200);
+        }
+        as(viewer).get("/api/v1/samples").then().statusCode(200);
+    }
+
+    @Test
     void placeholdersAreReplacedOnlyAsSourceSettings() {
         String yaml = """
             nodes:
