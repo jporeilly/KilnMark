@@ -111,6 +111,11 @@ Also needed, not yet scheduled:
   to set one up and give people their roles in it (roles per project, not only per server, and the
   unmask grant of ADR 0027 per project), and a lifecycle from development through test to
   production: promoting versions between stages, reviews before promotion, and who may promote.
+- **AI as nodes in pipelines and flows.** Pipelines and flows are already graphs of nodes and
+  connections, so AI can join them the way graph-based AI builders do: nodes that call a model
+  (classify, extract, summarise, embed, generate), nodes for prompts, memory and tools, and agents
+  that choose the next step in a flow. They must keep ADR 0012 and ADR 0016: local models by default,
+  one egress gate, columns marked sensitive never sent to a model, and people approve what AI changes.
 
 ## Engineering setup
 
