@@ -359,20 +359,38 @@ public class QualityStore {
      * masked). Callers outside {@link Sights} and the marking itself should not need this.
      */
     public Set<String> sensitive(String urn) {
-        return new HashSet<>(query("SELECT name FROM kilnmark.sensitive_column WHERE asset_urn = ?",
-            ps -> ps.setString(1, urn), rs -> rs.getString(1)));
+        return sensitive(java.util.List.of(urn)).get(urn);
+    }
+
+    /**
+     * A carried mark meaning every column of the asset: a write whose columns could not be followed
+     * or told before its run. It masks every column at once, and is listed as the asset's columns.
+     */
+    public static final String EVERY_COLUMN = "*";
+
+    /** Names compared as masks compare them: ignoring case. */
+    private static Set<String> names() {
+        return new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
     }
 
     /** Columns marked sensitive, for several assets at once. */
     public Map<String, Set<String>> sensitive(java.util.Collection<String> urns) {
         Map<String, Set<String>> out = new HashMap<>();
-        urns.forEach(u -> out.put(u, new HashSet<>()));
+        urns.forEach(u -> out.put(u, names()));
         if (urns.isEmpty()) {
             return out;
         }
         query("SELECT asset_urn, name FROM kilnmark.sensitive_column WHERE asset_urn = ANY (?)",
             ps -> ps.setArray(1, ps.getConnection().createArrayOf("text", urns.toArray())),
-            rs -> out.computeIfAbsent(rs.getString(1), k -> new HashSet<>()).add(rs.getString(2)));
+            rs -> out.computeIfAbsent(rs.getString(1), k -> names()).add(rs.getString(2)));
+        // "every column": the asset's columns, as they are catalogued now
+        List<String> every = out.entrySet().stream().filter(e -> e.getValue().contains(EVERY_COLUMN))
+            .map(Map.Entry::getKey).toList();
+        if (!every.isEmpty()) {
+            query("SELECT asset_urn, name FROM kilnmark.field WHERE asset_urn = ANY (?)",
+                ps -> ps.setArray(1, ps.getConnection().createArrayOf("text", every.toArray())),
+                rs -> out.get(rs.getString(1)).add(rs.getString(2)));
+        }
         return out;
     }
 

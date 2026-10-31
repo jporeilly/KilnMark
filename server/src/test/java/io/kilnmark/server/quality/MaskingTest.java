@@ -111,6 +111,16 @@ class MaskingTest {
     }
 
     @Test
+    void marksMatchIgnoringCaseAndEveryColumnMasksAll() {
+        Masking.Sight lower = new Masking.Sight(true, Set.of("postcode"), false);
+        assertFalse(lower.values("PostCode"));
+        assertTrue(lower.values("town"));
+        Masking.Sight every = new Masking.Sight(true, Set.of(QualityStore.EVERY_COLUMN), false);
+        assertFalse(every.values("town"));
+        assertTrue(new Masking.Sight(true, Set.of(QualityStore.EVERY_COLUMN), true).values("town"));
+    }
+
+    @Test
     void theProfileHidesASensitiveColumnsHistogramBounds() throws Exception {
         JsonNode p = Facts.JSON.readTree("{\"rows\":10,\"min\":\"1\",\"max\":\"9\",\"histogram\":[{\"from\":\"1\","
             + "\"to\":\"5\",\"count\":4},{\"from\":\"5\",\"to\":\"9\",\"count\":6}]}");

@@ -816,7 +816,10 @@ starts from what is known about it.
 sensitive where it is written too, whoever ran it and however the run ended: a column passed on
 or renamed, looked up, or worked out from one (a computed column, an aggregate's value or group).
 So it is masked there for stewards and viewers, as it was where it came from, even before the
-written table is catalogued. A column made only from unmarked columns is not marked. Only an admin
+written table is catalogued. A column made only from unmarked columns is not marked. When a node
+works on marked columns in a way Kilnmark cannot follow, every column it writes is marked. Marks
+match column names ignoring case. Where a source, table or path comes from a parameter, the marks
+land on what the run actually wrote with the values it used. Only an admin
 can clear a mark. A path a write writes to is written as the source lists it (`/` between
 folders, no empty or `.` folders), so what is recorded about it is found again.
 

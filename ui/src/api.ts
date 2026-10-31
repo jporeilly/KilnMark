@@ -925,6 +925,8 @@ export type AssetQuality = {
   urn: string;
   canSeeData: boolean;
   canUnmask: boolean;
+  /** Whether a mark of a sensitive column may be cleared (admins); missing from older servers. */
+  canClearMarks?: boolean;
   version: ProfileVersion | null;
   scores: { asset: DimensionScore[]; fields: Record<string, DimensionScore[]> };
   measures: Measure[];

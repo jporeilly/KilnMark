@@ -105,6 +105,7 @@ public class QualityResource {
         boolean data = sights.data();
         out.put("canSeeData", data);
         out.put("canUnmask", sights.mayUnmask());
+        out.put("canClearMarks", identity.hasRole(AccessRole.ADMIN_ROLE));
         Optional<QualityStore.Version> v = store.latestVersion(urn);
         v.ifPresentOrElse(x -> out.set("version", json.valueToTree(x)), () -> out.putNull("version"));
         ObjectNode scores = out.putObject("scores");

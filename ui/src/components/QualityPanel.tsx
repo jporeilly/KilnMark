@@ -908,8 +908,8 @@ function Samples({
             <label key={f.name} className="check">
               <input
                 type="checkbox"
-                checked={quality.sensitive.includes(f.name)}
-                disabled={quality.sensitive.includes(f.name) && !quality.canUnmask}
+                checked={marked(quality.sensitive, f.name)}
+                disabled={marked(quality.sensitive, f.name) && !(quality.canClearMarks ?? false)}
                 aria-describedby={`${id}-sens-hint`}
                 onChange={(e) => onSensitive(f.name, e.target.checked)}
               />{" "}
@@ -968,4 +968,10 @@ function Samples({
       </div>
     </Card>
   );
+}
+
+/** Whether a column is marked sensitive; marks match names ignoring case, and "*" marks every column. */
+function marked(sensitive: string[], name: string): boolean {
+  const n = name.toLowerCase();
+  return sensitive.some((s) => s === "*" || s.toLowerCase() === n);
 }

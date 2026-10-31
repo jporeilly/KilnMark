@@ -14,7 +14,8 @@ details.
   the run ends, before the written asset is catalogued (and on its catalogued columns when they
   could not be told before), and stay when it is removed and found again (`carried_mark`; the
   stewards' own marks are now `column_mark`, and `sensitive_column` is a view of both). Masks match
-  column names ignoring case. Only admins clear a mark, as before. Write paths must be written as the
+  column names ignoring case; a write Kilnmark cannot follow is marked on every column (`*`), even
+  when its run failed. Only admins clear a mark, as before. Write paths must be written as the
   source lists them (`/` between folders, no empty or `.` folders), so marks land where a scan finds
   the file. Before this, copying a marked column elsewhere and previewing the copy showed its values
   to stewards and viewers.

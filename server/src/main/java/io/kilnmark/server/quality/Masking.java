@@ -42,7 +42,7 @@ public final class Masking {
          */
         public boolean values(String field) {
             return data && (unmasked || field == null || field.isEmpty()
-                || sensitive.stream().noneMatch(s -> s.equalsIgnoreCase(field)));
+                || sensitive.stream().noneMatch(s -> s.equals(QualityStore.EVERY_COLUMN) || s.equalsIgnoreCase(field)));
         }
 
         /**

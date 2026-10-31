@@ -1426,9 +1426,11 @@ public class PipelineService {
             }
         }
         if (written.isEmpty()) {
-            // not known before the run: the names marked so far (masks compare ignoring case); the
-            // catalogued columns are marked too once the write is catalogued (carryToCatalogued)
-            carried.addAll(marked.names());
+            // not known before the run: the names marked so far (marks compare ignoring case), or, when
+            // what reached the write could not be followed, every column; the catalogued columns are
+            // marked by name too once the write is catalogued (carryToCatalogued)
+            carried.addAll(marked.all() ? List.of(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN)
+                : marked.names());
         }
         String from = readMarks.entrySet().stream().filter(e -> !e.getValue().isEmpty()).map(Map.Entry::getKey)
             .findFirst().map(id -> PipelinePreviews.readUrnsOf(c.configs().getOrDefault(id, Map.of()), context)
@@ -1436,7 +1438,7 @@ public class PipelineService {
         qualityStore.carry(w.urn(), carried, from, context.pipeline(), context.runId());
         if (marked.all() && written.isEmpty()) {
             note(notes, w.node() + ": it wrote columns made from columns marked sensitive in ways Kilnmark could not "
-                + "follow, so every column it wrote is marked once it is catalogued", null);
+                + "follow, so every column it wrote is marked sensitive", null);
         }
     }
 

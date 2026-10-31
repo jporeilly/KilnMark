@@ -278,7 +278,9 @@ final class NodePreview {
         }
 
         static Hidden of(Collection<String> names) {
-            return new Hidden(new HashSet<>(names), false);
+            // a carried "every column" mark hides every column
+            return names.contains(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN) ? ALL
+                : new Hidden(new HashSet<>(names), false);
         }
 
         boolean any() {
