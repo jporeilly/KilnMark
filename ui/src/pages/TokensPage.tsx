@@ -7,8 +7,8 @@ import { useTitle } from "../components/useTitle";
 const ROLES: { value: AccessRole; label: string }[] = [
   { value: "viewer", label: "Viewer: search and read the catalogue" },
   { value: "steward", label: "Steward: also run pipelines, scan, and look after quality" },
-  { value: "designer", label: "Designer: also build pipelines and flows, and add sources" },
-  { value: "admin", label: "Admin: also Settings, tokens and unmasked values" },
+  { value: "designer", label: "Designer: also build pipelines and flows, add sources, see sensitive values" },
+  { value: "admin", label: "Admin: also Settings and tokens" },
 ];
 
 const EXPIRY: { value: string; label: string }[] = [

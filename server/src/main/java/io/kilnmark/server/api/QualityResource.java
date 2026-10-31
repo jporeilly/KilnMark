@@ -287,7 +287,7 @@ public class QualityResource {
         if (body == null || body.field() == null || body.sensitive() == null) {
             throw new IllegalArgumentException("Send {\"field\": \"...\", \"sensitive\": true or false}");
         }
-        if (!body.sensitive() && !sights.mayUnmask()) {
+        if (!body.sensitive() && !identity.hasRole(AccessRole.ADMIN_ROLE)) {
             throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can stop treating a column as sensitive.");
         }
         if (!store.setSensitive(urn, body.field(), body.sensitive())) {

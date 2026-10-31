@@ -840,8 +840,8 @@ public class PipelineService {
     }
 
     static final String FOR_STEWARDS = "Stewards can see why: the message may hold values from the data.";
-    static final String FOR_ADMINS = "Only admins can see why: the message may hold values of columns marked "
-        + "sensitive.";
+    static final String FOR_ADMINS = "Only designers and admins can see why: the message may hold values of "
+        + "columns marked sensitive.";
 
     /**
      * Why the run's messages from the engine are held back from this caller, or null when they are
@@ -1048,6 +1048,9 @@ public class PipelineService {
                 Long rows = o.rowsIn().get(w.node());
                 total += rows == null ? 0 : rows;
                 boolean registered = false;
+                // Marks follow the data for every write, whatever the run's outcome: a writer may have
+                // written before a later node failed or the run was cancelled.
+                carryMarks(w, c, context, notes);
                 if (o.status().equals("succeeded")) {
                     // Writers profile what they write; one that could not says so on its ROW_COUNT, never by
                     // failing. The reason may quote the data, so it is the note's detail, held back via Sights.
@@ -1269,7 +1272,6 @@ public class PipelineService {
                 return false;
             }
             store.saveLineage(context.pipeline(), context.runId(), w.node(), w.inputs(), w.urn());
-            carryMarks(w, c, context, notes);
             // A scan ending now would mark an asset it did not see as removed: catalogue under the
             // source's scan lock, or leave it to the next scan.
             boolean locked;
@@ -1287,6 +1289,7 @@ public class PipelineService {
             }
             try {
                 catalogue(s, w, rows, events, profiled, c, context, notes);
+                carryToCatalogued(w, c, context);
             } finally {
                 lease.unlockSource(s.id());
             }
@@ -1423,7 +1426,8 @@ public class PipelineService {
             }
         }
         if (written.isEmpty()) {
-            // not known before the run: what it named, by name (all of it when nothing can be followed)
+            // not known before the run: the names marked so far (masks compare ignoring case); the
+            // catalogued columns are marked too once the write is catalogued (carryToCatalogued)
             carried.addAll(marked.names());
         }
         String from = readMarks.entrySet().stream().filter(e -> !e.getValue().isEmpty()).map(Map.Entry::getKey)
@@ -1432,8 +1436,30 @@ public class PipelineService {
         qualityStore.carry(w.urn(), carried, from, context.pipeline(), context.runId());
         if (marked.all() && written.isEmpty()) {
             note(notes, w.node() + ": it wrote columns made from columns marked sensitive in ways Kilnmark could not "
-                + "follow; scan " + w.source() + " and mark the written columns sensitive", null);
+                + "follow, so every column it wrote is marked once it is catalogued", null);
         }
+    }
+
+    /**
+     * The second half of {@link #carryMarks}, once the write is catalogued: when the written columns
+     * could not be told before the run, the catalogued ones made from marked columns are marked (every
+     * one, when what reached the write could not be followed).
+     */
+    private void carryToCatalogued(PipelineExecution.WriteTarget w, PipelineCompilerPort.Compilation c,
+                                   RunContext context) {
+        if (qualityStore == null || !writtenColumns(w, c).isEmpty()) {
+            return;
+        }
+        Map<String, java.util.Set<String>> readMarks = PipelinePreviews.readMarks(c, context, qualityStore::sensitive);
+        NodePreview.Hidden marked = NodePreview.marked(c, readMarks, w.node());
+        if (!marked.any()) {
+            return;
+        }
+        List<String> fields = graph.asset(w.urn()).map(a -> a.fields().stream().map(f -> f.name()).toList())
+            .orElse(List.of());
+        java.util.Set<String> carried = new java.util.LinkedHashSet<>();
+        fields.stream().filter(marked::hides).forEach(carried::add);
+        qualityStore.carry(w.urn(), carried, "", context.pipeline(), context.runId());
     }
 
     /** The columns arriving at a write node, as the check knew them; empty when not known. */

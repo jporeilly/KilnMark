@@ -197,10 +197,10 @@ describe("NodePreviewPanel", () => {
   });
 
   test("shows the server's refusal as an alert", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => json({ error: "Only an admin can preview this: node ps (filter) chooses rows by name" }, 403)));
+    vi.stubGlobal("fetch", vi.fn(async () => json({ error: "Only a designer or an admin can preview this: node ps (filter) chooses rows by name" }, 403)));
     const el = await mount(<Harness />);
     await act(async () => [...el.querySelectorAll("button")].find((b) => b.textContent?.includes("Preview rows"))!.click());
-    expect(el.querySelector("[role=alert]")?.textContent).toContain("Only an admin can preview this");
+    expect(el.querySelector("[role=alert]")?.textContent).toContain("Only a designer or an admin can preview this");
   });
 
   test("viewers, stewards and writes get words, not a button", async () => {

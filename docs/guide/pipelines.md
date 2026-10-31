@@ -18,8 +18,9 @@ catalogue with where it came from.
   step.
 - **Who does what.** Viewers read pipelines and their runs. Stewards also run them and cancel
   runs. Designers also build them: add, change, preview and delete pipelines and flows, add and
-  change sources, turn on writing, and set server variables. Admins also have the Settings pages
-  and see sensitive values unmasked; everyone else sees them masked.
+  change sources, turn on writing, and set server variables; they see values of columns marked
+  sensitive, since they cannot transform data they cannot see. Admins also have the Settings
+  pages. Stewards and viewers see sensitive values masked.
 
 ## The Pipelines page
 
@@ -243,13 +244,13 @@ Previews follow the same rules as previewing a source:
   whatever its own `memory_limit_mb` says.
 - Sources are reached as a run reaches them, with their saved credentials and the allowed hosts.
 - Columns marked sensitive can pass through a preview, kept, renamed or carried along, and are
-  masked (••••) for everyone but admins. But no node before the one you preview may look at their
+  masked (••••) for stewards and viewers. For them, no node before the one you preview may look at their
   values: a calculation or condition that uses one, a cast, a group, dedupe or lookup key on one,
-  or a quality gate with a rule on one. For everyone but admins such a preview is refused, and
+  or a quality gate with a rule on one. For stewards and viewers such a preview is refused, and
   says which node and column, because the rows shown, a value worked out from it, or even whether
   the preview works, could give the values away. Preview the node before it, or ask an admin.
 - When a node fails, its message may quote values from the rows; if anything read has columns
-  marked sensitive, only admins see it, as with a run's errors.
+  marked sensitive, only designers and admins see it, as with a run's errors.
 
 The rows are read when you ask and not kept. After you change the pipeline, the preview says it is
 out of date; choose **Preview again**.
@@ -642,7 +643,7 @@ could not tell ("1 unknown"); the node's settings list them.
 
 The estimate uses a column's values (its most common values and its spread) only when you may see
 them, as the Quality pages decide: not at all for viewers, and for a column marked sensitive only
-for admins. Otherwise what depends on them, such as how many rows `salary <= 50000` keeps, is
+for designers and admins. Otherwise what depends on them, such as how many rows `salary <= 50000` keeps, is
 unknown, so the estimate never gives the values away.
 
 How each node carries the estimate:
@@ -791,7 +792,7 @@ status changes.
   or **Warnings and errors** or **Errors only**, to narrow it, and **Download as text** (or
   **NDJSON**, one JSON object a line) to save it with the same choices. Where the engine's own
   message could quote values from your data, it shows only to those who may see why the run
-  failed (stewards, or admins when the run touched columns marked sensitive); others see that it
+  failed (stewards, or designers and admins when the run touched columns marked sensitive); others see that it
   was held back. A run keeps up to 10,000 events; the log says if it was cut short.
 - **What it wrote:** each table or file a write node wrote, with its mode and rows. Choose one to
   open it in the catalogue.
@@ -812,12 +813,12 @@ kept even if the pipeline is later deleted, so the next pipeline that reads the 
 starts from what is known about it.
 
 **Marks follow the data.** A column the run writes from a column marked sensitive is marked
-sensitive where it is written too, whoever ran it: a column passed on or renamed, looked up, or
-worked out from one (a computed column, an aggregate's value or group). So it is masked there for
-everyone but admins, as it was where it came from, even before the written table is catalogued. A
-column made only from unmarked columns is not marked. Only an admin can clear a mark. For the same
-reason, only an admin can point a folder source, or a bucket source using the server's own
-credentials, at files that a source with marked columns already reads.
+sensitive where it is written too, whoever ran it and however the run ended: a column passed on
+or renamed, looked up, or worked out from one (a computed column, an aggregate's value or group).
+So it is masked there for stewards and viewers, as it was where it came from, even before the
+written table is catalogued. A column made only from unmarked columns is not marked. Only an admin
+can clear a mark. A path a write writes to is written as the source lists it (`/` between
+folders, no empty or `.` folders), so what is recorded about it is found again.
 
 Messages never include a source's password, and pipelines connect only to the hosts your
 administrator allows.

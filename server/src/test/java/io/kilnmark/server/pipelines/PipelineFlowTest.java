@@ -472,7 +472,11 @@ class PipelineFlowTest {
                 assertEquals("The run failed. " + PipelineService.FOR_STEWARDS, v.getString("run.error"));
                 assertEquals("This node failed. " + PipelineService.FOR_STEWARDS,
                     v.getString("nodes.find { it.node == 'out' }.error"));
-                JsonPath st = as(designer).get(path).then().statusCode(200).extract().jsonPath();
+                // Stewards see that it was held back; designers, who see sensitive values, see why.
+                JsonPath ds = as(designer).get(path).then().statusCode(200).extract().jsonPath();
+                assertTrue(ds.getString("run.error").contains("refused the rows"), ds.prettify());
+                JsonPath st = as(token("flow-msg-steward", "steward")).get(path).then().statusCode(200).extract()
+                    .jsonPath();
                 assertEquals("The run failed. " + PipelineService.FOR_ADMINS, st.getString("run.error"));
                 assertEquals("This node failed. " + PipelineService.FOR_ADMINS,
                     st.getString("nodes.find { it.node == 'out' }.error"));
@@ -486,8 +490,11 @@ class PipelineFlowTest {
             assertTrue(vl.getList("events.text").contains("Node out failed"), vl.prettify());
             assertFalse(vl.prettify().contains("refused the rows"), vl.prettify());
             assertTrue(vl.getList("events.withheld").contains(PipelineService.FOR_STEWARDS), vl.prettify());
-            String stl = as(designer).get(events).then().statusCode(200).extract().asString();
+            String steward = token("flow-log-steward", "steward");
+            String stl = as(steward).get(events).then().statusCode(200).extract().asString();
             assertFalse(stl.contains("refused the rows"), stl);
+            String dsl = as(designer).get(events).then().statusCode(200).extract().asString();
+            assertTrue(dsl.contains("refused the rows"), dsl);
             String vText = Tokens.as(viewer).accept("text/plain").get(events + "/download").then().statusCode(200)
                 .extract().asString();
             assertFalse(vText.contains("refused the rows"), vText);
@@ -496,14 +503,14 @@ class PipelineFlowTest {
             assertFalse(al.contains(OUT_SECRET), al);
             as(viewer).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
                 .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_STEWARDS));
-            as(designer).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
+            as(steward).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
                 .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_ADMINS));
             as(admin).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
                 .body("[0].error", containsString("refused the rows"));
             as(viewer).get("/api/v1/pipelines").then().statusCode(200)
                 .body("find { it.name == 'people-copy' }.lastRun.error",
                     equalTo("The run failed. " + PipelineService.FOR_STEWARDS));
-            as(designer).get("/api/v1/pipelines").then().statusCode(200)
+            as(steward).get("/api/v1/pipelines").then().statusCode(200)
                 .body("find { it.name == 'people-copy' }.lastRun.error",
                     equalTo("The run failed. " + PipelineService.FOR_ADMINS));
 
@@ -518,8 +525,10 @@ class PipelineFlowTest {
             as(viewer).get(path).then().statusCode(200)
                 .body("notes", hasItems(note + ". " + PipelineService.FOR_STEWARDS)).body("run.error",
                     org.hamcrest.Matchers.nullValue());
-            as(designer).get(path).then().statusCode(200).body("notes", hasItems(note + ". "
+            as(steward).get(path).then().statusCode(200).body("notes", hasItems(note + ". "
                 + PipelineService.FOR_ADMINS));
+            as(designer).get(path).then().statusCode(200).body("notes", hasItems(note
+                + " (cannot profile a column of maps (test))"));
             as(admin).get(path).then().statusCode(200).body("notes", hasItems(note
                 + " (cannot profile a column of maps (test))"));
         } finally {

@@ -255,9 +255,18 @@ public final class WriteNodeFactory implements NodeFactory {
         if (target.startsWith("/") || target.startsWith("\\") || target.matches("^[A-Za-z]:.*")) {
             return "a path inside the source, without a leading / or drive";
         }
-        for (String part : target.split("[/\\\\]")) {
+        // One spelling per file, the one a scan finds it under, so what is recorded about the write
+        // (its marks of sensitive columns among them) is found again: / between folders, no empty or
+        // "." folders.
+        if (target.contains("\\")) {
+            return "use / between folders, not \\";
+        }
+        for (String part : target.split("/", -1)) {
             if (part.equals("..")) {
                 return "a path inside the source: .. is not allowed";
+            }
+            if (part.equals(".") || part.isEmpty() && target.contains("/")) {
+                return "a path written as the source lists it: no empty or . folders (such as a//b or a/./b)";
             }
         }
         if (target.chars().anyMatch(ch -> ch < 0x20)) {

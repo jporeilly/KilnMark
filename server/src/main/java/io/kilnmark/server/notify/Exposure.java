@@ -24,7 +24,7 @@ public record Exposure(Set<String> marks, boolean sourceMarked) {
      * Whether {@code role} may see {@code e}'s restricted detail: only where the role may see values
      * of its column by the quality views' rule ({@link Sights#recipient}, never unmasked, so never a
      * sensitive column's); and when it is about a whole asset or source that has marks (a scan's or
-     * connection's error can quote any column), only for admins.
+     * connection's error can quote any column), only for designers and admins, who may see such values.
      */
     public boolean restricted(NotificationEvent e, AccessRole role) {
         if (e.restrictedDetail() == null) {
@@ -35,6 +35,6 @@ public record Exposure(Set<String> marks, boolean sourceMarked) {
             return false;
         }
         boolean whole = e.field() == null && (e.subjectUrn() == null ? sourceMarked : !marks.isEmpty());
-        return !whole || role == AccessRole.ADMIN;
+        return !whole || role.atLeast(AccessRole.DESIGNER);
     }
 }

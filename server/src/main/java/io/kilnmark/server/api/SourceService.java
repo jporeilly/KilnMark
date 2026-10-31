@@ -152,9 +152,6 @@ public class SourceService {
         String kind = existing != null ? existing.kind() : sentKind == null ? "postgresql" : sentKind;
         Connector connector = connector(kind);
         adminOnlyKind(connector, existing, form.settings() == null ? Map.of() : settings(form.settings()), admin);
-        if (!admin) {
-            notOverMarked(kind, existing, form.settings() == null ? Map.of() : settings(form.settings()));
-        }
         String name = form.name() == null || form.name().isBlank()
             ? existing != null ? existing.name() : null : form.name().trim();
         if (existing != null && !name.equals(existing.name())) {
@@ -444,63 +441,7 @@ public class SourceService {
         return out;
     }
 
-    /**
-     * Marks follow the data, also to a second source over the same files: someone other than an admin
-     * may not point a source that needs no credentials of theirs (a folder on this server, or a bucket
-     * read with the server's own credentials) at files another source with columns marked sensitive
-     * reads: the same folder, one inside it or one holding it; the same bucket with an overlapping
-     * prefix. The files would be read again under a name with no marks. A database needs its own
-     * credentials, which already reach its data.
-     */
-    void notOverMarked(String kind, Records.Source existing, Map<String, String> settings) {
-        String own = existing == null ? null : existing.name();
-        for (Records.Source other : store.sources()) {
-            if (!other.kind().equals(kind) || other.name().equals(own) || !overlaps(kind, settings, other.settings())
-                || !sights.sourceHasMarks(other.name())) {
-                continue;
-            }
-            throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can point a source at files " + other.name()
-                + " already reads: it has columns marked sensitive, which would not be marked under another name.");
-        }
-    }
-
-    /** Whether two folder or bucket sources read some of the same files; false for other kinds. */
-    static boolean overlaps(String kind, Map<String, String> a, Map<String, String> b) {
-        switch (kind) {
-            case "files" -> {
-                String x = a.get("path");
-                String y = b.get("path");
-                if (x == null || y == null || x.isBlank() || y.isBlank()) {
-                    return false;
-                }
-                try {
-                    java.nio.file.Path p = java.nio.file.Path.of(x.trim()).normalize();
-                    java.nio.file.Path q = java.nio.file.Path.of(y.trim()).normalize();
-                    return p.startsWith(q) || q.startsWith(p);
-                } catch (java.nio.file.InvalidPathException e) {
-                    return false;
-                }
-            }
-            case "s3" -> {
-                boolean ownKey = a.get("access_key_id") != null && !a.get("access_key_id").isBlank();
-                if (ownKey || !same(a.get("bucket"), b.get("bucket")) || !same(a.get("endpoint"), b.get("endpoint"))) {
-                    return false;
-                }
-                String x = prefix(a.get("prefix"));
-                String y = prefix(b.get("prefix"));
-                return x.startsWith(y) || y.startsWith(x);
-            }
-            default -> {
-                return false;
-            }
-        }
-    }
-
-    private static String prefix(String p) {
-        return p == null ? "" : p.trim().replaceAll("^/+", "");
-    }
-
-    /** Who is looking: columns marked sensitive are masked in previews for all but admins. */
+    /** Who is looking: columns marked sensitive are masked in previews for all but designers and admins. */
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
 
