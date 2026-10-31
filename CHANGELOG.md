@@ -7,6 +7,12 @@ details.
 
 ### Details
 
+- **Samples can be turned off.** Admins have **Offer the samples** under Settings, Administration
+  (on by default; stored in the new `server_setting` table, V23, with `GET`/`PUT
+  /api/v1/samples/offered`). Off, the Pipelines page shows no **Add samples** and the samples API
+  answers 403 for listing, adding and the starter pack; pipelines already added stay.
+- **The run page's rows a second follows the run you are on.** Going from one run's page to
+  another's without a reload no longer shows the first run's nodes.
 - **The canvas: the node list only, and connections that do not cross.** The rail of folder
   buttons beside the node list is gone; **Nodes** in the canvas toolbar shows and hides the list,
   which is open by default. Auto-layout now stacks each column in the order of the outputs feeding

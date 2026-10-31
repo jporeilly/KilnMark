@@ -11,14 +11,17 @@ import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 
 /**
  * The samples that ship with Kilnmark: small pipelines and flows, one idea each, that name their
  * sources by placeholders. Viewers list them; stewards add them, choosing a saved source for each
- * placeholder.
+ * placeholder. An admin can stop offering them on this server: everything here but the switch is
+ * then refused (403), and the Pipelines page shows no Add samples.
  */
 @Path("/api/v1/samples")
 @Produces(MediaType.APPLICATION_JSON)
@@ -30,6 +33,52 @@ public class SampleResource {
 
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
+
+    @jakarta.inject.Inject
+    io.kilnmark.server.ServerSettings settings;
+
+    /** {@code GET} and {@code PUT /api/v1/samples/offered}: whether this server offers the samples. */
+    public record Offered(Boolean offered) {
+    }
+
+    @GET
+    @Path("offered")
+    @Operation(summary = "Whether the samples are offered", description = "Whether this server offers the samples "
+        + "(Add samples, the starter pack and the sample data). On unless an admin turned it off. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "Whether the samples are offered"),
+        @APIResponse(responseCode = "401", description = "Not signed in")})
+    public Offered offered() {
+        return new Offered(settings.samplesOffered());
+    }
+
+    @PUT
+    @Path("offered")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    @Operation(summary = "Offer the samples or not", description = "Turns the samples on or off for this server: "
+        + "send {\"offered\": false} to stop offering Add samples, the starter pack and the sample data. Pipelines "
+        + "already added from the samples stay as they are. Role: admin.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "Whether the samples are offered now"),
+        @APIResponse(responseCode = "400", description = "No offered value"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not an admin")})
+    public Offered setOffered(Offered body) {
+        if (body == null || body.offered() == null) {
+            throw new IllegalArgumentException("offered: send {\"offered\": true} or {\"offered\": false}");
+        }
+        settings.put(io.kilnmark.server.ServerSettings.SAMPLES_OFFERED, body.offered().toString(), who());
+        return new Offered(body.offered());
+    }
+
+    /** Everything about the samples but the switch: refused while an admin has them turned off. */
+    private void requireOffered() {
+        if (!settings.samplesOffered()) {
+            throw ApiError.of(Response.Status.FORBIDDEN, "The samples are not offered on this server: an admin turns "
+                + "them on under Settings, Administration");
+        }
+    }
 
     public SampleResource(Samples samples, SecurityIdentity identity) {
         this.samples = samples;
@@ -46,6 +95,7 @@ public class SampleResource {
         @APIResponse(responseCode = "200", description = "The placeholders and the samples"),
         @APIResponse(responseCode = "401", description = "Not signed in")})
     public Samples.Catalogue list() {
+        requireOffered();
         return samples.catalogue(sights);
     }
 
@@ -66,6 +116,7 @@ public class SampleResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "403", description = "Not a steward")})
     public Samples.AddResult add(Samples.AddRequest body) {
+        requireOffered();
         return samples.add(body, who());
     }
 
@@ -86,6 +137,7 @@ public class SampleResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "403", description = "Not a steward")})
     public Samples.TablesResult tables(Samples.TablesRequest body) {
+        requireOffered();
         AccessRole role = identity.hasRole(AccessRole.ADMIN_ROLE) ? AccessRole.ADMIN : AccessRole.STEWARD;
         return samples.createTables(body, who(), role, sights);
     }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { allows, formatNumber, formatTime, pipelinesApi, type AccessRole, type PipelineSummary } from "../api";
+import { allows, formatNumber, formatTime, pipelinesApi, samplesApi, type AccessRole, type PipelineSummary } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
@@ -27,6 +27,21 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
   }, []);
 
   useEffect(load, [load]);
+
+  // Add samples only where this server offers them (an admin can turn them off).
+  // Unknown until asked; if asking fails, the button shows and the server says no if they are off.
+  const [samplesOffered, setSamplesOffered] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!steward) return;
+    let live = true;
+    samplesApi
+      .offered()
+      .then((o) => live && setSamplesOffered(o.offered))
+      .catch(() => live && setSamplesOffered(true));
+    return () => {
+      live = false;
+    };
+  }, [steward]);
 
   // While a run is queued or running, look again every few seconds so its status stays current.
   const active = pipelines?.some((p) => p.lastRun && ["queued", "running"].includes(p.lastRun.status));
@@ -56,7 +71,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
         <h1 tabIndex={-1}>Pipelines</h1>
         {steward && (
           <div className="pl-head-actions">
-            <AddSamples onAdded={load} />
+            {samplesOffered === true && <AddSamples onAdded={load} />}
             <a className="pl-link-button" href={href.newPipeline()}>
               New pipeline
             </a>
@@ -83,8 +98,14 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
             No pipelines yet.{" "}
             {steward ? (
               <>
-                Choose <strong>New pipeline</strong> to start from a template that uses your sources, or{" "}
-                <strong>Add samples</strong> for small pipelines that show one idea each.
+                Choose <strong>New pipeline</strong> to start from a template that uses your sources
+                {samplesOffered === true ? (
+                  <>
+                    , or <strong>Add samples</strong> for small pipelines that show one idea each.
+                  </>
+                ) : (
+                  "."
+                )}
               </>
             ) : (
               "Stewards add them."
