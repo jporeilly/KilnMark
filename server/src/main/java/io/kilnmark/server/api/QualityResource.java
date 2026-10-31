@@ -579,8 +579,9 @@ public class QualityResource {
 
     /** Custom SQL rules are the admins' alone: they can read anything the source's login can see. */
     private void adminForCustomSql(io.kilnmark.server.quality.RuleType type) {
-        if (type == io.kilnmark.server.quality.RuleType.CUSTOM_SQL && !identity.hasRole(AccessRole.ADMIN_ROLE)) {
-            throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can write, change or run custom SQL rules.");
+        if (type == io.kilnmark.server.quality.RuleType.CUSTOM_SQL && !identity.hasRole(AccessRole.DESIGNER_ROLE)) {
+            throw ApiError.of(Response.Status.FORBIDDEN, "Only a designer or an admin can write, change or run custom "
+                + "SQL rules.");
         }
     }
 

@@ -462,7 +462,7 @@ public class NotificationStore {
         NotificationStore.InAppWriter.Item viewer = InAppFeed.write(e, AccessRole.VIEWER, x);
         try (PreparedStatement ps = c.prepareStatement("""
             INSERT INTO kilnmark.notify_inbox (token_id, event_id, kind, severity, title, detail, link)
-            SELECT t.id, ?, ?, ?, ?, CASE t.role WHEN 'admin' THEN ? WHEN 'steward' THEN ? ELSE ? END, ?
+            SELECT t.id, ?, ?, ?, ?, CASE WHEN t.role = 'admin' THEN ? WHEN t.role IN ('steward', 'designer') THEN ? ELSE ? END, ?
             FROM kilnmark.notify_person p
             JOIN kilnmark.api_token t ON t.id = p.token_id
             LEFT JOIN kilnmark.notify_subscriber s ON s.token_id = t.id

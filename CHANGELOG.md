@@ -7,6 +7,17 @@ details.
 
 ### Details
 
+- **A designer role, between steward and admin** (V24). Designers build: they add, change,
+  preview and delete pipelines and flows, add, import, change and delete sources, turn on writing
+  and change where a writable source points, write custom SQL rules, set server variables and add
+  the samples. They see sensitive values masked, and a preview that looks inside a sensitive column
+  is refused for them as for everyone but admins. **Stewards keep running pipelines and flows,
+  cancelling runs, testing, scanning and previewing sources and looking after quality, but no
+  longer build: existing steward tokens lose editing pipelines, flows, sources and server
+  variables.** Give a designer token to whoever builds. Admins keep the Settings pages, tokens,
+  admin-only connectors (generic JDBC), unmasked values and changing how a source with sensitive
+  marks is read, also in a source import, which designers may now run. Tokens can be made for the
+  new role under API tokens.
 - **Samples can be turned off.** Admins have **Offer the samples** under Settings, Administration
   (on by default; stored in the new `server_setting` table, V23, with `GET`/`PUT
   /api/v1/samples/offered`). Off, the Pipelines page shows no **Add samples** and the samples API

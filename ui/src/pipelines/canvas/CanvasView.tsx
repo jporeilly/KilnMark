@@ -971,17 +971,17 @@ function Canvas(props: CanvasProps) {
   };
   const menuItems = (id: string): NodeMenuItem[] => {
     const writes = kindOf(id) === "sink";
-    const steward = allows(role, "steward");
+    const designer = allows(role, "designer");
     const items: NodeMenuItem[] = [
       {
         id: "preview",
         label: "Preview rows",
         onSelect: () => previewNode(id),
-        disabled: writes || !steward || broken,
+        disabled: writes || !designer || broken,
         note: writes
           ? "A write passes no rows on"
-          : !steward
-            ? "For stewards and admins"
+          : !designer
+            ? "For designers and admins"
             : broken
               ? "Fix the YAML first"
               : undefined,

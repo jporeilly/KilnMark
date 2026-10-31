@@ -86,9 +86,13 @@ public class SourceImporter {
      * How to run an import. {@code skipErrors}: apply the right rows even if others are wrong.
      * {@code remapHosts}: rewrite host names with the server's host map. {@code test} and
      * {@code scan}: afterwards, test each source's connection and queue a scan of each (only of
-     * those whose test passed, when testing), reported in a batch the UI polls.
+     * those whose test passed, when testing), reported in a batch the UI polls. {@code admin}:
+     * whether the caller is an admin, who alone may add or change admin-only kinds of source (generic
+     * JDBC) and change how a source with sensitive marks is read; a row that would is refused, as the
+     * same change in the form is.
      */
-    public record Options(boolean dryRun, boolean skipErrors, boolean remapHosts, boolean test, boolean scan) {
+    public record Options(boolean dryRun, boolean skipErrors, boolean remapHosts, boolean test, boolean scan,
+                          boolean admin) {
     }
 
     /**
@@ -133,7 +137,7 @@ public class SourceImporter {
 
     /** The import as version 1 ran it: check every row, create all or nothing. */
     public Report run(List<Row> rows, boolean dryRun) {
-        return run(rows, new Options(dryRun, false, false, false, false), "import");
+        return run(rows, new Options(dryRun, false, false, false, false, true), "import");
     }
 
     public Report run(List<Row> rows, Options options, String who) {
@@ -155,7 +159,7 @@ public class SourceImporter {
                 if (r.name() != null && !inFile.add(r.name())) {
                     throw new IllegalArgumentException("the name " + r.name() + " appears more than once in the file");
                 }
-                p = plan(r, existing.get(r.name()), remap);
+                p = plan(r, existing.get(r.name()), remap, options.admin());
             } catch (IllegalArgumentException e) {
                 p = new Plan(new RowResult(r.line(), r.name(), "failed", e.getMessage(), List.of()), null, null, null,
                     null);
@@ -206,12 +210,22 @@ public class SourceImporter {
         return map;
     }
 
+    /** A check that refuses with a response (403), as a failed row, like any other row the import cannot apply. */
+    private static void asRow(Runnable check) {
+        try {
+            check.run();
+        } catch (jakarta.ws.rs.WebApplicationException e) {
+            throw new IllegalArgumentException(e.getResponse().getEntity() instanceof ApiError a ? a.error()
+                : e.getMessage());
+        }
+    }
+
     /**
      * Checks one row and works out what applying it does.
      *
      * @throws IllegalArgumentException with what to fix
      */
-    private Plan plan(Row r, Records.Source existing, HostRemap remap) {
+    private Plan plan(Row r, Records.Source existing, HostRemap remap, boolean admin) {
         if (r.name() == null || r.name().isBlank()) {
             throw new IllegalArgumentException("name: missing");
         }
@@ -237,6 +251,10 @@ public class SourceImporter {
             }
         }
         String password = password(r);
+        // Admin-only kinds (generic JDBC) are refused before the rest of the row is checked.
+        if (existing == null) {
+            asRow(() -> SourceService.adminOnlyKind(connector, null, row, admin));
+        }
         if (existing == null) {
             SourceService.Draft d = sources.draft(new SourceForm(r.name(), rowKind, row, password, null, null,
                 r.displayName()), null, true);
@@ -249,6 +267,11 @@ public class SourceImporter {
             : existing.displayName().equals(existing.name()) ? null : existing.displayName();
         SourceService.Draft d = sources.draft(new SourceForm(r.name(), rowKind, merged, password, null, null,
             displayName), existing, true);
+        asRow(() -> SourceService.adminOnlyKind(d.connector(), existing, d.config().settings(), admin));
+        if (!admin) {
+            asRow(() -> sources.readingUnchangedOrAdmin(existing, d.config().settings(),
+                "change how this source is read"));
+        }
         String shown = d.displayName() == null ? existing.name() : d.displayName();
         // A supplied password always counts as a change: comparing it with the stored one would
         // tell whoever runs imports whether they had guessed it.

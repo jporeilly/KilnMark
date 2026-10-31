@@ -13,9 +13,13 @@ catalogue with where it came from.
   admin role to add, change, run or delete them.
 - **Sources.** Pipelines name saved sources; they never hold passwords. Add the sources first
   (see **Sources**), and scan the ones you read from, so Kilnmark knows their columns.
-- **Writing needs permission.** Every source is read-only to pipelines until an admin turns on
-  **Allow writing** for it: open the source, choose **Edit**, and set it on the last step. Ask an
-  admin if a pipeline of yours writes to a source that does not allow it yet.
+- **Writing needs permission.** Every source is read-only to pipelines until a designer or an
+  admin turns on **Allow writing** for it: open the source, choose **Edit**, and set it on the last
+  step.
+- **Who does what.** Viewers read pipelines and their runs. Stewards also run them and cancel
+  runs. Designers also build them: add, change, preview and delete pipelines and flows, add and
+  change sources, turn on writing, and set server variables. Admins also have the Settings pages
+  and see sensitive values unmasked; everyone else sees them masked.
 
 ## The Pipelines page
 
@@ -23,7 +27,8 @@ Choose **Pipelines** in the navigation. The list shows each pipeline with its de
 latest version (and whether that version has problems), and its last run with its status in
 words: Queued, Running, Succeeded, Failed or Cancelled.
 
-Stewards see **Run now** beside each pipeline, and **Add samples** and **New pipeline** at the top.
+Stewards see **Run now** beside each pipeline; designers also see **Add samples** and **New
+pipeline** at the top.
 
 ## Starting a new pipeline
 
@@ -60,7 +65,7 @@ Pipelines page, and the samples' API refuses; pipelines already added from them 
 The quickest way to try the samples, with nothing of your own to prepare but a database and a file
 source that allow writing:
 
-1. On the **Pipelines** page, choose **Add samples** (stewards and admins).
+1. On the **Pipelines** page, choose **Add samples** (designers and admins).
 2. Under **Starter pack**, choose the **Database for the tables**, a **Schema** in it (it must
    exist; tables of the same names there are replaced), and where the samples' **Files go to**.
 3. Choose **Add the starter pack**.
@@ -84,7 +89,7 @@ The samples name their sources by placeholders rather than real sources:
 | `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) |
 | `files` | File storage the samples write to, under `samples/`; an admin must turn on **Allow writing** for it |
 
-1. On the **Pipelines** page, choose **Add samples** (stewards and admins).
+1. On the **Pipelines** page, choose **Add samples** (designers and admins).
 2. Under **Or choose your own sources**, choose one of your saved sources for each placeholder, or
    leave it as **Don't add the samples that use it**. The dialog says how many samples use each.
    Once the sample tables have been created, it offers to read them instead.
@@ -232,7 +237,7 @@ the read node for a while.
 
 Previews follow the same rules as previewing a source:
 
-- They are for stewards and admins. Each person runs one preview at a time and up to six a minute,
+- They are for designers and admins. Each person runs one preview at a time and up to six a minute,
   and a server runs two at once. A preview runs at most 50 nodes, 10 of them reads; a node that holds
   rows (an aggregate, a dedupe, a lookup or a union) is given a share of the preview's memory,
   whatever its own `memory_limit_mb` says.
@@ -387,7 +392,7 @@ the rows since a date, a file named after the run. There are two kinds of value,
 | | Parameter | Server variable |
 | --- | --- | --- |
 | What it is | An input the pipeline (or a flow) declares, like a function's argument | A value of the server, the same for every pipeline and flow on it |
-| Where it is set | In the YAML: `parameters:`, each with a type and a default | On the server, by a steward or admin (`/api/v1/variables`) |
+| Where it is set | In the YAML: `parameters:`, each with a type and a default | On the server, by a designer or admin (`/api/v1/variables`) |
 | Written as | `${status}` | `${vars.target_schema}` |
 | Changes | With each run: whoever runs it, or the flow running it, can give another value | When the environment does: a new schema, another bucket |
 | Kinds | text, number, boolean, text list, number list | text, number, boolean |
@@ -461,7 +466,7 @@ kind, or a parameter the pipeline does not take, is refused at once.
 
 ### Server variables
 
-Stewards and admins set them with `PUT /api/v1/variables/{name}` (`{ "type": "text", "value":
+Designers and admins set them with `PUT /api/v1/variables/{name}` (`{ "type": "text", "value":
 "sales_prod", "description": "..." }`) and delete them with `DELETE`; everyone with the steward role
 can list them. Every change is kept, with who made it and when, also after a variable is deleted
 (`GET /api/v1/variables/{name}/changes`). A Settings page for them follows with the flows pages.
@@ -676,7 +681,7 @@ with its predicted effect (an estimate), such as "Predicted 89% → 94% (+5 poin
 A suggestion that takes rows out (a dedupe, a gate, a lookup that drops rows with no match) also says
 how many fewer rows reach the write, since fewer rows can score higher. Choose **Add** to insert a
 suggestion's nodes before the write: the YAML changes only where the nodes go, and one **Undo** takes
-it out again. Suggestions are for stewards and admins.
+it out again. Suggestions are for designers and admins.
 
 When an admin sets a model for **Pipeline suggestions** under **AI models**, it ranks and explains
 the suggestions and may add its own. It sees metadata only (asset and column names, kinds, shares

@@ -57,7 +57,7 @@ async function mount(node: React.ReactNode) {
 
 /** The panel with the canvas's state around it, as CanvasView keeps it. */
 function Harness(props: {
-  role?: "viewer" | "steward" | "admin";
+  role?: "viewer" | "steward" | "designer" | "admin";
   kind?: string | null;
   outputs?: string[];
   ask?: PreviewAsk | null;
@@ -71,7 +71,7 @@ function Harness(props: {
       node="tidy"
       outputs={props.outputs ?? ["out"]}
       kind={props.kind ?? "transform"}
-      role={props.role ?? "steward"}
+      role={props.role ?? "designer"}
       ask={props.ask ?? null}
       last={last}
       onResult={setLast}
@@ -203,11 +203,15 @@ describe("NodePreviewPanel", () => {
     expect(el.querySelector("[role=alert]")?.textContent).toContain("Only an admin can preview this");
   });
 
-  test("viewers and writes get words, not a button", async () => {
+  test("viewers, stewards and writes get words, not a button", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
     let el = await mount(<Harness role="viewer" />);
-    expect(el.textContent).toContain("for stewards and admins");
+    expect(el.textContent).toContain("for designers and admins");
+    expect(el.querySelector("button")).toBeNull();
+    await act(async () => root!.render(<Harness role="steward" />));
+    el = host!;
+    expect(el.textContent).toContain("for designers and admins");
     expect(el.querySelector("button")).toBeNull();
     await act(async () => root!.render(<Harness kind="sink" outputs={[]} />));
     el = host!;

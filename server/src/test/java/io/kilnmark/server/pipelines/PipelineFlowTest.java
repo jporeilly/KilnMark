@@ -67,7 +67,7 @@ class PipelineFlowTest {
     @jakarta.inject.Inject
     io.kilnmark.graph.store.GraphStore graph;
 
-    static String steward;
+    static String designer;
     static String viewer;
     static long firstRun;
 
@@ -89,7 +89,7 @@ class PipelineFlowTest {
         long deadline = System.nanoTime() + Duration.ofSeconds(90).toNanos();
         JsonPath run = null;
         while (System.nanoTime() < deadline) {
-            run = as(steward).get("/api/v1/pipeline-runs/" + id).then().statusCode(200).extract().jsonPath();
+            run = as(designer).get("/api/v1/pipeline-runs/" + id).then().statusCode(200).extract().jsonPath();
             if (status.equals(run.getString("run.status"))) {
                 return run;
             }
@@ -101,35 +101,39 @@ class PipelineFlowTest {
     @Test
     @Order(1)
     void sourcesAreReadOnlyUntilAnAdminAllowsWriting() throws Exception {
-        steward = token("pipeline-steward", "steward");
+        designer = token("pipeline-designer", "designer");
         viewer = token("pipeline-viewer", "viewer");
         admin().contentType(ContentType.JSON).body(Map.of("name", "mem-src", "kind", MemoryConnector.KIND,
             "settings", Map.of("rows", "2500"), "password", IN_SECRET)).post("/api/v1/sources").then().statusCode(201);
         admin().contentType(ContentType.JSON).body(Map.of("name", "mem-out", "kind", MemoryConnector.KIND,
             "settings", Map.of(), "password", OUT_SECRET)).post("/api/v1/sources").then().statusCode(201);
 
+        // Stewards may not change sources at all; designers turn on writing.
+        String steward = token("pipeline-steward", "steward");
         as(steward).body(Map.of("settings", Map.of("allow_writing", "true"))).put("/api/v1/sources/mem-out")
-            .then().statusCode(403).body("error", startsWith("allow_writing: only admins"));
-        as(Tokens.ADMIN).body(Map.of("settings", Map.of("allow_writing", "true"))).put("/api/v1/sources/mem-out")
+            .then().statusCode(403);
+        as(designer).body(Map.of("settings", Map.of("allow_writing", "true"))).put("/api/v1/sources/mem-out")
             .then().statusCode(200).body("settings.allow_writing", equalTo("true"));
-        // A steward's edit that leaves the setting out keeps it.
-        as(steward).body(Map.of("settings", Map.of("description", "Copies land here")))
-            .put("/api/v1/sources/mem-out").then().statusCode(200).body("settings.allow_writing", equalTo("true"));
-        // But only an admin may change where a source that allows writing points.
-        as(steward).body(Map.of("settings", Map.of("description", "Copies land here", "rows", "5")))
-            .put("/api/v1/sources/mem-out").then().statusCode(403)
-            .body("error", containsString("only an admin can change where it points (rows)"));
+        // A designer sends every setting, as an admin does: one left out is removed, so writing stays on
+        // only while it is sent. And a designer may change where a source that allows writing points.
+        // (Moving a source needs its password again: Kilnmark never sends a stored one to a new place.)
+        as(designer).body(Map.of("settings", Map.of("description", "Copies land here", "allow_writing", "true",
+            "rows", "5"), "password", OUT_SECRET)).put("/api/v1/sources/mem-out").then().statusCode(200)
+            .body("settings.allow_writing", equalTo("true"));
+        as(designer).body(Map.of("settings", Map.of("description", "Copies land here", "allow_writing", "true"),
+            "password", OUT_SECRET)).put("/api/v1/sources/mem-out").then().statusCode(200)
+            .body("settings.allow_writing", equalTo("true"));
 
         // Scan the source read from, so validation knows its columns.
-        long scan = as(steward).post("/api/v1/sources/mem-src/scans").then().statusCode(202).extract().jsonPath()
+        long scan = as(designer).post("/api/v1/sources/mem-src/scans").then().statusCode(202).extract().jsonPath()
             .getLong("id");
         long deadline = System.nanoTime() + Duration.ofSeconds(90).toNanos();
         String status = "queued";
         while (System.nanoTime() < deadline && !status.equals("succeeded")) {
             Thread.sleep(250);
-            status = as(steward).get("/api/v1/runs/" + scan).then().extract().jsonPath().getString("status");
+            status = as(designer).get("/api/v1/runs/" + scan).then().extract().jsonPath().getString("status");
             if (status == null) {
-                status = as(steward).get("/api/v1/sources/mem-src").then().extract().jsonPath()
+                status = as(designer).get("/api/v1/sources/mem-src").then().extract().jsonPath()
                     .getString("lastRun.status");
             }
         }
@@ -183,27 +187,27 @@ class PipelineFlowTest {
     @Order(4)
     void stewardsSaveVersionsWithIfMatch() {
         as(viewer).body(Map.of("name", "people-copy", "yaml", YAML)).post("/api/v1/pipelines").then().statusCode(403);
-        as(steward).body(Map.of("name", "People Copy", "yaml", YAML)).post("/api/v1/pipelines").then().statusCode(400)
+        as(designer).body(Map.of("name", "People Copy", "yaml", YAML)).post("/api/v1/pipelines").then().statusCode(400)
             .body("error", startsWith("name:"));
-        as(steward).body(Map.of("name", "people-copy", "yaml", YAML, "message", "First go")).post("/api/v1/pipelines")
+        as(designer).body(Map.of("name", "people-copy", "yaml", YAML, "message", "First go")).post("/api/v1/pipelines")
             .then().statusCode(201).header("ETag", containsString("1")).body("latestVersion", equalTo(1))
             .body("latest.valid", equalTo(true)).body("description", equalTo("Synthetic people, copied."));
-        as(steward).body(Map.of("name", "people-copy", "yaml", YAML)).post("/api/v1/pipelines").then().statusCode(409);
+        as(designer).body(Map.of("name", "people-copy", "yaml", YAML)).post("/api/v1/pipelines").then().statusCode(409);
 
-        as(steward).header("If-Match", "\"1\"").body(Map.of("yaml", YAML.replace("Synthetic people, copied.",
+        as(designer).header("If-Match", "\"1\"").body(Map.of("yaml", YAML.replace("Synthetic people, copied.",
             "Synthetic people, copied again."), "message", "Clearer description")).put("/api/v1/pipelines/people-copy")
             .then().statusCode(200).header("ETag", containsString("2")).body("latestVersion", equalTo(2));
-        as(steward).header("If-Match", "\"1\"").body(Map.of("yaml", YAML, "message", "Stale"))
+        as(designer).header("If-Match", "\"1\"").body(Map.of("yaml", YAML, "message", "Stale"))
             .put("/api/v1/pipelines/people-copy").then().statusCode(409)
             .body("error", startsWith("Someone else saved a new version"));
 
         // A draft with a problem is saved but cannot run.
-        as(steward).header("If-Match", "\"2\"").body(Map.of("yaml", YAML.replace("type: write", "type: wirte"),
+        as(designer).header("If-Match", "\"2\"").body(Map.of("yaml", YAML.replace("type: write", "type: wirte"),
             "message", "Draft")).put("/api/v1/pipelines/people-copy").then().statusCode(200)
             .body("latest.valid", equalTo(false)).body("latest.problems[0].line", equalTo(11));
-        as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(409)
+        as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(409)
             .body("error", containsString("cannot run until its problems are fixed"));
-        as(steward).header("If-Match", "\"3\"").body(Map.of("yaml", YAML, "message", "Fixed"))
+        as(designer).header("If-Match", "\"3\"").body(Map.of("yaml", YAML, "message", "Fixed"))
             .put("/api/v1/pipelines/people-copy").then().statusCode(200).body("latestVersion", equalTo(4));
 
         JsonPath versions = as(viewer).get("/api/v1/pipelines/people-copy/versions").then().statusCode(200).extract()
@@ -222,7 +226,7 @@ class PipelineFlowTest {
     @Order(5)
     void aRunReadsWritesAndCataloguesWhatItWrote() throws Exception {
         as(viewer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(403);
-        firstRun = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202)
+        firstRun = as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202)
             .header("Location", containsString("/api/v1/pipeline-runs/")).body("status", equalTo("queued"))
             .body("version", equalTo(4)).extract().jsonPath().getLong("id");
         JsonPath run = waitForRun(firstRun, "succeeded");
@@ -316,19 +320,19 @@ class PipelineFlowTest {
         HoldingGraphRunner.hold = true;
         long id;
         try {
-            id = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
+            id = as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
                 .getLong("id");
             waitForRun(id, "running");
             as(viewer).post("/api/v1/pipeline-runs/" + id + "/cancel").then().statusCode(403);
-            as(steward).post("/api/v1/pipeline-runs/" + id + "/cancel").then().statusCode(200)
+            as(designer).post("/api/v1/pipeline-runs/" + id + "/cancel").then().statusCode(200)
                 .body("cancelRequested", equalTo(true));
             JsonPath done = waitForRun(id, "cancelled");
             assertTrue(done.getString("run.error").startsWith("Cancelled"), done.prettify());
         } finally {
             HoldingGraphRunner.hold = false;
         }
-        as(steward).post("/api/v1/pipeline-runs/" + id + "/cancel").then().statusCode(409);
-        as(steward).post("/api/v1/pipeline-runs/" + firstRun + "/cancel").then().statusCode(409);
+        as(designer).post("/api/v1/pipeline-runs/" + id + "/cancel").then().statusCode(409);
+        as(designer).post("/api/v1/pipeline-runs/" + firstRun + "/cancel").then().statusCode(409);
         as(viewer).get("/api/v1/pipeline-runs/999999").then().statusCode(404);
     }
 
@@ -358,28 +362,28 @@ class PipelineFlowTest {
     @Test
     @Order(7)
     void oneRunOfAPipelineAndOneWriterOfATargetAtATime() throws Exception {
-        as(steward).body(Map.of("name", "people-copy-2", "yaml", YAML.replace("name: people-copy",
+        as(designer).body(Map.of("name", "people-copy-2", "yaml", YAML.replace("name: people-copy",
             "name: people-copy-2"))).post("/api/v1/pipelines").then().statusCode(201);
         HoldingGraphRunner.hold = true;
         long first;
         try {
-            first = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
+            first = as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
                 .jsonPath().getLong("id");
             waitForRun(first, "running");
-            as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(409)
+            as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(409)
                 .body("error", containsString("already queued or running"));
             // Another pipeline writing the same table waits for it, then gives up plainly.
-            long second = as(steward).post("/api/v1/pipelines/people-copy-2/runs").then().statusCode(202).extract()
+            long second = as(designer).post("/api/v1/pipelines/people-copy-2/runs").then().statusCode(202).extract()
                 .jsonPath().getLong("id");
             JsonPath failed = waitForRun(second, "failed");
             assertTrue(failed.getString("run.error").startsWith("Another pipeline run is writing " + WRITE_URN),
                 failed.prettify());
-            as(steward).post("/api/v1/pipeline-runs/" + first + "/cancel").then().statusCode(200);
+            as(designer).post("/api/v1/pipeline-runs/" + first + "/cancel").then().statusCode(200);
             waitForRun(first, "cancelled");
         } finally {
             HoldingGraphRunner.hold = false;
         }
-        as(steward).delete("/api/v1/pipelines/people-copy-2").then().statusCode(204);
+        as(designer).delete("/api/v1/pipelines/people-copy-2").then().statusCode(204);
     }
 
     @Test
@@ -390,7 +394,7 @@ class PipelineFlowTest {
         long scan = sql("INSERT INTO kilnmark.run (source_id, kind, status, started_at) VALUES (" + sourceId
             + ", 'scan', 'running', now() - interval '1 hour') RETURNING id");
         sql("UPDATE kilnmark.asset SET description = 'Copied people' WHERE urn = '" + WRITE_URN + "'");
-        long run = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
+        long run = as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
             .getLong("id");
         waitForRun(run, "succeeded");
         graph.markUnseenRemoved(sourceId, scan);
@@ -402,7 +406,7 @@ class PipelineFlowTest {
         // While a scan holds the source, the write is not catalogued, and the run says to scan.
         try (io.kilnmark.server.jobs.JobQueue.ScanLease lease = jobs.lockSource(sourceId).orElseThrow()) {
             assertTrue(lease != null);
-            long held = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
+            long held = as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
                 .jsonPath().getLong("id");
             JsonPath r = waitForRun(held, "succeeded");
             assertFalse(r.getBoolean("written[0].registered"), r.prettify());
@@ -412,14 +416,14 @@ class PipelineFlowTest {
         // Rows appended to a table the connector cannot describe keep the catalogued columns.
         String missing = "urn:kilnmark:mem-out:lab.missing_copy";
         String toMissing = YAML.replace("table: lab.people_copy", "table: lab.missing_copy");
-        as(steward).body(Map.of("yaml", toMissing, "message", "Elsewhere")).put("/api/v1/pipelines/people-copy")
+        as(designer).body(Map.of("yaml", toMissing, "message", "Elsewhere")).put("/api/v1/pipelines/people-copy")
             .then().statusCode(200);
-        waitForRun(as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
+        waitForRun(as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
             .getLong("id"), "succeeded");
         sql("UPDATE kilnmark.field SET description = 'Who' WHERE asset_urn = '" + missing + "' AND name = 'name'");
-        as(steward).body(Map.of("yaml", toMissing.replace("mode: replace", "mode: append"), "message", "Append"))
+        as(designer).body(Map.of("yaml", toMissing.replace("mode: replace", "mode: append"), "message", "Append"))
             .put("/api/v1/pipelines/people-copy").then().statusCode(200);
-        JsonPath appended = waitForRun(as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202)
+        JsonPath appended = waitForRun(as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202)
             .extract().jsonPath().getLong("id"), "succeeded");
         assertTrue(appended.getBoolean("written[0].registered"), appended.prettify());
         as(viewer).get("/api/v1/assets/" + missing).then().statusCode(200)
@@ -430,7 +434,7 @@ class PipelineFlowTest {
             .post("/api/v1/pipelines/validate").then().statusCode(200)
             .body("problems.message", hasItems(containsString("host")))
             .body("valid", equalTo(false));
-        as(steward).body(Map.of("yaml", YAML, "message", "Back")).put("/api/v1/pipelines/people-copy").then()
+        as(designer).body(Map.of("yaml", YAML, "message", "Back")).put("/api/v1/pipelines/people-copy").then()
             .statusCode(200);
     }
 
@@ -438,9 +442,9 @@ class PipelineFlowTest {
     @Order(9)
     void failuresNameTheNodeWithoutTheSecret() throws Exception {
         String failing = YAML.replace("mode: replace", "mode: replace\n    fail: true");
-        as(steward).body(Map.of("yaml", failing, "message", "Make the write fail"))
+        as(designer).body(Map.of("yaml", failing, "message", "Make the write fail"))
             .put("/api/v1/pipelines/people-copy").then().statusCode(200);
-        long id = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
+        long id = as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract().jsonPath()
             .getLong("id");
         JsonPath run = waitForRun(id, "failed");
         String all = run.prettify();
@@ -457,10 +461,10 @@ class PipelineFlowTest {
     void messagesFromTheDataGoThroughSights() throws Exception {
         String admin = Tokens.ADMIN;
         // The pipeline now fails at its write (the previous test); mark a column it reads sensitive.
-        as(steward).body(Map.of("field", "name", "sensitive", true)).queryParam("urn", READ_URN)
+        as(designer).body(Map.of("field", "name", "sensitive", true)).queryParam("urn", READ_URN)
             .put("/api/v1/quality/asset/sensitive").then().statusCode(204);
         try {
-            long failed = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
+            long failed = as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
                 .jsonPath().getLong("id");
             waitForRun(failed, "failed");
             for (String path : List.of("/api/v1/pipeline-runs/" + failed)) {
@@ -468,7 +472,7 @@ class PipelineFlowTest {
                 assertEquals("The run failed. " + PipelineService.FOR_STEWARDS, v.getString("run.error"));
                 assertEquals("This node failed. " + PipelineService.FOR_STEWARDS,
                     v.getString("nodes.find { it.node == 'out' }.error"));
-                JsonPath st = as(steward).get(path).then().statusCode(200).extract().jsonPath();
+                JsonPath st = as(designer).get(path).then().statusCode(200).extract().jsonPath();
                 assertEquals("The run failed. " + PipelineService.FOR_ADMINS, st.getString("run.error"));
                 assertEquals("This node failed. " + PipelineService.FOR_ADMINS,
                     st.getString("nodes.find { it.node == 'out' }.error"));
@@ -482,7 +486,7 @@ class PipelineFlowTest {
             assertTrue(vl.getList("events.text").contains("Node out failed"), vl.prettify());
             assertFalse(vl.prettify().contains("refused the rows"), vl.prettify());
             assertTrue(vl.getList("events.withheld").contains(PipelineService.FOR_STEWARDS), vl.prettify());
-            String stl = as(steward).get(events).then().statusCode(200).extract().asString();
+            String stl = as(designer).get(events).then().statusCode(200).extract().asString();
             assertFalse(stl.contains("refused the rows"), stl);
             String vText = Tokens.as(viewer).accept("text/plain").get(events + "/download").then().statusCode(200)
                 .extract().asString();
@@ -492,21 +496,21 @@ class PipelineFlowTest {
             assertFalse(al.contains(OUT_SECRET), al);
             as(viewer).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
                 .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_STEWARDS));
-            as(steward).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
+            as(designer).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
                 .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_ADMINS));
             as(admin).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
                 .body("[0].error", containsString("refused the rows"));
             as(viewer).get("/api/v1/pipelines").then().statusCode(200)
                 .body("find { it.name == 'people-copy' }.lastRun.error",
                     equalTo("The run failed. " + PipelineService.FOR_STEWARDS));
-            as(steward).get("/api/v1/pipelines").then().statusCode(200)
+            as(designer).get("/api/v1/pipelines").then().statusCode(200)
                 .body("find { it.name == 'people-copy' }.lastRun.error",
                     equalTo("The run failed. " + PipelineService.FOR_ADMINS));
 
             // A run that succeeds with a note quoting the engine: the note's detail is held back alike.
-            as(steward).body(Map.of("yaml", YAML.replace("mode: replace", "mode: replace\n    break_profile: true"),
+            as(designer).body(Map.of("yaml", YAML.replace("mode: replace", "mode: replace\n    break_profile: true"),
                 "message", "Writes again")).put("/api/v1/pipelines/people-copy").then().statusCode(200);
-            long noted = as(steward).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
+            long noted = as(designer).post("/api/v1/pipelines/people-copy/runs").then().statusCode(202).extract()
                 .jsonPath().getLong("id");
             waitForRun(noted, "succeeded");
             String path = "/api/v1/pipeline-runs/" + noted;
@@ -514,7 +518,7 @@ class PipelineFlowTest {
             as(viewer).get(path).then().statusCode(200)
                 .body("notes", hasItems(note + ". " + PipelineService.FOR_STEWARDS)).body("run.error",
                     org.hamcrest.Matchers.nullValue());
-            as(steward).get(path).then().statusCode(200).body("notes", hasItems(note + ". "
+            as(designer).get(path).then().statusCode(200).body("notes", hasItems(note + ". "
                 + PipelineService.FOR_ADMINS));
             as(admin).get(path).then().statusCode(200).body("notes", hasItems(note
                 + " (cannot profile a column of maps (test))"));
@@ -528,7 +532,7 @@ class PipelineFlowTest {
     @Order(11)
     void deletingAPipelineKeepsItsLineage() {
         as(viewer).delete("/api/v1/pipelines/people-copy").then().statusCode(403);
-        as(steward).delete("/api/v1/pipelines/people-copy").then().statusCode(204);
+        as(designer).delete("/api/v1/pipelines/people-copy").then().statusCode(204);
         as(viewer).get("/api/v1/pipelines/people-copy").then().statusCode(404);
         as(viewer).get("/api/v1/pipeline-runs/" + firstRun).then().statusCode(404);
         as(viewer).queryParam("urn", WRITE_URN).get("/api/v1/lineage").then().statusCode(200)
@@ -579,7 +583,7 @@ class PipelineFlowTest {
     @Order(12)
     void aGateQuarantinesRowsAndEveryOutputIsScored() throws Exception {
         // The asset read has a rule of its own, which the gate checks beside the one written on it.
-        as(steward).body(Map.of("assetUrn", READ_URN, "field", "id", "type", "not_null", "name", "id present"))
+        as(designer).body(Map.of("assetUrn", READ_URN, "field", "id", "type", "not_null", "name", "id present"))
             .post("/api/v1/quality/rules").then().statusCode(201);
         as(viewer).body(Map.of("yaml", GATED)).post("/api/v1/pipelines/validate").then().statusCode(200)
             .body("valid", equalTo(true))
@@ -616,8 +620,8 @@ class PipelineFlowTest {
             stopped.prettify());
 
         // Predicted before it runs, from the catalogue alone: the scan's profile of lab.people and the asset's rule.
-        // (By a steward, who may see the values the estimate uses; a viewer's is below.)
-        JsonPath predicted = as(steward).body(Map.of("yaml", GATED)).post("/api/v1/pipelines/predict").then()
+        // (By a designer, who may see the values the estimate uses; a viewer's is below.)
+        JsonPath predicted = as(designer).body(Map.of("yaml", GATED)).post("/api/v1/pipelines/predict").then()
             .statusCode(200).body("estimate", equalTo(true)).body("valid", equalTo(true)).extract().jsonPath();
         String said = predicted.prettify();
         assertEquals(0.9, predicted.getDouble("outputs.find { it.node == 'check' }.overall"), 0.01, said);
@@ -640,16 +644,16 @@ class PipelineFlowTest {
             .statusCode(200).body("valid", equalTo(true)).extract().jsonPath();
         Object hiddenRows = byViewer.get("nodes.find { it.node == 'low' }.rows.out");
         assertEquals(null, hiddenRows, byViewer.prettify());
-        JsonPath bySteward = as(steward).body(Map.of("yaml", probe)).post("/api/v1/pipelines/predict").then()
+        JsonPath bySteward = as(designer).body(Map.of("yaml", probe)).post("/api/v1/pipelines/predict").then()
             .statusCode(200).extract().jsonPath();
         assertEquals(1000, bySteward.getInt("nodes.find { it.node == 'low' }.rows.out"), 20, bySteward.prettify());
 
-        as(steward).body(Map.of("name", "people-gate", "yaml", GATED)).post("/api/v1/pipelines").then()
+        as(designer).body(Map.of("name", "people-gate", "yaml", GATED)).post("/api/v1/pipelines").then()
             .statusCode(201);
         as(viewer).get("/api/v1/pipelines/people-gate/versions/1/prediction").then().statusCode(200)
             .body("outputs.node", hasItems("check", "good", "aside"));
         as(viewer).get("/api/v1/pipelines/people-gate/versions/9/prediction").then().statusCode(404);
-        long id = as(steward).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract().jsonPath()
+        long id = as(designer).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract().jsonPath()
             .getLong("id");
         JsonPath run = waitForRun(id, "succeeded");
         String all = run.prettify();
@@ -712,9 +716,9 @@ class PipelineFlowTest {
             .body("[0].qualityThreshold", equalTo(0.99f));
 
         // Stop: the run fails at the gate, naming the rule and counts, and writes nothing.
-        as(steward).body(Map.of("yaml", GATED.replace("on_fail: quarantine", "on_fail: stop"), "message", "Strict"))
+        as(designer).body(Map.of("yaml", GATED.replace("on_fail: quarantine", "on_fail: stop"), "message", "Strict"))
             .put("/api/v1/pipelines/people-gate").then().statusCode(200);
-        long strict = as(steward).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract()
+        long strict = as(designer).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract()
             .jsonPath().getLong("id");
         JsonPath failed = waitForRun(strict, "failed");
         JsonPath asAdmin = as(Tokens.ADMIN).get("/api/v1/pipeline-runs/" + strict).then().statusCode(200).extract()
@@ -738,7 +742,7 @@ class PipelineFlowTest {
 
         // The engine itself fails: the predictions stay, none still saying the run has just started.
         HoldingGraphRunner.failWith = "engine broke (test)";
-        long broken = as(steward).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract()
+        long broken = as(designer).post("/api/v1/pipelines/people-gate/runs").then().statusCode(202).extract()
             .jsonPath().getLong("id");
         JsonPath engine = waitForRun(broken, "failed");
         assertEquals(3, engine.getList("quality").size(), engine.prettify());
@@ -749,7 +753,7 @@ class PipelineFlowTest {
             1e-6, engine.prettify());
         assertEquals(0, sql("SELECT count(*) FROM kilnmark.notify_event WHERE kind = 'pipeline_low_quality' "
             + "AND dedupe_key = 'pipeline-quality:" + strict + "'"));
-        as(steward).delete("/api/v1/pipelines/people-gate").then().statusCode(204);
+        as(designer).delete("/api/v1/pipelines/people-gate").then().statusCode(204);
     }
 
     @Test
@@ -758,7 +762,7 @@ class PipelineFlowTest {
         String yaml = GATED.replace("name: people-gate", "name: people-suggest");
         as(viewer).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(403);
         // No model routed: Kilnmark's own suggestions, and ai says so.
-        JsonPath own = as(steward).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
+        JsonPath own = as(designer).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
             .body("estimate", equalTo(true)).body("ai.state", equalTo("off")).extract().jsonPath();
         for (Object s : own.getList("suggestions")) {
             @SuppressWarnings("unchecked")
@@ -783,13 +787,13 @@ class PipelineFlowTest {
             .statusCode(200);
         try {
             // mem-src keeps the default rule, local_only: a hosted model sees nothing and is not called.
-            as(steward).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
+            as(designer).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
                 .body("ai.state", equalTo("withheld")).body("ai.model", equalTo("pl-chat-hosted"));
             assertTrue(fake.seen().stream().noneMatch(x -> x.path().contains("chat")), "no call was made");
             // Allowed: the model is asked, with metadata only.
             sql("UPDATE kilnmark.data_source SET settings = settings || '{\"ai_egress\": \"allowed\"}'::jsonb "
                 + "WHERE name = 'mem-src'");
-            as(steward).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
+            as(designer).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
                 .body("ai.state", equalTo("used"));
             List<io.kilnmark.server.ai.FakeModelServer.Seen> calls = fake.seen().stream()
                 .filter(x -> x.path().contains("chat")).toList();
@@ -800,7 +804,7 @@ class PipelineFlowTest {
             assertFalse(body.contains("Person 1"), "no value from the data is sent: " + body);
             // A model that fails leaves Kilnmark's own suggestions.
             fake.failNext(500, 10);
-            as(steward).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
+            as(designer).body(Map.of("yaml", yaml)).post("/api/v1/pipelines/suggest").then().statusCode(200)
                 .body("ai.state", equalTo("unavailable"));
         } finally {
             sql("UPDATE kilnmark.data_source SET settings = settings - 'ai_egress' WHERE name = 'mem-src'");
@@ -849,18 +853,18 @@ class PipelineFlowTest {
         as(viewer).body(Map.of("yaml", yaml.replace("\"id <= ${max_id} and name like 'Person 1%'\"", "id + 1")))
             .post("/api/v1/pipelines/validate").then().statusCode(200).body("valid", equalTo(false));
 
-        as(steward).body(Map.of("name", "people-some", "yaml", yaml)).post("/api/v1/pipelines").then().statusCode(201);
+        as(designer).body(Map.of("name", "people-some", "yaml", yaml)).post("/api/v1/pipelines").then().statusCode(201);
         String urn = "urn:kilnmark:mem-out:lab.people_some";
         // ids 1, 10-19 and 100-199 start "Person 1": 111 rows, of which the first 50
-        JsonPath run = waitForRun(as(steward).post("/api/v1/pipelines/people-some/runs").then().statusCode(202)
+        JsonPath run = waitForRun(as(designer).post("/api/v1/pipelines/people-some/runs").then().statusCode(202)
             .extract().jsonPath().getLong("id"), "succeeded");
         assertEquals(50L, run.getLong("nodes.find { it.node == 'people' }.rowsOut"), run.prettify());
         assertEquals(50L, MemoryConnector.WRITTEN.get(urn).get());
 
         // A smaller value, with no row limit reached: ids 1 and 10-19.
-        as(steward).body(Map.of("parameters", Map.of("max_id", 19))).post("/api/v1/pipelines/people-some/runs")
+        as(designer).body(Map.of("parameters", Map.of("max_id", 19))).post("/api/v1/pipelines/people-some/runs")
             .then().statusCode(202);
-        JsonPath fewer = waitForRun(as(steward).get("/api/v1/pipelines/people-some/runs").then().statusCode(200)
+        JsonPath fewer = waitForRun(as(designer).get("/api/v1/pipelines/people-some/runs").then().statusCode(200)
             .extract().jsonPath().getLong("[0].id"), "succeeded");
         assertEquals(11L, fewer.getLong("nodes.find { it.node == 'people' }.rowsOut"), fewer.prettify());
     }

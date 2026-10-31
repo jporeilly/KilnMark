@@ -73,7 +73,7 @@ public class VariableService {
 
     /** Creates or replaces a variable. */
     public View set(String name, String type, Object value, String description, String by, AccessRole role) {
-        requireAtLeast(role, AccessRole.STEWARD, "Setting a server variable");
+        requireAtLeast(role, AccessRole.DESIGNER, "Setting a server variable");
         checkName(name);
         FlowCondition.Type t = type(type);
         if (description != null && description.length() > MAX_DESCRIPTION) {
@@ -91,7 +91,7 @@ public class VariableService {
     }
 
     public void delete(String name, String by, AccessRole role) {
-        requireAtLeast(role, AccessRole.STEWARD, "Deleting a server variable");
+        requireAtLeast(role, AccessRole.DESIGNER, "Deleting a server variable");
         if (!store.delete(name, by)) {
             throw fail(Response.Status.NOT_FOUND, "No server variable called " + name);
         }

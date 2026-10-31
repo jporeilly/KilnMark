@@ -53,7 +53,7 @@ export function SourcesPage({ role, add = false }: { role: AccessRole; add?: boo
   useTitle("Sources");
   const product = useProductName();
   const canScan = allows(role, "steward");
-  const canAdd = allows(role, "admin");
+  const canAdd = allows(role, "designer");
   const connectors = useConnectorInfo();
   const [sources, setSources] = useState<Source[] | null>(null);
   const [error, setError] = useState<string | null>(null);

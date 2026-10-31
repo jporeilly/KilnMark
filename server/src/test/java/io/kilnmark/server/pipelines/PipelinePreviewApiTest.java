@@ -59,7 +59,7 @@ class PipelinePreviewApiTest {
             table: lab.people_copy
         """;
 
-    static String steward;
+    static String designer;
     static String viewer;
 
     private static RequestSpecification as(String token) {
@@ -74,13 +74,13 @@ class PipelinePreviewApiTest {
     @Test
     @Order(1)
     void stewardsPreviewUnsavedYaml() throws Exception {
-        steward = token("preview-steward", "steward");
+        designer = token("preview-designer", "designer");
         viewer = token("preview-viewer", "viewer");
         admin().contentType(ContentType.JSON).body(Map.of("name", "preview-src", "kind", MemoryConnector.KIND,
             "settings", Map.of("rows", "100000"), "password", "preview-secret-55")).post("/api/v1/sources").then()
             .statusCode(201);
 
-        JsonPath p = as(steward).body(Map.of("yaml", YAML, "node", "tidy", "rows", 7)).post("/api/v1/pipelines/preview")
+        JsonPath p = as(designer).body(Map.of("yaml", YAML, "node", "tidy", "rows", 7)).post("/api/v1/pipelines/preview")
             .then().statusCode(200).header("Cache-Control", containsString("no-store")).extract().jsonPath();
         assertEquals("tidy", p.getString("node"));
         assertEquals("out", p.getString("port"));
@@ -104,27 +104,27 @@ class PipelinePreviewApiTest {
     @Test
     @Order(3)
     void writesAndBadRequestsAreRefusedPlainly() {
-        as(steward).body(Map.of("yaml", YAML, "node", "out")).post("/api/v1/pipelines/preview").then().statusCode(400)
+        as(designer).body(Map.of("yaml", YAML, "node", "out")).post("/api/v1/pipelines/preview").then().statusCode(400)
             .body("error", containsString("writes rows"));
-        as(steward).body(Map.of("yaml", YAML, "node", "nowhere")).post("/api/v1/pipelines/preview").then()
+        as(designer).body(Map.of("yaml", YAML, "node", "nowhere")).post("/api/v1/pipelines/preview").then()
             .statusCode(400).body("error", startsWith("node: there is no node called 'nowhere'"));
-        as(steward).body(Map.of("yaml", YAML, "node", "tidy", "rows", 5000)).post("/api/v1/pipelines/preview").then()
+        as(designer).body(Map.of("yaml", YAML, "node", "tidy", "rows", 5000)).post("/api/v1/pipelines/preview").then()
             .statusCode(400).body("error", equalTo("rows: from 1 to 1000"));
-        as(steward).body(Map.of("yaml", YAML, "node", "named", "port", "nope")).post("/api/v1/pipelines/preview")
+        as(designer).body(Map.of("yaml", YAML, "node", "named", "port", "nope")).post("/api/v1/pipelines/preview")
             .then().statusCode(400).body("error", containsString("its outputs are out, rejected"));
     }
 
     @Test
     @Order(4)
     void aSavedVersionCanBePreviewed() {
-        as(steward).body(Map.of("name", "preview-people", "yaml", YAML)).post("/api/v1/pipelines").then()
+        as(designer).body(Map.of("name", "preview-people", "yaml", YAML)).post("/api/v1/pipelines").then()
             .statusCode(201);
-        as(steward).body(Map.of("node", "named", "port", "rejected", "rows", 3))
+        as(designer).body(Map.of("node", "named", "port", "rejected", "rows", 3))
             .post("/api/v1/pipelines/preview-people/versions/1/preview").then().statusCode(200)
             .body("port", equalTo("rejected")).body("rows[0][1]", equalTo("Person 2"));
-        as(steward).body(Map.of("node", "named")).post("/api/v1/pipelines/preview-people/versions/9/preview").then()
+        as(designer).body(Map.of("node", "named")).post("/api/v1/pipelines/preview-people/versions/9/preview").then()
             .statusCode(404);
-        Tokens.as(steward).contentType(ContentType.TEXT).body("node=named")
+        Tokens.as(designer).contentType(ContentType.TEXT).body("node=named")
             .post("/api/v1/pipelines/preview-people/versions/1/preview").then().statusCode(415);
         as(viewer).body(Map.of("node", "named")).post("/api/v1/pipelines/preview-people/versions/1/preview").then()
             .statusCode(403);
@@ -134,27 +134,27 @@ class PipelinePreviewApiTest {
     @Order(5)
     void aSensitiveColumnIsMaskedForStewardsAndItsRowsCannotBeChosen() throws Exception {
         // Catalogue the asset, then mark its name sensitive.
-        long scan = as(steward).post("/api/v1/sources/preview-src/scans").then().statusCode(202).extract().jsonPath()
+        long scan = as(designer).post("/api/v1/sources/preview-src/scans").then().statusCode(202).extract().jsonPath()
             .getLong("id");
         long deadline = System.nanoTime() + Duration.ofSeconds(90).toNanos();
         String status = "queued";
         while (System.nanoTime() < deadline && !"succeeded".equals(status)) {
             Thread.sleep(250);
-            status = as(steward).get("/api/v1/runs/" + scan).then().extract().jsonPath().getString("status");
+            status = as(designer).get("/api/v1/runs/" + scan).then().extract().jsonPath().getString("status");
         }
         assertEquals("succeeded", status);
-        as(steward).body(Map.of("field", "name", "sensitive", true)).queryParam("urn", URN)
+        as(designer).body(Map.of("field", "name", "sensitive", true)).queryParam("urn", URN)
             .put("/api/v1/quality/asset/sensitive").then().statusCode(204);
 
-        JsonPath masked = as(steward).body(Map.of("yaml", YAML, "node", "people", "rows", 3))
+        JsonPath masked = as(designer).body(Map.of("yaml", YAML, "node", "people", "rows", 3))
             .post("/api/v1/pipelines/preview").then().statusCode(200).extract().jsonPath();
         assertEquals(List.of("name"), masked.getList("masked"));
         assertEquals(List.of("1", Masking.MASK), masked.getList("rows[0]"));
         // Nothing upstream may look inside it: a calculation or a condition on it is refused.
-        as(steward).body(Map.of("yaml", YAML, "node", "tidy")).post("/api/v1/pipelines/preview").then()
+        as(designer).body(Map.of("yaml", YAML, "node", "tidy")).post("/api/v1/pipelines/preview").then()
             .statusCode(403).body("error", startsWith("Only an admin can preview this: node tidy (compute) works out "
                 + "a value from name"));
-        as(steward).body(Map.of("yaml", YAML, "node", "named")).post("/api/v1/pipelines/preview").then()
+        as(designer).body(Map.of("yaml", YAML, "node", "named")).post("/api/v1/pipelines/preview").then()
             .statusCode(403).body("error", startsWith("Only an admin can preview this: node named (filter) chooses "
                 + "rows by name"));
 

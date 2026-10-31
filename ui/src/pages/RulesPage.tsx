@@ -33,6 +33,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<QualityRule | null>(null);
   const admin = allows(role, "admin");
+  const designer = allows(role, "designer");
 
   // keepError: refresh the list but leave the message about what just went wrong showing.
   const load = useCallback((keepError?: boolean) => {
@@ -206,7 +207,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                     {steward && (
                       <td>
                         <div className="buttons tight">
-                          {(admin || rule.type !== "custom_sql") && (
+                          {(designer || rule.type !== "custom_sql") && (
                             <button type="button" id={`edit-rule-${rule.id}`} onClick={() => startEdit(rule)}
                               aria-label={`Edit rule ${rule.name}`}>
                               Edit
@@ -238,7 +239,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
         editing ? (
           <RuleForm
             key={`edit-${editing.id}-${editing.updatedAt}`}
-            admin={admin}
+            customSql={designer}
             urn={editing.assetUrn}
             rule={editing}
             onReload={() =>
@@ -261,7 +262,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
         ) : (
           <RuleForm
             key="add"
-            admin={admin}
+            customSql={designer}
             urn={urn}
             onSaved={(name) => {
               setNotice(`Rule "${name}" added. It runs after the next scan, or press Run now.`);

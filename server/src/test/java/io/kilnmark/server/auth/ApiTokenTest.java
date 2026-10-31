@@ -104,7 +104,7 @@ class ApiTokenTest {
         Tokens.as(viewer).queryParam("q", "anything").get("/api/v1/search").then().statusCode(200);
         Tokens.as(viewer).get("/api/v1/runs/999999").then().statusCode(404);
         Tokens.as(viewer).post("/api/v1/sources/nope/scans")
-            .then().statusCode(403).body("error", containsString("steward to start scans"));
+            .then().statusCode(403).body("error", containsString("designer to build pipelines"));
         Tokens.as(viewer).contentType(ContentType.JSON).body(Map.of("name", "x")).post("/api/v1/sources")
             .then().statusCode(403);
         Tokens.as(viewer).get("/api/v1/tokens").then().statusCode(403);
@@ -174,7 +174,7 @@ class ApiTokenTest {
             .body(Map.of("name", "test-past", "role", "viewer", "expiresAt", "2020-01-01T00:00:00Z"))
             .post("/api/v1/tokens").then().statusCode(400).body("error", containsString("future"));
         admin().contentType(ContentType.JSON).body(Map.of("name", "test-owner", "role", "owner"))
-            .post("/api/v1/tokens").then().statusCode(400).body("error", containsString("viewer, steward or admin"));
+            .post("/api/v1/tokens").then().statusCode(400).body("error", containsString("viewer, steward, designer or admin"));
         admin().contentType(ContentType.JSON).body(Map.of("name", " ", "role", "viewer"))
             .post("/api/v1/tokens").then().statusCode(400).body("error", containsString("name"));
         admin().contentType(ContentType.JSON).body(Map.of("name", "ci\nINFO forged log line", "role", "viewer"))

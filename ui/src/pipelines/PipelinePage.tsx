@@ -59,9 +59,10 @@ const MOVED = "Moved nodes";
  */
 export function PipelinePage({ name, version, role }: { name: string | null; version: number | null; role: AccessRole }) {
   const steward = allows(role, "steward");
+  const designer = allows(role, "designer");
   const isNew = name == null;
   const viewing = version != null;
-  const editable = steward && !viewing;
+  const editable = designer && !viewing;
   useTitle(isNew ? "New pipeline" : viewing ? `${name}, version ${version}` : (name ?? "Pipeline"));
 
   const [detail, setDetail] = useState<PipelineDetail | null>(null);
@@ -453,9 +454,11 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
             >
               Run now
             </button>
-            <button type="button" onClick={remove}>
-              Delete
-            </button>
+            {designer && (
+              <button type="button" onClick={remove}>
+                Delete
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -694,7 +697,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
             </details>
           )}
         </div>
-        {(editable || (isNew && steward)) && (
+        {(editable || (isNew && designer)) && (
           <form className="pl-save" onSubmit={save}>
             <div className="field">
               <label htmlFor="pl-message">{isNew ? "Message (optional)" : "What changed"}</label>

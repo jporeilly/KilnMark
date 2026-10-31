@@ -87,10 +87,17 @@ public class SourceResource {
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Response add(NewSource body) {
         if (body == null || body.name() == null) {
             throw new IllegalArgumentException("Send the source as JSON with at least a name");
+        }
+        // Admin-only kinds (generic JDBC) are refused before anything else is checked.
+        try {
+            SourceService.adminOnlyKind(sources.connector(body.kind() == null ? "postgresql" : body.kind()), null,
+                body.settings() == null ? java.util.Map.of() : body.settings(), identity.hasRole(AccessRole.ADMIN_ROLE));
+        } catch (IllegalArgumentException e) {
+            // an unknown kind: the draft says so
         }
         SourceService.Draft d = sources.draft(new SourceForm(body.name(), body.kind(), body.settings(),
             body.password(), null, null, body.displayName()), null, true);
@@ -111,18 +118,20 @@ public class SourceResource {
     @PUT
     @Path("{name}")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Views.Source update(@PathParam("name") String name, SourceForm body) {
         Records.Source existing = find(name);
         if (body == null || body.settings() == null) {
             throw new IllegalArgumentException("Send the source as JSON with all its settings");
         }
-        // allow_writing: only admins may change it; a steward's form that leaves it out keeps it.
+        // allow_writing, and where a writable source points: designers and admins (whoever may edit
+        // sources at all); admin-only kinds and reading settings of marked sources stay with admins.
         boolean admin = identity.hasRole(AccessRole.ADMIN_ROLE);
-        SourceForm form = SourceService.writingAsAllowed(body, existing, admin);
+        boolean designer = identity.hasRole(AccessRole.DESIGNER_ROLE);
+        SourceForm form = SourceService.writingAsAllowed(body, existing, designer);
         // Who may change where a writable source points is decided before the form is checked, so a
         // steward is told no (403) rather than asked to re-enter the password for a change they may not make.
-        SourceService.whereUnchangedOrAdmin(existing, SourceService.settings(form.settings()), admin);
+        SourceService.whereUnchangedOrAdmin(existing, SourceService.settings(form.settings()), designer);
         SourceService.adminOnlyKind(sources.connector(existing.kind()), existing,
             SourceService.settings(form.settings()), admin);
         SourceService.Draft d = sources.draft(form, existing, true);
@@ -143,7 +152,7 @@ public class SourceResource {
      */
     @DELETE
     @Path("{name}")
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Views.Deleted delete(@PathParam("name") String name) {
         Records.Source existing = find(name);
         try {
@@ -283,28 +292,28 @@ public class SourceResource {
     @POST
     @Path("import")
     @Consumes({"text/csv", MediaType.TEXT_PLAIN})
-    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Response importCsv(String body, @QueryParam("dryRun") boolean dryRun, @QueryParam("onError") String onError,
                               @QueryParam("remapHosts") boolean remapHosts, @QueryParam("test") boolean test,
                               @QueryParam("scan") boolean scan) {
         return report(conflicts(() -> importer.run(importer.fromCsv(body == null ? "" : body),
-            options(dryRun, onError, remapHosts, test, scan), who())));
+            options(dryRun, onError, remapHosts, test, scan, identity.hasRole(AccessRole.ADMIN_ROLE)), who())));
     }
 
     /** The same as a JSON array of sources. */
     @POST
     @Path("import")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Response importJson(String body, @QueryParam("dryRun") boolean dryRun, @QueryParam("onError") String onError,
                                @QueryParam("remapHosts") boolean remapHosts, @QueryParam("test") boolean test,
                                @QueryParam("scan") boolean scan) {
         return report(conflicts(() -> importer.run(importer.fromJson(body == null ? "[]" : body),
-            options(dryRun, onError, remapHosts, test, scan), who())));
+            options(dryRun, onError, remapHosts, test, scan, identity.hasRole(AccessRole.ADMIN_ROLE)), who())));
     }
 
     private static SourceImporter.Options options(boolean dryRun, String onError, boolean remapHosts, boolean test,
-                                                  boolean scan) {
+                                                  boolean scan, boolean admin) {
         boolean skip;
         if (onError == null || onError.isBlank() || onError.equalsIgnoreCase("stop")) {
             skip = false;
@@ -314,7 +323,7 @@ public class SourceResource {
             throw new IllegalArgumentException("onError: stop (change nothing if any row is wrong, the default) or "
                 + "skip (apply the rows that are right)");
         }
-        return new SourceImporter.Options(dryRun, skip, remapHosts, test, scan);
+        return new SourceImporter.Options(dryRun, skip, remapHosts, test, scan, admin);
     }
 
     private static Response report(SourceImporter.Report r) {

@@ -62,7 +62,7 @@ export function NodePreviewPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ctl = useRef<AbortController | null>(null);
-  const allowed = allows(role, "steward");
+  const allowed = allows(role, "designer");
   const writes = kind === "sink" || outputs.length === 0;
 
   const stop = () => {
@@ -119,7 +119,7 @@ export function NodePreviewPanel({
   if (!allowed) {
     return (
       <div className="cv-preview">
-        <p className="hint">Previews show rows from the sources, so they are for stewards and admins.</p>
+        <p className="hint">Previews show rows from the sources while a pipeline is built, so they are for designers and admins.</p>
       </div>
     );
   }

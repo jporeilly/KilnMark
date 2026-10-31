@@ -41,6 +41,7 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
   const [test, setTest] = useState<TestResult | null>(null);
   const editButton = useRef<HTMLButtonElement>(null);
   const canChange = allows(role, "steward");
+  const canEdit = allows(role, "designer");
   useTitle(source?.displayName ?? name);
 
   const load = useCallback(() => {
@@ -136,9 +137,11 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
 
       {canChange && !editing && (
         <div className="buttons actions">
-          <button type="button" className="primary" ref={editButton} onClick={() => setEditing(true)} disabled={!connector}>
-            Edit
-          </button>
+          {canEdit && (
+            <button type="button" className="primary" ref={editButton} onClick={() => setEditing(true)} disabled={!connector}>
+              Edit
+            </button>
+          )}
           <Button onClick={runTest} disabled={testing}>
             {testing ? "Testing…" : "Test connection"}
           </Button>
@@ -150,7 +153,7 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
             }}
             onError={setError}
           />
-          <DeleteSource source={source} runs={history.length} />
+          {canEdit && <DeleteSource source={source} runs={history.length} />}
         </div>
       )}
       <div role="status" aria-live="polite">
@@ -286,7 +289,7 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
         )}
       </section>
       {!canChange && (
-        <p className="hint">Your role ({role}) can read sources. Ask an admin for a steward token to change them.</p>
+        <p className="hint">Your role ({role}) can read sources. Stewards test and scan them; designers change them.</p>
       )}
     </>
   );

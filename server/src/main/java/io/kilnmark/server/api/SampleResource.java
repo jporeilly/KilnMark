@@ -101,7 +101,7 @@ public class SampleResource {
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Add the samples", description = "Adds every sample pipeline whose placeholders are all given "
         + "a saved source in sources, such as {\"sources\": {\"crm-db\": \"my-postgres\", \"files\": \"my-bucket\"}}. "
         + "A placeholder left out skips the samples that use it. A sample whose name is taken is left as it is; one "
@@ -123,7 +123,7 @@ public class SampleResource {
     @POST
     @Path("tables")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Create the sample tables", description = "Copies Kilnmark's sample data (synthetic "
         + "customers, accounts, transactions, orders and products) into one schema of a database, as tables named "
         + "crm_customers, shop_orders and so on, with a pipeline called sample-tables, and queues a run of it. The "
@@ -138,7 +138,7 @@ public class SampleResource {
         @APIResponse(responseCode = "403", description = "Not a steward")})
     public Samples.TablesResult tables(Samples.TablesRequest body) {
         requireOffered();
-        AccessRole role = identity.hasRole(AccessRole.ADMIN_ROLE) ? AccessRole.ADMIN : AccessRole.STEWARD;
+        AccessRole role = AccessRole.highest(identity::hasRole);
         return samples.createTables(body, who(), role, sights);
     }
 

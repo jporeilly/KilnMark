@@ -105,6 +105,7 @@ function LoadError({ what, message, onRetry }: { what: string; message: string; 
 export function HomePage({ me }: { me: Me }) {
   useTitle("");
   const steward = allows(me.role, "steward");
+  const designer = allows(me.role, "designer");
   const admin = allows(me.role, "admin");
   const notesOn = useNotifications().available === true;
 
@@ -170,7 +171,7 @@ export function HomePage({ me }: { me: Me }) {
         ? "nothing needs a look"
         : `${openCount} ${openList.length === 1 ? "issue needs" : "issues need"} a look`,
   ].filter(Boolean);
-  const canPipeline = pipelineList != null && steward;
+  const canPipeline = pipelineList != null && designer;
 
   return (
     <div className="km-stack">
@@ -187,7 +188,7 @@ export function HomePage({ me }: { me: Me }) {
               New pipeline
             </ButtonLink>
           )}
-          {admin ? (
+          {designer ? (
             <ButtonLink
               variant={canPipeline ? "secondary" : "primary"}
               href={href.addConnection()}
