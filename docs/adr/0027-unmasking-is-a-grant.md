@@ -65,5 +65,12 @@ but does not build. And catalogues have no exact designer, because they do not b
 - Clearing a sensitive mark stays an admin act: it is a governance decision, like changing a
   masking policy in Snowflake, and it is logged. An admin who clears a mark sees that column's values
   afterwards; the log line is the control until the audit log.
+- Marks belong to the source that found the columns, so a second source over the same data would
+  catalogue it unmarked. For folders and buckets, which the server reaches without a login of the
+  person's own, such a source is refused for everyone while the first has marks (one folder or
+  prefix inside the other). A second database source is not refused: adding it takes a login,
+  and whoever holds that login can read the data directly, outside Kilnmark. Its scan would still
+  show unmarked values to stewards, so the guide asks for one source per database, and the audit
+  log will record who added each source.
 - Messages that said "ask an admin" about sensitive values now say "ask a designer".
 - Tests that read unmasked values sign in with a designer token, not the admin token.

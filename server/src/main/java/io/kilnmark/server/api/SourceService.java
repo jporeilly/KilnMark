@@ -202,7 +202,81 @@ public class SourceService {
             throw new IllegalArgumentException(problem);
         }
         hosts.check(connector, config);
+        noUnmarkedCopy(config);
         return new Draft(connector, config, replace, replace ? secret : null, displayName, keepSecretIf);
+    }
+
+    /**
+     * Refuses (403), for everyone, a folder or bucket source that would read files another source
+     * already reads while that source has columns marked sensitive. Marks belong to the source that
+     * found the columns, so a second source over the same files would catalogue them unmarked: its
+     * profiles, samples and previews would show the values to stewards and viewers, and to an admin.
+     * The server reaches folders, and buckets through its own cloud role, without a login of the
+     * person's own, so nothing else would stop it. Database sources need a login the person enters,
+     * which reads the same data directly, so they are not checked here (ADR 0027).
+     */
+    void noUnmarkedCopy(SourceConfig config) {
+        if (!FOLDER_KIND.equals(config.kind()) && !S3_KIND.equals(config.kind())) {
+            return;
+        }
+        for (Records.Source other : store.sources()) {
+            if (other.name().equals(config.name()) || !other.kind().equals(config.kind())
+                || !sameFiles(config.kind(), config.settings(), other.settings()) || !sights.sourceHasMarks(other.name())) {
+                continue;
+            }
+            throw ApiError.of(Response.Status.FORBIDDEN, other.name() + " already reads these files and has columns "
+                + "marked sensitive, so a second source over them would show those columns unmasked. Use "
+                + other.name() + ", or point this source at files no marked source reads.");
+        }
+    }
+
+    static final String FOLDER_KIND = "files";
+    static final String S3_KIND = "s3";
+
+    /** Whether two sources of {@code kind} read some of the same files: one folder or prefix inside the other. */
+    static boolean sameFiles(String kind, Map<String, String> a, Map<String, String> b) {
+        if (FOLDER_KIND.equals(kind)) {
+            java.nio.file.Path x = folder(a.get("path"));
+            java.nio.file.Path y = folder(b.get("path"));
+            return x != null && y != null && (x.startsWith(y) || y.startsWith(x));
+        }
+        if (S3_KIND.equals(kind)) {
+            if (!endpoint(a.get("endpoint")).equals(endpoint(b.get("endpoint")))
+                || !Objects.equals(trim(a.get("bucket")), trim(b.get("bucket"))) || trim(a.get("bucket")) == null) {
+                return false;
+            }
+            String p = trim(a.get("prefix")) == null ? "" : trim(a.get("prefix"));
+            String q = trim(b.get("prefix")) == null ? "" : trim(b.get("prefix"));
+            return p.startsWith(q) || q.startsWith(p);
+        }
+        return false;
+    }
+
+    private static java.nio.file.Path folder(String path) {
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        try {
+            return java.nio.file.Path.of(path.trim()).toAbsolutePath().normalize();
+        } catch (java.nio.file.InvalidPathException e) {
+            return null; // the source's own checks report a bad path
+        }
+    }
+
+    private static String endpoint(String url) {
+        String e = trim(url);
+        if (e == null) {
+            return "";
+        }
+        e = e.toLowerCase(java.util.Locale.ROOT);
+        while (e.endsWith("/")) {
+            e = e.substring(0, e.length() - 1);
+        }
+        return e;
+    }
+
+    private static String trim(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     /** Said when someone other than an admin tries to change whether a source may be written to. */
