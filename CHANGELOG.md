@@ -17,6 +17,27 @@ details.
   double-click or Enter opens them (and a node just added opens them at once). A node's preview
   scrolls inside a box that fits the screen, both ways, with the column names kept in view and
   smaller text.
+- **A volume sample.** The sample data gains one large table, `volume/sales.csv`: four million
+  made-up till sales, written by the `sample-data` source as they are read (from a fixed seed, every
+  row 54 bytes, so the file's size is known) rather than stored. `sample-volume` reads it with the
+  sample products, values each line, adds its category with a lookup, routes the large lines to a
+  file of their own and totals the rest per category and channel: a run of several seconds, so the
+  run's page has something to show. It reads the sample data directly, so it needs only a place to
+  write; adding it adds the `sample-data` source if it is not there.
+- **The starter pack: sample data, and every sample at once.** Kilnmark now ships synthetic sample
+  data for the samples (`samples/data`, written by `generate.py`: ten small tables of made-up
+  customers, accounts, transactions, invoices, orders, order lines, products and a supplier feed,
+  shaped so each sample has something to show), read through a new built-in, read-only source kind,
+  **Kilnmark sample data** (`sample-data`; the CSV files are in the kiln-plugins jar under
+  `kilnmark/sample-data`). `POST /api/v1/samples/tables` (stewards and admins) copies them into one
+  schema of a database that allows writing, as `crm_customers`, `shop_orders` and so on, with a
+  pipeline called `sample-tables`, and queues its run; it adds the `sample-data` source and sets the
+  server variable `sample_region` if they are not there. `POST /api/v1/samples` takes `schema` to
+  point the samples at those tables, and `GET /api/v1/samples` says where they were created. In
+  **Add samples**, **Add the starter pack** does both in one step; choosing your own sources stays
+  below it. `SampleTablesTest` checks every sample against the sample data's columns, and
+  `SampleTablesApiTest` creates the tables in PostgreSQL, adds the samples and runs them (the stop
+  gate stops). `checkProductOnly` also scans the sample data for the lab.
 - **The samples ship, and Add samples maps them to your sources.** The samples in `samples/` no
   longer name the lab's sources: they name three placeholders, `crm-db` and `shop-db` (databases)
   and `files` (file storage they write to), and their comments no longer mention the lab. The

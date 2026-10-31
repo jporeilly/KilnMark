@@ -39,9 +39,11 @@ class SamplesApiTest {
     /** Leaves no samples or sources for other tests' lists. */
     private static void tidy() {
         for (String name : List.of("sample-read-write-csv", "sample-write-parquet", "sample-read-columns-where",
-            "sample-limit", "sample-compute", "sample-dedupe", "sample-union", "sample-gate-quarantine")) {
+            "sample-limit", "sample-compute", "sample-dedupe", "sample-union", "sample-gate-quarantine",
+            "sample-volume")) {
             admin().delete("/api/v1/pipelines/" + name);
         }
+        admin().delete("/api/v1/sources/" + Samples.SAMPLE_DATA);
         admin().delete("/api/v1/sources/samples-crm");
         admin().delete("/api/v1/sources/samples-files");
     }

@@ -193,7 +193,7 @@ class SourcePreviewTest {
         String maria = "categories[0].connectors.find { it.kind == 'mariadb' }";
         assertFalse(c.getBoolean(maria + ".addressFields"), "host, port and database are its own settings");
         assertTrue(c.getBoolean(maria + ".driverBundled"));
-        assertEquals(List.of("files", "s3"), c.getList("categories[2].connectors.kind"));
+        assertEquals(List.of("files", "s3", "sample-data"), c.getList("categories[2].connectors.kind"));
         assertTrue(c.getList("categories[2].connectors[0].formats").contains("parquet"));
         assertEquals("object storage", c.getString("categories[2].connectors[1].family"));
         assertTrue(c.getList("categories[0].planned.name").contains("IBM Db2"));

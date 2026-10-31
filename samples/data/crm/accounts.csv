@@ -1,0 +1,301 @@
+account_id,customer_id,account_type,opened_on,status
+10001,6,current,2021-01-17,open
+10002,182,loan,2018-08-25,closed
+10003,167,credit card,2018-04-24,open
+10004,134,loan,2018-10-26,open
+10005,25,credit card,2022-03-25,open
+10006,4,current,2020-03-06,open
+10007,173,savings,2018-11-01,open
+10008,156,credit card,2016-09-15,open
+10009,162,loan,2016-05-15,closed
+10010,38,current,2021-06-27,open
+10011,217,credit card,2020-08-25,frozen
+10012,144,current,2022-09-22,open
+10013,101,loan,2021-01-24,open
+10014,69,current,2025-07-03,open
+10015,226,savings,2022-09-29,open
+10016,171,savings,2023-02-06,open
+10017,218,current,2023-08-31,open
+10018,60,savings,2015-10-04,open
+10019,207,credit card,2023-09-28,open
+10020,237,loan,2023-08-02,open
+10021,164,savings,2018-03-18,open
+10022,191,current,2021-11-11,open
+10023,25,loan,2024-05-08,open
+10024,59,loan,2020-05-30,open
+10025,114,current,2016-02-16,open
+10026,189,current,2024-08-28,frozen
+10027,236,savings,2021-03-07,open
+10028,57,current,2015-09-11,open
+10029,186,credit card,2023-10-02,open
+10030,204,credit card,2020-08-01,open
+10031,154,savings,2024-11-19,open
+10032,52,credit card,2015-05-28,open
+10033,150,savings,2018-05-16,open
+10034,34,savings,2017-05-11,closed
+10035,218,loan,2024-08-09,open
+10036,87,credit card,2023-12-18,open
+10037,122,current,2026-02-22,open
+10038,153,credit card,2019-10-01,open
+10039,162,loan,2026-05-10,open
+10040,49,savings,2017-06-16,open
+10041,154,credit card,2024-04-15,open
+10042,204,current,2021-06-18,open
+10043,207,loan,2023-07-30,open
+10044,183,savings,2017-10-13,closed
+10045,43,loan,2025-03-21,open
+10046,80,savings,2019-08-22,closed
+10047,12,credit card,2018-06-30,open
+10048,221,loan,2025-08-03,open
+10049,217,loan,2023-07-16,open
+10050,119,current,2024-12-05,open
+10051,230,current,2026-03-26,open
+10052,95,loan,2020-09-01,open
+10053,50,loan,2020-01-16,open
+10054,46,savings,2023-04-03,frozen
+10055,88,current,2023-04-24,open
+10056,238,loan,2023-05-30,open
+10057,103,current,2024-06-23,open
+10058,169,current,2017-11-01,open
+10059,171,loan,2016-02-28,open
+10060,132,credit card,2026-03-17,open
+10061,194,savings,2018-11-03,open
+10062,42,credit card,2018-08-28,open
+10063,134,savings,2016-07-23,open
+10064,167,savings,2021-10-22,open
+10065,169,savings,2025-01-14,open
+10066,44,savings,2023-08-02,open
+10067,30,current,2020-04-18,open
+10068,117,savings,2026-01-07,frozen
+10069,116,current,2017-12-11,open
+10070,131,current,2015-05-13,open
+10071,73,loan,2019-01-07,open
+10072,108,credit card,2016-12-24,frozen
+10073,110,loan,2021-08-03,open
+10074,196,current,2021-11-28,open
+10075,225,savings,2020-05-19,open
+10076,139,credit card,2023-02-22,frozen
+10077,8,current,2017-12-23,open
+10078,3,credit card,2023-11-30,open
+10079,221,savings,2016-07-13,open
+10080,229,savings,2017-02-23,open
+10081,111,current,2017-11-24,open
+10082,100,credit card,2020-04-22,open
+10083,81,savings,2018-12-29,open
+10084,203,savings,2022-05-28,open
+10085,81,current,2025-03-27,open
+10086,148,current,2015-07-27,open
+10087,71,credit card,2025-08-27,frozen
+10088,71,savings,2016-08-15,closed
+10089,47,current,2020-03-18,open
+10090,203,current,2024-09-18,frozen
+10091,118,loan,2022-07-17,open
+10092,112,savings,2023-07-04,closed
+10093,151,loan,2015-03-16,open
+10094,202,credit card,2023-11-05,open
+10095,1,current,2015-10-02,open
+10096,113,current,2025-05-27,open
+10097,127,credit card,2016-09-19,open
+10098,74,current,2023-06-20,open
+10099,136,savings,2017-01-01,open
+10100,192,loan,2022-06-20,open
+10101,103,credit card,2020-04-14,open
+10102,75,credit card,2023-05-08,open
+10103,109,current,2017-10-13,open
+10104,201,savings,2022-11-28,open
+10105,177,current,2026-04-25,frozen
+10106,200,loan,2016-02-02,open
+10107,218,credit card,2020-12-31,open
+10108,230,credit card,2022-01-31,open
+10109,102,savings,2017-01-20,open
+10110,232,savings,2020-06-26,open
+10111,169,loan,2015-07-02,open
+10112,143,savings,2021-01-17,open
+10113,14,loan,2022-12-14,open
+10114,217,current,2016-05-04,open
+10115,73,savings,2022-10-14,open
+10116,234,current,2017-02-02,frozen
+10117,88,credit card,2018-06-04,open
+10118,144,credit card,2020-01-10,open
+10119,71,credit card,2025-06-27,frozen
+10120,43,current,2024-01-22,open
+10121,11,current,2023-04-21,open
+10122,62,current,2022-06-20,closed
+10123,221,loan,2021-03-22,frozen
+10124,11,savings,2023-11-11,open
+10125,145,savings,2024-12-04,open
+10126,139,credit card,2021-03-13,open
+10127,52,current,2016-07-13,open
+10128,166,credit card,2025-10-12,open
+10129,169,loan,2025-03-24,open
+10130,54,savings,2017-06-14,open
+10131,187,credit card,2020-09-20,open
+10132,58,loan,2022-03-30,open
+10133,31,current,2025-05-02,frozen
+10134,122,savings,2026-04-28,open
+10135,13,savings,2018-07-22,open
+10136,125,savings,2024-08-27,open
+10137,94,loan,2017-11-02,closed
+10138,171,credit card,2021-11-09,open
+10139,216,savings,2024-03-30,closed
+10140,220,loan,2015-06-20,open
+10141,1,current,2024-05-07,open
+10142,10,credit card,2018-03-27,open
+10143,13,current,2017-09-03,open
+10144,216,credit card,2016-10-16,open
+10145,171,savings,2023-02-26,open
+10146,18,savings,2019-11-30,closed
+10147,10,loan,2015-04-23,frozen
+10148,136,current,2018-04-06,open
+10149,69,credit card,2020-06-27,open
+10150,143,savings,2018-05-18,frozen
+10151,67,credit card,2015-06-17,open
+10152,23,credit card,2020-06-14,open
+10153,118,credit card,2020-11-27,open
+10154,178,credit card,2024-09-14,open
+10155,89,savings,2023-03-19,open
+10156,123,credit card,2025-01-27,open
+10157,171,savings,2021-11-04,open
+10158,73,loan,2018-02-18,open
+10159,117,current,2024-09-03,frozen
+10160,151,current,2022-05-22,open
+10161,156,loan,2017-11-19,open
+10162,232,loan,2023-09-15,open
+10163,167,current,2016-06-28,open
+10164,119,savings,2020-08-30,open
+10165,211,credit card,2019-10-02,open
+10166,87,current,2025-03-18,frozen
+10167,51,savings,2017-04-12,open
+10168,217,current,2025-09-30,open
+10169,117,loan,2025-01-25,open
+10170,56,loan,2019-01-17,frozen
+10171,221,loan,2016-06-01,open
+10172,63,credit card,2016-09-24,closed
+10173,213,savings,2021-10-07,open
+10174,61,current,2016-07-27,open
+10175,133,savings,2017-06-02,frozen
+10176,169,credit card,2020-03-22,open
+10177,87,savings,2016-05-27,open
+10178,4,loan,2019-10-27,frozen
+10179,150,credit card,2017-05-15,open
+10180,43,savings,2025-01-26,open
+10181,48,savings,2025-09-13,open
+10182,188,savings,2017-01-16,open
+10183,48,savings,2019-02-15,open
+10184,84,credit card,2019-09-24,open
+10185,53,savings,2021-11-03,open
+10186,13,loan,2016-02-13,frozen
+10187,45,loan,2018-11-21,open
+10188,118,savings,2016-03-15,open
+10189,31,loan,2016-09-06,open
+10190,116,current,2024-08-29,open
+10191,103,current,2022-05-13,open
+10192,179,credit card,2015-07-29,open
+10193,217,loan,2021-06-08,open
+10194,236,savings,2018-07-10,open
+10195,226,loan,2025-10-18,closed
+10196,212,credit card,2015-06-12,open
+10197,98,credit card,2024-04-30,open
+10198,101,current,2024-08-20,closed
+10199,88,credit card,2018-04-11,open
+10200,132,loan,2017-07-12,frozen
+10201,99,loan,2021-11-21,frozen
+10202,156,loan,2023-06-26,open
+10203,214,current,2015-03-26,open
+10204,85,savings,2018-02-28,open
+10205,233,current,2025-02-06,open
+10206,47,savings,2025-06-09,open
+10207,54,savings,2021-09-16,open
+10208,169,loan,2017-10-14,closed
+10209,155,credit card,2016-02-05,frozen
+10210,225,credit card,2022-08-29,open
+10211,235,current,2019-04-17,open
+10212,209,current,2019-07-26,open
+10213,8,loan,2019-03-26,open
+10214,199,current,2018-03-21,open
+10215,24,current,2015-04-09,open
+10216,202,current,2025-05-30,open
+10217,177,credit card,2024-06-29,open
+10218,84,loan,2021-01-12,open
+10219,14,loan,2016-11-28,open
+10220,69,loan,2022-12-10,open
+10221,191,loan,2021-05-30,open
+10222,188,current,2017-12-15,open
+10223,60,loan,2017-02-28,closed
+10224,70,savings,2019-11-09,open
+10225,43,current,2016-06-08,open
+10226,75,current,2019-05-22,frozen
+10227,35,current,2026-04-18,open
+10228,176,current,2026-05-30,open
+10229,191,savings,2016-05-14,open
+10230,161,credit card,2016-07-28,closed
+10231,34,savings,2025-08-10,open
+10232,50,credit card,2016-07-29,open
+10233,187,credit card,2020-01-30,open
+10234,211,current,2025-04-18,open
+10235,239,credit card,2017-09-10,open
+10236,123,savings,2023-08-28,open
+10237,49,credit card,2025-02-05,closed
+10238,77,current,2019-11-15,open
+10239,6,savings,2024-09-29,frozen
+10240,33,loan,2020-09-12,open
+10241,51,credit card,2021-05-17,closed
+10242,203,current,2022-09-17,open
+10243,238,current,2022-11-13,open
+10244,128,credit card,2024-10-03,open
+10245,231,savings,2021-02-09,open
+10246,80,loan,2020-07-20,open
+10247,161,loan,2015-03-01,open
+10248,177,loan,2024-07-28,frozen
+10249,183,loan,2015-05-20,open
+10250,165,credit card,2017-07-01,frozen
+10251,113,savings,2019-03-09,open
+10252,178,credit card,2024-04-12,open
+10253,99,credit card,2016-02-14,open
+10254,188,current,2022-08-16,open
+10255,135,savings,2017-03-27,open
+10256,21,current,2024-05-10,open
+10257,182,credit card,2015-08-27,open
+10258,222,credit card,2018-07-30,open
+10259,201,credit card,2023-06-18,open
+10260,118,credit card,2016-12-27,open
+10261,190,savings,2017-11-18,open
+10262,233,savings,2015-07-04,open
+10263,195,loan,2025-09-06,closed
+10264,125,loan,2019-06-17,open
+10265,31,savings,2021-02-15,open
+10266,173,current,2019-12-05,open
+10267,63,savings,2020-09-12,open
+10268,135,loan,2019-11-04,closed
+10269,95,savings,2022-03-28,open
+10270,92,loan,2019-08-30,open
+10271,158,savings,2020-11-24,frozen
+10272,41,current,2018-03-11,frozen
+10273,137,savings,2024-11-30,open
+10274,170,current,2026-04-22,open
+10275,89,credit card,2026-05-23,open
+10276,158,current,2017-10-25,closed
+10277,17,savings,2024-10-20,open
+10278,192,credit card,2021-03-21,open
+10279,1,loan,2016-02-21,open
+10280,152,current,2016-12-05,frozen
+10281,105,savings,2023-08-30,open
+10282,116,credit card,2018-09-22,open
+10283,208,credit card,2025-06-16,closed
+10284,36,credit card,2018-03-31,open
+10285,208,loan,2020-07-06,closed
+10286,186,loan,2017-02-25,open
+10287,79,current,2025-01-17,open
+10288,22,savings,2022-12-28,open
+10289,96,current,2025-06-07,open
+10290,81,credit card,2025-03-26,open
+10291,100,savings,2019-07-04,open
+10292,180,credit card,2025-05-16,open
+10293,99,current,2025-10-02,open
+10294,157,savings,2025-12-11,open
+10295,230,current,2022-05-17,open
+10296,48,credit card,2020-06-02,open
+10297,72,loan,2022-09-06,open
+10298,43,savings,2023-08-23,open
+10299,132,credit card,2015-12-01,open
+10300,94,savings,2020-04-15,open

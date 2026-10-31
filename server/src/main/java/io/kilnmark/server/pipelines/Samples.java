@@ -15,7 +15,11 @@ import java.util.regex.Pattern;
 
 import org.jboss.logging.Logger;
 
+import io.kilnmark.graph.store.GraphStore;
+import io.kilnmark.graph.store.Records;
+import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.quality.Sights;
+import io.kilnmark.server.variables.VariableService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
@@ -27,6 +31,12 @@ import jakarta.ws.rs.core.Response;
  * maps each placeholder to one of the person's saved sources. A sample already there is left as it
  * is, so changes made to it are kept. Flows are listed, to read, but not added until the flows API
  * comes.
+ *
+ * <p>The tables the samples read come with them: Kilnmark's sample data ({@code samples/data}, the
+ * {@code sample-data} source kind). {@link #createTables} copies them into one schema of a database
+ * the person chooses, with a pipeline of its own ({@value #SETUP}), named {@code <group>_<table>}
+ * (crm_customers, shop_orders, ...) so only that one schema is needed; adding the samples with that
+ * schema points each sample's {@code asset} at them.
  */
 @ApplicationScoped
 public class Samples {
@@ -58,12 +68,34 @@ public class Samples {
     static final Pattern SOURCE_LINE =
         Pattern.compile("(?m)^(\\s*(?:-\\s+)?source:\\s*)([\"']?)([A-Za-z0-9_.-]+)\\2(\\s*(?:#.*)?)$");
 
+    /** The source of Kilnmark's sample data, made when the sample tables are first created. */
+    public static final String SAMPLE_DATA = "sample-data";
+    /** The pipeline that copies the sample data into a database. */
+    public static final String SETUP = "sample-tables";
+    /** The tables the samples read, as group.table: the sample data's folder and file. */
+    public static final List<String> TABLES = List.of("crm.customers", "crm.customers_archive_2023", "crm.accounts",
+        "billing.transactions", "billing.invoices", "shop.customers", "shop.orders", "shop.order_lines",
+        "stock.products", "stock.supplier_feed");
+    /** A schema to create the sample tables in: a plain name, so it needs no quoting anywhere. */
+    private static final Pattern SCHEMA = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,62}");
+    /** {@code asset: group.table} for one of {@link #TABLES}, optionally quoted: group and table in groups 3 and 4. */
+    private static final Pattern ASSET_LINE = Pattern.compile(
+        "(?m)^(\\s*(?:-\\s+)?asset:\\s*)([\"']?)(crm|billing|shop|stock)\\.([a-z0-9_]+)\\2(\\s*(?:#.*)?)$");
+
+    /** The server variable the sample sample-server-variable reads, and the value the starter pack gives it. */
+    public static final String REGION_VARIABLE = "sample_region";
+    static final String REGION = "EMEA";
+
     private final PipelineService pipelines;
     private final PipelineSources sources;
+    private final GraphStore store;
+    private final VariableService variables;
 
-    public Samples(PipelineService pipelines, PipelineSources sources) {
+    public Samples(PipelineService pipelines, PipelineSources sources, GraphStore store, VariableService variables) {
         this.pipelines = pipelines;
         this.sources = sources;
+        this.store = store;
+        this.variables = variables;
     }
 
     /** Every bundled sample, in the list's order (by folder). Missing resources give an empty list. */
@@ -126,6 +158,51 @@ public class Samples {
             java.util.Locale.ROOT)));
     }
 
+    /** The YAML with each sample table it reads ({@code crm.customers}) as created in {@code schema}. */
+    public static String withTables(String yaml, String schema) {
+        Matcher m = ASSET_LINE.matcher(yaml);
+        StringBuilder out = new StringBuilder();
+        while (m.find()) {
+            String table = m.group(3) + "." + m.group(4);
+            String line = TABLES.contains(table)
+                ? m.group(1) + m.group(2) + tableIn(schema, table) + m.group(2) + m.group(5) : m.group();
+            m.appendReplacement(out, Matcher.quoteReplacement(line));
+        }
+        m.appendTail(out);
+        return out.toString();
+    }
+
+    /** Where one of {@link #TABLES} is created: {@code <schema>.<group>_<table>}. */
+    static String tableIn(String schema, String table) {
+        return schema + "." + table.replace('.', '_');
+    }
+
+    /** The pipeline copying every sample table from the sample data into {@code source}'s {@code schema}. */
+    public static String setupYaml(String source, String schema) {
+        StringBuilder y = new StringBuilder();
+        y.append("# Copies Kilnmark's sample data into ").append(source).append(", schema ").append(schema)
+            .append(", as the samples read it.\n")
+            .append("# Each table is replaced: run it again to put the sample tables back as they were.\n")
+            .append("kilnmark: pipeline/v1\n")
+            .append("name: ").append(SETUP).append('\n')
+            .append("description: The sample tables, in ").append(source).append('.').append(schema).append(".\n\n")
+            .append("nodes:\n");
+        for (String t : TABLES) {
+            String id = t.replace('.', '_');
+            y.append("  - id: ").append(id).append('\n')
+                .append("    type: read\n")
+                .append("    source: ").append(SAMPLE_DATA).append('\n')
+                .append("    asset: ").append(t.replace('.', '/')).append(".csv\n\n")
+                .append("  - id: ").append(id).append("_out\n")
+                .append("    type: write\n")
+                .append("    input: ").append(id).append('\n')
+                .append("    source: ").append(source).append('\n')
+                .append("    table: ").append(tableIn(schema, t)).append('\n')
+                .append("    mode: replace\n\n");
+        }
+        return y.toString().stripTrailing() + "\n";
+    }
+
     private static String topLevel(String yaml, String key) {
         Matcher m = Pattern.compile("(?m)^" + key + ":[ \\t]*(.*?)[ \\t]*$").matcher(yaml);
         return m.find() ? m.group(1) : null;
@@ -138,12 +215,27 @@ public class Samples {
                              boolean exists) {
     }
 
-    /** {@code GET /api/v1/samples}: the placeholders and the samples. */
-    public record Catalogue(List<Placeholder> placeholders, List<SampleView> samples) {
+    /** Where the sample tables were last created (the {@value #SETUP} pipeline's target), and its last run. */
+    public record Tables(String source, String schema, PipelineViews.RunSummary lastRun) {
     }
 
-    /** {@code POST /api/v1/samples}: placeholder to saved source; a placeholder left out skips its samples. */
-    public record AddRequest(Map<String, String> sources) {
+    /** {@code GET /api/v1/samples}: the placeholders, the samples, and the sample tables if created. */
+    public record Catalogue(List<Placeholder> placeholders, List<SampleView> samples, Tables tables) {
+    }
+
+    /**
+     * {@code POST /api/v1/samples}: placeholder to saved source; a placeholder left out skips its
+     * samples. With {@code schema}, the samples read the sample tables created there.
+     */
+    public record AddRequest(Map<String, String> sources, String schema) {
+    }
+
+    /** {@code POST /api/v1/samples/tables}: the database and schema to create the sample tables in. */
+    public record TablesRequest(String source, String schema) {
+    }
+
+    /** The setup pipeline saved and its run queued. */
+    public record TablesResult(String pipeline, PipelineViews.RunSummary run, String source, String schema) {
     }
 
     /** What happened to one sample: added, exists (left as it is), skipped or failed, and why. */
@@ -157,7 +249,132 @@ public class Samples {
         Set<String> existing = new java.util.HashSet<>();
         pipelines.list(sights).forEach(p -> existing.add(p.name()));
         return new Catalogue(PLACEHOLDERS, bundled().stream().map(s -> new SampleView(s.file(), s.name(), s.type(),
-            s.description(), s.sources(), "pipeline".equals(s.type()) && existing.contains(s.name()))).toList());
+            s.description(), s.sources(), "pipeline".equals(s.type()) && existing.contains(s.name()))).toList(),
+            existing.contains(SETUP) ? tables(sights) : null);
+    }
+
+    /** The {@value #SETUP} pipeline, or null when there is none. */
+    private PipelineViews.PipelineDetail existingSetup(Sights sights) {
+        try {
+            return pipelines.get(SETUP, sights);
+        } catch (WebApplicationException e) {
+            if (e.getResponse().getStatus() == Response.Status.NOT_FOUND.getStatusCode()) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    /** Where the {@value #SETUP} pipeline writes, read from its latest version; null if it cannot be told. */
+    private Tables tables(Sights sights) {
+        PipelineViews.PipelineDetail d = existingSetup(sights);
+        return d == null ? null : tables(d);
+    }
+
+    private static Tables tables(PipelineViews.PipelineDetail d) {
+        String yaml = d.latest() == null ? "" : d.latest().yaml();
+        Matcher write = Pattern.compile("(?m)^\\s*source:\\s*(\\S+)\\s*\\n\\s*table:\\s*([A-Za-z0-9_]+)\\.")
+            .matcher(yaml);
+        return write.find() ? new Tables(write.group(1), write.group(2), d.lastRun()) : null;
+    }
+
+    /**
+     * Saves the {@value #SETUP} pipeline, copying the sample data into {@code schema} of the
+     * database {@code source}, and queues a run of it. The database must be a saved database source
+     * that allows writing. Running it again replaces the tables; it is refused while the tables are
+     * being created, and when a pipeline called {@value #SETUP} is there that is not one this wrote
+     * (someone's own, or one changed since), which it would otherwise overwrite.
+     *
+     * <p>The sample data's own source is added first if it is not there, and so is the server
+     * variable {@value #REGION_VARIABLE} that one sample reads, if it is not set. Adding a source is
+     * otherwise for admins; this one is let through for stewards because it has no settings, no
+     * secret and reads only Kilnmark's own files (ADR 0024).
+     */
+    public TablesResult createTables(TablesRequest body, String by, AccessRole role, Sights sights) {
+        String name = body == null || body.source() == null ? "" : body.source().strip();
+        String schema = body == null || body.schema() == null ? "" : body.schema().strip();
+        Records.Source target = sources.source(name).orElseThrow(() -> new IllegalArgumentException(name.isEmpty()
+            ? "source: choose the database to create the sample tables in"
+            : "source: there is no saved source called '" + name + "'"));
+        String category = sources.connector(target.kind()).map(c -> c.category()).orElse("other");
+        if (!"databases".equals(category)) {
+            throw new IllegalArgumentException("source: " + name + " is not a database; the sample tables go in a "
+                + "database, such as PostgreSQL, MySQL, MariaDB or SQL Server");
+        }
+        if (!"true".equals(target.settings().get("allow_writing"))) {
+            throw new IllegalArgumentException("source: " + name + " does not allow writing; an admin turns on Allow "
+                + "writing for it first");
+        }
+        if (!SCHEMA.matcher(schema).matches()) {
+            throw new IllegalArgumentException("schema: the schema to create the tables in, such as public or dbo: "
+                + "letters, digits and _, starting with a letter or _");
+        }
+        PipelineViews.PipelineDetail existing = existingSetup(sights);
+        if (existing != null) {
+            PipelineViews.RunSummary last = existing.lastRun();
+            if (last != null && List.of("queued", "running").contains(last.status())) {
+                throw PipelineService.fail(Response.Status.CONFLICT, "The sample tables are being created now (run "
+                    + last.id() + "): wait for it to finish");
+            }
+            Tables was = tables(existing);
+            if (was == null || existing.latest() == null
+                || !setupYaml(was.source(), was.schema()).equals(existing.latest().yaml())) {
+                throw PipelineService.fail(Response.Status.CONFLICT, "A pipeline called " + SETUP + " is here that "
+                    + "Kilnmark did not write, or that has been changed since: rename or delete it to create the "
+                    + "sample tables again");
+            }
+        }
+        ensureSampleData(by);
+        if (!variables.snapshot().containsKey(REGION_VARIABLE)) {
+            variables.set(REGION_VARIABLE, "text", REGION, "The region the sample sample-server-variable names its "
+                + "file after; set by the starter pack", by, role);
+        }
+        String yaml = setupYaml(name, schema);
+        String message = "The sample tables, in " + name + "." + schema;
+        if (existing == null) {
+            pipelines.create(new PipelineViews.NewPipeline(SETUP, "Sample tables", null, yaml, message), by);
+        } else {
+            // Saved over the version read above only: one saved since is not overwritten (409).
+            pipelines.save(SETUP, existing.latestVersion(), new PipelineViews.PipelineChange(yaml, message, null, null),
+                by, sights);
+        }
+        PipelineViews.RunSummary run = pipelines.queueRun(SETUP, null, by, role);
+        LOG.infof("Sample tables requested in %s.%s by %s: run %d", name, schema, by, run.id());
+        return new TablesResult(SETUP, run, name, schema);
+    }
+
+    /**
+     * The sample data's own source, added if it is not there: it has no settings and no secret and
+     * reads only Kilnmark's own files, so stewards may have it added (ADR 0024). A source of that
+     * name that is something else is refused, never replaced.
+     */
+    private void ensureSampleData(String by) {
+        if (sources.source(SAMPLE_DATA).isEmpty()) {
+            try {
+                store.addSource(new Records.NewSource(SAMPLE_DATA, SAMPLE_DATA, Map.of(), null,
+                    "Kilnmark sample data"));
+                LOG.infof("Source %s added for the samples, by %s", SAMPLE_DATA, by);
+            } catch (RuntimeException e) {
+                if (sources.source(SAMPLE_DATA).isEmpty()) {
+                    throw e;
+                }
+                // added by someone else at the same moment
+            }
+        } else if (!SAMPLE_DATA.equals(sources.source(SAMPLE_DATA).get().kind())) {
+            throw new IllegalArgumentException("A source called " + SAMPLE_DATA + " already exists but is not "
+                + "Kilnmark's sample data: rename or remove it first");
+        }
+    }
+
+    /** Whether a sample reads Kilnmark's sample data itself (the volume sample does). */
+    static boolean readsSampleData(String yaml) {
+        Matcher m = SOURCE_LINE.matcher(yaml);
+        while (m.find()) {
+            if (SAMPLE_DATA.equals(m.group(3))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -188,8 +405,18 @@ public class Samples {
             throw new IllegalArgumentException("sources: choose a saved source for at least one of "
                 + String.join(", ", PLACEHOLDERS.stream().map(Placeholder::name).toList()));
         }
+        String schema = body.schema() == null || body.schema().isBlank() ? null : body.schema().strip();
+        if (schema != null && !SCHEMA.matcher(schema).matches()) {
+            throw new IllegalArgumentException("schema: the schema the sample tables are in, such as public: "
+                + "letters, digits and _, starting with a letter or _");
+        }
         List<Outcome> out = new ArrayList<>();
         int added = 0;
+        boolean dataNeeded = bundled().stream().anyMatch(s -> "pipeline".equals(s.type()) && readsSampleData(s.yaml())
+            && s.sources().stream().allMatch(mapping::containsKey));
+        if (dataNeeded) {
+            ensureSampleData(by);
+        }
         for (Sample s : bundled()) {
             if ("flow".equals(s.type())) {
                 out.add(new Outcome(s.name(), s.file(), "skipped", "a flow: flows are added once the flows API comes",
@@ -203,8 +430,9 @@ public class Samples {
                 continue;
             }
             try {
+                String yaml = withSources(s.yaml(), mapping);
                 PipelineViews.PipelineDetail d = pipelines.create(new PipelineViews.NewPipeline(s.name(), null, null,
-                    withSources(s.yaml(), mapping), "Added from the samples (" + s.file() + ")"), by);
+                    schema == null ? yaml : withTables(yaml, schema), "Added from the samples (" + s.file() + ")"), by);
                 Boolean valid = d.latest() == null ? null : d.latest().valid();
                 out.add(new Outcome(s.name(), s.file(), "added", null, valid));
                 added++;

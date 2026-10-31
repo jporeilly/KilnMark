@@ -10,8 +10,9 @@
 //   ports      no lab-only port: localhost:5433, :9020 or :3307, or a 5433:5432, 9020:7070 or 3307:3306
 //              mapping
 //   words      the shipped compose.yaml, everything under containers/, the bundled guides and the
-//              samples (samples/ and kilnmark/samples/ in the jar) do not mention the lab at all (the
-//              word "lab"); the samples name their sources by placeholders
+//              samples (samples/ and kilnmark/samples/ in the jar) and the sample data they read
+//              (kilnmark/sample-data/) do not mention the lab at all (the word "lab"); the samples name
+//              their sources by placeholders
 //   changelog  the bundled changelog's "What's new" sections, written for customers, do not either;
 //              its details may describe lab changes, and the UI bundle that carries them is let off
 //              for exactly that text
@@ -199,7 +200,8 @@ class ProductOnly(private val root: java.io.File, allowFile: java.io.File) {
             problems += "$where: only the user guides and the changelog are bundled as documentation"
         }
         when {
-            name.startsWith("kilnmark/docs/guide/") || name.startsWith("kilnmark/samples/") ->
+            name.startsWith("kilnmark/docs/guide/") || name.startsWith("kilnmark/samples/")
+                || name.startsWith("kilnmark/sample-data/") ->
                 scan(where, text, names + word, corpus = false)
             name == "kilnmark/docs/CHANGELOG.md" -> {}   // checked in changelog()
             name == "application.properties" ->

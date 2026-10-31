@@ -1415,7 +1415,9 @@ export type SampleInfo = {
   sources: string[];
   exists: boolean;
 };
-export type SampleCatalogue = { placeholders: SamplePlaceholder[]; samples: SampleInfo[] };
+/** Where the sample tables were last created, and the run that created them. */
+export type SampleTables = { source: string; schema: string; lastRun: PipelineRun | null };
+export type SampleCatalogue = { placeholders: SamplePlaceholder[]; samples: SampleInfo[]; tables: SampleTables | null };
 export type SampleOutcome = {
   name: string;
   file: string;
@@ -1428,10 +1430,17 @@ export type SampleOutcome = {
 export const samplesApi = {
   list: () => call<SampleCatalogue>("/api/v1/samples"),
   /** sources: placeholder to saved source; a placeholder left out skips the samples that use it. */
-  add: (sources: Record<string, string>) =>
+  /** schema: the samples read the sample tables created there. */
+  add: (sources: Record<string, string>, schema?: string) =>
     call<{ samples: SampleOutcome[]; added: number }>("/api/v1/samples", {
       method: "POST",
-      body: JSON.stringify({ sources }),
+      body: JSON.stringify({ sources, schema: schema ?? null }),
+    }),
+  /** Copies Kilnmark's sample data into a schema of a database, with the sample-tables pipeline, and queues a run. */
+  createTables: (source: string, schema: string) =>
+    call<{ pipeline: string; run: PipelineRun; source: string; schema: string }>("/api/v1/samples/tables", {
+      method: "POST",
+      body: JSON.stringify({ source, schema }),
     }),
 };
 
