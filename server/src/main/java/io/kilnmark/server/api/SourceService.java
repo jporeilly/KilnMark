@@ -413,22 +413,23 @@ public class SourceService {
      */
     void previewDraftAllowed(Records.Source existing, SourceConfig draft) {
         Records.Source saved = existing != null ? existing : store.source(draft.name()).orElse(null);
-        readingUnchangedOrAdmin(saved, draft.settings(), "preview settings that are not saved");
+        readingUnchangedOrUnmasked(saved, draft.settings(), "preview settings that are not saved");
     }
 
     /**
-     * Refuses (403) a non-admin a change of reading settings, or a preview of them, for a source with
-     * columns marked sensitive: read under other names, its columns would no longer be masked.
-     * Description, display name and the like stay open to stewards.
+     * Refuses (403) a change of reading settings, or a preview of them, for a source with
+     * columns marked sensitive, to anyone who sees them masked: read under other names, its
+     * columns would no longer be masked. Description, display name and the like stay open to stewards.
      */
-    void readingUnchangedOrAdmin(Records.Source saved, Map<String, String> settings, String doing) {
+    void readingUnchangedOrUnmasked(Records.Source saved, Map<String, String> settings, String doing) {
         if (saved == null || sights.mayUnmask() || reading(saved.settings()).equals(reading(settings))
             || !sights.sourceHasMarks(saved.name())) {
             return;
         }
-        throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can " + doing + " for " + saved.name() + ": it has "
-            + "columns marked sensitive, and other reading settings (folders, patterns, header rows, formats) could read "
-            + "them under other names, unmasked. You can still change its description and display name.");
+        throw ApiError.of(Response.Status.FORBIDDEN, "Only a designer who sees unmasked values can " + doing + " for "
+            + saved.name() + ": it has columns marked sensitive, and other reading settings (folders, patterns, header "
+            + "rows, formats) could read them under other names, unmasked. You can still change its description and "
+            + "display name.");
     }
 
     private static Map<String, String> reading(Map<String, String> settings) {

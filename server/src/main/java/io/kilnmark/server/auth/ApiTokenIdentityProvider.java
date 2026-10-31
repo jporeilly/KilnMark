@@ -9,7 +9,10 @@ import io.quarkus.security.runtime.QuarkusSecurityIdentity;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 
-/** Turns a valid API token into a security identity with its role and every role that role includes. */
+/**
+ * Turns a valid API token into a security identity with its role, every role that role includes,
+ * and {@link AccessRole#UNMASK_GRANT} for a designer token that holds it.
+ */
 @ApplicationScoped
 public class ApiTokenIdentityProvider implements IdentityProvider<ApiTokenRequest> {
 
@@ -46,6 +49,10 @@ public class ApiTokenIdentityProvider implements IdentityProvider<ApiTokenReques
             .addAttribute(ROLE, caller.role());
         if (caller.expiresAt() != null) {
             b.addAttribute(EXPIRES_AT, caller.expiresAt());
+        }
+        // Checked again here, whatever was stored: only a designer token ever sees unmasked values.
+        if (caller.unmask() && caller.role().mayHoldUnmask()) {
+            b.addRole(AccessRole.UNMASK_GRANT);
         }
         return b.build();
     }

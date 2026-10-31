@@ -64,9 +64,11 @@ import jakarta.ws.rs.core.Response;
 @RolesAllowed(AccessRole.VIEWER_ROLE)
 public class QualityResource {
 
+    private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(QualityResource.class);
+
     /** The least role that may see data values. */
     public static final String DATA_ROLE = Sights.DATA_ROLE;
-    /** The least role that may see values of columns marked sensitive. */
+    /** What a caller needs to see values of columns marked sensitive: the unmask grant (ADR 0027). */
     public static final String UNMASK_ROLE = Sights.UNMASK_ROLE;
     static final String MASK = Masking.MASK;
 
@@ -301,6 +303,13 @@ public class QualityResource {
         }
         if (!store.setSensitive(urn, body.field(), body.sensitive())) {
             throw ApiError.of(Response.Status.NOT_FOUND, urn + " has no field called " + body.field());
+        }
+        if (!body.sensitive()) {
+            // Clearing a mark shows the column's values to everyone who may see data: who did it is logged (ADR 0027).
+            Long token = identity.getAttribute(io.kilnmark.server.auth.ApiTokenIdentityProvider.TOKEN_ID);
+            LOG.infof("Column %s of %s is no longer marked sensitive; cleared by token %s (%s)",
+                io.kilnmark.server.auth.ApiTokens.loggable(body.field()), io.kilnmark.server.auth.ApiTokens.loggable(urn),
+                token, io.kilnmark.server.auth.ApiTokens.loggable(identity.getPrincipal().getName()));
         }
         return Response.noContent().build();
     }
@@ -553,7 +562,7 @@ public class QualityResource {
             // would read a sensitive column through the other columns.
             throw ApiError.of(Response.Status.FORBIDDEN, "This rule checks a column marked sensitive, so it cannot be "
                 + "previewed: the failing rows would show which rows hold which values. Save it and run it (its "
-                + "results give counts only), or ask an admin to preview it.");
+                + "results give counts only), or ask a designer to preview it.");
         }
         QualityService.Preview p = quality.preview(r).orElseThrow(() -> ApiError.of(Response.Status.CONFLICT,
             "No sample is kept for this asset, so the rule cannot be previewed. Save it and run it instead, or turn "

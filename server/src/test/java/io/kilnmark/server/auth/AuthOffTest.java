@@ -29,7 +29,8 @@ class AuthOffTest {
     @Test
     void everyCallerIsAnAdminButTokensCannotBeCreated() {
         given().get("/api/v1/me").then().statusCode(200)
-            .body("role", equalTo("admin")).body("signInRequired", equalTo(false));
+            .body("role", equalTo("admin")).body("signInRequired", equalTo(false))
+            .body("unmask", equalTo(false)); // an admin, so values of sensitive columns stay masked (ADR 0027)
         given().get("/api/v1/sources").then().statusCode(200);
         given().contentType(ContentType.JSON).body(Map.of("name", "x", "role", "admin"))
             .post("/api/v1/tokens").then().statusCode(409).body("error", containsString("Sign-in is off"));

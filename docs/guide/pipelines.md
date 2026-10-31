@@ -20,7 +20,8 @@ catalogue with where it came from.
   runs. Designers also build them: add, change, preview and delete pipelines and flows, add and
   change sources, turn on writing, and set server variables; they see values of columns marked
   sensitive, since they cannot transform data they cannot see. Admins also have the Settings
-  pages. Stewards and viewers see sensitive values masked.
+  pages. Only designers see sensitive values: admins, stewards and viewers see them masked
+  ([ADR 0027](../adr/0027-unmasking-is-a-grant.md)).
 
 ## The Pipelines page
 
@@ -244,13 +245,14 @@ Previews follow the same rules as previewing a source:
   whatever its own `memory_limit_mb` says.
 - Sources are reached as a run reaches them, with their saved credentials and the allowed hosts.
 - Columns marked sensitive can pass through a preview, kept, renamed or carried along, and are
-  masked (••••) for stewards and viewers. For them, no node before the one you preview may look at their
-  values: a calculation or condition that uses one, a cast, a group, dedupe or lookup key on one,
-  or a quality gate with a rule on one. For stewards and viewers such a preview is refused, and
-  says which node and column, because the rows shown, a value worked out from it, or even whether
-  the preview works, could give the values away. Preview the node before it, or ask an admin.
+  masked (••••) for everyone but designers, admins included. For them, no node before the one you
+  preview may look at their values: a calculation or condition that uses one, a cast, a group,
+  dedupe or lookup key on one, or a quality gate with a rule on one. For them such a preview is
+  refused, and says which node and column, because the rows shown, a value worked out from it, or
+  even whether the preview works, could give the values away. Preview the node before it, or ask a
+  designer.
 - When a node fails, its message may quote values from the rows; if anything read has columns
-  marked sensitive, only designers and admins see it, as with a run's errors.
+  marked sensitive, only designers see it, as with a run's errors.
 
 The rows are read when you ask and not kept. After you change the pipeline, the preview says it is
 out of date; choose **Preview again**.
@@ -792,7 +794,7 @@ status changes.
   or **Warnings and errors** or **Errors only**, to narrow it, and **Download as text** (or
   **NDJSON**, one JSON object a line) to save it with the same choices. Where the engine's own
   message could quote values from your data, it shows only to those who may see why the run
-  failed (stewards, or designers and admins when the run touched columns marked sensitive); others see that it
+  failed (stewards and above, or only designers when the run touched columns marked sensitive); others see that it
   was held back. A run keeps up to 10,000 events; the log says if it was cut short.
 - **What it wrote:** each table or file a write node wrote, with its mode and rows. Choose one to
   open it in the catalogue.
@@ -815,7 +817,7 @@ starts from what is known about it.
 **Marks follow the data.** A column the run writes from a column marked sensitive is marked
 sensitive where it is written too, whoever ran it and however the run ended: a column passed on
 or renamed, looked up, or worked out from one (a computed column, an aggregate's value or group).
-So it is masked there for stewards and viewers, as it was where it came from, even before the
+So it is masked there for everyone but designers, as it was where it came from, even before the
 written table is catalogued. A column made only from unmarked columns is not marked. When a node
 works on marked columns in a way Kilnmark cannot follow, every column it writes is marked, also
 columns it adds later; that mark is cleared as a whole, not one column at a time. Marks

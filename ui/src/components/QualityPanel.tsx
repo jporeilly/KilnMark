@@ -120,7 +120,7 @@ export function QualityPanel({ asset }: { asset: Asset }) {
   const steward = allows(role, "steward");
 
   const load = useCallback(() => {
-    // "Show sensitive values" (admins) unmasks rules and drift too; servers that do not mask ignore it.
+    // "Show sensitive values" (designers) unmasks rules and drift too; servers that do not mask ignore it.
     Promise.all([qualityApi.asset(urn, unmask), qualityApi.rules({ urn }, unmask), qualityApi.drift(urn, unmask)])
       .then(([q, r, d]) => {
         setQuality(q);

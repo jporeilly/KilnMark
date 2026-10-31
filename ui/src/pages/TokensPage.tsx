@@ -8,7 +8,7 @@ const ROLES: { value: AccessRole; label: string }[] = [
   { value: "viewer", label: "Viewer: search and read the catalogue" },
   { value: "steward", label: "Steward: also run pipelines, scan, and look after quality" },
   { value: "designer", label: "Designer: also build pipelines and flows, add sources, see sensitive values" },
-  { value: "admin", label: "Admin: also Settings and tokens" },
+  { value: "admin", label: "Admin: also Settings and tokens (sees sensitive values masked)" },
 ];
 
 const EXPIRY: { value: string; label: string }[] = [
@@ -125,6 +125,7 @@ export function TokensPage({ me }: { me: Me }) {
                 <tr>
                   <th scope="col">Name</th>
                   <th scope="col">Role</th>
+                  <th scope="col">Sensitive values</th>
                   <th scope="col">Status</th>
                   <th scope="col">Created</th>
                   <th scope="col">Expires</th>
@@ -143,6 +144,7 @@ export function TokensPage({ me }: { me: Me }) {
                       {me.tokenId === t.id && <div className="small muted">You are signed in with this one</div>}
                     </th>
                     <td>{t.role}</td>
+                    <td>{t.unmask ? <strong>Unmasked</strong> : "Masked"}</td>
                     <td>
                       <span className={`badge badge-token-${t.status}`}>{STATUS[t.status]}</span>
                       {t.revokedAt && <div className="small muted">{formatTime(t.revokedAt)}</div>}
@@ -175,6 +177,11 @@ export function TokensPage({ me }: { me: Me }) {
             </table>
           </div>
         )}
+        <p className="hint">
+          Sensitive values: only designer tokens can see values of columns marked sensitive, and only when created with
+          that. Admins, stewards and viewers always see them masked. To take it away, revoke the token and create one
+          without it.
+        </p>
         <p id="assistant-hint" className="hint">
           Local AI assistant: turn it on only for a token used by an AI assistant whose model runs on your own network. Through
           the MCP server it then also sees sources that allow only local models; other tokens see only sources that allow
@@ -188,6 +195,7 @@ export function TokensPage({ me }: { me: Me }) {
 function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
   const [name, setName] = useState("");
   const [role, setRole] = useState<AccessRole>("viewer");
+  const [unmask, setUnmask] = useState(true);
   const [expiry, setExpiry] = useState("90");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -199,7 +207,12 @@ function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
     setError(null);
     try {
       const expiresAt = expiry === "never" ? null : new Date(Date.now() + Number(expiry) * 86_400_000).toISOString();
-      const t = await api.createToken({ name: name.trim(), role, expiresAt });
+      const t = await api.createToken({
+        name: name.trim(),
+        role,
+        expiresAt,
+        ...(role === "designer" ? { unmask } : {}),
+      });
       setName("");
       onCreated(t);
     } catch (err) {
@@ -249,6 +262,19 @@ function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
             <p id="tok-expiry-hint" className="hint">Give the least role and the shortest life that will do.</p>
           </div>
         </div>
+        {role === "designer" && (
+          <div className="field">
+            <Switch
+              label="Sees values of columns marked sensitive"
+              checked={unmask}
+              onChange={setUnmask}
+              describedBy="tok-unmask-hint"
+            />
+            <p id="tok-unmask-hint" className="hint">
+              Only designer tokens can. Turn it off for a designer who builds without needing the real values.
+            </p>
+          </div>
+        )}
         <button type="submit" className="primary" disabled={saving}>
           {saving ? "Creating…" : "Create token"}
         </button>
@@ -289,6 +315,7 @@ function NewTokenPanel({ created, onDone }: { created: CreatedToken; onDone: () 
       <div className="field">
         <label htmlFor="new-token">
           Token for {created.name} ({created.role}
+          {created.unmask ? ", sees sensitive values" : ""}
           {created.expiresAt ? `, expires ${formatTime(created.expiresAt)}` : ", never expires"})
         </label>
         <div className="copy-row">

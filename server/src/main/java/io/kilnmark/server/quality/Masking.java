@@ -218,6 +218,6 @@ public final class Masking {
             return r;
         }
         return new Recommendations.Recommendation(r.field(), r.type(), r.dimension(), r.name(), J.objectNode(),
-            s.data() ? "The column is sensitive: ask an admin to review it" : "Ask a steward to review it");
+            s.data() ? "The column is sensitive: ask a designer to review it" : "Ask a steward to review it");
     }
 }

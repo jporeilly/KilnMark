@@ -8,6 +8,9 @@ import java.util.function.Predicate;
  * What a caller may do. Each role includes the ones below it: a steward can do everything a
  * viewer can, a designer everything a steward can, and an admin everything a designer can.
  * Resources name the least role they need in {@code @RolesAllowed}, using the constants here.
+ *
+ * <p>Seeing values of columns marked sensitive is not on this ladder: it is {@link #UNMASK_GRANT},
+ * which no role includes and only a designer token may hold (ADR 0027).
  */
 public enum AccessRole {
     /** Reads the catalogue: search, assets, sources, pipelines, flows and runs. */
@@ -20,10 +23,10 @@ public enum AccessRole {
     /**
      * Also builds: adds, edits, previews and deletes pipelines and flows; adds, imports, edits and
      * deletes sources and turns on writing for them; writes custom SQL rules; sets server variables.
-     * Sees values masked, as stewards do.
+     * The only role whose tokens may hold {@link #UNMASK_GRANT}.
      */
     DESIGNER,
-    /** Also the Settings pages, API tokens, admin-only connectors and unmasked values. */
+    /** Also the Settings pages, API tokens and admin-only connectors. Sees values masked. */
     ADMIN;
 
     /** Security role names, as used in {@code @RolesAllowed}. */
@@ -34,6 +37,16 @@ public enum AccessRole {
     public static final String DESIGNER_ROLE = "designer";
     /** See {@link #VIEWER_ROLE}. */
     public static final String ADMIN_ROLE = "admin";
+    /**
+     * Security role for seeing values of columns marked sensitive unmasked. In no role's
+     * {@link #grants()}: a designer token adds it when it holds the grant, and nothing else does.
+     */
+    public static final String UNMASK_GRANT = "unmask";
+
+    /** Whether a token with this role may hold {@link #UNMASK_GRANT}: designers only. */
+    public boolean mayHoldUnmask() {
+        return this == DESIGNER;
+    }
 
     /** The name stored with a token and shown in the API: viewer, steward, designer or admin. */
     public String id() {

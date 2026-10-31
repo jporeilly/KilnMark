@@ -126,7 +126,7 @@ public class SourceResource {
         // steward is told no (403) rather than asked to re-enter the password for a change they may not make.
         SourceService.whereUnchangedOrAdmin(existing, SourceService.settings(form.settings()), designer);
         SourceService.Draft d = sources.draft(form, existing, true, admin);
-        sources.readingUnchangedOrAdmin(existing, d.config().settings(), "change how this source is read");
+        sources.readingUnchangedOrUnmasked(existing, d.config().settings(), "change how this source is read");
         byte[] secret = d.replaceSecret() && d.newSecret() != null ? secrets.seal(d.newSecret()) : null;
         Records.Source s = conflicts(() -> store.updateSource(existing.id(), new Records.SourceChange(d.displayName(),
             d.config().settings(), d.replaceSecret(), secret, d.keepSecretIf()))).orElseThrow(() -> ApiError.of(

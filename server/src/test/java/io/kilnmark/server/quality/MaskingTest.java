@@ -26,7 +26,7 @@ class MaskingTest {
     private static final String URN = "urn:kilnmark:shop:sales.customers";
     /** A steward looking at an asset whose {@code postcode} column is sensitive. */
     private static final Masking.Sight STEWARD = new Masking.Sight(true, Set.of("postcode"), false);
-    private static final Masking.Sight ADMIN_UNMASKED = new Masking.Sight(true, Set.of("postcode"), true);
+    private static final Masking.Sight UNMASKED = new Masking.Sight(true, Set.of("postcode"), true);
     private static final Masking.Sight VIEWER = new Masking.Sight(false, Set.of("postcode"), false);
 
     private static Rule rule(String field, RuleType type, String params) throws Exception {
@@ -42,7 +42,7 @@ class MaskingTest {
         e.putArray("domain").add("SW1A 1AA");
         JsonNode masked = Masking.evidence(e, "postcode", STEWARD);
         assertEquals(1, masked.size(), masked.toString());
-        assertEquals(e, Masking.evidence(e, "postcode", ADMIN_UNMASKED));
+        assertEquals(e, Masking.evidence(e, "postcode", UNMASKED));
         assertEquals(e, Masking.evidence(e, "quantity", STEWARD), "other columns keep their values");
         assertEquals(1, Masking.evidence(e, "quantity", VIEWER).size(), "viewers never get values");
 
@@ -50,7 +50,7 @@ class MaskingTest {
         ObjectNode t = Facts.JSON.createObjectNode().put("field", "postcode").put("latest", "2026-10-01T00:00:00Z")
             .put("ageHours", 3);
         assertFalse(Masking.evidence(t, "", STEWARD).has("latest"));
-        assertTrue(Masking.evidence(t, "", ADMIN_UNMASKED).has("latest"));
+        assertTrue(Masking.evidence(t, "", UNMASKED).has("latest"));
 
         QualityStore.DriftRow d = new QualityStore.DriftRow(1, URN, "postcode", "distribution", "top_values", "low",
             "The most common values of postcode changed, including the commonest", Facts.JSON.createObjectNode()
@@ -60,7 +60,7 @@ class MaskingTest {
         assertNull(seen.detail());
         assertFalse(seen.evidence().has("medianFrom"));
         assertEquals(d.message(), seen.message(), "the words stay");
-        assertSame(d, Masking.drift(d, ADMIN_UNMASKED));
+        assertSame(d, Masking.drift(d, UNMASKED));
         QualityStore.DriftRow other = new QualityStore.DriftRow(1, URN, "quantity", "distribution", "quantile_shift",
             "low", "shifted", Facts.JSON.createObjectNode(), 3, 2L, "previous", Instant.EPOCH, "Median 4, was 2");
         assertSame(other, Masking.drift(other, STEWARD));
@@ -73,7 +73,7 @@ class MaskingTest {
         assertFalse(seen.params().toString().contains("SW1A"), seen.params().toString());
         assertTrue(seen.params().path("hidden").asBoolean());
         assertEquals("https://hooks.example.com/k/x", seen.actions().webhook(), "stewards still see the webhook");
-        assertSame(allowed, Masking.rule(allowed, ADMIN_UNMASKED));
+        assertSame(allowed, Masking.rule(allowed, UNMASKED));
         Rule range = rule("quantity", RuleType.IN_RANGE, "{'min':'0','max':'99'}");
         assertSame(range, Masking.rule(range, STEWARD), "a column that is not sensitive");
         Rule pattern = rule("postcode", RuleType.MATCHES_PATTERN, "{'regex':'^[A-Z]{1,2}[0-9]'}");
@@ -85,7 +85,7 @@ class MaskingTest {
         QualityStore.Result r = Masking.result(res, allowed, STEWARD);
         assertNull(r.failingQuery());
         assertNull(r.errorDetail());
-        assertEquals(res.failingQuery(), Masking.result(res, allowed, ADMIN_UNMASKED).failingQuery());
+        assertEquals(res.failingQuery(), Masking.result(res, allowed, UNMASKED).failingQuery());
         assertEquals(res.errorDetail(), Masking.result(res, range, STEWARD).errorDetail());
         Rule custom = rule(null, RuleType.CUSTOM_SQL, "{'sql':'SELECT * FROM ${table}'}");
         assertNull(Masking.result(res, custom, STEWARD).errorDetail(), "custom SQL can read any column");

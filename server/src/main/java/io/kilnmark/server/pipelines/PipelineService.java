@@ -840,7 +840,7 @@ public class PipelineService {
     }
 
     static final String FOR_STEWARDS = "Stewards can see why: the message may hold values from the data.";
-    static final String FOR_ADMINS = "Only designers and admins can see why: the message may hold values of "
+    static final String FOR_DESIGNERS = "Only designers who see unmasked values can see why: the message may hold values of "
         + "columns marked sensitive.";
 
     /**
@@ -864,7 +864,7 @@ public class PipelineService {
         }
         List<String> urns = assets(r);
         sights.load(urns); // a no-op for assets already loaded by prepare()
-        return urns.stream().anyMatch(u -> !sights.marks(u).isEmpty()) ? FOR_ADMINS : null;
+        return urns.stream().anyMatch(u -> !sights.marks(u).isEmpty()) ? FOR_DESIGNERS : null;
     }
 
     /** Loads the marks of every asset these runs touched in one query, before their views are made. */

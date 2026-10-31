@@ -47,7 +47,7 @@ public class DocumentResource {
         String u = urn(urn);
         if (!sights.textWithheld(List.of(u)).isEmpty()) {
             throw ApiError.of(jakarta.ws.rs.core.Response.Status.FORBIDDEN, "This document's text holds columns marked "
-                + "sensitive (in its sheets), so only an admin can read it.");
+                + "sensitive (in its sheets), so only a designer who sees unmasked values can read it.");
         }
         return u;
     }

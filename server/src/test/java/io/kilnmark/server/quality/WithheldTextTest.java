@@ -2,6 +2,7 @@ package io.kilnmark.server.quality;
 
 import static io.kilnmark.server.Tokens.admin;
 import static io.kilnmark.server.Tokens.as;
+import static io.kilnmark.server.Tokens.designer;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
@@ -23,7 +24,8 @@ import jakarta.inject.Inject;
 
 /**
  * A workbook's text holds its sheets' cells (container test, run in CI). When a sheet has a column
- * marked sensitive, the workbook's text, find and chunks are for admins only, and its text is not
+ * marked sensitive, the workbook's text, find and chunks are for designers only (ADR 0027: not
+ * admins), and its text is not
  * matched by others' searches at all; the same up the chain, for a mail whose attached workbook's
  * sheet is marked. The catalogue rows are written directly: a synthetic workbook, sheet, mail and
  * attachment, with chunks of text.
@@ -83,15 +85,16 @@ class WithheldTextTest {
     }
 
     @Test
-    void aWorkbookWithAMarkedSheetKeepsItsTextForAdmins() {
+    void aWorkbookWithAMarkedSheetKeepsItsTextForDesigners() {
         for (String urn : new String[] {BOOK, MAIL}) {
             as(steward).queryParam("urn", urn).get("/api/v1/documents/text").then().statusCode(403)
                 .body("error", containsString("sensitive"));
             as(steward).queryParam("urn", urn).queryParam("q", "zanzibarite").get("/api/v1/documents/find").then()
                 .statusCode(403);
             as(steward).queryParam("urn", urn).get("/api/v1/documents/chunks").then().statusCode(403);
-            assertNotEquals(403, admin().queryParam("urn", urn).get("/api/v1/documents/chunks").statusCode(),
-                "admins read it");
+            admin().queryParam("urn", urn).get("/api/v1/documents/chunks").then().statusCode(403);
+            assertNotEquals(403, designer().queryParam("urn", urn).get("/api/v1/documents/chunks").statusCode(),
+                "designers read it");
         }
         assertNotEquals(403, as(steward).queryParam("urn", OPEN).get("/api/v1/documents/chunks").statusCode(),
             "a document without marks is open");
@@ -102,8 +105,10 @@ class WithheldTextTest {
             .body("hits.urn", hasItem(OPEN));
         as(steward).contentType(ContentType.JSON).body(Map.of("question", "zanzibarite")).post("/api/v1/search/ask")
             .then().statusCode(200).body("hits.urn", not(hasItem(BOOK))).body("hits.urn", not(hasItem(MAIL)));
-        String adminHits = admin().queryParam("q", "zanzibarite").queryParam("mode", "keyword").get("/api/v1/search")
-            .then().statusCode(200).extract().asString();
-        assertEquals(true, adminHits.contains(BOOK) && adminHits.contains(MAIL), adminHits);
+        admin().queryParam("q", "zanzibarite").queryParam("mode", "keyword").get("/api/v1/search").then()
+            .statusCode(200).body("hits.urn", not(hasItem(BOOK))).body("hits.urn", not(hasItem(MAIL)));
+        String designerHits = designer().queryParam("q", "zanzibarite").queryParam("mode", "keyword")
+            .get("/api/v1/search").then().statusCode(200).extract().asString();
+        assertEquals(true, designerHits.contains(BOOK) && designerHits.contains(MAIL), designerHits);
     }
 }

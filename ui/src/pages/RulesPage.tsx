@@ -38,7 +38,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
   // keepError: refresh the list but leave the message about what just went wrong showing.
   const load = useCallback((keepError?: boolean) => {
     qualityApi
-      // Admins edit with the real values of sensitive columns; others get them held back ({"hidden": true}).
+      // Designers edit with the real values of sensitive columns; others get them held back ({"hidden": true}).
       .rules(filter.trim() ? { urn: filter.trim() } : {}, admin)
       .then((r) => {
         setRules(r);

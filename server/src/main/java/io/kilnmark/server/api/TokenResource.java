@@ -27,8 +27,12 @@ import jakarta.ws.rs.core.Response;
 @Produces(MediaType.APPLICATION_JSON)
 public class TokenResource {
 
-    /** Body of {@code POST /api/v1/tokens}. {@code expiresAt} is optional: leave it out for no expiry. */
-    public record NewToken(String name, String role, Instant expiresAt) {
+    /**
+     * Body of {@code POST /api/v1/tokens}. {@code expiresAt} is optional: leave it out for no expiry.
+     * {@code unmask} is optional: a designer token sees unmasked values unless it is false; no other
+     * role's token may have it true (ADR 0027).
+     */
+    public record NewToken(String name, String role, Instant expiresAt, Boolean unmask) {
     }
 
     private final ApiTokens tokens;
@@ -50,7 +54,7 @@ public class TokenResource {
         Long id = identity.getAttribute(ApiTokenIdentityProvider.TOKEN_ID);
         Instant expires = identity.getAttribute(ApiTokenIdentityProvider.EXPIRES_AT);
         return new Views.Me(identity.getPrincipal().getName(), role.id(), id == null || id == 0 ? null : id, expires,
-            config.auth().mode() != AuthMode.OFF);
+            config.auth().mode() != AuthMode.OFF, identity.hasRole(AccessRole.UNMASK_GRANT));
     }
 
     /** Creates a token and returns it this once; only its hash is kept. */
@@ -64,15 +68,17 @@ public class TokenResource {
                 + "be checked. Remove KILNMARK_AUTH_MODE and restart the server, then create tokens.");
         }
         if (body == null) {
-            throw new IllegalArgumentException("Send the token as JSON: a name, a role (viewer, steward or admin) "
-                + "and optionally expiresAt");
+            throw new IllegalArgumentException("Send the token as JSON: a name, a role (viewer, steward, designer or "
+                + "admin), and optionally expiresAt and unmask (designer tokens only)");
         }
-        ApiTokens.Issued issued = tokens.create(body.name(), AccessRole.parse(body.role()), body.expiresAt(), caller());
+        ApiTokens.Issued issued = tokens.create(body.name(), AccessRole.parse(body.role()), body.expiresAt(), caller(),
+            body.unmask());
         ApiTokens.Token t = issued.token();
         CacheControl noStore = new CacheControl();
         noStore.setNoStore(true);
         return Response.created(URI.create("/api/v1/tokens/" + t.id())).cacheControl(noStore)
-            .entity(new Views.NewToken(t.id(), t.name(), t.role().id(), t.createdAt(), t.expiresAt(), issued.secret()))
+            .entity(new Views.NewToken(t.id(), t.name(), t.role().id(), t.unmask(), t.createdAt(), t.expiresAt(),
+                issued.secret()))
             .build();
     }
 

@@ -13,12 +13,16 @@ export type Me = {
   tokenId: number | null;
   expiresAt: string | null;
   signInRequired: boolean;
+  /** Whether this token sees values of columns marked sensitive: designer tokens only (ADR 0027). */
+  unmask: boolean;
 };
 
 export type ApiToken = {
   id: number;
   name: string;
   role: AccessRole;
+  /** Whether it sees values of columns marked sensitive: designer tokens only. */
+  unmask: boolean;
   status: "active" | "expired" | "set-aside" | "revoked";
   createdBy: string;
   createdAt: string;
@@ -32,6 +36,7 @@ export type CreatedToken = {
   id: number;
   name: string;
   role: AccessRole;
+  unmask: boolean;
   createdAt: string;
   expiresAt: string | null;
   token: string;
@@ -39,7 +44,10 @@ export type CreatedToken = {
 
 const RANK: Record<AccessRole, number> = { viewer: 0, steward: 1, designer: 2, admin: 3 };
 
-/** True if `role` includes `needed`: an admin can do what a steward can, and a steward what a viewer can. */
+/**
+ * True if `role` includes `needed`: an admin can do what a steward can, and a steward what a viewer can.
+ * Seeing unmasked values is not on this ladder: it is `Me.unmask` (designer tokens only).
+ */
 export const allows = (role: AccessRole | undefined, needed: AccessRole) => role != null && RANK[role] >= RANK[needed];
 
 const TOKEN_KEY = "kilnmark.token";
@@ -508,7 +516,7 @@ export const api = {
     return me;
   },
   tokens: () => call<ApiToken[]>("/api/v1/tokens"),
-  createToken: (t: { name: string; role: AccessRole; expiresAt: string | null }) =>
+  createToken: (t: { name: string; role: AccessRole; expiresAt: string | null; unmask?: boolean }) =>
     call<CreatedToken>("/api/v1/tokens", { method: "POST", body: JSON.stringify(t) }),
   revokeToken: (id: number) => call<null>(`/api/v1/tokens/${id}`, { method: "DELETE" }),
   info: () => call<{ product: string; version: string; roles: string[] }>("/api/v1/info"),
@@ -1063,7 +1071,7 @@ export type Recommendation = {
 export type QualityRun = { id: number; status: "queued" | "running" | "succeeded" | "failed"; detail: string | null };
 
 const q = (urn: string) => `urn=${encodeURIComponent(urn)}`;
-/** Admins may ask for sensitive values unmasked; servers that do not mask ignore it. */
+/** Designers may ask for sensitive values unmasked; for anyone else the server ignores it. */
 const unmasked = (unmask: boolean) => (unmask ? "&unmask=true" : "");
 
 /**

@@ -287,7 +287,7 @@ public class PipelinePreviews {
                     .orElse(null);
                 // Its words may quote values from the rows: held back as a run's are.
                 throw PreviewFailed.of(marked ? "The preview stopped" + (at == null ? "" : " at node " + at) + ". "
-                    + PipelineService.FOR_ADMINS : context.scrub(result.error()));
+                    + PipelineService.FOR_DESIGNERS : context.scrub(result.error()));
             }
             return view(c, plan.node(), p.port(), o.rows(), (System.nanoTime() - started) / 1_000_000, waits);
         } catch (Stop s) {

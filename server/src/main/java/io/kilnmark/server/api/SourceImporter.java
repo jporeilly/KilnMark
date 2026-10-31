@@ -272,7 +272,7 @@ public class SourceImporter {
         SourceService.Draft d = asRow(() -> sources.draft(new SourceForm(r.name(), rowKind, merged, password, null,
             null, displayName), existing, true, admin));
         if (!admin) {
-            asRow(() -> sources.readingUnchangedOrAdmin(existing, d.config().settings(),
+            asRow(() -> sources.readingUnchangedOrUnmasked(existing, d.config().settings(),
                 "change how this source is read"));
         }
         String shown = d.displayName() == null ? existing.name() : d.displayName();

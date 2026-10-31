@@ -71,9 +71,9 @@ public class ApiTokens {
     /** File, next to the secret key, holding the first admin token. */
     public static final String ADMIN_TOKEN_FILE = "admin-token";
 
-    /** A stored token, without its hash. */
-    public record Token(long id, String name, AccessRole role, String createdBy, Instant createdAt, Instant expiresAt,
-                        Instant lastUsedAt, Instant revokedAt, String revokedReason) {
+    /** A stored token, without its hash. {@code unmask}: it holds {@link AccessRole#UNMASK_GRANT}. */
+    public record Token(long id, String name, AccessRole role, boolean unmask, String createdBy, Instant createdAt,
+                        Instant expiresAt, Instant lastUsedAt, Instant revokedAt, String revokedReason) {
 
         /**
          * {@code active}, {@code expired}, {@code set-aside} (an environment token replaced by a new
@@ -91,8 +91,13 @@ public class ApiTokens {
     public record Issued(Token token, String secret) {
     }
 
-    /** Who presented a valid token. */
-    public record Caller(long tokenId, String name, AccessRole role, Instant expiresAt) {
+    /** Who presented a valid token. {@code unmask}: the token holds {@link AccessRole#UNMASK_GRANT}. */
+    public record Caller(long tokenId, String name, AccessRole role, Instant expiresAt, boolean unmask) {
+
+        /** A caller without the unmask grant. */
+        public Caller(long tokenId, String name, AccessRole role, Instant expiresAt) {
+            this(tokenId, name, role, expiresAt, false);
+        }
     }
 
     private final Db db;
@@ -126,8 +131,17 @@ public class ApiTokens {
         }
     }
 
-    /** Creates a token. {@code expiresAt} may be null for one that never expires. */
+    /** Creates a token, with the unmask grant if it is a designer's. */
     public Issued create(String name, AccessRole role, Instant expiresAt, String createdBy) {
+        return create(name, role, expiresAt, createdBy, null);
+    }
+
+    /**
+     * Creates a token. {@code expiresAt} may be null for one that never expires. {@code unmask}
+     * says whether it holds {@link AccessRole#UNMASK_GRANT}; null means yes for a designer token and
+     * no for any other. Only a designer token may hold it (ADR 0027).
+     */
+    public Issued create(String name, AccessRole role, Instant expiresAt, String createdBy, Boolean unmask) {
         String clean = name == null ? "" : name.strip();
         if (clean.isEmpty() || clean.length() > 100) {
             throw new IllegalArgumentException("name: give the token a name of 1 to 100 characters, such as ci-pipeline");
@@ -137,36 +151,42 @@ public class ApiTokens {
                 + "breaks or other control characters");
         }
         if (role == null) {
-            throw new IllegalArgumentException("role: use viewer, steward or admin");
+            throw new IllegalArgumentException("role: use viewer, steward, designer or admin");
+        }
+        boolean grant = unmask == null ? role.mayHoldUnmask() : unmask;
+        if (grant && !role.mayHoldUnmask()) {
+            throw new IllegalArgumentException("unmask: only a designer token can see unmasked values; " + role.id()
+                + " tokens always see columns marked sensitive masked");
         }
         if (expiresAt != null && !expiresAt.isAfter(Instant.now())) {
             throw new IllegalArgumentException("expiresAt: choose a time in the future, or leave it out for no expiry");
         }
         String secret = newSecret();
-        Token t = db.tx(c -> insert(c, clean, role, hash(secret), createdBy, expiresAt));
-        LOG.infof("API token %d (%s, %s) created by %s", t.id(), loggable(t.name()), t.role().id(),
-            loggable(createdBy));
+        Token t = db.tx(c -> insert(c, clean, role, grant, hash(secret), createdBy, expiresAt));
+        LOG.infof("API token %d (%s, %s%s) created by %s", t.id(), loggable(t.name()), t.role().id(),
+            t.unmask() ? ", sees unmasked values" : "", loggable(createdBy));
         return new Issued(t, secret);
     }
 
     private static final String COLUMNS =
-        "id, name, role, created_by, created_at, expires_at, last_used_at, revoked_at, revoked_reason";
+        "id, name, role, created_by, created_at, expires_at, last_used_at, revoked_at, revoked_reason, unmask";
 
     private static Token token(ResultSet rs) throws SQLException {
-        return new Token(rs.getLong(1), rs.getString(2), AccessRole.parse(rs.getString(3)), rs.getString(4),
-            Db.instant(rs.getTimestamp(5)), Db.instant(rs.getTimestamp(6)), Db.instant(rs.getTimestamp(7)),
-            Db.instant(rs.getTimestamp(8)), rs.getString(9));
+        return new Token(rs.getLong(1), rs.getString(2), AccessRole.parse(rs.getString(3)), rs.getBoolean(10),
+            rs.getString(4), Db.instant(rs.getTimestamp(5)), Db.instant(rs.getTimestamp(6)),
+            Db.instant(rs.getTimestamp(7)), Db.instant(rs.getTimestamp(8)), rs.getString(9));
     }
 
-    private static Token insert(Connection c, String name, AccessRole role, byte[] hash, String createdBy,
-                                Instant expiresAt) throws SQLException {
+    private static Token insert(Connection c, String name, AccessRole role, boolean unmask, byte[] hash,
+                                String createdBy, Instant expiresAt) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.api_token "
-            + "(name, role, hash, created_by, expires_at) VALUES (?, ?, ?, ?, ?) RETURNING " + COLUMNS)) {
+            + "(name, role, unmask, hash, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING " + COLUMNS)) {
             ps.setString(1, name);
             ps.setString(2, role.id());
-            ps.setBytes(3, hash);
-            ps.setString(4, createdBy);
-            ps.setTimestamp(5, Db.timestamp(expiresAt));
+            ps.setBoolean(3, unmask);
+            ps.setBytes(4, hash);
+            ps.setString(5, createdBy);
+            ps.setTimestamp(6, Db.timestamp(expiresAt));
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return token(rs);
@@ -236,7 +256,7 @@ public class ApiTokens {
             Instant lastUsed;
             Instant now;
             try (PreparedStatement ps = c.prepareStatement("SELECT id, name, role, hash, expires_at, last_used_at, "
-                + "revoked_at, now() FROM kilnmark.api_token WHERE hash = ?")) {
+                + "revoked_at, now(), unmask FROM kilnmark.api_token WHERE hash = ?")) {
                 ps.setBytes(1, wanted);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next() || !MessageDigest.isEqual(wanted, rs.getBytes(4))) {
@@ -247,7 +267,8 @@ public class ApiTokens {
                     if (rs.getTimestamp(7) != null || (expires != null && !expires.isAfter(now))) {
                         return Optional.empty();
                     }
-                    caller = new Caller(rs.getLong(1), rs.getString(2), AccessRole.parse(rs.getString(3)), expires);
+                    caller = new Caller(rs.getLong(1), rs.getString(2), AccessRole.parse(rs.getString(3)), expires,
+                        rs.getBoolean(9));
                     lastUsed = Db.instant(rs.getTimestamp(6));
                 }
             }
@@ -276,7 +297,7 @@ public class ApiTokens {
     }
 
     /** Text as it may appear in a log line: control characters (a forged line break, say) become '?'. */
-    static String loggable(String text) {
+    public static String loggable(String text) {
         if (text == null) {
             return "";
         }
@@ -341,7 +362,7 @@ public class ApiTokens {
             }
             // Never leave the server with no way for an admin to sign in.
             String secret = newSecret();
-            Token t = insert(c, "first admin", AccessRole.ADMIN, hash(secret), FROM_FIRST_START,
+            Token t = insert(c, "first admin", AccessRole.ADMIN, false, hash(secret), FROM_FIRST_START,
                 Instant.now().plus(FIRST_TOKEN_LIFE));
             writePrivate(file, secret);
             LOG.infof("No admin API token was usable, so token %d was created. It is in %s (readable only by this "

@@ -477,11 +477,12 @@ class PipelineFlowTest {
                 assertTrue(ds.getString("run.error").contains("refused the rows"), ds.prettify());
                 JsonPath st = as(token("flow-msg-steward", "steward")).get(path).then().statusCode(200).extract()
                     .jsonPath();
-                assertEquals("The run failed. " + PipelineService.FOR_ADMINS, st.getString("run.error"));
-                assertEquals("This node failed. " + PipelineService.FOR_ADMINS,
+                assertEquals("The run failed. " + PipelineService.FOR_DESIGNERS, st.getString("run.error"));
+                assertEquals("This node failed. " + PipelineService.FOR_DESIGNERS,
                     st.getString("nodes.find { it.node == 'out' }.error"));
+                // Admins see it held back too: only designers see values of sensitive columns (ADR 0027).
                 JsonPath ad = as(admin).get(path).then().statusCode(200).extract().jsonPath();
-                assertTrue(ad.getString("run.error").contains("refused the rows"), ad.prettify());
+                assertEquals("The run failed. " + PipelineService.FOR_DESIGNERS, ad.getString("run.error"));
                 assertFalse(ad.prettify().contains(OUT_SECRET), "the secret stays out, even for admins");
             }
             // The log's details are held back alike; its own words are not.
@@ -499,12 +500,12 @@ class PipelineFlowTest {
                 .extract().asString();
             assertFalse(vText.contains("refused the rows"), vText);
             String al = as(admin).get(events).then().statusCode(200).extract().asString();
-            assertTrue(al.contains("refused the rows"), al);
+            assertFalse(al.contains("refused the rows"), al);
             assertFalse(al.contains(OUT_SECRET), al);
             as(viewer).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
                 .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_STEWARDS));
             as(steward).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
-                .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_ADMINS));
+                .body("[0].error", equalTo("The run failed. " + PipelineService.FOR_DESIGNERS));
             as(admin).get("/api/v1/pipelines/people-copy/runs").then().statusCode(200)
                 .body("[0].error", containsString("refused the rows"));
             as(viewer).get("/api/v1/pipelines").then().statusCode(200)
@@ -512,7 +513,7 @@ class PipelineFlowTest {
                     equalTo("The run failed. " + PipelineService.FOR_STEWARDS));
             as(steward).get("/api/v1/pipelines").then().statusCode(200)
                 .body("find { it.name == 'people-copy' }.lastRun.error",
-                    equalTo("The run failed. " + PipelineService.FOR_ADMINS));
+                    equalTo("The run failed. " + PipelineService.FOR_DESIGNERS));
 
             // A run that succeeds with a note quoting the engine: the note's detail is held back alike.
             as(designer).body(Map.of("yaml", YAML.replace("mode: replace", "mode: replace\n    break_profile: true"),
@@ -526,7 +527,7 @@ class PipelineFlowTest {
                 .body("notes", hasItems(note + ". " + PipelineService.FOR_STEWARDS)).body("run.error",
                     org.hamcrest.Matchers.nullValue());
             as(steward).get(path).then().statusCode(200).body("notes", hasItems(note + ". "
-                + PipelineService.FOR_ADMINS));
+                + PipelineService.FOR_DESIGNERS));
             as(designer).get(path).then().statusCode(200).body("notes", hasItems(note
                 + " (cannot profile a column of maps (test))"));
             as(admin).get(path).then().statusCode(200).body("notes", hasItems(note

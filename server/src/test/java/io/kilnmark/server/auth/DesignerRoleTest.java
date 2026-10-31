@@ -17,7 +17,8 @@ import io.restassured.specification.RequestSpecification;
 
 /**
  * The designer role: designers build pipelines and sources and turn on writing; stewards run what
- * is built and no longer build; admin-only kinds of source and unmasking stay with admins.
+ * is built and no longer build; admin-only kinds of source stay with admins. Unmasking is a grant of
+ * its own, held only by designer tokens (UnmaskGrantTest, ADR 0027).
  */
 @QuarkusTest
 class DesignerRoleTest {

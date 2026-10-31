@@ -1,6 +1,7 @@
 package io.kilnmark.server.quality;
 
 import static io.kilnmark.server.Tokens.admin;
+import static io.kilnmark.server.Tokens.designer;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
@@ -494,8 +495,11 @@ class QualityFlowTest {
             .statusCode(204);
         assertEquals(List.of("••••", "••••", "••••"), as(steward).get("/api/v1/assets/" + CUSTOMERS).then().statusCode(200)
             .extract().jsonPath().getList("fields.find { it.name == 'postcode' }.profile.top.value"));
-        assertTrue(admin().get("/api/v1/assets/" + CUSTOMERS).then().statusCode(200).extract().jsonPath()
+        assertTrue(designer().get("/api/v1/assets/" + CUSTOMERS).then().statusCode(200).extract().jsonPath()
             .getList("fields.find { it.name == 'postcode' }.profile.top.value").contains("SW1A 1AA"));
+        assertEquals(List.of("••••", "••••", "••••"), admin().get("/api/v1/assets/" + CUSTOMERS).then().statusCode(200)
+            .extract().jsonPath().getList("fields.find { it.name == 'postcode' }.profile.top.value"),
+            "an admin sees sensitive values masked (ADR 0027)");
         // Marking is for stewards; un-marking only for admins.
         as(steward).contentType(ContentType.JSON).queryParam("urn", CUSTOMERS)
             .body(Map.of("field", "postcode", "sensitive", false)).put("/api/v1/quality/asset/sensitive").then()
@@ -504,9 +508,15 @@ class QualityFlowTest {
             .body(Map.of("field", "postcode", "sensitive", false)).put("/api/v1/quality/asset/sensitive").then()
             .statusCode(204);
 
-        JsonPath open = admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
+        JsonPath open = designer().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
             .get("/api/v1/quality/asset/samples").then().statusCode(200).extract().jsonPath();
         assertEquals(List.of(), open.getList("masked"));
+        assertEquals(List.of("e-mail"), admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
+            .get("/api/v1/quality/asset/samples").then().statusCode(200).extract().jsonPath().getList("masked"),
+            "an admin cannot unmask, even when asking");
+        assertEquals(List.of("e-mail"), Tokens.as(Tokens.newToken("designer", false)).queryParam("urn", CUSTOMERS)
+            .queryParam("unmask", true).get("/api/v1/quality/asset/samples").then().statusCode(200).extract().jsonPath()
+            .getList("masked"), "nor a designer whose token was made without the grant");
         List<List<String>> plain = open.getList("rows");
         assertTrue(plain.stream().map(r -> r.get(col)).anyMatch(v -> v != null && v.contains("@example.com")));
     }
@@ -559,7 +569,7 @@ class QualityFlowTest {
         as(steward).contentType(ContentType.JSON).queryParam("urn", CUSTOMERS)
             .body(Map.of("field", "quantity", "sensitive", true)).put("/api/v1/quality/asset/sensitive").then()
             .statusCode(204);
-        JsonNode event = JSON.readTree(admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
+        JsonNode event = JSON.readTree(designer().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
             .get("/api/v1/quality/export/openlineage").then().statusCode(200).extract().asString());
         assertEquals(Set.of(), validate("https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent", event,
             SpecVersion.VersionFlag.V202012));
@@ -592,7 +602,7 @@ class QualityFlowTest {
         assertTrue(contract.toString().contains("\"validValues\""), "stewards see allowed values");
         assertFalse(contract.toString().contains("< 0"), "custom SQL may quote any column: hidden while the asset "
             + "has sensitive columns");
-        assertTrue(admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true).get("/api/v1/quality/export/odcs")
+        assertTrue(designer().queryParam("urn", CUSTOMERS).queryParam("unmask", true).get("/api/v1/quality/export/odcs")
             .then().statusCode(200).extract().asString().contains("{property} < 0"), "custom SQL with ODCS placeholders");
         Set<ValidationMessage> odcsErrors = validate("classpath:schemas/odcs/odcs-json-schema-v3.1.0.json", contract,
             SpecVersion.VersionFlag.V201909);
@@ -740,10 +750,10 @@ class QualityFlowTest {
             && d.get("change").equals("quantile_shift")).findFirst().orElseThrow();
         assertNull(shift.get("detail"), shift.toString());
         assertFalse(((Map<?, ?>) shift.get("evidence")).containsKey("medianFrom"), shift.toString());
-        Map<String, Object> unmasked = admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
+        Map<String, Object> unmasked = designer().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
             .get("/api/v1/quality/asset/drift").then().statusCode(200).extract().jsonPath().<Map<String, Object>>getList("$")
             .stream().filter(d -> d.get("id").equals(shift.get("id"))).findFirst().orElseThrow();
-        assertNotNull(unmasked.get("detail"), "an admin who unmasks sees it");
+        assertNotNull(unmasked.get("detail"), "a designer who unmasks sees it");
 
         List<Map<String, Object>> measures = quality(steward, CUSTOMERS).getList("measures");
         for (Map<String, Object> m : measures) {
@@ -760,7 +770,7 @@ class QualityFlowTest {
         as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "quantity",
             "type", "in_range", "params", Map.of("hidden", true), "failAbove", 0.5))
             .put("/api/v1/quality/rules/" + rules.get("quantity")).then().statusCode(200);
-        JsonPath kept = admin().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
+        JsonPath kept = designer().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
             .statusCode(200).extract().jsonPath();
         assertNull(kept.get("rule.params.hidden"));
         assertNotNull(kept.get("rule.params.min"), kept.prettify());
@@ -785,9 +795,9 @@ class QualityFlowTest {
             "params", Map.of("min", 0, "max", 5));
         as(steward).contentType(ContentType.JSON).body(range).post("/api/v1/quality/rules/preview").then()
             .statusCode(403).body("error", containsString("sensitive"));
-        admin().contentType(ContentType.JSON).body(range).queryParam("unmask", true)
+        designer().contentType(ContentType.JSON).body(range).queryParam("unmask", true)
             .post("/api/v1/quality/rules/preview").then().statusCode(200);
-        long resultId = admin().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
+        long resultId = designer().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
             .statusCode(200).extract().jsonPath().getLong("latest.id");
         JsonPath result = as(steward).get("/api/v1/quality/results/" + resultId).then().statusCode(200).extract()
             .jsonPath();
@@ -814,7 +824,7 @@ class QualityFlowTest {
         shown.put("enabled", false);
         as(steward).contentType(ContentType.JSON).body(shown).put("/api/v1/quality/rules/" + rules.get("quantity"))
             .then().statusCode(200).body("enabled", equalTo(false)).body("params.hidden", equalTo(true));
-        JsonPath kept = admin().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
+        JsonPath kept = designer().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
             .statusCode(200).extract().jsonPath();
         assertNotNull(kept.get("rule.params.min"), kept.prettify());
         assertEquals(false, kept.get("rule.enabled"));
@@ -860,8 +870,8 @@ class QualityFlowTest {
         String version = before.getString("rule.updatedAt");
         Map<String, Object> body = Map.of("assetUrn", CUSTOMERS, "field", "quantity", "type", "in_range",
             "params", Map.of("min", 0, "max", 1000), "enabled", true);
-        // quantity is marked sensitive by now: an admin who unmasks sees the bounds in the answer.
-        JsonPath saved = admin().contentType(ContentType.JSON).header("If-Match", "\"" + version + "\"")
+        // quantity is marked sensitive by now: a designer who unmasks sees the bounds in the answer.
+        JsonPath saved = designer().contentType(ContentType.JSON).header("If-Match", "\"" + version + "\"")
             .queryParam("unmask", true).body(body).put("/api/v1/quality/rules/" + id).then().statusCode(200).extract()
             .jsonPath();
         assertEquals("1000", saved.getString("params.max"));
