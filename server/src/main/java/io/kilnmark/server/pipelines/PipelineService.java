@@ -287,6 +287,9 @@ public class PipelineService {
     public PredictionViews.Advice suggest(String yaml, boolean useAi, String caller, Sights sights) {
         checkSize(yaml);
         PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes, Map.of(), variables());
+        if (useAi && sights != null) {
+            sights.speakingToModel(); // what the model is shown is never unmasked, whoever asks (ADR 0027)
+        }
         PredictionCatalogue.Remembering catalogue = predictions.open(sights);
         QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
         PipelineAdvisor advisor = new PipelineAdvisor(catalogue, nodes, json);

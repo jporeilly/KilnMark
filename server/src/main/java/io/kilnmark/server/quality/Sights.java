@@ -42,9 +42,12 @@ public class Sights {
         return identity.hasRole(DATA_ROLE);
     }
 
-    /** Whether the caller may see values of columns marked sensitive, when asking to. */
+    /**
+     * Whether the caller may see values of columns marked sensitive, when asking to: a designer with
+     * the unmask grant, and never while the request answers a model ({@link #speakingToModel}).
+     */
     public boolean mayUnmask() {
-        return identity.hasRole(UNMASK_ROLE);
+        return identity.hasRole(UNMASK_ROLE) && !model;
     }
 
     /** The asset's columns marked sensitive (once per request). */
@@ -60,7 +63,10 @@ public class Sights {
         }
     }
 
-    /** This request answers a model (the MCP server): never unmasked, whoever's token it uses. */
+    /**
+     * This request answers a model (the MCP server, AI pipeline suggestions): never unmasked, whoever's
+     * token it uses. Call it before anything is read for the model.
+     */
     public void speakingToModel() {
         model = true;
     }

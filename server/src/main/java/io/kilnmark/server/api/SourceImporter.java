@@ -167,6 +167,31 @@ public class SourceImporter {
             }
             plans.add(p);
         }
+        // Each row was checked against the sources already saved; two rows of one file over the same files
+        // would pass that and be saved together, so they are checked against each other too (ADR 0027).
+        for (int i = 0; i < plans.size(); i++) {
+            Plan a = plans.get(i);
+            if (a.draft() == null || a.result().status().equals("failed")) {
+                continue;
+            }
+            for (int j = 0; j < i; j++) {
+                Plan b = plans.get(j);
+                if (b.draft() == null || b.result().status().equals("failed")) {
+                    continue;
+                }
+                io.kilnmark.kiln.connect.SourceConfig x = a.draft().config();
+                io.kilnmark.kiln.connect.SourceConfig y = b.draft().config();
+                if (x.kind().equals(y.kind()) && !x.name().equals(y.name())
+                    && SourceService.sameFiles(x.kind(), x.settings(), y.settings())) {
+                    plans.set(i, new Plan(new RowResult(a.result().line(), a.result().name(), "failed", "this row and "
+                        + y.name() + " read the same files (one folder or prefix inside the other). Two sources over the "
+                        + "same files keep separate marks, so a column marked sensitive in one would show unmasked in the "
+                        + "other.", List.of()), null, null, null, null));
+                    failed++;
+                    break;
+                }
+            }
+        }
         boolean apply = !options.dryRun() && (failed == 0 || options.skipErrors());
         Map<String, Long> ids = new HashMap<>();
         existing.values().forEach(s -> ids.put(s.name(), s.id()));

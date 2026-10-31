@@ -51,7 +51,8 @@ but does not build. And catalogues have no exact designer, because they do not b
   create one without it.
 - **Admins see masked values**, everywhere, including in Previews, in run errors and in document
   text. With sign-in off every caller is an admin, so every caller sees masked values.
-- **A model never sees unmasked values** (the MCP server), whoever's token it uses, as before.
+- **A model never sees unmasked values** (the MCP server, AI pipeline suggestions), whoever's token
+  it uses: while a request answers a model, `Sights` never unmasks.
 - **The Tokens page shows which tokens hold the grant** and who created each, and the server logs
   each token created with the grant and each mark cleared, with who did it.
 
