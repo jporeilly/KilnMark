@@ -35,7 +35,7 @@ class CatalogueUnitTest {
         assertFalse(c.showPlanned());
         assertTrue(c.categories().stream().allMatch(x -> x.planned().isEmpty()));
         // Test-only connectors (kind test-...) are registered on the test class path; leave them out.
-        assertEquals(8, c.categories().stream().flatMap(x -> x.connectors().stream())
+        assertEquals(9, c.categories().stream().flatMap(x -> x.connectors().stream())
             .filter(x -> !x.kind().startsWith("test-")).count());
         Views.ConnectorCatalogue shown = new CatalogResource(null, null, Connectors.load(), config(true)).catalogue();
         assertTrue(shown.categories().stream().mapToInt(x -> x.planned().size()).sum() > 30);

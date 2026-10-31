@@ -45,8 +45,31 @@ it with a source's name. To start from nothing instead, choose **Start with an e
 
 Kilnmark comes with samples: small pipelines, one idea each, such as reading some columns and
 rows, filtering and routing, lookups, totals, quality gates and parameters. Each is named
-`sample-...` and starts with comments on what it shows and what to look for. They name their
-sources by placeholders rather than real sources:
+`sample-...` and starts with comments on what it shows and what to look for. Kilnmark also comes
+with sample data for them to read: made-up customers, accounts, transactions, orders and products.
+
+### The starter pack
+
+The quickest way to try the samples, with nothing of your own to prepare but a database and a file
+source that allow writing:
+
+1. On the **Pipelines** page, choose **Add samples** (stewards and admins).
+2. Under **Starter pack**, choose the **Database for the tables**, a **Schema** in it (it must
+   exist; tables of the same names there are replaced), and where the samples' **Files go to**.
+3. Choose **Add the starter pack**.
+
+Kilnmark creates the sample tables in that schema (`crm_customers`, `shop_orders` and so on) with a
+pipeline called `sample-tables`, which you can open and run again to put them back as they were.
+Adding the starter pack again recreates the tables too, but not while they are being created, and
+not over a `sample-tables` pipeline that has been changed (rename or delete it first). It
+adds every sample, reading those tables, and sets the server variable `sample_region` to `EMEA` if it
+is not set, since one sample reads it. The dialog lists each sample, with a link to the run creating
+the tables. Every sample can then run. The sample data's own read-only source, **Kilnmark sample
+data** (`sample-data`), is added too: you can browse its files and read them like any other.
+
+### With your own sources
+
+The samples name their sources by placeholders rather than real sources:
 
 | Placeholder | Stands for |
 | --- | --- |
@@ -55,8 +78,9 @@ sources by placeholders rather than real sources:
 | `files` | File storage the samples write to, under `samples/`; an admin must turn on **Allow writing** for it |
 
 1. On the **Pipelines** page, choose **Add samples** (stewards and admins).
-2. For each placeholder, choose one of your saved sources, or leave it as **Don't add the samples
-   that use it**. The dialog says how many samples use each.
+2. Under **Or choose your own sources**, choose one of your saved sources for each placeholder, or
+   leave it as **Don't add the samples that use it**. The dialog says how many samples use each.
+   Once the sample tables have been created, it offers to read them instead.
 3. Choose **Add samples**. The dialog lists what happened to each: added, already here (a sample
    whose name is taken is left as it is, so your changes are kept), or not added and why.
 
@@ -65,7 +89,9 @@ table a sample reads that the scan did not find saves it as a draft with problem
 change its `asset` to one of yours, or its columns. The sample flows are not added yet; they are
 in the release's `samples` folder to read. Through the API, `GET /api/v1/samples` lists the
 placeholders and samples, and `POST /api/v1/samples` with
-`{"sources": {"crm-db": "my-database", "files": "my-bucket"}}` adds them.
+`{"sources": {"crm-db": "my-database", "files": "my-bucket"}}` adds them; `POST
+/api/v1/samples/tables` with `{"source": "my-database", "schema": "public"}` creates the sample
+tables, and `"schema": "public"` added to the first points the samples at them.
 
 ## Building on the canvas
 

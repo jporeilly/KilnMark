@@ -126,3 +126,24 @@ tasks.register<Test>("oracleTest") {
     jvmArgs("-Duser.timezone=America/New_York")
     mustRunAfter("heavyTest")
 }
+
+// Kilnmark's sample data (samples/data/*/*.csv, made by samples/data/generate.py), read by the
+// sample-data connector from the jar: copied under kilnmark/sample-data with a list of the files,
+// since a jar cannot be listed reliably at run time.
+val sampleDataDir = rootProject.layout.projectDirectory.dir("samples/data")
+val sampleDataResources = layout.buildDirectory.dir("generated/sample-data")
+val bundleSampleData = tasks.register<Sync>("bundleSampleData") {
+    description = "Copies samples/data/*/*.csv into the connectors' resources."
+    from(sampleDataDir) {
+        include("*/*.csv")
+        into("kilnmark/sample-data")
+    }
+    into(sampleDataResources)
+    val listFile = sampleDataResources.map { it.file("kilnmark/sample-data/files.list").asFile }
+    val dataFiles = sampleDataDir.asFileTree.matching { include("*/*.csv") }.elements
+        .map { files -> files.map { it.asFile.relativeTo(sampleDataDir.asFile).invariantSeparatorsPath }.sorted() }
+    doLast {
+        listFile.get().writeText(dataFiles.get().joinToString("\n", postfix = "\n"))
+    }
+}
+project.extensions.getByType<SourceSetContainer>()["main"].resources.srcDir(bundleSampleData)
