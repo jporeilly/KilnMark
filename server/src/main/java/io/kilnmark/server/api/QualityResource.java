@@ -410,7 +410,8 @@ public class QualityResource {
 
     /** A rule and its latest result as the caller may see them: no values or query text without sight of them. */
     private RuleView view(Rule r, QualityStore.Result res, Masking.Sight sight) {
-        return new RuleView(Masking.rule(r, sight), Masking.result(res, r, sight));
+        QualityStore.Result shown = Masking.result(res, r, sight);
+        return new RuleView(Masking.rule(r, sight), customSqlHidden(r, r.assetUrn(), sight) ? withoutDetail(shown) : shown);
     }
 
     @POST
@@ -451,7 +452,7 @@ public class QualityResource {
     public Rule updateRule(@PathParam("id") long id, @HeaderParam("If-Match") String ifMatch, RuleDraft body,
                            @QueryParam("unmask") boolean unmask) {
         Rule old = findRule(id);
-        adminForCustomSql(old.type());
+        unmaskForCustomSql(old.type());
         java.time.Instant expected = readVersion(ifMatch);
         if (expected != null && !expected.equals(old.updatedAt())) {
             throw changedSince();
@@ -543,7 +544,7 @@ public class QualityResource {
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Response deleteRule(@PathParam("id") long id) {
         Rule r = findRule(id);
-        adminForCustomSql(r.type());
+        unmaskForCustomSql(r.type());
         store.deleteRule(id);
         quality.rescore(r.assetUrn());
         return Response.noContent().build();
@@ -581,7 +582,7 @@ public class QualityResource {
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Response runRule(@PathParam("id") long id) {
         Rule r = findRule(id);
-        adminForCustomSql(r.type());
+        unmaskForCustomSql(r.type());
         long run = quality.queueManual(r.assetUrn(), id, who());
         return Response.accepted(store.run(run).orElseThrow()).location(URI.create("/api/v1/quality/runs/" + run))
             .build();
@@ -613,11 +614,16 @@ public class QualityResource {
             r.total(), r.failing(), r.method(), null, null, r.message(), r.observedAt(), r.origin(), null, r.estimate());
     }
 
-    /** Custom SQL rules are for designers and admins: they can read anything the source's login can see. */
-    private void adminForCustomSql(io.kilnmark.server.quality.RuleType type) {
-        if (type == io.kilnmark.server.quality.RuleType.CUSTOM_SQL && !identity.hasRole(AccessRole.DESIGNER_ROLE)) {
-            throw ApiError.of(Response.Status.FORBIDDEN, "Only a designer or an admin can write, change or run custom "
-                + "SQL rules.");
+    /**
+     * Custom SQL rules are for designers whose token sees unmasked values (ADR 0027): such SQL can read
+     * any column the source's login can, and even its counts of failing rows could tell a value bit by
+     * bit, so only someone who may see the values writes, changes or runs it. Admins see masked values,
+     * so they do not.
+     */
+    private void unmaskForCustomSql(io.kilnmark.server.quality.RuleType type) {
+        if (type == io.kilnmark.server.quality.RuleType.CUSTOM_SQL && !identity.hasRole(AccessRole.UNMASK_GRANT)) {
+            throw ApiError.of(Response.Status.FORBIDDEN, "Only a designer whose token sees unmasked values can write, "
+                + "change or run custom SQL rules: such SQL can read any column the source's login can.");
         }
     }
 
@@ -778,7 +784,7 @@ public class QualityResource {
             throw new IllegalArgumentException("Send the rule as JSON: assetUrn, type, field, params and thresholds");
         }
         if ("custom_sql".equalsIgnoreCase(String.valueOf(body.type()).trim())) {
-            adminForCustomSql(io.kilnmark.server.quality.RuleType.CUSTOM_SQL);
+            unmaskForCustomSql(io.kilnmark.server.quality.RuleType.CUSTOM_SQL);
         }
         Records.AssetDetail a = asset(body.assetUrn());
         return body.check(context(a), who());

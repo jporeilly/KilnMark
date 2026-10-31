@@ -208,12 +208,14 @@ public class SourceService {
 
     /**
      * Refuses (403), for everyone, a folder or bucket source that would read files another source
-     * already reads while that source has columns marked sensitive. Marks belong to the source that
-     * found the columns, so a second source over the same files would catalogue them unmarked: its
-     * profiles, samples and previews would show the values to stewards and viewers, and to an admin.
-     * The server reaches folders, and buckets through its own cloud role, without a login of the
-     * person's own, so nothing else would stop it. Database sources need a login the person enters,
-     * which reads the same data directly, so they are not checked here (ADR 0027).
+     * already reads. Marks belong to the source that found the columns, so two sources over the same
+     * files keep separate marks: a column marked sensitive in one would be catalogued unmarked in the
+     * other, and its profiles, samples and previews would show the values to stewards, viewers and
+     * admins. That holds for marks set later, or carried there by a pipeline's write, too, so any
+     * overlap is refused, not only one with marks today. The server reaches folders, and buckets
+     * through its own cloud role, without a login of the person's own, so nothing else would stop it.
+     * Database sources need a login the person enters, which reads the same data directly, so they are
+     * not checked here (ADR 0027).
      */
     void noUnmarkedCopy(SourceConfig config) {
         if (!FOLDER_KIND.equals(config.kind()) && !S3_KIND.equals(config.kind())) {
@@ -221,19 +223,24 @@ public class SourceService {
         }
         for (Records.Source other : store.sources()) {
             if (other.name().equals(config.name()) || !other.kind().equals(config.kind())
-                || !sameFiles(config.kind(), config.settings(), other.settings()) || !sights.sourceHasMarks(other.name())) {
+                || !sameFiles(config.kind(), config.settings(), other.settings())) {
                 continue;
             }
-            throw ApiError.of(Response.Status.FORBIDDEN, other.name() + " already reads these files and has columns "
-                + "marked sensitive, so a second source over them would show those columns unmasked. Use "
-                + other.name() + ", or point this source at files no marked source reads.");
+            throw ApiError.of(Response.Status.FORBIDDEN, other.name() + " already reads these files (one folder or "
+                + "prefix inside the other). Two sources over the same files keep separate marks, so a column marked "
+                + "sensitive in one would show unmasked in the other. Use " + other.name() + ", or point this source "
+                + "at files no other source reads.");
         }
     }
 
     static final String FOLDER_KIND = "files";
     static final String S3_KIND = "s3";
 
-    /** Whether two sources of {@code kind} read some of the same files: one folder or prefix inside the other. */
+    /**
+     * Whether two sources of {@code kind} read some of the same files: one folder or prefix inside the
+     * other. Errs towards yes: folders are compared after following links and ignoring case, and
+     * every way of naming AWS's own S3 service counts as one endpoint.
+     */
     static boolean sameFiles(String kind, Map<String, String> a, Map<String, String> b) {
         if (FOLDER_KIND.equals(kind)) {
             java.nio.file.Path x = folder(a.get("path"));
@@ -241,8 +248,9 @@ public class SourceService {
             return x != null && y != null && (x.startsWith(y) || y.startsWith(x));
         }
         if (S3_KIND.equals(kind)) {
-            if (!endpoint(a.get("endpoint")).equals(endpoint(b.get("endpoint")))
-                || !Objects.equals(trim(a.get("bucket")), trim(b.get("bucket"))) || trim(a.get("bucket")) == null) {
+            String bucket = trim(a.get("bucket"));
+            if (bucket == null || !bucket.equalsIgnoreCase(String.valueOf(trim(b.get("bucket"))))
+                || !endpoint(a.get("endpoint")).equals(endpoint(b.get("endpoint")))) {
                 return false;
             }
             String p = trim(a.get("prefix")) == null ? "" : trim(a.get("prefix"));
@@ -252,27 +260,44 @@ public class SourceService {
         return false;
     }
 
+    /** A folder as compared: absolute, normalised, links followed where it exists, lower case. */
     private static java.nio.file.Path folder(String path) {
         if (path == null || path.isBlank()) {
             return null;
         }
         try {
-            return java.nio.file.Path.of(path.trim()).toAbsolutePath().normalize();
+            java.nio.file.Path p = java.nio.file.Path.of(path.trim()).toAbsolutePath().normalize();
+            try {
+                p = p.toRealPath();
+            } catch (java.io.IOException e) {
+                // not there (yet): compare it as written
+            }
+            return java.nio.file.Path.of(p.toString().toLowerCase(java.util.Locale.ROOT));
         } catch (java.nio.file.InvalidPathException e) {
             return null; // the source's own checks report a bad path
         }
     }
 
-    private static String endpoint(String url) {
+    /**
+     * An S3 endpoint as compared: none, or any amazonaws.com host, is AWS's own service; otherwise the
+     * lower-case host with its port, a default port (80, 443) left out.
+     */
+    static String endpoint(String url) {
         String e = trim(url);
         if (e == null) {
-            return "";
+            return "aws";
         }
-        e = e.toLowerCase(java.util.Locale.ROOT);
-        while (e.endsWith("/")) {
-            e = e.substring(0, e.length() - 1);
+        try {
+            java.net.URI u = java.net.URI.create(e.contains("://") ? e : "https://" + e);
+            String host = u.getHost() == null ? e : u.getHost().toLowerCase(java.util.Locale.ROOT);
+            if (host.equals("amazonaws.com") || host.endsWith(".amazonaws.com")) {
+                return "aws";
+            }
+            int port = u.getPort();
+            return port == -1 || port == 80 || port == 443 ? host : host + ":" + port;
+        } catch (IllegalArgumentException x) {
+            return e.toLowerCase(java.util.Locale.ROOT);
         }
-        return e;
     }
 
     private static String trim(String s) {
@@ -514,6 +539,11 @@ public class SourceService {
             }
         });
         return out;
+    }
+
+    /** Whether any asset of {@code source} has a column marked sensitive. */
+    boolean hasMarks(String source) {
+        return sights.sourceHasMarks(source);
     }
 
     /** Who is looking: columns marked sensitive are masked in previews for all but designers with the unmask grant. */

@@ -67,10 +67,23 @@ but does not build. And catalogues have no exact designer, because they do not b
   afterwards; the log line is the control until the audit log.
 - Marks belong to the source that found the columns, so a second source over the same data would
   catalogue it unmarked. For folders and buckets, which the server reaches without a login of the
-  person's own, such a source is refused for everyone while the first has marks (one folder or
-  prefix inside the other). A second database source is not refused: adding it takes a login,
-  and whoever holds that login can read the data directly, outside Kilnmark. Its scan would still
-  show unmarked values to stewards, so the guide asks for one source per database, and the audit
-  log will record who added each source.
+  person's own, a second source over the same files (one folder or prefix inside the other, links
+  followed, case ignored, every name of AWS's own S3 service one endpoint) is refused for everyone,
+  whether or not the first has marks yet, since marks can be set or carried there later. A second
+  database source is not refused: adding it takes a login, and whoever holds that login can read
+  the data directly, outside Kilnmark. Its scan would still show unmarked values to stewards, so
+  the guide asks for one source per database, and the audit log will record who added each source.
+  Two sources added at the same moment are not locked against each other.
+- Deleting a source with marks clears them with its assets, so it is an admin's act, logged, as
+  clearing a mark is.
+- Custom SQL quality rules can read any column the source's login can, and even their counts of
+  failing rows could tell a value bit by bit, so only designers with the grant write, change or run
+  them; admins do not. Their rows and error text are withheld from everyone else, in views and in
+  notifications, while any table of the source has a mark.
+- Masking hides values, not every fact about them. Accepted, as in other masking systems: counts
+  from a library rule on a marked column (how many rows lie in a range), and a pipeline that
+  filters or routes on a marked column and writes only other columns (which rows matched). Both
+  are built by people with roles that already act on the data, and each run is recorded with who
+  asked; a preview of them stays refused without the grant.
 - Messages that said "ask an admin" about sensitive values now say "ask a designer".
 - Tests that read unmasked values sign in with a designer token, not the admin token.

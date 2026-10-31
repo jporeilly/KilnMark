@@ -146,11 +146,19 @@ public class SourceResource {
     @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Views.Deleted delete(@PathParam("name") String name) {
         Records.Source existing = find(name);
+        // Deleting a source drops its marks with its assets, which is clearing them: admins only, and logged,
+        // as clearing a mark is (ADR 0027). Otherwise the same files could be added again, unmarked.
+        boolean marked = sources.hasMarks(existing.name());
+        if (marked && !identity.hasRole(AccessRole.ADMIN_ROLE)) {
+            throw ApiError.of(Response.Status.FORBIDDEN, existing.name() + " has columns marked sensitive, and deleting "
+                + "it clears those marks, so only an admin can delete it.");
+        }
         try {
             Records.Deleted d = conflicts(() -> store.deleteSource(existing.id())).orElseThrow(() -> ApiError.of(
                 Response.Status.NOT_FOUND, "No source called " + name));
             org.jboss.logging.Logger.getLogger(SourceResource.class).infof(
-                "Source %s deleted by %s, with %d assets and %d runs", d.name(), who(), d.assets(), d.runs());
+                "Source %s deleted by %s, with %d assets and %d runs%s", d.name(), who(), d.assets(), d.runs(),
+                marked ? "; its columns marked sensitive are no longer marked" : "");
             return new Views.Deleted(d.name(), d.assets(), d.runs());
         } catch (GraphStore.SourceBusyException e) {
             throw ApiError.of(Response.Status.CONFLICT, e.getMessage());

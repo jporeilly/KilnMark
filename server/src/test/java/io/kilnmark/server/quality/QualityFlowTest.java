@@ -319,19 +319,23 @@ class QualityFlowTest {
             "params", Map.of("min", 0))));
         rules.put("orphans", rule(Map.of("assetUrn", ORDERS, "field", "customer_id", "type", "references",
             "params", Map.of("asset", CUSTOMERS, "field", "id"))));
-        // Custom SQL: admins only, never functions that act outside the query.
+        // Custom SQL: designers who see unmasked values only (ADR 0027), never functions that act outside the query.
         Map<String, Object> custom = Map.of("assetUrn", CUSTOMERS, "field", "quantity", "type", "custom_sql",
             "params", Map.of("sql", "SELECT * FROM ${table} WHERE ${column} < 0"));
         as(steward).contentType(ContentType.JSON).body(custom).post("/api/v1/quality/rules").then().statusCode(403);
-        rules.put("custom", admin().contentType(ContentType.JSON).body(custom).post("/api/v1/quality/rules").then()
+        admin().contentType(ContentType.JSON).body(custom).post("/api/v1/quality/rules").then().statusCode(403)
+            .body("error", containsString("sees unmasked values"));
+        Tokens.as(Tokens.newToken("designer", false)).contentType(ContentType.JSON).body(custom)
+            .post("/api/v1/quality/rules").then().statusCode(403);
+        rules.put("custom", designer().contentType(ContentType.JSON).body(custom).post("/api/v1/quality/rules").then()
             .statusCode(201).extract().jsonPath().getLong("id"));
-        admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+        designer().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
             "params", Map.of("sql", "SELECT nextval('qa.s') FROM ${table}"))).post("/api/v1/quality/rules").then()
             .statusCode(400).body("error", containsString("nextval"));
-        admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+        designer().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
             "params", Map.of("sql", "SELECT 1 AS a) f) DENY SELECT ON qa.t TO public COMMIT SELECT (SELECT 1 AS b FROM "
                 + "(SELECT 1 AS c"))).post("/api/v1/quality/rules").then().statusCode(400);
-        rules.put("slow", admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+        rules.put("slow", designer().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
             "params", Map.of("sql", "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT * FROM r")))
             .post("/api/v1/quality/rules").then().statusCode(201).extract().jsonPath().getLong("id"));
         as(steward).post("/api/v1/quality/rules/" + rules.get("slow") + "/run").then().statusCode(403);
@@ -344,7 +348,7 @@ class QualityFlowTest {
             .post("/api/v1/quality/rules").then().statusCode(403);
         as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "nope", "type", "unique"))
             .post("/api/v1/quality/rules").then().statusCode(400).body("error", containsString("field"));
-        admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+        designer().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
             "params", Map.of("sql", "DELETE FROM qa.orders"))).post("/api/v1/quality/rules").then().statusCode(400)
             .body("error", containsString("params.sql"));
         as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "id", "type", "unique",
@@ -677,12 +681,12 @@ class QualityFlowTest {
             .post("/api/v1/quality/rules/preview").then().statusCode(409);
 
         // This source logs in as the database's superuser: custom SQL refuses to run there.
-        long custom = admin().contentType(ContentType.JSON).body(Map.of("assetUrn", urn, "field", "quantity",
+        long custom = designer().contentType(ContentType.JSON).body(Map.of("assetUrn", urn, "field", "quantity",
             "type", "custom_sql", "params", Map.of("sql", "SELECT * FROM ${table} WHERE ${column} < 0")))
             .post("/api/v1/quality/rules").then().statusCode(201).extract().jsonPath().getLong("id");
-        waitForQualityRun(admin().post("/api/v1/quality/rules/" + custom + "/run").then().statusCode(202).extract()
+        waitForQualityRun(designer().post("/api/v1/quality/rules/" + custom + "/run").then().statusCode(202).extract()
             .jsonPath().getLong("id"));
-        JsonPath refused = admin().get("/api/v1/quality/rules/" + custom).then().statusCode(200).extract().jsonPath();
+        JsonPath refused = designer().get("/api/v1/quality/rules/" + custom).then().statusCode(200).extract().jsonPath();
         assertEquals("error", refused.getString("latest.status"));
         assertTrue(refused.getString("latest.message").contains("superuser"), refused.getString("latest.message"));
     }

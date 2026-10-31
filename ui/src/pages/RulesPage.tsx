@@ -24,7 +24,7 @@ const assetName = (urn: string) => {
 };
 
 /** Rules: every rule with its latest result; stewards add, preview, edit, run, switch off and delete them. */
-export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
+export function RulesPage({ role, urn, unmask = false }: { role: AccessRole; urn: string; unmask?: boolean }) {
   useTitle("Quality rules");
   const steward = allows(role, "steward");
   const [filter, setFilter] = useState(urn);
@@ -32,20 +32,20 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<QualityRule | null>(null);
-  const admin = allows(role, "admin");
-  const designer = allows(role, "designer");
+  // Only a designer whose token sees unmasked values reads them and writes custom SQL (ADR 0027).
+  const sees = unmask && allows(role, "designer");
 
   // keepError: refresh the list but leave the message about what just went wrong showing.
   const load = useCallback((keepError?: boolean) => {
     qualityApi
       // Designers edit with the real values of sensitive columns; others get them held back ({"hidden": true}).
-      .rules(filter.trim() ? { urn: filter.trim() } : {}, admin)
+      .rules(filter.trim() ? { urn: filter.trim() } : {}, sees)
       .then((r) => {
         setRules(r);
         if (keepError !== true) setError(null);
       })
       .catch((e: Error) => setError(e.message));
-  }, [filter, admin]);
+  }, [filter, sees]);
 
   useEffect(() => setFilter(urn), [urn]);
   useEffect(() => load(), [load]);
@@ -207,7 +207,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
                     {steward && (
                       <td>
                         <div className="buttons tight">
-                          {(designer || rule.type !== "custom_sql") && (
+                          {(sees || rule.type !== "custom_sql") && (
                             <button type="button" id={`edit-rule-${rule.id}`} onClick={() => startEdit(rule)}
                               aria-label={`Edit rule ${rule.name}`}>
                               Edit
@@ -239,12 +239,12 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
         editing ? (
           <RuleForm
             key={`edit-${editing.id}-${editing.updatedAt}`}
-            customSql={designer}
+            customSql={sees}
             urn={editing.assetUrn}
             rule={editing}
             onReload={() =>
               qualityApi
-                .rule(editing.id, admin)
+                .rule(editing.id, sees)
                 .then((v) => {
                   focusForm.current = true;
                   setEditing(v.rule);
@@ -262,7 +262,7 @@ export function RulesPage({ role, urn }: { role: AccessRole; urn: string }) {
         ) : (
           <RuleForm
             key="add"
-            customSql={designer}
+            customSql={sees}
             urn={urn}
             onSaved={(name) => {
               setNotice(`Rule "${name}" added. It runs after the next scan, or press Run now.`);

@@ -73,9 +73,11 @@ public class Sights {
         return mayUnmask() && !model;
     }
 
-    /** Whether any asset of the source has a column marked sensitive. */
+    private final Map<String, Boolean> sourceMarks = new HashMap<>();
+
+    /** Whether any asset of the source has a column marked sensitive (once per request and source). */
     public boolean sourceHasMarks(String source) {
-        return store.sourceHasMarks(source);
+        return sourceMarks.computeIfAbsent(source, store::sourceHasMarks);
     }
 
     /** Quality views: values for roles that may see data; sensitive columns only for a designer who asks. */

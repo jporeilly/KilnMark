@@ -7,7 +7,7 @@
     {"question": "Which role do I need to add or change rules?", "relevant": ["quality-rules/before-you-start"]},
     {"question": "How do I get a webhook call when a rule fails?", "relevant": ["quality-rules/alerts-and-tasks"]},
     {"question": "How do I switch a rule off without deleting it?", "relevant": ["quality-rules/managing-rules"]},
-    {"question": "Can a designer write their own SQL query as a check?", "relevant": ["quality-rules/custom-sql-designers-and-admins"]},
+    {"question": "Can a designer write their own SQL query as a check?", "relevant": ["quality-rules/custom-sql-designers"]},
     {"question": "What does the status Could not run mean?", "relevant": ["quality-rules/running-rules-and-reading-results", "quality-rules/when-something-goes-wrong"]},
     {"question": "How do drift and rule results change an asset's quality score?", "relevant": ["quality-rules/how-rules-affect-scores"]},
     {"question": "How do I export an asset's rules as an ODCS data contract?", "relevant": ["quality-rules/sharing-rules-with-other-tools"]},
