@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import io.kilnmark.graph.Urn;
 import io.kilnmark.graph.store.GraphStore;
 import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.connect.Connectors;
@@ -569,7 +570,8 @@ public class QualityResource {
                 + "on keep_samples for its source and scan again."));
         ObjectNode out = json.valueToTree(p);
         if (p.failingRows() != null) {
-            out.set("failingRows", rows(p.failingRows().columns(), p.failingRows().rows(), r.assetUrn(), sight, false));
+            out.set("failingRows", rows(p.failingRows().columns(), p.failingRows().rows(), r.assetUrn(), sight,
+                r.type() == io.kilnmark.server.quality.RuleType.CUSTOM_SQL));
         }
         return out;
     }
@@ -591,11 +593,27 @@ public class QualityResource {
                                              @QueryParam("unmask") boolean unmask) {
         Rule rule = findRule(id);
         Masking.Sight sight = sights.of(rule.assetUrn(), unmask);
+        boolean quiet = customSqlHidden(rule, rule.assetUrn(), sight);
         return store.results(id, limit == null ? 20 : Math.max(1, Math.min(limit, 200))).stream()
-            .map(r -> Masking.result(r, rule, sight)).toList();
+            .map(r -> Masking.result(r, rule, sight)).map(r -> quiet ? withoutDetail(r) : r).toList();
     }
 
-    /** Custom SQL rules are the admins' alone: they can read anything the source's login can see. */
+    /**
+     * Whether a custom SQL rule's rows and error text are withheld from this caller: its SQL can read
+     * any table the source's login can, so whenever any asset of the source has a mark, unless a
+     * designer with the unmask grant asked to unmask (ADR 0027). {@code rule} null counts as custom.
+     */
+    private boolean customSqlHidden(Rule rule, String urn, Masking.Sight sight) {
+        boolean custom = rule == null || rule.type() == io.kilnmark.server.quality.RuleType.CUSTOM_SQL;
+        return custom && !sight.unmasked() && (sight.anyHidden() || sights.sourceHasMarks(Urn.parse(urn).source()));
+    }
+
+    private static QualityStore.Result withoutDetail(QualityStore.Result r) {
+        return r == null ? null : new QualityStore.Result(r.id(), r.ruleId(), r.qualityRunId(), r.assetUrn(), r.status(),
+            r.total(), r.failing(), r.method(), null, null, r.message(), r.observedAt(), r.origin(), null, r.estimate());
+    }
+
+    /** Custom SQL rules are for designers and admins: they can read anything the source's login can see. */
     private void adminForCustomSql(io.kilnmark.server.quality.RuleType type) {
         if (type == io.kilnmark.server.quality.RuleType.CUSTOM_SQL && !identity.hasRole(AccessRole.DESIGNER_ROLE)) {
             throw ApiError.of(Response.Status.FORBIDDEN, "Only a designer or an admin can write, change or run custom "
@@ -611,7 +629,9 @@ public class QualityResource {
             "No result " + id));
         Rule rule = store.rule(r.ruleId()).orElse(null);
         Masking.Sight sight = sights.of(r.assetUrn(), unmask);
-        ObjectNode out = json.valueToTree(Masking.result(r, rule, sight));
+        boolean quiet = customSqlHidden(rule, r.assetUrn(), sight);
+        QualityStore.Result shown = Masking.result(r, rule, sight);
+        ObjectNode out = json.valueToTree(quiet ? withoutDetail(shown) : shown);
         // Rows failing a rule on a column the caller may not see would show which rows hold which values: counts only.
         if (sight.data() && Masking.ruleValues(rule, sight) && r.failingRows() != null
             && quality.samplesAllowed(r.assetUrn())) {
@@ -632,13 +652,18 @@ public class QualityResource {
     /**
      * Failing rows with sensitive columns masked: by name, and by position, since rows from the
      * library's queries ({@code SELECT t.*}) hold the asset's columns in order. Rows from custom
-     * SQL can hold anything under any name, so when the asset has a sensitive column they are
-     * masked entirely unless an admin unmasks them.
+     * SQL can hold anything under any name, from any table the source's login can read, so when
+     * any asset of the source has a sensitive column they are masked entirely unless a designer
+     * with the unmask grant unmasks them (ADR 0027).
      */
     private ObjectNode rows(List<String> columns, List<List<String>> rows, String urn, Masking.Sight sight,
                             boolean custom) {
         Set<Integer> hide = new HashSet<>();
-        if (sight.anyHidden()) {
+        if (custom && customSqlHidden(null, urn, sight)) {
+            for (int i = 0; i < columns.size(); i++) {
+                hide.add(i);
+            }
+        } else if (sight.anyHidden()) {
             List<String> fields = graph.asset(urn).map(a -> a.fields().stream().map(Records.FieldDetail::name).toList())
                 .orElse(List.of());
             for (int i = 0; i < columns.size(); i++) {

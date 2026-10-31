@@ -370,7 +370,7 @@ public class SourceService {
             masked(config, path.get() == null ? asset : path.get(), p), p.rows().size(), p.truncated(), p.details());
     }
 
-    /** The preview's rows with the catalogued asset's sensitive columns masked, for all but admins. */
+    /** The preview's rows with the catalogued asset's sensitive columns masked, for all but designers with the unmask grant. */
     private List<List<String>> masked(SourceConfig config, String path, io.kilnmark.kiln.connect.Preview p) {
         io.kilnmark.server.quality.Masking.Sight sight;
         try {
@@ -409,7 +409,7 @@ public class SourceService {
      * and stewards preview them as they add them. But masking finds a table's sensitive columns by
      * the saved source's name and the column names it read, so for a saved source with columns
      * marked sensitive, changed reading settings (another folder, no header row, other patterns)
-     * could read the same data under other names: only an admin may preview those.
+     * could read the same data under other names: only a designer with the unmask grant may preview those.
      */
     void previewDraftAllowed(Records.Source existing, SourceConfig draft) {
         Records.Source saved = existing != null ? existing : store.source(draft.name()).orElse(null);
@@ -442,7 +442,7 @@ public class SourceService {
         return out;
     }
 
-    /** Who is looking: columns marked sensitive are masked in previews for all but designers and admins. */
+    /** Who is looking: columns marked sensitive are masked in previews for all but designers with the unmask grant. */
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
 

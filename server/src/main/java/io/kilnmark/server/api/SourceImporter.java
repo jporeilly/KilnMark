@@ -88,8 +88,8 @@ public class SourceImporter {
      * {@code scan}: afterwards, test each source's connection and queue a scan of each (only of
      * those whose test passed, when testing), reported in a batch the UI polls. {@code admin}:
      * whether the caller is an admin, who alone may add or change admin-only kinds of source (generic
-     * JDBC) and change how a source with sensitive marks is read; a row that would is refused, as the
-     * same change in the form is.
+     * JDBC). Changing how a source with sensitive marks is read needs the unmask grant, whoever
+     * imports; a row that would is refused, as the same change in the form is.
      */
     public record Options(boolean dryRun, boolean skipErrors, boolean remapHosts, boolean test, boolean scan,
                           boolean admin) {
@@ -271,10 +271,10 @@ public class SourceImporter {
             : existing.displayName().equals(existing.name()) ? null : existing.displayName();
         SourceService.Draft d = asRow(() -> sources.draft(new SourceForm(r.name(), rowKind, merged, password, null,
             null, displayName), existing, true, admin));
-        if (!admin) {
-            asRow(() -> sources.readingUnchangedOrUnmasked(existing, d.config().settings(),
-                "change how this source is read"));
-        }
+        // For every caller, admins included: read under other settings, marked columns could come back
+        // under new names, unmasked (ADR 0027).
+        asRow(() -> sources.readingUnchangedOrUnmasked(existing, d.config().settings(),
+            "change how this source is read"));
         String shown = d.displayName() == null ? existing.name() : d.displayName();
         // A supplied password always counts as a change: comparing it with the stored one would
         // tell whoever runs imports whether they had guessed it.
