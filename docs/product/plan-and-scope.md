@@ -97,6 +97,21 @@ Later phases follow the architecture spec's roadmap; each gets its own detailed 
 
 Integration with other catalogs arrives only through open standards in v0.5 or later.
 
+Also needed, not yet scheduled:
+
+- **A library of pipelines and flows.** Ready-made pipelines and flows for common work (incremental
+  loads, slowly changing dimensions, file-to-table with error rows, lookups, dedupes, summaries, an
+  orchestrating flow with alerts), and migration templates that turn jobs built in other data
+  integration tools into Kilnmark pipelines and flows. They build on the importer for existing jobs
+  (v0.3), and an audit of those tools' steps and job entries against Kilnmark's nodes comes first. A
+  decision is needed on how the importer reads other tools' files, since Kilnmark uses no other
+  vendors' file formats (Scope).
+- **Projects and their lifecycle.** A project groups pipelines, flows and sources for a team: several
+  designers who build, a steward who runs and looks after quality, and a viewer or two. It needs a way
+  to set one up and give people their roles in it (roles per project, not only per server, and the
+  unmask grant of ADR 0027 per project), and a lifecycle from development through test to
+  production: promoting versions between stages, reviews before promotion, and who may promote.
+
 ## Engineering setup
 
 One mono-repo, one build, one Compose file: the whole product runs from a clean clone with a single command.
