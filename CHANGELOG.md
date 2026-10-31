@@ -7,6 +7,16 @@ details.
 
 ### Details
 
+- **The canvas: the node list only, and connections that do not cross.** The rail of folder
+  buttons beside the node list is gone; **Nodes** in the canvas toolbar shows and hides the list,
+  which is open by default. Auto-layout now stacks each column in the order of the outputs feeding
+  it, so a route's routes (or a filter's kept and rejected rows) reach their nodes without crossing.
+  The pipelines guide says what solid and dashed connections are, and that one output feeding
+  several nodes gives each of them every row (route, filter and gates are how rows are split).
+  A click on a node now only selects it, so it can be moved without its settings opening; a
+  double-click or Enter opens them (and a node just added opens them at once). A node's preview
+  scrolls inside a box that fits the screen, both ways, with the column names kept in view and
+  smaller text.
 - **A volume sample.** The sample data gains one large table, `volume/sales.csv`: four million
   made-up till sales, written by the `sample-data` source as they are read (from a fixed seed, every
   row 54 bytes, so the file's size is known) rather than stored. `sample-volume` reads it with the

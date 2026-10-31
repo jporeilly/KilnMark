@@ -102,10 +102,12 @@ The **Canvas** and **YAML** tabs show the same pipeline: a change on the canvas 
 lines it changes in the YAML, so your comments, layout and every other setting stay exactly as
 they were, and a change to the YAML redraws the canvas. Kilnmark remembers which tab you used last.
 
-The canvas uses the page's full width. On the left is a narrow rail with a button per folder of
-node types; the pipeline fills the rest, with an overview in its corner for finding your way
-around a large one. The selected node's settings open in a panel over the right of the canvas (below
-it on a narrow screen), and close with its **×** or when nothing is selected.
+The canvas uses the page's full width. On the left is the node list, which **Nodes** in the canvas
+toolbar hides and shows again; the pipeline fills the rest, with an overview in its corner for
+finding your way around a large one. A click selects a node, so you can move it without anything
+opening. To open its settings, double-click it, or select it and press Enter: they open in a panel
+over the right of the canvas (below it on a narrow screen), follow the node you select while open,
+and close with their **×** or when nothing is selected. A node you add opens its settings at once.
 
 ### Adding and connecting nodes
 
@@ -113,10 +115,8 @@ it on a narrow screen), and close with its **×** or when nothing is selected.
   selected, the new node is added after it and reads from it.
 - **The node list** is in folders: Read, Write, Filter and route, Transform, Combine, Aggregate,
   Quality, AI and Other, each with how many types it holds, and **Recently used** first with the
-  last five types you added. The first button on the rail opens the whole list, with **Find a
-  node** to search every folder at once (the folders with a match open by themselves); choose a
-  folder's icon on the rail to open the list at that folder. The list sits beside the canvas, which
-  narrows to make room, so it never covers your nodes (on a phone it opens over the canvas). Folders
+  last five types you added. **Find a node** searches every folder at once (the folders with a
+  match open by themselves). The list sits beside the canvas, which narrows to make room, so it never covers your nodes (on a phone it opens over the canvas). Folders
   holding the nodes your pipeline uses start open, and Kilnmark remembers in this browser which
   folders you open.
 - **Each node** shows its type, its id, a line summing up its settings, its input ports on the
@@ -124,8 +124,16 @@ it on a narrow screen), and close with its **×** or when nothing is selected.
   focus to it, to see the columns leaving it.
 - **Connect nodes** by dragging from an output port to an input port. A connection Kilnmark cannot
   make is refused with the reason: a node reading from itself, a loop, or an input that already
-  reads from another node (combine rows with a union node instead). Lines for ports other than
-  `out` are dashed and labelled.
+  reads from another node (combine rows with a union node instead). A solid line leaves a node's
+  main output, `out`; a line from any other output (a filter's or lookup's `rejected`, a gate's
+  `quarantine`, a route's named routes) is dashed and labelled with that output's name.
+- **One output feeding several nodes gives each of them every row.** Connect a node's `out` to an
+  aggregate and to a write, and the aggregate totals all the rows while the write writes all of
+  them. Rows are never shared out between the nodes. To send different rows different ways, say
+  which way each goes: a **route** node sends each row down the first route whose condition it
+  meets (and the rest through `out`), a **filter** keeps the rows meeting its condition and sends
+  the others through `rejected`, and a quality gate can set failing rows aside through
+  `quarantine`.
 - **Remove a connection** with **Disconnect** beside it in the settings of the node it feeds, or
   click it and press Delete.
 - **Move** a node by dragging it. **Auto-layout** lays the nodes out again from left to right.
@@ -250,9 +258,9 @@ list:
 | Shift+arrow keys | Move the node on the canvas |
 | Alt+arrow keys | Pan the canvas |
 | A | Open the node list at **Find a node**; type, Tab to the type and press Enter to add it after the selected node |
-| Arrow keys in the node list | Up and down through the folders and nodes; Right opens a folder, Left closes it; Enter adds the node. On the rail, Right opens the list at that folder |
+| Arrow keys in the node list | Up and down through the folders and nodes; Right opens a folder, Left closes it; Enter adds the node |
 | C | **Connect to…**: a list of the nodes this node can send rows to or read rows from |
-| Enter | Go to the node's settings |
+| Enter | Open the node's settings and go to them (a double-click does the same) |
 | Shift+F10 or the menu key | The node's menu: **Preview rows**, **Settings**, **Connect to…**, **Duplicate**, **Remove** |
 | Delete or Backspace | Remove the node (or a connection you clicked) |
 | Ctrl+D | Duplicate the node |

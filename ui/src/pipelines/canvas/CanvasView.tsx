@@ -21,6 +21,8 @@ import {
   IconFocus2,
   IconKeyboard,
   IconLayoutDistributeHorizontal,
+  IconLayoutSidebarLeftCollapse,
+  IconLayoutSidebarLeftExpand,
   IconPlug,
   IconSparkles,
   IconTextSize,
@@ -144,7 +146,7 @@ const SHORTCUTS: [string, string][] = [
   ["C", "Connect to… : connect the node to another"],
   ["A", "Add a node: open the node list and go to its search"],
   ["Arrow keys in the node list", "Move through the folders and nodes; Right opens a folder, Left closes it; Enter adds the node"],
-  ["Enter", "Go to the node's settings"],
+  ["Enter", "Open the node's settings and go to them (a double-click does the same)"],
   ["Shift+F10 or the menu key", "Open the node's menu: preview its rows, open its settings, connect, duplicate or remove it"],
   ["Delete or Backspace", "Remove the node (or a connection selected with the mouse)"],
   ["Ctrl+D", "Duplicate the node"],
@@ -166,7 +168,7 @@ function Canvas(props: CanvasProps) {
   const [sources, setSources] = useState<Source[] | null>(null);
   const [announce, setAnnounce] = useState("");
   const [refusal, setRefusal] = useState<string | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(true);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [connectFor, setConnectFor] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
@@ -174,6 +176,14 @@ function Canvas(props: CanvasProps) {
   // The node's context menu, the drawer's tab, and previews at a node.
   const [menu, setMenu] = useState<{ node: string; x: number; y: number } | null>(null);
   const [drawerTab, setDrawerTab] = useState<"settings" | "preview">("settings");
+  // Whether the selected node's settings are open: selecting a node (to move it, say) does not open
+  // them; a double-click, Enter, the node's menu or adding a node does.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // With nothing selected (Escape, a click on the canvas, a removed node) the settings close, so the
+  // next node selected does not open them.
+  useEffect(() => {
+    if (!selected) setDrawerOpen(false);
+  }, [selected]);
   const [previewAsk, setPreviewAsk] = useState<PreviewAsk | null>(null);
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
   const role = useRole();
@@ -230,8 +240,8 @@ function Canvas(props: CanvasProps) {
   const graph = read.ok ? read.graph : (props.memory.lastGood ?? null);
   const broken = !read.ok;
   const readOnly = lockedByPage || broken || types == null;
-  // An empty canvas opens the node list; otherwise it waits in the rail. (A saved pipeline is empty
-  // text until it has loaded, which is not an empty canvas.)
+  // An empty canvas opens the node list, even if it was hidden. (A saved pipeline is empty text
+  // until it has loaded, which is not an empty canvas.)
   const nodeCount = graph?.nodes.length ?? -1;
   const loaded = yaml.trim() !== "" && types != null;
   useEffect(() => {
@@ -453,6 +463,8 @@ function Canvas(props: CanvasProps) {
     const made = apply(c, label, { pin: id ? { [id]: spot } : true });
     if (made) {
       onSelect(made);
+      setDrawerOpen(true);
+      setDrawerTab("settings");
       pendingFocus.current = made;
     }
   };
@@ -683,6 +695,8 @@ function Canvas(props: CanvasProps) {
     const r = props.focusRequest;
     if (!r) return;
     onSelect(r.node);
+    setDrawerOpen(true);
+    setDrawerTab("settings");
     window.setTimeout(() => {
       const panel = wrap.current?.querySelector<HTMLElement>(".cv-drawer");
       const field = r.key ? panel?.querySelector<HTMLElement>(`[data-setting="${CSS.escape(r.key)}"]`) : null;
@@ -910,6 +924,7 @@ function Canvas(props: CanvasProps) {
     if (k === "Enter" || k === " ") {
       done();
       onSelect(id);
+      setDrawerOpen(true);
       window.setTimeout(() => wrap.current?.querySelector<HTMLElement>(".cv-drawer input, .cv-drawer select, .cv-drawer textarea")?.focus(), 30);
       return;
     }
@@ -948,6 +963,7 @@ function Canvas(props: CanvasProps) {
     flush();
     setSuggestOpen(false);
     onSelect(id);
+    setDrawerOpen(true);
     setDrawerTab("preview");
     // Counted here, not from the last ask, which the panel clears once it has run it.
     askCount.current += 1;
@@ -975,6 +991,7 @@ function Canvas(props: CanvasProps) {
         label: "Settings",
         onSelect: () => {
           onSelect(id);
+          setDrawerOpen(true);
           setDrawerTab("settings");
           window.setTimeout(() => wrap.current?.querySelector<HTMLElement>(".cv-drawer input, .cv-drawer select, .cv-drawer textarea")?.focus(), 30);
         },
@@ -1005,6 +1022,22 @@ function Canvas(props: CanvasProps) {
         </p>
       )}
       <div className="cv-toolbar" ref={toolbar} role="group" aria-label="Canvas tools">
+        <button
+          type="button"
+          className={`cv-tool${paletteOpen ? " is-on" : ""}`}
+          aria-pressed={paletteOpen}
+          aria-controls="cv-palette-panel"
+          title={paletteOpen ? "Hide the node list" : "Show the node list"}
+          onClick={() => setPaletteOpen((o) => !o)}
+        >
+          {paletteOpen ? (
+            <IconLayoutSidebarLeftCollapse size={18} stroke={1.8} aria-hidden="true" />
+          ) : (
+            <IconLayoutSidebarLeftExpand size={18} stroke={1.8} aria-hidden="true" />
+          )}
+          Nodes
+        </button>
+        <span className="cv-tool-sep" aria-hidden="true" />
         <button type="button" className="cv-tool" onClick={undo} disabled={readOnly || !props.canUndo}>
           <IconArrowBackUp size={18} stroke={1.8} aria-hidden="true" />
           Undo
@@ -1061,13 +1094,12 @@ function Canvas(props: CanvasProps) {
         )}
       </div>
 
-      <div className={`cv-stage${selectedNode || suggestOpen ? " has-drawer" : ""}`}>
+      <div className={`cv-stage${(selectedNode && drawerOpen) || suggestOpen ? " has-drawer" : ""}${paletteOpen ? "" : " no-list"}`}>
         <Palette
           types={types}
           usedTypes={graph?.nodes.map((s) => s.type ?? "") ?? []}
           readOnly={readOnly}
           expanded={paletteOpen}
-          onExpand={setPaletteOpen}
           onAdd={(type) => add(type)}
           searchRef={searchBox}
           hint={
@@ -1116,6 +1148,14 @@ function Canvas(props: CanvasProps) {
               setSelectedEdge(null);
               onSelect(n.id);
             }}
+            onNodeDoubleClick={(_, n) => {
+              setSelectedEdge(null);
+              flush();
+              onSelect(n.id);
+              setSuggestOpen(false);
+              setDrawerOpen(true);
+              setDrawerTab("settings");
+            }}
             onEdgeClick={(_, e) => {
               setSelectedEdge(e.id);
               say(`Selected the connection from ${edgeWords(e.data as GraphEdge)}. Press Delete to remove it.`);
@@ -1123,6 +1163,7 @@ function Canvas(props: CanvasProps) {
             onPaneClick={() => {
               setSelectedEdge(null);
               onSelect(null);
+              setDrawerOpen(false);
             }}
             onNodeContextMenu={(e, n) => {
               e.preventDefault();
@@ -1184,7 +1225,7 @@ function Canvas(props: CanvasProps) {
             <SuggestionsPanel yaml={yaml} readOnly={readOnly} onAdd={addSuggestion} onClose={() => setSuggestOpen(false)} />
           </Suspense>
         )}
-        {selectedNode && !suggestOpen && (
+        {selectedNode && drawerOpen && !suggestOpen && (
           <aside
             className={`cv-drawer${drawerTab === "preview" ? " is-wide" : ""}`}
             aria-labelledby="cv-panel-h"
@@ -1203,8 +1244,8 @@ function Canvas(props: CanvasProps) {
                 onClick={() => {
                   const id = selectedNode.id;
                   flush();
-                  onSelect(null);
-                  // Back to the node, without selecting it again (which would reopen the drawer).
+                  setDrawerOpen(false);
+                  // Back to the node, which stays selected.
                   quietFocus.current = id;
                   focusNode(id);
                 }}

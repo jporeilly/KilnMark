@@ -8,8 +8,6 @@ import {
   IconDeviceFloppy,
   IconFilter,
   IconHistory,
-  IconLayoutSidebarLeftCollapse,
-  IconLayoutSidebarLeftExpand,
   IconMathFunction,
   IconSearch,
   IconShieldCheck,
@@ -111,18 +109,16 @@ function treeKeys(e: KeyboardEvent<HTMLElement>, root: HTMLElement | null, toggl
 }
 
 /**
- * The node types, in folders by category: an icon rail (a button per folder) and, beside it, a list
- * docked in its own column so it never covers the canvas. A folder's rail button opens the list with
- * that folder open. In the list, folders are disclosure buttons; the arrow keys move through the
- * tree, Right and Left open and close a folder, Enter adds a node after the selected one. Which
- * folders are open is remembered in this browser.
+ * The node types, in folders by category, as a list docked in its own column so it never covers the
+ * canvas; the canvas toolbar's Nodes button shows and hides it. Folders are disclosure buttons; the
+ * arrow keys move through the tree, Right and Left open and close a folder, Enter adds a node after
+ * the selected one. Which folders are open is remembered in this browser.
  */
 export function Palette({
   types,
   usedTypes,
   readOnly,
   expanded,
-  onExpand,
   onAdd,
   searchRef,
   hint,
@@ -131,13 +127,12 @@ export function Palette({
   usedTypes: string[];
   readOnly: boolean;
   expanded: boolean;
-  onExpand: (open: boolean) => void;
   onAdd: (type: string) => void;
   searchRef: RefObject<HTMLInputElement | null>;
   hint: string;
 }) {
   const [search, setSearch] = useState("");
-  // Read each time: nodes added by dragging or from the rail update it too.
+  // Read each time: nodes added by dragging update it too.
   const recent = stored<string[]>(RECENT_KEY, []);
   const recentKey = recent.join(",");
   const folders: Folder[] = useMemo(() => {
@@ -187,24 +182,6 @@ export function Palette({
     .filter((f) => f.types.length > 0 && !(q && f.name === RECENT));
   const tree = useRef<HTMLDivElement>(null);
 
-  // A folder's rail button: the list opens with that folder open, scrolled to and focused.
-  const [reveal, setReveal] = useState<{ folder: string } | null>(null);
-  const showFolder = (folder: string) => {
-    setSearch("");
-    toggle(folder, true);
-    onExpand(true);
-    setReveal({ folder });
-  };
-  useEffect(() => {
-    if (!reveal || !expanded) return;
-    const el = tree.current?.querySelector<HTMLElement>(`[data-tree-item="folder"][data-folder="${CSS.escape(reveal.folder)}"]`);
-    const list = el?.closest<HTMLElement>(".cv-palette-panel");
-    // Scrolls the list only: scrollIntoView would move the page too.
-    if (el && list) list.scrollTop += el.getBoundingClientRect().top - list.getBoundingClientRect().top - 8;
-    el?.focus({ preventScroll: true });
-    setReveal(null);
-  }, [reveal, expanded]);
-
   const nodeButton = (t: NodeType, folder: string) => (
     <button
       type="button"
@@ -228,129 +205,74 @@ export function Palette({
     </button>
   );
 
-  const railKeys = (e: KeyboardEvent<HTMLElement>) => {
-    const items = [...(e.currentTarget.querySelectorAll<HTMLElement>("[data-rail-item]") ?? [])];
-    const i = items.indexOf(e.target as HTMLElement);
-    if (i < 0) return;
-    const to = e.key === "ArrowDown" ? i + 1 : e.key === "ArrowUp" ? i - 1 : e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : null;
-    if (to != null) {
-      e.preventDefault();
-      e.stopPropagation();
-      items[(to + items.length) % items.length]?.focus();
-    } else if (e.key === "ArrowRight") {
-      const f = (e.target as HTMLElement).dataset.folder;
-      if (f) {
-        e.preventDefault();
-        e.stopPropagation();
-        showFolder(f);
-      }
-    }
-  };
+  if (!expanded) return null;
 
   return (
-    <div className={`cv-palette${expanded ? " is-expanded" : ""}`}>
-      <nav className="cv-rail" aria-label="Node types" onKeyDown={railKeys}>
-        <button
-          type="button"
-          className="cv-rail-button"
-          data-rail-item
-          aria-expanded={expanded}
-          aria-controls="cv-palette-panel"
-          aria-label={expanded ? "Hide the node list" : "Add a node: show the node list"}
-          title={expanded ? "Hide the node list" : "Show the node list"}
-          onClick={() => onExpand(!expanded)}
-        >
-          {expanded ? <IconLayoutSidebarLeftCollapse size={20} stroke={1.8} aria-hidden="true" /> : <IconLayoutSidebarLeftExpand size={20} stroke={1.8} aria-hidden="true" />}
-        </button>
-        <span className="cv-rail-sep" aria-hidden="true" />
-        {folders.map((f) => {
-          const Icon = ICONS[f.name] ?? IconBox;
-          const showing = expanded && !q && open.has(f.name);
-          return (
-            <button
-              key={f.name}
-              type="button"
-              className={`cv-rail-button${showing ? " is-open" : ""}`}
-              data-rail-item
-              data-folder={f.name}
-              aria-label={`${f.name} (${f.types.length}): show in the node list`}
-              title={`${f.name} (${f.types.length})`}
-              aria-controls={expanded ? `cv-folder-${slug(f.name)}` : undefined}
-              disabled={readOnly}
-              onClick={() => showFolder(f.name)}
-            >
-              <Icon size={20} stroke={1.8} aria-hidden="true" />
-            </button>
-          );
-        })}
-      </nav>
-
-      {expanded && (
-        <section id="cv-palette-panel" className="cv-palette-panel" aria-labelledby="cv-palette-h">
-          <h3 id="cv-palette-h" className="cv-side-title">
-            Nodes
-          </h3>
-          <label className="cv-search">
-            <span className="visually-hidden">Find a node type</span>
-            <IconSearch size={16} stroke={1.8} aria-hidden="true" />
-            <input
-              ref={searchRef}
-              type="search"
-              placeholder="Find a node"
-              value={search}
-              disabled={readOnly}
-              aria-describedby="cv-palette-hint"
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  tree.current?.querySelector<HTMLElement>("[data-tree-item]")?.focus();
-                }
-              }}
-            />
-          </label>
-          <p id="cv-palette-hint" className="hint">
-            {hint}
-          </p>
-          {types == null && <p className="small muted">Loading the node types…</p>}
-          <div className="cv-tree" ref={tree} onKeyDown={(e) => treeKeys(e, tree.current, toggle)}>
-            <ul className="cv-folders">
-              {shown.map((f) => {
-                const isOpen = q ? true : open.has(f.name);
-                const id = `cv-folder-${slug(f.name)}`;
-                const Icon = ICONS[f.name] ?? IconBox;
-                return (
-                  <li key={f.name}>
-                    <button
-                      type="button"
-                      className="cv-folder"
-                      aria-expanded={isOpen}
-                      aria-controls={id}
-                      data-tree-item="folder"
-                      data-folder={f.name}
-                      // While searching every folder with a match is open, so Tab goes straight to the nodes.
-                      tabIndex={q ? -1 : undefined}
-                      onClick={() => !q && toggle(f.name)}
-                    >
-                      {isOpen ? <IconChevronDown size={16} stroke={2} aria-hidden="true" /> : <IconChevronRight size={16} stroke={2} aria-hidden="true" />}
-                      <Icon size={16} stroke={1.8} aria-hidden="true" />
-                      <span>
-                        {f.name} <span className="cv-count">({f.types.length})</span>
-                      </span>
-                    </button>
-                    <ul id={id} className="cv-type-list" hidden={!isOpen}>
-                      {f.types.map((t) => (
-                        <li key={t.type}>{nodeButton(t, f.name)}</li>
-                      ))}
-                    </ul>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-          {types && shown.length === 0 && <p className="small muted">No node type matches “{search}”.</p>}
+    <div className="cv-palette">
+      <section id="cv-palette-panel" className="cv-palette-panel" aria-labelledby="cv-palette-h">
+        <h3 id="cv-palette-h" className="cv-side-title">
+          Nodes
+        </h3>
+        <label className="cv-search">
+          <span className="visually-hidden">Find a node type</span>
+          <IconSearch size={16} stroke={1.8} aria-hidden="true" />
+          <input
+            ref={searchRef}
+            type="search"
+            placeholder="Find a node"
+            value={search}
+            disabled={readOnly}
+            aria-describedby="cv-palette-hint"
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                tree.current?.querySelector<HTMLElement>("[data-tree-item]")?.focus();
+              }
+            }}
+          />
+        </label>
+        <p id="cv-palette-hint" className="hint">
+          {hint}
+        </p>
+        {types == null && <p className="small muted">Loading the node types…</p>}
+        <div className="cv-tree" ref={tree} onKeyDown={(e) => treeKeys(e, tree.current, toggle)}>
+          <ul className="cv-folders">
+            {shown.map((f) => {
+              const isOpen = q ? true : open.has(f.name);
+              const id = `cv-folder-${slug(f.name)}`;
+              const Icon = ICONS[f.name] ?? IconBox;
+              return (
+                <li key={f.name}>
+                  <button
+                    type="button"
+                    className="cv-folder"
+                    aria-expanded={isOpen}
+                    aria-controls={id}
+                    data-tree-item="folder"
+                    data-folder={f.name}
+                    // While searching every folder with a match is open, so Tab goes straight to the nodes.
+                    tabIndex={q ? -1 : undefined}
+                    onClick={() => !q && toggle(f.name)}
+                  >
+                    {isOpen ? <IconChevronDown size={16} stroke={2} aria-hidden="true" /> : <IconChevronRight size={16} stroke={2} aria-hidden="true" />}
+                    <Icon size={16} stroke={1.8} aria-hidden="true" />
+                    <span>
+                      {f.name} <span className="cv-count">({f.types.length})</span>
+                    </span>
+                  </button>
+                  <ul id={id} className="cv-type-list" hidden={!isOpen}>
+                    {f.types.map((t) => (
+                      <li key={t.type}>{nodeButton(t, f.name)}</li>
+                    ))}
+                  </ul>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+        {types && shown.length === 0 && <p className="small muted">No node type matches “{search}”.</p>}
         </section>
-      )}
     </div>
   );
 }
