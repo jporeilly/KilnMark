@@ -27,10 +27,14 @@ Last reviewed: 1 November 2026.
 
 ## Next
 
-5. **Hardening** (brief of 28 October): the audit log first (tokens with the unmask grant, marks
-   cleared, sources deleted, Allow SQL and Allow writing changed; ADR 0027 relies on it), then
-   HTTPS, security headers, dev compose ports on 127.0.0.1 with `KILNMARK_DB_PASSWORD`, a JDBC
-   `socketTimeout`, masking on the run quality view, and a metric for preview slots.
+5. **Hardening for regulated customers** (brief of 28 October; owner, 1 November: Kilnmark must be
+   deployable in banks, EU and US federal and state, and meet DORA, NYDFS Part 500 and the rest).
+   The order is in [Compliance](compliance.md#order-of-work): the audit log (#58), HTTPS, security
+   headers and the supply chain (SBOM, signed releases, scanning), OIDC sign-in with MFA brought
+   forward from v0.2, access reviews, backup and restore, the evidence pack, change approval, then
+   dev compose ports on 127.0.0.1 with `KILNMARK_DB_PASSWORD`, a JDBC `socketTimeout`, masking on
+   the run quality view, a metric for preview slots, and a FIPS mode when a federal customer needs
+   it.
 6. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope).
