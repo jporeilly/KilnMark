@@ -61,6 +61,14 @@ details.
   generic JDBC sources with such URLs stop connecting**, and their tests, scans and runs say why.
   Run the database as a server (an H2 or HSQLDB server, Derby's network server and the like) and
   change the source's URL to its network address.
+- **S3 access points and overlapping sources.** An S3 source whose bucket is an access point (an
+  `-s3alias`, Object Lambda `--ol-s3`, Outposts `--op-s3` or `.mrap` alias, or an ARN), or whose
+  endpoint host names a bucket or access point (`<bucket>.s3.<region>.amazonaws.com`,
+  `s3-accesspoint` hosts and the like), counts as reading the same files as any other source at
+  that endpoint, since Kilnmark cannot see the bucket behind it. Two access point ARNs in different
+  regions or partitions are told apart; accounts are not compared, as an access point may front
+  another account's bucket. Endpoint hosts are compared without a trailing dot, and amazonaws.com.cn
+  and amazonaws.eu hosts count as AWS's own service.
 
 ## 0.0.9 (31 October 2026)
 

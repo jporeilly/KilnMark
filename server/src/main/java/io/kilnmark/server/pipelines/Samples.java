@@ -57,7 +57,8 @@ public class Samples {
             "A database with shop orders and stock: schemas shop (customers, orders, order_lines) and stock "
                 + "(products, supplier_feed)"),
         new Placeholder("files", "files",
-            "File storage the samples write to, under samples/; an admin must turn on Allow writing for it"));
+            "File storage the samples write to, under samples/; a designer or an admin must turn on Allow "
+                + "writing for it"));
 
     /** One bundled sample: its file under samples/, what it is, and the placeholders it reads or writes. */
     public record Sample(String file, String name, String type, String description, List<String> sources,
@@ -302,8 +303,8 @@ public class Samples {
                 + "database, such as PostgreSQL, MySQL, MariaDB or SQL Server");
         }
         if (!"true".equals(target.settings().get("allow_writing"))) {
-            throw new IllegalArgumentException("source: " + name + " does not allow writing; an admin turns on Allow "
-                + "writing for it first");
+            throw new IllegalArgumentException("source: " + name + " does not allow writing; a designer or an admin "
+                + "turns on Allow writing for it first");
         }
         if (!SCHEMA.matcher(schema).matches()) {
             throw new IllegalArgumentException("schema: the schema to create the tables in, such as public or dbo: "

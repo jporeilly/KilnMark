@@ -83,6 +83,81 @@ class SourceOverlapTest {
             Map.of("bucket", "hr", "endpoint", "http://minio.local:9000")));
         assertFalse(SourceService.sameFiles("s3", Map.of("bucket", "hr-s3aliases"), Map.of("bucket", "hr")));
         assertFalse(SourceService.sameFiles("s3", Map.of("bucket", arn), Map.of("prefix", "raw/")));
+        // Object Lambda and Outposts aliases are access points too.
+        for (String other : List.of("payroll-ol-abc123def456ghi789jkl0mnopq--ol-s3",
+            "payroll-op-0123456789abcdef0abc123def456ghi789jkl0mn--op-s3")) {
+            assertTrue(SourceService.accessPoint(other), other);
+            assertTrue(SourceService.sameFiles("s3", Map.of("bucket", other, "prefix", "a/"),
+                Map.of("bucket", "hr", "prefix", "b/")), other);
+        }
+        assertFalse(SourceService.accessPoint("hr--x-s3"), "a directory bucket is a bucket");
+    }
+
+    @Test
+    void anEndpointHostThatNamesABucketOrAccessPointIsAnAccessPoint() {
+        for (String host : List.of("https://payroll.s3.eu-west-2.amazonaws.com", "https://payroll.s3.amazonaws.com",
+            "payroll.s3-eu-west-2.amazonaws.com", "https://s3-data.s3.dualstack.eu-west-2.amazonaws.com",
+            "https://payroll-ap-123456789012.s3-accesspoint.eu-west-2.amazonaws.com",
+            "https://payroll-ap-123456789012.s3-accesspoint.dualstack.eu-west-2.amazonaws.com",
+            "https://payroll-olap-123456789012.s3-object-lambda.eu-west-2.amazonaws.com",
+            "https://mfzwi23gnjvgw.mrap.accesspoint.s3-global.amazonaws.com",
+            "https://bucket.vpce-1a2b3c4d-5e6f.s3.eu-west-2.vpce.amazonaws.com",
+            "https://payroll.s3-website-eu-west-2.amazonaws.com", "https://payroll.s3.cn-north-1.amazonaws.com.cn")) {
+            assertTrue(SourceService.namesBucket(host), host);
+            assertTrue(SourceService.sameFiles("s3", Map.of("bucket", "x", "endpoint", host, "prefix", "a/"),
+                Map.of("bucket", "hr", "prefix", "b/")), host);
+            assertTrue(SourceService.sameFiles("s3", Map.of("bucket", "hr"),
+                Map.of("bucket", "arn:aws:s3:us-east-1:123456789012:accesspoint/x", "endpoint", host)), host);
+        }
+        for (String host : List.of("https://s3.amazonaws.com", "https://s3.eu-west-2.amazonaws.com",
+            "s3-eu-west-2.amazonaws.com", "https://s3.dualstack.eu-west-2.amazonaws.com",
+            "https://s3-fips.us-gov-west-1.amazonaws.com", "https://s3-fips.dualstack.us-east-1.amazonaws.com",
+            "https://s3-external-1.amazonaws.com", "https://s3.cn-north-1.amazonaws.com.cn",
+            "https://s3.eu-west-2.amazonaws.com.", "http://minio.local:9000", "https://payroll.minio.local")) {
+            assertFalse(SourceService.namesBucket(host), host);
+        }
+        assertFalse(SourceService.sameFiles("s3", Map.of("bucket", "hr", "endpoint",
+            "https://s3.eu-west-2.amazonaws.com"), Map.of("bucket", "sales")), "a plain service host names no bucket");
+        // A trailing dot names the same host.
+        assertEquals("aws", SourceService.endpoint("https://payroll.s3.eu-west-2.amazonaws.com."));
+        assertEquals("minio.local:9000", SourceService.endpoint("http://MINIO.local.:9000/"));
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", "b", "endpoint", "https://minio.local."),
+            Map.of("bucket", "b", "endpoint", "https://minio.local")));
+        assertTrue(SourceService.namesBucket("https://payroll.s3.eu-west-2.amazonaws.com."));
+        assertEquals("aws", SourceService.endpoint("https://s3.cn-north-1.amazonaws.com.cn"));
+    }
+
+    @Test
+    void twoAccessPointArnsInDifferentRegionsOrPartitionsAreApart() {
+        String london = "arn:aws:s3:eu-west-2:123456789012:accesspoint/payroll";
+        String londonOther = "arn:aws:s3:eu-west-2:210987654321:accesspoint/sales";
+        String virginia = "arn:aws:s3:us-east-1:123456789012:accesspoint/payroll";
+        String china = "arn:aws-cn:s3:eu-west-2:123456789012:accesspoint/payroll";
+        String lambda = "arn:aws:s3-object-lambda:us-east-1:123456789012:accesspoint/payroll-olap";
+        String global = "arn:aws:s3::123456789012:accesspoint/mfzwi23gnjvgw.mrap";
+        assertFalse(SourceService.sameFiles("s3", Map.of("bucket", london), Map.of("bucket", virginia)),
+            "an access point reads only a bucket in its own region");
+        assertFalse(SourceService.sameFiles("s3", Map.of("bucket", london), Map.of("bucket", china)),
+            "nor outside its partition");
+        assertFalse(SourceService.sameFiles("s3", Map.of("bucket", london), Map.of("bucket", lambda)));
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", london), Map.of("bucket", londonOther)),
+            "another account's access point may front the same bucket");
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", virginia), Map.of("bucket", lambda)),
+            "an Object Lambda access point reads through one in its region");
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", london, "prefix", "a/"),
+            Map.of("bucket", london.toUpperCase(java.util.Locale.ROOT), "prefix", "b/")));
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", global), Map.of("bucket", london)),
+            "a multi-Region access point names no region");
+        // Kept conservative: an alias or a bucket name beside an ARN, whatever its region.
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", london),
+            Map.of("bucket", "payroll-ap-abc123def456ghi789jkl0mnopq-s3alias")));
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", london),
+            Map.of("bucket", "hr", "region", "us-east-1")));
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", "arn:aws:s3:eu-west-2"), Map.of("bucket", virginia)),
+            "an ARN Kilnmark cannot read may be anything");
+        // and a host that names an access point is not told apart by the ARN beside it
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", london, "endpoint",
+            "https://payroll-123456789012.s3-accesspoint.eu-west-2.amazonaws.com"), Map.of("bucket", virginia)));
     }
 
     @Test
