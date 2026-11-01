@@ -1061,7 +1061,6 @@ public class PipelineService {
                 assets.add(QUERY_READ); // its messages may quote any value the query read (ADR 0028)
             }
             store.setAssets(id, json.writeValueAsString(assets));
-            markQueryWrites(c, writes, context);
             // One run writes a table or file at a time: wait a while for another run writing it. The
             // locks are taken on the job's own connection, so a run never holds more than one.
             BooleanSupplier stop = () -> store.cancelRequested(id) || shutdown.getAsBoolean();
@@ -1077,6 +1076,7 @@ public class PipelineService {
                 }
                 held.add(urn);
             }
+            markQueryWrites(c, writes, context); // the targets are this run's now, and no row has moved yet
             // What the catalogue predicts for each write and gate, stored before a row moves, so the run
             // shows its estimate beside what it measures (docs/design/data-quality.md section 8).
             predicted.addAll(predictRun(c, context));
@@ -1483,17 +1483,29 @@ public class PipelineService {
             carried.addAll(marked.all() ? List.of(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN)
                 : marked.names());
         }
-        String from = readMarks.entrySet().stream().filter(e -> !e.getValue().isEmpty()).map(Map.Entry::getKey)
-            .findFirst().map(id -> PipelinePreviews.readUrnsOf(c.configs().getOrDefault(id, Map.of()), context)
-                .stream().findFirst().orElse(ReadNodeFactory.isQuery(c.configs().getOrDefault(id, Map.of()))
-                    ? QUERY_READ : id)).orElse("");
+        String from = queryFeeds(c, w) ? QUERY_READ : readMarks.entrySet().stream()
+            .filter(e -> !e.getValue().isEmpty()).map(Map.Entry::getKey).sorted().findFirst()
+            .map(id -> PipelinePreviews.readUrnsOf(c.configs().getOrDefault(id, Map.of()), context).stream()
+                .findFirst().orElse(id)).orElse("");
         qualityStore.carry(w.urn(), carried, from, context.pipeline(), context.runId());
         if (marked.all() && written.isEmpty()) {
-            note(notes, w.node() + (PipelinePreviews.hasQueryRead(c)
+            note(notes, w.node() + (queryFeeds(c, w)
                 ? ": it wrote rows a read's query read, so every column it wrote is marked sensitive"
                 : ": it wrote columns made from columns marked sensitive in ways Kilnmark could not follow, so every "
                     + "column it wrote is marked sensitive"), null);
         }
+    }
+
+    /** Whether a read's query feeds {@code w}: what it reads reaches the write, marked on every column. */
+    private static boolean queryFeeds(PipelineCompilerPort.Compilation c, PipelineExecution.WriteTarget w) {
+        Map<String, java.util.Set<String>> queries = new java.util.HashMap<>();
+        for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
+            if (ReadNodeFactory.TYPE.equals(s.type()) && ReadNodeFactory.isQuery(c.configs().getOrDefault(s.id(),
+                Map.of()))) {
+                queries.put(s.id(), java.util.Set.of(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN));
+            }
+        }
+        return !queries.isEmpty() && NodePreview.marked(c, queries, w.node()).all();
     }
 
     /**
@@ -1506,9 +1518,8 @@ public class PipelineService {
         if (qualityStore == null || !PipelinePreviews.hasQueryRead(c)) {
             return;
         }
-        Map<String, java.util.Set<String>> readMarks = PipelinePreviews.readMarks(c, context, qualityStore::sensitive);
         for (PipelineExecution.WriteTarget w : writes) {
-            if (NodePreview.marked(c, readMarks, w.node()).all()) {
+            if (queryFeeds(c, w)) {
                 qualityStore.carry(w.urn(), List.of(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN), QUERY_READ,
                     context.pipeline(), context.runId());
             }
