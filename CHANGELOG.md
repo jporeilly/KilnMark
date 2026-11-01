@@ -52,6 +52,15 @@ details.
   accepted and run only where it is on. **`kilnmark.quality.custom-sql` is retired**: it does
   nothing, and a server that sets it to true logs a warning. Turn on Allow SQL for each source whose
   custom rules should keep running, with a login that can read only what the SQL needs.
+- **Generic JDBC reaches database servers only** (ADR 0027). A generic JDBC URL must name a network
+  host, as `//host[:port]` (or `jdbc:sybase:Tds:host:port`); a URL for a database the driver would
+  open inside the Kilnmark server is refused for admins too: H2 files and memory (and H2's `INIT`,
+  now as a driver property too), SQLite, DuckDB, HSQLDB files and memory, embedded Derby,
+  UCanAccess, CSV files, Calcite, embedded, local or native Firebird, Drill with `zk=local`, Ignite
+  from `cfg:`, Hive with no host, and any other URL with no host Kilnmark can read. **Existing
+  generic JDBC sources with such URLs stop connecting**, and their tests, scans and runs say why.
+  Run the database as a server (an H2 or HSQLDB server, Derby's network server and the like) and
+  change the source's URL to its network address.
 
 ## 0.0.9 (31 October 2026)
 

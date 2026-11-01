@@ -124,7 +124,8 @@ class GenericJdbcConnectorTest {
 
         // registered with a prefix the driver itself does not take: the driver's own answer counts
         H2Drivers.H2 odd = H2Drivers.registered("jdbc:hx:");
-        SourceConfig s = new SourceConfig("odd", "jdbc", Map.of("driver", "h2", "url", "jdbc:hx:mem:x"), null);
+        SourceConfig s = new SourceConfig("odd", "jdbc", Map.of("driver", "h2", "url", "jdbc:hx:tcp://localhost/mem:x"),
+            null);
         assertTrue(odd.connector().validate(s).contains("url: the driver h2 does not accept this URL. Check it "
             + "against the driver's documentation"), odd.connector().validate(s).toString());
     }
@@ -224,10 +225,40 @@ class GenericJdbcConnectorTest {
             {"jdbc:derby:memory:sales;create=true", "Derby URL without a //host"},
             {"jdbc:derby:directory:/srv/sales", "Derby URL without a //host"},
             {"jdbc:firebirdsql:embedded:/srv/sales.fdb", "embedded Firebird"},
+            {"jdbc:firebirdsql:local:/srv/sales.fdb", "local or native Firebird"},
+            {"jdbc:firebirdsql:native:db.example.com/3050:/srv/sales.fdb", "local or native Firebird"},
+            {"jdbc:firebird:native:/srv/sales.fdb", "local or native Firebird"},
+            {"jdbc:ucanaccess:///srv/sales.accdb", "UCanAccess"},
+            {"jdbc:ucanaccess://C:/srv/sales.accdb", "UCanAccess"},
+            {"jdbc:relique:csv:/srv/exports", "CSV driver"},
+            {"jdbc:relique:csv:zip:/srv/exports.zip", "CSV driver"},
+            {"jdbc:calcite:", "Calcite"},
+            {"jdbc:calcite:model=/srv/model.json", "Calcite"},
+            {"jdbc:drill:zk=local", "zk=local"},
+            {"jdbc:drill:zk=local;schema=dfs", "zk=local"},
+            {"jdbc:hive2://", "Hive URL without a host"},
+            {"jdbc:hive2:///default", "Hive URL without a host"},
+            {"jdbc:hive2://;transportMode=http", "Hive URL without a host"},
+            {"jdbc:ignite:cfg://cache=sales@file:///srv/ignite.xml", "Ignite cfg: URL"},
+            {"jdbc:ignite:cfg://file:///srv/ignite.xml", "Ignite cfg: URL"},
+            // and any other URL that names no network host: refused by its shape
+            {"jdbc:drill:zk=zk.example.com:2181/drill", "does not name a network host"},
+            {"jdbc:all:/srv/sales.db", "does not name a network host"},
+            {"jdbc:all:mem:sales", "does not name a network host"},
+            {"jdbc:all://", "does not name a network host"},
+            {"jdbc:all:///srv/sales.db", "does not name a network host"},
+            {"jdbc:all://C:/srv/sales.db", "does not name a network host"},
+            {"jdbc:all://~/sales", "does not name a network host"},
+            {"jdbc:all://./sales", "does not name a network host"},
+            {"jdbc:all://db.example.com:/sales", "does not name a network host"},
+            {"jdbc:all://db.example.com,/sales", "does not name a network host"},
+            {"jdbc:all://[2001:db8::1/sales", "does not name a network host"},
+            {"jdbc:all:/srv/x;url=http://db.example.com/sales", "does not name a network host"},
+            {"jdbc:sybase:Tds:/srv/sales", "does not name a network host"},
         };
         java.util.List<String> every = new java.util.ArrayList<>();
         every.addAll(ANY.allowedProperties());
-        every.addAll(List.of("init", "create"));
+        every.addAll(List.of("init", "create", "schema", "transportmode", "url", "model", "zk", "cache"));
         io.kilnmark.kiln.connect.RegisteredDriver allowsAll = new io.kilnmark.kiln.connect.RegisteredDriver("all",
             "all.jar", "a".repeat(64), "x.Driver", "jdbc:all:", every, "admin", Instant.EPOCH);
         for (String[] r : refused) {
@@ -238,9 +269,32 @@ class GenericJdbcConnectorTest {
         }
         for (String ok : List.of("jdbc:h2:tcp://db.example.com:9092/sales", "jdbc:h2:ssl://db.example.com/~/sales",
             "jdbc:hsqldb:hsql://db.example.com/sales", "jdbc:hsqldb:https://db.example.com/sales",
-            "jdbc:derby://db.example.com:1527/sales;create=true", "jdbc:db2://db.example.com:50000/SALES")) {
+            "jdbc:derby://db.example.com:1527/sales;create=true", "jdbc:db2://db.example.com:50000/SALES",
+            "jdbc:hive2://hive.example.com:10000/default", "jdbc:hive2://zk1.example.com:2181,zk2.example.com:2181/",
+            "jdbc:ignite:thin://ignite.example.com:10800", "jdbc:firebirdsql://db.example.com:3050//srv/sales.fdb",
+            "jdbc:oracle:thin:@//db.example.com:1521/SALES", "jdbc:jtds:sybase://db.example.com:5000/sales",
+            "jdbc:sqlserver://db.example.com:1433;failoverPartner=standby.example.com",
+            "jdbc:informix-sqli://db.example.com:1533/sales", "jdbc:snowflake://acct.snowflakecomputing.com/",
+            "jdbc:db2://[2001:db8::1]:50000/SALES", "jdbc:all://db_1.internal:5000/zk=localhost",
+            "jdbc:sybase:Tds:db.example.com:5000/sales")) {
             assertNull(GenericJdbcConnector.refusal(allowsAll, ok, null), ok);
         }
+        // H2's INIT as a driver property runs SQL as surely as in the URL, whatever its case
+        for (String name : List.of("INIT", "init", "Init")) {
+            java.util.Properties init = new java.util.Properties();
+            init.setProperty(name, "RUNSCRIPT FROM '/srv/x.sql'");
+            String why = GenericJdbcConnector.refusal(allowsAll, "jdbc:h2:tcp://db.example.com/sales", init);
+            assertTrue(why != null && why.startsWith("properties: H2's INIT setting runs SQL"), name + " gave " + why);
+            assertFalse(why.contains("/srv"), "never echoes the value: " + why);
+        }
+        java.util.Properties init = new java.util.Properties();
+        init.setProperty("init", "x");
+        assertNull(GenericJdbcConnector.refusal(allowsAll, "jdbc:db2://db.example.com:50000/SALES", init),
+            "only H2 reads INIT as SQL");
+        assertEquals(GenericJdbcConnector.UNREADABLE_HOST, h2.connector().hosts(h2.source("p",
+            Map.of("url", "jdbc:all://C:/srv/sales.db"))).get(0), "an allow-list refuses a host it cannot read too");
+        assertEquals(List.of("db.example.com"), h2.connector().hosts(h2.source("p",
+            Map.of("url", "jdbc:sybase:Tds:db.example.com:5000/sales"))));
         assertTrue(problems("jdbc:h2:mem:other").get(0).contains("opens a file or in-memory database"));
         assertEquals(List.of(), h2.connector().validate(reader), "an H2 server is reached over the network");
     }

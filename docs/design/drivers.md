@@ -155,11 +155,23 @@ Kilnmark could vouch for.
   connector settings or check an unsaved one (`Connector.adminOnly()`); stewards still test, scan and
   preview saved ones.
 - *A database inside the server.* A driver that opens its database in the server's own process
-  (SQLite, DuckDB, embedded Firebird, H2 or HSQLDB files and memory, embedded Derby) lets the
-  source's SQL read or write the server's files, or run code there, with no login of anyone's own
-  (ADR 0027). Such URLs are refused for admins too, whatever the allow-list: H2 only as `tcp://` or
-  `ssl://` and never with `INIT`, HSQLDB only as `hsql://`, `hsqls://`, `http://` or `https://`,
-  Derby only with `//host`. The check looks anywhere in the URL, so a wrapping driver is caught too.
+  (SQLite, DuckDB, H2 or HSQLDB files and memory, embedded Derby, Access files through UCanAccess,
+  CSV files, Calcite, embedded, local or native Firebird, Drill with `zk=local`, Ignite started from
+  `cfg:`, embedded Hive) lets the source's SQL read or write the server's files, or run code there,
+  with no login of anyone's own (ADR 0027). Such URLs are refused for admins too, whatever the
+  property allow-list: H2 only as `tcp://` or `ssl://` and never with `INIT`, in the URL or as a
+  driver property in any case; HSQLDB only as `hsql://`, `hsqls://`, `http://` or `https://`; Derby
+  only with `//host`; Hive only with a host. The names are looked for anywhere in the URL, so a
+  wrapping driver is caught too, and refused with a message saying why.
+- *Only URLs that name a network host.* Beyond those names, the check is an allow-list by shape, as
+  a driver Kilnmark does not know could open anything in the process: the URL must be
+  `jdbc:<subprotocols>://host[:port][,host[:port]...]` (or `@//host` as Oracle's thin URLs have
+  it), with every host a host name or a bracketed IPv6 address and every port digits. A URL with no
+  `//` (`jdbc:x:/path`, `jdbc:x:mem:db`), an empty authority (`jdbc:x:///path`) or one Kilnmark
+  cannot read as hosts (`//C:/path`, `//~/db`, `//host:`) is refused, whether or not an allow-list
+  of hosts is set. The one exception is jConnect's `jdbc:sybase:Tds:host:port`, read as naming its
+  host. Drivers whose URLs name the host otherwise (Drill's `zk=host:2181`, for example) cannot be
+  used through Generic JDBC.
 - *Reaching the outside.* Nothing is downloaded. The hosts a source would reach are the URL's and
   those its settings name (failover partners, `*servername`, `alternate*` and the like, and any value
   that is itself a URL), all checked against `kilnmark.sources.allowed-hosts`; with an allow-list

@@ -148,7 +148,7 @@ class RegisteredDriversApiTest {
 
         // only admins set up generic JDBC sources, or check unsaved ones
         Map<String, Object> source = Map.of("name", "acme-src-" + name.substring(5), "kind", "jdbc",
-            "settings", Map.of("driver", name, "url", "jdbc:acme:sales"));
+            "settings", Map.of("driver", name, "url", "jdbc:acme://db.example.com/sales"));
         Tokens.as(designer).contentType(ContentType.JSON).body(source).post("/api/v1/drafts/test").then()
             .statusCode(403).body("error", containsString("Only admins can set up Generic JDBC sources"));
         String sourceName = (String) source.get("name");
@@ -157,20 +157,20 @@ class RegisteredDriversApiTest {
             Map.of("driver", name, "url", "jdbc:other:sales"))).post("/api/v1/sources").then().statusCode(400)
             .body("error", containsString("takes URLs starting jdbc:acme:"));
         Tokens.as(designer).contentType(ContentType.JSON).body(Map.of("settings", Map.of("driver", name, "url",
-            "jdbc:acme:other"))).put("/api/v1/sources/" + sourceName).then().statusCode(403)
+            "jdbc:acme://db.example.com/other"))).put("/api/v1/sources/" + sourceName).then().statusCode(403)
             .body("error", containsString("Only admins can change the url"));
         Tokens.as(designer).contentType(ContentType.JSON).body(Map.of("settings", Map.of("driver", name, "url",
-            "jdbc:acme:sales", "description", "Synthetic sales"))).put("/api/v1/sources/" + sourceName).then()
+            "jdbc:acme://db.example.com/sales", "description", "Synthetic sales"))).put("/api/v1/sources/" + sourceName).then()
             .statusCode(200);
         // drafts of the saved source: as it is, a designer may check it; changed, only an admin
         Tokens.as(designer).contentType(ContentType.JSON).body(Map.of("source", sourceName, "settings",
-            Map.of("driver", name, "url", "jdbc:acme:sales", "description", "Synthetic sales")))
+            Map.of("driver", name, "url", "jdbc:acme://db.example.com/sales", "description", "Synthetic sales")))
             .post("/api/v1/drafts/test").then().statusCode(200);
         Tokens.as(designer).contentType(ContentType.JSON).body(Map.of("source", sourceName, "settings",
-            Map.of("driver", name, "url", "jdbc:acme:sales;currentSchema=HR")))
+            Map.of("driver", name, "url", "jdbc:acme://db.example.com/sales;currentSchema=HR")))
             .post("/api/v1/drafts/test").then().statusCode(403).body("error", containsString("Only admins can change the url"));
         admin().contentType(ContentType.JSON).body(Map.of("name", "x", "kind", "jdbc", "settings",
-            Map.of("driver", name, "url", "jdbc:acme:sales;INIT=RUNSCRIPT"))).post("/api/v1/sources").then()
+            Map.of("driver", name, "url", "jdbc:acme://db.example.com/sales;INIT=RUNSCRIPT"))).post("/api/v1/sources").then()
             .statusCode(400).body("error", containsString("not registered to take the property INIT"));
 
         // a driver in use cannot be removed
