@@ -1,18 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  allows,
-  formatNumber,
-  formatTime,
-  pipelinesApi,
-  type AccessRole,
-  rating,
-  type PipelineRunDetail,
-  type PipelineNodeQuality,
-  type PipelineNodeRun,
-} from "../api";
+import { useEffect, useState } from "react";
+import { allows, formatNumber, pipelinesApi, rating, type AccessRole, type PipelineNodeQuality } from "../api";
 import { Meter, StatusChip, type FillTone, type Tone } from "../components/ui";
 import {
-  belowThreshold,
   DECISION_WORDS,
   dimensionWord,
   gateWords,
@@ -23,50 +12,16 @@ import {
 import { dimensionRows, ESTIMATE, gapWords, pointsWords } from "./prediction";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
-import { formatBytes, formatDuration, RunStatus, runTime } from "./RunStatus";
 import { RunTimeSpent } from "./RunTimeSpent";
 import { RunRates } from "./RunRates";
 import { RunLogPanel } from "./RunLogPanel";
-import { rateWords } from "./live";
-import { runOrigin, shareWords } from "./timeline";
+import { runOrigin } from "./timeline";
+import { RunFacts, RunNodes, ScoreChip, useRunDetail } from "./RunSummary";
 import "./pipelines.css";
 
-const LIVE_STATE: Record<string, string> = {
-  not_started: "Not started",
-  waiting: "Waiting for rows",
-  running: "Running",
-  ended: "Ended",
-};
-
-const OUTCOME: Record<NonNullable<PipelineNodeRun["outcome"]>, string> = {
-  finished: "Finished",
-  ended_early: "Ended early",
-  stopped: "Stopped by the engine",
-  failed: "Failed",
-};
-
-/** Rows per port, in words: "main 10, lookup 4". */
-function portRows(ports: Record<string, number | null> | undefined): string {
-  if (!ports || Object.keys(ports).length === 0) return "";
-  return Object.entries(ports)
-    .map(([port, n]) => `${port} ${n == null ? "not counted" : formatNumber(n)}`)
-    .join(", ");
-}
-
-const TONE: Record<string, Tone> = { good: "good", fair: "warn", poor: "bad" };
 const FILL: Record<string, FillTone> = { good: "good", fair: "warn", poor: "bad" };
 const DECISION_TONE: Record<string, Tone> = { passed: "good", warned: "warn", quarantined: "orange", stopped: "bad" };
 const RULE_TONE: Record<string, Tone> = { pass: "good", warn: "warn", fail: "bad", error: "neutral" };
-
-/** A score as a chip: the percentage and its word, never colour alone. */
-function ScoreChip({ score }: { score: number }) {
-  const r = rating(score);
-  return (
-    <StatusChip tone={TONE[r.tone]}>
-      {percent(score)} · {r.word}
-    </StatusChip>
-  );
-}
 
 /**
  * Measured beside predicted, per dimension, with the gap: the estimate made when the run started
@@ -248,46 +203,23 @@ function NodeQuality({ q }: { q: PipelineNodeQuality }) {
 export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) {
   useTitle(`Pipeline run ${id}`);
   const steward = allows(role, "steward");
-  const [detail, setDetail] = useState<PipelineRunDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { detail: shownDetail, error: loadError, notice: statusNotice, tick, fetchedAt, load, unfinished } = useRunDetail(id);
+  const detail = shownDetail?.run.id === id ? shownDetail : null;
   const [notice, setNotice] = useState("");
-  // Counts each look at the run, so the log can fetch what happened since.
-  const [tick, setTick] = useState(0);
-  // When the run was last fetched, by the browser's clock: a live run's "now" is its last snapshot plus the time since.
-  const [fetchedAt, setFetchedAt] = useState(0);
-  const last = useRef<string | null>(null);
-
-  const load = useCallback(() => {
-    pipelinesApi
-      .runDetail(id)
-      .then((d) => {
-        if (last.current != null && last.current !== d.run.status) {
-          setNotice(`Run ${id} is now ${d.run.status}.`);
-        }
-        last.current = d.run.status;
-        setDetail(d);
-        setFetchedAt(Date.now());
-        setTick((n) => n + 1);
-        setError(null);
-      })
-      .catch((e: Error) => setError(e.message));
-  }, [id]);
-
-  useEffect(load, [load]);
-  const unfinished = detail != null && (detail.run.status === "queued" || detail.run.status === "running");
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const error = cancelError ?? loadError;
   useEffect(() => {
-    if (!unfinished) return;
-    const t = window.setInterval(load, 2000);
-    return () => window.clearInterval(t);
-  }, [unfinished, load]);
+    if (statusNotice) setNotice(statusNotice);
+  }, [statusNotice]);
 
   const cancel = async () => {
     try {
       await pipelinesApi.cancel(id);
       setNotice(`Asked run ${id} to stop.`);
+      setCancelError(null);
       load();
     } catch (e) {
-      setError((e as Error).message);
+      setCancelError((e as Error).message);
     }
   };
 
@@ -308,10 +240,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
   const r = detail.run;
   // The run's time on the worker's clock (when it started and finished with the run), as the charts use.
   const origin = runOrigin(detail);
-  const workerEnd = detail.progress?.workerFinishedAt ? Date.parse(detail.progress.workerFinishedAt) : null;
-  const runMs = origin != null && workerEnd != null ? Math.max(1, workerEnd - origin) : null;
   const clock = { fetchedAt };
-  const live = unfinished && detail.nodes.length === 0 ? (detail.progress?.nodes ?? []) : [];
   const nodeNames = detail.nodes.length > 0 ? detail.nodes.map((s) => s.node) : (detail.progress?.nodes.map((s) => s.node) ?? []);
   return (
     <>
@@ -338,49 +267,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
       )}
       <section aria-labelledby="run-h" className="panel">
         <h2 id="run-h">Summary</h2>
-        <dl className="pl-facts">
-          <dt>Status</dt>
-          <dd>
-            <RunStatus run={r} />
-          </dd>
-          <dt>Version</dt>
-          <dd>
-            <a href={href.pipeline(r.pipeline, r.version)}>Version {r.version}</a>
-          </dd>
-          <dt>Asked for</dt>
-          <dd>
-            {formatTime(r.requestedAt)} by {r.requestedBy}
-          </dd>
-          <dt>Started</dt>
-          <dd>{formatTime(r.startedAt)}</dd>
-          <dt>Finished</dt>
-          <dd>{formatTime(r.finishedAt)}</dd>
-          <dt>Took</dt>
-          <dd>{runTime(r)}</dd>
-          <dt>Rows written</dt>
-          <dd>{formatNumber(r.rowsWritten)}</dd>
-          {r.qualityScore != null && (
-            <>
-              <dt>Quality</dt>
-              <dd>
-                <ScoreChip score={r.qualityScore} /> <span className="small muted">lowest of what it wrote</span>
-                {r.qualityThreshold != null && (
-                  <div className={`small${belowThreshold(r.qualityScore, r.qualityThreshold) ? " pl-bad" : ""}`}>
-                    {belowThreshold(r.qualityScore, r.qualityThreshold)
-                      ? `Below the pipeline's threshold of ${percent(r.qualityThreshold)}`
-                      : `At or above the pipeline's threshold of ${percent(r.qualityThreshold)}`}
-                  </div>
-                )}
-              </dd>
-            </>
-          )}
-        </dl>
-        {r.error && (
-          <p className={r.status === "failed" ? "pl-bad" : "muted"}>
-            <strong>{r.status === "failed" ? "Why it failed: " : "Note: "}</strong>
-            {r.error}
-          </p>
-        )}
+        <RunFacts run={r} />
       </section>
 
       <section aria-labelledby="spent-h" className="panel">
@@ -395,109 +282,7 @@ export function PipelineRunPage({ id, role }: { id: number; role: AccessRole }) 
 
       <section aria-labelledby="nodes-h" className="panel">
         <h2 id="nodes-h">Nodes</h2>
-        {live.length > 0 ? (
-          <>
-            <p className="small muted">So far; the full record of each node is kept when the run ends.</p>
-            <div className="table-scroll" role="region" aria-label="Nodes of the run so far" tabIndex={0}>
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Node</th>
-                    <th scope="col">Now</th>
-                    <th scope="col">Rows in</th>
-                    <th scope="col">Rows out</th>
-                    <th scope="col">Rows a second</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {live.map((s) => (
-                    <tr key={s.node}>
-                      <th scope="row">
-                        <span className="mono">{s.node}</span>
-                      </th>
-                      <td>
-                        {detail.progress?.slowest === s.node ? (
-                          <StatusChip tone="orange" kind="slowest">
-                            Slowest
-                          </StatusChip>
-                        ) : (
-                          LIVE_STATE[s.state]
-                        )}
-                      </td>
-                      <td>{formatNumber(s.rowsIn)}</td>
-                      <td>{formatNumber(s.rowsOut)}</td>
-                      <td>{s.state === "running" ? rateWords(s.rowsPerSecond) : "–"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : detail.nodes.length === 0 ? (
-          <p className="muted">{unfinished ? "The nodes are recorded when the run ends." : "No nodes were recorded."}</p>
-        ) : (
-          <div className="table-scroll" role="region" aria-label="Nodes of the run" tabIndex={0}>
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Node</th>
-                  <th scope="col">How it ended</th>
-                  <th scope="col">Rows in</th>
-                  <th scope="col">Rows out</th>
-                  <th scope="col">Peak memory</th>
-                  <th scope="col">Time</th>
-                  <th scope="col">Share of the run</th>
-                  <th scope="col">Error</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detail.nodes.map((s) => (
-                  <tr key={s.node}>
-                    <th scope="row">
-                      <span className="mono">{s.node}</span>
-                      <div className="small muted">{s.type}</div>
-                    </th>
-                    <td>
-                      {s.outcome ? (
-                        <span
-                          className={`badge ${
-                            s.outcome === "failed"
-                              ? "badge-failed"
-                              : s.outcome === "stopped"
-                                ? "badge-running"
-                                : s.outcome === "ended_early"
-                                  ? "badge-none"
-                                  : "badge-succeeded"
-                          }`}
-                        >
-                          {OUTCOME[s.outcome]}
-                        </span>
-                      ) : (
-                        "–"
-                      )}
-                    </td>
-                    <td>
-                      {formatNumber(s.rowsIn)}
-                      {Object.keys(s.ports?.in ?? {}).length > 1 && (
-                        <div className="small muted">{portRows(s.ports?.in)}</div>
-                      )}
-                    </td>
-                    <td>
-                      {formatNumber(s.rowsOut)}
-                      {Object.keys(s.ports?.out ?? {}).length > 0 && (
-                        <div className="small muted">{portRows(s.ports?.out)}</div>
-                      )}
-                    </td>
-                    <td>{formatBytes(s.peakMemory)}</td>
-                    <td>{formatDuration(s.durationMs)}</td>
-                    <td>{runMs && s.durationMs != null ? shareWords(Math.min(1, s.durationMs / runMs)) : "–"}</td>
-                    <td className={s.error ? "pl-bad" : undefined}>{s.error ?? "–"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <RunNodes detail={detail} />
       </section>
 
       <section aria-labelledby="log-h" className="panel">
