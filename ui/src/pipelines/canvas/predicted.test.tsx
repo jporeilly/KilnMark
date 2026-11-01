@@ -257,7 +257,7 @@ describe("predictions on the canvas", () => {
     expect(html).toContain("km-chip km-chip--violet km-chip--outline cv-node-chip cv-predicted-badge");
   });
 
-  test("the settings drawer says what the estimate could not tell", () => {
+  test("a node's settings say what the estimate could not tell", () => {
     const html = renderToStaticMarkup(<PredictedSection p={PREDICTED} id="p" />);
     expect(html).toContain("Predicted quality (estimate)");
     expect(html).toContain("no data was read");
@@ -282,7 +282,7 @@ describe("the suggestions panel", () => {
     document.body.append(host);
     const root = createRoot(host);
     await act(async () => {
-      root.render(<SuggestionsPanel yaml={PIPELINE} readOnly={false} onAdd={(s) => (added.push(s), null)} onClose={() => {}} />);
+      root.render(<SuggestionsPanel yaml={PIPELINE} readOnly={false} onAdd={(s) => (added.push(s), null)} />);
     });
     await act(async () => {
       await new Promise((r) => setTimeout(r, 20));
@@ -305,7 +305,7 @@ describe("the suggestions panel", () => {
     document.body.append(host);
     const root = createRoot(host);
     await act(async () => {
-      root.render(<SuggestionsPanel yaml={PIPELINE} readOnly onAdd={() => null} onClose={() => {}} />);
+      root.render(<SuggestionsPanel yaml={PIPELINE} readOnly onAdd={() => null} />);
     });
     await act(async () => {
       await new Promise((r) => setTimeout(r, 20));
