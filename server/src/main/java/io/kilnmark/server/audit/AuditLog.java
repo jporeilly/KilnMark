@@ -42,7 +42,7 @@ import jakarta.enterprise.context.ApplicationScoped;
  * its row by one thread of its own, in the order recorded (read the table in {@code id} order), so
  * no request waits on it or blocks a thread that must not block. If the row cannot be written (the
  * database is unreachable) the change stands and the server logs an error saying so; the JSON line,
- * which a SIEM keeps, has the event either way. Refusals are kept at most
+ * which a SIEM keeps, has the event either way. Refusals are kept in the table at most
  * {@value #REFUSALS_PER_MINUTE} a minute for each caller (each token, and everyone not signed in
  * together), with a count of the rest, and {@code api.*} events never take the last
  * {@value #RESERVED} places in the queue, so no flood of requests keeps a token, mark or source
@@ -196,12 +196,11 @@ public class AuditLog {
         if (!ACTIONS.contains(action)) {
             throw new IllegalArgumentException("not an audit action: " + action);
         }
+        boolean keep = true;
         if (API_REFUSED.equals(action)) {
             Integer skipped = refusalSkips(actor.tokenId() == null ? ANONYMOUS : "token " + actor.tokenId());
-            if (skipped == null) {
-                return; // over this minute's share: counted, and reported with the next one kept
-            }
-            if (skipped > 0) {
+            keep = skipped != null; // over this minute's share: the JSON line only, counted for the next row kept
+            if (skipped != null && skipped > 0) {
                 Map<String, Object> more = new LinkedHashMap<>(detail == null ? Map.of() : detail);
                 more.put("notKeptBefore", skipped);
                 detail = more;
@@ -234,6 +233,9 @@ public class AuditLog {
         } catch (JsonProcessingException e) {
             AUDIT.infof("%s %s %s", actor, action, safeTarget);
         }
+        if (!keep) {
+            return;
+        }
         String body = json;
         String where = safeTarget;
         boolean request = action.startsWith("api.");
@@ -253,7 +255,10 @@ public class AuditLog {
         try {
             writer.execute(() -> store(at, actor, action, where, body));
         } catch (java.util.concurrent.RejectedExecutionException e) {
-            if (request) {
+            if (request && writer.isShutdown()) {
+                LOG.errorf("Audit: an event was not stored as the server was stopping (it is on the %s log "
+                    + "category): %s %s %s", CATEGORY, actor, action, where);
+            } else if (request) {
                 notStored();
             } else {
                 store(at, actor, action, where, body); // never lose a token, mark or source event to a flood

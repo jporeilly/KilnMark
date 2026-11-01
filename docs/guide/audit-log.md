@@ -24,7 +24,7 @@ it (behind a proxy, as its forwarding settings say).
 | Allow writing changed (`source.allow_writing`) | Allow writing turned on or off | On or off, and how: in the form, or by an import |
 | Allow SQL changed (`source.allow_sql`) | Allow SQL turned on or off | On or off, and how |
 | Request (`api.request`) | Any request that may change something (`POST`, `PUT`, `PATCH`, `DELETE`) and succeeded. Some of these only read, such as previews and dry runs | The method, status and the caller's address; the event is on the request's path |
-| Request refused (`api.refused`) | A request refused for want of a role (403), or for want of sign-in when it would have changed something (401) | The method, status and address. Refusals are kept at most 30 a minute for each token, and for everyone not signed in together; the next one kept says how many were not |
+| Request refused (`api.refused`) | A request refused for want of a role (403), or for want of sign-in when it would have changed something (401) | The method, status and address. In the table, refusals are kept at most 30 a minute for each token, and for everyone not signed in together; the next one kept says how many were not. The JSON line has every one |
 
 Start-up records the tokens it makes or sets aside (the first admin token, `KILNMARK_ADMIN_TOKEN`)
 as the server. A change is recorded as it is made, after it has succeeded. Only a request's method
