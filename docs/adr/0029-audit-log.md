@@ -20,7 +20,7 @@ those went only to the server's log, which an operator can rotate away and nobod
 
 ## Decision
 
-1. **One table, `kilnmark.audit_event`, in the server's own database (V27).** Each row: when, who
+1. **One table, `kilnmark.audit_event`, in the server's own database (V28).** Each row: when, who
    (the principal's name and the token's number), the action, what it was done to, and a small
    JSON detail. Rows are only ever added: a trigger refuses `UPDATE`, `DELETE` and `TRUNCATE`
    whoever asks.

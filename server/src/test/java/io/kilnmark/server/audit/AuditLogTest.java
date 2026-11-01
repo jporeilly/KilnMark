@@ -24,7 +24,7 @@ import io.restassured.http.ContentType;
 import io.restassured.path.json.JsonPath;
 
 /**
- * The audit log (V27): what is recorded, who may read it, and that it cannot be rewritten.
+ * The audit log (V28): what is recorded, who may read it, and that it cannot be rewritten.
  */
 @QuarkusTest
 class AuditLogTest {

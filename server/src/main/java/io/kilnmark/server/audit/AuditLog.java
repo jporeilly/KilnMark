@@ -25,7 +25,7 @@ import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
- * The audit log (V27): who did what, for the controls banks and other regulated users must show
+ * The audit log (V28): who did what, for the controls banks and other regulated users must show
  * (an audit trail as NIST SP 800-53 AU-2 and AU-9, NYDFS Part 500 and DORA expect). Every request
  * that changes something, and every request refused for want of a role, is an {@code api.*} event
  * ({@link AuditFilter}); the changes that decide who sees sensitive values and what reaches a source

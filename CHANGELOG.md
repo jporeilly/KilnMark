@@ -21,7 +21,7 @@ details.
 
 ### Details
 
-- **The audit log** (V27, ADR 0029). `kilnmark.audit_event` is append-only: a trigger refuses
+- **The audit log** (V28, ADR 0029). `kilnmark.audit_event` is append-only: a trigger refuses
   `UPDATE`, `DELETE` and `TRUNCATE`. Events: `token.created` (with role, unmask and expiry),
   `token.revoked`, `mark.set`, `mark.cleared`, `source.deleted`, `source.allow_writing` and
   `source.allow_sql` (from the form or an import), `api.request` for every `POST`, `PUT`, `PATCH`
