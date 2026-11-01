@@ -112,15 +112,20 @@ public record RegisteredDriver(String name, String fileName, String sha256, Stri
     }
 
     /**
-     * Whether a property's name says it reads or writes the server's files or loads code (ends in
-     * file, path, dir, directory, factory, class or classname; a trust or key store; javax.net), so no
+     * Whether a property's name says it reads or writes the server's files, loads code or acts as the
+     * server (ends in file, path, dir, directory, factory, class or classname; a trust or key store;
+     * javax.net; an interceptor, verifier, callback, provider or strategy; a location; MySQL's
+     * deserialising and local-file loading; the server's own Windows or Kerberos sign-in), so no
      * allow-list may hold it.
      */
     public static boolean readsServerFiles(String name) {
         String n = name.toLowerCase(java.util.Locale.ROOT);
         return n.endsWith("file") || n.endsWith("path") || n.endsWith("dir") || n.endsWith("directory")
             || n.endsWith("factory") || n.endsWith("class") || n.endsWith("classname") || n.contains("truststore")
-            || n.contains("keystore") || n.startsWith("javax.") || n.endsWith("tns_admin");
+            || n.contains("keystore") || n.startsWith("javax.") || n.endsWith("tns_admin")
+            || n.contains("interceptor") || n.contains("verifier") || n.contains("callback") || n.contains("provider")
+            || n.contains("strategy") || n.contains("location") || n.contains("autodeserialize")
+            || n.contains("localinfile") || n.contains("integratedsecurity") || n.contains("authenticationscheme");
     }
 
     /** Whether sources may set the property {@code name} (ignoring case) with this driver. */

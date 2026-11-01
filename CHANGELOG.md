@@ -56,13 +56,17 @@ details.
   host, as `//host[:port]` (or `jdbc:sybase:Tds:host:port`); a URL for a database the driver would
   open inside the Kilnmark server is refused for admins too: H2 files and memory (and H2's `INIT`,
   now as a driver property too), SQLite, DuckDB, HSQLDB files and memory, embedded Derby,
-  UCanAccess, CSV files, Calcite, embedded, local or native Firebird, Drill with `zk=local`, Ignite
-  from `cfg:`, Hive with no host, and any other URL with no host Kilnmark can read. **Existing
+  UCanAccess, CSV files, Calcite, embedded, local or native Firebird, Oracle OCI (use `thin`), Drill
+  with `zk=local`, Ignite from `cfg:`, Hive with no host, and any other URL with no host Kilnmark can
+  read. No driver's allow-list may hold a property that loads code, reads the server's files or signs
+  in as the server: interceptors, verifiers, callbacks, providers, strategies, locations, MySQL's
+  `autoDeserialize` and local-file loading, `integratedSecurity` and `authenticationScheme`. **Existing
   generic JDBC sources with such URLs stop connecting**, and their tests, scans and runs say why.
   Run the database as a server (an H2 or HSQLDB server, Derby's network server and the like) and
   change the source's URL to its network address.
 - **S3 access points and overlapping sources.** An S3 source whose bucket is an access point (an
-  `-s3alias`, Object Lambda `--ol-s3`, Outposts `--op-s3` or `.mrap` alias, or an ARN), or whose
+  `-s3alias`, Object Lambda `--ol-s3`, Outposts `--op-s3`, directory bucket `--xa--s3` or `.mrap`
+  alias, or an ARN), or whose
   endpoint host names a bucket or access point (`<bucket>.s3.<region>.amazonaws.com`,
   `s3-accesspoint` hosts and the like), counts as reading the same files as any other source at
   that endpoint, since Kilnmark cannot see the bucket behind it. Two access point ARNs in different

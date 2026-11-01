@@ -312,6 +312,10 @@ public class GenericJdbcConnector extends JdbcConnector {
             || u.contains(":firebirdsql:native:") || u.contains(":firebird:native:")) {
             return "a local or native Firebird URL loads Firebird's own library into the server." + INSIDE;
         }
+        if (u.contains(":oracle:oci:") || u.contains(":oracle:oci8:")) {
+            return "an Oracle OCI URL loads Oracle's native client library into the server; use jdbc:oracle:thin:."
+                + INSIDE;
+        }
         if (u.contains(":ucanaccess:")) {
             return "UCanAccess opens Access database files on the server." + INSIDE;
         }

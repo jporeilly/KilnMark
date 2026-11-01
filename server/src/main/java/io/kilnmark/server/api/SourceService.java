@@ -289,13 +289,14 @@ public class SourceService {
 
     /**
      * Whether an S3 bucket setting names an access point, not a bucket: an alias ({@code -s3alias},
-     * {@code --ol-s3} for Object Lambda, {@code --op-s3} for Outposts, {@code .mrap} for a
-     * multi-Region one) or any ARN (a bucket name never holds a colon).
+     * {@code --ol-s3} for Object Lambda, {@code --op-s3} for Outposts, {@code --xa--s3} for a
+     * directory bucket's, {@code .mrap} for a multi-Region one) or any ARN (a bucket name never holds
+     * a colon). A directory bucket itself ({@code --x-s3}) is a bucket.
      */
     static boolean accessPoint(String bucket) {
         String b = bucket.toLowerCase(java.util.Locale.ROOT);
-        return b.endsWith("-s3alias") || b.endsWith("--ol-s3") || b.endsWith("--op-s3") || b.endsWith(".mrap")
-            || b.startsWith("arn:");
+        return b.endsWith("-s3alias") || b.endsWith("--ol-s3") || b.endsWith("--op-s3") || b.endsWith("--xa--s3")
+            || b.endsWith("--xa-s3") || b.endsWith(".mrap") || b.startsWith("arn:");
     }
 
     /** An S3 ARN's partition and region (empty for a multi-Region access point). */
