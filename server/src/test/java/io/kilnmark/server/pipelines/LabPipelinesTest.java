@@ -56,7 +56,7 @@ class LabPipelinesTest {
             s.connectors.put(kind, all.get(kind).orElseThrow(() -> new AssertionError("no connector " + kind)));
         }
         s.add("lab-db", "postgresql", Map.of("host", "localhost", "port", "5433", "database", "lab",
-            "username", "lab", "schemas", "crm;billing"), "lab");
+            "username", "lab", "schemas", "crm;billing", "allow_sql", "true"), "lab");
         s.add("lab-mariadb", "mariadb", Map.of("host", "localhost", "port", "3307", "username", "kiln_reader",
             "schemas", "shop;stock"), "Lab-Reader-2026");
         s.add("lab-warehouse", "s3", Map.of("endpoint", "http://localhost:9020", "bucket", "lab-warehouse",
@@ -130,7 +130,9 @@ class LabPipelinesTest {
             assertTrue(c.name().startsWith(prefix), file + ": named " + prefix + "...");
             assertTrue(out.put(c.name(), PipelineDefinition.parse(text).definition()) == null, file + ": name used twice");
             for (PipelineCompilerPort.NodeOutline node : c.nodes()) {
-                if (!"sink".equals(node.kind())) {
+                // a query's columns are known when it runs (ADR 0028)
+                if (!"sink".equals(node.kind()) && !ReadNodeFactory.isQuery(c.configs().getOrDefault(node.id(),
+                    Map.of()))) {
                     assertTrue(node.columns().get("out") != null, file + ": the columns leaving " + node.id()
                         + " are known");
                 }

@@ -1,11 +1,25 @@
 # Kilnmark
 
-On-prem trusted-data engine: it finds, profiles and scores every data asset, then acts on what it
-finds. **Kiln** is its execution engine.
+A modern data integration engine, on-prem, that knows the quality of the data it moves: it profiles
+each source once, predicts a pipeline's output quality before it runs, and gates or quarantines rows
+in the same pass ([ADR 0021](docs/adr/0021-pipeline-first.md)). **Kiln** is its execution engine.
 
-Status: version 0.0.2, the first working slice. Register PostgreSQL sources (one at a time or
-imported from a file), scan them, search tables, views and columns, and open an asset page with
-every column's profile. No sign-in yet: lab use only.
+Status: version 0.0.9, early and moving fast; see the [changelog](CHANGELOG.md).
+
+- **Sources:** PostgreSQL, SQL Server, MySQL, MariaDB, Oracle, any database with a JDBC driver an
+  admin registers, local folders and S3, with CSV, JSON and Parquet files. Scan them, search
+  tables, views and columns, and open each asset with its column profiles and quality score.
+- **Pipelines:** graphs of nodes (read, filter, compute, select, lookup, aggregate, union, dedupe,
+  route, limit, quality gate, write), built on a canvas or in YAML, with parameters, server
+  variables, previews at any node and a predicted quality before they run.
+- **Flows** (engine built, API and canvas next) will run pipelines in order, on success, failure
+  or a condition over what they measured.
+- **Quality:** rules from a library, drift and issues, sent out as OpenLineage and ODCS 3.1.
+- **Samples:** small pipelines that show one idea each, and a starter pack to run them on.
+- **Sign-in** with API tokens in four roles: viewer, steward (runs pipelines and looks after
+  quality), designer (builds pipelines, flows and sources) and admin (Settings and tokens). Columns
+  marked sensitive stay masked for everyone but designers, admins included
+  ([ADR 0027](docs/adr/0027-unmasking-is-a-grant.md)).
 
 ## Quick start
 

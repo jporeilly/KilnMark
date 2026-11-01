@@ -25,6 +25,8 @@ public final class RunContext {
     private final Set<String> reads = Collections.synchronizedSet(new LinkedHashSet<>());
     private final java.util.Map<String, String> writes = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<String, String> readUrns = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, java.util.List<String>> queryReads =
+        new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<String, java.util.List<String>> writeColumns =
         new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Map<String, ReadRef> gateReads = new java.util.concurrent.ConcurrentHashMap<>();
@@ -81,6 +83,23 @@ public final class RunContext {
                 readUrns.put(source + "\u0000" + asset, urn);
             }
         }
+    }
+
+    /**
+     * Notes the tables a read's query reads in {@code source}, as the database planned it, under
+     * their URNs (ADR 0028): each is a read of the run, and an input of what is written from it.
+     */
+    void queryRead(String source, String query, java.util.List<String> urns) {
+        if (source != null && query != null) {
+            urns.forEach(u -> read(source, null, u));
+            queryReads.put(source + "\u0000" + query, java.util.List.copyOf(urns));
+        }
+    }
+
+    /** The tables the read of {@code query} in {@code source} read, as noted; empty before it is set up. */
+    public java.util.List<String> queryReadUrns(String source, String query) {
+        return source == null || query == null ? java.util.List.of()
+            : queryReads.getOrDefault(source + "\u0000" + query, java.util.List.of());
     }
 
     /**

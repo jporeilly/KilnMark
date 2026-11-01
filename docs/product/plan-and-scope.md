@@ -97,6 +97,35 @@ Later phases follow the architecture spec's roadmap; each gets its own detailed 
 
 Integration with other catalogs arrives only through open standards in v0.5 or later.
 
+Also needed, not yet scheduled:
+
+- **A library of pipelines and flows.** Ready-made pipelines and flows for common work (incremental
+  loads, slowly changing dimensions, file-to-table with error rows, lookups, dedupes, summaries, an
+  orchestrating flow with alerts), and migration templates that turn jobs built in other data
+  integration tools into Kilnmark pipelines and flows. They build on the importer for existing jobs
+  (v0.3), and an audit of those tools' steps and job entries against Kilnmark's nodes comes first. A
+  decision is needed on how the importer reads other tools' files, since Kilnmark uses no other
+  vendors' file formats (Scope).
+- **Projects and their lifecycle.** A project groups pipelines, flows and sources for a team: several
+  designers who build, a steward who runs and looks after quality, and a viewer or two. It needs a way
+  to set one up and give people their roles in it (roles per project, not only per server, and the
+  unmask grant of ADR 0027 per project), and a lifecycle from development through test to
+  production: promoting versions between stages, reviews before promotion, and who may promote.
+- **AI as nodes in pipelines and flows.** Pipelines and flows are already graphs of nodes and
+  connections, so AI can join them the way graph-based AI builders do: nodes that call a model
+  (classify, extract, summarise, embed, generate), nodes for prompts, memory and tools, and agents
+  that choose the next step in a flow. They must keep ADR 0012 and ADR 0016: local models by default,
+  one egress gate, columns marked sensitive never sent to a model, and people approve what AI changes.
+- **Building agents.** People create their own agents: a model, instructions, tools, memory and
+  limits, saved and versioned like a pipeline or flow. Their tools are Kilnmark's own actions
+  (search, read a source, run a pipeline or flow, check quality), under the caller's role and the
+  same masking, so an agent can do no more than the person who runs it.
+- **Run tools for agents, and an optimisation agent (parked).** Pipeline and flow runs on the MCP
+  server (timings, rows, peak memory, quarantine share, model tokens), read through the model's
+  sight, then an agent that finds the slowest pipelines and says why. Folded into the Optimise work
+  when it comes; a money cost model only if cloud customers ask. External agent tools (OpenCode)
+  can use the same MCP tools, but are not built into the product (ADR 0007, ADR 0012).
+
 ## Engineering setup
 
 One mono-repo, one build, one Compose file: the whole product runs from a clean clone with a single command.

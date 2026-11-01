@@ -3,7 +3,7 @@ import { IconPlayerPlay, IconPlayerStop } from "@tabler/icons-react";
 import { ApiError, allows, formatNumber, pipelinesApi, type AccessRole, type NodePreview } from "../../api";
 import { PreviewTable } from "../../components/PreviewTable";
 
-/** The last preview shown in the drawer, kept by the canvas while the settings tab is open. */
+/** The last preview shown in the Preview tab, kept by the canvas while another tab is shown. */
 export type PreviewResult = { node: string; port: string; yaml: string; view: NodePreview };
 
 /** Asks the panel to run a preview now (the node's context menu): `n` changes on each ask. */
@@ -29,7 +29,7 @@ export function previewSummary(v: NodePreview): string {
 }
 
 /**
- * The drawer's Preview tab: runs the pipeline as it stands up to the selected node, without
+ * The Preview tab of the panel under the canvas: runs the pipeline as it stands up to the selected node, without
  * writing anything, and shows the first rows leaving one of its outputs, with their columns and
  * kinds, how long it took and what was masked. Designers and admins only; only designers see sensitive values.
  */
@@ -106,7 +106,7 @@ export function NodePreviewPanel({
       run();
     }
   });
-  // Leaving the node or closing the drawer stops a preview still running.
+  // Leaving the node or the Preview tab stops a preview still running.
   useEffect(() => () => ctl.current?.abort(), []);
 
   if (writes) {

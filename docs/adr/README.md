@@ -31,3 +31,4 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0026](0026-flows.md) | Flows orchestrate pipelines; the scheduler comes later and is built in | Accepted |
 | [0027](0027-unmasking-is-a-grant.md) | Seeing unmasked values is a grant of its own, held only by designers | Accepted |
 | [0030](0030-generic-jdbc-vetted-settings.md) | Generic JDBC takes only settings Kilnmark has vetted; isolated drivers later | Accepted |
+| [0028](0028-sql-in-reads-and-flow-actions.md) | SQL a person writes runs in two places only: a read's query, and a flow's SQL action | Accepted |

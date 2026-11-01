@@ -1,0 +1,29 @@
+# Read with a query (a Kilnmark sample).
+# Runs one SELECT on the CRM database: each customer with the number of accounts they hold, joined
+# and counted by the database, and writes the result to a CSV file.
+# Needs: a PostgreSQL source with Allow SQL on for crm-db, and a designer who may see unmasked
+# values to add or change it. Adding the samples skips it otherwise.
+# Look for: the run's reads. Before reading a row, Kilnmark asks the database which tables the query
+# reads (without running it) and records them for lineage. Every column the query returns is treated
+# as marked sensitive, since a column cannot be followed through SQL, so the CSV it writes is masked
+# for everyone but designers who may see unmasked values.
+kilnmark: pipeline/v1
+name: sample-read-query
+description: Customers with their number of accounts, counted by the database.
+
+nodes:
+  - id: accounts_per_customer
+    type: read
+    source: crm-db
+    query: >-
+      SELECT c.customer_id, c.segment, count(a.account_id) AS accounts
+      FROM crm.customers c LEFT JOIN crm.accounts a ON a.customer_id = c.customer_id
+      GROUP BY c.customer_id, c.segment
+    row_limit: 1000
+
+  - id: out
+    type: write
+    input: accounts_per_customer
+    source: files
+    path: samples/read-and-write/accounts_per_customer.csv
+    mode: replace

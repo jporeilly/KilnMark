@@ -39,6 +39,20 @@ class DriverFolderTest {
     /** The drivers folder, inside the test's folder, so the private copies beside it are too. */
     Path dir;
 
+    /** Every folder a test opens, released after it: a loaded driver's jar stays open until then. */
+    private final java.util.List<DriverFolder> opened = new java.util.ArrayList<>();
+
+    private DriverFolder open(Path d) {
+        DriverFolder f = new DriverFolder(d);
+        opened.add(f);
+        return f;
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void releaseDrivers() {
+        opened.forEach(DriverFolder::close);
+    }
+
     @org.junit.jupiter.api.BeforeEach
     void folder() throws IOException {
         dir = Files.createDirectories(root.resolve("drivers"));
@@ -97,7 +111,7 @@ class DriverFolderTest {
 
     @Test
     void aMissingDriverSaysWhereItGoesAndWhoInstallsIt() {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         Connector.Driver spec = spec(driverJar);
         DriverFolder.Status s = folder.status(spec);
         assertEquals(DriverFolder.State.MISSING, s.state());
@@ -113,7 +127,7 @@ class DriverFolderTest {
 
     @Test
     void aFileWithAnotherChecksumIsRefusedAndNeverLoaded() throws Exception {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         Connector.Driver spec = spec(driverJar);
         byte[] tampered = driverJar.clone();
         tampered[tampered.length - 1] ^= 1;
@@ -129,7 +143,7 @@ class DriverFolderTest {
 
     @Test
     void theVerifiedDriverLoadsAloneInItsOwnClassLoader() throws Exception {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         Connector.Driver spec = spec(driverJar);
         Files.write(folder.file(spec), driverJar);
         Files.write(dir.resolve("other-1.0.jar"), otherJar);
@@ -156,7 +170,7 @@ class DriverFolderTest {
 
     @Test
     void aLoadedDriverIsUsedAgainWithoutReadingItsFileWhileTheFileIsUnchanged() throws Exception {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         Connector.Driver spec = spec(driverJar);
         Path file = folder.file(spec);
         Files.write(file, driverJar);
@@ -177,7 +191,7 @@ class DriverFolderTest {
 
     @Test
     void loadedCopiesLiveInOnePrivateFolderBesideTheDriversFolderClearedAtStart() throws Exception {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         Connector.Driver spec = spec(driverJar);
         Files.write(folder.file(spec), driverJar);
         folder.driver(spec);
@@ -193,14 +207,15 @@ class DriverFolderTest {
         assertEquals(List.of(), listing(empty), "nothing for a driver to read settings from");
 
         Files.writeString(copies.resolve("left-over.jar"), "from the last run");
-        new DriverFolder(dir).prepare();
+        folder.close(); // the server restarts: the last run's loaders are gone before the folder is emptied
+        open(dir).prepare();
         assertEquals(List.of(), listing(copies), "emptied when the server starts");
         assertTrue(Files.isDirectory(copies));
     }
 
     @Test
     void installKeepsOnlyTheExpectedFile() throws Exception {
-        DriverFolder folder = new DriverFolder(dir.resolve("drivers"));
+        DriverFolder folder = open(dir.resolve("drivers"));
         Connector.Driver spec = spec(driverJar);
         IOException wrong = assertThrows(IOException.class,
             () -> folder.install(spec, new ByteArrayInputStream("not a jar".getBytes(StandardCharsets.UTF_8))));

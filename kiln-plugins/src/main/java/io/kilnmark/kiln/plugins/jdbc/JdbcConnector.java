@@ -997,4 +997,33 @@ public abstract class JdbcConnector implements Connector {
         s.putAll(readSettings(source));
         return new NodeSpec("read", tableInput(), s);
     }
+
+    /**
+     * A reader for SQL a person wrote (ADR 0028): one {@code SELECT}, already checked by the caller,
+     * run as written on a read-only connection; with a row limit it is wrapped, so the database
+     * stops at that many rows. PostgreSQL only for now.
+     *
+     * @throws IllegalStateException for a database other than PostgreSQL
+     */
+    public NodeSpec queryReader(SourceConfig source, String sql, String label, long rowLimit, int batchSize) {
+        if (dialect() != SqlDialect.POSTGRESQL) {
+            throw new IllegalStateException("A query reads only from PostgreSQL sources for now");
+        }
+        Map<String, String> s = new HashMap<>();
+        s.put("url", jdbcUrl(source));
+        if (source.setting("username") != null) {
+            s.put("user", source.setting("username"));
+        }
+        if (source.secret() != null) {
+            s.put("password", source.secret());
+        }
+        driverSettings(source).forEach((k, v) -> s.put(JdbcTableInput.DRIVER_PREFIX + k, String.valueOf(v)));
+        // On lines of its own, so a query ending in a -- comment cannot comment out the closing parenthesis.
+        s.put("query", rowLimit > 0 ? "SELECT * FROM (\n" + sql + "\n) AS kilnmark_query LIMIT " + rowLimit : sql);
+        s.put("label", label);
+        s.put("row-limit", "0"); // the query applies the limit itself
+        s.put("batch-size", Integer.toString(batchSize));
+        s.putAll(readSettings(source));
+        return new NodeSpec("read", tableInput(), s);
+    }
 }

@@ -10,7 +10,8 @@
   margin: 0;
 }
 
-/* The stage: the node list (docked when shown), the canvas, and the drawers over it. */
+/* The stage: the node list (docked when shown) and the canvas. The panel under the canvas (the
+   page's) takes --cv-below of the screen's height, so the canvas gets the rest. */
 .cv-stage {
   position: relative;
   display: grid;
@@ -18,7 +19,7 @@
   /* One row the stage's height, so a long node list scrolls inside it rather than stretching it. */
   grid-template-rows: minmax(0, 1fr);
   gap: 8px;
-  height: max(480px, calc(100vh - var(--km-topbar-h) - 150px));
+  height: max(360px, calc(100vh - var(--km-topbar-h) - 150px - var(--cv-below, 0px)));
 }
 
 .cv-side-title {
@@ -282,11 +283,6 @@
   --xy-minimap-node-stroke-color: var(--km-ink-soft);
   border: 1px solid var(--km-border-control);
   border-radius: 6px;
-}
-
-/* Clear of the settings drawer when it is open. */
-.cv-stage.has-drawer .react-flow__minimap {
-  right: min(340px, 38%);
 }
 
 .cv-flow .react-flow__minimap .cv-mini-source {
@@ -590,45 +586,20 @@
 
 /* ---- the settings panel ---- */
 
-/* The selected node's settings: a drawer over the right of the canvas. */
-.cv-drawer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 15;
-  width: min(340px, 38%);
-  box-sizing: border-box;
-  overflow: auto;
-  border: 1px solid var(--km-border-control);
-  border-radius: var(--km-radius-card);
-  background: var(--km-surface);
-  box-shadow: var(--km-shadow-raised);
-  padding: 14px 16px;
+/* The selected node's settings, preview and the suggestions: drawn by the canvas into the panel
+   under it (see .pl-dock in pipelines.css). */
+.cv-dock-body {
+  min-width: 0;
 }
 
-.cv-drawer-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.cv-drawer-head .cv-side-title {
+.cv-dock-none {
   margin: 0;
 }
 
-/* On a phone the drawer is below the canvas, so the canvas stays usable. */
+/* On a phone the canvas has a fixed height, and the page scrolls on to the panel under it. */
 @media (max-width: 700px) {
   .cv-stage {
-    height: auto;
-    grid-template-rows: 440px auto;
-  }
-
-  .cv-drawer {
-    position: static;
-    grid-column: 1 / -1;
-    width: auto;
-    box-shadow: none;
+    height: 440px;
   }
 }
 
@@ -710,6 +681,12 @@
 
 .cv-number {
   max-width: 14ch;
+}
+
+.cv-sql {
+  font-size: 13px;
+  resize: vertical;
+  min-height: 6em;
 }
 
 .cv-expression {
@@ -956,7 +933,6 @@ button.cv-danger {
   .cv-node,
   .cv-type,
   .cv-flow,
-  .cv-drawer,
   .cv-palette-panel {
     border-color: CanvasText;
   }
@@ -992,7 +968,7 @@ button.cv-danger {
   cursor: pointer;
 }
 
-/* Suggestions beside the canvas, in the drawer's place. */
+/* Suggestions, a tab of the panel under the canvas. */
 .cv-suggest {
   display: grid;
   align-content: start;
@@ -1056,7 +1032,7 @@ button.cv-danger {
   font-weight: 600;
 }
 
-/* ---- a node's context menu, and the drawer's Preview tab ---- */
+/* ---- a node's context menu, and the Preview tab under the canvas ---- */
 
 .cv-menu {
   position: fixed;
@@ -1107,14 +1083,6 @@ button.cv-danger {
 .cv-menu-note {
   font-size: 0.8rem;
   color: var(--km-muted);
-}
-
-.cv-drawer.is-wide {
-  width: min(640px, 62%);
-}
-
-.cv-drawer .km-tabs {
-  margin: 8px 0 12px;
 }
 
 .cv-preview {
@@ -1178,7 +1146,8 @@ button.cv-danger {
 /* The rows scroll inside a box that fits the screen, both ways, so the sideways scrollbar is in
    view rather than under the last of up to a hundred rows; the column names stay on top. */
 .cv-preview .table-scroll {
-  max-height: min(60vh, 520px);
+  /* Within the panel under the canvas, it fits that panel's height. */
+  max-height: min(60vh, 520px, calc(var(--pl-dock-h, 100vh) - 40px));
   overflow: auto;
   border: 1px solid var(--km-divider);
 }
@@ -1196,12 +1165,6 @@ button.cv-danger {
 
 .cv-preview .preview-table td {
   max-width: 28ch;
-}
-
-@media (max-width: 700px) {
-  .cv-drawer.is-wide {
-    width: auto;
-  }
 }
 
 @media (forced-colors: active) {

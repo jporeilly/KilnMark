@@ -72,6 +72,8 @@ public final class DriverFolder implements JdbcDrivers {
 
     private final Path dir;
     private final Map<String, java.sql.Driver> loaded = new ConcurrentHashMap<>();
+    /** Every class loader a driver was loaded through, so {@link #close()} can release their jars. */
+    private final java.util.List<URLClassLoader> loaders = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Map<Path, Known> checksums = new ConcurrentHashMap<>();
     private final Path privateCopies;
 
@@ -258,6 +260,7 @@ public final class DriverFolder implements JdbcDrivers {
             }
             URLClassLoader loader = new URLClassLoader("driver " + spec.coordinates() + " " + spec.version(),
                 new URL[] {copy.toUri().toURL()}, ClassLoader.getPlatformClassLoader());
+            loaders.add(loader);
             Class<?> c = Class.forName(spec.driverClass(), true, loader);
             if (!java.sql.Driver.class.isAssignableFrom(c)) {
                 throw new SQLException(spec.driverClass() + " in " + spec.fileName() + " is not a JDBC driver", "08001");
@@ -266,6 +269,24 @@ public final class DriverFolder implements JdbcDrivers {
         } catch (IOException | ReflectiveOperationException | LinkageError e) {
             throw new SQLException("Cannot load the driver " + spec.fileName() + ": " + e, "08001", e);
         }
+    }
+
+    /**
+     * Releases the drivers this folder loaded: their class loaders are closed, so their jars are no
+     * longer held open (Windows will not delete an open jar), and no loaded driver is handed out
+     * again. Called when the folder is no longer used, such as at shutdown or in a test's cleanup.
+     */
+    public void close() {
+        loaded.clear();
+        registeredLoaded.clear();
+        for (URLClassLoader l : loaders) {
+            try {
+                l.close();
+            } catch (IOException e) {
+                // a loader that will not close is left for the garbage collector
+            }
+        }
+        loaders.clear();
     }
 
     /** The private folder, made (owner only) when it is not there. */
@@ -604,6 +625,7 @@ public final class DriverFolder implements JdbcDrivers {
                 }
                 URLClassLoader loader = new URLClassLoader("registered driver " + fileName,
                     new URL[] {copy.toUri().toURL()}, ClassLoader.getPlatformClassLoader());
+                loaders.add(loader);
                 Class<?> c;
                 try {
                     // not initialised yet: no code of the jar runs before it is known to be a driver

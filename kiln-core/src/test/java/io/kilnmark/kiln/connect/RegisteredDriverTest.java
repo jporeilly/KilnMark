@@ -39,6 +39,20 @@ class RegisteredDriverTest {
     Path root;
     Path dir;
 
+    /** Every folder a test opens, released after it: a loaded driver's jar stays open until then. */
+    private final java.util.List<DriverFolder> opened = new java.util.ArrayList<>();
+
+    private DriverFolder open(Path d) {
+        DriverFolder f = new DriverFolder(d);
+        opened.add(f);
+        return f;
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void releaseDrivers() {
+        opened.forEach(DriverFolder::close);
+    }
+
     @BeforeEach
     void folder() throws IOException {
         dir = Files.createDirectories(root.resolve("drivers"));
@@ -98,7 +112,7 @@ class RegisteredDriverTest {
 
     @Test
     void registrationRecordsTheChecksumAndChecksTheClass() throws Exception {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         Files.write(dir.resolve("acme-4.2.jar"), driverJar);
         DriverFolder.Inspected i = folder.inspect("acme-4.2.jar", "acme.AcmeDriver");
         assertEquals(DriverFolder.sha256(driverJar), i.sha256());
@@ -115,7 +129,7 @@ class RegisteredDriverTest {
 
     @Test
     void aRegisteredDriverLoadsOnlyWhileItsChecksumMatches() throws Exception {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         Path file = dir.resolve("acme-4.2.jar");
         Files.write(file, driverJar);
         RegisteredDriver r = registered(folder, "acme-4.2.jar");
@@ -142,7 +156,7 @@ class RegisteredDriverTest {
 
     @Test
     void aRegisteredDriverIsIsolatedLikeAPinnedOne() throws Exception {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         Files.write(dir.resolve("acme-4.2.jar"), driverJar);
         RegisteredDriver r = registered(folder, "acme-4.2.jar");
         java.sql.Driver d = folder.driver(r);
@@ -159,7 +173,7 @@ class RegisteredDriverTest {
 
     @Test
     void aRemovedRegistrationIsNeverHandedOut() throws Exception {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         Files.write(dir.resolve("acme-4.2.jar"), driverJar);
         RegisteredDriver r = registered(folder, "acme-4.2.jar");
         assertEquals(List.of(r), folder.registered());
@@ -174,7 +188,7 @@ class RegisteredDriverTest {
 
     @Test
     void onlyJarsDirectlyInTheFolderCanBeNamed() throws Exception {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         for (String bad : List.of("../acme.jar", "sub/acme.jar", "/etc/passwd", "acme.zip", ".hidden.jar", "a..b.jar")) {
             assertThrows(IOException.class, () -> folder.jar(bad), bad);
         }
@@ -186,7 +200,7 @@ class RegisteredDriverTest {
 
     @Test
     void aLinkInTheFolderIsNeverFollowed() throws Exception {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         Path elsewhere = root.resolve("elsewhere.jar");
         Files.write(elsewhere, driverJar);
         Files.createSymbolicLink(dir.resolve("linked.jar"), elsewhere);
@@ -196,7 +210,7 @@ class RegisteredDriverTest {
 
     @Test
     void uploadsNeverReplaceAFileAndStayWithinTheLimit() throws Exception {
-        DriverFolder folder = new DriverFolder(dir);
+        DriverFolder folder = open(dir);
         String sha = folder.upload("acme-4.2.jar", new ByteArrayInputStream(driverJar));
         assertEquals(DriverFolder.sha256(driverJar), sha);
         assertThrows(java.nio.file.FileAlreadyExistsException.class,

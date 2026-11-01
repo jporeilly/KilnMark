@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { IconPlus, IconRefresh, IconSparkles, IconX } from "@tabler/icons-react";
+import { IconPlus, IconRefresh, IconSparkles } from "@tabler/icons-react";
 import { Button, StatusChip, Switch } from "../../components/ui";
 import { changedDimensions, effectWords, predictionApi, type Advice, type Suggestion } from "../prediction";
 
 /**
- * Suggestions for raising the predicted quality, beside the canvas (loaded when first opened).
+ * Suggestions for raising the predicted quality, a tab of the panel under the canvas (loaded when first shown).
  * Kilnmark's own come from the catalogue's metadata with no model; when an AI model is set for
  * pipeline suggestions it ranks, explains and adds to them. Each shows its predicted effect as an
  * estimate; Add inserts its nodes through the canvas, as one change to undo.
@@ -13,13 +13,16 @@ export default function SuggestionsPanel({
   yaml,
   readOnly,
   onAdd,
-  onClose,
+  focusAsk = 0,
+  onFocused,
 }: {
   yaml: string;
   readOnly: boolean;
   /** Adds the suggestion's nodes; returns why not, or null. */
   onAdd: (s: Suggestion) => string | null;
-  onClose: () => void;
+  /** Above 0: move the focus to the heading (Suggestions on the toolbar asked for them), then say so. */
+  focusAsk?: number;
+  onFocused?: () => void;
 }) {
   const [advice, setAdvice] = useState<Advice | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,9 +32,13 @@ export default function SuggestionsPanel({
   const [added, setAdded] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
 
+  // Only when asked: choosing the tab itself keeps the focus on the tab.
   useEffect(() => {
+    if (focusAsk <= 0) return;
     heading.current?.focus();
-  }, []);
+    onFocused?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusAsk]);
 
   // The model is asked when the panel opens, on Ask again, and when it is switched on; after an edit
   // (or an Add) only Kilnmark's own suggestions are worked out again, a moment later.
@@ -62,15 +69,10 @@ export default function SuggestionsPanel({
   }, [yaml, useAi, ask]);
 
   return (
-    <aside className="cv-drawer cv-suggest" aria-labelledby="cv-suggest-h" aria-busy={busy}>
-      <div className="cv-drawer-head">
-        <h3 id="cv-suggest-h" className="cv-side-title" tabIndex={-1} ref={heading}>
-          <IconSparkles size={18} stroke={1.8} aria-hidden="true" /> Suggestions
-        </h3>
-        <button type="button" className="cv-mini" aria-label="Close the suggestions" onClick={onClose}>
-          <IconX size={16} stroke={2} aria-hidden="true" />
-        </button>
-      </div>
+    <section className="cv-suggest" aria-labelledby="cv-suggest-h" aria-busy={busy}>
+      <h3 id="cv-suggest-h" className="cv-side-title" tabIndex={-1} ref={heading}>
+        <IconSparkles size={18} stroke={1.8} aria-hidden="true" /> Suggestions
+      </h3>
       <p className="small muted">
         Nodes that would raise the predicted quality of a write. Every score here is an estimate from the catalogue's
         metadata; no data is read.
@@ -152,6 +154,6 @@ export default function SuggestionsPanel({
           );
         })}
       </ul>
-    </aside>
+    </section>
   );
 }
