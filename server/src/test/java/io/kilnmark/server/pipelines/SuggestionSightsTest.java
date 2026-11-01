@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.kilnmark.server.quality.ProfileFacts;
 import io.kilnmark.server.quality.QualityStore;
 import io.kilnmark.server.quality.Sights;
+import jakarta.enterprise.inject.Vetoed;
 
 /**
  * AI pipeline suggestions never show a model a marked column's values, even for a designer whose
@@ -29,6 +30,7 @@ class SuggestionSightsTest {
     static final String PAYROLL = "urn:kilnmark:hr:staff.payroll";
 
     /** A designer whose token holds the unmask grant, with salary marked sensitive. */
+    @Vetoed // not a second bean: the parent's scope annotation is @Inherited
     static final class DesignerWithGrant extends Sights {
         boolean model;
 

@@ -9,10 +9,13 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import jakarta.enterprise.inject.Vetoed;
+
 /** The one-line hook pipelines call when a run finishes: what it tells, and when it stays quiet. */
 class PipelineHookTest {
 
     /** A publisher that keeps what it would have fired. */
+    @Vetoed // not a second bean: the parent's scope annotation is @Inherited
     static final class Fake extends NotificationPublisher {
         final List<NotificationEvent> fired = new ArrayList<>();
         final List<String> cleared = new ArrayList<>();

@@ -1,6 +1,0 @@
--Xlint:all
--d
-/tmp/claude-0/-home-claude/702d61ab-f1f4-57d7-b8ca-74a22b0643bc/scratchpad/jc
--sourcepath
-kiln-core/src/main/java:kiln-plugins/src/main/java
-kiln-plugins/src/main/java/io/kilnmark/kiln/plugins/jdbc/GenericJdbcConnector.java

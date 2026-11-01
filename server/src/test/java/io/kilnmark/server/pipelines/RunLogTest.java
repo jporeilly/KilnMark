@@ -18,6 +18,7 @@ import io.kilnmark.kiln.RunResult;
 import io.kilnmark.kiln.graph.RunListener;
 import io.kilnmark.kiln.graph.RunProgress;
 import io.kilnmark.server.auth.AccessRole;
+import jakarta.enterprise.inject.Vetoed;
 
 /** The run's log and progress as the worker keeps them, without a database. */
 class RunLogTest {
@@ -25,6 +26,7 @@ class RunLogTest {
     static final ObjectMapper JSON = new ObjectMapper();
 
     /** Keeps what would be written; can be told to fail. */
+    @Vetoed // not a second bean: the parent's scope annotation is @Inherited
     static final class Kept extends PipelineStore {
         final List<PipelineStore.Event> events = new ArrayList<>();
         final List<String> progress = new ArrayList<>();
