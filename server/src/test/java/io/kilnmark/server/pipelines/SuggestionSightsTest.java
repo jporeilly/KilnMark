@@ -1,6 +1,7 @@
 package io.kilnmark.server.pipelines;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Instant;
@@ -14,6 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.kilnmark.server.quality.ProfileFacts;
+import io.kilnmark.server.quality.QualityStore;
 import io.kilnmark.server.quality.Sights;
 
 /**
@@ -63,12 +65,19 @@ class SuggestionSightsTest {
     static PredictionCatalogue stored() {
         ProfileFacts facts = new ProfileFacts(1L, PAYROLL, Instant.now(), 10L, true, false, List.of(),
             List.of(field("id", 1), field("salary", 2)));
-        return new PredictionCatalogue() {
+        PredictionCatalogue catalogue = new PredictionCatalogue() {
             @Override
             Optional<ProfileFacts> latest(String urn) {
                 return Optional.of(facts);
             }
         };
+        catalogue.store = new QualityStore(null, JSON) {
+            @Override
+            public Set<String> sensitive(String urn) {
+                return QualityStore.marks(List.of("SALARY")); // compared ignoring case, as stored marks are
+            }
+        };
+        return catalogue;
     }
 
     @Test
@@ -86,5 +95,19 @@ class SuggestionSightsTest {
     void withoutTheModelTheGrantStillUnmasks() {
         ProfileFacts own = PipelineService.suggestionCatalogue(stored(), false, new DesignerWithGrant()).facts(PAYROLL);
         assertTrue(own.field("salary").stats().has("top"), "the designer's own suggestions use the values");
+    }
+
+    @Test
+    void withNoCallerTheCatalogueIsMasked() {
+        ProfileFacts server = stored().open().facts(PAYROLL);
+        assertFalse(server.field("salary").stats().has("top"), "no sights is the masked view: " + server.field("salary"));
+        assertTrue(server.field("id").stats().has("top"));
+    }
+
+    @Test
+    void aModelIsNeverAskedWithoutTheCallersSights() {
+        assertThrows(IllegalStateException.class, () -> PipelineService.suggestionCatalogue(stored(), true, null));
+        ProfileFacts own = PipelineService.suggestionCatalogue(stored(), false, null).facts(PAYROLL);
+        assertFalse(own.field("salary").stats().has("top"));
     }
 }
