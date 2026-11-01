@@ -333,10 +333,11 @@ public class GenericJdbcConnector extends JdbcConnector {
         if (firebird(u) && (u.contains("?type=") || u.contains("&type=") || u.contains(";type="))) {
             return FIREBIRD_TYPE;
         }
-        if (u.contains(":snowflake:") || u.contains(":vertica:") || u.contains(":exa:")) {
-            return "this database's driver reads and writes files on the server for ordinary SQL (Snowflake PUT and "
-                + "GET, Vertica COPY FROM LOCAL, Exasol IMPORT and EXPORT LOCAL), so it is not used through Generic "
-                + "JDBC." + INSIDE;
+        if (u.contains(":snowflake:") || u.contains(":vertica:") || u.contains(":exa:") || u.contains(":clickhouse:")
+            || u.contains(":ch:") || u.contains(":netezza:")) {
+            return "this database's driver reads and writes files on the Kilnmark server for ordinary SQL (Snowflake "
+                + "PUT and GET, Vertica COPY FROM LOCAL, Exasol IMPORT and EXPORT LOCAL, ClickHouse INFILE and "
+                + "OUTFILE, Netezza external tables), so it is not used through Generic JDBC (ADR 0030).";
         }
         if (u.contains(":redshift:iam:")) {
             return "a Redshift IAM URL signs in with the Kilnmark server's own AWS identity; give the source a "
@@ -594,7 +595,7 @@ public class GenericJdbcConnector extends JdbcConnector {
         Properties use = new Properties();
         use.putAll(p);
         String lower = url.toLowerCase(Locale.ROOT);
-        if (lower.contains(":mysql:") || lower.contains(":mariadb:")) {
+        if (lower.contains(":mysql") || lower.contains(":mariadb:") || lower.contains(":singlestore:")) {
             // A MySQL or MariaDB server can ask the driver to send it any of the server's files (LOAD DATA
             // LOCAL), and some driver versions agree by default: never.
             for (String off : List.of("allowLoadLocalInfile", "allowLocalInfile", "allowUrlInLocalInfile",

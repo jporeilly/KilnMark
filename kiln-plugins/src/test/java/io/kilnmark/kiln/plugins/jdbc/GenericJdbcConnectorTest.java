@@ -146,18 +146,18 @@ class GenericJdbcConnectorTest {
     @Test
     void everySettingInAUrlMustBeOnTheDriversAllowList() {
         String[][] refused = {
-            {"jdbc:h2:mem:x;INIT=RUNSCRIPT", "property INIT"},
+            {"jdbc:h2:mem:x;INIT=RUNSCRIPT", "H2's INIT"},
             {"jdbc:h2:mem:x;INIT=RUNSCRIPT FROM 'http://files.example.com/x.sql'", "cannot read the settings"},
             {"jdbc:mysql://db.example.com/shop?autoDeserialize=true", "property autoDeserialize"},
             {"jdbc:mysql://db.example.com/shop?useSSL=true&allowLoadLocalInfile=true", "property useSSL"},
             {"jdbc:mysql://db.example.com/shop?currentSchema=a&queryInterceptors=x.Y", "property queryInterceptors"},
-            {"jdbc:derby:sales;restoreFrom=/srv/backup/sales", "property restoreFrom"},
+            {"jdbc:derby://db.example.com/sales;restoreFrom=/srv/backup/sales", "property restoreFrom"},
             {"jdbc:sqlserver://db.example.com;databaseName=x", "property databaseName"},
             {"jdbc:db2://db.example.com:50000/SALES:traceFile=/tmp/db2.trc;", "property traceFile"},
             {"jdbc:db2://db.example.com:50000/SALES:currentSchema=S;traceDirectory=/tmp;", "property traceDirectory"},
-            {"jdbc:mysql://address=(host=elsewhere.example.com)(port=3306)/shop", "property address"},
+            {"jdbc:mysql://address=(host=elsewhere.example.com)(port=3306)/shop", "does not name a network host"},
             {"jdbc:mysql://db.example.com/shop?currentSchema=a&(host=x)", "property host"},
-            {"jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=elsewhere)))", "property DESCRIPTION"},
+            {"jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=elsewhere)))", "does not name a network host"},
             {"jdbc:x://db.example.com/sales?javax.net.ssl.trustStore=/etc/x", "property javax.net.ssl.trustStore"},
             {"jdbc:x://db.example.com/sales;oracle.net.tns_admin=/etc", "property oracle.net.tns_admin"},
             {"jdbc:teradata://db.example.com/DATABASE=x,CHARSET=UTF8,LOGMECH=LDAP", "property LOGMECH"},
@@ -167,7 +167,7 @@ class GenericJdbcConnectorTest {
             {"jdbc:x://db.example.com/sales?pwd=x", "user name or secret"},
             {"jdbc:x://db.example.com/sales?sslpassword=x", "user name or secret"},
             {"jdbc:x://db.example.com/sales?token=x", "user name or secret"},
-            {"jdbc:snowflake://acct.example.com/?private_key_file_pwd=x", "user name or secret"},
+            {"jdbc:x://acct.example.com/?private_key_file_pwd=x", "user name or secret"},
             {"jdbc:x://db.example.com/sales;passwd=x", "user name or secret"},
             {"jdbc:x://db.example.com/sales;user=x", "user name or secret"},
         };
@@ -228,6 +228,13 @@ class GenericJdbcConnectorTest {
      */
     @Test
     void aDatabaseOpenedInsideTheServerIsRefused() {
+        // Drivers that move the server's files for ordinary SQL (ADR 0030)
+        for (String url : List.of("jdbc:snowflake://acct.snowflakecomputing.com/", "jdbc:vertica://db.example.com:5433/s",
+            "jdbc:exa:db.example.com:8563", "jdbc:clickhouse://db.example.com:8123/s", "jdbc:ch://db.example.com/s",
+            "jdbc:netezza://db.example.com:5480/s")) {
+            String why = GenericJdbcConnector.insideTheServer(url);
+            assertTrue(why != null && why.contains("reads and writes files on the Kilnmark server"), url + " gave " + why);
+        }
         // Firebird's type, whatever the driver allows: in the URL, refused even before the allow-list
         assertTrue(GenericJdbcConnector.insideTheServer("jdbc:firebirdsql://db.example.com:3050/sales?type=EMBEDDED")
             .contains("Firebird type setting"));
@@ -257,9 +264,6 @@ class GenericJdbcConnectorTest {
             {"jdbc:oracle:oci:@//db.example.com:1521/sales", "other than jdbc:oracle:thin:"},
             {"jdbc:oracle:oci7:@//db.example.com:1521/sales", "other than jdbc:oracle:thin:"},
             {"jdbc:redshift:iam://cluster.example.com:5439/dev", "Redshift IAM URL"},
-            {"jdbc:snowflake://acct.snowflakecomputing.com/", "reads and writes files on the server"},
-            {"jdbc:vertica://db.example.com:5433/sales", "reads and writes files on the server"},
-            {"jdbc:exa:db.example.com:8563", "reads and writes files on the server"},
             {"jdbc:firebird:native:/srv/sales.fdb", "local or native Firebird"},
             {"jdbc:ucanaccess:///srv/sales.accdb", "UCanAccess"},
             {"jdbc:ucanaccess://C:/srv/sales.accdb", "UCanAccess"},
