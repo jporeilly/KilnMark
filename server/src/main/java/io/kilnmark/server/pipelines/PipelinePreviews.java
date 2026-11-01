@@ -217,6 +217,9 @@ public class PipelinePreviews {
         Map<String, Object> variables = variables();
         PipelineCompilerPort.Compilation checked = KilnPipelineCompiler.compile(plan.definition(), nodes, false,
             variables);
+        if (!viewer.mayUnmask() && hasQueryRead(checked)) {
+            throw PipelineService.fail(Response.Status.FORBIDDEN, QUERY_NEEDS_UNMASK);
+        }
         if (!checked.valid()) {
             throw new IllegalArgumentException("Fix the pipeline before previewing " + plan.node() + ": "
                 + problems(checked.problems()));
@@ -465,10 +468,26 @@ public class PipelinePreviews {
         return readMarks(c, context, viewer::marks);
     }
 
+    /** Why a pipeline with a query read is refused to a caller who may not see unmasked values. */
+    static final String QUERY_NEEDS_UNMASK = "Only a designer who may see unmasked values writes or previews a read "
+        + "that runs a query, since a query can read any column of the source";
+
+    /** Whether any read node of {@code c} runs a query (ADR 0028). */
+    static boolean hasQueryRead(PipelineCompilerPort.Compilation c) {
+        for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
+            if (ReadNodeFactory.TYPE.equals(s.type())
+                && ReadNodeFactory.isQuery(c.configs().getOrDefault(s.id(), Map.of()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * For each read node, the columns marked sensitive in what it reads (any of the URNs it may be
      * catalogued under), and the first such asset ({@code firstMarked}, when given), as {@code marksOf}
-     * gives them.
+     * gives them. A read that runs a query may read anything its login can, in any schema and under
+     * any saved source, so every column it reads is marked, whatever the catalogue says (ADR 0028).
      */
     static Map<String, Set<String>> readMarks(PipelineCompilerPort.Compilation c, RunContext context,
                                               java.util.function.Function<String, Set<String>> marksOf) {
@@ -479,6 +498,11 @@ public class PipelinePreviews {
             }
             Map<String, Object> config = c.configs().getOrDefault(s.id(), Map.of());
             Set<String> marks = new LinkedHashSet<>();
+            if (ReadNodeFactory.isQuery(config)) {
+                marks.add(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN);
+                out.put(s.id(), marks);
+                continue;
+            }
             readUrns(config, context).forEach(u -> marks.addAll(marksOf.apply(u)));
             out.put(s.id(), marks);
         }
