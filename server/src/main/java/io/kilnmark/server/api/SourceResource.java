@@ -87,13 +87,13 @@ public class SourceResource {
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Response add(NewSource body) {
         if (body == null || body.name() == null) {
             throw new IllegalArgumentException("Send the source as JSON with at least a name");
         }
         SourceService.Draft d = sources.draft(new SourceForm(body.name(), body.kind(), body.settings(),
-            body.password(), null, null, body.displayName()), null, true);
+            body.password(), null, null, body.displayName()), null, true, identity.hasRole(AccessRole.ADMIN_ROLE));
         if (store.source(d.config().name()).isPresent()) {
             throw ApiError.of(Response.Status.CONFLICT, "A source called " + d.config().name() + " already exists");
         }
@@ -111,22 +111,22 @@ public class SourceResource {
     @PUT
     @Path("{name}")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Views.Source update(@PathParam("name") String name, SourceForm body) {
         Records.Source existing = find(name);
         if (body == null || body.settings() == null) {
             throw new IllegalArgumentException("Send the source as JSON with all its settings");
         }
-        // allow_writing: only admins may change it; a steward's form that leaves it out keeps it.
+        // allow_writing, and where a writable source points: designers and admins (whoever may edit
+        // sources at all); admin-only kinds and reading settings of marked sources stay with admins.
         boolean admin = identity.hasRole(AccessRole.ADMIN_ROLE);
-        SourceForm form = SourceService.writingAsAllowed(body, existing, admin);
+        boolean designer = identity.hasRole(AccessRole.DESIGNER_ROLE);
+        SourceForm form = SourceService.writingAsAllowed(body, existing, designer);
         // Who may change where a writable source points is decided before the form is checked, so a
         // steward is told no (403) rather than asked to re-enter the password for a change they may not make.
-        SourceService.whereUnchangedOrAdmin(existing, SourceService.settings(form.settings()), admin);
-        SourceService.adminOnlyKind(sources.connector(existing.kind()), existing,
-            SourceService.settings(form.settings()), admin);
-        SourceService.Draft d = sources.draft(form, existing, true);
-        sources.readingUnchangedOrAdmin(existing, d.config().settings(), "change how this source is read");
+        SourceService.whereUnchangedOrAdmin(existing, SourceService.settings(form.settings()), designer);
+        SourceService.Draft d = sources.draft(form, existing, true, admin);
+        sources.readingUnchangedOrUnmasked(existing, d.config().settings(), "change how this source is read");
         byte[] secret = d.replaceSecret() && d.newSecret() != null ? secrets.seal(d.newSecret()) : null;
         Records.Source s = conflicts(() -> store.updateSource(existing.id(), new Records.SourceChange(d.displayName(),
             d.config().settings(), d.replaceSecret(), secret, d.keepSecretIf()))).orElseThrow(() -> ApiError.of(
@@ -143,14 +143,22 @@ public class SourceResource {
      */
     @DELETE
     @Path("{name}")
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Views.Deleted delete(@PathParam("name") String name) {
         Records.Source existing = find(name);
+        // Deleting a source drops its marks with its assets, which is clearing them: admins only, and logged,
+        // as clearing a mark is (ADR 0027). Otherwise the same files could be added again, unmarked.
+        boolean marked = sources.hasMarks(existing.name());
+        if (marked && !identity.hasRole(AccessRole.ADMIN_ROLE)) {
+            throw ApiError.of(Response.Status.FORBIDDEN, existing.name() + " has columns marked sensitive, and deleting "
+                + "it clears those marks, so only an admin can delete it.");
+        }
         try {
             Records.Deleted d = conflicts(() -> store.deleteSource(existing.id())).orElseThrow(() -> ApiError.of(
                 Response.Status.NOT_FOUND, "No source called " + name));
             org.jboss.logging.Logger.getLogger(SourceResource.class).infof(
-                "Source %s deleted by %s, with %d assets and %d runs", d.name(), who(), d.assets(), d.runs());
+                "Source %s deleted by %s, with %d assets and %d runs%s", d.name(), who(), d.assets(), d.runs(),
+                marked ? "; its columns marked sensitive are no longer marked" : "");
             return new Views.Deleted(d.name(), d.assets(), d.runs());
         } catch (GraphStore.SourceBusyException e) {
             throw ApiError.of(Response.Status.CONFLICT, e.getMessage());
@@ -283,28 +291,28 @@ public class SourceResource {
     @POST
     @Path("import")
     @Consumes({"text/csv", MediaType.TEXT_PLAIN})
-    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Response importCsv(String body, @QueryParam("dryRun") boolean dryRun, @QueryParam("onError") String onError,
                               @QueryParam("remapHosts") boolean remapHosts, @QueryParam("test") boolean test,
                               @QueryParam("scan") boolean scan) {
         return report(conflicts(() -> importer.run(importer.fromCsv(body == null ? "" : body),
-            options(dryRun, onError, remapHosts, test, scan), who())));
+            options(dryRun, onError, remapHosts, test, scan, identity.hasRole(AccessRole.ADMIN_ROLE)), who())));
     }
 
     /** The same as a JSON array of sources. */
     @POST
     @Path("import")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Response importJson(String body, @QueryParam("dryRun") boolean dryRun, @QueryParam("onError") String onError,
                                @QueryParam("remapHosts") boolean remapHosts, @QueryParam("test") boolean test,
                                @QueryParam("scan") boolean scan) {
         return report(conflicts(() -> importer.run(importer.fromJson(body == null ? "[]" : body),
-            options(dryRun, onError, remapHosts, test, scan), who())));
+            options(dryRun, onError, remapHosts, test, scan, identity.hasRole(AccessRole.ADMIN_ROLE)), who())));
     }
 
     private static SourceImporter.Options options(boolean dryRun, String onError, boolean remapHosts, boolean test,
-                                                  boolean scan) {
+                                                  boolean scan, boolean admin) {
         boolean skip;
         if (onError == null || onError.isBlank() || onError.equalsIgnoreCase("stop")) {
             skip = false;
@@ -314,7 +322,7 @@ public class SourceResource {
             throw new IllegalArgumentException("onError: stop (change nothing if any row is wrong, the default) or "
                 + "skip (apply the rows that are right)");
         }
-        return new SourceImporter.Options(dryRun, skip, remapHosts, test, scan);
+        return new SourceImporter.Options(dryRun, skip, remapHosts, test, scan, admin);
     }
 
     private static Response report(SourceImporter.Report r) {

@@ -133,11 +133,14 @@ public class SourceService {
      * stored secret, unless the form changes a setting that decides where the secret goes (the
      * connector's {@link Connector#secretScope()}): then the password must be entered again, so a
      * stored secret is never sent somewhere new. {@code checkName} is false for checks of unsaved
-     * forms, which may not have a name yet.
+     * forms, which may not have a name yet. {@code admin}: whether the caller is an admin; for anyone
+     * else, a kind only admins set up (generic JDBC) is refused (403) here, on the kind as it is read
+     * below and before anything in the form is checked, since checking a URL already hands it to the
+     * driver. Every path that makes or changes a source comes through here.
      *
      * @throws IllegalArgumentException with the first problem, for a 400 answer
      */
-    Draft draft(SourceForm form, Records.Source existing, boolean checkName) {
+    Draft draft(SourceForm form, Records.Source existing, boolean checkName, boolean admin) {
         if (form == null) {
             throw new IllegalArgumentException("Send the source as JSON");
         }
@@ -148,6 +151,7 @@ public class SourceService {
         }
         String kind = existing != null ? existing.kind() : sentKind == null ? "postgresql" : sentKind;
         Connector connector = connector(kind);
+        adminOnlyKind(connector, existing, form.settings() == null ? Map.of() : settings(form.settings()), admin);
         String name = form.name() == null || form.name().isBlank()
             ? existing != null ? existing.name() : null : form.name().trim();
         if (existing != null && !name.equals(existing.name())) {
@@ -198,7 +202,107 @@ public class SourceService {
             throw new IllegalArgumentException(problem);
         }
         hosts.check(connector, config);
+        noUnmarkedCopy(config);
         return new Draft(connector, config, replace, replace ? secret : null, displayName, keepSecretIf);
+    }
+
+    /**
+     * Refuses (403), for everyone, a folder or bucket source that would read files another source
+     * already reads. Marks belong to the source that found the columns, so two sources over the same
+     * files keep separate marks: a column marked sensitive in one would be catalogued unmarked in the
+     * other, and its profiles, samples and previews would show the values to stewards, viewers and
+     * admins. That holds for marks set later, or carried there by a pipeline's write, too, so any
+     * overlap is refused, not only one with marks today. The server reaches folders, and buckets
+     * through its own cloud role, without a login of the person's own, so nothing else would stop it.
+     * Database sources need a login the person enters, which reads the same data directly, so they are
+     * not checked here (ADR 0027).
+     */
+    void noUnmarkedCopy(SourceConfig config) {
+        if (!FOLDER_KIND.equals(config.kind()) && !S3_KIND.equals(config.kind())) {
+            return;
+        }
+        for (Records.Source other : store.sources()) {
+            if (other.name().equals(config.name()) || !other.kind().equals(config.kind())
+                || !sameFiles(config.kind(), config.settings(), other.settings())) {
+                continue;
+            }
+            throw ApiError.of(Response.Status.FORBIDDEN, other.name() + " already reads these files (one folder or "
+                + "prefix inside the other). Two sources over the same files keep separate marks, so a column marked "
+                + "sensitive in one would show unmasked in the other. Use " + other.name() + ", or point this source "
+                + "at files no other source reads.");
+        }
+    }
+
+    static final String FOLDER_KIND = "files";
+    static final String S3_KIND = "s3";
+
+    /**
+     * Whether two sources of {@code kind} read some of the same files: one folder or prefix inside the
+     * other. Errs towards yes: folders are compared after following links and ignoring case, and
+     * every way of naming AWS's own S3 service counts as one endpoint.
+     */
+    static boolean sameFiles(String kind, Map<String, String> a, Map<String, String> b) {
+        if (FOLDER_KIND.equals(kind)) {
+            java.nio.file.Path x = folder(a.get("path"));
+            java.nio.file.Path y = folder(b.get("path"));
+            return x != null && y != null && (x.startsWith(y) || y.startsWith(x));
+        }
+        if (S3_KIND.equals(kind)) {
+            String bucket = trim(a.get("bucket"));
+            if (bucket == null || !bucket.equalsIgnoreCase(String.valueOf(trim(b.get("bucket"))))
+                || !endpoint(a.get("endpoint")).equals(endpoint(b.get("endpoint")))) {
+                return false;
+            }
+            String p = trim(a.get("prefix")) == null ? "" : trim(a.get("prefix"));
+            String q = trim(b.get("prefix")) == null ? "" : trim(b.get("prefix"));
+            return p.startsWith(q) || q.startsWith(p);
+        }
+        return false;
+    }
+
+    /** A folder as compared: absolute, normalised, links followed where it exists, lower case. */
+    private static java.nio.file.Path folder(String path) {
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        try {
+            java.nio.file.Path p = java.nio.file.Path.of(path.trim()).toAbsolutePath().normalize();
+            try {
+                p = p.toRealPath();
+            } catch (java.io.IOException e) {
+                // not there (yet): compare it as written
+            }
+            return java.nio.file.Path.of(p.toString().toLowerCase(java.util.Locale.ROOT));
+        } catch (java.nio.file.InvalidPathException e) {
+            return null; // the source's own checks report a bad path
+        }
+    }
+
+    /**
+     * An S3 endpoint as compared: none, or any amazonaws.com host, is AWS's own service; otherwise the
+     * lower-case host with its port, a default port (80, 443) left out.
+     */
+    static String endpoint(String url) {
+        String e = trim(url);
+        if (e == null) {
+            return "aws";
+        }
+        try {
+            // No two slashes inside one literal: SightsUseTest strips line comments before strings.
+            java.net.URI u = java.net.URI.create(e.contains(":/") ? e : "https:" + "/" + "/" + e);
+            String host = u.getHost() == null ? e : u.getHost().toLowerCase(java.util.Locale.ROOT);
+            if (host.equals("amazonaws.com") || host.endsWith(".amazonaws.com")) {
+                return "aws";
+            }
+            int port = u.getPort();
+            return port == -1 || port == 80 || port == 443 ? host : host + ":" + port;
+        } catch (IllegalArgumentException x) {
+            return e.toLowerCase(java.util.Locale.ROOT);
+        }
+    }
+
+    private static String trim(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     /** Said when someone other than an admin tries to change whether a source may be written to. */
@@ -366,7 +470,7 @@ public class SourceService {
             masked(config, path.get() == null ? asset : path.get(), p), p.rows().size(), p.truncated(), p.details());
     }
 
-    /** The preview's rows with the catalogued asset's sensitive columns masked, for all but admins. */
+    /** The preview's rows with the catalogued asset's sensitive columns masked, for all but designers with the unmask grant. */
     private List<List<String>> masked(SourceConfig config, String path, io.kilnmark.kiln.connect.Preview p) {
         io.kilnmark.server.quality.Masking.Sight sight;
         try {
@@ -405,26 +509,27 @@ public class SourceService {
      * and stewards preview them as they add them. But masking finds a table's sensitive columns by
      * the saved source's name and the column names it read, so for a saved source with columns
      * marked sensitive, changed reading settings (another folder, no header row, other patterns)
-     * could read the same data under other names: only an admin may preview those.
+     * could read the same data under other names: only a designer with the unmask grant may preview those.
      */
     void previewDraftAllowed(Records.Source existing, SourceConfig draft) {
         Records.Source saved = existing != null ? existing : store.source(draft.name()).orElse(null);
-        readingUnchangedOrAdmin(saved, draft.settings(), "preview settings that are not saved");
+        readingUnchangedOrUnmasked(saved, draft.settings(), "preview settings that are not saved");
     }
 
     /**
-     * Refuses (403) a non-admin a change of reading settings, or a preview of them, for a source with
-     * columns marked sensitive: read under other names, its columns would no longer be masked.
-     * Description, display name and the like stay open to stewards.
+     * Refuses (403) a change of reading settings, or a preview of them, for a source with
+     * columns marked sensitive, to anyone who sees them masked: read under other names, its
+     * columns would no longer be masked. Description, display name and the like stay open to stewards.
      */
-    void readingUnchangedOrAdmin(Records.Source saved, Map<String, String> settings, String doing) {
+    void readingUnchangedOrUnmasked(Records.Source saved, Map<String, String> settings, String doing) {
         if (saved == null || sights.mayUnmask() || reading(saved.settings()).equals(reading(settings))
             || !sights.sourceHasMarks(saved.name())) {
             return;
         }
-        throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can " + doing + " for " + saved.name() + ": it has "
-            + "columns marked sensitive, and other reading settings (folders, patterns, header rows, formats) could read "
-            + "them under other names, unmasked. You can still change its description and display name.");
+        throw ApiError.of(Response.Status.FORBIDDEN, "Only a designer who sees unmasked values can " + doing + " for "
+            + saved.name() + ": it has columns marked sensitive, and other reading settings (folders, patterns, header "
+            + "rows, formats) could read them under other names, unmasked. You can still change its description and "
+            + "display name.");
     }
 
     private static Map<String, String> reading(Map<String, String> settings) {
@@ -437,7 +542,12 @@ public class SourceService {
         return out;
     }
 
-    /** Who is looking: columns marked sensitive are masked in previews for all but admins. */
+    /** Whether any asset of {@code source} has a column marked sensitive. */
+    boolean hasMarks(String source) {
+        return sights.sourceHasMarks(source);
+    }
+
+    /** Who is looking: columns marked sensitive are masked in previews for all but designers with the unmask grant. */
     @jakarta.inject.Inject
     io.kilnmark.server.quality.Sights sights;
 

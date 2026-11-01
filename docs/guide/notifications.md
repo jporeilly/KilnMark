@@ -106,8 +106,8 @@ see them in Kilnmark:
   test failed, or why a rule could not run. Such text can name hosts and users or quote values, so
   only stewards and admins see it; everyone else gets plain words, such as *The scan failed. Open
   the source to see why.*
-- For a source or table with a column marked sensitive, that detail goes to admins only, and never
-  for the sensitive column itself, whoever you are.
+- For a source or table with a column marked sensitive, that detail goes to designers and admins
+  only, and never for the sensitive column itself, whoever you are.
 - Team addresses get what a viewer gets.
 
 ## Setting up email (admins)

@@ -89,9 +89,12 @@ class NotificationMaskingTest {
             .contains("The scan failed. Open the source to see why."), "everyone gets the plain words");
         Exposure marked = new Exposure(Set.of(), true);
         assertFalse(shows(messages(marked).single(e, person(AccessRole.STEWARD))), "a source with marks: not stewards");
-        assertTrue(shows(messages(marked).single(e, person(AccessRole.ADMIN))), "but admins");
+        // Nor admins or designers: only a designer token with the unmask grant may see such values, and a
+        // notification has no request to check it against (ADR 0027).
+        assertFalse(shows(messages(marked).single(e, person(AccessRole.ADMIN))), "nor admins");
+        assertFalse(shows(messages(marked).single(e, person(AccessRole.DESIGNER))), "nor designers");
         assertFalse(InAppFeed.write(e, AccessRole.STEWARD, marked).detail().contains(SECRET), "in the app alike");
-        assertTrue(InAppFeed.write(e, AccessRole.ADMIN, marked).detail().contains(SECRET));
+        assertFalse(InAppFeed.write(e, AccessRole.ADMIN, marked).detail().contains(SECRET));
         assertFalse(InAppFeed.write(e, AccessRole.VIEWER, clean).detail().contains(SECRET));
     }
 

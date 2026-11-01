@@ -104,7 +104,7 @@ class SampleTablesApiTest {
     }
 
     private void run(Path out) throws Exception {
-        String steward = token("sample-tables-steward", "steward");
+        String designer = token("sample-tables-designer", "designer");
         source("e2e-db", "postgresql", Map.of("url", url, "username", "kilnmark", "schemas", SCHEMA,
             "allow_writing", "true"), "kilnmark");
         source("e2e-db-readonly", "postgresql", Map.of("url", url, "username", "kilnmark", "schemas", SCHEMA),
@@ -112,52 +112,52 @@ class SampleTablesApiTest {
         source("e2e-files", "files", Map.of("path", out.toString(), "allow_writing", "true"), null);
 
         // What cannot have the tables: no such source, not a database, not writable, an unusable schema.
-        as(steward).body(Map.of("source", "nope", "schema", SCHEMA)).post("/api/v1/samples/tables").then()
+        as(designer).body(Map.of("source", "nope", "schema", SCHEMA)).post("/api/v1/samples/tables").then()
             .statusCode(400).body("error", containsString("no saved source called 'nope'"));
-        as(steward).body(Map.of("source", "e2e-files", "schema", SCHEMA)).post("/api/v1/samples/tables").then()
+        as(designer).body(Map.of("source", "e2e-files", "schema", SCHEMA)).post("/api/v1/samples/tables").then()
             .statusCode(400).body("error", containsString("is not a database"));
-        as(steward).body(Map.of("source", "e2e-db-readonly", "schema", SCHEMA)).post("/api/v1/samples/tables")
+        as(designer).body(Map.of("source", "e2e-db-readonly", "schema", SCHEMA)).post("/api/v1/samples/tables")
             .then().statusCode(400).body("error", containsString("does not allow writing"));
-        as(steward).body(Map.of("source", "e2e-db", "schema", "x; drop")).post("/api/v1/samples/tables").then()
+        as(designer).body(Map.of("source", "e2e-db", "schema", "x; drop")).post("/api/v1/samples/tables").then()
             .statusCode(400).body("error", containsString("schema:"));
 
         // Created: the sample data's source appears, the pipeline runs, and every table is filled.
-        JsonPath made = as(steward).body(Map.of("source", "e2e-db", "schema", SCHEMA))
+        JsonPath made = as(designer).body(Map.of("source", "e2e-db", "schema", SCHEMA))
             .post("/api/v1/samples/tables").then().statusCode(200).extract().jsonPath();
         assertEquals(Samples.SETUP, made.getString("pipeline"));
 
         // The samples, added at once, as the starter pack adds them: before the tables are there.
-        JsonPath added = as(steward).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
+        JsonPath added = as(designer).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
             "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
             .extract().jsonPath();
         assertEquals(19, added.getInt("added"), added.prettify());
         // All of them can run: the starter pack also set the server variable one of them reads.
         assertEquals(List.of(true), added.getList("samples.findAll { it.outcome == 'added' }.valid").stream()
             .distinct().toList(), added.prettify());
-        String yaml = as(steward).get("/api/v1/pipelines/sample-limit").then().statusCode(200).extract()
+        String yaml = as(designer).get("/api/v1/pipelines/sample-limit").then().statusCode(200).extract()
             .jsonPath().getString("latest.yaml");
         assertTrue(yaml.contains("asset: " + SCHEMA + ".billing_transactions"), yaml);
 
-        JsonPath setup = waitForRun(steward, made.getLong("run.id"));
+        JsonPath setup = waitForRun(designer, made.getLong("run.id"));
         assertEquals("succeeded", setup.getString("run.status"), setup.prettify());
         assertEquals(240, count(SCHEMA + ".crm_customers"));
         assertEquals(700, count(SCHEMA + ".shop_orders"));
         for (String t : Samples.TABLES) {
             assertTrue(count(Samples.tableIn(SCHEMA, t)) > 0, t);
         }
-        as(steward).get("/api/v1/sources/" + Samples.SAMPLE_DATA).then().statusCode(200);
-        JsonPath listed = as(steward).get("/api/v1/samples").then().statusCode(200).extract().jsonPath();
+        as(designer).get("/api/v1/sources/" + Samples.SAMPLE_DATA).then().statusCode(200);
+        JsonPath listed = as(designer).get("/api/v1/samples").then().statusCode(200).extract().jsonPath();
         assertEquals("e2e-db", listed.getString("tables.source"));
         assertEquals(SCHEMA, listed.getString("tables.schema"));
         assertEquals("succeeded", listed.getString("tables.lastRun.status"));
 
         // Again: the tables are replaced, not added to.
-        JsonPath again = waitForRun(steward, as(steward).body(Map.of("source", "e2e-db", "schema", SCHEMA))
+        JsonPath again = waitForRun(designer, as(designer).body(Map.of("source", "e2e-db", "schema", SCHEMA))
             .post("/api/v1/samples/tables").then().statusCode(200).extract().jsonPath().getLong("run.id"));
         assertEquals("succeeded", again.getString("run.status"));
         assertEquals(240, count(SCHEMA + ".crm_customers"));
 
-        JsonPath limit = waitForRun(steward, as(steward).body(Map.of()).post("/api/v1/pipelines/sample-limit/runs")
+        JsonPath limit = waitForRun(designer, as(designer).body(Map.of()).post("/api/v1/pipelines/sample-limit/runs")
             .then().statusCode(202).extract().jsonPath().getLong("id"));
         assertEquals("succeeded", limit.getString("run.status"), limit.prettify());
         assertEquals(100, limit.getLong("run.rowsWritten"));
@@ -165,24 +165,24 @@ class SampleTablesApiTest {
 
         // The volume sample: four million rows from the sample data itself, totalled and the large lines set
         // apart, in one run.
-        JsonPath volume = waitForRun(steward, as(steward).body(Map.of()).post("/api/v1/pipelines/sample-volume/runs")
+        JsonPath volume = waitForRun(designer, as(designer).body(Map.of()).post("/api/v1/pipelines/sample-volume/runs")
             .then().statusCode(202).extract().jsonPath().getLong("id"));
         assertEquals("succeeded", volume.getString("run.status"), volume.prettify());
         assertTrue(Files.exists(out.resolve("samples/volume/takings_by_category_and_channel.csv")));
         assertTrue(volume.getLong("run.rowsWritten") > 24, volume.prettify());
 
         // The gate that is meant to stop does: two shipping fees are out of range.
-        JsonPath stop = waitForRun(steward, as(steward).body(Map.of()).post("/api/v1/pipelines/sample-gate-stop/runs")
+        JsonPath stop = waitForRun(designer, as(designer).body(Map.of()).post("/api/v1/pipelines/sample-gate-stop/runs")
             .then().statusCode(202).extract().jsonPath().getLong("id"));
         assertEquals("failed", stop.getString("run.status"), stop.prettify());
 
         // A sample-tables pipeline someone has changed is not written over.
-        int version = as(steward).get("/api/v1/pipelines/" + Samples.SETUP).then().statusCode(200).extract()
+        int version = as(designer).get("/api/v1/pipelines/" + Samples.SETUP).then().statusCode(200).extract()
             .jsonPath().getInt("latestVersion");
         String changed = Samples.setupYaml("e2e-db", SCHEMA) + "# mine now\n";
-        as(steward).header("If-Match", "\"" + version + "\"").body(Map.of("yaml", changed, "message", "Mine"))
+        as(designer).header("If-Match", "\"" + version + "\"").body(Map.of("yaml", changed, "message", "Mine"))
             .put("/api/v1/pipelines/" + Samples.SETUP).then().statusCode(200);
-        as(steward).body(Map.of("source", "e2e-db", "schema", SCHEMA)).post("/api/v1/samples/tables").then()
+        as(designer).body(Map.of("source", "e2e-db", "schema", SCHEMA)).post("/api/v1/samples/tables").then()
             .statusCode(409).body("error", containsString("has been changed since"));
     }
 }

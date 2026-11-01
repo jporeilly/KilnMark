@@ -352,7 +352,7 @@ class NodePreviewTest {
         WebApplicationException e = assertThrows(WebApplicationException.class, () -> previews().preview(byName, "ps",
             null, 5, "jo", AccessRole.STEWARD, viewer(false, "name"), () -> false));
         assertEquals(403, status(e));
-        assertTrue(error(e).startsWith("Only an admin can preview this: node ps (filter) chooses rows by name, which "
+        assertTrue(error(e).startsWith("Only a designer who sees unmasked values can preview this: node ps (filter) chooses rows by name, which "
             + "is marked sensitive"), error(e));
         assertEquals(5, previews().preview(byName, "ps", null, 5, "ann", AccessRole.ADMIN, viewer(true, "name"),
             () -> false).rowCount());
@@ -387,7 +387,7 @@ class NodePreviewTest {
             WebApplicationException r = assertThrows(WebApplicationException.class, () -> previews().preview(y, "x",
                 null, 5, "jo", AccessRole.STEWARD, viewer(false, "name"), () -> false), node);
             assertEquals(403, status(r), node);
-            assertTrue(error(r).startsWith("Only an admin can preview this: node x ("), error(r));
+            assertTrue(error(r).startsWith("Only a designer who sees unmasked values can preview this: node x ("), error(r));
         }
     }
 
@@ -673,7 +673,7 @@ class NodePreviewTest {
         WebApplicationException held = assertThrows(WebApplicationException.class, () -> previews().preview(yaml, "bad",
             null, 5, "jo", AccessRole.STEWARD, viewer(false, "id"), () -> false));
         assertEquals(422, status(held));
-        assertEquals("The preview stopped at node bad. " + PipelineService.FOR_ADMINS, error(held));
+        assertEquals("The preview stopped at node bad. " + PipelineService.FOR_DESIGNERS, error(held));
         WebApplicationException shown = assertThrows(WebApplicationException.class, () -> previews().preview(yaml,
             "bad", null, 5, "jo", AccessRole.STEWARD, STEWARD, () -> false));
         assertTrue(error(shown).contains("bad"), error(shown));

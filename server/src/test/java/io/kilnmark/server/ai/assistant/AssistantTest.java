@@ -317,9 +317,9 @@ class AssistantTest {
         String tools = payload(mcp(session, "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"tools/list\"}"));
         assertTrue(tools.contains("search_docs"), tools);
         String found = payload(mcp(session, "{\"jsonrpc\": \"2.0\", \"id\": 3, \"method\": \"tools/call\", \"params\": "
-            + "{\"name\": \"search_docs\", \"arguments\": {\"query\": \"custom SQL admins\"}}}"));
-        assertTrue(found.contains("quality-rules/custom-sql-admins"), found);
-        assertTrue(found.contains("#/docs/quality-rules/custom-sql-admins"), found);
+            + "{\"name\": \"search_docs\", \"arguments\": {\"query\": \"custom SQL designers\"}}}"));
+        assertTrue(found.contains("quality-rules/custom-sql-designers"), found);
+        assertTrue(found.contains("#/docs/quality-rules/custom-sql-designers"), found);
     }
 
     private Response mcp(String session, String body) {

@@ -84,8 +84,7 @@ public class VariableResource {
     }
 
     private AccessRole role() {
-        return identity.hasRole(AccessRole.ADMIN_ROLE) ? AccessRole.ADMIN
-            : identity.hasRole(AccessRole.STEWARD_ROLE) ? AccessRole.STEWARD : AccessRole.VIEWER;
+        return AccessRole.highest(identity::hasRole);
     }
 
     private String who() {

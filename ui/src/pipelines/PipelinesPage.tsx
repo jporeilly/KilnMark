@@ -7,10 +7,11 @@ import { RunStatus } from "./RunStatus";
 import { AddSamples } from "./AddSamples";
 import "./pipelines.css";
 
-/** Every pipeline: what it does, its latest version, its last run, and Run now for stewards. */
+/** Every pipeline: what it does, its latest version, its last run; Run now for stewards, New pipeline for designers. */
 export function PipelinesPage({ role }: { role: AccessRole }) {
   useTitle("Pipelines");
   const steward = allows(role, "steward");
+  const designer = allows(role, "designer");
   const [pipelines, setPipelines] = useState<PipelineSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
@@ -32,7 +33,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
   // Unknown until asked; if asking fails, the button shows and the server says no if they are off.
   const [samplesOffered, setSamplesOffered] = useState<boolean | null>(null);
   useEffect(() => {
-    if (!steward) return;
+    if (!designer) return;
     let live = true;
     samplesApi
       .offered()
@@ -41,7 +42,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
     return () => {
       live = false;
     };
-  }, [steward]);
+  }, [designer]);
 
   // While a run is queued or running, look again every few seconds so its status stays current.
   const active = pipelines?.some((p) => p.lastRun && ["queued", "running"].includes(p.lastRun.status));
@@ -69,7 +70,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
     <>
       <div className="pl-head">
         <h1 tabIndex={-1}>Pipelines</h1>
-        {steward && (
+        {designer && (
           <div className="pl-head-actions">
             {samplesOffered === true && <AddSamples onAdded={load} />}
             <a className="pl-link-button" href={href.newPipeline()}>
@@ -96,7 +97,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
         {pipelines?.length === 0 && (
           <p>
             No pipelines yet.{" "}
-            {steward ? (
+            {designer ? (
               <>
                 Choose <strong>New pipeline</strong> to start from a template that uses your sources
                 {samplesOffered === true ? (
@@ -108,7 +109,7 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
                 )}
               </>
             ) : (
-              "Stewards add them."
+              "Designers add them."
             )}
           </p>
         )}
@@ -177,7 +178,13 @@ export function PipelinesPage({ role }: { role: AccessRole }) {
           </div>
         )}
       </section>
-      {!steward && <p className="hint">Your role ({role}) can read pipelines and their runs. Stewards edit and run them.</p>}
+      {!designer && (
+        <p className="hint">
+          {steward
+            ? `Your role (${role}) can read and run pipelines. Designers build and change them.`
+            : `Your role (${role}) can read pipelines and their runs. Stewards run them; designers build them.`}
+        </p>
+      )}
     </>
   );
 }

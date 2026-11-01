@@ -99,7 +99,7 @@ export const CHECKS: {
   },
   {
     type: "custom_sql",
-    label: "Custom SQL (admins)",
+    label: "Custom SQL (designers and admins)",
     column: "optional",
     whole: false,
     what: "Fails the rows your query returns. PostgreSQL sources only.",
@@ -437,14 +437,15 @@ function serverField(message: string, type: RuleType, jsonMode: boolean): string
  */
 export function RuleForm({
   urn,
-  admin,
+  customSql,
   rule,
   onSaved,
   onCancel,
   onReload,
 }: {
   urn: string;
-  admin: boolean;
+  /** Whether custom SQL rules may be written (designers and admins). */
+  customSql: boolean;
   rule?: QualityRule;
   onSaved: (name: string) => void;
   onCancel?: () => void;
@@ -773,7 +774,7 @@ export function RuleForm({
               disabled={keepHidden}
               aria-describedby={keepHidden ? "rule-type-hint rule-hidden-hint" : "rule-type-hint"}
             >
-              {CHECKS.filter((c) => admin || c.type !== "custom_sql" || c.type === rule?.type).map((c) => (
+              {CHECKS.filter((c) => customSql || c.type !== "custom_sql" || c.type === rule?.type).map((c) => (
                 <option key={c.type} value={c.type}>
                   {c.label}
                 </option>

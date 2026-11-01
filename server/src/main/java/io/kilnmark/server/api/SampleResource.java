@@ -101,20 +101,20 @@ public class SampleResource {
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Add the samples", description = "Adds every sample pipeline whose placeholders are all given "
         + "a saved source in sources, such as {\"sources\": {\"crm-db\": \"my-postgres\", \"files\": \"my-bucket\"}}. "
         + "A placeholder left out skips the samples that use it. A sample whose name is taken is left as it is; one "
         + "that checks with problems (a table the source's scan did not find, a source that does not allow writing) is "
         + "saved as a draft; one that cannot be saved at all is reported as failed, with why, and the rest are still "
         + "added. Flows are skipped until the flows API comes. With schema, the samples read the sample tables "
-        + "created there (POST /api/v1/samples/tables) instead of crm.customers and the like. Role: steward.")
+        + "created there (POST /api/v1/samples/tables) instead of crm.customers and the like. Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "What happened to each sample: added, exists, skipped or failed"),
         @APIResponse(responseCode = "400", description = "No source chosen, a name that is not a placeholder, or a "
             + "source that is not saved"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward")})
+        @APIResponse(responseCode = "403", description = "Not a designer")})
     public Samples.AddResult add(Samples.AddRequest body) {
         requireOffered();
         return samples.add(body, who());
@@ -123,22 +123,22 @@ public class SampleResource {
     @POST
     @Path("tables")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     @Operation(summary = "Create the sample tables", description = "Copies Kilnmark's sample data (synthetic "
         + "customers, accounts, transactions, orders and products) into one schema of a database, as tables named "
         + "crm_customers, shop_orders and so on, with a pipeline called sample-tables, and queues a run of it. The "
         + "database must be a saved database source that allows writing; the sample data's own read-only source, "
         + "sample-data, is added if it is not there. Run it again to put the tables back as they were. Send "
-        + "{\"source\": \"my-postgres\", \"schema\": \"public\"}. Role: steward.")
+        + "{\"source\": \"my-postgres\", \"schema\": \"public\"}. Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The pipeline saved and its run queued"),
         @APIResponse(responseCode = "400", description = "No such source, not a database, a database that does not "
             + "allow writing, or a schema name that cannot be used"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a steward")})
+        @APIResponse(responseCode = "403", description = "Not a designer")})
     public Samples.TablesResult tables(Samples.TablesRequest body) {
         requireOffered();
-        AccessRole role = identity.hasRole(AccessRole.ADMIN_ROLE) ? AccessRole.ADMIN : AccessRole.STEWARD;
+        AccessRole role = AccessRole.highest(identity::hasRole);
         return samples.createTables(body, who(), role, sights);
     }
 

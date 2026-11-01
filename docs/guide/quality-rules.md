@@ -8,9 +8,9 @@ fails.
 
 - **Scan the source first.** Rules are built on an asset's profile, so an asset that has not been
   scanned has nothing to check against yet. Open the source and choose **Scan**.
-- **You need the steward or admin role** to add, run or change rules. Viewers can see rules and
-  their results. Your role is set by the API token you signed in with; ask an admin for a steward
-  token if you need one.
+- **You need the steward role or above** to add, run or change rules (custom SQL rules: a designer
+  whose token sees unmasked values). Viewers can see rules and their results. Your role is set by the API token you signed
+  in with; ask an admin for a steward token if you need one.
 - **Where rules live:**
   - On an asset's page, the **Quality** tab shows its overall score and a score for each
     dimension, the rules on it with their latest result and a bar for each of the last ten
@@ -127,7 +127,7 @@ Each check is tagged with a quality dimension, which decides which score it affe
 | **Row count** | The whole check fails when the asset has too few or too many rows | **Minimum rows**, **Maximum rows** or both, as whole numbers | Volume |
 | **Row count change** | The whole check fails when the row count moved by too much since the last scan, up or down | **Largest change since the last scan**, in percent: `20` means 20% | Volume |
 | **References** | Values that don't appear in a column of another asset in the same source: a foreign key that does not hold | **Asset referred to**, found by name in the same source, and its **Column referred to** | Referential integrity |
-| **Custom SQL** | The rows your query returns. Admins only; see [Custom SQL](#custom-sql-admins) | The **SQL**, for example `SELECT * FROM ${table} WHERE amount < 0` | Validity |
+| **Custom SQL** | The rows your query returns. Designers who see unmasked values only; see [Custom SQL](#custom-sql-designers) | The **SQL**, for example `SELECT * FROM ${table} WHERE amount < 0` | Validity |
 
 **Where each check runs.** On a database, a rule runs as SQL inside the database, so the data stays
 where it is. On files, Kilnmark checks the rows while it reads them, in one pass. Two checks need
@@ -252,7 +252,7 @@ On the **Quality rules** page, each rule has:
 - **Edit:** opens the rule in the form, headed **Edit rule**. Change what you need and choose
   **Save changes**, or **Cancel** to leave it as it was. The rule keeps its results so far, and
   the next run uses the new settings. A rule stays on its asset: to check another asset, add a new
-  rule there. Only admins can edit custom SQL rules.
+  rule there. Only designers who see unmasked values can edit custom SQL rules.
 
   On a column marked sensitive, the allowed values and range limits may be hidden from you. The
   form then shows **Hidden: this column is sensitive**, and saving keeps the hidden values. The
@@ -268,9 +268,13 @@ Rules can also be changed through the API, with `PUT /api/v1/quality/rules/{id}`
 rule's `updatedAt`, as you read it, in an `If-Match` header to have the change refused (409) if the
 rule has changed since.
 
-## Custom SQL (admins)
+## Custom SQL (designers)
 
-When no check in the library fits, an admin can write the query that finds the failing rows.
+When no check in the library fits, a designer whose token sees unmasked values can write the query
+that finds the failing rows. A custom query can read any column the source's login can see, so
+admins, who see sensitive values masked, cannot write or run one
+([ADR 0027](../adr/0027-unmasking-is-a-grant.md)). Its failing rows and error text are withheld
+from everyone else while any table of the source has a column marked sensitive.
 
 - It is **off by default.** An administrator turns it on with `kilnmark.quality.custom-sql=true`.
 - **PostgreSQL sources only.** There, Kilnmark can hold the query to a read-only transaction.

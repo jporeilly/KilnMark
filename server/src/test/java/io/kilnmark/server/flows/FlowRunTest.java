@@ -105,7 +105,7 @@ class FlowRunTest {
     @Inject
     PipelineStore pipelineStore;
 
-    static String steward;
+    static String designer;
     static String viewer;
 
     private static RequestSpecification as(String token) {
@@ -146,7 +146,7 @@ class FlowRunTest {
     }
 
     private FlowStore.Flow save(String yaml) {
-        return flows.save(yaml, "test", "tester", AccessRole.STEWARD, null);
+        return flows.save(yaml, "test", "tester", AccessRole.DESIGNER, null);
     }
 
     private FlowStore.Run start(String flow, Map<String, Object> parameters) {
@@ -156,7 +156,7 @@ class FlowRunTest {
     @Test
     @Order(1)
     void setUp() throws Exception {
-        steward = token("flow-steward", "steward");
+        designer = token("flow-designer", "designer");
         viewer = token("flow-viewer", "viewer");
         admin().contentType(ContentType.JSON).body(Map.of("name", "fl-src", "kind", MemoryConnector.KIND,
             "settings", Map.of("rows", "2500"), "password", IN_SECRET)).post("/api/v1/sources")
@@ -165,13 +165,13 @@ class FlowRunTest {
             "settings", Map.of(), "password", OUT_SECRET)).post("/api/v1/sources").then().statusCode(201);
         as(Tokens.ADMIN).body(Map.of("settings", Map.of("allow_writing", "true"))).put("/api/v1/sources/fl-out")
             .then().statusCode(200);
-        long scan = as(steward).post("/api/v1/sources/fl-src/scans").then().statusCode(202).extract().jsonPath()
+        long scan = as(designer).post("/api/v1/sources/fl-src/scans").then().statusCode(202).extract().jsonPath()
             .getLong("id");
-        await("the scan " + scan, () -> as(steward).get("/api/v1/runs/" + scan).then().extract().jsonPath()
+        await("the scan " + scan, () -> as(designer).get("/api/v1/runs/" + scan).then().extract().jsonPath()
             .getString("status"), "succeeded"::equals);
         for (String yaml : List.of(COPY, GATED, BROKEN)) {
             String name = yaml.lines().filter(l -> l.startsWith("name: ")).findFirst().orElseThrow().substring(6);
-            as(steward).body(Map.of("name", name, "yaml", yaml)).post("/api/v1/pipelines").then().statusCode(201);
+            as(designer).body(Map.of("name", name, "yaml", yaml)).post("/api/v1/pipelines").then().statusCode(201);
         }
     }
 
@@ -298,7 +298,7 @@ class FlowRunTest {
               - { id: copy, type: run-pipeline, pipeline: fl-copy }
             """);
         HoldingGraphRunner.hold = true;
-        long direct = as(steward).post("/api/v1/pipelines/fl-copy/runs").then().statusCode(202).extract().jsonPath()
+        long direct = as(designer).post("/api/v1/pipelines/fl-copy/runs").then().statusCode(202).extract().jsonPath()
             .getLong("id");
         await("the direct run to start", () -> pipelineStore.run(direct).orElseThrow().status(), "running"::equals);
 
@@ -310,7 +310,7 @@ class FlowRunTest {
         assertNull(waiting.pipelineRunId());
 
         // The direct run is held; cancelling it frees the pipeline, and later runs are not held.
-        as(steward).post("/api/v1/pipeline-runs/" + direct + "/cancel").then().statusCode(200);
+        as(designer).post("/api/v1/pipeline-runs/" + direct + "/cancel").then().statusCode(200);
         await("the direct run to be cancelled", () -> pipelineStore.run(direct).orElseThrow().status(), "cancelled"::equals);
         HoldingGraphRunner.hold = false;
         FlowStore.Run done = waitForFlow(waits.id(), "succeeded");
@@ -318,7 +318,7 @@ class FlowRunTest {
         assertNotNull(node(waits.id(), "copy").pipelineRunId());
 
         HoldingGraphRunner.hold = true;
-        long again = as(steward).post("/api/v1/pipelines/fl-copy/runs").then().statusCode(202).extract().jsonPath()
+        long again = as(designer).post("/api/v1/pipelines/fl-copy/runs").then().statusCode(202).extract().jsonPath()
             .getLong("id");
         await("the second direct run to start", () -> pipelineStore.run(again).orElseThrow().status(), "running"::equals);
         FlowStore.Run gives = start("fl-gives-up", Map.of());
@@ -326,7 +326,7 @@ class FlowRunTest {
         assertEquals("Node copy failed (the pipeline fl-copy)", failed.error());
         assertTrue(node(gives.id(), "copy").message().startsWith("Waited 1 seconds for fl-copy"),
             node(gives.id(), "copy").message());
-        as(steward).post("/api/v1/pipeline-runs/" + again + "/cancel").then().statusCode(200);
+        as(designer).post("/api/v1/pipeline-runs/" + again + "/cancel").then().statusCode(200);
         await("the direct run to be cancelled", () -> pipelineStore.run(again).orElseThrow().status(), "cancelled"::equals);
         HoldingGraphRunner.hold = false;
     }
@@ -417,8 +417,8 @@ class FlowRunTest {
             nodes:
               - { id: a, type: run-pipeline, pipeline: fl-copy }
             """;
-        assertEquals(2, flows.save(yaml, "fixed", "tester", AccessRole.STEWARD, 1).latestVersion());
-        assertEquals(409, assertThrows(WebApplicationException.class, () -> flows.save(yaml, "stale", "tester", AccessRole.STEWARD, 1))
+        assertEquals(2, flows.save(yaml, "fixed", "tester", AccessRole.DESIGNER, 1).latestVersion());
+        assertEquals(409, assertThrows(WebApplicationException.class, () -> flows.save(yaml, "stale", "tester", AccessRole.DESIGNER, 1))
             .getResponse().getStatus());
 
         assertEquals(403, assertThrows(WebApplicationException.class,
@@ -436,7 +436,7 @@ class FlowRunTest {
         // A pipeline deleted since the flow was saved stops it running.
         Optional<FlowStore.Flow> f = flows.find("fl-draft");
         assertTrue(f.isPresent());
-        assertThrows(IllegalArgumentException.class, () -> flows.save("kilnmark: flow/v1\nnodes: []", null, "t", AccessRole.STEWARD, null));
+        assertThrows(IllegalArgumentException.class, () -> flows.save("kilnmark: flow/v1\nnodes: []", null, "t", AccessRole.DESIGNER, null));
     }
 
     @Test
@@ -497,26 +497,26 @@ class FlowRunTest {
     @Test
     @Order(10)
     void stewardsKeepServerVariablesAndEveryChangeIsKept() {
-        as(steward).body(Map.of("type", "text", "value", "north", "description", "Where the lab is"))
+        as(designer).body(Map.of("type", "text", "value", "north", "description", "Where the lab is"))
             .put("/api/v1/variables/area").then().statusCode(200).body("value", org.hamcrest.Matchers.equalTo("north"));
-        as(steward).body(Map.of("type", "number", "value", 3)).put("/api/v1/variables/batch").then().statusCode(200);
-        as(steward).body(Map.of("type", "number", "value", 4)).put("/api/v1/variables/batch").then().statusCode(200);
-        assertEquals(List.of("area", "batch"), as(steward).get("/api/v1/variables").then().statusCode(200).extract()
+        as(designer).body(Map.of("type", "number", "value", 3)).put("/api/v1/variables/batch").then().statusCode(200);
+        as(designer).body(Map.of("type", "number", "value", 4)).put("/api/v1/variables/batch").then().statusCode(200);
+        assertEquals(List.of("area", "batch"), as(designer).get("/api/v1/variables").then().statusCode(200).extract()
             .jsonPath().getList("name"));
-        List<Object> after = as(steward).get("/api/v1/variables/batch/changes").then().statusCode(200).extract()
+        List<Object> after = as(designer).get("/api/v1/variables/batch/changes").then().statusCode(200).extract()
             .jsonPath().getList("after");
         assertEquals(2, after.size());
         assertEquals(4, ((Number) after.get(0)).intValue(), "newest first");
-        as(steward).delete("/api/v1/variables/batch").then().statusCode(204);
-        assertEquals(3, as(steward).get("/api/v1/variables/batch/changes").then().statusCode(200).extract().jsonPath()
+        as(designer).delete("/api/v1/variables/batch").then().statusCode(204);
+        assertEquals(3, as(designer).get("/api/v1/variables/batch/changes").then().statusCode(200).extract().jsonPath()
             .getList("after").size(), "the changes outlive the variable");
         // Never a secret, never the wrong kind, and viewers neither read nor write them.
-        assertTrue(as(steward).body(Map.of("type", "text", "value", "x")).put("/api/v1/variables/db_password").then()
+        assertTrue(as(designer).body(Map.of("type", "text", "value", "x")).put("/api/v1/variables/db_password").then()
             .statusCode(400).extract().jsonPath().getString("error").contains("looks like a credential"));
-        as(steward).body(Map.of("type", "number", "value", "lots")).put("/api/v1/variables/n").then().statusCode(400);
+        as(designer).body(Map.of("type", "number", "value", "lots")).put("/api/v1/variables/n").then().statusCode(400);
         as(viewer).get("/api/v1/variables").then().statusCode(403);
         as(viewer).body(Map.of("type", "text", "value", "x")).put("/api/v1/variables/v").then().statusCode(403);
-        // An admin can do whatever a steward can.
+        // An admin can do whatever a designer can.
         as(Tokens.ADMIN).body(Map.of("type", "boolean", "value", true)).put("/api/v1/variables/by_admin").then()
             .statusCode(200);
         as(Tokens.ADMIN).get("/api/v1/variables/by_admin/changes").then().statusCode(200);
@@ -533,8 +533,8 @@ class FlowRunTest {
     @Test
     @Order(11)
     void aPipelineRunTakesParametersAndKeepsTheValuesItStartedWith() throws Exception {
-        as(steward).body(Map.of("name", "fl-param", "yaml", PARAM)).post("/api/v1/pipelines").then().statusCode(201);
-        long id = as(steward).body(Map.of("parameters", Map.of("suffix", "emea"))).post("/api/v1/pipelines/fl-param/runs")
+        as(designer).body(Map.of("name", "fl-param", "yaml", PARAM)).post("/api/v1/pipelines").then().statusCode(201);
+        long id = as(designer).body(Map.of("parameters", Map.of("suffix", "emea"))).post("/api/v1/pipelines/fl-param/runs")
             .then().statusCode(202).extract().jsonPath().getLong("id");
         PipelineStore.Run run = await("pipeline run " + id, () -> pipelineStore.run(id).orElseThrow(),
             PipelineStore.Run::finished);
@@ -543,15 +543,15 @@ class FlowRunTest {
         assertTrue(run.parameters().replace(" ", "").contains("\"suffix\":\"emea\""), run.parameters());
         assertTrue(run.variables().replace(" ", "").contains("\"area\":\"north\""), run.variables());
         // A value that would leave its part of the name, an unknown parameter, a wrong kind.
-        as(steward).body(Map.of("parameters", Map.of("suffix", "../x"))).post("/api/v1/pipelines/fl-param/runs")
+        as(designer).body(Map.of("parameters", Map.of("suffix", "../x"))).post("/api/v1/pipelines/fl-param/runs")
             .then().statusCode(409);
-        assertTrue(as(steward).body(Map.of("parameters", Map.of("colour", "red"))).post("/api/v1/pipelines/fl-param/runs")
+        assertTrue(as(designer).body(Map.of("parameters", Map.of("colour", "red"))).post("/api/v1/pipelines/fl-param/runs")
             .then().statusCode(400).extract().jsonPath().getString("error").contains("has no parameter 'colour'"));
         // A run never chooses the table a write replaces: a parameter is only part of a name the pipeline writes.
         String whole = PARAM.replace("name: fl-param", "name: fl-whole").replace("table: lab.fl_${suffix}_${vars.area}",
             "table: \"${suffix}\"");
-        as(steward).body(Map.of("name", "fl-whole", "yaml", whole)).post("/api/v1/pipelines").then().statusCode(201);
-        assertTrue(as(steward).body(Map.of("parameters", Map.of("suffix", "payroll")))
+        as(designer).body(Map.of("name", "fl-whole", "yaml", whole)).post("/api/v1/pipelines").then().statusCode(201);
+        assertTrue(as(designer).body(Map.of("parameters", Map.of("suffix", "payroll")))
             .post("/api/v1/pipelines/fl-whole/runs").then().statusCode(409).extract().jsonPath().getString("error")
             .contains("is only parameters"));
     }

@@ -95,8 +95,11 @@ public class NotificationPublisher {
         String restricted = null;
         if (status == Rule.Status.ERROR) {
             detail = "The rule could not run. Open the asset to see why.";
-            // The reason can be a database's own words, which may quote the data.
-            restricted = error == null ? null : "The rule could not run: " + error;
+            // The reason can be a database's own words, which may quote the data. A custom SQL rule's can
+            // quote any table the source's login reads, which no notification can mask, so it is never sent
+            // (ADR 0027): the app shows it to those who may see it.
+            restricted = error == null || rule.type() == io.kilnmark.server.quality.RuleType.CUSTOM_SQL ? null
+                : "The rule could not run: " + error;
         } else if (rule.type().wholeAsset()) {
             detail = "The check on the whole " + (status == Rule.Status.FAIL ? "fails." : "warns.");
         } else {

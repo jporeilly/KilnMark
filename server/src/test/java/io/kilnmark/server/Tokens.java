@@ -22,4 +22,19 @@ public final class Tokens {
     public static RequestSpecification as(String token) {
         return given().header("Authorization", "Bearer " + token);
     }
+
+    /**
+     * A request signed in as a designer whose token sees unmasked values (ADR 0027): the only kind
+     * of caller that does, admins included. A new token is created for each request, by the admin.
+     */
+    public static RequestSpecification designer() {
+        return as(newToken("designer", true));
+    }
+
+    /** A new token with {@code role}, created by the test admin; {@code unmask} as asked. */
+    public static String newToken(String role, boolean unmask) {
+        return admin().contentType("application/json")
+            .body(java.util.Map.of("name", "test " + role, "role", role, "unmask", unmask))
+            .post("/api/v1/tokens").then().statusCode(201).extract().jsonPath().getString("token");
+    }
 }

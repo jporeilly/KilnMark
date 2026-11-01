@@ -49,7 +49,7 @@ class DocumentFlowTest {
             // the same folder in every class loader that runs this (the test profile is read in another)
             ROOT = Files.createDirectories(Path.of(System.getProperty("java.io.tmpdir"),
                 "kilnmark-documents-test-" + ProcessHandle.current().pid())).toRealPath();
-            for (String source : List.of("docs", "meta")) {
+            for (String source : List.of("docs", "meta", "meta-od")) {
                 Path dir = Files.createDirectories(ROOT.resolve(source));
                 try (var lab = Files.list(Path.of("../lab/files/share/documents"))) {
                     for (Path f : lab.toList()) {
@@ -58,6 +58,7 @@ class DocumentFlowTest {
                 }
             }
             Files.writeString(ROOT.resolve("meta/private-note.txt"), "The quarterly zebra census is kept private.\n");
+            Files.writeString(ROOT.resolve("meta-od/private-note.txt"), "The quarterly zebra census is kept private.\n");
             Files.writeString(ROOT.resolve("docs/offices.txt"), "Our offices are in İSTANBUL, İzmir and Ankara. "
                 + "The İstanbul office opens first.\n");
         } catch (IOException e) {
@@ -268,7 +269,8 @@ class DocumentFlowTest {
     @Test
     @Order(9)
     void stewardsCanReadTextOnDemandWhenTheSourceAllowsIt() throws Exception {
-        JsonPath run = scan("meta-od", Map.of("path", ROOT.resolve("meta").toString(), "keep_text", "false",
+        // Its own folder: two sources over the same files are refused, as they would keep separate marks.
+        JsonPath run = scan("meta-od", Map.of("path", ROOT.resolve("meta-od").toString(), "keep_text", "false",
             "read_text_on_demand", "true"));
         assertEquals("succeeded", run.getString("status"), run.getString("detail"));
         String note = "urn:kilnmark:meta-od:private-note.txt";

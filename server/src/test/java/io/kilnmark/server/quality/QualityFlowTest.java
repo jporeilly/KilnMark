@@ -1,6 +1,7 @@
 package io.kilnmark.server.quality;
 
 import static io.kilnmark.server.Tokens.admin;
+import static io.kilnmark.server.Tokens.designer;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
@@ -318,19 +319,23 @@ class QualityFlowTest {
             "params", Map.of("min", 0))));
         rules.put("orphans", rule(Map.of("assetUrn", ORDERS, "field", "customer_id", "type", "references",
             "params", Map.of("asset", CUSTOMERS, "field", "id"))));
-        // Custom SQL: admins only, never functions that act outside the query.
+        // Custom SQL: designers who see unmasked values only (ADR 0027), never functions that act outside the query.
         Map<String, Object> custom = Map.of("assetUrn", CUSTOMERS, "field", "quantity", "type", "custom_sql",
             "params", Map.of("sql", "SELECT * FROM ${table} WHERE ${column} < 0"));
         as(steward).contentType(ContentType.JSON).body(custom).post("/api/v1/quality/rules").then().statusCode(403);
-        rules.put("custom", admin().contentType(ContentType.JSON).body(custom).post("/api/v1/quality/rules").then()
+        admin().contentType(ContentType.JSON).body(custom).post("/api/v1/quality/rules").then().statusCode(403)
+            .body("error", containsString("sees unmasked values"));
+        Tokens.as(Tokens.newToken("designer", false)).contentType(ContentType.JSON).body(custom)
+            .post("/api/v1/quality/rules").then().statusCode(403);
+        rules.put("custom", designer().contentType(ContentType.JSON).body(custom).post("/api/v1/quality/rules").then()
             .statusCode(201).extract().jsonPath().getLong("id"));
-        admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+        designer().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
             "params", Map.of("sql", "SELECT nextval('qa.s') FROM ${table}"))).post("/api/v1/quality/rules").then()
             .statusCode(400).body("error", containsString("nextval"));
-        admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+        designer().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
             "params", Map.of("sql", "SELECT 1 AS a) f) DENY SELECT ON qa.t TO public COMMIT SELECT (SELECT 1 AS b FROM "
                 + "(SELECT 1 AS c"))).post("/api/v1/quality/rules").then().statusCode(400);
-        rules.put("slow", admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+        rules.put("slow", designer().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
             "params", Map.of("sql", "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT * FROM r")))
             .post("/api/v1/quality/rules").then().statusCode(201).extract().jsonPath().getLong("id"));
         as(steward).post("/api/v1/quality/rules/" + rules.get("slow") + "/run").then().statusCode(403);
@@ -343,7 +348,7 @@ class QualityFlowTest {
             .post("/api/v1/quality/rules").then().statusCode(403);
         as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "nope", "type", "unique"))
             .post("/api/v1/quality/rules").then().statusCode(400).body("error", containsString("field"));
-        admin().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
+        designer().contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "type", "custom_sql",
             "params", Map.of("sql", "DELETE FROM qa.orders"))).post("/api/v1/quality/rules").then().statusCode(400)
             .body("error", containsString("params.sql"));
         as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "id", "type", "unique",
@@ -494,8 +499,11 @@ class QualityFlowTest {
             .statusCode(204);
         assertEquals(List.of("••••", "••••", "••••"), as(steward).get("/api/v1/assets/" + CUSTOMERS).then().statusCode(200)
             .extract().jsonPath().getList("fields.find { it.name == 'postcode' }.profile.top.value"));
-        assertTrue(admin().get("/api/v1/assets/" + CUSTOMERS).then().statusCode(200).extract().jsonPath()
+        assertTrue(designer().get("/api/v1/assets/" + CUSTOMERS).then().statusCode(200).extract().jsonPath()
             .getList("fields.find { it.name == 'postcode' }.profile.top.value").contains("SW1A 1AA"));
+        assertEquals(List.of("••••", "••••", "••••"), admin().get("/api/v1/assets/" + CUSTOMERS).then().statusCode(200)
+            .extract().jsonPath().getList("fields.find { it.name == 'postcode' }.profile.top.value"),
+            "an admin sees sensitive values masked (ADR 0027)");
         // Marking is for stewards; un-marking only for admins.
         as(steward).contentType(ContentType.JSON).queryParam("urn", CUSTOMERS)
             .body(Map.of("field", "postcode", "sensitive", false)).put("/api/v1/quality/asset/sensitive").then()
@@ -504,9 +512,15 @@ class QualityFlowTest {
             .body(Map.of("field", "postcode", "sensitive", false)).put("/api/v1/quality/asset/sensitive").then()
             .statusCode(204);
 
-        JsonPath open = admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
+        JsonPath open = designer().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
             .get("/api/v1/quality/asset/samples").then().statusCode(200).extract().jsonPath();
         assertEquals(List.of(), open.getList("masked"));
+        assertEquals(List.of("e-mail"), admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
+            .get("/api/v1/quality/asset/samples").then().statusCode(200).extract().jsonPath().getList("masked"),
+            "an admin cannot unmask, even when asking");
+        assertEquals(List.of("e-mail"), Tokens.as(Tokens.newToken("designer", false)).queryParam("urn", CUSTOMERS)
+            .queryParam("unmask", true).get("/api/v1/quality/asset/samples").then().statusCode(200).extract().jsonPath()
+            .getList("masked"), "nor a designer whose token was made without the grant");
         List<List<String>> plain = open.getList("rows");
         assertTrue(plain.stream().map(r -> r.get(col)).anyMatch(v -> v != null && v.contains("@example.com")));
     }
@@ -559,7 +573,7 @@ class QualityFlowTest {
         as(steward).contentType(ContentType.JSON).queryParam("urn", CUSTOMERS)
             .body(Map.of("field", "quantity", "sensitive", true)).put("/api/v1/quality/asset/sensitive").then()
             .statusCode(204);
-        JsonNode event = JSON.readTree(admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
+        JsonNode event = JSON.readTree(designer().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
             .get("/api/v1/quality/export/openlineage").then().statusCode(200).extract().asString());
         assertEquals(Set.of(), validate("https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent", event,
             SpecVersion.VersionFlag.V202012));
@@ -592,7 +606,7 @@ class QualityFlowTest {
         assertTrue(contract.toString().contains("\"validValues\""), "stewards see allowed values");
         assertFalse(contract.toString().contains("< 0"), "custom SQL may quote any column: hidden while the asset "
             + "has sensitive columns");
-        assertTrue(admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true).get("/api/v1/quality/export/odcs")
+        assertTrue(designer().queryParam("urn", CUSTOMERS).queryParam("unmask", true).get("/api/v1/quality/export/odcs")
             .then().statusCode(200).extract().asString().contains("{property} < 0"), "custom SQL with ODCS placeholders");
         Set<ValidationMessage> odcsErrors = validate("classpath:schemas/odcs/odcs-json-schema-v3.1.0.json", contract,
             SpecVersion.VersionFlag.V201909);
@@ -667,12 +681,12 @@ class QualityFlowTest {
             .post("/api/v1/quality/rules/preview").then().statusCode(409);
 
         // This source logs in as the database's superuser: custom SQL refuses to run there.
-        long custom = admin().contentType(ContentType.JSON).body(Map.of("assetUrn", urn, "field", "quantity",
+        long custom = designer().contentType(ContentType.JSON).body(Map.of("assetUrn", urn, "field", "quantity",
             "type", "custom_sql", "params", Map.of("sql", "SELECT * FROM ${table} WHERE ${column} < 0")))
             .post("/api/v1/quality/rules").then().statusCode(201).extract().jsonPath().getLong("id");
-        waitForQualityRun(admin().post("/api/v1/quality/rules/" + custom + "/run").then().statusCode(202).extract()
+        waitForQualityRun(designer().post("/api/v1/quality/rules/" + custom + "/run").then().statusCode(202).extract()
             .jsonPath().getLong("id"));
-        JsonPath refused = admin().get("/api/v1/quality/rules/" + custom).then().statusCode(200).extract().jsonPath();
+        JsonPath refused = designer().get("/api/v1/quality/rules/" + custom).then().statusCode(200).extract().jsonPath();
         assertEquals("error", refused.getString("latest.status"));
         assertTrue(refused.getString("latest.message").contains("superuser"), refused.getString("latest.message"));
     }
@@ -740,10 +754,10 @@ class QualityFlowTest {
             && d.get("change").equals("quantile_shift")).findFirst().orElseThrow();
         assertNull(shift.get("detail"), shift.toString());
         assertFalse(((Map<?, ?>) shift.get("evidence")).containsKey("medianFrom"), shift.toString());
-        Map<String, Object> unmasked = admin().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
+        Map<String, Object> unmasked = designer().queryParam("urn", CUSTOMERS).queryParam("unmask", true)
             .get("/api/v1/quality/asset/drift").then().statusCode(200).extract().jsonPath().<Map<String, Object>>getList("$")
             .stream().filter(d -> d.get("id").equals(shift.get("id"))).findFirst().orElseThrow();
-        assertNotNull(unmasked.get("detail"), "an admin who unmasks sees it");
+        assertNotNull(unmasked.get("detail"), "a designer who unmasks sees it");
 
         List<Map<String, Object>> measures = quality(steward, CUSTOMERS).getList("measures");
         for (Map<String, Object> m : measures) {
@@ -760,7 +774,7 @@ class QualityFlowTest {
         as(steward).contentType(ContentType.JSON).body(Map.of("assetUrn", CUSTOMERS, "field", "quantity",
             "type", "in_range", "params", Map.of("hidden", true), "failAbove", 0.5))
             .put("/api/v1/quality/rules/" + rules.get("quantity")).then().statusCode(200);
-        JsonPath kept = admin().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
+        JsonPath kept = designer().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
             .statusCode(200).extract().jsonPath();
         assertNull(kept.get("rule.params.hidden"));
         assertNotNull(kept.get("rule.params.min"), kept.prettify());
@@ -785,9 +799,9 @@ class QualityFlowTest {
             "params", Map.of("min", 0, "max", 5));
         as(steward).contentType(ContentType.JSON).body(range).post("/api/v1/quality/rules/preview").then()
             .statusCode(403).body("error", containsString("sensitive"));
-        admin().contentType(ContentType.JSON).body(range).queryParam("unmask", true)
+        designer().contentType(ContentType.JSON).body(range).queryParam("unmask", true)
             .post("/api/v1/quality/rules/preview").then().statusCode(200);
-        long resultId = admin().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
+        long resultId = designer().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
             .statusCode(200).extract().jsonPath().getLong("latest.id");
         JsonPath result = as(steward).get("/api/v1/quality/results/" + resultId).then().statusCode(200).extract()
             .jsonPath();
@@ -814,7 +828,7 @@ class QualityFlowTest {
         shown.put("enabled", false);
         as(steward).contentType(ContentType.JSON).body(shown).put("/api/v1/quality/rules/" + rules.get("quantity"))
             .then().statusCode(200).body("enabled", equalTo(false)).body("params.hidden", equalTo(true));
-        JsonPath kept = admin().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
+        JsonPath kept = designer().queryParam("unmask", true).get("/api/v1/quality/rules/" + rules.get("quantity")).then()
             .statusCode(200).extract().jsonPath();
         assertNotNull(kept.get("rule.params.min"), kept.prettify());
         assertEquals(false, kept.get("rule.enabled"));
@@ -826,29 +840,29 @@ class QualityFlowTest {
         assertEquals("http://127.0.0.1:47391/hooks/quality", admin().get("/api/v1/quality/rules/" + rules.get("email"))
             .then().statusCode(200).extract().jsonPath().getString("rule.actions.webhook"), "the stored webhook is kept");
 
-        // Previews of settings not saved are for admins; the saved settings preview, masked.
+        // Source forms are for designers, who see sensitive values and so may preview other reading
+        // settings of a source with marks; stewards neither preview nor change a source.
         Map<String, String> saved = new HashMap<>(Map.of("url", url, "username", "qa_reader", "schemas", "qa",
             "sample_rows", "200", "table_sample_above_rows", "10000"));
         Map<String, String> changed = new HashMap<>(saved);
         changed.put("schemas", "qa,public");
+        String designer = token("quality-designer", "designer");
         as(steward).contentType(ContentType.JSON).queryParam("asset", "qa.Customers")
-            .body(Map.of("source", "quality-db", "name", "quality-db", "kind", "postgresql", "settings", changed))
-            .post("/api/v1/drafts/preview").then().statusCode(403).body("error", containsString("admin"));
-        JsonPath same = as(steward).contentType(ContentType.JSON).queryParam("asset", "qa.Customers")
             .body(Map.of("source", "quality-db", "name", "quality-db", "kind", "postgresql", "settings", saved))
+            .post("/api/v1/drafts/preview").then().statusCode(403);
+        JsonPath other = as(designer).contentType(ContentType.JSON).queryParam("asset", "qa.Customers")
+            .body(Map.of("source", "quality-db", "name", "quality-db", "kind", "postgresql", "settings", changed))
             .post("/api/v1/drafts/preview").then().statusCode(200).extract().jsonPath();
-        int col = same.getList("columns.name").indexOf("quantity");
-        List<List<String>> rows = same.getList("rows");
-        assertTrue(col >= 0 && rows.stream().allMatch(r -> r.get(col) == null || r.get(col).equals("••••")));
+        int col = other.getList("columns.name").indexOf("quantity");
+        List<List<String>> rows = other.getList("rows");
+        assertTrue(col >= 0 && rows.stream().anyMatch(r -> r.get(col) != null && !r.get(col).equals("••••")),
+            other.prettify());
 
-        // A source with marks: stewards may not change how it is read (other names would escape the marks),
-        // but may still describe it; admins may change anything.
-        as(steward).contentType(ContentType.JSON).body(Map.of("name", "quality-db", "kind", "postgresql",
-            "settings", changed)).put("/api/v1/sources/quality-db").then().statusCode(403)
-            .body("error", containsString("marked sensitive"));
         Map<String, String> described = new HashMap<>(saved);
         described.put("description", "The quality test database");
         as(steward).contentType(ContentType.JSON).body(Map.of("name", "quality-db", "kind", "postgresql",
+            "settings", described)).put("/api/v1/sources/quality-db").then().statusCode(403);
+        as(designer).contentType(ContentType.JSON).body(Map.of("name", "quality-db", "kind", "postgresql",
             "settings", described)).put("/api/v1/sources/quality-db").then().statusCode(200);
     }
 
@@ -860,8 +874,8 @@ class QualityFlowTest {
         String version = before.getString("rule.updatedAt");
         Map<String, Object> body = Map.of("assetUrn", CUSTOMERS, "field", "quantity", "type", "in_range",
             "params", Map.of("min", 0, "max", 1000), "enabled", true);
-        // quantity is marked sensitive by now: an admin who unmasks sees the bounds in the answer.
-        JsonPath saved = admin().contentType(ContentType.JSON).header("If-Match", "\"" + version + "\"")
+        // quantity is marked sensitive by now: a designer who unmasks sees the bounds in the answer.
+        JsonPath saved = designer().contentType(ContentType.JSON).header("If-Match", "\"" + version + "\"")
             .queryParam("unmask", true).body(body).put("/api/v1/quality/rules/" + id).then().statusCode(200).extract()
             .jsonPath();
         assertEquals("1000", saved.getString("params.max"));

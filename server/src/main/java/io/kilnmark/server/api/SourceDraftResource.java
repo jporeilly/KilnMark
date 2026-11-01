@@ -37,24 +37,13 @@ public class SourceDraftResource {
 
     /** The form as a draft, refused (403) to all but admins for kinds only admins set up. */
     private SourceService.Draft draft(SourceForm form, Records.Source saved) {
-        // before the form is checked: checking a URL already hands it to the driver
-        String kind = saved != null ? saved.kind() : form == null || form.kind() == null || form.kind().isBlank()
-            ? "postgresql" : form.kind().trim();
-        java.util.Map<String, String> settings = form == null || form.settings() == null ? java.util.Map.of()
-            : SourceService.settings(form.settings());
-        boolean admin = identity.hasRole(AccessRole.ADMIN_ROLE);
-        try {
-            SourceService.adminOnlyKind(sources.connector(kind), saved, settings, admin);
-        } catch (IllegalArgumentException e) {
-            // an unknown kind: the draft says so
-        }
-        return sources.draft(form, saved, false);
+        return sources.draft(form, saved, false, identity.hasRole(AccessRole.ADMIN_ROLE));
     }
 
     /** A bulk import's follow-up tests and scans, row by row, for the web UI to poll. */
     @GET
     @Path("imports/{id}")
-    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Views.ImportBatch importBatch(@jakarta.ws.rs.PathParam("id") long id) {
         return batches.get(id).orElseThrow(() -> ApiError.of(jakarta.ws.rs.core.Response.Status.NOT_FOUND,
             "No import batch " + id + ". Batches are kept for a week"));
@@ -72,7 +61,7 @@ public class SourceDraftResource {
     @POST
     @Path("drafts/test")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Views.TestResult test(SourceForm form) {
         SourceService.Draft d = draft(form, existing(form));
         return sources.test(d.connector(), d.config());
@@ -82,7 +71,7 @@ public class SourceDraftResource {
     @POST
     @Path("drafts/containers")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Views.ContainerList containers(SourceForm form) {
         SourceService.Draft d = draft(form, existing(form));
         return sources.containers(d.connector(), d.config());
@@ -92,7 +81,7 @@ public class SourceDraftResource {
     @POST
     @Path("drafts/assets")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public Views.AssetList assets(SourceForm form, @jakarta.ws.rs.QueryParam("container") String container,
                                   @jakarta.ws.rs.QueryParam("offset") Integer offset,
                                   @jakarta.ws.rs.QueryParam("limit") Integer limit) {
@@ -105,7 +94,7 @@ public class SourceDraftResource {
     @POST
     @Path("drafts/preview")
     @Consumes(MediaType.APPLICATION_JSON)
-    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
     public jakarta.ws.rs.core.Response preview(SourceForm form, @jakarta.ws.rs.QueryParam("asset") String asset,
                                  @jakarta.ws.rs.QueryParam("rows") Integer rows) {
         Records.Source saved = existing(form);

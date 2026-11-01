@@ -240,7 +240,9 @@ public class FlowService {
      * @param expected the latest version the caller read, or null (409 if another has been saved since)
      */
     public FlowStore.Flow save(String yaml, String message, String by, AccessRole role, Integer expected) {
-        requireSteward(role, "Saving a flow");
+        if (!role.atLeast(AccessRole.DESIGNER)) {
+            throw fail(Response.Status.FORBIDDEN, "Saving a flow takes the designer role");
+        }
         Validation check = validate(yaml);
         if (check.name() == null || !FlowDefinition.NAME.matcher(check.name()).matches()) {
             throw new IllegalArgumentException("yaml: the flow needs a name, such as name: nightly-customers");

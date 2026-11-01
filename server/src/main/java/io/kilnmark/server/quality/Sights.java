@@ -23,8 +23,12 @@ public class Sights {
 
     /** The least role that may see data values. */
     public static final String DATA_ROLE = AccessRole.STEWARD_ROLE;
-    /** The least role that may see values of columns marked sensitive. */
-    public static final String UNMASK_ROLE = AccessRole.ADMIN_ROLE;
+    /**
+     * What a caller needs to see values of columns marked sensitive: the unmask grant, which only a
+     * designer token holds, since designers build what transforms the data and cannot do it blind.
+     * It is not a level on the role ladder, so admins, stewards and viewers see them masked (ADR 0027).
+     */
+    public static final String UNMASK_ROLE = AccessRole.UNMASK_GRANT;
 
     @Inject
     SecurityIdentity identity;
@@ -38,9 +42,12 @@ public class Sights {
         return identity.hasRole(DATA_ROLE);
     }
 
-    /** Whether the caller may see values of columns marked sensitive, when asking to. */
+    /**
+     * Whether the caller may see values of columns marked sensitive, when asking to: a designer with
+     * the unmask grant, and never while the request answers a model ({@link #speakingToModel}).
+     */
     public boolean mayUnmask() {
-        return identity.hasRole(UNMASK_ROLE);
+        return identity.hasRole(UNMASK_ROLE) && !model;
     }
 
     /** The asset's columns marked sensitive (once per request). */
@@ -56,32 +63,37 @@ public class Sights {
         }
     }
 
-    /** This request answers a model (the MCP server): no admin sight, whoever's token it uses. */
+    /**
+     * This request answers a model (the MCP server, AI pipeline suggestions): never unmasked, whoever's
+     * token it uses. Call it before anything is read for the model.
+     */
     public void speakingToModel() {
         model = true;
     }
 
     /**
      * Whether searches may match the text of every document, including those withheld because they
-     * hold a column marked sensitive: for admins, never for a model.
+     * hold a column marked sensitive: for a designer with the unmask grant, never for a model.
      */
     public boolean everyText() {
         return mayUnmask() && !model;
     }
 
-    /** Whether any asset of the source has a column marked sensitive. */
+    private final Map<String, Boolean> sourceMarks = new HashMap<>();
+
+    /** Whether any asset of the source has a column marked sensitive (once per request and source). */
     public boolean sourceHasMarks(String source) {
-        return store.sourceHasMarks(source);
+        return sourceMarks.computeIfAbsent(source, store::sourceHasMarks);
     }
 
-    /** Quality views: values for roles that may see data; sensitive columns only for an admin who asks. */
+    /** Quality views: values for roles that may see data; sensitive columns only for a designer who asks. */
     public Masking.Sight of(String urn, boolean unmask) {
         return new Masking.Sight(data(), marks(urn), unmask && mayUnmask());
     }
 
     /**
      * The catalogue's own views (an asset's column profiles, live previews): their statistics are
-     * shown to every role, as before; sensitive columns are masked for all but admins.
+     * shown to every role, as before; sensitive columns are masked for all but designers.
      */
     public Masking.Sight catalogue(String urn) {
         return new Masking.Sight(true, marks(urn), mayUnmask());
@@ -103,8 +115,8 @@ public class Sights {
 
     /**
      * Documents whose text is withheld from the caller: a document's text holds its sheets' cells
-     * (a workbook), so when it or any part of it has a column marked sensitive, only an admin reads
-     * its text, finds in it or sees its snippets.
+     * (a workbook), so when it or any part of it has a column marked sensitive, only a designer
+     * with the unmask grant reads its text, finds in it or sees its snippets.
      */
     public Set<String> textWithheld(Collection<String> urns) {
         return mayUnmask() || urns.isEmpty() ? Set.of() : store.textWithheld(urns);

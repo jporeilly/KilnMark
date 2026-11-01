@@ -43,13 +43,13 @@ class SourcePreviewTest {
     @ConfigProperty(name = "quarkus.datasource.password")
     String password;
 
-    private static String steward;
+    private static String designer;
     private static String viewer;
     private static Path folder;
 
     @BeforeEach
     void setUp() throws Exception {
-        if (steward != null) {
+        if (designer != null) {
             return;
         }
         try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
@@ -65,7 +65,7 @@ class SourcePreviewTest {
         Files.writeString(folder.resolve(".hidden.csv"), "secret\n1\n");
         Files.createDirectories(folder.resolve("letters"));
         Files.writeString(folder.resolve("letters/note.txt"), "hello");
-        steward = token("prev-steward", "steward");
+        designer = token("prev-designer", "designer");
         viewer = token("prev-viewer", "viewer");
         admin().contentType(ContentType.JSON).body(Map.of("name", "prev-db", "password", password, "settings",
             Map.of("url", url, "username", user))).post("/api/v1/sources").then().statusCode(201);
@@ -76,13 +76,13 @@ class SourcePreviewTest {
             .post("/api/v1/tokens").then().statusCode(201).extract().jsonPath().getString("token");
     }
 
-    private static RequestSpecification steward() {
-        return Tokens.as(steward);
+    private static RequestSpecification designer() {
+        return Tokens.as(designer);
     }
 
     @Test
     void previewsTheFirstRowsOfATableWithColumnsAndKinds() {
-        JsonPath p = steward().queryParam("asset", "prev.people").queryParam("rows", 5)
+        JsonPath p = designer().queryParam("asset", "prev.people").queryParam("rows", 5)
             .get("/api/v1/sources/prev-db/preview").then().statusCode(200)
             .header("Cache-Control", containsString("no-store")).extract().jsonPath();
         assertEquals(5, p.getInt("rowCount"));
@@ -94,20 +94,20 @@ class SourcePreviewTest {
         assertTrue(p.getString("rows[1][3]").startsWith("x".repeat(500) + "…"), "long values are cut");
         assertFalse(p.getBoolean("truncated"));
 
-        steward().queryParam("asset", "prev.people").get("/api/v1/sources/prev-db/preview")
+        designer().queryParam("asset", "prev.people").get("/api/v1/sources/prev-db/preview")
             .then().statusCode(200).body("rowCount", equalTo(100));
-        steward().queryParam("asset", "prev.people").queryParam("rows", 1001).get("/api/v1/sources/prev-db/preview")
+        designer().queryParam("asset", "prev.people").queryParam("rows", 1001).get("/api/v1/sources/prev-db/preview")
             .then().statusCode(400).body("error", containsString("rows"));
-        steward().queryParam("asset", "prev.nothing").get("/api/v1/sources/prev-db/preview")
+        designer().queryParam("asset", "prev.nothing").get("/api/v1/sources/prev-db/preview")
             .then().statusCode(502).body("error", containsString("prev.nothing"));
     }
 
     @Test
     void listsAContainersTablesInPages() {
-        steward().queryParam("container", "prev").queryParam("limit", 1)
+        designer().queryParam("container", "prev").queryParam("limit", 1)
             .get("/api/v1/sources/prev-db/assets").then().statusCode(200)
             .body("total", equalTo(2)).body("items[0].path", equalTo("prev.other"));
-        steward().queryParam("container", "prev").queryParam("offset", 1)
+        designer().queryParam("container", "prev").queryParam("offset", 1)
             .get("/api/v1/sources/prev-db/assets").then().statusCode(200)
             .body("items[0].name", equalTo("people"));
     }
@@ -125,13 +125,13 @@ class SourcePreviewTest {
     void aCsvWithoutAHeaderCanBePreviewedWithTheRightSettings() throws Exception {
         Map<String, Object> draft = new HashMap<>(Map.of("kind", "files", "settings",
             Map.of("path", folder.toString())));
-        JsonPath detected = steward().contentType(ContentType.JSON).body(draft)
+        JsonPath detected = designer().contentType(ContentType.JSON).body(draft)
             .post("/api/v1/drafts/preview?asset=data.csv").then().statusCode(200).extract().jsonPath();
         assertEquals("true", detected.getString("details.header"));
         assertEquals(2, detected.getInt("rowCount"), "the first row taken as names");
 
         draft.put("settings", Map.of("path", folder.toString(), "delimiter", ";", "header", "false"));
-        JsonPath p = steward().contentType(ContentType.JSON).body(draft)
+        JsonPath p = designer().contentType(ContentType.JSON).body(draft)
             .post("/api/v1/drafts/preview?asset=data.csv").then().statusCode(200).extract().jsonPath();
         assertEquals(List.of("column_1", "column_2"), p.getList("columns.name"));
         assertEquals(3, p.getInt("rowCount"));
@@ -140,25 +140,25 @@ class SourcePreviewTest {
         assertEquals(";", p.getString("details.delimiter"));
         assertEquals("csv", p.getString("details.format"));
 
-        steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/assets?container=/")
+        designer().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/assets?container=/")
             .then().statusCode(200).body("items.path", hasItem("data.csv"));
-        steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/assets?container=letters")
+        designer().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/assets?container=letters")
             .then().statusCode(200).body("items[0].readable", equalTo(false));
-        steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/preview?asset=.hidden.csv")
+        designer().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/preview?asset=.hidden.csv")
             .then().statusCode(502).body("error", containsString("hidden"));
         draft.put("settings", Map.of("path", folder.toString(), "recursive", "false"));
         Files.createDirectories(folder.resolve("sub"));
-        steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/preview?asset=letters/note.txt")
+        designer().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/preview?asset=letters/note.txt")
             .then().statusCode(502).body("error", containsString("sub-folders"));
         draft.put("settings", Map.of("path", folder.toString(), "delimiter", "ab"));
-        steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/preview?asset=data.csv")
+        designer().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/preview?asset=data.csv")
             .then().statusCode(400).body("error", containsString("delimiter"));
     }
 
     @Test
     void aSilentServerOrAWrongPasswordEndsAPreviewWithoutTheSecret() throws Exception {
         String secret = "prev-secret-0042";
-        String error = steward().contentType(ContentType.JSON).body(Map.of("kind", "postgresql", "password", secret,
+        String error = designer().contentType(ContentType.JSON).body(Map.of("kind", "postgresql", "password", secret,
                 "settings", Map.of("url", url, "username", user)))
             .post("/api/v1/drafts/preview?asset=prev.people").then().statusCode(502).extract().jsonPath()
             .getString("error");
@@ -166,7 +166,7 @@ class SourcePreviewTest {
         try (java.net.ServerSocket silent = new java.net.ServerSocket(0, 50,
             java.net.InetAddress.getLoopbackAddress())) {
             long start = System.nanoTime();
-            steward().contentType(ContentType.JSON).body(Map.of("kind", "postgresql", "password", "pw",
+            designer().contentType(ContentType.JSON).body(Map.of("kind", "postgresql", "password", "pw",
                     "settings", Map.of("url", "jdbc:postgresql://127.0.0.1:" + silent.getLocalPort() + "/x",
                         "username", "u")))
                 .post("/api/v1/drafts/preview?asset=a.b").then().statusCode(502);
