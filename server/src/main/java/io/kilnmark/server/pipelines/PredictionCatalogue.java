@@ -95,6 +95,11 @@ public class PredictionCatalogue {
             f.estimate(), f.primaryKey(), fields);
     }
 
+    /** The facts of an asset's latest profile, as stored. */
+    Optional<ProfileFacts> latest(String urn) {
+        return quality.latestFacts(urn);
+    }
+
     final class Remembering implements QualityPredictor.Catalogue {
         private final Sights sights;
 
@@ -112,7 +117,7 @@ public class PredictionCatalogue {
         public ProfileFacts facts(String urn) {
             return facts.computeIfAbsent(urn, u -> {
                 try {
-                    Optional<ProfileFacts> f = quality.latestFacts(u);
+                    Optional<ProfileFacts> f = latest(u);
                     if (sights == null || f.isEmpty()) {
                         return f;
                     }

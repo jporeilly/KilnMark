@@ -287,10 +287,7 @@ public class PipelineService {
     public PredictionViews.Advice suggest(String yaml, boolean useAi, String caller, Sights sights) {
         checkSize(yaml);
         PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes, Map.of(), variables());
-        if (useAi && sights != null) {
-            sights.speakingToModel(); // what the model is shown is never unmasked, whoever asks (ADR 0027)
-        }
-        PredictionCatalogue.Remembering catalogue = predictions.open(sights);
+        PredictionCatalogue.Remembering catalogue = suggestionCatalogue(predictions, useAi, sights);
         QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
         PipelineAdvisor advisor = new PipelineAdvisor(catalogue, nodes, json);
         PipelineAdvisor.Model model = null;
@@ -327,6 +324,19 @@ public class PipelineService {
             };
         }
         return PredictionViews.of(advisor.advise(plan, model, status, n -> graph.source(n).orElse(null)));
+    }
+
+    /**
+     * The catalogue suggestions read. With {@code useAi} the caller's sights are told first that the
+     * request answers a model, so what the model is shown is never unmasked, whoever asks, a designer
+     * with the unmask grant included (ADR 0027).
+     */
+    static PredictionCatalogue.Remembering suggestionCatalogue(PredictionCatalogue predictions, boolean useAi,
+                                                               Sights sights) {
+        if (useAi && sights != null) {
+            sights.speakingToModel();
+        }
+        return predictions.open(sights);
     }
 
     /**
