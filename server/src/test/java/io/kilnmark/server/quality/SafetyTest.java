@@ -146,6 +146,10 @@ class SafetyTest {
         IllegalArgumentException off = assertThrows(IllegalArgumentException.class,
             () -> custom("SELECT * FROM ${table}").check(context("postgresql", true, false), "admin"));
         assertTrue(off.getMessage().contains("allow_sql"), off.getMessage());
+        // A rule saved switched off never runs, so a source without Allow SQL still takes it (to rename or turn off).
+        assertNotNull(new RuleDraft(URN, null, null, "custom_sql", null,
+            Facts.JSON.readTree("{\"sql\":\"SELECT * FROM ${table}\"}"), null, null, null, null, false)
+            .check(context("postgresql", true, false), "admin"), "a rule switched off saves without allow_sql");
         IllegalArgumentException mssql = assertThrows(IllegalArgumentException.class,
             () -> custom("SELECT * FROM ${table}").check(context("sqlserver", true, true), "admin"));
         assertTrue(mssql.getMessage().contains("only on PostgreSQL"), mssql.getMessage());
