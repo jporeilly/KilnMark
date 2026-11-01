@@ -207,6 +207,12 @@ class GenericJdbcConnectorTest {
                 || io.kilnmark.kiln.connect.RegisteredDriver.isSecretName(lower), n);
             assertFalse(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(List.of(lower)).isEmpty(), n);
         }
+        // Settings Kilnmark has not vetted are refused too, whatever they do (ADR 0030).
+        for (String n : List.of("zk", "url", "model", "cache", "serverName", "searchPath", "logmech", "browser",
+            "dnsResolver", "tracing", "debug", "clientRerouteServerListJNDIName", "custom_http_params")) {
+            assertFalse(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(
+                List.of(n.toLowerCase(java.util.Locale.ROOT))).isEmpty(), n);
+        }
         // Normal settings stay allowed.
         for (String n : List.of("trustServerCertificate", "hostNameInCertificate", "loginTimeout", "charset", "tmode",
             "sslmode", "applicationName")) {
@@ -251,6 +257,9 @@ class GenericJdbcConnectorTest {
             {"jdbc:oracle:oci:@//db.example.com:1521/sales", "other than jdbc:oracle:thin:"},
             {"jdbc:oracle:oci7:@//db.example.com:1521/sales", "other than jdbc:oracle:thin:"},
             {"jdbc:redshift:iam://cluster.example.com:5439/dev", "Redshift IAM URL"},
+            {"jdbc:snowflake://acct.snowflakecomputing.com/", "reads and writes files on the server"},
+            {"jdbc:vertica://db.example.com:5433/sales", "reads and writes files on the server"},
+            {"jdbc:exa:db.example.com:8563", "reads and writes files on the server"},
             {"jdbc:firebird:native:/srv/sales.fdb", "local or native Firebird"},
             {"jdbc:ucanaccess:///srv/sales.accdb", "UCanAccess"},
             {"jdbc:ucanaccess://C:/srv/sales.accdb", "UCanAccess"},
@@ -282,7 +291,7 @@ class GenericJdbcConnectorTest {
         };
         java.util.List<String> every = new java.util.ArrayList<>();
         every.addAll(ANY.allowedProperties());
-        every.addAll(List.of("init", "create", "schema", "transportmode", "url", "model", "zk", "cache"));
+        every.addAll(List.of("create", "schema", "transportmode")); // what the URLs below use, all vetted
         io.kilnmark.kiln.connect.RegisteredDriver allowsAll = new io.kilnmark.kiln.connect.RegisteredDriver("all",
             "all.jar", "a".repeat(64), "x.Driver", "jdbc:all:", every, "admin", Instant.EPOCH);
         for (String[] r : refused) {
@@ -298,8 +307,7 @@ class GenericJdbcConnectorTest {
             "jdbc:ignite:thin://ignite.example.com:10800", "jdbc:firebirdsql://db.example.com:3050//srv/sales.fdb",
             "jdbc:oracle:thin:@//db.example.com:1521/SALES", "jdbc:jtds:sybase://db.example.com:5000/sales",
             "jdbc:sqlserver://db.example.com:1433;failoverPartner=standby.example.com",
-            "jdbc:informix-sqli://db.example.com:1533/sales", "jdbc:snowflake://acct.snowflakecomputing.com/",
-            "jdbc:db2://[2001:db8::1]:50000/SALES", "jdbc:all://db_1.internal:5000/zk=localhost",
+            "jdbc:informix-sqli://db.example.com:1533/sales", "jdbc:db2://[2001:db8::1]:50000/SALES",
             "jdbc:sybase:Tds:db.example.com:5000/sales")) {
             assertNull(GenericJdbcConnector.refusal(allowsAll, ok, null), ok);
         }
@@ -313,8 +321,8 @@ class GenericJdbcConnectorTest {
         }
         java.util.Properties init = new java.util.Properties();
         init.setProperty("init", "x");
-        assertNull(GenericJdbcConnector.refusal(allowsAll, "jdbc:db2://db.example.com:50000/SALES", init),
-            "only H2 reads INIT as SQL");
+        assertTrue(GenericJdbcConnector.refusal(allowsAll, "jdbc:db2://db.example.com:50000/SALES", init)
+            .contains("not registered to take"), "elsewhere init is just a setting no driver may be allowed");
         assertEquals(GenericJdbcConnector.UNREADABLE_HOST, h2.connector().hosts(h2.source("p",
             Map.of("url", "jdbc:all://C:/srv/sales.db"))).get(0), "an allow-list refuses a host it cannot read too");
         assertEquals(List.of("db.example.com"), h2.connector().hosts(h2.source("p",

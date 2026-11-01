@@ -69,6 +69,14 @@ details.
   generic JDBC sources with such URLs stop connecting**, and their tests, scans and runs say why.
   Run the database as a server (an H2 or HSQLDB server, Derby's network server and the like) and
   change the source's URL to its network address.
+- **Generic JDBC takes only vetted settings** (ADR 0030). A registered driver may be allowed only
+  settings Kilnmark has vetted: time limits, TLS, characters, database, schema, catalog, warehouse
+  and role, the application's name, fetch and batch sizes, time zones, keep-alive and failover
+  servers, and a few databases' own (Teradata `TMODE`, Informix `INFORMIXSERVER`). **Registrations
+  whose lists hold anything else are no longer used**; register them again without it. Snowflake,
+  Vertica and Exasol are refused through Generic JDBC, as their drivers move files for ordinary SQL,
+  and MySQL and MariaDB connections never load local files. A URL is checked for what it opens
+  before its settings. Running drivers in a process of their own is next.
 - **S3 access points and overlapping sources.** An S3 source whose bucket is an access point (an
   `-s3alias`, Object Lambda `--ol-s3`, Outposts `--op-s3`, directory bucket `--<zone>--xa-s3` or `.mrap`
   alias, or an ARN), or whose
