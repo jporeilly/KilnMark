@@ -52,12 +52,12 @@ class SourceManagementTest {
     @ConfigProperty(name = "quarkus.datasource.password")
     String password;
 
-    private static String steward;
+    private static String designer;
     private static String viewer;
 
     @BeforeEach
     void setUp() throws Exception {
-        if (steward != null) {
+        if (designer != null) {
             return;
         }
         try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
@@ -70,7 +70,7 @@ class SourceManagementTest {
             s.execute("CREATE VIEW mgmt_b.big_orders AS SELECT * FROM mgmt_b.orders WHERE amount > 100");
             s.execute("CREATE SCHEMA mgmt_empty");
         }
-        steward = token("mgmt-steward", "steward");
+        designer = token("mgmt-designer", "designer");
         viewer = token("mgmt-viewer", "viewer");
     }
 
@@ -79,8 +79,8 @@ class SourceManagementTest {
             .post("/api/v1/tokens").then().statusCode(201).extract().jsonPath().getString("token");
     }
 
-    private static RequestSpecification steward() {
-        return Tokens.as(steward);
+    private static RequestSpecification designer() {
+        return Tokens.as(designer);
     }
 
     private static RequestSpecification viewer() {
@@ -140,7 +140,7 @@ class SourceManagementTest {
         viewer().contentType(ContentType.JSON).body(source("x", null, null)).post("/api/v1/drafts/containers")
             .then().statusCode(403);
         viewer().get("/api/v1/imports/1").then().statusCode(403);
-        steward().get("/api/v1/imports/1").then().statusCode(403);
+        designer().get("/api/v1/imports/1").then().statusCode(org.hamcrest.Matchers.not(403)); // designers may read imports
         given().delete("/api/v1/sources/mgmt-roles").then().statusCode(401);
         // viewers read
         viewer().get("/api/v1/sources/mgmt-roles/history").then().statusCode(200);
@@ -158,7 +158,7 @@ class SourceManagementTest {
         Map<String, Object> body = Map.of("displayName", "Edit test DB", "settings", Map.of("url", url, "username",
             user, "schemas", "mgmt_a,mgmt_b", "description", "Synthetic test data", "ai_egress", "ALLOWED",
             "exclude", "*_backup"));
-        steward().contentType(ContentType.JSON).body(body).put("/api/v1/sources/mgmt-edit")
+        designer().contentType(ContentType.JSON).body(body).put("/api/v1/sources/mgmt-edit")
             .then().statusCode(200)
             .body("name", equalTo("mgmt-edit"))
             .body("displayName", equalTo("Edit test DB"))
@@ -169,44 +169,44 @@ class SourceManagementTest {
             .body("$", not(hasKey("password")))
             .body("settings", not(hasKey("password")));
         assertArrayEquals(before, storedSecret("mgmt-edit"), "a blank password keeps the stored one");
-        steward().post("/api/v1/sources/mgmt-edit/test").then().statusCode(200).body("ok", equalTo(true));
+        designer().post("/api/v1/sources/mgmt-edit/test").then().statusCode(200).body("ok", equalTo(true));
 
         // leaving a setting out removes it; display name back to the name
-        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", user)))
+        designer().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", user)))
             .put("/api/v1/sources/mgmt-edit").then().statusCode(200)
             .body("displayName", equalTo("mgmt-edit"))
             .body("settings", not(hasKey("description")));
 
         // a new place for the password needs the password again
-        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url",
+        designer().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url",
                 "jdbc:postgresql://attacker.example.com:5432/x", "username", user)))
             .put("/api/v1/sources/mgmt-edit").then().statusCode(400)
             .body("error", containsString("enter the password again"));
-        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", "someone")))
+        designer().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", "someone")))
             .put("/api/v1/sources/mgmt-edit").then().statusCode(400).body("error", containsString("username"));
         assertArrayEquals(before, storedSecret("mgmt-edit"));
 
         // the name is a fixed key
-        steward().contentType(ContentType.JSON).body(Map.of("name", "mgmt-renamed", "settings", Map.of("url", url)))
+        designer().contentType(ContentType.JSON).body(Map.of("name", "mgmt-renamed", "settings", Map.of("url", url)))
             .put("/api/v1/sources/mgmt-edit").then().statusCode(400)
             .body("error", containsString("cannot change"))
             .body("error", containsString("add a new source"));
-        steward().contentType(ContentType.JSON).body(Map.of("kind", "files", "settings", Map.of("url", url)))
+        designer().contentType(ContentType.JSON).body(Map.of("kind", "files", "settings", Map.of("url", url)))
             .put("/api/v1/sources/mgmt-edit").then().statusCode(400).body("error", containsString("kind"));
-        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", user, "ai_egress", "cloud")))
+        designer().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", user, "ai_egress", "cloud")))
             .put("/api/v1/sources/mgmt-edit").then().statusCode(400).body("error", containsString("ai_egress"));
-        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", user, "include", "*.{x")))
+        designer().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", user, "include", "*.{x")))
             .put("/api/v1/sources/mgmt-edit").then().statusCode(400).body("error", containsString("include"));
-        steward().contentType(ContentType.JSON).body(Map.of("displayName", "two\nlines", "settings", Map.of("url", url)))
+        designer().contentType(ContentType.JSON).body(Map.of("displayName", "two\nlines", "settings", Map.of("url", url)))
             .put("/api/v1/sources/mgmt-edit").then().statusCode(400).body("error", containsString("displayName"));
-        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url)))
+        designer().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url)))
             .put("/api/v1/sources/no-such-source").then().statusCode(404);
 
         // a new password replaces it; clearing removes it
-        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", user),
+        designer().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", user),
             "password", "changed-pw")).put("/api/v1/sources/mgmt-edit").then().statusCode(200);
         assertFalse(java.util.Arrays.equals(before, storedSecret("mgmt-edit")));
-        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", user),
+        designer().contentType(ContentType.JSON).body(Map.of("settings", Map.of("url", url, "username", user),
             "clearPassword", true)).put("/api/v1/sources/mgmt-edit").then().statusCode(200)
             .body("hasPassword", equalTo(false));
     }
@@ -215,35 +215,35 @@ class SourceManagementTest {
     void connectionTestsSayWhatIsWrongAndNeverEchoTheSecret() {
         add("mgmt-test-ok", password, null);
         add("mgmt-test-bad", "wrong-password-8813", null);
-        steward().post("/api/v1/sources/mgmt-test-ok/test").then().statusCode(200)
+        designer().post("/api/v1/sources/mgmt-test-ok/test").then().statusCode(200)
             .body("ok", equalTo(true)).body("problem", equalTo(null));
-        String problem = steward().post("/api/v1/sources/mgmt-test-bad/test").then().statusCode(200)
+        String problem = designer().post("/api/v1/sources/mgmt-test-bad/test").then().statusCode(200)
             .body("ok", equalTo(false)).extract().jsonPath().getString("problem");
         assertTrue(problem.contains("Cannot connect"), problem);
         assertFalse(problem.contains("wrong-password-8813"));
 
         // unsaved settings: a new source, then an edit with a blank password using the stored one
-        steward().contentType(ContentType.JSON).body(source("", password, null)).post("/api/v1/drafts/test")
+        designer().contentType(ContentType.JSON).body(source("", password, null)).post("/api/v1/drafts/test")
             .then().statusCode(200).body("ok", equalTo(true));
-        steward().contentType(ContentType.JSON).body(source("", null, null)).post("/api/v1/drafts/test")
+        designer().contentType(ContentType.JSON).body(source("", null, null)).post("/api/v1/drafts/test")
             .then().statusCode(200).body("ok", equalTo(false));
         Map<String, Object> edit = new HashMap<>(source("mgmt-test-ok", null, null));
         edit.put("source", "mgmt-test-ok");
-        steward().contentType(ContentType.JSON).body(edit).post("/api/v1/drafts/test")
+        designer().contentType(ContentType.JSON).body(edit).post("/api/v1/drafts/test")
             .then().statusCode(200).body("ok", equalTo(true));
         Map<String, Object> moved = new HashMap<>(edit);
         moved.put("settings", Map.of("url", "jdbc:postgresql://elsewhere.example.com/x", "username", user));
-        steward().contentType(ContentType.JSON).body(moved).post("/api/v1/drafts/test")
+        designer().contentType(ContentType.JSON).body(moved).post("/api/v1/drafts/test")
             .then().statusCode(400).body("error", containsString("enter the password again"));
-        steward().contentType(ContentType.JSON).body(Map.of("kind", "postgresql", "settings", Map.of("url", "nope")))
+        designer().contentType(ContentType.JSON).body(Map.of("kind", "postgresql", "settings", Map.of("url", "nope")))
             .post("/api/v1/drafts/test").then().statusCode(400).body("error", containsString("url"));
-        steward().post("/api/v1/sources/no-such-source/test").then().statusCode(404);
+        designer().post("/api/v1/sources/no-such-source/test").then().statusCode(404);
     }
 
     @Test
     void listsSchemasWithCountsAndWarnsBeforeScanningNothing() {
         add("mgmt-list", password, "mgmt_a");
-        JsonPath l = steward().get("/api/v1/sources/mgmt-list/containers").then().statusCode(200)
+        JsonPath l = designer().get("/api/v1/sources/mgmt-list/containers").then().statusCode(200)
             .body("setting", equalTo("schemas"))
             .body("label", equalTo("Schemas"))
             .body("selected", equalTo(List.of("mgmt_a")))
@@ -258,7 +258,7 @@ class SourceManagementTest {
         assertEquals(2, l.getInt("total"));
 
         add("mgmt-nothing", password, "mgmt_empty");
-        steward().get("/api/v1/sources/mgmt-nothing/containers").then().statusCode(200)
+        designer().get("/api/v1/sources/mgmt-nothing/containers").then().statusCode(200)
             .body("total", equalTo(0))
             .body("nothingToScan", equalTo(true))
             .body("warnings[0]", containsString("nothing"));
@@ -269,10 +269,10 @@ class SourceManagementTest {
         Map<String, String> settings = new HashMap<>((Map<String, String>) draft.get("settings"));
         settings.put("exclude", "*_BACKUP");
         draft.put("settings", settings);
-        steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/containers")
+        designer().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/containers")
             .then().statusCode(200).body("total", equalTo(1));
 
-        steward().contentType(ContentType.JSON)
+        designer().contentType(ContentType.JSON)
             .body(Map.of("name", "", "kind", "postgresql", "password", "x",
                 "settings", Map.of("url", "jdbc:postgresql://127.0.0.1:1/none", "username", "u")))
             .post("/api/v1/drafts/containers").then().statusCode(502).body("error", containsString("Cannot list"));
@@ -298,7 +298,7 @@ class SourceManagementTest {
             s.execute("INSERT INTO kilnmark.run (source_id, kind, status) VALUES (" + sourceId + ", 'scan', 'running')");
         }
         admin().get("/api/v1/sources/mgmt-del").then().statusCode(200).body("assets", equalTo(2));
-        steward().delete("/api/v1/sources/mgmt-del").then().statusCode(409)
+        designer().delete("/api/v1/sources/mgmt-del").then().statusCode(409)
             .body("error", containsString("queued or running"));
         admin().get("/api/v1/sources/mgmt-del").then().statusCode(200);
 
@@ -306,11 +306,11 @@ class SourceManagementTest {
             s.execute("UPDATE kilnmark.run SET status = 'failed' WHERE source_id = " + sourceId
                 + " AND status = 'running'");
         }
-        steward().delete("/api/v1/sources/mgmt-del").then().statusCode(200)
+        designer().delete("/api/v1/sources/mgmt-del").then().statusCode(200)
             .body("name", equalTo("mgmt-del")).body("assets", equalTo(2)).body("runs", equalTo(2));
         admin().get("/api/v1/sources/mgmt-del").then().statusCode(404);
         admin().get("/api/v1/assets/urn:kilnmark:mgmt-del:mgmt_b.orders").then().statusCode(404);
-        steward().delete("/api/v1/sources/mgmt-del").then().statusCode(404);
+        designer().delete("/api/v1/sources/mgmt-del").then().statusCode(404);
 
         try (Connection c = db.getConnection()) {
             assertEquals(List.of(), leftovers(c, "urn:kilnmark:mgmt-del:", sourceId),
@@ -402,7 +402,7 @@ class SourceManagementTest {
     @Test
     void historyShowsRunsWithTheirJobs() throws Exception {
         add("mgmt-history", password, "mgmt_b");
-        long runId = steward().post("/api/v1/sources/mgmt-history/scans").then().statusCode(202)
+        long runId = designer().post("/api/v1/sources/mgmt-history/scans").then().statusCode(202)
             .extract().jsonPath().getLong("id");
         waitForRun(runId);
         viewer().get("/api/v1/sources/mgmt-history/history").then().statusCode(200)
@@ -438,15 +438,15 @@ class SourceManagementTest {
             for (int i = 0; i < 4; i++) {
                 stuck.add(pool.submit(() -> {
                     long start = System.nanoTime();
-                    steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/test")
+                    designer().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/test")
                         .then().statusCode(200).body("ok", equalTo(false));
                     return (System.nanoTime() - start) / 1_000_000;
                 }));
             }
             Thread.sleep(800);
-            steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/test")
+            designer().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/test")
                 .then().statusCode(429).body("error", containsString("Try again"));
-            steward().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/containers")
+            designer().contentType(ContentType.JSON).body(draft).post("/api/v1/drafts/containers")
                 .then().statusCode(429);
             for (var f : stuck) {
                 long ms = f.get(20, java.util.concurrent.TimeUnit.SECONDS);
@@ -456,7 +456,7 @@ class SourceManagementTest {
             // the places come back once the checks have really ended
             int status = 429;
             for (int i = 0; i < 40 && status == 429; i++) {
-                status = steward().contentType(ContentType.JSON).body(source("", password, null))
+                status = designer().contentType(ContentType.JSON).body(source("", password, null))
                     .post("/api/v1/drafts/test").then().extract().statusCode();
                 if (status == 429) {
                     Thread.sleep(250);
@@ -471,19 +471,19 @@ class SourceManagementTest {
         add("mgmt-moved", password, null);
         Map<String, Object> moved = new HashMap<>(Map.of("source", "mgmt-moved", "settings",
             Map.of("url", "jdbc:postgresql://elsewhere.example.com/x", "username", user)));
-        steward().contentType(ContentType.JSON).body(moved).post("/api/v1/drafts/containers")
+        designer().contentType(ContentType.JSON).body(moved).post("/api/v1/drafts/containers")
             .then().statusCode(400).body("error", containsString("enter the password again"));
 
         admin().contentType(ContentType.JSON).body(Map.of("name", "mgmt-s3", "kind", "s3", "password", "s3-secret",
                 "settings", Map.of("endpoint", "http://store.example.com:9000", "bucket", "raw", "access_key_id", "AK")))
             .post("/api/v1/sources").then().statusCode(201);
-        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("endpoint", "http://evil.example.com",
+        designer().contentType(ContentType.JSON).body(Map.of("settings", Map.of("endpoint", "http://evil.example.com",
                 "bucket", "raw", "access_key_id", "AK")))
             .put("/api/v1/sources/mgmt-s3").then().statusCode(400).body("error", containsString("endpoint"));
-        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("endpoint",
+        designer().contentType(ContentType.JSON).body(Map.of("settings", Map.of("endpoint",
                 "http://store.example.com:9000", "bucket", "raw", "access_key_id", "OTHER")))
             .put("/api/v1/sources/mgmt-s3").then().statusCode(400).body("error", containsString("access_key_id"));
-        steward().contentType(ContentType.JSON).body(Map.of("settings", Map.of("endpoint",
+        designer().contentType(ContentType.JSON).body(Map.of("settings", Map.of("endpoint",
                 "http://store.example.com:9000", "bucket", "curated", "access_key_id", "AK")))
             .put("/api/v1/sources/mgmt-s3").then().statusCode(200).body("hasPassword", equalTo(true));
     }
@@ -491,7 +491,7 @@ class SourceManagementTest {
     @Test
     void anUnreachableSourcesErrorNeverHoldsItsSecret() {
         String secret = "pw-secret-7731";
-        String error = steward().contentType(ContentType.JSON)
+        String error = designer().contentType(ContentType.JSON)
             .body(Map.of("kind", "postgresql", "password", secret,
                 "settings", Map.of("url", "jdbc:postgresql://127.0.0.1:1/none", "username", "u")))
             .post("/api/v1/drafts/containers").then().statusCode(502).extract().jsonPath().getString("error");
@@ -525,11 +525,11 @@ class SourceManagementTest {
         long id = store.source("mgmt-locked").orElseThrow().id();
         try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
             s.execute("SELECT pg_advisory_lock(" + 0x4B53 + ", " + id + ")");
-            steward().delete("/api/v1/sources/mgmt-locked").then().statusCode(409);
+            designer().delete("/api/v1/sources/mgmt-locked").then().statusCode(409);
             s.execute("SELECT pg_advisory_unlock(" + 0x4B53 + ", " + id + ")");
         }
-        steward().delete("/api/v1/sources/mgmt-locked").then().statusCode(200);
-        steward().post("/api/v1/sources/mgmt-locked/scans").then().statusCode(404);
+        designer().delete("/api/v1/sources/mgmt-locked").then().statusCode(200);
+        designer().post("/api/v1/sources/mgmt-locked/scans").then().statusCode(404);
     }
 
     @Test

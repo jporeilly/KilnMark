@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
+  allows,
   api,
   type CommonSetting,
   type Connector,
@@ -31,7 +32,7 @@ const AI_LABELS: Record<string, string> = {
   false: "No: read-only (default)",
   true: "Yes: pipelines may write tables or files here",
 };
-/** Whether pipelines may write to the source: only admins see and change it. */
+/** Whether pipelines may write to the source: designers and admins see and change it. */
 const ADMIN_STEP = new Set(["allow_writing"]);
 
 /**
@@ -615,7 +616,7 @@ export function ConnectionPanel({
             </p>
           </div>
           {commonOf(SAVE_STEP).map(commonField)}
-          {role === "admin" && commonOf(ADMIN_STEP).map(commonField)}
+          {allows(role, "designer") && commonOf(ADMIN_STEP).map(commonField)}
           <div className="buttons">
             <button type="button" className="primary" onClick={() => !saving && save(true)} aria-disabled={saving}>
               {saving ? "Saving…" : "Save and scan"}

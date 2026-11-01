@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import io.kilnmark.graph.Urn;
 import io.kilnmark.graph.store.GraphStore;
 import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.connect.Connectors;
@@ -64,9 +65,11 @@ import jakarta.ws.rs.core.Response;
 @RolesAllowed(AccessRole.VIEWER_ROLE)
 public class QualityResource {
 
+    private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(QualityResource.class);
+
     /** The least role that may see data values. */
     public static final String DATA_ROLE = Sights.DATA_ROLE;
-    /** The least role that may see values of columns marked sensitive. */
+    /** What a caller needs to see values of columns marked sensitive: the unmask grant (ADR 0027). */
     public static final String UNMASK_ROLE = Sights.UNMASK_ROLE;
     static final String MASK = Masking.MASK;
 
@@ -105,6 +108,7 @@ public class QualityResource {
         boolean data = sights.data();
         out.put("canSeeData", data);
         out.put("canUnmask", sights.mayUnmask());
+        out.put("canClearMarks", identity.hasRole(AccessRole.ADMIN_ROLE));
         Optional<QualityStore.Version> v = store.latestVersion(urn);
         v.ifPresentOrElse(x -> out.set("version", json.valueToTree(x)), () -> out.putNull("version"));
         ObjectNode scores = out.putObject("scores");
@@ -130,7 +134,8 @@ public class QualityResource {
             e.remove("reason");
             o.set("evidence", Masking.evidence(e, m.field(), sight));
         }));
-        out.set("sensitive", json.valueToTree(sensitive));
+        out.set("sensitive", json.valueToTree(sensitive.stream()
+            .filter(s -> !s.equals(QualityStore.EVERY_COLUMN)).toList()));
         List<QualityStore.Accepted> accepted = store.accepted(urn);
         out.set("accepted", json.valueToTree(accepted));
         JsonNode examples = data && quality.samplesAllowed(urn)
@@ -287,11 +292,25 @@ public class QualityResource {
         if (body == null || body.field() == null || body.sensitive() == null) {
             throw new IllegalArgumentException("Send {\"field\": \"...\", \"sensitive\": true or false}");
         }
-        if (!body.sensitive() && !sights.mayUnmask()) {
+        if (!body.sensitive() && !identity.hasRole(AccessRole.ADMIN_ROLE)) {
             throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can stop treating a column as sensitive.");
+        }
+        // "every column" also covers columns not catalogued yet, so one column cannot be taken out of it
+        if (!body.sensitive() && !body.field().equals(QualityStore.EVERY_COLUMN)
+            && sights.marks(urn).contains(QualityStore.EVERY_COLUMN)) {
+            throw ApiError.of(Response.Status.CONFLICT, "Every column of " + urn + " is marked sensitive, because a "
+                + "pipeline wrote it from marked columns in a way Kilnmark could not follow. Clear that mark first "
+                + "(field \"*\"), then mark again the columns that stay sensitive.");
         }
         if (!store.setSensitive(urn, body.field(), body.sensitive())) {
             throw ApiError.of(Response.Status.NOT_FOUND, urn + " has no field called " + body.field());
+        }
+        if (!body.sensitive()) {
+            // Clearing a mark shows the column's values to everyone who may see data: who did it is logged (ADR 0027).
+            Long token = identity.getAttribute(io.kilnmark.server.auth.ApiTokenIdentityProvider.TOKEN_ID);
+            LOG.infof("Column %s of %s is no longer marked sensitive; cleared by token %s (%s)",
+                io.kilnmark.server.auth.ApiTokens.loggable(body.field()), io.kilnmark.server.auth.ApiTokens.loggable(urn),
+                token, io.kilnmark.server.auth.ApiTokens.loggable(identity.getPrincipal().getName()));
         }
         return Response.noContent().build();
     }
@@ -391,7 +410,8 @@ public class QualityResource {
 
     /** A rule and its latest result as the caller may see them: no values or query text without sight of them. */
     private RuleView view(Rule r, QualityStore.Result res, Masking.Sight sight) {
-        return new RuleView(Masking.rule(r, sight), Masking.result(res, r, sight));
+        QualityStore.Result shown = Masking.result(res, r, sight);
+        return new RuleView(Masking.rule(r, sight), customSqlHidden(r, r.assetUrn(), sight) ? withoutDetail(shown) : shown);
     }
 
     @POST
@@ -432,7 +452,7 @@ public class QualityResource {
     public Rule updateRule(@PathParam("id") long id, @HeaderParam("If-Match") String ifMatch, RuleDraft body,
                            @QueryParam("unmask") boolean unmask) {
         Rule old = findRule(id);
-        adminForCustomSql(old.type());
+        unmaskForCustomSql(old.type());
         java.time.Instant expected = readVersion(ifMatch);
         if (expected != null && !expected.equals(old.updatedAt())) {
             throw changedSince();
@@ -524,7 +544,7 @@ public class QualityResource {
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Response deleteRule(@PathParam("id") long id) {
         Rule r = findRule(id);
-        adminForCustomSql(r.type());
+        unmaskForCustomSql(r.type());
         store.deleteRule(id);
         quality.rescore(r.assetUrn());
         return Response.noContent().build();
@@ -544,14 +564,15 @@ public class QualityResource {
             // would read a sensitive column through the other columns.
             throw ApiError.of(Response.Status.FORBIDDEN, "This rule checks a column marked sensitive, so it cannot be "
                 + "previewed: the failing rows would show which rows hold which values. Save it and run it (its "
-                + "results give counts only), or ask an admin to preview it.");
+                + "results give counts only), or ask a designer to preview it.");
         }
         QualityService.Preview p = quality.preview(r).orElseThrow(() -> ApiError.of(Response.Status.CONFLICT,
             "No sample is kept for this asset, so the rule cannot be previewed. Save it and run it instead, or turn "
                 + "on keep_samples for its source and scan again."));
         ObjectNode out = json.valueToTree(p);
         if (p.failingRows() != null) {
-            out.set("failingRows", rows(p.failingRows().columns(), p.failingRows().rows(), r.assetUrn(), sight, false));
+            out.set("failingRows", rows(p.failingRows().columns(), p.failingRows().rows(), r.assetUrn(), sight,
+                r.type() == io.kilnmark.server.quality.RuleType.CUSTOM_SQL));
         }
         return out;
     }
@@ -561,7 +582,7 @@ public class QualityResource {
     @RolesAllowed(AccessRole.STEWARD_ROLE)
     public Response runRule(@PathParam("id") long id) {
         Rule r = findRule(id);
-        adminForCustomSql(r.type());
+        unmaskForCustomSql(r.type());
         long run = quality.queueManual(r.assetUrn(), id, who());
         return Response.accepted(store.run(run).orElseThrow()).location(URI.create("/api/v1/quality/runs/" + run))
             .build();
@@ -573,14 +594,36 @@ public class QualityResource {
                                              @QueryParam("unmask") boolean unmask) {
         Rule rule = findRule(id);
         Masking.Sight sight = sights.of(rule.assetUrn(), unmask);
+        boolean quiet = customSqlHidden(rule, rule.assetUrn(), sight);
         return store.results(id, limit == null ? 20 : Math.max(1, Math.min(limit, 200))).stream()
-            .map(r -> Masking.result(r, rule, sight)).toList();
+            .map(r -> Masking.result(r, rule, sight)).map(r -> quiet ? withoutDetail(r) : r).toList();
     }
 
-    /** Custom SQL rules are the admins' alone: they can read anything the source's login can see. */
-    private void adminForCustomSql(io.kilnmark.server.quality.RuleType type) {
-        if (type == io.kilnmark.server.quality.RuleType.CUSTOM_SQL && !identity.hasRole(AccessRole.ADMIN_ROLE)) {
-            throw ApiError.of(Response.Status.FORBIDDEN, "Only an admin can write, change or run custom SQL rules.");
+    /**
+     * Whether a custom SQL rule's rows and error text are withheld from this caller: its SQL can read
+     * any table the source's login can, so whenever any asset of the source has a mark, unless a
+     * designer with the unmask grant asked to unmask (ADR 0027). {@code rule} null counts as custom.
+     */
+    private boolean customSqlHidden(Rule rule, String urn, Masking.Sight sight) {
+        boolean custom = rule == null || rule.type() == io.kilnmark.server.quality.RuleType.CUSTOM_SQL;
+        return custom && !sight.unmasked() && (sight.anyHidden() || sights.sourceHasMarks(Urn.parse(urn).source()));
+    }
+
+    private static QualityStore.Result withoutDetail(QualityStore.Result r) {
+        return r == null ? null : new QualityStore.Result(r.id(), r.ruleId(), r.qualityRunId(), r.assetUrn(), r.status(),
+            r.total(), r.failing(), r.method(), null, null, r.message(), r.observedAt(), r.origin(), null, r.estimate());
+    }
+
+    /**
+     * Custom SQL rules are for designers whose token sees unmasked values (ADR 0027): such SQL can read
+     * any column the source's login can, and even its counts of failing rows could tell a value bit by
+     * bit, so only someone who may see the values writes, changes or runs it. Admins see masked values,
+     * so they do not.
+     */
+    private void unmaskForCustomSql(io.kilnmark.server.quality.RuleType type) {
+        if (type == io.kilnmark.server.quality.RuleType.CUSTOM_SQL && !identity.hasRole(AccessRole.UNMASK_GRANT)) {
+            throw ApiError.of(Response.Status.FORBIDDEN, "Only a designer whose token sees unmasked values can write, "
+                + "change or run custom SQL rules: such SQL can read any column the source's login can.");
         }
     }
 
@@ -592,7 +635,9 @@ public class QualityResource {
             "No result " + id));
         Rule rule = store.rule(r.ruleId()).orElse(null);
         Masking.Sight sight = sights.of(r.assetUrn(), unmask);
-        ObjectNode out = json.valueToTree(Masking.result(r, rule, sight));
+        boolean quiet = customSqlHidden(rule, r.assetUrn(), sight);
+        QualityStore.Result shown = Masking.result(r, rule, sight);
+        ObjectNode out = json.valueToTree(quiet ? withoutDetail(shown) : shown);
         // Rows failing a rule on a column the caller may not see would show which rows hold which values: counts only.
         if (sight.data() && Masking.ruleValues(rule, sight) && r.failingRows() != null
             && quality.samplesAllowed(r.assetUrn())) {
@@ -613,13 +658,18 @@ public class QualityResource {
     /**
      * Failing rows with sensitive columns masked: by name, and by position, since rows from the
      * library's queries ({@code SELECT t.*}) hold the asset's columns in order. Rows from custom
-     * SQL can hold anything under any name, so when the asset has a sensitive column they are
-     * masked entirely unless an admin unmasks them.
+     * SQL can hold anything under any name, from any table the source's login can read, so when
+     * any asset of the source has a sensitive column they are masked entirely unless a designer
+     * with the unmask grant unmasks them (ADR 0027).
      */
     private ObjectNode rows(List<String> columns, List<List<String>> rows, String urn, Masking.Sight sight,
                             boolean custom) {
         Set<Integer> hide = new HashSet<>();
-        if (sight.anyHidden()) {
+        if (custom && customSqlHidden(null, urn, sight)) {
+            for (int i = 0; i < columns.size(); i++) {
+                hide.add(i);
+            }
+        } else if (sight.anyHidden()) {
             List<String> fields = graph.asset(urn).map(a -> a.fields().stream().map(Records.FieldDetail::name).toList())
                 .orElse(List.of());
             for (int i = 0; i < columns.size(); i++) {
@@ -734,7 +784,7 @@ public class QualityResource {
             throw new IllegalArgumentException("Send the rule as JSON: assetUrn, type, field, params and thresholds");
         }
         if ("custom_sql".equalsIgnoreCase(String.valueOf(body.type()).trim())) {
-            adminForCustomSql(io.kilnmark.server.quality.RuleType.CUSTOM_SQL);
+            unmaskForCustomSql(io.kilnmark.server.quality.RuleType.CUSTOM_SQL);
         }
         Records.AssetDetail a = asset(body.assetUrn());
         return body.check(context(a), who());

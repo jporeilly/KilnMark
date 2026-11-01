@@ -86,9 +86,13 @@ public class SourceImporter {
      * How to run an import. {@code skipErrors}: apply the right rows even if others are wrong.
      * {@code remapHosts}: rewrite host names with the server's host map. {@code test} and
      * {@code scan}: afterwards, test each source's connection and queue a scan of each (only of
-     * those whose test passed, when testing), reported in a batch the UI polls.
+     * those whose test passed, when testing), reported in a batch the UI polls. {@code admin}:
+     * whether the caller is an admin, who alone may add or change admin-only kinds of source (generic
+     * JDBC). Changing how a source with sensitive marks is read needs the unmask grant, whoever
+     * imports; a row that would is refused, as the same change in the form is.
      */
-    public record Options(boolean dryRun, boolean skipErrors, boolean remapHosts, boolean test, boolean scan) {
+    public record Options(boolean dryRun, boolean skipErrors, boolean remapHosts, boolean test, boolean scan,
+                          boolean admin) {
     }
 
     /**
@@ -133,7 +137,7 @@ public class SourceImporter {
 
     /** The import as version 1 ran it: check every row, create all or nothing. */
     public Report run(List<Row> rows, boolean dryRun) {
-        return run(rows, new Options(dryRun, false, false, false, false), "import");
+        return run(rows, new Options(dryRun, false, false, false, false, false), "import");
     }
 
     public Report run(List<Row> rows, Options options, String who) {
@@ -155,13 +159,38 @@ public class SourceImporter {
                 if (r.name() != null && !inFile.add(r.name())) {
                     throw new IllegalArgumentException("the name " + r.name() + " appears more than once in the file");
                 }
-                p = plan(r, existing.get(r.name()), remap);
+                p = plan(r, existing.get(r.name()), remap, options.admin());
             } catch (IllegalArgumentException e) {
                 p = new Plan(new RowResult(r.line(), r.name(), "failed", e.getMessage(), List.of()), null, null, null,
                     null);
                 failed++;
             }
             plans.add(p);
+        }
+        // Each row was checked against the sources already saved; two rows of one file over the same files
+        // would pass that and be saved together, so they are checked against each other too (ADR 0027).
+        for (int i = 0; i < plans.size(); i++) {
+            Plan a = plans.get(i);
+            if (a.draft() == null || a.result().status().equals("failed")) {
+                continue;
+            }
+            for (int j = 0; j < i; j++) {
+                Plan b = plans.get(j);
+                if (b.draft() == null || b.result().status().equals("failed")) {
+                    continue;
+                }
+                io.kilnmark.kiln.connect.SourceConfig x = a.draft().config();
+                io.kilnmark.kiln.connect.SourceConfig y = b.draft().config();
+                if (x.kind().equals(y.kind()) && !x.name().equals(y.name())
+                    && SourceService.sameFiles(x.kind(), x.settings(), y.settings())) {
+                    plans.set(i, new Plan(new RowResult(a.result().line(), a.result().name(), "failed", "this row and "
+                        + y.name() + " read the same files (one folder or prefix inside the other). Two sources over the "
+                        + "same files keep separate marks, so a column marked sensitive in one would show unmasked in the "
+                        + "other.", List.of()), null, null, null, null));
+                    failed++;
+                    break;
+                }
+            }
         }
         boolean apply = !options.dryRun() && (failed == 0 || options.skipErrors());
         Map<String, Long> ids = new HashMap<>();
@@ -206,12 +235,29 @@ public class SourceImporter {
         return map;
     }
 
+    /** A check that refuses with a response (403), as a failed row, like any other row the import cannot apply. */
+    private static void asRow(Runnable check) {
+        asRow(() -> {
+            check.run();
+            return null;
+        });
+    }
+
+    private static <T> T asRow(java.util.function.Supplier<T> work) {
+        try {
+            return work.get();
+        } catch (jakarta.ws.rs.WebApplicationException e) {
+            throw new IllegalArgumentException(e.getResponse().getEntity() instanceof ApiError a ? a.error()
+                : e.getMessage());
+        }
+    }
+
     /**
      * Checks one row and works out what applying it does.
      *
      * @throws IllegalArgumentException with what to fix
      */
-    private Plan plan(Row r, Records.Source existing, HostRemap remap) {
+    private Plan plan(Row r, Records.Source existing, HostRemap remap, boolean admin) {
         if (r.name() == null || r.name().isBlank()) {
             throw new IllegalArgumentException("name: missing");
         }
@@ -238,8 +284,9 @@ public class SourceImporter {
         }
         String password = password(r);
         if (existing == null) {
-            SourceService.Draft d = sources.draft(new SourceForm(r.name(), rowKind, row, password, null, null,
-                r.displayName()), null, true);
+            // admin-only kinds (generic JDBC) are refused in the draft, before the rest of the row is checked
+            SourceService.Draft d = asRow(() -> sources.draft(new SourceForm(r.name(), rowKind, row, password, null,
+                null, r.displayName()), null, true, admin));
             RowResult res = new RowResult(r.line(), r.name(), "created", null, notes);
             return new Plan(res, new Records.NewSource(r.name(), kind, d.config().settings(),
                 d.newSecret() == null ? null : secrets.seal(d.newSecret()), d.displayName()), null, null, d);
@@ -247,8 +294,12 @@ public class SourceImporter {
         Map<String, String> merged = merge(existing.settings(), row, present, notes);
         String displayName = present.contains("display_name") ? r.displayName()
             : existing.displayName().equals(existing.name()) ? null : existing.displayName();
-        SourceService.Draft d = sources.draft(new SourceForm(r.name(), rowKind, merged, password, null, null,
-            displayName), existing, true);
+        SourceService.Draft d = asRow(() -> sources.draft(new SourceForm(r.name(), rowKind, merged, password, null,
+            null, displayName), existing, true, admin));
+        // For every caller, admins included: read under other settings, marked columns could come back
+        // under new names, unmasked (ADR 0027).
+        asRow(() -> sources.readingUnchangedOrUnmasked(existing, d.config().settings(),
+            "change how this source is read"));
         String shown = d.displayName() == null ? existing.name() : d.displayName();
         // A supplied password always counts as a change: comparing it with the stored one would
         // tell whoever runs imports whether they had guessed it.

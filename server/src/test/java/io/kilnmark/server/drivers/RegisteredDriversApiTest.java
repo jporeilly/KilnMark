@@ -101,12 +101,12 @@ class RegisteredDriversApiTest {
 
     @Test
     void registeringRecordsTheChecksumAndOnlyAdminsMayDoIt() throws Exception {
-        String steward = token("steward");
-        Tokens.as(steward).get("/api/v1/drivers/registered").then().statusCode(403);
-        Tokens.as(steward).get("/api/v1/drivers/files").then().statusCode(403);
-        Tokens.as(steward).contentType(ContentType.BINARY).body(jar).post("/api/v1/drivers/files/" + fileName)
+        String designer = token("designer");
+        Tokens.as(designer).get("/api/v1/drivers/registered").then().statusCode(403);
+        Tokens.as(designer).get("/api/v1/drivers/files").then().statusCode(403);
+        Tokens.as(designer).contentType(ContentType.BINARY).body(jar).post("/api/v1/drivers/files/" + fileName)
             .then().statusCode(403);
-        Tokens.as(steward).contentType(ContentType.JSON).body(registration("acme.AcmeDriver"))
+        Tokens.as(designer).contentType(ContentType.JSON).body(registration("acme.AcmeDriver"))
             .post("/api/v1/drivers/registered").then().statusCode(403);
 
         // upload, never over a file already there
@@ -149,24 +149,24 @@ class RegisteredDriversApiTest {
         // only admins set up generic JDBC sources, or check unsaved ones
         Map<String, Object> source = Map.of("name", "acme-src-" + name.substring(5), "kind", "jdbc",
             "settings", Map.of("driver", name, "url", "jdbc:acme:sales"));
-        Tokens.as(steward).contentType(ContentType.JSON).body(source).post("/api/v1/drafts/test").then()
+        Tokens.as(designer).contentType(ContentType.JSON).body(source).post("/api/v1/drafts/test").then()
             .statusCode(403).body("error", containsString("Only admins can set up Generic JDBC sources"));
         String sourceName = (String) source.get("name");
         admin().contentType(ContentType.JSON).body(source).post("/api/v1/sources").then().statusCode(201);
         admin().contentType(ContentType.JSON).body(Map.of("name", "x", "kind", "jdbc", "settings",
             Map.of("driver", name, "url", "jdbc:other:sales"))).post("/api/v1/sources").then().statusCode(400)
             .body("error", containsString("takes URLs starting jdbc:acme:"));
-        Tokens.as(steward).contentType(ContentType.JSON).body(Map.of("settings", Map.of("driver", name, "url",
+        Tokens.as(designer).contentType(ContentType.JSON).body(Map.of("settings", Map.of("driver", name, "url",
             "jdbc:acme:other"))).put("/api/v1/sources/" + sourceName).then().statusCode(403)
             .body("error", containsString("Only admins can change the url"));
-        Tokens.as(steward).contentType(ContentType.JSON).body(Map.of("settings", Map.of("driver", name, "url",
+        Tokens.as(designer).contentType(ContentType.JSON).body(Map.of("settings", Map.of("driver", name, "url",
             "jdbc:acme:sales", "description", "Synthetic sales"))).put("/api/v1/sources/" + sourceName).then()
             .statusCode(200);
-        // drafts of the saved source: as it is, a steward may check it; changed, only an admin
-        Tokens.as(steward).contentType(ContentType.JSON).body(Map.of("source", sourceName, "settings",
+        // drafts of the saved source: as it is, a designer may check it; changed, only an admin
+        Tokens.as(designer).contentType(ContentType.JSON).body(Map.of("source", sourceName, "settings",
             Map.of("driver", name, "url", "jdbc:acme:sales", "description", "Synthetic sales")))
             .post("/api/v1/drafts/test").then().statusCode(200);
-        Tokens.as(steward).contentType(ContentType.JSON).body(Map.of("source", sourceName, "settings",
+        Tokens.as(designer).contentType(ContentType.JSON).body(Map.of("source", sourceName, "settings",
             Map.of("driver", name, "url", "jdbc:acme:sales;currentSchema=HR")))
             .post("/api/v1/drafts/test").then().statusCode(403).body("error", containsString("Only admins can change the url"));
         admin().contentType(ContentType.JSON).body(Map.of("name", "x", "kind", "jdbc", "settings",
@@ -176,7 +176,7 @@ class RegisteredDriversApiTest {
         // a driver in use cannot be removed
         admin().delete("/api/v1/drivers/registered/" + name).then().statusCode(409)
             .body("error", containsString(sourceName));
-        Tokens.as(steward).delete("/api/v1/drivers/registered/" + name).then().statusCode(403);
+        Tokens.as(designer).delete("/api/v1/drivers/registered/" + name).then().statusCode(403);
 
         // a changed jar is not used
         Path file = Path.of(folder, fileName);

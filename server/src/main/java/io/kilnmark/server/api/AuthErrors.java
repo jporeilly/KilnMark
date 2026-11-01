@@ -20,7 +20,8 @@ public final class AuthErrors {
     static final String NOT_ACCEPTED = "The API token was not accepted: it is unknown, has expired or was revoked. "
         + "Check it was copied in full, or ask an admin for a new one.";
     static final String NOT_ALLOWED = "Your API token's role cannot do this. Ask an admin for a token with a role "
-        + "that can: steward to start scans, admin to add sources or manage tokens.";
+        + "that can: steward to run pipelines and scan sources, designer to build pipelines and add sources, admin "
+        + "for Settings and tokens.";
 
     private static Response unauthorized(String message) {
         return Response.status(Response.Status.UNAUTHORIZED).type(MediaType.APPLICATION_JSON)

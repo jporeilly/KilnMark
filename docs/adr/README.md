@@ -29,4 +29,5 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0024](0024-the-lab-is-not-the-product.md) | The reference lab is for development and tests only, never shipped, and a release check enforces it | Accepted |
 | [0025](0025-registered-jdbc-drivers.md) | Registered JDBC drivers: the admin vouches, Kilnmark checks the checksum | Accepted |
 | [0026](0026-flows.md) | Flows orchestrate pipelines; the scheduler comes later and is built in | Accepted |
+| [0027](0027-unmasking-is-a-grant.md) | Seeing unmasked values is a grant of its own, held only by designers | Accepted |
 | [0028](0028-sql-in-reads-and-flow-actions.md) | SQL a person writes runs in two places only: a read's query, and a flow's SQL action | Accepted |

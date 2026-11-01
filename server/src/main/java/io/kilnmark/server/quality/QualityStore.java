@@ -359,20 +359,47 @@ public class QualityStore {
      * masked). Callers outside {@link Sights} and the marking itself should not need this.
      */
     public Set<String> sensitive(String urn) {
-        return new HashSet<>(query("SELECT name FROM kilnmark.sensitive_column WHERE asset_urn = ?",
-            ps -> ps.setString(1, urn), rs -> rs.getString(1)));
+        return sensitive(java.util.List.of(urn)).get(urn);
+    }
+
+    /**
+     * A carried mark meaning every column of the asset: a write whose columns could not be followed
+     * or told before its run. It masks every column at once, and is listed as the asset's columns.
+     */
+    public static final String EVERY_COLUMN = "*";
+
+    /** Names compared as masks compare them: ignoring case. */
+    private static Set<String> names() {
+        return new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+    }
+
+    /** A fixed copy of {@code marks} that still compares names ignoring case (Set.copyOf would not). */
+    public static Set<String> marks(java.util.Collection<String> marks) {
+        Set<String> out = names();
+        if (marks != null) {
+            out.addAll(marks);
+        }
+        return java.util.Collections.unmodifiableSet(out);
     }
 
     /** Columns marked sensitive, for several assets at once. */
     public Map<String, Set<String>> sensitive(java.util.Collection<String> urns) {
         Map<String, Set<String>> out = new HashMap<>();
-        urns.forEach(u -> out.put(u, new HashSet<>()));
+        urns.forEach(u -> out.put(u, names()));
         if (urns.isEmpty()) {
             return out;
         }
         query("SELECT asset_urn, name FROM kilnmark.sensitive_column WHERE asset_urn = ANY (?)",
             ps -> ps.setArray(1, ps.getConnection().createArrayOf("text", urns.toArray())),
-            rs -> out.computeIfAbsent(rs.getString(1), k -> new HashSet<>()).add(rs.getString(2)));
+            rs -> out.computeIfAbsent(rs.getString(1), k -> names()).add(rs.getString(2)));
+        // "every column": the asset's columns, as they are catalogued now
+        List<String> every = out.entrySet().stream().filter(e -> e.getValue().contains(EVERY_COLUMN))
+            .map(Map.Entry::getKey).toList();
+        if (!every.isEmpty()) {
+            query("SELECT asset_urn, name FROM kilnmark.field WHERE asset_urn = ANY (?)",
+                ps -> ps.setArray(1, ps.getConnection().createArrayOf("text", every.toArray())),
+                rs -> out.get(rs.getString(1)).add(rs.getString(2)));
+        }
         return out;
     }
 
@@ -382,15 +409,29 @@ public class QualityStore {
      */
     public boolean setSensitive(String urn, String field, boolean sensitive) {
         if (!sensitive) {
-            return update("DELETE FROM kilnmark.sensitive_column WHERE asset_urn = ? AND name = ?", ps -> {
+            // An admin's decision: the mark a steward set and the one a pipeline carried here both go,
+            // whatever their case. Whether there is anything to clear is known before anything goes.
+            boolean known = !query("SELECT 1 FROM kilnmark.sensitive_column WHERE asset_urn = ? AND lower(name) = lower(?) "
+                + "UNION ALL SELECT 1 FROM kilnmark.field WHERE asset_urn = ? AND lower(name) = lower(?)", ps -> {
+                    ps.setString(1, urn);
+                    ps.setString(2, field);
+                    ps.setString(3, urn);
+                    ps.setString(4, field);
+                }, rs -> 1).isEmpty();
+            if (!known) {
+                return false;
+            }
+            update("DELETE FROM kilnmark.carried_mark WHERE asset_urn = ? AND lower(name) = lower(?)", ps -> {
                 ps.setString(1, urn);
                 ps.setString(2, field);
-            }) == 1 || query("SELECT 1 FROM kilnmark.field WHERE asset_urn = ? AND name = ?", ps -> {
+            });
+            update("DELETE FROM kilnmark.column_mark WHERE asset_urn = ? AND lower(name) = lower(?)", ps -> {
                 ps.setString(1, urn);
                 ps.setString(2, field);
-            }, rs -> 1).size() == 1;
+            });
+            return true;
         }
-        return update("INSERT INTO kilnmark.sensitive_column (asset_urn, name) SELECT asset_urn, name "
+        return update("INSERT INTO kilnmark.column_mark (asset_urn, name) SELECT asset_urn, name "
             + "FROM kilnmark.field WHERE asset_urn = ? AND name = ? ON CONFLICT DO NOTHING", ps -> {
                 ps.setString(1, urn);
                 ps.setString(2, field);
@@ -414,9 +455,35 @@ public class QualityStore {
             ps -> ps.setString(1, source), rs -> 1).isEmpty();
     }
 
+    /**
+     * Marks carried to {@code urn} by a pipeline's write: columns it wrote from columns marked
+     * sensitive upstream ({@code from}, the first such asset read). Kept apart from the marks
+     * stewards set, and kept when the asset is removed and found again; an admin clears them as any
+     * mark.
+     */
+    public void carry(String urn, java.util.Collection<String> names, String from, String pipeline, Long runId) {
+        if (names.isEmpty()) {
+            return;
+        }
+        for (String name : names) {
+            update("INSERT INTO kilnmark.carried_mark (asset_urn, name, from_urn, pipeline, run_id) VALUES (?, ?, ?, ?, ?) "
+                + "ON CONFLICT (asset_urn, name) DO NOTHING", ps -> {
+                    ps.setString(1, urn);
+                    ps.setString(2, name);
+                    ps.setString(3, from);
+                    ps.setString(4, pipeline);
+                    if (runId == null) {
+                        ps.setNull(5, java.sql.Types.BIGINT);
+                    } else {
+                        ps.setLong(5, runId);
+                    }
+                });
+        }
+    }
+
     /** A column renamed from {@code from} to {@code to} keeps its mark under both names. */
     public void carrySensitive(String urn, String from, String to) {
-        update("INSERT INTO kilnmark.sensitive_column (asset_urn, name) SELECT asset_urn, ? "
+        update("INSERT INTO kilnmark.column_mark (asset_urn, name) SELECT DISTINCT asset_urn, ? "
             + "FROM kilnmark.sensitive_column WHERE asset_urn = ? AND name = ? ON CONFLICT DO NOTHING", ps -> {
                 ps.setString(1, to);
                 ps.setString(2, urn);

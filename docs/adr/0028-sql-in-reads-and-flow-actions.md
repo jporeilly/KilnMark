@@ -11,7 +11,7 @@ masking out of reach of a renamed column, and refuse a parameter that picks a ta
 design therefore left out a SQL node ("Not in this plan: a SQL check node").
 
 The one exception built so far is custom SQL quality rules (docs/guide/quality-rules.md): off by
-default, designer-only, PostgreSQL only, one `SELECT` checked by `SqlTokens.checkCustomSql`, run in
+default, for designers with the unmask grant (ADR 0027), PostgreSQL only, one `SELECT` checked by `SqlTokens.checkCustomSql`, run in
 a read-only transaction with a timeout, and never under a login with superuser, file or program
 access. A review on 31 October 2026 showed its rows had to be masked whenever any asset of the
 source has a mark, because such SQL can read any table the login can.
@@ -45,8 +45,10 @@ use rather than keeping one of their own:
 - **A source opts in.** `allow_sql`, beside `allow_writing`, off by default; a designer or an admin
   turns it on, the same roles that turn on writing. The server-wide `kilnmark.quality.custom-sql`
   switch is retired in favour of it.
-- **Designers write it**, as they write custom rules; stewards run what is built. The statements
-  are saved and versioned with the pipeline or flow, so a change is a new version with a message.
+- **Designers with the unmask grant write it** (ADR 0027), as they write custom rules: SQL can
+  read any column the login can, so only someone who may see the values writes it. Stewards run
+  what is built. The statements are saved and versioned with the pipeline or flow, so a change is a
+  new version with a message.
 - **Marked columns are checked before running.** A read query that names a marked column, or a
   table whose marks cannot be resolved, is refused for a caller without the unmask grant (ADR 0027),
   as a preview of such a node is. A SQL action's statements never return rows, so marks do not

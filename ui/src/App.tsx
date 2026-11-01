@@ -338,7 +338,7 @@ function Shell({ me }: { me: Me }) {
             <BrowsePage source={route.source} container={route.container} asset={route.asset} />
           )}
           {route.page === "relationships" && <RelationshipsPage status={route.status} />}
-          {route.page === "rules" && <RulesPage role={me.role} urn={route.urn} />}
+          {route.page === "rules" && <RulesPage role={me.role} urn={route.urn} unmask={me.unmask} />}
           {route.page === "issues" && <IssuesPage role={me.role} />}
           {route.page === "pipelines" && <PipelinesPage role={me.role} />}
           {route.page === "pipeline" && (

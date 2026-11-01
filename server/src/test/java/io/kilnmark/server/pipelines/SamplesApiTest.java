@@ -58,7 +58,7 @@ class SamplesApiTest {
     }
 
     private static void listAndAdd() {
-        String steward = token("samples-steward", "steward");
+        String designer = token("samples-designer", "designer");
         String viewer = token("samples-viewer", "viewer");
 
         JsonPath list = as(viewer).get("/api/v1/samples").then().statusCode(200).extract().jsonPath();
@@ -74,11 +74,11 @@ class SamplesApiTest {
 
         Map<String, Object> body = Map.of("sources", Map.of("crm-db", "samples-crm", "files", "samples-files"));
         as(viewer).body(body).post("/api/v1/samples").then().statusCode(403);
-        as(steward).body(Map.of("sources", Map.of())).post("/api/v1/samples").then().statusCode(400)
+        as(designer).body(Map.of("sources", Map.of())).post("/api/v1/samples").then().statusCode(400)
             .body("error", containsString("choose a saved source"));
-        as(steward).body(Map.of("sources", Map.of("lab-db", "x"))).post("/api/v1/samples").then().statusCode(400)
+        as(designer).body(Map.of("sources", Map.of("lab-db", "x"))).post("/api/v1/samples").then().statusCode(400)
             .body("error", containsString("not a placeholder"));
-        as(steward).body(body).post("/api/v1/samples").then().statusCode(400)
+        as(designer).body(body).post("/api/v1/samples").then().statusCode(400)
             .body("error", containsString("no saved source called 'samples-"));
 
         admin().contentType(ContentType.JSON).body(Map.of("name", "samples-crm", "kind", MemoryConnector.KIND,
@@ -87,7 +87,7 @@ class SamplesApiTest {
         admin().contentType(ContentType.JSON).body(Map.of("name", "samples-files", "kind", MemoryConnector.KIND,
             "settings", Map.of(), "password", "samples-secret-2")).post("/api/v1/sources").then().statusCode(201);
 
-        JsonPath added = as(steward).body(body).post("/api/v1/samples").then().statusCode(200).extract().jsonPath();
+        JsonPath added = as(designer).body(body).post("/api/v1/samples").then().statusCode(200).extract().jsonPath();
         assertEquals("added", added.getString("samples.find { it.name == 'sample-read-write-csv' }.outcome"));
         assertEquals("skipped", added.getString("samples.find { it.name == 'sample-filter' }.outcome"));
         assertEquals("no source chosen for shop-db", added.getString("samples.find { it.name == 'sample-filter' }"
@@ -102,7 +102,7 @@ class SamplesApiTest {
         assertFalse(yaml.contains("crm-db") || yaml.contains("source: files"), yaml);
 
         // Again: what is there is left as it is.
-        as(steward).body(body).post("/api/v1/samples").then().statusCode(200)
+        as(designer).body(body).post("/api/v1/samples").then().statusCode(200)
             .body("added", equalTo(0))
             .body("samples.findAll { it.name == 'sample-read-write-csv' }.outcome", hasItems("exists"));
         as(viewer).get("/api/v1/samples").then().statusCode(200)
@@ -111,17 +111,17 @@ class SamplesApiTest {
 
     @Test
     void anAdminCanStopOfferingTheSamples() {
-        String steward = token("samples-off-steward", "steward");
+        String designer = token("samples-off-designer", "designer");
         String viewer = token("samples-off-viewer", "viewer");
         as(viewer).get("/api/v1/samples/offered").then().statusCode(200).body("offered", equalTo(true));
-        as(steward).body(Map.of("offered", false)).put("/api/v1/samples/offered").then().statusCode(403);
+        as(designer).body(Map.of("offered", false)).put("/api/v1/samples/offered").then().statusCode(403);
         try {
             as(Tokens.ADMIN).body(Map.of("offered", false)).put("/api/v1/samples/offered").then().statusCode(200)
                 .body("offered", equalTo(false));
             as(viewer).get("/api/v1/samples/offered").then().statusCode(200).body("offered", equalTo(false));
             as(viewer).get("/api/v1/samples").then().statusCode(403).body("error", containsString("not offered"));
-            as(steward).body(Map.of("sources", Map.of("files", "x"))).post("/api/v1/samples").then().statusCode(403);
-            as(steward).body(Map.of("source", "x", "schema", "public")).post("/api/v1/samples/tables").then()
+            as(designer).body(Map.of("sources", Map.of("files", "x"))).post("/api/v1/samples").then().statusCode(403);
+            as(designer).body(Map.of("source", "x", "schema", "public")).post("/api/v1/samples/tables").then()
                 .statusCode(403);
             as(Tokens.ADMIN).body(Map.of()).put("/api/v1/samples/offered").then().statusCode(400);
         } finally {

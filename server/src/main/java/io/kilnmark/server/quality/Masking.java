@@ -33,12 +33,16 @@ public final class Masking {
      */
     public record Sight(boolean data, Set<String> sensitive, boolean unmasked) {
         public Sight {
-            sensitive = sensitive == null ? Set.of() : Set.copyOf(sensitive);
+            sensitive = QualityStore.marks(sensitive);
         }
 
-        /** Whether values from {@code field} may be shown; null or empty for the asset as a whole. */
+        /**
+         * Whether values from {@code field} may be shown; null or empty for the asset as a whole. Names
+         * are compared ignoring case, so a column written as Email is masked by a mark on email.
+         */
         public boolean values(String field) {
-            return data && (unmasked || field == null || field.isEmpty() || !sensitive.contains(field));
+            return data && (unmasked || field == null || field.isEmpty()
+                || sensitive.stream().noneMatch(s -> s.equals(QualityStore.EVERY_COLUMN) || s.equalsIgnoreCase(field)));
         }
 
         /**
@@ -214,6 +218,6 @@ public final class Masking {
             return r;
         }
         return new Recommendations.Recommendation(r.field(), r.type(), r.dimension(), r.name(), J.objectNode(),
-            s.data() ? "The column is sensitive: ask an admin to review it" : "Ask a steward to review it");
+            s.data() ? "The column is sensitive: ask a designer to review it" : "Ask a steward to review it");
     }
 }

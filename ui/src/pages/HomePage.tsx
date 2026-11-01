@@ -105,6 +105,7 @@ function LoadError({ what, message, onRetry }: { what: string; message: string; 
 export function HomePage({ me }: { me: Me }) {
   useTitle("");
   const steward = allows(me.role, "steward");
+  const designer = allows(me.role, "designer");
   const admin = allows(me.role, "admin");
   const notesOn = useNotifications().available === true;
 
@@ -170,7 +171,7 @@ export function HomePage({ me }: { me: Me }) {
         ? "nothing needs a look"
         : `${openCount} ${openList.length === 1 ? "issue needs" : "issues need"} a look`,
   ].filter(Boolean);
-  const canPipeline = pipelineList != null && steward;
+  const canPipeline = pipelineList != null && designer;
 
   return (
     <div className="km-stack">
@@ -187,7 +188,7 @@ export function HomePage({ me }: { me: Me }) {
               New pipeline
             </ButtonLink>
           )}
-          {admin ? (
+          {designer ? (
             <ButtonLink
               variant={canPipeline ? "secondary" : "primary"}
               href={href.addConnection()}
@@ -286,6 +287,7 @@ export function HomePage({ me }: { me: Me }) {
         pipelines={pipelines.state === "ok" ? pipelines.data : undefined}
         admin={admin}
         steward={steward}
+        designer={designer}
       />
 
       {runs ? (
@@ -294,7 +296,7 @@ export function HomePage({ me }: { me: Me }) {
         <div className="km-columns km-columns--level">
           <div className="km-column">
             <RecentRuns runs={runs} />
-            <SourcesCard sources={sources} shown={shown} scores={scores} admin={admin} onRetry={reloadSources} />
+            <SourcesCard sources={sources} shown={shown} scores={scores} designer={designer} onRetry={reloadSources} />
           </div>
           <div className="km-column">
             <NeedsALook issues={issues} full={full} onRetry={reloadIssues} />
@@ -307,7 +309,7 @@ export function HomePage({ me }: { me: Me }) {
           {pipelines.state === "error" && (
             <LoadError what="pipelines" message={pipelines.message} onRetry={reloadPipelines} />
           )}
-          <SourcesCard sources={sources} shown={shown} scores={scores} admin={admin} onRetry={reloadSources} />
+          <SourcesCard sources={sources} shown={shown} scores={scores} designer={designer} onRetry={reloadSources} />
           <div className={notesOn ? "km-halves" : undefined}>
             <NeedsALook issues={issues} full={full} onRetry={reloadIssues} />
             {notesOn && <NotificationsCard admin={admin} />}
@@ -408,13 +410,14 @@ function SourcesCard({
   sources,
   shown,
   scores,
-  admin,
+  designer,
   onRetry,
 }: {
   sources: Load<Source[]>;
   shown: Source[];
   scores: Record<string, SourceScore | null>;
-  admin: boolean;
+  /** Whether the viewer may add sources (designers and admins). */
+  designer: boolean;
   onRetry: () => void;
 }) {
   const connectors = useConnectorInfo();
@@ -432,9 +435,9 @@ function SourcesCard({
         <EmptyState
           icon={<Icon name="sources" size={22} />}
           title="No sources yet"
-          action={admin ? <ButtonLink variant="primary" href={href.addConnection()}>Add a connection</ButtonLink> : undefined}
+          action={designer ? <ButtonLink variant="primary" href={href.addConnection()}>Add a connection</ButtonLink> : undefined}
         >
-          {admin ? "Add a database, folder or bucket and scan it to fill the catalogue." : "Ask an admin to add a source."}
+          {designer ? "Add a database, folder or bucket and scan it to fill the catalogue." : "Ask a designer to add a source."}
         </EmptyState>
       )}
       {shown.length > 0 && (
@@ -636,6 +639,7 @@ function SetupCard({
   pipelines,
   admin,
   steward,
+  designer,
 }: {
   sources: Source[] | null;
   rules: number | null;
@@ -645,12 +649,13 @@ function SetupCard({
   pipelines: PipelineSummary[] | null | undefined;
   admin: boolean;
   steward: boolean;
+  designer: boolean;
 }) {
   const [dismissed, setDismissed] = useState(readDismissed);
   if (sources === null || rules === null || pipelines === undefined) return null;
   const scanned = sources.some((s) => s.lastRun?.status === "succeeded" || s.lastRun?.status === "partial" || s.assets > 0);
   const steps: Step[] = [
-    { id: "source", label: "Connect a source", done: sources.length > 0, link: admin ? href.addConnection() : null, cta: "Add a connection" },
+    { id: "source", label: "Connect a source", done: sources.length > 0, link: designer ? href.addConnection() : null, cta: "Add a connection" },
     { id: "scan", label: "Scan and profile it", done: scanned, link: steward ? href.sources() : null, cta: "Scan a source" },
     { id: "rule", label: "Add a quality rule", done: rules > 0, link: steward ? href.rules() : null, cta: "Add a rule" },
   ];
@@ -661,7 +666,7 @@ function SetupCard({
       id: "pipeline",
       label: "Build your first pipeline",
       done: pipelines.length > 0,
-      link: steward ? href.newPipeline() : null,
+      link: designer ? href.newPipeline() : null,
       cta: "Build a pipeline",
     });
   const key = steps.map((s) => s.id).join(",");

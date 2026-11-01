@@ -31,7 +31,7 @@ export function previewSummary(v: NodePreview): string {
 /**
  * The drawer's Preview tab: runs the pipeline as it stands up to the selected node, without
  * writing anything, and shows the first rows leaving one of its outputs, with their columns and
- * kinds, how long it took and what was masked. Stewards and admins only, as source previews are.
+ * kinds, how long it took and what was masked. Designers and admins only; only designers see sensitive values.
  */
 export function NodePreviewPanel({
   yaml,
@@ -62,7 +62,7 @@ export function NodePreviewPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ctl = useRef<AbortController | null>(null);
-  const allowed = allows(role, "steward");
+  const allowed = allows(role, "designer");
   const writes = kind === "sink" || outputs.length === 0;
 
   const stop = () => {
@@ -119,7 +119,7 @@ export function NodePreviewPanel({
   if (!allowed) {
     return (
       <div className="cv-preview">
-        <p className="hint">Previews show rows from the sources, so they are for stewards and admins.</p>
+        <p className="hint">Previews show rows from the sources while a pipeline is built, so they are for designers and admins.</p>
       </div>
     );
   }
@@ -186,7 +186,7 @@ export function NodePreviewPanel({
           {stale && <p className="cv-preview-note small">The pipeline has changed since this preview. Preview again to see its rows now.</p>}
           {view.masked.length > 0 && (
             <p className="cv-preview-note small" id={`${id}-masked`}>
-              Values of {view.masked.join(", ")} are hidden (••••): they come from columns marked sensitive, which only admins see.
+              Values of {view.masked.join(", ")} are hidden (••••): they come from columns marked sensitive, which only designers see.
             </p>
           )}
           {view.waits.length > 0 && (

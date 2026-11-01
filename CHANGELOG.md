@@ -31,6 +31,28 @@ details.
 
 ### Details
 
+- **Marks follow the data** (V25). A column a pipeline writes from a column marked sensitive is
+  marked on what it writes: passed on, renamed, looked up or worked out from one (a computed column,
+  an aggregate's value or group), followed through the pipeline as previews already follow it, for
+  every run whoever asked for it and however it ended. These marks are recorded for every write as
+  the run ends, before the written asset is catalogued (and on its catalogued columns when they
+  could not be told before), and stay when it is removed and found again (`carried_mark`; the
+  stewards' own marks are now `column_mark`, and `sensitive_column` is a view of both). Masks match
+  column names ignoring case; a write Kilnmark cannot follow is marked on every column (`*`), even
+  when its run failed. Only admins clear a mark, as before. Write paths must be written as the
+  source lists them (`/` between folders, no empty or `.` folders), so marks land where a scan finds
+  the file. Before this, copying a marked column elsewhere and previewing the copy showed its values
+  to stewards and viewers.
+- **A designer role, between steward and admin** (V24). Designers build: they add, change,
+  preview and delete pipelines and flows, add, import, change and delete sources, turn on writing
+  and change where a writable source points, write custom SQL rules, set server variables and add
+  the samples. They see values of columns marked sensitive, as admins do, since they cannot
+  transform data they cannot see; stewards and viewers see them masked. **Stewards keep running pipelines and flows,
+  cancelling runs, testing, scanning and previewing sources and looking after quality, but no
+  longer build: existing steward tokens lose editing pipelines, flows, sources and server
+  variables.** Give a designer token to whoever builds. Admins keep the Settings pages, tokens,
+  admin-only connectors (generic JDBC) and clearing a mark; designers may now run source imports.
+  Tokens can be made for the new role under API tokens.
 - **Samples can be turned off.** Admins have **Offer the samples** under Settings, Administration
   (on by default; stored in the new `server_setting` table, V23, with `GET`/`PUT
   /api/v1/samples/offered`). Off, the Pipelines page shows no **Add samples** and the samples API

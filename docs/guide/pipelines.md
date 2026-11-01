@@ -13,9 +13,15 @@ catalogue with where it came from.
   admin role to add, change, run or delete them.
 - **Sources.** Pipelines name saved sources; they never hold passwords. Add the sources first
   (see **Sources**), and scan the ones you read from, so Kilnmark knows their columns.
-- **Writing needs permission.** Every source is read-only to pipelines until an admin turns on
-  **Allow writing** for it: open the source, choose **Edit**, and set it on the last step. Ask an
-  admin if a pipeline of yours writes to a source that does not allow it yet.
+- **Writing needs permission.** Every source is read-only to pipelines until a designer or an
+  admin turns on **Allow writing** for it: open the source, choose **Edit**, and set it on the last
+  step.
+- **Who does what.** Viewers read pipelines and their runs. Stewards also run them and cancel
+  runs. Designers also build them: add, change, preview and delete pipelines and flows, add and
+  change sources, turn on writing, and set server variables; they see values of columns marked
+  sensitive, since they cannot transform data they cannot see. Admins also have the Settings
+  pages. Only designers see sensitive values: admins, stewards and viewers see them masked
+  ([ADR 0027](../adr/0027-unmasking-is-a-grant.md)).
 
 ## The Pipelines page
 
@@ -23,7 +29,8 @@ Choose **Pipelines** in the navigation. The list shows each pipeline with its de
 latest version (and whether that version has problems), and its last run with its status in
 words: Queued, Running, Succeeded, Failed or Cancelled.
 
-Stewards see **Run now** beside each pipeline, and **Add samples** and **New pipeline** at the top.
+Stewards see **Run now** beside each pipeline; designers also see **Add samples** and **New
+pipeline** at the top.
 
 ## Starting a new pipeline
 
@@ -60,7 +67,7 @@ Pipelines page, and the samples' API refuses; pipelines already added from them 
 The quickest way to try the samples, with nothing of your own to prepare but a database and a file
 source that allow writing:
 
-1. On the **Pipelines** page, choose **Add samples** (stewards and admins).
+1. On the **Pipelines** page, choose **Add samples** (designers and admins).
 2. Under **Starter pack**, choose the **Database for the tables**, a **Schema** in it (it must
    exist; tables of the same names there are replaced), and where the samples' **Files go to**.
 3. Choose **Add the starter pack**.
@@ -84,7 +91,7 @@ The samples name their sources by placeholders rather than real sources:
 | `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) |
 | `files` | File storage the samples write to, under `samples/`; an admin must turn on **Allow writing** for it |
 
-1. On the **Pipelines** page, choose **Add samples** (stewards and admins).
+1. On the **Pipelines** page, choose **Add samples** (designers and admins).
 2. Under **Or choose your own sources**, choose one of your saved sources for each placeholder, or
    leave it as **Don't add the samples that use it**. The dialog says how many samples use each.
    Once the sample tables have been created, it offers to read them instead.
@@ -232,19 +239,20 @@ the read node for a while.
 
 Previews follow the same rules as previewing a source:
 
-- They are for stewards and admins. Each person runs one preview at a time and up to six a minute,
+- They are for designers and admins. Each person runs one preview at a time and up to six a minute,
   and a server runs two at once. A preview runs at most 50 nodes, 10 of them reads; a node that holds
   rows (an aggregate, a dedupe, a lookup or a union) is given a share of the preview's memory,
   whatever its own `memory_limit_mb` says.
 - Sources are reached as a run reaches them, with their saved credentials and the allowed hosts.
 - Columns marked sensitive can pass through a preview, kept, renamed or carried along, and are
-  masked (••••) for everyone but admins. But no node before the one you preview may look at their
-  values: a calculation or condition that uses one, a cast, a group, dedupe or lookup key on one,
-  or a quality gate with a rule on one. For everyone but admins such a preview is refused, and
-  says which node and column, because the rows shown, a value worked out from it, or even whether
-  the preview works, could give the values away. Preview the node before it, or ask an admin.
+  masked (••••) for everyone but designers, admins included. For them, no node before the one you
+  preview may look at their values: a calculation or condition that uses one, a cast, a group,
+  dedupe or lookup key on one, or a quality gate with a rule on one. For them such a preview is
+  refused, and says which node and column, because the rows shown, a value worked out from it, or
+  even whether the preview works, could give the values away. Preview the node before it, or ask a
+  designer.
 - When a node fails, its message may quote values from the rows; if anything read has columns
-  marked sensitive, only admins see it, as with a run's errors.
+  marked sensitive, only designers see it, as with a run's errors.
 
 The rows are read when you ask and not kept. After you change the pipeline, the preview says it is
 out of date; choose **Preview again**.
@@ -387,7 +395,7 @@ the rows since a date, a file named after the run. There are two kinds of value,
 | | Parameter | Server variable |
 | --- | --- | --- |
 | What it is | An input the pipeline (or a flow) declares, like a function's argument | A value of the server, the same for every pipeline and flow on it |
-| Where it is set | In the YAML: `parameters:`, each with a type and a default | On the server, by a steward or admin (`/api/v1/variables`) |
+| Where it is set | In the YAML: `parameters:`, each with a type and a default | On the server, by a designer or admin (`/api/v1/variables`) |
 | Written as | `${status}` | `${vars.target_schema}` |
 | Changes | With each run: whoever runs it, or the flow running it, can give another value | When the environment does: a new schema, another bucket |
 | Kinds | text, number, boolean, text list, number list | text, number, boolean |
@@ -461,7 +469,7 @@ kind, or a parameter the pipeline does not take, is refused at once.
 
 ### Server variables
 
-Stewards and admins set them with `PUT /api/v1/variables/{name}` (`{ "type": "text", "value":
+Designers and admins set them with `PUT /api/v1/variables/{name}` (`{ "type": "text", "value":
 "sales_prod", "description": "..." }`) and delete them with `DELETE`; everyone with the steward role
 can list them. Every change is kept, with who made it and when, also after a variable is deleted
 (`GET /api/v1/variables/{name}/changes`). A Settings page for them follows with the flows pages.
@@ -637,7 +645,7 @@ could not tell ("1 unknown"); the node's settings list them.
 
 The estimate uses a column's values (its most common values and its spread) only when you may see
 them, as the Quality pages decide: not at all for viewers, and for a column marked sensitive only
-for admins. Otherwise what depends on them, such as how many rows `salary <= 50000` keeps, is
+for designers and admins. Otherwise what depends on them, such as how many rows `salary <= 50000` keeps, is
 unknown, so the estimate never gives the values away.
 
 How each node carries the estimate:
@@ -676,7 +684,7 @@ with its predicted effect (an estimate), such as "Predicted 89% → 94% (+5 poin
 A suggestion that takes rows out (a dedupe, a gate, a lookup that drops rows with no match) also says
 how many fewer rows reach the write, since fewer rows can score higher. Choose **Add** to insert a
 suggestion's nodes before the write: the YAML changes only where the nodes go, and one **Undo** takes
-it out again. Suggestions are for stewards and admins.
+it out again. Suggestions are for designers and admins.
 
 When an admin sets a model for **Pipeline suggestions** under **AI models**, it ranks and explains
 the suggestions and may add its own. It sees metadata only (asset and column names, kinds, shares
@@ -786,7 +794,7 @@ status changes.
   or **Warnings and errors** or **Errors only**, to narrow it, and **Download as text** (or
   **NDJSON**, one JSON object a line) to save it with the same choices. Where the engine's own
   message could quote values from your data, it shows only to those who may see why the run
-  failed (stewards, or admins when the run touched columns marked sensitive); others see that it
+  failed (stewards and above, or only designers when the run touched columns marked sensitive); others see that it
   was held back. A run keeps up to 10,000 events; the log says if it was cut short.
 - **What it wrote:** each table or file a write node wrote, with its mode and rows. Choose one to
   open it in the catalogue.
@@ -805,6 +813,18 @@ could not be made, the write still counts and the run says so.
 Kilnmark also records the lineage: the written asset came from the assets the pipeline read. It is
 kept even if the pipeline is later deleted, so the next pipeline that reads the written table
 starts from what is known about it.
+
+**Marks follow the data.** A column the run writes from a column marked sensitive is marked
+sensitive where it is written too, whoever ran it and however the run ended: a column passed on
+or renamed, looked up, or worked out from one (a computed column, an aggregate's value or group).
+So it is masked there for everyone but designers, as it was where it came from, even before the
+written table is catalogued. A column made only from unmarked columns is not marked. When a node
+works on marked columns in a way Kilnmark cannot follow, every column it writes is marked, also
+columns it adds later; that mark is cleared as a whole, not one column at a time. Marks
+match column names ignoring case. Where a source, table or path comes from a parameter, the marks
+land on what the run actually wrote with the values it used. Only an admin
+can clear a mark. A path a write writes to is written as the source lists it (`/` between
+folders, no empty or `.` folders), so what is recorded about it is found again.
 
 Messages never include a source's password, and pipelines connect only to the hosts your
 administrator allows.

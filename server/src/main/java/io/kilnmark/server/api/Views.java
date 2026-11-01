@@ -172,21 +172,26 @@ public final class Views {
                         String description, JsonNode profile, Instant profiledAt) {
     }
 
-    /** An API token as listed: never its secret or hash. {@code status} is active, expired or revoked. */
-    public record Token(long id, String name, String role, String status, String createdBy, Instant createdAt,
-                        Instant expiresAt, Instant lastUsedAt, Instant revokedAt) {
+    /**
+     * An API token as listed: never its secret or hash. {@code status} is active, expired or revoked;
+     * {@code unmask} says whether it sees values of columns marked sensitive (designer tokens only).
+     */
+    public record Token(long id, String name, String role, boolean unmask, String status, String createdBy,
+                        Instant createdAt, Instant expiresAt, Instant lastUsedAt, Instant revokedAt) {
         static Token of(io.kilnmark.server.auth.ApiTokens.Token t, Instant now) {
-            return new Token(t.id(), t.name(), t.role().id(), t.status(now), t.createdBy(), t.createdAt(),
+            return new Token(t.id(), t.name(), t.role().id(), t.unmask(), t.status(now), t.createdBy(), t.createdAt(),
                 t.expiresAt(), t.lastUsedAt(), t.revokedAt());
         }
     }
 
     /** A token just created. {@code token} is shown this once and cannot be read again. */
-    public record NewToken(long id, String name, String role, Instant createdAt, Instant expiresAt, String token) {
+    public record NewToken(long id, String name, String role, boolean unmask, Instant createdAt, Instant expiresAt,
+                           String token) {
     }
 
-    /** Who is signed in. */
-    public record Me(String name, String role, Long tokenId, Instant expiresAt, boolean signInRequired) {
+    /** Who is signed in; {@code unmask}: whether they see values of columns marked sensitive. */
+    public record Me(String name, String role, Long tokenId, Instant expiresAt, boolean signInRequired,
+                     boolean unmask) {
     }
 
     /**
