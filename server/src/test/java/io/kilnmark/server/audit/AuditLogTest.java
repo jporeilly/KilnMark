@@ -32,7 +32,12 @@ class AuditLogTest {
     @jakarta.inject.Inject
     io.agroal.api.AgroalDataSource db;
 
-    private static JsonPath events(String action) {
+    @jakarta.inject.Inject
+    AuditLog audit;
+
+    /** The events of {@code action}, once every event recorded so far is stored (they are stored in the background). */
+    private JsonPath events(String action) {
+        audit.awaitStored(5000);
         return admin().queryParam("action", action).queryParam("limit", 50).get("/api/v1/audit").then()
             .statusCode(200).extract().jsonPath();
     }
@@ -86,7 +91,47 @@ class AuditLogTest {
     }
 
     @Test
+    void refusalsOfCallersNotSignedInAreRecordedWithoutBreakingThe401() {
+        audit.resetAnonymous();
+        io.restassured.RestAssured.given().contentType(ContentType.JSON).body("{}").post("/api/v1/tokens").then()
+            .statusCode(401);
+        as("km_not-a-real-token-0123456789abcdefghijklmnopqrstuvwxyzABCD").contentType(ContentType.JSON).body("{}")
+            .post("/api/v1/tokens").then().statusCode(401);
+        JsonPath refused = events(AuditLog.API_REFUSED);
+        List<Map<String, Object>> anonymous = refused.getList("events.findAll { it.target == '/api/v1/tokens' "
+            + "&& it.actor == 'anonymous' && it.detail.status == 401 }");
+        assertTrue(anonymous.size() >= 2, refused.prettify());
+        assertNotNull(anonymous.get(0).get("detail"));
+    }
+
+    @Test
+    void refusalsOfCallersNotSignedInCannotFloodTheLog() throws Exception {
+        audit.resetAnonymous();
+        String target = "/flood/" + System.nanoTime();
+        AuditLog.Actor nobody = new AuditLog.Actor(AuditLog.ANONYMOUS, null);
+        for (int i = 0; i < AuditLog.ANONYMOUS_PER_MINUTE + 20; i++) {
+            audit.record(nobody, AuditLog.API_REFUSED, target, Map.of("method", "POST", "status", 401));
+        }
+        audit.awaitStored(5000);
+        audit.resetAnonymous(); // leave the share for the other tests
+        try (Connection c = db.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement(
+            "SELECT count(*) FROM kilnmark.audit_event WHERE target = ?")) {
+            ps.setString(1, target);
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                assertTrue(rs.getInt(1) <= AuditLog.ANONYMOUS_PER_MINUTE, "kept " + rs.getInt(1));
+            }
+        }
+        // A long path is cut short.
+        audit.record(AuditLog.Actor.server("test"), AuditLog.API_REQUEST, "/x".repeat(400), Map.of());
+        audit.awaitStored(5000);
+        assertTrue(events(AuditLog.API_REQUEST).getList("events.target", String.class).stream()
+            .allMatch(t -> t.length() <= AuditLog.MAX_TARGET + 3));
+    }
+
+    @Test
     void pagesGoBackInTime() {
+        audit.awaitStored(5000);
         JsonPath first = admin().queryParam("limit", 1).get("/api/v1/audit").then().statusCode(200).extract()
             .jsonPath();
         List<Map<String, Object>> one = first.getList("events");
@@ -102,6 +147,7 @@ class AuditLogTest {
     void eventsCannotBeChangedOrDeleted() throws Exception {
         admin().contentType(ContentType.JSON).body(Map.of("name", "audit probe", "role", "viewer"))
             .post("/api/v1/tokens").then().statusCode(201);
+        audit.awaitStored(5000);
         try (Connection c = db.getConnection(); Statement st = c.createStatement()) {
             SQLException update = assertThrows(SQLException.class,
                 () -> st.executeUpdate("UPDATE kilnmark.audit_event SET actor = 'someone else'"));

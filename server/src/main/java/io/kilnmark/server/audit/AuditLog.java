@@ -10,6 +10,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.jboss.logging.Logger;
 
@@ -22,6 +26,7 @@ import io.kilnmark.server.auth.ApiTokenIdentityProvider;
 import io.kilnmark.server.auth.ApiTokens;
 import io.kilnmark.server.sources.CommonSettings;
 import io.quarkus.security.identity.SecurityIdentity;
+import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 
 /**
@@ -33,9 +38,13 @@ import jakarta.enterprise.context.ApplicationScoped;
  * which only ever grows, and one JSON line on the {@value #CATEGORY} log category, for a SIEM.
  * Admins read it ({@code GET /api/v1/audit}).
  *
- * <p>An event is recorded after the change it describes has been made. If the row cannot be
- * written the change stands, and the server logs an error saying so, with the event, so it is
- * never lost silently.
+ * <p>An event is recorded after the change it describes has been made: its JSON line at once, and
+ * its row by one thread of its own, in order, so no request waits on it or blocks a thread that
+ * must not block. If the row cannot be written (the database is unreachable, or more events wait
+ * than {@value #QUEUE} at once) the change stands and the server logs an error saying so; the JSON
+ * line, which a SIEM keeps, has the event either way. Refusals of callers who are not signed in
+ * are kept at most {@value #ANONYMOUS_PER_MINUTE} a minute, with a count of the rest, so they
+ * cannot flood the table.
  */
 @ApplicationScoped
 public class AuditLog {
@@ -72,6 +81,12 @@ public class AuditLog {
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;
+    /** The most events waiting to be stored at once. */
+    static final int QUEUE = 10_000;
+    /** The most refusals of callers who are not signed in kept each minute. */
+    static final int ANONYMOUS_PER_MINUTE = 30;
+    /** The longest target kept: a path can be as long as a caller likes. */
+    static final int MAX_TARGET = 300;
 
     /** Who acted: a name for people, and the token they used, when one was. */
     public record Actor(String name, Long tokenId) {
@@ -96,25 +111,86 @@ public class AuditLog {
     }
 
     private final Db db;
+    private final ThreadPoolExecutor writer = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
+        new ArrayBlockingQueue<>(QUEUE), r -> {
+            Thread t = new Thread(r, "kilnmark-audit");
+            t.setDaemon(true);
+            return t;
+        }, new ThreadPoolExecutor.AbortPolicy());
+    private final AtomicLong dropped = new AtomicLong();
+    private final Object minuteLock = new Object();
+    private long minute;
+    private int anonymousThisMinute;
+    private int anonymousSkipped;
 
     public AuditLog(Db db) {
         this.db = db;
     }
 
-    /** The caller of the current request. */
-    public static Actor actor(SecurityIdentity identity) {
-        if (identity == null || identity.isAnonymous()) {
-            return new Actor("anonymous", null);
+    /** Stores what is waiting, for up to five seconds, as the server stops. */
+    @PreDestroy
+    void stop() {
+        writer.shutdown();
+        try {
+            if (!writer.awaitTermination(5, TimeUnit.SECONDS)) {
+                LOG.errorf("Audit: %d events were not stored as the server stopped (they are on the %s log category)",
+                    writer.getQueue().size(), CATEGORY);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
-        Long id = identity.getAttribute(ApiTokenIdentityProvider.TOKEN_ID);
-        return new Actor(identity.getPrincipal().getName(), id);
     }
 
-    /** Records one event. Never throws: a failure is logged as an error, with the event. */
+    /** Waits until every event recorded so far is stored, for up to {@code millis}; for tests. */
+    public void awaitStored(long millis) {
+        long until = System.currentTimeMillis() + millis;
+        while ((writer.getActiveCount() > 0 || !writer.getQueue().isEmpty()) && System.currentTimeMillis() < until) {
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    /** Who is not signed in, or whose sign-in failed. */
+    public static final String ANONYMOUS = "anonymous";
+
+    /** The caller of the current request; anonymous when it is not signed in or its sign-in failed. */
+    public static Actor actor(SecurityIdentity identity) {
+        try {
+            if (identity == null || identity.isAnonymous()) {
+                return new Actor(ANONYMOUS, null);
+            }
+            Long id = identity.getAttribute(ApiTokenIdentityProvider.TOKEN_ID);
+            return new Actor(identity.getPrincipal().getName(), id);
+        } catch (RuntimeException e) {
+            return new Actor(ANONYMOUS, null); // a failed sign-in can throw again when asked
+        }
+    }
+
+    /**
+     * Records one event. Never throws for a failure to store it, which is logged as an error.
+     *
+     * @throws IllegalArgumentException for an action not in {@link #ACTIONS}: a mistake in the server
+     */
     public void record(Actor actor, String action, String target, Map<String, ?> detail) {
         if (!ACTIONS.contains(action)) {
             throw new IllegalArgumentException("not an audit action: " + action);
         }
+        if (API_REFUSED.equals(action) && ANONYMOUS.equals(actor.name()) && actor.tokenId() == null) {
+            Integer skipped = anonymousSkips();
+            if (skipped == null) {
+                return; // over this minute's share: counted, and reported with the next one kept
+            }
+            if (skipped > 0) {
+                Map<String, Object> more = new LinkedHashMap<>(detail == null ? Map.of() : detail);
+                more.put("notKeptBefore", skipped);
+                detail = more;
+            }
+        }
+        Instant at = Instant.now();
         Map<String, Object> d = new LinkedHashMap<>();
         if (detail != null) {
             detail.forEach((k, v) -> d.put(k, v instanceof String s ? ApiTokens.loggable(s) : v));
@@ -126,8 +202,11 @@ public class AuditLog {
             json = "{}";
         }
         String safeTarget = ApiTokens.loggable(target == null ? "" : target);
+        if (safeTarget.length() > MAX_TARGET) {
+            safeTarget = safeTarget.substring(0, MAX_TARGET) + "...";
+        }
         Map<String, Object> line = new LinkedHashMap<>();
-        line.put("at", Instant.now().toString());
+        line.put("at", at.toString());
         line.put("actor", actor.name());
         line.put("tokenId", actor.tokenId());
         line.put("action", action);
@@ -139,25 +218,69 @@ public class AuditLog {
             AUDIT.infof("%s %s %s", actor, action, safeTarget);
         }
         String body = json;
+        String where = safeTarget;
+        try {
+            writer.execute(() -> store(at, actor, action, where, body));
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            long n = dropped.incrementAndGet();
+            if (n == 1 || n % 1000 == 0) {
+                LOG.errorf("Audit: %d events not stored, as more than %d were waiting (each is on the %s log "
+                    + "category)", n, QUEUE, CATEGORY);
+            }
+        }
+    }
+
+    private void store(Instant at, Actor actor, String action, String target, String detail) {
         try {
             db.tx(c -> {
                 try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.audit_event "
-                    + "(actor, token_id, action, target, detail) VALUES (?, ?, ?, ?, ?::jsonb)")) {
-                    ps.setString(1, actor.name());
+                    + "(at, actor, token_id, action, target, detail) VALUES (?, ?, ?, ?, ?, ?::jsonb)")) {
+                    ps.setTimestamp(1, Db.timestamp(at));
+                    ps.setString(2, actor.name());
                     if (actor.tokenId() == null) {
-                        ps.setNull(2, Types.BIGINT);
+                        ps.setNull(3, Types.BIGINT);
                     } else {
-                        ps.setLong(2, actor.tokenId());
+                        ps.setLong(3, actor.tokenId());
                     }
-                    ps.setString(3, action);
-                    ps.setString(4, safeTarget);
-                    ps.setString(5, body);
+                    ps.setString(4, action);
+                    ps.setString(5, target);
+                    ps.setString(6, detail);
                     return ps.executeUpdate();
                 }
             });
         } catch (RuntimeException e) {
             LOG.errorf("Audit: an event could not be stored in the audit log (it is on the %s log category): %s %s "
-                + "%s: %s", CATEGORY, actor, action, safeTarget, e.getMessage());
+                + "%s: %s", CATEGORY, actor, action, target, e.getMessage());
+        }
+    }
+
+    /** Starts this minute's share of refusals of callers not signed in afresh; for tests. */
+    void resetAnonymous() {
+        synchronized (minuteLock) {
+            anonymousThisMinute = 0;
+            anonymousSkipped = 0;
+        }
+    }
+
+    /**
+     * For a refusal of a caller who is not signed in: null when this minute's share is used up (it is
+     * counted), else how many were not kept since the last one that was.
+     */
+    private Integer anonymousSkips() {
+        long now = System.currentTimeMillis() / 60_000;
+        synchronized (minuteLock) {
+            if (now != minute) {
+                minute = now;
+                anonymousThisMinute = 0;
+            }
+            if (anonymousThisMinute >= ANONYMOUS_PER_MINUTE) {
+                anonymousSkipped++;
+                return null;
+            }
+            anonymousThisMinute++;
+            int skipped = anonymousSkipped;
+            anonymousSkipped = 0;
+            return skipped;
         }
     }
 

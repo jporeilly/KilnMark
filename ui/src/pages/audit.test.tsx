@@ -21,6 +21,9 @@ group("the audit log page", () => {
       "ci: designer, sees unmasked values, never expires",
     );
     expect(describe(event("api.refused", { method: "GET", status: 403 }))).toBe("GET 403");
+    expect(describe(event("api.refused", { method: "POST", status: 401, client: "10.0.0.9", notKeptBefore: 12 }))).toBe(
+      "POST 401, from 10.0.0.9, 12 more not kept before this",
+    );
     expect(describe(event("mark.cleared", { field: "email" }))).toBe("field: email");
   });
 

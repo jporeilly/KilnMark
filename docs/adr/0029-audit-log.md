@@ -22,8 +22,9 @@ those went only to the server's log, which an operator can rotate away and nobod
 
 1. **One table, `kilnmark.audit_event`, in the server's own database (V28).** Each row: when, who
    (the principal's name and the token's number), the action, what it was done to, and a small
-   JSON detail. Rows are only ever added: a trigger refuses `UPDATE`, `DELETE` and `TRUNCATE`
-   whoever asks.
+   JSON detail (for requests: method, status and the caller's address). Rows are only ever added: a
+   trigger refuses `UPDATE`, `DELETE` and `TRUNCATE`. The server's own login owns the table and
+   could switch the trigger off, so the SIEM's copy is the one nothing in Kilnmark can change.
 2. **Two kinds of event.** Every request that may change something and succeeded (`api.request`),
    and every request refused for want of a role, or for want of sign-in on a change
    (`api.refused`), from a response filter, so nothing new escapes the log by being forgotten. And
@@ -32,12 +33,16 @@ those went only to the server's log, which an operator can rotate away and nobod
    deleted, Allow writing and Allow SQL turned on or off (from the form or an import).
 3. **Never a body or a query string**: only the method, path and status, so no password or token
    secret is ever kept.
-4. **The change stands if its event cannot be stored**, and the server logs an error with the
-   event. Refusing the change would let a database hiccup stop work; losing the event silently would
-   break the trail. The error line keeps it.
-5. **Every event is also a JSON line on the `kilnmark.audit` log category**, with a syslog handler
-   configured and off by default (`KILNMARK_AUDIT_SYSLOG_*`), so a bank's SIEM collects it.
-6. **Admins read it** (`GET /api/v1/audit`, Settings › Audit log). Nobody else does: it names
+4. **Stored in the background, never in the request.** The JSON line is written at once; the row is
+   written by one thread of the audit log's own, in order, from a queue of at most 10,000. A
+   refusal can be answered on the event loop, where a database call must not run, and no request
+   should wait for its own audit row. Refusals of callers who are not signed in are kept at most 30
+   a minute, with a count of the rest, so they cannot flood the table.
+5. **The change stands if its event cannot be stored**, and the server logs an error. Refusing the
+   change would let a database hiccup stop work; the JSON line keeps the event for the SIEM.
+6. **Every event is also a JSON line on the `kilnmark.audit` log category**; the `siem` profile
+   sends that category to a syslog collector (`KILNMARK_AUDIT_SYSLOG_ENDPOINT`).
+7. **Admins read it** (`GET /api/v1/audit`, Settings › Audit log). Nobody else does: it names
    people, sources and assets.
 
 ## Consequences
@@ -50,5 +55,9 @@ those went only to the server's log, which an operator can rotate away and nobod
 - Reading data is not yet an event: previews and run detail viewed by designers with the grant are
   not recorded. That is the next step, with sign-in events when sign-in through an identity
   provider (OIDC) arrives.
-- A superuser of the database can still disable the trigger. Protection against that is the
-  SIEM's copy, which the server cannot change.
+- The server's login, or a superuser of the database, can still disable the trigger. Protection
+  against that is the SIEM's copy, which the server cannot change. A separate owner role for the
+  table, with the server granted only `INSERT` and `SELECT`, would close it for the server's login;
+  it needs the customer's database administrator, so it is documented, not done.
+- Events waiting to be stored when the process dies are lost from the table (not from the SIEM).
+- The MCP endpoint's refusals are made before the REST layer and are not recorded yet.

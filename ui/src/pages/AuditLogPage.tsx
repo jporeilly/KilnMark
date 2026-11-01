@@ -13,7 +13,7 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "source.deleted", label: "Source deleted", tone: "warn" },
   { value: "source.allow_writing", label: "Allow writing changed", tone: "warn" },
   { value: "source.allow_sql", label: "Allow SQL changed", tone: "warn" },
-  { value: "api.request", label: "Change made", tone: "neutral" },
+  { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
 ];
 
@@ -32,7 +32,11 @@ export function describe(e: AuditEvent): string {
     return `${d.name ? `${String(d.name)}: ` : ""}${parts.filter(Boolean).join(", ")}`;
   }
   if (e.action === "api.request" || e.action === "api.refused") {
-    return `${String(d.method ?? "")} ${String(d.status ?? "")}`.trim();
+    const call = `${String(d.method ?? "")} ${String(d.status ?? "")}`.trim();
+    const parts = [call];
+    if (d.client) parts.push(`from ${String(d.client)}`);
+    if (d.notKeptBefore) parts.push(`${String(d.notKeptBefore)} more not kept before this`);
+    return parts.join(", ");
   }
   return Object.entries(d)
     .map(([k, v]) => `${k}: ${v == null ? "none" : String(v)}`)
