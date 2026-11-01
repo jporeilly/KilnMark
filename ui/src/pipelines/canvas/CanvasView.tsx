@@ -75,7 +75,7 @@ import { Palette, rememberUsed } from "./Palette";
 import { SettingsPanel } from "./SettingsPanel";
 import { NodeMenu, type NodeMenuItem } from "./NodeMenu";
 import { NodePreviewPanel, type PreviewAsk, type PreviewResult } from "./NodePreviewPanel";
-import { CANVAS_TABS, type DockControl } from "../PipelineDock";
+import { CANVAS_TABS, NODE_TABS, type DockControl } from "../PipelineDock";
 import { useRole } from "../../components/role";
 import { NodeCard, badgeRows, runWords, type NodeCardType, type NodeRunInfo } from "./NodeCard";
 import "./canvas.css";
@@ -173,8 +173,8 @@ function Canvas(props: CanvasProps) {
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [connectFor, setConnectFor] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
-  // The panel under the canvas. Selecting a node (to move it, say) does not change its tab; a
-  // double-click, Enter, the node's menu or adding a node shows the node's settings there.
+  // The panel under the canvas: selecting a node shows its settings there (Enter, a double-click and
+  // the node's menu also move the focus into them).
   const { dock } = props;
   const dockRef = useRef(dock);
   dockRef.current = dock;
@@ -342,6 +342,20 @@ function Canvas(props: CanvasProps) {
     return { left, top: 0, width: Math.max(120, box.width - left), height: box.height };
   }, []);
 
+  /**
+   * Selects a node and shows the panel under the canvas with its Settings (its Preview stays shown if
+   * it was): a click, the focus moving to a node and the arrow keys all do this. The focus stays where
+   * it is; Enter moves it into the settings.
+   */
+  const selectNode = useCallback(
+    (id: string) => {
+      onSelect(id);
+      const d = dockRef.current;
+      d.show(NODE_TABS.has(d.tab) ? d.tab : "settings");
+    },
+    [onSelect],
+  );
+
   /** Moves the focus to the first field of the settings in the panel under the canvas, once drawn. */
   const focusSettings = useCallback(() => {
     window.setTimeout(() => dockRef.current.host?.querySelector<HTMLElement>("input, select, textarea")?.focus(), 30);
@@ -470,9 +484,13 @@ function Canvas(props: CanvasProps) {
     const c = removeNode(yamlRef.current, id, catalogue);
     apply(c, `Removed node ${id} and its connections.`, { pin: true });
     if (!("error" in c)) {
-      onSelect(next);
-      if (next) pendingFocus.current = next;
-      else flowBox.current?.focus();
+      if (next) {
+        selectNode(next);
+        pendingFocus.current = next;
+      } else {
+        onSelect(null);
+        flowBox.current?.focus();
+      }
     }
   };
 
@@ -485,7 +503,7 @@ function Canvas(props: CanvasProps) {
     const spot = at ? { x: at.x + 40, y: at.y + 140 } : undefined;
     const made = apply(c, newId ? `Duplicated ${id} as ${newId}.` : "", { pin: newId && spot ? { [newId]: spot } : true });
     if (made) {
-      onSelect(made);
+      selectNode(made);
       pendingFocus.current = made;
     }
   };
@@ -933,7 +951,7 @@ function Canvas(props: CanvasProps) {
       }
       const next = neighbour(id, k);
       if (next) {
-        onSelect(next);
+        selectNode(next);
         focusNode(next);
       } else {
         say(k === "ArrowRight" ? `Nothing reads from ${id}.` : k === "ArrowLeft" ? `${id} reads from no node.` : `No node ${k === "ArrowUp" ? "above" : "below"} ${id}.`);
@@ -1206,7 +1224,7 @@ function Canvas(props: CanvasProps) {
               quietFocus.current = null;
               return;
             }
-            if (id && id !== selected) onSelect(id);
+            if (id && id !== selected) selectNode(id);
           }}
           role="region"
           aria-label={`Canvas of ${props.title}: ${graph?.nodes.length ?? 0} nodes. Press question mark for keyboard shortcuts.`}
@@ -1218,7 +1236,7 @@ function Canvas(props: CanvasProps) {
             onNodesChange={onNodesChange}
             onNodeClick={(_, n) => {
               setSelectedEdge(null);
-              onSelect(n.id);
+              selectNode(n.id);
             }}
             onNodeDoubleClick={(_, n) => {
               setSelectedEdge(null);

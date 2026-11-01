@@ -10,7 +10,6 @@ import {
   type PipelineDetail,
   type PipelineProblem,
   type PipelineRun,
-  type PipelineRunDetail,
   type PipelineValidation,
   type PipelineVersion,
   type PipelineVersionSummary,
@@ -23,7 +22,8 @@ import { columnsText } from "./outline";
 import { nodeQualityWords } from "./quality";
 import { emptyYaml, findStarterPicks, renamed, starterYaml, withoutLayout } from "./template";
 import { YamlEditor, type YamlEditorHandle } from "./YamlEditor";
-import { CANVAS_TABS, PipelineDock, useDock, type DockControl, type DockTab } from "./PipelineDock";
+import { CANVAS_TABS, NODE_TABS, PipelineDock, useDock, type DockControl, type DockTab } from "./PipelineDock";
+import { RunFacts, RunNodes, rowsRead, useRunDetail } from "./RunSummary";
 import type { CanvasRun } from "./canvas/CanvasView";
 import type { Graph } from "./canvas/model";
 import "./pipelines.css";
@@ -94,23 +94,14 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
     }
   };
   const tabsId = useTabsId();
-  // The panel under the canvas: the selected node's settings and preview, suggestions, the nodes
-  // as a table, runs and versions, one tab at a time.
   const dockId = useTabsId();
   const dock = useDock(dockId);
   const [dockHost, setDockHost] = useState<HTMLDivElement | null>(null);
-  const dockTabs: DockTab[] = isNew
-    ? ["settings", "preview", "suggestions", "nodes"]
-    : ["settings", "preview", "suggestions", "nodes", "runs", "versions"];
-  const dockTab = dockTabs.includes(dock.tab) ? dock.tab : "settings";
-  const dockControl: DockControl = useMemo(
-    () => ({ tab: dockTab, open: dock.open, show: dock.show, host: dockHost, panel: dock.panel }),
-    [dockTab, dock.open, dock.show, dockHost, dock.panel],
-  );
   const [selected, setSelected] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ node: string; key: string | null; n: number } | null>(null);
   const [confirmRun, setConfirmRun] = useState(false);
-  const [runShown, setRunShown] = useState<PipelineRunDetail | null>(null);
+  // A run asked for here, shown before the runs list has it.
+  const [startedRun, setStartedRun] = useState<number | null>(null);
   const canvasMemory = useRef<{ lastGood?: Graph | null }>({});
   // Undo and redo for changes made on the canvas (the YAML editor has the browser's own).
   const yamlNow = useRef(yaml);
@@ -214,26 +205,21 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
     return () => window.clearInterval(t);
   }, [active, loadLists]);
 
-  // The latest run, node by node, for the canvas: refreshed when the runs list changes.
+  // The latest run (or the one just asked for), node by node, for the canvas and the Run tab: looked
+  // at every two seconds while it is queued or running, as the run page does.
   const latestRun = runs?.[0] ?? null;
-  const latestKey = latestRun ? `${latestRun.id}:${latestRun.status}` : "";
+  const runId = Math.max(startedRun ?? 0, latestRun?.id ?? 0) || null;
+  const runLook = useRunDetail(runId);
+  const runShown = runLook.detail;
+  // Once it ends, the runs list and the page's last run catch up.
+  const wasUnfinished = useRef(false);
   useEffect(() => {
-    if (!latestRun || latestRun.status === "queued") return;
-    let live = true;
-    const look = () =>
-      pipelinesApi
-        .runDetail(latestRun.id)
-        .then((d) => live && setRunShown(d))
-        .catch(() => {});
-    void look();
-    // While it runs, look every two seconds: the canvas shows each node's rows so far and rate.
-    const t = latestRun.status === "running" ? window.setInterval(look, 2000) : undefined;
-    return () => {
-      live = false;
-      if (t) window.clearInterval(t);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latestKey]);
+    if (wasUnfinished.current && !runLook.unfinished) {
+      loadLists();
+      void load();
+    }
+    wasUnfinished.current = runLook.unfinished;
+  }, [runLook.unfinished, loadLists, load]);
   const canvasRun: CanvasRun | null = useMemo(
     () =>
       runShown && !viewing
@@ -248,6 +234,32 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
         : null,
     [runShown, viewing],
   );
+
+  // The panel under the canvas, one tab at a time: the selected node's settings and preview (only
+  // while a node is selected), then the pipeline's run, suggestions, nodes, runs and versions.
+  const dockTabs: DockTab[] = [
+    ...(selected != null ? (["settings", "preview"] as const) : []),
+    ...(isNew ? [] : (["run"] as const)),
+    "suggestions",
+    "nodes",
+    ...(isNew ? [] : (["runs", "versions"] as const)),
+  ];
+  // When the tab shown goes (the node was deselected or removed): the Run tab if a run is going or
+  // it was the last of the pipeline's tabs shown, else Nodes.
+  const lastPipelineTab = useRef<DockTab | null>(null);
+  const fallback: DockTab = !isNew && (runLook.unfinished || lastPipelineTab.current === "run") ? "run" : "nodes";
+  const dockTab = dockTabs.includes(dock.tab) ? dock.tab : fallback;
+  const { setTab: setDockTab } = dock;
+  useEffect(() => {
+    if (dockTab !== dock.tab) setDockTab(dockTab);
+    if (!NODE_TABS.has(dockTab)) lastPipelineTab.current = dockTab;
+  }, [dockTab, dock.tab, setDockTab]);
+  const dockControl: DockControl = useMemo(
+    () => ({ tab: dockTab, open: dock.open, show: dock.show, host: dockHost, panel: dock.panel }),
+    [dockTab, dock.open, dock.show, dockHost, dock.panel],
+  );
+  // The nodes that read, for the rows a run read.
+  const reads = useMemo(() => new Set((check?.nodes ?? []).filter((n) => n.kind === "source").map((n) => n.id)), [check]);
 
   const text = viewing ? (shown?.yaml ?? "") : yaml;
 
@@ -369,6 +381,9 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
     try {
       const run = await pipelinesApi.run(name);
       setNotice(`Run ${run.id} of version ${run.version} is queued.`);
+      // Its progress is shown under the canvas, live.
+      setStartedRun(run.id);
+      dock.show("run");
       loadLists();
     } catch (err) {
       fail(err);
@@ -680,6 +695,45 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                 Show the canvas
               </button>
             </p>
+          )}
+          {dockTab === "run" && (
+            <>
+              {runShown ? (
+                <div className="pl-dock-run">
+                  <div className="pl-dock-run-head">
+                    <h3 className="cv-side-title">
+                      Run {runShown.run.id} of version {runShown.run.version}
+                      {runLook.unfinished && <span className="muted">, updating as it goes</span>}
+                    </h3>
+                    <a href={href.pipelineRun(runShown.run.id)}>Open run {runShown.run.id}: its timeline, log and what it wrote</a>
+                  </div>
+                  <p role="status" className="small notice">
+                    {runLook.notice}
+                  </p>
+                  <RunFacts run={runShown.run} rowsRead={rowsRead(runShown, reads)} />
+                  <h4>Nodes</h4>
+                  <RunNodes detail={runShown} quality label={` ${runShown.run.id}`} />
+                  {runShown.notes.length > 0 && (
+                    <>
+                      <h4>Notes</h4>
+                      <ul className="small">
+                        {runShown.notes.map((n, i) => (
+                          <li key={i}>{n}</li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              ) : runLook.error ? (
+                <p role="alert" className="error">
+                  {runLook.error}
+                </p>
+              ) : runs === null || runId != null ? (
+                <p role="status">Loading…</p>
+              ) : (
+                <p>Not run yet.{steward ? " Run now runs the saved version, and its progress is shown here." : ""}</p>
+              )}
+            </>
           )}
           {dockTab === "nodes" && (
             <>

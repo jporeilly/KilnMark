@@ -522,6 +522,19 @@ main:has(.pl-wide) {
   margin: 0;
 }
 
+/* The Run tab: the run shown on the canvas, live while it goes. */
+.pl-dock-run-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+}
+
+.pl-dock-run h4 {
+  margin: 14px 0 6px;
+}
+
 /* A node's settings use the panel's width: their fields run on in columns. */
 .pl-dock .cv-dock-settings .cv-panel-body {
   display: block;
