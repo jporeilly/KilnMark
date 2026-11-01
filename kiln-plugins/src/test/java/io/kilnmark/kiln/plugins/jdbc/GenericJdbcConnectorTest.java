@@ -115,7 +115,8 @@ class GenericJdbcConnectorTest {
             .startsWith("url: take the user name and password out"));
         assertTrue(problems(h2.url() + ";socketFactory=x.Y").get(0).contains("not registered to take the property "
             + "socketFactory"));
-        assertTrue(problems(h2.url() + ";INIT=RUNSCRIPT").get(0).contains("not registered to take the property INIT"));
+        assertTrue(problems(h2.url() + ";INIT=RUNSCRIPT").get(0).contains("H2's INIT setting runs SQL"),
+            "what the URL opens is checked first");
         assertTrue(problems(h2.url() + ";INIT=RUNSCRIPT FROM 'http://files.example.com/x.sql'").get(0)
             .contains("cannot read the settings in this URL"));
         assertTrue(problems("jdbc:h2:mem:x\nother").get(0).contains("a space or control character"));
