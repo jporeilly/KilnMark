@@ -26,7 +26,25 @@ const OUTCOME: Record<NonNullable<PipelineNodeRun["outcome"]>, string> = {
 
 const TONE: Record<string, Tone> = { good: "good", fair: "warn", poor: "bad" };
 
-export const isUnfinished = (r: PipelineRun | null | undefined) => r != null && (r.status === "queued" || r.status === "running");
+/** A run's status as a sentence, announced when it changes: "Run 8 is running.", "Run 8 failed." */
+export function runStatusSentence(id: number, status: PipelineRun["status"] | string): string {
+  switch (status) {
+    case "queued":
+      return `Run ${id} is queued.`;
+    case "running":
+      return `Run ${id} is running.`;
+    case "succeeded":
+      return `Run ${id} succeeded.`;
+    case "failed":
+      return `Run ${id} failed.`;
+    case "cancelled":
+      return `Run ${id} was cancelled.`;
+    default:
+      return `Run ${id}: ${status}.`;
+  }
+}
+
+export const isUnfinished =(r: PipelineRun | null | undefined) => r != null && (r.status === "queued" || r.status === "running");
 
 /** Rows per port, in words: "main 10, lookup 4". */
 function portRows(ports: Record<string, number | null> | undefined): string {
@@ -68,7 +86,7 @@ export function useRunDetail(id: number | null) {
       .runDetail(id)
       .then((d) => {
         if (current.current !== id) return;
-        if (last.current?.id === id && last.current.status !== d.run.status) setNotice(`Run ${id} is now ${d.run.status}.`);
+        if (last.current?.id === id && last.current.status !== d.run.status) setNotice(runStatusSentence(id, d.run.status));
         last.current = { id, status: d.run.status };
         setDetail(d);
         setFetchedAt(Date.now());

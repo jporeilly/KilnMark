@@ -8,6 +8,7 @@ import { useTabsId } from "../components/ui";
 import { RoleContext } from "../components/role";
 import { DOCK_OPEN_KEY, PipelineDock, useDock, type DockTab } from "./PipelineDock";
 import { PipelinePage } from "./PipelinePage";
+import { runStatusSentence } from "./RunSummary";
 
 const TABS: DockTab[] = ["settings", "preview", "run", "suggestions", "nodes", "runs", "versions"];
 
@@ -390,12 +391,14 @@ describe("the pipeline page's panel", () => {
 
       await act(async () => vi.advanceTimersByTimeAsync(2000));
       expect(panel().textContent).toContain("So far");
+      expect(panel().querySelector('.pl-dock-run [role="status"]')?.textContent).toBe("Run 8 is running.");
       expect(panel().querySelector('[aria-label="Nodes of the run so far 8"]')?.textContent).toContain("Slowest");
 
       await act(async () => vi.advanceTimersByTimeAsync(2000));
       expect(panel().textContent).toContain("Why it failed: The write could not reach warehouse.");
       expect(panel().querySelector('[aria-label="Nodes of the run 8"]')?.textContent).toContain("Connection refused");
-      expect(panel().textContent).toContain("Run 8 is now failed.");
+      expect(panel().textContent).toContain("Run 8 failed.");
+      expect(panel().textContent).not.toContain("is now");
 
       const looks = () => state.asked.filter((a) => a === "GET /api/v1/pipeline-runs/8").length;
       const ended = looks();
@@ -406,4 +409,14 @@ describe("the pipeline page's panel", () => {
       vi.useRealTimers();
     }
   });
+});
+
+test("a run's status reads as a sentence in each state", () => {
+  expect(["queued", "running", "succeeded", "failed", "cancelled"].map((st) => runStatusSentence(8, st))).toEqual([
+    "Run 8 is queued.",
+    "Run 8 is running.",
+    "Run 8 succeeded.",
+    "Run 8 failed.",
+    "Run 8 was cancelled.",
+  ]);
 });
