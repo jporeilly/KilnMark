@@ -36,8 +36,12 @@ those went only to the server's log, which an operator can rotate away and nobod
 4. **Stored in the background, never in the request.** The JSON line is written at once; the row is
    written by one thread of the audit log's own, in order, from a queue of at most 10,000. A
    refusal can be answered on the event loop, where a database call must not run, and no request
-   should wait for its own audit row. Refusals of callers who are not signed in are kept at most 30
-   a minute, with a count of the rest, so they cannot flood the table.
+   should wait for its own audit row. Refusals are kept at most 30 a minute for each caller (each
+   token, and everyone not signed in together), with a count of the rest, and request events never
+   take the last 1,000 places in the queue, so a flood cannot keep a token, mark or source event
+   out: when even those places are taken, such an event is stored on the caller's thread. The
+   queue drains as the server stops, before its database closes. Rows are in the order recorded;
+   read them by `id`.
 5. **The change stands if its event cannot be stored**, and the server logs an error. Refusing the
    change would let a database hiccup stop work; the JSON line keeps the event for the SIEM.
 6. **Every event is also a JSON line on the `kilnmark.audit` log category**; the `siem` profile

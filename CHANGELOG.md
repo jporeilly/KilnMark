@@ -27,8 +27,9 @@ details.
   `source.allow_sql` (from the form or an import), `api.request` for every `POST`, `PUT`, `PATCH`
   or `DELETE` that succeeded, and `api.refused` for every 403, and every 401 on a change. Only the
   method, path, status and caller's address of a request are kept, never its body or query string.
-  Start-up records the admin tokens it makes or sets aside. Rows are stored in the background, and
-  refusals of callers not signed in are kept at most 30 a minute. `GET /api/v1/audit` (admins)
+  Start-up records the admin tokens it makes or sets aside. Rows are stored in the background, in
+  order; refusals are kept at most 30 a minute for each caller, and a flood of requests never keeps
+  a token, mark or source event out. `GET /api/v1/audit` (admins)
   pages through them; each is also one JSON line on the `kilnmark.audit` log category, sent to a
   syslog collector with the `siem` profile and `KILNMARK_AUDIT_SYSLOG_ENDPOINT`.
 

@@ -92,7 +92,7 @@ class AuditLogTest {
 
     @Test
     void refusalsOfCallersNotSignedInAreRecordedWithoutBreakingThe401() {
-        audit.resetAnonymous();
+        audit.resetRefusals();
         io.restassured.RestAssured.given().contentType(ContentType.JSON).body("{}").post("/api/v1/tokens").then()
             .statusCode(401);
         as("km_not-a-real-token-0123456789abcdefghijklmnopqrstuvwxyzABCD").contentType(ContentType.JSON).body("{}")
@@ -106,27 +106,39 @@ class AuditLogTest {
 
     @Test
     void refusalsOfCallersNotSignedInCannotFloodTheLog() throws Exception {
-        audit.resetAnonymous();
+        audit.resetRefusals();
         String target = "/flood/" + System.nanoTime();
         AuditLog.Actor nobody = new AuditLog.Actor(AuditLog.ANONYMOUS, null);
-        for (int i = 0; i < AuditLog.ANONYMOUS_PER_MINUTE + 20; i++) {
-            audit.record(nobody, AuditLog.API_REFUSED, target, Map.of("method", "POST", "status", 401));
+        AuditLog.Actor viewer = new AuditLog.Actor("flooding viewer", 987_654L);
+        long fixed = System.currentTimeMillis();
+        audit.clock(() -> fixed); // one minute throughout, whenever the test runs
+        try {
+            for (int i = 0; i < AuditLog.REFUSALS_PER_MINUTE + 20; i++) {
+                audit.record(nobody, AuditLog.API_REFUSED, target, Map.of("method", "POST", "status", 401));
+                audit.record(viewer, AuditLog.API_REFUSED, target, Map.of("method", "GET", "status", 403));
+            }
+            // A signed-in caller's flood never keeps a token event out.
+            audit.record(viewer, AuditLog.TOKEN_REVOKED, target, Map.of("name", "after the flood"));
+            audit.awaitStored(5000);
+        } finally {
+            audit.clock(null);
+            audit.resetRefusals(); // leave the share for the other tests
         }
-        audit.awaitStored(5000);
-        audit.resetAnonymous(); // leave the share for the other tests
         try (Connection c = db.getConnection(); java.sql.PreparedStatement ps = c.prepareStatement(
             "SELECT count(*) FROM kilnmark.audit_event WHERE target = ?")) {
             ps.setString(1, target);
             try (java.sql.ResultSet rs = ps.executeQuery()) {
                 rs.next();
-                assertTrue(rs.getInt(1) <= AuditLog.ANONYMOUS_PER_MINUTE, "kept " + rs.getInt(1));
+                // each caller's share, and the token event
+                assertEquals(2 * AuditLog.REFUSALS_PER_MINUTE + 1, rs.getInt(1));
             }
         }
         // A long path is cut short.
         audit.record(AuditLog.Actor.server("test"), AuditLog.API_REQUEST, "/x".repeat(400), Map.of());
         audit.awaitStored(5000);
-        assertTrue(events(AuditLog.API_REQUEST).getList("events.target", String.class).stream()
-            .allMatch(t -> t.length() <= AuditLog.MAX_TARGET + 3));
+        List<String> targets = events(AuditLog.API_REQUEST).getList("events.target", String.class);
+        assertTrue(targets.contains("/x".repeat(150) + "..."), targets.toString());
+        assertTrue(targets.stream().allMatch(t -> t.length() <= AuditLog.MAX_TARGET + 3));
     }
 
     @Test

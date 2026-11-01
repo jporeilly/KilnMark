@@ -39,12 +39,14 @@ import jakarta.enterprise.context.ApplicationScoped;
  * Admins read it ({@code GET /api/v1/audit}).
  *
  * <p>An event is recorded after the change it describes has been made: its JSON line at once, and
- * its row by one thread of its own, in order, so no request waits on it or blocks a thread that
- * must not block. If the row cannot be written (the database is unreachable, or more events wait
- * than {@value #QUEUE} at once) the change stands and the server logs an error saying so; the JSON
- * line, which a SIEM keeps, has the event either way. Refusals of callers who are not signed in
- * are kept at most {@value #ANONYMOUS_PER_MINUTE} a minute, with a count of the rest, so they
- * cannot flood the table.
+ * its row by one thread of its own, in the order recorded (read the table in {@code id} order), so
+ * no request waits on it or blocks a thread that must not block. If the row cannot be written (the
+ * database is unreachable) the change stands and the server logs an error saying so; the JSON line,
+ * which a SIEM keeps, has the event either way. Refusals are kept at most
+ * {@value #REFUSALS_PER_MINUTE} a minute for each caller (each token, and everyone not signed in
+ * together), with a count of the rest, and {@code api.*} events never take the last
+ * {@value #RESERVED} places in the queue, so no flood of requests keeps a token, mark or source
+ * event out of the table: when even those are taken, such an event is stored on the caller's thread.
  */
 @ApplicationScoped
 public class AuditLog {
@@ -83,8 +85,10 @@ public class AuditLog {
     public static final int MAX_LIMIT = 500;
     /** The most events waiting to be stored at once. */
     static final int QUEUE = 10_000;
-    /** The most refusals of callers who are not signed in kept each minute. */
-    static final int ANONYMOUS_PER_MINUTE = 30;
+    /** The most refusals kept each minute for one caller (a token, or everyone not signed in). */
+    static final int REFUSALS_PER_MINUTE = 30;
+    /** Places in the queue only events other than {@code api.*} may take. */
+    static final int RESERVED = 1_000;
     /** The longest target kept: a path can be as long as a caller likes. */
     static final int MAX_TARGET = 300;
 
@@ -119,17 +123,28 @@ public class AuditLog {
         }, new ThreadPoolExecutor.AbortPolicy());
     private final AtomicLong dropped = new AtomicLong();
     private final Object minuteLock = new Object();
+    /** The clock refusals are counted by, in milliseconds; a test sets its own. */
+    private java.util.function.LongSupplier clock = System::currentTimeMillis;
     private long minute;
-    private int anonymousThisMinute;
-    private int anonymousSkipped;
+    /** Refusals kept this minute, and those not kept since the last one kept, by caller. */
+    private final Map<String, int[]> refusals = new java.util.HashMap<>();
+    private volatile boolean stopping;
 
     public AuditLog(Db db) {
         this.db = db;
     }
 
-    /** Stores what is waiting, for up to five seconds, as the server stops. */
+    /** Stores what is waiting, for up to five seconds, as the server stops, before its database closes. */
+    void onStop(@jakarta.enterprise.event.Observes io.quarkus.runtime.ShutdownEvent event) {
+        stop();
+    }
+
     @PreDestroy
     void stop() {
+        if (stopping && writer.isTerminated()) {
+            return;
+        }
+        stopping = true;
         writer.shutdown();
         try {
             if (!writer.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -141,16 +156,18 @@ public class AuditLog {
         }
     }
 
-    /** Waits until every event recorded so far is stored, for up to {@code millis}; for tests. */
+    /**
+     * Waits until every event recorded so far is stored, for up to {@code millis}; for tests. One
+     * thread stores them in order, so a task queued now runs after all of them.
+     */
     public void awaitStored(long millis) {
-        long until = System.currentTimeMillis() + millis;
-        while ((writer.getActiveCount() > 0 || !writer.getQueue().isEmpty()) && System.currentTimeMillis() < until) {
-            try {
-                Thread.sleep(10);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            }
+        try {
+            writer.submit(() -> { }).get(millis, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException
+            | java.util.concurrent.RejectedExecutionException e) {
+            LOG.debugf("Audit: waiting for stored events: %s", e.getMessage());
         }
     }
 
@@ -179,8 +196,8 @@ public class AuditLog {
         if (!ACTIONS.contains(action)) {
             throw new IllegalArgumentException("not an audit action: " + action);
         }
-        if (API_REFUSED.equals(action) && ANONYMOUS.equals(actor.name()) && actor.tokenId() == null) {
-            Integer skipped = anonymousSkips();
+        if (API_REFUSED.equals(action)) {
+            Integer skipped = refusalSkips(actor.tokenId() == null ? ANONYMOUS : "token " + actor.tokenId());
             if (skipped == null) {
                 return; // over this minute's share: counted, and reported with the next one kept
             }
@@ -219,14 +236,36 @@ public class AuditLog {
         }
         String body = json;
         String where = safeTarget;
+        boolean request = action.startsWith("api.");
+        if (stopping) {
+            if (!request) {
+                store(at, actor, action, where, body); // start-up or shutdown work still records its changes
+            } else {
+                LOG.errorf("Audit: an event was not stored as the server was stopping (it is on the %s log "
+                    + "category): %s %s %s", CATEGORY, actor, action, where);
+            }
+            return;
+        }
+        if (request && writer.getQueue().size() >= QUEUE - RESERVED) {
+            notStored();
+            return;
+        }
         try {
             writer.execute(() -> store(at, actor, action, where, body));
         } catch (java.util.concurrent.RejectedExecutionException e) {
-            long n = dropped.incrementAndGet();
-            if (n == 1 || n % 1000 == 0) {
-                LOG.errorf("Audit: %d events not stored, as more than %d were waiting (each is on the %s log "
-                    + "category)", n, QUEUE, CATEGORY);
+            if (request) {
+                notStored();
+            } else {
+                store(at, actor, action, where, body); // never lose a token, mark or source event to a flood
             }
+        }
+    }
+
+    private void notStored() {
+        long n = dropped.incrementAndGet();
+        if (n == 1 || n % 1000 == 0) {
+            LOG.errorf("Audit: %d request events not stored, as too many were waiting (each is on the %s log "
+                + "category)", n, CATEGORY);
         }
     }
 
@@ -254,32 +293,40 @@ public class AuditLog {
         }
     }
 
-    /** Starts this minute's share of refusals of callers not signed in afresh; for tests. */
-    void resetAnonymous() {
+    /** Counts refusals by {@code millis} rather than the system clock, or by it again with null; for tests. */
+    void clock(java.util.function.LongSupplier millis) {
         synchronized (minuteLock) {
-            anonymousThisMinute = 0;
-            anonymousSkipped = 0;
+            clock = millis == null ? System::currentTimeMillis : millis;
+        }
+    }
+
+    /** Starts this minute's share of refusals afresh for every caller; for tests. */
+    void resetRefusals() {
+        synchronized (minuteLock) {
+            refusals.clear();
         }
     }
 
     /**
-     * For a refusal of a caller who is not signed in: null when this minute's share is used up (it is
-     * counted), else how many were not kept since the last one that was.
+     * For a refusal of {@code caller}: null when this minute's share is used up (it is counted), else
+     * how many were not kept since the last one that was.
      */
-    private Integer anonymousSkips() {
-        long now = System.currentTimeMillis() / 60_000;
+    private Integer refusalSkips(String caller) {
         synchronized (minuteLock) {
+            long now = clock.getAsLong() / 60_000;
             if (now != minute) {
                 minute = now;
-                anonymousThisMinute = 0;
+                refusals.values().forEach(c -> c[0] = 0); // the counts not kept carry over to the next one kept
+                refusals.values().removeIf(c -> c[1] == 0);
             }
-            if (anonymousThisMinute >= ANONYMOUS_PER_MINUTE) {
-                anonymousSkipped++;
+            int[] c = refusals.computeIfAbsent(caller, k -> new int[2]);
+            if (c[0] >= REFUSALS_PER_MINUTE) {
+                c[1]++;
                 return null;
             }
-            anonymousThisMinute++;
-            int skipped = anonymousSkipped;
-            anonymousSkipped = 0;
+            c[0]++;
+            int skipped = c[1];
+            c[1] = 0;
             return skipped;
         }
     }

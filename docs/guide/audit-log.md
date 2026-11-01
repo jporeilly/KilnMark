@@ -24,7 +24,7 @@ it (behind a proxy, as its forwarding settings say).
 | Allow writing changed (`source.allow_writing`) | Allow writing turned on or off | On or off, and how: in the form, or by an import |
 | Allow SQL changed (`source.allow_sql`) | Allow SQL turned on or off | On or off, and how |
 | Request (`api.request`) | Any request that may change something (`POST`, `PUT`, `PATCH`, `DELETE`) and succeeded. Some of these only read, such as previews and dry runs | The method, status and the caller's address; the event is on the request's path |
-| Request refused (`api.refused`) | A request refused for want of a role (403), or for want of sign-in when it would have changed something (401) | The method, status and address. Refusals of callers who are not signed in are kept at most 30 a minute; the next one kept says how many were not |
+| Request refused (`api.refused`) | A request refused for want of a role (403), or for want of sign-in when it would have changed something (401) | The method, status and address. Refusals are kept at most 30 a minute for each token, and for everyone not signed in together; the next one kept says how many were not |
 
 Start-up records the tokens it makes or sets aside (the first admin token, `KILNMARK_ADMIN_TOKEN`)
 as the server. A change is recorded as it is made, after it has succeeded. Only a request's method
@@ -39,9 +39,11 @@ Kilnmark runs as owns the table, though, so someone with that login could switch
 off: that is why the events also go to your SIEM, which Kilnmark cannot change. Back the table up
 with the rest of the database.
 
-Events are stored in the background, in order, so no request waits for them. If one cannot be
-stored (the database is unreachable, or ten thousand are already waiting), the change still stands
-and the server logs an error; the event's JSON line, below, is written either way.
+Events are stored in the background, in the order they happened (read them by number), so no
+request waits for them. A flood of requests cannot keep a token, mark or source event out: request
+events give way first, and those events are stored at once when the queue is full. If an event
+cannot be stored (the database is unreachable, say), the change still stands and the server logs an
+error; the event's JSON line, below, is written either way.
 
 The log grows with use: roughly one event for each change made through the API. A year of a busy
 team is a few hundred thousand rows, which PostgreSQL holds easily. Nothing is deleted, so it keeps
