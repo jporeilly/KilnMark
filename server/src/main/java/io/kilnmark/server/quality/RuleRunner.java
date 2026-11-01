@@ -52,6 +52,7 @@ public final class RuleRunner {
     private final Duration queryTimeout;
     private final int keepFailing;
     private final long memoryLimitBytes;
+    /** Whether the source allows SQL a person writes ({@code allow_sql}, ADR 0028). */
     private final boolean customSql;
 
     public RuleRunner(Duration queryTimeout, int keepFailing, long memoryLimitBytes) {
@@ -71,7 +72,8 @@ public final class RuleRunner {
             return null;
         }
         if (!customSql) {
-            return "Custom SQL rules are turned off on this server (kilnmark.quality.custom-sql).";
+            return "This source does not allow SQL a person writes, so its custom SQL rules do not run. A designer "
+                + "or an admin turns on Allow SQL (allow_sql) for it.";
         }
         if (d != SqlDialect.POSTGRESQL) {
             return "Custom SQL rules run only on PostgreSQL sources, where they can be held to a read-only "

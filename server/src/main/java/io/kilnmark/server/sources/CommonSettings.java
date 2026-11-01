@@ -25,7 +25,10 @@ import io.kilnmark.kiln.connect.SourceConfig;
  *   <li>{@value AssetFilter#INCLUDE} and {@value AssetFilter#EXCLUDE}: glob patterns choosing the
  *       tables or files to scan, applied by {@link AssetFilter} for every kind of source.</li>
  *   <li>{@value #ALLOW_WRITING}: whether pipelines may write to the source ({@code true}); read-only
- *       ({@code false}) when absent. Only admins may change it (docs/design/pipelines.md).</li>
+ *       ({@code false}) when absent. Only designers and admins may change it (docs/design/pipelines.md).</li>
+ *   <li>{@value #ALLOW_SQL}: whether SQL a person writes may run on the source ({@code true}): custom
+ *       SQL rules, and later query reads and flow SQL actions (ADR 0028). Off when absent; PostgreSQL
+ *       sources only for now. Only designers and admins may change it.</li>
  *   <li>{@value #KEEP_SAMPLES}, {@value #SAMPLE_ROWS} and {@value #TABLE_SAMPLE_ABOVE_ROWS}: how
  *       profiling samples a source (docs/design/data-quality.md); the last applies to databases.</li>
  * </ul>
@@ -37,6 +40,7 @@ public final class CommonSettings {
     public static final String DESCRIPTION = "description";
     public static final String AI_EGRESS = "ai_egress";
     public static final String ALLOW_WRITING = "allow_writing";
+    public static final String ALLOW_SQL = "allow_sql";
     public static final String KEEP_SAMPLES = "keep_samples";
     public static final String SAMPLE_ROWS = "sample_rows";
     public static final String TABLE_SAMPLE_ABOVE_ROWS = "table_sample_above_rows";
@@ -121,6 +125,10 @@ public final class CommonSettings {
         new Definition(ALLOW_WRITING, "Allow writing", "true lets pipelines write tables or files to this source, "
             + "with an account that has write rights; false keeps it read-only. Only admins can change it", false,
             List.of("false", "true"), "false", SettingSpec.Kind.BOOLEAN),
+        new Definition(ALLOW_SQL, "Allow SQL", "PostgreSQL only: true lets designers whose token sees unmasked "
+            + "values write SQL that runs on this source (custom quality rules). Give the source a login that can read "
+            + "only what that SQL needs. false (the default) runs only the SQL Kilnmark builds", false,
+            List.of("false", "true"), "false", SettingSpec.Kind.BOOLEAN),
         new Definition(KEEP_SAMPLES, "Keep samples", "true (the default) keeps sample rows, example values and "
             + "failing rows for stewards to see; false keeps only shapes and statistics", false, List.of(), "true",
             SettingSpec.Kind.BOOLEAN),
@@ -176,6 +184,12 @@ public final class CommonSettings {
     /** Whether pipelines may write to a source with these settings: {@code allow_writing=true}. */
     public static boolean allowsWriting(Map<String, String> settings) {
         String w = settings == null ? null : settings.get(ALLOW_WRITING);
+        return w != null && w.trim().equalsIgnoreCase("true");
+    }
+
+    /** Whether SQL a person writes may run on a source with these settings: {@code allow_sql=true} (ADR 0028). */
+    public static boolean allowsSql(Map<String, String> settings) {
+        String w = settings == null ? null : settings.get(ALLOW_SQL);
         return w != null && w.trim().equalsIgnoreCase("true");
     }
 

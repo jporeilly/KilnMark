@@ -32,8 +32,11 @@ const AI_LABELS: Record<string, string> = {
   false: "No: read-only (default)",
   true: "Yes: pipelines may write tables or files here",
 };
-/** Whether pipelines may write to the source: designers and admins see and change it. */
-const ADMIN_STEP = new Set(["allow_writing"]);
+/**
+ * Whether pipelines may write to the source, and whether SQL a person writes may run on it
+ * (PostgreSQL only, ADR 0028): designers and admins see and change them.
+ */
+const ADMIN_STEP = new Set(["allow_writing", "allow_sql"]);
 
 /**
  * A connection, step by step: 1 Connect (fields with help and examples; host, port and database
@@ -616,7 +619,10 @@ export function ConnectionPanel({
             </p>
           </div>
           {commonOf(SAVE_STEP).map(commonField)}
-          {allows(role, "designer") && commonOf(ADMIN_STEP).map(commonField)}
+          {allows(role, "designer") &&
+            commonOf(ADMIN_STEP)
+              .filter((c) => c.key !== "allow_sql" || connector.kind === "postgresql")
+              .map(commonField)}
           <div className="buttons">
             <button type="button" className="primary" onClick={() => !saving && save(true)} aria-disabled={saving}>
               {saving ? "Saving…" : "Save and scan"}

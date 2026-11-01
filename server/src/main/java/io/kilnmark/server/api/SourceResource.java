@@ -100,6 +100,10 @@ public class SourceResource {
         byte[] secret = d.newSecret() == null ? null : secrets.seal(d.newSecret());
         Records.Source s = conflicts(() -> store.addSource(new Records.NewSource(d.config().name(), d.config().kind(),
             d.config().settings(), secret, d.displayName())));
+        if (io.kilnmark.server.sources.CommonSettings.allowsSql(s.settings())) {
+            org.jboss.logging.Logger.getLogger(SourceResource.class).infof(
+                "Source %s added by %s; SQL a person writes may run on it (allow_sql)", s.name(), who());
+        }
         return Response.created(URI.create("/api/v1/sources/" + s.name())).entity(view(s)).build();
     }
 
@@ -121,7 +125,8 @@ public class SourceResource {
         // sources at all); admin-only kinds and reading settings of marked sources stay with admins.
         boolean admin = identity.hasRole(AccessRole.ADMIN_ROLE);
         boolean designer = identity.hasRole(AccessRole.DESIGNER_ROLE);
-        SourceForm form = SourceService.writingAsAllowed(body, existing, designer);
+        SourceForm form = SourceService.sqlAsAllowed(SourceService.writingAsAllowed(body, existing, designer), existing,
+            designer);
         // Who may change where a writable source points is decided before the form is checked, so a
         // steward is told no (403) rather than asked to re-enter the password for a change they may not make.
         SourceService.whereUnchangedOrAdmin(existing, SourceService.settings(form.settings()), designer);
@@ -131,8 +136,11 @@ public class SourceResource {
         Records.Source s = conflicts(() -> store.updateSource(existing.id(), new Records.SourceChange(d.displayName(),
             d.config().settings(), d.replaceSecret(), secret, d.keepSecretIf()))).orElseThrow(() -> ApiError.of(
                 Response.Status.NOT_FOUND, "No source called " + name));
-        org.jboss.logging.Logger.getLogger(SourceResource.class).infof("Source %s changed by %s", existing.name(),
-            who());
+        boolean sqlBefore = io.kilnmark.server.sources.CommonSettings.allowsSql(existing.settings());
+        boolean sqlAfter = io.kilnmark.server.sources.CommonSettings.allowsSql(s.settings());
+        org.jboss.logging.Logger.getLogger(SourceResource.class).infof("Source %s changed by %s%s", existing.name(),
+            who(), sqlBefore == sqlAfter ? "" : sqlAfter ? "; SQL a person writes may now run on it (allow_sql)"
+                : "; SQL a person writes may no longer run on it (allow_sql)");
         quality.settingsChanged(s); // samples go at once when keep_samples is turned off
         return view(s);
     }

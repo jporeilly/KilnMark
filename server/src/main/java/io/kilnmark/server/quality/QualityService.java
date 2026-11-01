@@ -46,6 +46,16 @@ public class QualityService {
 
     /** Job kind for quality evaluations in the job queue. */
     public static final String JOB_KIND = "quality";
+
+    /** The retired server-wide switch is still read so a server that sets it starts; say it does nothing. */
+    @SuppressWarnings("deprecation")
+    void retiredSettings(@jakarta.enterprise.event.Observes io.quarkus.runtime.StartupEvent event) {
+        if (config.quality().customSql()) {
+            LOG.warn("kilnmark.quality.custom-sql is retired and does nothing: custom SQL rules run on sources with "
+                + "Allow SQL (allow_sql) turned on, by designers whose token sees unmasked values (ADR 0028). "
+                + "Remove the setting.");
+        }
+    }
     /** Source setting: keep samples and example values (default true). */
     public static final String KEEP_SAMPLES = "keep_samples";
     /** Source setting: rows sampled per asset. */
@@ -391,7 +401,7 @@ public class QualityService {
         RuleRunner.Target target = new RuleRunner.Target(connector, cfg, assetInfo(asset), kinds, previousRows,
             other -> graph.asset(other).map(o -> new SqlRules.Table(o.container(), o.name())).orElse(null));
         RuleRunner runner = new RuleRunner(config.quality().queryTimeout(), keep ? config.quality().failingRows() : 0,
-            config.scan().memoryLimitMb() << 20, config.quality().customSql());
+            config.scan().memoryLimitMb() << 20, io.kilnmark.server.sources.CommonSettings.allowsSql(source.settings()));
         Map<Long, QualityStore.Result> before = store.latestResults(urn);
         List<RowChecks.Evaluation> evaluations = runner.run(rules, target, Instant.now());
         int failing = 0;

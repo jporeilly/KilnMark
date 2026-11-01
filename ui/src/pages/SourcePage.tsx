@@ -22,7 +22,7 @@ import { Icon } from "../components/icons";
 import { Button, Card, DataTable, EmptyState, PageHeader } from "../components/ui";
 import { go, href } from "../router";
 
-const COMMON = new Set(["description", "ai_egress", "include", "exclude", "allow_writing"]);
+const COMMON = new Set(["description", "ai_egress", "include", "exclude", "allow_writing", "allow_sql"]);
 const AI = { local_only: "Local models only", allowed: "Any configured model", none: "No AI models" } as Record<
   string,
   string
@@ -219,6 +219,12 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
               <dt>Pipelines may write</dt>
               <dd>{source.settings.allow_writing === "true" ? "Yes" : "No (read-only)"}</dd>
             </div>
+            {source.kind === "postgresql" && (
+              <div>
+                <dt>SQL a person writes</dt>
+                <dd>{source.settings.allow_sql === "true" ? "May run (custom quality rules)" : "Does not run"}</dd>
+              </div>
+            )}
             <div>
               <dt>Assets recorded</dt>
               <dd>{formatNumber(source.assets)}</dd>
