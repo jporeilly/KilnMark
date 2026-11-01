@@ -329,18 +329,19 @@ public class SourceService {
         return s == null || s.isBlank() ? null : s.trim();
     }
 
-    /** Said when someone other than an admin tries to change whether a source may be written to. */
-    static final String WRITING_ADMIN_ONLY = CommonSettings.ALLOW_WRITING + ": only admins can let pipelines write "
-        + "to a source, or make it read-only again. Ask an admin";
+    /** Said when someone other than a designer or an admin tries to change whether a source may be written to. */
+    static final String WRITING_ADMIN_ONLY = CommonSettings.ALLOW_WRITING + ": only designers and admins can let "
+        + "pipelines write to a source, or make it read-only again. Ask a designer or an admin";
 
     /**
-     * The edit form with {@code allow_writing} as only an admin may change it: for anyone else, a
-     * form that leaves it out keeps the stored value, and one that changes it is refused.
+     * The edit form with {@code allow_writing} as only a designer or an admin ({@code designer}: a
+     * role at least designer) may change it: for anyone else, a form that leaves it out keeps the
+     * stored value, and one that changes it is refused.
      *
      * @throws jakarta.ws.rs.WebApplicationException 403 when someone else changes it
      */
-    static SourceForm writingAsAllowed(SourceForm form, Records.Source existing, boolean admin) {
-        if (admin || form == null || form.settings() == null) {
+    static SourceForm writingAsAllowed(SourceForm form, Records.Source existing, boolean designer) {
+        if (designer || form == null || form.settings() == null) {
             return form;
         }
         String stored = existing.settings().get(CommonSettings.ALLOW_WRITING);
