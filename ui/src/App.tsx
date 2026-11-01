@@ -33,6 +33,7 @@ const RelationshipsPage = page(() => import("./browse/RelationshipsPage"), "Rela
 const NotificationsPage = page(() => import("./pages/NotificationsPage"), "NotificationsPage");
 const EmailSettingsPage = page(() => import("./pages/EmailSettingsPage"), "EmailSettingsPage");
 const SentEmailsPage = page(() => import("./pages/SentEmailsPage"), "SentEmailsPage");
+const AuditLogPage = page(() => import("./pages/AuditLogPage"), "AuditLogPage");
 const DriversPage = page(() => import("./pages/DriversPage"), "DriversPage");
 const JdbcDriversPage = page(() => import("./pages/JdbcDriversPage"), "JdbcDriversPage");
 import { Icon } from "./components/icons";
@@ -352,6 +353,12 @@ function Shell({ me }: { me: Me }) {
               route.page === "email" ? <EmailSettingsPage /> : <SentEmailsPage />
             ) : (
               <NotAllowed title="Email">Only admins can set up email. Choose your own notifications under Settings, Notifications.</NotAllowed>
+            ))}
+          {route.page === "audit" &&
+            (allows(me.role, "admin") ? (
+              <AuditLogPage />
+            ) : (
+              <NotAllowed title="Audit log">Only admins can read the audit log.</NotAllowed>
             ))}
           {route.page === "drivers" &&
             (allows(me.role, "admin") ? (

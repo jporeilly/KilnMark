@@ -12,6 +12,8 @@ export type Route =
   | { page: "notifications"; confirm: string | null }
   | { page: "email" }
   | { page: "email-log" }
+  // The audit log, for admins
+  | { page: "audit" }
   // Drivers the customer installs, for admins
   | { page: "drivers" }
   // JDBC drivers admins register for the generic JDBC connector
@@ -53,6 +55,7 @@ export function parse(hash: string): Route {
   if (path === "/settings/notifications") return { page: "notifications", confirm: params.get("confirm") };
   if (path === "/settings/email") return { page: "email" };
   if (path === "/settings/email/sent") return { page: "email-log" };
+  if (path === "/settings/audit") return { page: "audit" };
   if (path === "/settings/drivers") return { page: "drivers" };
   if (path === "/settings/jdbc-drivers") return { page: "jdbc-drivers" };
   if (path === "/quality/rules") return { page: "rules", urn: params.get("urn") ?? "" };
@@ -104,6 +107,7 @@ export const href = {
   notifications: () => "#/settings/notifications",
   email: () => "#/settings/email",
   emailLog: () => "#/settings/email/sent",
+  audit: () => "#/settings/audit",
   drivers: () => "#/settings/drivers",
   jdbcDrivers: () => "#/settings/jdbc-drivers",
   rules: (urn?: string) => (urn ? `#/quality/rules?urn=${encodeURIComponent(urn)}` : "#/quality/rules"),

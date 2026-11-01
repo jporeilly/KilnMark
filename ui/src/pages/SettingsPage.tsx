@@ -31,6 +31,7 @@ export function SettingsPage({ role }: { role: AccessRole }) {
     { title: "Email", link: href.email(), icon: "mail", tint: "green", text: "The mail server notifications go through, the rules for email, a test email, and team addresses." },
     { title: "Drivers", link: href.drivers(), icon: "connected", tint: "orange", text: "Drivers some databases need that cannot ship with Kilnmark: accept their licence and install them." },
     { title: "JDBC drivers", link: href.jdbcDrivers(), icon: "database", tint: "teal", text: "Drivers you bring for databases without a connector of their own, such as Db2 or Teradata: register them for Generic JDBC sources." },
+    { title: "Audit log", link: href.audit(), icon: "timeline", tint: "slate", text: "Who changed what, and requests refused: tokens, marks, sources, Allow writing and Allow SQL." },
     { title: "Sent emails", link: href.emailLog(), icon: "mail-queued", tint: "slate", text: "Every email sent or tried in the last 30 days, with errors." },
     { title: "AI models", link: href.ai(), icon: "model", tint: "violet", text: "Local and hosted models, which feature uses which, and the rule for hosted models." },
     { title: "AI usage", link: href.aiUsage(), icon: "chart", tint: "sky", text: "Model calls by day and model, with failures and refusals." },

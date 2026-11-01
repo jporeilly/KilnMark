@@ -78,6 +78,8 @@ public class QualityResource {
     private final QualityService quality;
     private final Connectors connectors;
     private final SecurityIdentity identity;
+    @jakarta.inject.Inject
+    io.kilnmark.server.audit.AuditLog audit;
     /** Who is looking: every value shown goes through here. */
     @jakarta.inject.Inject
     Sights sights;
@@ -305,6 +307,8 @@ public class QualityResource {
         if (!store.setSensitive(urn, body.field(), body.sensitive())) {
             throw ApiError.of(Response.Status.NOT_FOUND, urn + " has no field called " + body.field());
         }
+        audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), body.sensitive() ? io.kilnmark.server.audit.AuditLog.MARK_SET : io.kilnmark.server.audit.AuditLog.MARK_CLEARED, urn,
+            java.util.Map.of("field", body.field()));
         if (!body.sensitive()) {
             // Clearing a mark shows the column's values to everyone who may see data: who did it is logged (ADR 0027).
             Long token = identity.getAttribute(io.kilnmark.server.auth.ApiTokenIdentityProvider.TOKEN_ID);
