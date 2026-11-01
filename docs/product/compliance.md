@@ -49,6 +49,7 @@ it is listed under [If Kilnmark is hosted](#if-kilnmark-is-hosted) so the cost i
 | **Time synchronisation** | DORA RTS 12 | Times are UTC from the host clock | Document NTP on the host; record the clock source in a health check | 6 |
 | **Resilience** | DORA; FFIEC | One image; jobs recover after a crash | Running two servers for failover; documented limits; load test results | 5 |
 | **Data protection: find and erase** | GDPR; state privacy laws | Search across sources; marks | A "where is this person's data" report from marks and search; erasure stays in the source systems | 6 |
+| **Third-party database drivers** (Generic JDBC) | 800-53 CM-7 (least functionality), SC-39 (process isolation); vendor due diligence | Network database servers only; only vetted driver settings (ADR 0030, PR #60); drivers that move files for SQL refused | Drivers run in the server's own process | 2 (vetted settings, done); isolation 4 |
 | **Secure development and supply chain** | OMB M-26-05 (SSDF on request); bank due diligence | CI on every change; no GPL drivers; dependency policy (ADR 0007) | A CycloneDX SBOM with each release; signed images and release files; dependency and image scanning in CI; a security policy and a way to report a vulnerability; an SSDF self-assessment | 2 |
 | **Evidence pack** for vendor-risk teams | Interagency guidance; FFIEC; DORA register of information | Docs and ADRs in the repository | A security whitepaper, the controls above as a mapped table (this page), a hardening guide, and penetration-test results | 3 |
 
@@ -61,10 +62,12 @@ This replaces "Hardening" in the [backlog](backlog.md):
 3. **OIDC sign-in with MFA from the customer's provider** (ADR 0014), brought forward from v0.2:
    it is the largest gap against NYDFS 500.12, and every bank will ask.
 4. **Access reviews and token policy; backup and restore with a runbook; the evidence pack.**
-5. **Change approval and environments**; masking shapes; the remaining hardening items (dev
+5. **Generic JDBC drivers in a process of their own** (ADR 0030), with only the network hosts a
+   source names; until then only vetted settings (PR #60).
+6. **Change approval and environments**; masking shapes; the remaining hardening items (dev
    compose ports on 127.0.0.1 with `KILNMARK_DB_PASSWORD`, JDBC `socketTimeout`, the run quality
    view, a metric for preview slots).
-6. **FIPS mode**, when a federal customer needs it.
+7. **FIPS mode**, when a federal customer needs it.
 
 ## If Kilnmark is hosted
 
