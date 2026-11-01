@@ -105,6 +105,25 @@ final class PipelineExecution {
         return out;
     }
 
+    /**
+     * The tables each read that runs a query read, by node id, as {@code run} noted them when the
+     * nodes were made; empty without a run (ADR 0028).
+     */
+    static Map<String, List<String>> queryReads(PipelineCompilerPort.Compilation c, RunContext run) {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        if (run == null) {
+            return out;
+        }
+        for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
+            Map<String, Object> config = c.configs().getOrDefault(s.id(), Map.of());
+            if (ReadNodeFactory.TYPE.equals(s.type()) && ReadNodeFactory.isQuery(config)) {
+                out.put(s.id(), run.queryReadUrns(PipelineSources.text(config, "source"),
+                    ReadNodeFactory.query(config)));
+            }
+        }
+        return out;
+    }
+
     /** Every write node, with the read assets upstream of it (as the settings name them). */
     static List<WriteTarget> writes(PipelineCompilerPort.Compilation c) {
         return writes(c, null);
@@ -116,6 +135,7 @@ final class PipelineExecution {
      */
     static List<WriteTarget> writes(PipelineCompilerPort.Compilation c, RunContext run) {
         Map<String, String> reads = reads(c, run);
+        Map<String, List<String>> queried = queryReads(c, run);
         List<WriteTarget> out = new ArrayList<>();
         for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
             if (!WriteNodeFactory.TYPE.equals(s.type())) {
@@ -133,6 +153,7 @@ final class PipelineExecution {
                 if (reads.containsKey(up)) {
                     inputs.add(reads.get(up));
                 }
+                inputs.addAll(queried.getOrDefault(up, List.of()));
             }
             out.add(new WriteTarget(s.id(), PipelineSources.text(config, "source"), WriteNodeFactory.target(config),
                 mode, urn, key == null ? List.of() : key, List.copyOf(inputs)));

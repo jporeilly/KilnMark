@@ -397,15 +397,20 @@ The guide's "Reading" is the user's view.
   asset not scanned yet, so later nodes' column checks happen at run time. The run takes the
   columns from the result set.
 - **Lineage from the database.** As the run sets the node up, `EXPLAIN (VERBOSE, FORMAT JSON)` names
-  every table the query reads (a view as the tables it reads), without running it. Each is
-  recorded as read, under its URN, as a read of that asset would be. Column lineage is not
-  attempted.
-- **Marks: every column, or none.** When the source has any column marked sensitive, every column
-  the query returns is marked (`*`): masked downstream for everyone but designers with the grant,
-  and carried to what a write writes from it. Kilnmark cannot follow a column through SQL, so it
-  does not try; a source without marks marks nothing.
-- **Row limit.** The query is wrapped: `SELECT * FROM (<query>) AS kilnmark_query LIMIT n`, so the
-  database stops at `n` rows.
+  every table the query reads (a view as the tables it reads), without running it, within 30
+  seconds. Each is recorded as a read of the run (`RunContext.queryRead`) and as an input of every
+  write downstream (`PipelineExecution.queryReads`), so lineage shows it as it shows a read of that
+  asset. Column lineage is not attempted.
+- **Marks: every column, always.** Every column a query returns is marked (`*`), whatever the
+  catalogue says: masked downstream for everyone but designers with the grant, and carried to what
+  a write writes from it. A query can read anything its login can, in any schema and under any
+  saved source on the same database, so neither the source's marks nor the plan's tables are
+  enough to clear it. Kilnmark cannot follow a column through SQL, so it does not try. For the same
+  reason a run with a query read is recorded as such (`kilnmark:query-read` with its assets), and its
+  engine messages are withheld from everyone but designers with the grant, as for marked data.
+- **Row limit.** The query is wrapped, on lines of its own so a closing `--` comment cannot end the
+  wrapping: `SELECT * FROM (\n<query>\n) AS kilnmark_query LIMIT n`, so the database stops at `n`
+  rows.
 
 ## 3. Expressions
 

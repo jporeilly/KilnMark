@@ -51,5 +51,6 @@ class QueryReadApiTest {
             "asset: crm.customers");
         as(plain).contentType(ContentType.JSON).body(Map.of("yaml", table, "message", "A table instead"))
             .put("/api/v1/pipelines/query-unmask").then().statusCode(200);
+        admin().delete("/api/v1/pipelines/query-unmask").then().statusCode(204);
     }
 }

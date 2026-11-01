@@ -58,9 +58,10 @@ details.
   custom SQL rules are, when the pipeline is checked and again as it runs, on a read-only connection
   and a login without superuser-like rights; `row_limit` wraps it so the database stops early.
   `${...}` is refused for now. Only designers whose token sees unmasked values save or preview a
-  pipeline with one (403 otherwise, admins included); anyone who runs pipelines runs it. When the
-  source has a column marked sensitive, every column the query returns is marked (`*`). Each run
-  records the tables it reads, from the database's plan (`EXPLAIN`), for lineage. The canvas edits
+  pipeline with one (403 otherwise, admins included); anyone who runs pipelines runs it. Every
+  column a query returns is marked (`*`), and a run with one keeps its engine messages for
+  designers with the grant. Each run records the tables it reads, from the database's plan
+  (`EXPLAIN`), as reads and as the inputs of what it writes. The canvas edits
   the query in a box over several lines. Adding the samples skips `sample-read-query` unless
   `crm-db` is a PostgreSQL source with Allow SQL on, or for a caller who may not see unmasked values.
 

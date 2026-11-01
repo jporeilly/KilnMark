@@ -4,9 +4,9 @@
 # Needs: a PostgreSQL source with Allow SQL on for crm-db, and a designer who may see unmasked
 # values to add or change it. Adding the samples skips it otherwise.
 # Look for: the run's reads. Before reading a row, Kilnmark asks the database which tables the query
-# reads (without running it) and records them for lineage. When the source has any column marked
-# sensitive, every column the query returns is treated as marked, since a column cannot be followed
-# through SQL.
+# reads (without running it) and records them for lineage. Every column the query returns is treated
+# as marked sensitive, since a column cannot be followed through SQL, so the CSV it writes is masked
+# for everyone but designers who may see unmasked values.
 kilnmark: pipeline/v1
 name: sample-read-query
 description: Customers with their number of accounts, counted by the database.

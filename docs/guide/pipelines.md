@@ -387,9 +387,12 @@ On a PostgreSQL source with **Allow SQL** on, a read can run one `SELECT` in pla
 - Its columns are known only when it runs, so the nodes after it are checked against them then.
 - Only a designer who may see unmasked values saves or previews a pipeline with a query, since a
   query can read any column the login can. Others, admins included, can run it.
-- When the source has any column marked sensitive, every column the query returns is treated as
-  marked: masked for everyone else, and marked on what a write writes from it.
-- Each run records the tables the query reads, as the database plans it, so lineage shows them.
+- Every column the query returns is treated as marked sensitive, since a query can read any table
+  its login can: masked for everyone else, and marked on what a write writes from it. A run's error
+  messages are held back the same way. Once someone has checked that what was written holds nothing
+  sensitive, an admin can clear its marks.
+- Each run records the tables the query reads, as the database plans it, so lineage shows them as
+  the inputs of what the pipeline writes.
 
 The sample `sample-read-query` shows one; adding the samples skips it unless `crm-db` is a
 PostgreSQL source with Allow SQL on.

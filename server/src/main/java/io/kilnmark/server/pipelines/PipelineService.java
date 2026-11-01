@@ -870,6 +870,9 @@ public class PipelineService {
      * values is, on the assets the run recorded as it started; {@code sights} null is the server's
      * own use.
      */
+    /** Recorded with a run's assets when it reads with a query, so its messages are withheld as for marked data. */
+    static final String QUERY_READ = "kilnmark:query-read";
+
     private String withheld(PipelineStore.Run r, Sights sights) {
         if (sights == null) {
             return null;
@@ -879,6 +882,14 @@ public class PipelineService {
         }
         if (sights.mayUnmask()) {
             return null;
+        }
+        JsonNode recorded = tree(r.assets());
+        if (recorded != null) {
+            for (JsonNode n : recorded) {
+                if (QUERY_READ.equals(n.asText())) {
+                    return FOR_DESIGNERS; // a query may have read any column, marked or not
+                }
+            }
         }
         List<String> urns = assets(r);
         sights.load(urns); // a no-op for assets already loaded by prepare()
@@ -1030,6 +1041,9 @@ public class PipelineService {
             java.util.Set<String> assets = new java.util.TreeSet<>(context.reads());
             assets.addAll(PipelineExecution.reads(c, context).values());
             writes.forEach(w -> assets.add(w.urn()));
+            if (PipelinePreviews.hasQueryRead(c)) {
+                assets.add(QUERY_READ); // its messages may quote any value the query read (ADR 0028)
+            }
             store.setAssets(id, json.writeValueAsString(assets));
             // One run writes a table or file at a time: wait a while for another run writing it. The
             // locks are taken on the job's own connection, so a run never holds more than one.
@@ -1058,7 +1072,9 @@ public class PipelineService {
                 o.status());
             ObjectNode result = json.createObjectNode();
             ArrayNode read = result.putArray("read");
-            PipelineExecution.reads(c, context).values().stream().distinct().forEach(read::add);
+            java.util.Set<String> reads = new java.util.LinkedHashSet<>(PipelineExecution.reads(c, context).values());
+            PipelineExecution.queryReads(c, context).values().forEach(reads::addAll);
+            reads.forEach(read::add);
             ArrayNode notes = json.createArrayNode();
             ArrayNode written = result.putArray("written");
             long total = 0;
@@ -1428,8 +1444,7 @@ public class PipelineService {
         if (qualityStore == null) {
             return;
         }
-        Map<String, java.util.Set<String>> readMarks = PipelinePreviews.readMarks(c, context, qualityStore::sensitive,
-            qualityStore::sourceHasMarks);
+        Map<String, java.util.Set<String>> readMarks = PipelinePreviews.readMarks(c, context, qualityStore::sensitive);
         if (readMarks.values().stream().allMatch(java.util.Set::isEmpty)) {
             return;
         }
@@ -1471,8 +1486,7 @@ public class PipelineService {
         if (qualityStore == null || !writtenColumns(w, c).isEmpty()) {
             return;
         }
-        Map<String, java.util.Set<String>> readMarks = PipelinePreviews.readMarks(c, context, qualityStore::sensitive,
-            qualityStore::sourceHasMarks);
+        Map<String, java.util.Set<String>> readMarks = PipelinePreviews.readMarks(c, context, qualityStore::sensitive);
         NodePreview.Hidden marked = NodePreview.marked(c, readMarks, w.node());
         if (!marked.any()) {
             return;

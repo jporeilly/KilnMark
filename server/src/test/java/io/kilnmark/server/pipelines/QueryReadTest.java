@@ -19,7 +19,7 @@ import io.kilnmark.server.quality.QualityStore;
 
 /**
  * A read that runs a query (ADR 0028): checked as custom SQL rules are, PostgreSQL sources with
- * Allow SQL on only, never with columns or where, and every column marked when its source has marks.
+ * Allow SQL on only, never with columns or where, and every column it reads marked.
  */
 class QueryReadTest {
 
@@ -102,6 +102,25 @@ class QueryReadTest {
     }
 
     @Test
+    void theTablesAQueryReadIsWhatWritesFromItCameFrom() {
+        PipelineCompilerPort.Compilation c = new KilnPipelineCompiler().check("""
+            kilnmark: pipeline/v1
+            name: by-query
+            nodes:
+              - id: q
+                type: read
+                source: warehouse
+                query: SELECT id FROM sales.orders
+            """, io.kilnmark.kiln.NodeFactories.discover().register(read), Map.of(), Map.of());
+        RunContext run = new RunContext("by-query", 1, "jo", io.kilnmark.server.auth.AccessRole.DESIGNER);
+        assertEquals(Map.of("q", List.of()), PipelineExecution.queryReads(c, run));
+        run.queryRead("warehouse", "SELECT id FROM sales.orders", List.of("urn:kilnmark:warehouse:sales.orders"));
+        assertEquals(Map.of("q", List.of("urn:kilnmark:warehouse:sales.orders")), PipelineExecution.queryReads(c, run));
+        assertTrue(run.reads().contains("urn:kilnmark:warehouse:sales.orders"));
+        assertEquals(Map.of(), PipelineExecution.queryReads(c, null));
+    }
+
+    @Test
     void loginRefusalsAreWordedForAQuery() {
         String r = ReadNodeFactory.forQuery("Custom SQL does not run under this source's login: it is a superuser");
         assertTrue(r.startsWith("The query does not run under"), r);
@@ -112,7 +131,7 @@ class QueryReadTest {
         SourceConfig config = new SourceConfig("warehouse", "postgresql",
             Map.of("url", "jdbc:postgresql:" + "/" + "/h/db", "username", "reader"), "pw");
         PostgresConnector pg = new PostgresConnector();
-        assertEquals("SELECT * FROM (SELECT 1) AS kilnmark_query LIMIT 5",
+        assertEquals("SELECT * FROM (\nSELECT 1\n) AS kilnmark_query LIMIT 5",
             pg.queryReader(config, "SELECT 1", "query", 5, 100).settings().get("query"));
         assertEquals("SELECT 1", pg.queryReader(config, "SELECT 1", "query", 0, 100).settings().get("query"));
         assertThrows(IllegalStateException.class,
@@ -120,7 +139,7 @@ class QueryReadTest {
     }
 
     @Test
-    void everyColumnAQueryReadsIsMarkedWhenItsSourceHasMarks() {
+    void everyColumnAQueryReadsIsMarked() {
         PipelineCompilerPort.Compilation c = new KilnPipelineCompiler().check("""
             kilnmark: pipeline/v1
             name: by-query
@@ -131,9 +150,8 @@ class QueryReadTest {
                 query: SELECT id, email FROM crm.customers
             """, io.kilnmark.kiln.NodeFactories.discover().register(read), Map.of(), Map.of());
         assertTrue(PipelinePreviews.hasQueryRead(c));
-        assertEquals(Set.of(QualityStore.EVERY_COLUMN),
-            PipelinePreviews.readMarks(c, null, urn -> Set.of(), source -> true).get("q"));
-        assertEquals(Set.of(), PipelinePreviews.readMarks(c, null, urn -> Set.of("email"), source -> false).get("q"));
+        // Whatever the catalogue says: the query may read tables of other schemas or sources.
+        assertEquals(Set.of(QualityStore.EVERY_COLUMN), PipelinePreviews.readMarks(c, null, urn -> Set.of()).get("q"));
         assertTrue(NodePreview.marked(c, Map.of("q", Set.of(QualityStore.EVERY_COLUMN)), "q").all());
     }
 }

@@ -451,13 +451,9 @@ public class Samples {
      * sample whose name is taken is left as it is; one that checks with problems is saved as a
      * draft, as any pipeline is.
      */
-    public AddResult add(AddRequest body, String by) {
-        return add(body, by, null);
-    }
-
     /**
-     * As {@link #add(AddRequest, String)}, for a caller seen through {@code sights}: a sample whose
-     * read runs a query is skipped unless they may see unmasked values (ADR 0028); null skips none.
+     * Adds the samples for a caller seen through {@code sights}: a sample whose read runs a query is
+     * skipped unless they may see unmasked values (ADR 0028), and always when {@code sights} is null.
      */
     public AddResult add(AddRequest body, String by, io.kilnmark.server.quality.Sights sights) {
         Map<String, String> mapping = new LinkedHashMap<>();
@@ -506,7 +502,8 @@ public class Samples {
                     null));
                 continue;
             }
-            String sql = queryProblem(s, mapping);
+            String sql = sights == null && readsWithQuery(s.yaml())
+                ? "it reads with a query: only a designer who may see unmasked values adds it" : queryProblem(s, mapping);
             if (sql != null) {
                 out.add(new Outcome(s.name(), s.file(), "skipped", sql, null));
                 continue;

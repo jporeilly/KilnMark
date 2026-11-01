@@ -72,11 +72,6 @@ public class PipelinePreviews {
         boolean mayUnmask();
 
         Set<String> marks(String urn);
-
-        /** Whether any asset of the source has a column marked sensitive; true unless known otherwise. */
-        default boolean sourceHasMarks(String source) {
-            return true;
-        }
     }
 
     /** The limits, from {@code kilnmark.pipelines.*}. */
@@ -168,11 +163,6 @@ public class PipelinePreviews {
             @Override
             public Set<String> marks(String urn) {
                 return sights.marks(urn);
-            }
-
-            @Override
-            public boolean sourceHasMarks(String source) {
-                return sights.sourceHasMarks(source);
             }
         };
     }
@@ -475,7 +465,7 @@ public class PipelinePreviews {
         if (viewer.mayUnmask()) {
             return new HashMap<>();
         }
-        return readMarks(c, context, viewer::marks, viewer::sourceHasMarks);
+        return readMarks(c, context, viewer::marks);
     }
 
     /** Why a pipeline with a query read is refused to a caller who may not see unmasked values. */
@@ -496,12 +486,11 @@ public class PipelinePreviews {
     /**
      * For each read node, the columns marked sensitive in what it reads (any of the URNs it may be
      * catalogued under), and the first such asset ({@code firstMarked}, when given), as {@code marksOf}
-     * gives them. A read that runs a query may read any column of its source, so when the source has
-     * any column marked sensitive ({@code sourceMarked}) every column it reads is marked.
+     * gives them. A read that runs a query may read anything its login can, in any schema and under
+     * any saved source, so every column it reads is marked, whatever the catalogue says (ADR 0028).
      */
     static Map<String, Set<String>> readMarks(PipelineCompilerPort.Compilation c, RunContext context,
-                                              java.util.function.Function<String, Set<String>> marksOf,
-                                              java.util.function.Predicate<String> sourceMarked) {
+                                              java.util.function.Function<String, Set<String>> marksOf) {
         Map<String, Set<String>> out = new HashMap<>();
         for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
             if (!ReadNodeFactory.TYPE.equals(s.type())) {
@@ -510,10 +499,7 @@ public class PipelinePreviews {
             Map<String, Object> config = c.configs().getOrDefault(s.id(), Map.of());
             Set<String> marks = new LinkedHashSet<>();
             if (ReadNodeFactory.isQuery(config)) {
-                String source = PipelineSources.text(config, "source");
-                if (source == null || sourceMarked.test(source)) {
-                    marks.add(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN);
-                }
+                marks.add(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN);
                 out.put(s.id(), marks);
                 continue;
             }

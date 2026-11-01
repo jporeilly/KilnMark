@@ -43,9 +43,9 @@ import io.kilnmark.server.sources.CommonSettings;
  *
  * <p>Or, in place of an asset, a {@code query} (ADR 0028): one {@code SELECT} a person wrote, run as
  * written on a read-only connection, on a PostgreSQL source with Allow SQL on and a login without
- * superuser-like rights. Its columns are known only when it runs, and when the source has any
- * column marked sensitive every column it reads is treated as marked. The tables it reads, as the
- * database plans the query, are recorded for lineage.
+ * superuser-like rights. Its columns are known only when it runs, and every column it reads is
+ * treated as marked sensitive. The tables it reads, as the database plans the query, are recorded
+ * as the run's reads and the inputs of what it writes.
  */
 public final class ReadNodeFactory implements NodeFactory {
 
@@ -54,6 +54,8 @@ public final class ReadNodeFactory implements NodeFactory {
     /** The longest query, as for custom SQL rules. */
     static final int MAX_QUERY = 10_000;
     private static final ObjectMapper JSON = new ObjectMapper();
+    /** How long the database may take to plan a query, for its lineage, before the read gives up. */
+    static final int PLAN_TIMEOUT_SECONDS = 30;
 
     private final PipelineSources sources;
 
@@ -511,15 +513,22 @@ public final class ReadNodeFactory implements NodeFactory {
                 throw new NodeException("query: " + forQuery(refusal));
             }
             String plan;
-            try (Statement st = c.createStatement();
-                 ResultSet rs = st.executeQuery("EXPLAIN (VERBOSE, FORMAT JSON) " + checked)) {
-                plan = rs.next() ? rs.getString(1) : "[]";
+            try (Statement st = c.createStatement()) {
+                st.setQueryTimeout(PLAN_TIMEOUT_SECONDS);
+                try (ResultSet rs = st.executeQuery("EXPLAIN (VERBOSE, FORMAT JSON) " + checked)) {
+                    plan = rs.next() ? rs.getString(1) : "[]";
+                }
             } finally {
                 c.rollback();
             }
+            List<String> urns = new ArrayList<>();
             for (String table : relations(plan)) {
-                run.read(source, null, PipelineSources.urn(source, table));
+                String urn = PipelineSources.urn(source, table);
+                if (urn != null) {
+                    urns.add(urn);
+                }
             }
+            run.queryRead(source, sql, urns);
         } catch (SQLException e) {
             throw new NodeException("Cannot run the query on " + source + ": " + run.scrub(String.valueOf(
                 e.getMessage())));
