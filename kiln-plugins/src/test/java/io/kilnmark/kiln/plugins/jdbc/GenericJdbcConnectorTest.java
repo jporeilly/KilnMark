@@ -201,12 +201,17 @@ class GenericJdbcConnectorTest {
             "logger", "profilerEventHandler", "authentication", "authenticator", "oracle.net.authentication_services",
             "oracle.net.kerberos5_cc_name", "securityMechanism", "pluginName", "gsslib", "jaasLogin", "sslcert",
             "sslrootcert", "serverSslCert", "clientCertificate")) {
-            assertFalse(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(List.of(n)).isEmpty(), n);
+            // as an allow-list stores them: in lower case, so the name itself is what is refused
+            String lower = n.toLowerCase(java.util.Locale.ROOT);
+            assertTrue(io.kilnmark.kiln.connect.RegisteredDriver.readsServerFiles(lower)
+                || io.kilnmark.kiln.connect.RegisteredDriver.isSecretName(lower), n);
+            assertFalse(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(List.of(lower)).isEmpty(), n);
         }
         // Normal settings stay allowed.
         for (String n : List.of("trustServerCertificate", "hostNameInCertificate", "loginTimeout", "charset", "tmode",
             "sslmode", "applicationName")) {
-            assertTrue(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(List.of(n)).isEmpty(), n);
+            assertTrue(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(
+                List.of(n.toLowerCase(java.util.Locale.ROOT))).isEmpty(), n);
         }
     }
 
@@ -217,6 +222,11 @@ class GenericJdbcConnectorTest {
      */
     @Test
     void aDatabaseOpenedInsideTheServerIsRefused() {
+        // Firebird's type, whatever the driver allows: in the URL, refused even before the allow-list
+        assertTrue(GenericJdbcConnector.insideTheServer("jdbc:firebirdsql://db.example.com:3050/sales?type=EMBEDDED")
+            .contains("Firebird type setting"));
+        assertTrue(GenericJdbcConnector.insideTheServer("jdbc:firebirdsql://db.example.com:3050/sales;type=NATIVE")
+            .contains("Firebird type setting"));
         String[][] refused = {
             {"jdbc:h2:mem:sales", "H2 URL other than tcp"},
             {"jdbc:h2:file:/srv/kilnmark/data", "H2 URL other than tcp"},
@@ -240,7 +250,6 @@ class GenericJdbcConnectorTest {
             {"jdbc:firebirdsql:native:db.example.com/3050:/srv/sales.fdb", "local or native Firebird"},
             {"jdbc:oracle:oci:@//db.example.com:1521/sales", "other than jdbc:oracle:thin:"},
             {"jdbc:oracle:oci7:@//db.example.com:1521/sales", "other than jdbc:oracle:thin:"},
-            {"jdbc:firebirdsql://db.example.com:3050/sales?type=EMBEDDED", "Firebird type setting"},
             {"jdbc:redshift:iam://cluster.example.com:5439/dev", "Redshift IAM URL"},
             {"jdbc:firebird:native:/srv/sales.fdb", "local or native Firebird"},
             {"jdbc:ucanaccess:///srv/sales.accdb", "UCanAccess"},
