@@ -3,6 +3,7 @@ package io.kilnmark.server.api;
 import static io.kilnmark.server.Tokens.admin;
 import static io.kilnmark.server.Tokens.designer;
 import static org.hamcrest.Matchers.containsString;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -11,6 +12,7 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.AfterEach;
@@ -19,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import io.agroal.api.AgroalDataSource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
+import io.restassured.path.json.JsonPath;
 import jakarta.inject.Inject;
 
 /**
@@ -127,11 +130,57 @@ class SourceOverlapTest {
             .post("/api/v1/sources").then().statusCode(201);
     }
 
+    private static JsonPath importJson(String body, String query, int status) {
+        return admin().contentType(ContentType.JSON).body(body).post("/api/v1/sources/import" + query)
+            .then().statusCode(status).extract().jsonPath();
+    }
+
+    private static String filesRow(String name, Path path) {
+        return "{\"name\": \"" + name + "\", \"kind\": \"files\", \"path\": \""
+            + path.toString().replace("\\", "\\\\") + "\"}";
+    }
+
+    @Test
+    void twoRowsOfOneImportOverTheSameFilesAreRefused() throws Exception {
+        Path root = folder("overlap-rows");
+        Path inside = Files.createDirectories(root.resolve("sub"));
+        // One folder inside the other, and the very same folder: the later row fails, in a dry run too.
+        for (Path second : List.of(inside, root)) {
+            String file = "[" + filesRow("overlap-row-one", root) + ", " + filesRow("overlap-row-two", second) + "]";
+            JsonPath dry = importJson(file, "?dryRun=true", 200);
+            assertEquals(List.of("created", "failed"), dry.getList("rows.status"));
+            assertTrue(dry.getString("rows[1].error").contains("read the same files"), dry.getString("rows[1].error"));
+            JsonPath real = importJson(file, "", 422);
+            assertFalse(real.getBoolean("applied"));
+            assertTrue(real.getString("rows[1].error").contains("read the same files"), real.getString("rows[1].error"));
+            admin().get("/api/v1/sources/overlap-row-one").then().statusCode(404);
+        }
+    }
+
+    @Test
+    void anUpdateRowMovingASourceOntoAnotherRowsFolderIsRefused() throws Exception {
+        Path root = folder("overlap-move");
+        Path apart = folder("overlap-move-apart");
+        admin().contentType(ContentType.JSON)
+            .body(Map.of("name", "overlap-row-moved", "kind", "files", "settings", Map.of("path", apart.toString())))
+            .post("/api/v1/sources").then().statusCode(201);
+        String file = "[" + filesRow("overlap-row-new", root) + ", "
+            + filesRow("overlap-row-moved", Files.createDirectories(root.resolve("sub"))) + "]";
+        JsonPath r = importJson(file, "?dryRun=true", 200);
+        assertEquals(List.of("created", "failed"), r.getList("rows.status"));
+        assertTrue(r.getString("rows[1].error").contains("read the same files"), r.getString("rows[1].error"));
+        importJson(file, "", 422);
+        admin().get("/api/v1/sources/overlap-row-new").then().statusCode(404);
+        admin().get("/api/v1/sources/overlap-row-moved").then().statusCode(200)
+            .body("settings.path", org.hamcrest.Matchers.equalTo(apart.toString()));
+    }
+
     @AfterEach
     void drop() throws Exception {
         try (Connection c = db.getConnection(); Statement s = c.createStatement()) {
             s.execute("DELETE FROM kilnmark.data_source WHERE name IN ('" + MARKED + "', 'overlap-copy', "
-                + "'overlap-apart', 'overlap-first', 'overlap-second')");
+                + "'overlap-apart', 'overlap-first', 'overlap-second', 'overlap-row-one', 'overlap-row-two', "
+                + "'overlap-row-new', 'overlap-row-moved')");
         }
     }
 }
