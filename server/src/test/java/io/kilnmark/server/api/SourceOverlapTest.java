@@ -85,7 +85,8 @@ class SourceOverlapTest {
         assertFalse(SourceService.sameFiles("s3", Map.of("bucket", arn), Map.of("prefix", "raw/")));
         // Object Lambda, Outposts and directory-bucket (S3 Express) aliases are access points too.
         for (String other : List.of("payroll-ol-abc123def456ghi789jkl0mnopq--ol-s3",
-            "payroll-op-0123456789abcdef0abc123def456ghi789jkl0mn--op-s3", "pay--usw2-az1--xa--s3")) {
+            "payroll-op-0123456789abcdef0abc123def456ghi789jkl0mn--op-s3", "pay--usw2-az1--xa-s3",
+            "pay--usw2-az1--xa--s3")) {
             assertTrue(SourceService.accessPoint(other), other);
             assertTrue(SourceService.sameFiles("s3", Map.of("bucket", other, "prefix", "a/"),
                 Map.of("bucket", "hr", "prefix", "b/")), other);

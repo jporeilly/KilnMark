@@ -196,8 +196,17 @@ class GenericJdbcConnectorTest {
         for (String n : List.of("javax.net.ssl.truststore", "oracle.net.tns_admin", "tracedirectory", "tracefile",
             "sslfactory", "socketfactoryclass", "keystorelocation", "queryInterceptors", "autoDeserialize",
             "allowLoadLocalInfile", "allowUrlInLocalInfile", "sslhostnameverifier", "sslpasswordcallback",
-            "integratedSecurity", "authenticationScheme", "oracle.net.wallet_location", "gssEncProvider")) {
+            "integratedSecurity", "authenticationScheme", "oracle.net.wallet_location", "gssEncProvider",
+            "propertiesTransform", "authenticationPlugins", "defaultAuthenticationPlugin", "loadBalanceExceptionChecker",
+            "logger", "profilerEventHandler", "authentication", "authenticator", "oracle.net.authentication_services",
+            "oracle.net.kerberos5_cc_name", "securityMechanism", "pluginName", "gsslib", "jaasLogin", "sslcert",
+            "sslrootcert", "serverSslCert", "clientCertificate")) {
             assertFalse(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(List.of(n)).isEmpty(), n);
+        }
+        // Normal settings stay allowed.
+        for (String n : List.of("trustServerCertificate", "hostNameInCertificate", "loginTimeout", "charset", "tmode",
+            "sslmode", "applicationName")) {
+            assertTrue(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(List.of(n)).isEmpty(), n);
         }
     }
 
@@ -229,7 +238,10 @@ class GenericJdbcConnectorTest {
             {"jdbc:firebirdsql:embedded:/srv/sales.fdb", "embedded Firebird"},
             {"jdbc:firebirdsql:local:/srv/sales.fdb", "local or native Firebird"},
             {"jdbc:firebirdsql:native:db.example.com/3050:/srv/sales.fdb", "local or native Firebird"},
-            {"jdbc:oracle:oci:@//db.example.com:1521/sales", "Oracle OCI"},
+            {"jdbc:oracle:oci:@//db.example.com:1521/sales", "other than jdbc:oracle:thin:"},
+            {"jdbc:oracle:oci7:@//db.example.com:1521/sales", "other than jdbc:oracle:thin:"},
+            {"jdbc:firebirdsql://db.example.com:3050/sales?type=EMBEDDED", "Firebird type setting"},
+            {"jdbc:redshift:iam://cluster.example.com:5439/dev", "Redshift IAM URL"},
             {"jdbc:firebird:native:/srv/sales.fdb", "local or native Firebird"},
             {"jdbc:ucanaccess:///srv/sales.accdb", "UCanAccess"},
             {"jdbc:ucanaccess://C:/srv/sales.accdb", "UCanAccess"},

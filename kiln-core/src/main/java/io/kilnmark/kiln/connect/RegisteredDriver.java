@@ -114,9 +114,10 @@ public record RegisteredDriver(String name, String fileName, String sha256, Stri
     /**
      * Whether a property's name says it reads or writes the server's files, loads code or acts as the
      * server (ends in file, path, dir, directory, factory, class or classname; a trust or key store;
-     * javax.net; an interceptor, verifier, callback, provider or strategy; a location; MySQL's
-     * deserialising and local-file loading; the server's own Windows or Kerberos sign-in), so no
-     * allow-list may hold it.
+     * javax.net; an interceptor, verifier, callback, provider, strategy, transform, plugin, checker,
+     * handler or logger; a location; a client certificate; MySQL's deserialising and local-file
+     * loading; any authentication setting, which can sign in as the server through Windows, Kerberos,
+     * JAAS, GSS or a cloud identity), so no allow-list may hold it.
      */
     public static boolean readsServerFiles(String name) {
         String n = name.toLowerCase(java.util.Locale.ROOT);
@@ -125,7 +126,11 @@ public record RegisteredDriver(String name, String fileName, String sha256, Stri
             || n.contains("keystore") || n.startsWith("javax.") || n.endsWith("tns_admin")
             || n.contains("interceptor") || n.contains("verifier") || n.contains("callback") || n.contains("provider")
             || n.contains("strategy") || n.contains("location") || n.contains("autodeserialize")
-            || n.contains("localinfile") || n.contains("integratedsecurity") || n.contains("authenticationscheme");
+            || n.contains("localinfile") || n.contains("integratedsecurity") || n.contains("transform")
+            || n.contains("plugin") || n.contains("checker") || n.contains("handler") || n.contains("logger")
+            || n.contains("authentication") || n.contains("authenticator") || n.contains("kerberos")
+            || n.contains("jaas") || n.contains("gss") || n.contains("securitymechanism") || n.endsWith("cert")
+            || n.contains("clientcertificate");
     }
 
     /** Whether sources may set the property {@code name} (ignoring case) with this driver. */

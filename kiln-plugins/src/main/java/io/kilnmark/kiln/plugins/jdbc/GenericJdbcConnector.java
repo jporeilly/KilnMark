@@ -262,6 +262,10 @@ public class GenericJdbcConnector extends JdbcConnector {
                 && extra.stringPropertyNames().stream().anyMatch(k -> k.equalsIgnoreCase("init"))) {
                 return "properties: " + H2_INIT;
             }
+            if (url != null && firebird(url.toLowerCase(Locale.ROOT))
+                && extra.stringPropertyNames().stream().anyMatch(k -> k.equalsIgnoreCase("type"))) {
+                return "properties: " + FIREBIRD_TYPE;
+            }
             for (String key : extra.stringPropertyNames()) {
                 String why = refusedName(r, key, "properties", "as a property");
                 if (why != null) {
@@ -279,6 +283,14 @@ public class GenericJdbcConnector extends JdbcConnector {
 
     /** Drill's {@code zk=local}, which runs a Drillbit in the process, and not {@code zk=localhost}. */
     private static final Pattern DRILL_LOCAL = Pattern.compile("zk=local(?![a-z0-9._-])");
+
+    /** Firebird's {@code type}, in the URL or as a property: EMBEDDED and NATIVE load its library into the server. */
+    private static final String FIREBIRD_TYPE = "a Firebird type setting can open the database embedded or load "
+        + "Firebird's native library inside the server; leave it out to use the network protocol." + INSIDE;
+
+    private static boolean firebird(String lowerUrl) {
+        return lowerUrl.contains(":firebirdsql:") || lowerUrl.contains(":firebird:");
+    }
 
     /** H2's {@code INIT}, in the URL or as a property. */
     private static final String H2_INIT = "H2's INIT setting runs SQL, which can read the server's files, as each "
@@ -312,9 +324,17 @@ public class GenericJdbcConnector extends JdbcConnector {
             || u.contains(":firebirdsql:native:") || u.contains(":firebird:native:")) {
             return "a local or native Firebird URL loads Firebird's own library into the server." + INSIDE;
         }
-        if (u.contains(":oracle:oci:") || u.contains(":oracle:oci8:")) {
-            return "an Oracle OCI URL loads Oracle's native client library into the server; use jdbc:oracle:thin:."
-                + INSIDE;
+        int oracle = u.indexOf(":oracle:");
+        if (oracle >= 0 && !u.startsWith("thin:", oracle + 8)) {
+            return "an Oracle URL other than jdbc:oracle:thin: loads Oracle's native client library or runs inside "
+                + "a database; use jdbc:oracle:thin:." + INSIDE;
+        }
+        if (firebird(u) && (u.contains("?type=") || u.contains("&type=") || u.contains(";type="))) {
+            return FIREBIRD_TYPE;
+        }
+        if (u.contains(":redshift:iam:")) {
+            return "a Redshift IAM URL signs in with the Kilnmark server's own AWS identity; give the source a "
+                + "database user and password instead." + INSIDE;
         }
         if (u.contains(":ucanaccess:")) {
             return "UCanAccess opens Access database files on the server." + INSIDE;

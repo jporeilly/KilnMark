@@ -151,8 +151,10 @@ Kilnmark could vouch for.
   every property must be one the admin allowed at registration. No allow-list may hold a property
   that loads code, reads the server's files or signs in as the server (`RegisteredDriver.readsServerFiles`:
   files, paths, folders, factories, classes, key and trust stores, interceptors, verifiers, callbacks,
-  providers, strategies, locations, MySQL's `autoDeserialize` and local-file loading,
-  `integratedSecurity`, `authenticationScheme`). A URL with an `=` that belongs to no
+  providers, strategies, transforms, plugins, checkers, handlers, loggers, locations, client
+  certificates, MySQL's `autoDeserialize` and local-file loading, `integratedSecurity`, and any
+  authentication, Kerberos, JAAS, GSS or security-mechanism setting). A stored registration whose
+  list holds one is not used, and the server log says so. A URL with an `=` that belongs to no
   readable setting, or with quotes, braces, back-slashes, spaces or percent-encoding, is refused.
   Secrets and the user name are refused whatever the list, as settings are stored and shown as plain
   text, and messages never quote the URL. Only admins may set up a generic JDBC source, change its
@@ -160,8 +162,8 @@ Kilnmark could vouch for.
   preview saved ones.
 - *A database inside the server.* A driver that opens its database in the server's own process
   (SQLite, DuckDB, H2 or HSQLDB files and memory, embedded Derby, Access files through UCanAccess,
-  CSV files, Calcite, embedded, local or native Firebird, Oracle OCI, Drill with `zk=local`, Ignite
-  started from `cfg:`, embedded Hive) lets the source's SQL read or write the server's files, or run code there,
+  CSV files, Calcite, embedded, local or native Firebird or a Firebird `type`, Oracle other than
+  `thin`, Drill with `zk=local`, Ignite started from `cfg:`, embedded Hive) lets the source's SQL read or write the server's files, or run code there,
   with no login of anyone's own (ADR 0027). Such URLs are refused for admins too, whatever the
   property allow-list: H2 only as `tcp://` or `ssl://` and never with `INIT`, in the URL or as a
   driver property in any case; HSQLDB only as `hsql://`, `hsqls://`, `http://` or `https://`; Derby
