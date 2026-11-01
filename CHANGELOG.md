@@ -60,7 +60,8 @@ details.
   `${...}` is refused for now. Only designers whose token sees unmasked values save or preview a
   pipeline with one (403 otherwise, admins included); anyone who runs pipelines runs it. Every
   column a query returns is marked (`*`), and a run with one keeps its engine messages for
-  designers with the grant. Each run records the tables it reads, from the database's plan
+  designers with the grant; the writes it feeds are marked before any row moves. A version saved
+  before this (V27, `queries_checked`) that has a query read does not run until saved again. Each run records the tables it reads, from the database's plan
   (`EXPLAIN`), as reads and as the inputs of what it writes. The canvas edits
   the query in a box over several lines. Adding the samples skips `sample-read-query` unless
   `crm-db` is a PostgreSQL source with Allow SQL on, or for a caller who may not see unmasked values.

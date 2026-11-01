@@ -383,7 +383,9 @@ The guide's "Reading" is the user's view.
   0027), as custom SQL rules do: the SQL can read any column the login can. Admins and designers
   without the grant are refused (403), including when saving a new version of a pipeline that
   already has one. Running a saved pipeline needs only the role that runs pipelines, as for any
-  read; what it reads is masked for them as below.
+  read; what it reads is masked for them as below. Each version records that it was saved through
+  this check (`queries_checked`, V27); a version saved before the check existed that has a query read
+  does not run (409) until it is saved again.
 - **No parameters yet.** `${...}` in a query is refused: the setting is never filled
   (`SettingSpec.Parameters.NONE`). Bound values, `?` with each value bound so a value can never
   name a table or column, come as a later step.
@@ -406,8 +408,10 @@ The guide's "Reading" is the user's view.
   a write writes from it. A query can read anything its login can, in any schema and under any
   saved source on the same database, so neither the source's marks nor the plan's tables are
   enough to clear it. Kilnmark cannot follow a column through SQL, so it does not try. For the same
-  reason a run with a query read is recorded as such (`kilnmark:query-read` with its assets), and its
-  engine messages are withheld from everyone but designers with the grant, as for marked data.
+  reason a run with a query read is recorded as such (`kilnmark:query-read` with its assets, before
+  any node is set up), and its engine messages are withheld from everyone but designers with the
+  grant, as for marked data. The writes it feeds are marked `*` before any row moves, so what they
+  wrote stays masked even if the run never reaches its end.
 - **Row limit.** The query is wrapped, on lines of its own so a closing `--` comment cannot end the
   wrapping: `SELECT * FROM (\n<query>\n) AS kilnmark_query LIMIT n`, so the database stops at `n`
   rows.

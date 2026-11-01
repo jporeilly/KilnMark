@@ -20,6 +20,12 @@ import io.restassured.http.ContentType;
 @QuarkusTest
 class QueryReadApiTest {
 
+    @jakarta.inject.Inject
+    PipelineStore store;
+
+    @jakarta.inject.Inject
+    io.agroal.api.AgroalDataSource db;
+
     private static final String YAML = """
         kilnmark: pipeline/v1
         name: %s
@@ -44,6 +50,16 @@ class QueryReadApiTest {
         // A designer who sees unmasked values saves it (a draft here: the source does not exist).
         as(unmask).contentType(ContentType.JSON).body(Map.of("name", "query-unmask", "yaml",
             YAML.formatted("query-unmask"))).post("/api/v1/pipelines").then().statusCode(201);
+        // Saved through the check, so it may run once its source is there; a version saved before the
+        // check existed (V27) may not.
+        org.junit.jupiter.api.Assertions.assertTrue(store.queriesChecked("query-unmask", 1));
+        try (java.sql.Connection c = db.getConnection(); java.sql.Statement st = c.createStatement()) {
+            st.executeUpdate("UPDATE kilnmark.pipeline_version SET queries_checked = false WHERE pipeline = 'query-unmask'");
+        } catch (java.sql.SQLException e) {
+            throw new AssertionError(e);
+        }
+        org.junit.jupiter.api.Assertions.assertFalse(store.queriesChecked("query-unmask", 1));
+        org.junit.jupiter.api.Assertions.assertFalse(store.queriesChecked("query-unmask", 9));
         // Nobody else saves a new version of it while it has the query.
         as(plain).contentType(ContentType.JSON).body(Map.of("yaml", YAML.formatted("query-unmask"), "message", "x"))
             .put("/api/v1/pipelines/query-unmask").then().statusCode(403);
