@@ -1,13 +1,21 @@
 package io.kilnmark.server.pipelines;
 
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
 import org.apache.arrow.vector.types.pojo.Schema;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.SettingSpec;
@@ -22,17 +30,30 @@ import io.kilnmark.kiln.connect.ConnectorException;
 import io.kilnmark.kiln.nodes.ReadShaping;
 import io.kilnmark.kiln.nodes.expr.ExprException;
 import io.kilnmark.kiln.nodes.expr.PushDown;
+import io.kilnmark.kiln.plugins.jdbc.JdbcConnector;
+import io.kilnmark.server.quality.RuleRunner;
+import io.kilnmark.server.quality.SqlTokens;
+import io.kilnmark.server.sources.CommonSettings;
 
 /**
  * The {@code read} node: a table, view or file of a saved source, read with its connector's
  * reader (docs/design/pipelines.md section 4). The server registers it, since it needs the saved
  * sources and their secrets; the YAML only names the source. Its columns, for validation and the
  * canvas, are the asset's as last catalogued.
+ *
+ * <p>Or, in place of an asset, a {@code query} (ADR 0028): one {@code SELECT} a person wrote, run as
+ * written on a read-only connection, on a PostgreSQL source with Allow SQL on and a login without
+ * superuser-like rights. Its columns are known only when it runs, and when the source has any
+ * column marked sensitive every column it reads is treated as marked. The tables it reads, as the
+ * database plans the query, are recorded for lineage.
  */
 public final class ReadNodeFactory implements NodeFactory {
 
     public static final String TYPE = "read";
     static final int BATCH_ROWS = 8192;
+    /** The longest query, as for custom SQL rules. */
+    static final int MAX_QUERY = 10_000;
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final PipelineSources sources;
 
@@ -75,8 +96,11 @@ public final class ReadNodeFactory implements NodeFactory {
     public List<SettingSpec> settings() {
         return List.of(
             SettingSpec.required("source", "Source", SettingSpec.Kind.SOURCE, "The saved source to read from"),
-            SettingSpec.required("asset", "Table or file", SettingSpec.Kind.ASSET,
-                "A table or view as schema.table, or a file's path inside the source"),
+            SettingSpec.optional("asset", "Table or file", SettingSpec.Kind.ASSET, null,
+                "A table or view as schema.table, or a file's path inside the source. Leave out to run a query"),
+            SettingSpec.optional("query", "Query", SettingSpec.Kind.TEXT, null,
+                "One SELECT run as written, in place of a table (PostgreSQL sources with Allow SQL on). Its columns "
+                    + "are known when it runs").withParameters(SettingSpec.Parameters.NONE),
             SettingSpec.optional("columns", "Columns", SettingSpec.Kind.COLUMNS, null,
                 "Only these columns, in this order; all of them when left out. A database reads only these"),
             SettingSpec.optional("where", "Where", SettingSpec.Kind.EXPRESSION, null,
@@ -90,8 +114,10 @@ public final class ReadNodeFactory implements NodeFactory {
     public List<String> check(Map<String, Object> config) {
         List<String> problems = new ArrayList<>();
         String name = PipelineSources.text(config, "source");
+        String query = query(config);
+        Optional<Records.Source> s = Optional.empty();
         if (name != null) {
-            Optional<Records.Source> s = sources.source(name);
+            s = sources.source(name);
             if (s.isEmpty()) {
                 problems.add("source: there is no saved source called '" + name + "'");
             } else {
@@ -100,16 +126,122 @@ public final class ReadNodeFactory implements NodeFactory {
                     problems.add("source: this server has no connector for sources of kind '" + s.get().kind() + "'");
                 } else if (!c.get().capabilities().contains(Connector.Capability.READ)) {
                     problems.add("source: " + c.get().displayName() + " sources cannot be read in pipelines yet");
+                } else if (query != null) {
+                    String p = queryProblem(s.get(), c.get());
+                    if (p != null) {
+                        problems.add(p);
+                    }
                 }
             }
         }
-        if (config.get("asset") != null && PipelineSources.text(config, "asset") == null) {
+        if (config.get("query") != null && query == null) {
+            problems.add("query: one SELECT, or leave query out to read a table or file");
+        }
+        if (query != null) {
+            if (config.get("asset") != null) {
+                problems.add("query: a read takes a table or file, or a query, not both");
+            }
+            if (config.get("columns") != null || config.get("where") != null) {
+                problems.add("query: columns and where do not apply to a query; choose the columns and rows in the "
+                    + "query itself");
+            }
+            try {
+                checkQuery(query);
+            } catch (IllegalArgumentException e) {
+                problems.add(e.getMessage());
+            }
+        } else if (config.get("query") == null && config.get("asset") == null) {
+            problems.add("asset: one table or file to read, such as crm.customers or exports/orders.csv, or a query");
+        } else if (config.get("asset") != null && PipelineSources.text(config, "asset") == null) {
             problems.add("asset: one table or file, such as crm.customers or exports/orders.csv");
         }
         if (rowLimit(config) < 0) {
             problems.add("row_limit: a whole number of rows, 0 or more (0 reads every row)");
         }
         return problems;
+    }
+
+    /** The query set, stripped, or null when none (or only blanks). */
+    public static String query(Map<String, Object> config) {
+        String q = PipelineSources.text(config, "query");
+        return q == null || q.isBlank() ? null : q.strip();
+    }
+
+    /** Whether this read runs a query rather than reading a table or file. */
+    public static boolean isQuery(Map<String, Object> config) {
+        return config.get("query") != null;
+    }
+
+    /** Why a query may not run on this source, or null: PostgreSQL only, with Allow SQL on. */
+    static String queryProblem(Records.Source source, Connector connector) {
+        if (!"postgresql".equals(source.kind()) || !(connector instanceof JdbcConnector)) {
+            return "query: a query reads only from PostgreSQL sources for now";
+        }
+        if (!CommonSettings.allowsSql(source.settings())) {
+            return "query: " + source.name() + " does not allow SQL. A designer or admin turns on Allow SQL on the "
+                + "source, after checking its login only reads what pipelines may read";
+        }
+        return null;
+    }
+
+    /**
+     * The query checked as custom SQL rules are (one {@code SELECT} or {@code WITH}, nothing that acts
+     * outside the query) and returned without trailing semicolons; throws with a reason starting
+     * {@code query:}. Parameters are not filled in a query yet, so {@code ${...}} is refused.
+     */
+    static String checkQuery(String sql) {
+        if (sql != null && sql.contains("${")) {
+            throw new IllegalArgumentException("query: parameters such as ${name} are not filled in a query yet; "
+                + "write the value in the query");
+        }
+        try {
+            return SqlTokens.checkCustomSql(sql, MAX_QUERY);
+        } catch (IllegalArgumentException e) {
+            String m = String.valueOf(e.getMessage());
+            m = m.startsWith("params.sql: ") ? m.substring("params.sql: ".length()) : m;
+            throw new IllegalArgumentException("query: " + m.replace("a SELECT listing the failing rows", "one SELECT")
+                .replace("custom rules only read", "a query only reads"));
+        }
+    }
+
+    /** A refusal of the login, worded for a query rather than a custom SQL rule. */
+    static String forQuery(String refusal) {
+        return refusal.replace("Custom SQL does not run", "The query does not run")
+            .replace("custom SQL rules", "queries").replace("custom SQL", "queries");
+    }
+
+    /**
+     * The tables and views a query reads, as {@code schema.name}, from PostgreSQL's
+     * {@code EXPLAIN (VERBOSE, FORMAT JSON)} plan: every plan node naming a relation. Views appear as
+     * the tables they read, since the plan has them expanded.
+     */
+    static Set<String> relations(String explainJson) {
+        Set<String> out = new LinkedHashSet<>();
+        if (explainJson == null) {
+            return out;
+        }
+        try {
+            collect(JSON.readTree(explainJson), out);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            // no lineage rather than a failed read
+        }
+        return out;
+    }
+
+    private static void collect(JsonNode n, Set<String> out) {
+        if (n == null) {
+            return;
+        }
+        if (n.isObject()) {
+            JsonNode name = n.get("Relation Name");
+            JsonNode schema = n.get("Schema");
+            if (name != null && name.isTextual() && schema != null && schema.isTextual()) {
+                out.add(schema.asText() + "." + name.asText());
+            }
+            n.elements().forEachRemaining(c -> collect(c, out));
+        } else if (n.isArray()) {
+            n.elements().forEachRemaining(c -> collect(c, out));
+        }
     }
 
     /** The row limit set, 0 when none, or -1 when it is not a whole number of 0 or more. */
@@ -143,8 +275,8 @@ public final class ReadNodeFactory implements NodeFactory {
         throws NodeException {
         String source = PipelineSources.text(config, "source");
         String asset = PipelineSources.text(config, "asset");
-        if (source == null || asset == null) {
-            return null;
+        if (source == null || asset == null || isQuery(config)) {
+            return null; // a query's columns are known when it runs
         }
         // The asset as written, or as the catalogue writes a file's path (# and % escaped), so a path
         // picked from the catalogue and one typed as on disk both find its columns.
@@ -189,7 +321,7 @@ public final class ReadNodeFactory implements NodeFactory {
         String where = where(config);
         String source = PipelineSources.text(config, "source");
         String asset = PipelineSources.text(config, "asset");
-        if (where == null || source == null || asset == null) {
+        if (where == null || source == null || asset == null || isQuery(config)) {
             return List.of();
         }
         List<Records.FieldDetail> fields = assetFields(source, asset);
@@ -294,6 +426,9 @@ public final class ReadNodeFactory implements NodeFactory {
         RunContext run = RunContext.current().orElseThrow(() -> new NodeException(
             "A read node is set up only when its pipeline runs"));
         String source = PipelineSources.text(config, "source");
+        if (isQuery(config)) {
+            return createQuery(run, config, source);
+        }
         String path = PipelineSources.text(config, "asset");
         if (source == null || path == null) {
             throw new NodeException("A read node needs a source and an asset");
@@ -344,5 +479,58 @@ public final class ReadNodeFactory implements NodeFactory {
         }
         Node reader = new WithSettings(spec.node(), spec.settings());
         return columns.isEmpty() && where == null ? reader : new ShapedRead(reader, new ReadShaping(where, columns, limit));
+    }
+
+    /**
+     * A read that runs a query: checked again as it is set up (the source may have changed since the
+     * pipeline was saved), the login checked as for custom SQL rules, and the tables the database plans
+     * to read recorded for lineage, before any row is read.
+     */
+    private Node createQuery(RunContext run, Map<String, Object> config, String source) throws NodeException {
+        String sql = query(config);
+        if (source == null || sql == null) {
+            throw new NodeException("A read node with a query needs a source and one SELECT");
+        }
+        String checked;
+        try {
+            checked = checkQuery(sql);
+        } catch (IllegalArgumentException e) {
+            throw new NodeException(e.getMessage());
+        }
+        PipelineSources.Resolved r = sources.resolve("read query", source, run);
+        String problem = queryProblem(r.source(), r.connector());
+        if (problem != null) {
+            throw new NodeException(problem);
+        }
+        JdbcConnector jdbc = (JdbcConnector) r.connector();
+        try (Connection c = jdbc.connect(r.config())) {
+            c.setAutoCommit(false);
+            c.setReadOnly(true);
+            String refusal = RuleRunner.privileged(c);
+            if (refusal != null) {
+                throw new NodeException("query: " + forQuery(refusal));
+            }
+            String plan;
+            try (Statement st = c.createStatement();
+                 ResultSet rs = st.executeQuery("EXPLAIN (VERBOSE, FORMAT JSON) " + checked)) {
+                plan = rs.next() ? rs.getString(1) : "[]";
+            } finally {
+                c.rollback();
+            }
+            for (String table : relations(plan)) {
+                run.read(source, null, PipelineSources.urn(source, table));
+            }
+        } catch (SQLException e) {
+            throw new NodeException("Cannot run the query on " + source + ": " + run.scrub(String.valueOf(
+                e.getMessage())));
+        }
+        NodeSpec spec;
+        try {
+            spec = jdbc.queryReader(r.config(), checked, "query", Math.max(0, rowLimit(config)), BATCH_ROWS);
+        } catch (RuntimeException e) {
+            throw new NodeException("Cannot run the query on " + source + ": " + run.scrub(String.valueOf(
+                e.getMessage())));
+        }
+        return new WithSettings(spec.node(), spec.settings());
     }
 }

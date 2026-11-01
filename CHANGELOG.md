@@ -14,6 +14,8 @@ details.
 - **Allow SQL.** A PostgreSQL source can let SQL a person writes run on it, with the new **Allow SQL**
   setting (`allow_sql`), off by default. Custom SQL quality rules run only on such sources, written
   by designers whose token sees unmasked values (ADR 0028).
+- **Read with a query.** A read node can run one `SELECT` in place of a table, on a PostgreSQL
+  source with Allow SQL on (ADR 0028). The new sample `sample-read-query` shows one.
 
 ### Details
 
@@ -52,6 +54,15 @@ details.
   accepted and run only where it is on. **`kilnmark.quality.custom-sql` is retired**: it does
   nothing, and a server that sets it to true logs a warning. Turn on Allow SQL for each source whose
   custom rules should keep running, with a login that can read only what the SQL needs.
+- **A read's `query`** (ADR 0028), in place of `asset`, never with `columns` or `where`. Checked as
+  custom SQL rules are, when the pipeline is checked and again as it runs, on a read-only connection
+  and a login without superuser-like rights; `row_limit` wraps it so the database stops early.
+  `${...}` is refused for now. Only designers whose token sees unmasked values save or preview a
+  pipeline with one (403 otherwise, admins included); anyone who runs pipelines runs it. When the
+  source has a column marked sensitive, every column the query returns is marked (`*`). Each run
+  records the tables it reads, from the database's plan (`EXPLAIN`), for lineage. The canvas edits
+  the query in a box over several lines. Adding the samples skips `sample-read-query` unless
+  `crm-db` is a PostgreSQL source with Allow SQL on, or for a caller who may not see unmasked values.
 
 ## 0.0.9 (31 October 2026)
 

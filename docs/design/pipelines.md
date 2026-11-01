@@ -374,6 +374,39 @@ The guide's "Reading" is the user's view.
 - **Notes.** `NodeFactory.notes` lets a node add notes to a check; the read node says whether the
   database applies `where`, applies part of it (and what it leaves), or not at all.
 
+### The read node's query (decisions, ADR 0028)
+
+- **Settings.** A read gives `asset` or `query`, never both. `query` is one `SELECT` or `WITH`
+  statement; `columns` and `where` do not go with it (the SQL says them), `row_limit` does. Only on
+  a source of kind `postgresql` with `allow_sql` on.
+- **Who.** Saving a pipeline with a query read, and previewing one, need the unmask grant (ADR
+  0027), as custom SQL rules do: the SQL can read any column the login can. Admins and designers
+  without the grant are refused (403), including when saving a new version of a pipeline that
+  already has one. Running a saved pipeline needs only the role that runs pipelines, as for any
+  read; what it reads is masked for them as below.
+- **No parameters yet.** `${...}` in a query is refused: the setting is never filled
+  (`SettingSpec.Parameters.NONE`). Bound values, `?` with each value bound so a value can never
+  name a table or column, come as a later step.
+- **Checked as custom rules are** (`SqlTokens.checkCustomSql`): one statement, no `;`, nothing that
+  writes, no function that reaches out of the query (files, other sessions or databases, large
+  objects, advisory locks, settings). Checked when the pipeline is checked and again when the run
+  sets the node up. Before any row is read the login is checked as for custom SQL rules
+  (`RuleRunner.privileged`): not a superuser, no file or program roles, no user mappings or foreign
+  tables. The query runs on a read-only connection.
+- **Columns are known when it runs.** Until then the node's output schema is unknown, as for an
+  asset not scanned yet, so later nodes' column checks happen at run time. The run takes the
+  columns from the result set.
+- **Lineage from the database.** As the run sets the node up, `EXPLAIN (VERBOSE, FORMAT JSON)` names
+  every table the query reads (a view as the tables it reads), without running it. Each is
+  recorded as read, under its URN, as a read of that asset would be. Column lineage is not
+  attempted.
+- **Marks: every column, or none.** When the source has any column marked sensitive, every column
+  the query returns is marked (`*`): masked downstream for everyone but designers with the grant,
+  and carried to what a write writes from it. Kilnmark cannot follow a column through SQL, so it
+  does not try; a source without marks marks nothing.
+- **Row limit.** The query is wrapped: `SELECT * FROM (<query>) AS kilnmark_query LIMIT n`, so the
+  database stops at `n` rows.
+
 ## 3. Expressions
 
 `filter`, `compute`, `aggregate`, `route` and later the gate use one small expression language,

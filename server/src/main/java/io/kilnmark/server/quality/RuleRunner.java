@@ -152,7 +152,7 @@ public final class RuleRunner {
         + "login without those rights.";
 
     /** Why custom SQL may not run on {@code c}'s login and database, or null; {@code c} is not in auto-commit. */
-    static String privileged(Connection c) throws SQLException {
+    public static String privileged(Connection c) throws SQLException {
         try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery(PRIVILEGED_LOGIN)) {
             return refusal(rs.next() ? rs.getString(1) : "roles");
         } finally {

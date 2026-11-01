@@ -395,6 +395,21 @@ public class PipelineService {
             problems(v.problems()));
     }
 
+    /**
+     * Refuses YAML with a read that runs a query unless the caller may see unmasked values: a query
+     * can read any column of its source, so only a designer holding the unmask grant writes one
+     * (ADR 0028). Runs are not refused: what a query reads is masked as marked for everyone else.
+     */
+    public void allowQueries(String yaml, Sights sights) {
+        if (yaml == null || sights == null || sights.mayUnmask()) {
+            return;
+        }
+        checkSize(yaml);
+        if (PipelinePreviews.hasQueryRead(compiler.check(yaml, nodes, Map.of(), variables()))) {
+            throw fail(Response.Status.FORBIDDEN, PipelinePreviews.QUERY_NEEDS_UNMASK);
+        }
+    }
+
     /** Adds a pipeline with its first version; an invalid one is saved as a draft. */
     public PipelineViews.PipelineDetail create(PipelineViews.NewPipeline body, String by) {
         if (body == null) {
@@ -1413,7 +1428,8 @@ public class PipelineService {
         if (qualityStore == null) {
             return;
         }
-        Map<String, java.util.Set<String>> readMarks = PipelinePreviews.readMarks(c, context, qualityStore::sensitive);
+        Map<String, java.util.Set<String>> readMarks = PipelinePreviews.readMarks(c, context, qualityStore::sensitive,
+            qualityStore::sourceHasMarks);
         if (readMarks.values().stream().allMatch(java.util.Set::isEmpty)) {
             return;
         }
@@ -1455,7 +1471,8 @@ public class PipelineService {
         if (qualityStore == null || !writtenColumns(w, c).isEmpty()) {
             return;
         }
-        Map<String, java.util.Set<String>> readMarks = PipelinePreviews.readMarks(c, context, qualityStore::sensitive);
+        Map<String, java.util.Set<String>> readMarks = PipelinePreviews.readMarks(c, context, qualityStore::sensitive,
+            qualityStore::sourceHasMarks);
         NodePreview.Hidden marked = NodePreview.marked(c, readMarks, w.node());
         if (!marked.any()) {
             return;

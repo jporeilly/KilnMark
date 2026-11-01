@@ -160,7 +160,7 @@ public class Samples {
 
     /** The YAML with each sample table it reads ({@code crm.customers}) as created in {@code schema}. */
     public static String withTables(String yaml, String schema) {
-        Matcher m = ASSET_LINE.matcher(yaml);
+        Matcher m = ASSET_LINE.matcher(queriesWithTables(yaml, schema));
         StringBuilder out = new StringBuilder();
         while (m.find()) {
             String table = m.group(3) + "." + m.group(4);
@@ -170,6 +170,75 @@ public class Samples {
         }
         m.appendTail(out);
         return out.toString();
+    }
+
+    /** A {@code query:} setting's first line: its indent in group 1, the rest in group 2. */
+    private static final Pattern QUERY_LINE = Pattern.compile("^( *)query\\s*:(.*)$");
+
+    /** Whether a read in {@code yaml} runs a query (ADR 0028). */
+    static boolean readsWithQuery(String yaml) {
+        return yaml.lines().anyMatch(l -> QUERY_LINE.matcher(l).matches());
+    }
+
+    /**
+     * Each {@code query:} (its first line and the lines indented under it) with the sample tables it
+     * names as created in {@code schema}, as {@link #withTables} does for {@code asset:}.
+     */
+    static String queriesWithTables(String yaml, String schema) {
+        String[] lines = yaml.split("\n", -1);
+        int under = -1;
+        for (int i = 0; i < lines.length; i++) {
+            Matcher q = QUERY_LINE.matcher(lines[i]);
+            if (q.matches()) {
+                under = q.group(1).length();
+                lines[i] = q.group(1) + "query:" + tablesIn(q.group(2), schema);
+            } else if (under >= 0 && (lines[i].isBlank() || indent(lines[i]) > under)) {
+                lines[i] = tablesIn(lines[i], schema);
+            } else {
+                under = -1;
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private static int indent(String line) {
+        int n = 0;
+        while (n < line.length() && line.charAt(n) == ' ') {
+            n++;
+        }
+        return n;
+    }
+
+    /** {@code sql} with each of {@link #TABLES} it names, as a whole name, as created in {@code schema}. */
+    private static String tablesIn(String sql, String schema) {
+        String out = sql;
+        for (String t : TABLES) {
+            out = Pattern.compile("(?<![\\w.])" + Pattern.quote(t) + "(?!\\w)").matcher(out)
+                .replaceAll(Matcher.quoteReplacement(tableIn(schema, t)));
+        }
+        return out;
+    }
+
+    /**
+     * Why a sample whose read runs a query cannot be added with {@code mapping}, or null: each
+     * database it reads must be a PostgreSQL source with Allow SQL on.
+     */
+    private String queryProblem(Sample s, Map<String, String> mapping) {
+        if (!readsWithQuery(s.yaml())) {
+            return null;
+        }
+        for (String p : s.sources()) {
+            boolean database = PLACEHOLDERS.stream().anyMatch(x -> x.name().equals(p) && "databases".equals(x.category()));
+            if (!database) {
+                continue;
+            }
+            Records.Source src = sources.source(mapping.get(p)).orElse(null);
+            if (src == null || !"postgresql".equals(src.kind())
+                || !io.kilnmark.server.sources.CommonSettings.allowsSql(src.settings())) {
+                return "it reads with a query: choose a PostgreSQL source with Allow SQL on for " + p;
+            }
+        }
+        return null;
     }
 
     /** Where one of {@link #TABLES} is created: {@code <schema>.<group>_<table>}. */
@@ -383,6 +452,14 @@ public class Samples {
      * draft, as any pipeline is.
      */
     public AddResult add(AddRequest body, String by) {
+        return add(body, by, null);
+    }
+
+    /**
+     * As {@link #add(AddRequest, String)}, for a caller seen through {@code sights}: a sample whose
+     * read runs a query is skipped unless they may see unmasked values (ADR 0028); null skips none.
+     */
+    public AddResult add(AddRequest body, String by, io.kilnmark.server.quality.Sights sights) {
         Map<String, String> mapping = new LinkedHashMap<>();
         if (body != null && body.sources() != null) {
             for (var e : body.sources().entrySet()) {
@@ -429,8 +506,14 @@ public class Samples {
                     null));
                 continue;
             }
+            String sql = queryProblem(s, mapping);
+            if (sql != null) {
+                out.add(new Outcome(s.name(), s.file(), "skipped", sql, null));
+                continue;
+            }
             try {
                 String yaml = withSources(s.yaml(), mapping);
+                pipelines.allowQueries(yaml, sights);
                 PipelineViews.PipelineDetail d = pipelines.create(new PipelineViews.NewPipeline(s.name(), null, null,
                     schema == null ? yaml : withTables(yaml, schema), "Added from the samples (" + s.file() + ")"), by);
                 Boolean valid = d.latest() == null ? null : d.latest().valid();
@@ -439,6 +522,9 @@ public class Samples {
             } catch (WebApplicationException e) {
                 if (e.getResponse().getStatus() == Response.Status.CONFLICT.getStatusCode()) {
                     out.add(new Outcome(s.name(), s.file(), "exists", "already there: left as it is", null));
+                } else if (e.getResponse().getStatus() == Response.Status.FORBIDDEN.getStatusCode()) {
+                    out.add(new Outcome(s.name(), s.file(), "skipped", "it reads with a query: only a designer who "
+                        + "may see unmasked values adds it", null));
                 } else {
                     out.add(failed(s, e.getResponse().getEntity() instanceof io.kilnmark.server.api.ApiError a
                         ? a.error() : e.getMessage(), e));

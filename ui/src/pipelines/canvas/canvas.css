@@ -712,6 +712,12 @@
   max-width: 14ch;
 }
 
+.cv-sql {
+  font-size: 13px;
+  resize: vertical;
+  min-height: 6em;
+}
+
 .cv-expression {
   font-size: 13px;
   resize: vertical;

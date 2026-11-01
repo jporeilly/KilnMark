@@ -72,6 +72,11 @@ public class PipelinePreviews {
         boolean mayUnmask();
 
         Set<String> marks(String urn);
+
+        /** Whether any asset of the source has a column marked sensitive; true unless known otherwise. */
+        default boolean sourceHasMarks(String source) {
+            return true;
+        }
     }
 
     /** The limits, from {@code kilnmark.pipelines.*}. */
@@ -164,6 +169,11 @@ public class PipelinePreviews {
             public Set<String> marks(String urn) {
                 return sights.marks(urn);
             }
+
+            @Override
+            public boolean sourceHasMarks(String source) {
+                return sights.sourceHasMarks(source);
+            }
         };
     }
 
@@ -217,6 +227,9 @@ public class PipelinePreviews {
         Map<String, Object> variables = variables();
         PipelineCompilerPort.Compilation checked = KilnPipelineCompiler.compile(plan.definition(), nodes, false,
             variables);
+        if (!viewer.mayUnmask() && hasQueryRead(checked)) {
+            throw PipelineService.fail(Response.Status.FORBIDDEN, QUERY_NEEDS_UNMASK);
+        }
         if (!checked.valid()) {
             throw new IllegalArgumentException("Fix the pipeline before previewing " + plan.node() + ": "
                 + problems(checked.problems()));
@@ -462,16 +475,33 @@ public class PipelinePreviews {
         if (viewer.mayUnmask()) {
             return new HashMap<>();
         }
-        return readMarks(c, context, viewer::marks);
+        return readMarks(c, context, viewer::marks, viewer::sourceHasMarks);
+    }
+
+    /** Why a pipeline with a query read is refused to a caller who may not see unmasked values. */
+    static final String QUERY_NEEDS_UNMASK = "Only a designer who may see unmasked values writes or previews a read "
+        + "that runs a query, since a query can read any column of the source";
+
+    /** Whether any read node of {@code c} runs a query (ADR 0028). */
+    static boolean hasQueryRead(PipelineCompilerPort.Compilation c) {
+        for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
+            if (ReadNodeFactory.TYPE.equals(s.type())
+                && ReadNodeFactory.isQuery(c.configs().getOrDefault(s.id(), Map.of()))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
      * For each read node, the columns marked sensitive in what it reads (any of the URNs it may be
      * catalogued under), and the first such asset ({@code firstMarked}, when given), as {@code marksOf}
-     * gives them.
+     * gives them. A read that runs a query may read any column of its source, so when the source has
+     * any column marked sensitive ({@code sourceMarked}) every column it reads is marked.
      */
     static Map<String, Set<String>> readMarks(PipelineCompilerPort.Compilation c, RunContext context,
-                                              java.util.function.Function<String, Set<String>> marksOf) {
+                                              java.util.function.Function<String, Set<String>> marksOf,
+                                              java.util.function.Predicate<String> sourceMarked) {
         Map<String, Set<String>> out = new HashMap<>();
         for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
             if (!ReadNodeFactory.TYPE.equals(s.type())) {
@@ -479,6 +509,14 @@ public class PipelinePreviews {
             }
             Map<String, Object> config = c.configs().getOrDefault(s.id(), Map.of());
             Set<String> marks = new LinkedHashSet<>();
+            if (ReadNodeFactory.isQuery(config)) {
+                String source = PipelineSources.text(config, "source");
+                if (source == null || sourceMarked.test(source)) {
+                    marks.add(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN);
+                }
+                out.put(s.id(), marks);
+                continue;
+            }
             readUrns(config, context).forEach(u -> marks.addAll(marksOf.apply(u)));
             out.put(s.id(), marks);
         }

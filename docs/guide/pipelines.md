@@ -362,6 +362,38 @@ is handy while you try a pipeline out; 0 reads them all.
 The samples `sample-read-columns-where` and `sample-orders-by-status` show both (see
 [Adding the samples](#adding-the-samples)).
 
+#### Reading with a query
+
+On a PostgreSQL source with **Allow SQL** on, a read can run one `SELECT` in place of a table:
+
+```yaml
+  - id: accounts_per_customer
+    type: read
+    source: crm-db
+    query: >-
+      SELECT c.customer_id, c.segment, count(a.account_id) AS accounts
+      FROM crm.customers c LEFT JOIN crm.accounts a ON a.customer_id = c.customer_id
+      GROUP BY c.customer_id, c.segment
+    row_limit: 1000
+```
+
+- A read gives `asset` or `query`, not both. `columns` and `where` do not go with a query: choose
+  the columns and rows in the SQL. `row_limit` does, and the database stops at that many rows.
+- The query is checked as custom SQL rules are (see [Quality rules](quality-rules.md)): one
+  `SELECT` or `WITH`, no `;` between statements, nothing that writes, and no function that reaches
+  outside the query, such as reading files or other databases. It runs on a read-only connection,
+  and not at all when the source's login is a superuser or may read the server's files.
+- Parameters (`${name}`) are not filled in a query yet; write the value in the SQL.
+- Its columns are known only when it runs, so the nodes after it are checked against them then.
+- Only a designer who may see unmasked values saves or previews a pipeline with a query, since a
+  query can read any column the login can. Others, admins included, can run it.
+- When the source has any column marked sensitive, every column the query returns is treated as
+  marked: masked for everyone else, and marked on what a write writes from it.
+- Each run records the tables the query reads, as the database plans it, so lineage shows them.
+
+The sample `sample-read-query` shows one; adding the samples skips it unless `crm-db` is a
+PostgreSQL source with Allow SQL on.
+
 ### Writing
 
 The `write` node takes `source` and where to write: `table` for a database, `path` for a file
