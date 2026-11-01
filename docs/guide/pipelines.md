@@ -115,14 +115,23 @@ they were, and a change to the YAML redraws the canvas. Kilnmark remembers which
 
 The canvas uses the page's full width. On the left is the node list, which **Nodes** in the canvas
 toolbar hides and shows again; the pipeline fills the rest, with an overview in its corner for
-finding your way around a large one. Nothing covers the canvas: under it is one panel with the
-tabs **Settings**, **Preview**, **Suggestions**, **Nodes**, **Runs** and **Versions**, which
-**Collapse** in its tab bar folds away to give the canvas more room (Kilnmark remembers which you
-chose). A click selects a node, so you can move it without the panel changing tab. To go to its
-settings, double-click it, or select it and press Enter: the panel shows the **Settings** tab, and
-it follows the node you select. A node you add shows its settings at once. **Settings**, **Preview**
-and **Suggestions** need the canvas; **Nodes**, **Runs** and **Versions** also work beside the
-YAML.
+finding your way around a large one. Nothing covers the canvas: under it is one panel of tabs,
+which **Collapse** in its tab bar folds away to give the canvas more room (Kilnmark remembers which
+you chose):
+
+- **Settings** and **Preview**, for the selected node. They are there only while a node is
+  selected: selecting one (a click, or moving to it with Tab or the arrow keys) shows its
+  **Settings**, and the focus stays where it was. Enter or a double-click also moves you into the
+  settings. When nothing is selected any more, the panel shows **Run** if a run is going or Run
+  was the last of the pipeline's tabs you looked at, else **Nodes**.
+- **Run**: the run the canvas shows (the latest), with its status, when it started and how long it
+  took, the rows read and written, and each node's rows in and out, time, peak memory, quality and
+  error. While it runs it updates every two seconds. **Open run** goes to the run's own page, with
+  its timeline and log.
+- **Suggestions**, **Nodes** (the nodes as a table), **Runs** (every run) and **Versions**.
+
+**Settings**, **Preview** and **Suggestions** need the canvas; **Run**, **Nodes**, **Runs** and
+**Versions** also work beside the YAML. A node you add shows its settings at once.
 
 ### Adding and connecting nodes
 
@@ -743,7 +752,8 @@ YAML exactly as it was saved.
 
 Choose **Run now**, on the Pipelines page or the pipeline's own page. Kilnmark checks the latest
 version again first, since a source may have changed, then queues the run for a worker. The run
-appears in the **Runs** tab, under the canvas, as Queued, then Running.
+appears in the **Runs** tab, under the canvas, as Queued, then Running, and the panel shows the
+**Run** tab, following the run as it goes.
 
 A run uses the version that was latest when you asked, even if someone saves another while it
 waits. A pipeline with parameters runs with their defaults; see
