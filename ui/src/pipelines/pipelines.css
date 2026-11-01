@@ -452,6 +452,102 @@ main:has(.pl-wide) {
   padding: 12px;
 }
 
+/* ---- the panel under the canvas: one tab bar and one panel, so nothing covers the canvas ---- */
+
+.pl-build {
+  /* The panel's height when open; the canvas takes the screen's height less this and its tab bar. */
+  --pl-dock-h: clamp(220px, 32vh, 420px);
+  --cv-below: 56px;
+}
+
+.pl-build:has(.pl-dock.is-open) {
+  --cv-below: calc(56px + var(--pl-dock-h));
+}
+
+.pl-dock {
+  margin-top: 12px;
+  min-width: 0;
+  border: 1px solid var(--km-border-control);
+  border-radius: var(--km-radius-card);
+  background: var(--km-surface);
+}
+
+.pl-dock-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 0 8px;
+}
+
+.pl-dock.is-open .pl-dock-bar {
+  border-bottom: 1px solid var(--km-border);
+}
+
+.pl-dock-bar .tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  border-bottom: 0;
+}
+
+.pl-dock-bar .tabs [role="tab"] {
+  padding: 8px 12px;
+}
+
+.pl-dock-toggle {
+  flex: none;
+  margin: 4px 0 4px auto;
+}
+
+.pl-dock-panel {
+  height: var(--pl-dock-h);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  overscroll-behavior: contain;
+}
+
+.pl-dock-panel[hidden],
+.pl-dock-host[hidden] {
+  display: none;
+}
+
+.pl-dock-panel:focus-visible {
+  outline: 3px solid var(--km-focus);
+  outline-offset: -3px;
+}
+
+.pl-dock-none {
+  margin: 0;
+}
+
+/* A node's settings use the panel's width: their fields run on in columns. */
+.pl-dock .cv-dock-settings .cv-panel-body {
+  display: block;
+  columns: 300px;
+  column-gap: 28px;
+}
+
+.pl-dock .cv-dock-settings .cv-panel-body > * {
+  break-inside: avoid;
+  margin: 0 0 14px;
+}
+
+@media (max-width: 700px) {
+  .pl-dock-panel {
+    height: auto;
+    max-height: 70vh;
+    padding: 12px;
+  }
+}
+
+@media (forced-colors: active) {
+  .pl-dock {
+    border-color: CanvasText;
+  }
+}
+
 .pl-conflict {
   margin-bottom: 12px;
 }

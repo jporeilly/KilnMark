@@ -10,7 +10,7 @@ const DECISION: Record<string, string> = {
 };
 
 /**
- * A write's or gate's predicted quality in the settings drawer: the estimate, per dimension, what
+ * A write's or gate's predicted quality in its settings: the estimate, per dimension, what
  * a gate is expected to do with each rule, and what could not be told or was assumed. Labelled as
  * an estimate throughout.
  */

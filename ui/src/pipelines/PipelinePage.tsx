@@ -23,6 +23,7 @@ import { columnsText } from "./outline";
 import { nodeQualityWords } from "./quality";
 import { emptyYaml, findStarterPicks, renamed, starterYaml, withoutLayout } from "./template";
 import { YamlEditor, type YamlEditorHandle } from "./YamlEditor";
+import { CANVAS_TABS, PipelineDock, useDock, type DockControl, type DockTab } from "./PipelineDock";
 import type { CanvasRun } from "./canvas/CanvasView";
 import type { Graph } from "./canvas/model";
 import "./pipelines.css";
@@ -93,6 +94,19 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
     }
   };
   const tabsId = useTabsId();
+  // The panel under the canvas: the selected node's settings and preview, suggestions, the nodes
+  // as a table, runs and versions, one tab at a time.
+  const dockId = useTabsId();
+  const dock = useDock(dockId);
+  const [dockHost, setDockHost] = useState<HTMLDivElement | null>(null);
+  const dockTabs: DockTab[] = isNew
+    ? ["settings", "preview", "suggestions", "nodes"]
+    : ["settings", "preview", "suggestions", "nodes", "runs", "versions"];
+  const dockTab = dockTabs.includes(dock.tab) ? dock.tab : "settings";
+  const dockControl: DockControl = useMemo(
+    () => ({ tab: dockTab, open: dock.open, show: dock.show, host: dockHost, panel: dock.panel }),
+    [dockTab, dock.open, dock.show, dockHost, dock.panel],
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ node: string; key: string | null; n: number } | null>(null);
   const [confirmRun, setConfirmRun] = useState(false);
@@ -616,6 +630,7 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                 run={canvasRun}
                 title={title ?? "the pipeline"}
                 memory={canvasMemory.current}
+                dock={dockControl}
               />
             </Suspense>
           ) : (
@@ -652,6 +667,162 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
             </div>
           )}
         </TabPanel>
+
+        <PipelineDock idBase={dockId} tabs={dockTabs} tab={dockTab} open={dock.open} onTab={dock.show} onOpen={dock.setOpen}>
+          {/* The canvas draws the Settings, Preview and Suggestions tabs here; kept while the canvas
+              is shown, so it is there as soon as one of them is chosen. */}
+          {view === "canvas" && <div ref={setDockHost} className="pl-dock-host" hidden={!CANVAS_TABS.has(dockTab)} />}
+          {view !== "canvas" && CANVAS_TABS.has(dockTab) && (
+            <p className="hint pl-dock-none">
+              {dockTab === "settings" ? "A node's settings" : dockTab === "preview" ? "Previews of a node's rows" : "Suggestions"} are shown
+              with the canvas.{" "}
+              <button type="button" className="link-button" onClick={() => setView("canvas")}>
+                Show the canvas
+              </button>
+            </p>
+          )}
+          {dockTab === "nodes" && (
+            <>
+              <h3 className="visually-hidden">Nodes as a table</h3>
+              {check && check.nodes.length > 0 ? (
+                <div className="table-scroll" role="region" aria-label="Nodes table" tabIndex={0}>
+                  <table className="small">
+                    <thead>
+                      <tr>
+                        <th scope="col">Node</th>
+                        <th scope="col">Type</th>
+                        <th scope="col">Reads from</th>
+                        <th scope="col">Columns out</th>
+                        {canvasRun && <th scope="col">Last run</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {check.nodes.map((s) => {
+                        const ran = canvasRun?.nodes.find((r) => r.node === s.id);
+                        const measured = nodeQualityWords(canvasRun?.quality?.find((q) => q.node === s.id));
+                        return (
+                          <tr key={s.id}>
+                            <th scope="row">
+                              <button
+                                type="button"
+                                className="pl-link mono"
+                                onClick={() => {
+                                  if (view === "canvas") {
+                                    setSelected(s.id);
+                                    setFocusRequest((r) => ({ node: s.id, key: null, n: (r?.n ?? 0) + 1 }));
+                                  } else {
+                                    editor.current?.goToLine(s.line);
+                                  }
+                                }}
+                                aria-label={view === "canvas" ? `${s.id}: select it on the canvas` : `${s.id}: go to line ${s.line}`}
+                              >
+                                {s.id}
+                              </button>
+                              {problemNodes.has(s.id) && <div className="pl-bad">Has a problem</div>}
+                            </th>
+                            <td>{s.type ?? "–"}</td>
+                            <td className="mono">
+                              {check.edges
+                                .filter((e) => e.toNode === s.id)
+                                .map((e) => `${e.fromNode}${e.fromPort === "out" ? "" : `.${e.fromPort}`}${e.toPort === "in" ? "" : ` → ${e.toPort}`}`)
+                                .join(", ") || "–"}
+                            </td>
+                            <td>{columnsText(s)}</td>
+                            {canvasRun && (
+                              <td>
+                                {ran
+                                  ? [
+                                      ran.rowsOut != null ? `${formatNumber(ran.rowsOut)} rows out` : ran.rowsIn != null ? `${formatNumber(ran.rowsIn)} rows in` : "",
+                                      ran.outcome ? ran.outcome.replace("_", " ") : "",
+                                      measured ?? "",
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" · ")
+                                  : "–"}
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="muted">{checking ? "Checking…" : "The nodes are listed here once the pipeline can be read."}</p>
+              )}
+            </>
+          )}
+          {dockTab === "runs" && (
+            <>
+              <h3 className="visually-hidden">Runs</h3>
+              {runs === null && <p role="status">Loading…</p>}
+              {runs?.length === 0 && <p>Not run yet.</p>}
+              {runs && runs.length > 0 && (
+                <div className="table-scroll" role="region" aria-label="Runs table" tabIndex={0}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Run</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Version</th>
+                        <th scope="col">Asked for</th>
+                        <th scope="col">Took</th>
+                        <th scope="col">Rows written</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {runs.map((r) => (
+                        <tr key={r.id}>
+                          <th scope="row">
+                            <a href={href.pipelineRun(r.id)}>Run {r.id}</a>
+                          </th>
+                          <td>
+                            <RunStatus run={r} />
+                            {r.error && <div className="small muted">{r.error}</div>}
+                          </td>
+                          <td>{r.version}</td>
+                          <td className="small">
+                            {formatTime(r.requestedAt)} by {r.requestedBy}
+                          </td>
+                          <td>{runTime(r)}</td>
+                          <td>{formatNumber(r.rowsWritten)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+          {dockTab === "versions" && (
+            <>
+              <h3 className="visually-hidden">Versions</h3>
+              {versions === null && <p role="status">Loading…</p>}
+              {versions && (
+                <ol className="pl-versions" reversed>
+                  {versions.map((v) => (
+                    <li key={v.n}>
+                      <a href={href.pipeline(name!, v.n)} aria-current={version === v.n ? "page" : undefined}>
+                        Version {v.n}
+                      </a>
+                      {v.n === detail?.latestVersion && " (latest)"}
+                      {!v.valid && (
+                        <span className="pl-bad">
+                          {" "}
+                          · {v.problems} {v.problems === 1 ? "problem" : "problems"}
+                        </span>
+                      )}
+                      <div className="small muted">
+                        {formatTime(v.createdAt)} by {v.author}
+                        {v.message && <>: {v.message}</>}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </>
+          )}
+        </PipelineDock>
 
         <div className="pl-problems">
           {checking && (
@@ -729,147 +900,6 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
           </form>
         )}
       </section>
-
-      <section aria-labelledby="nodes-table-h" className="panel">
-        <h2 id="nodes-table-h">Nodes as a table</h2>
-        {check && check.nodes.length > 0 ? (
-          <div className="table-scroll" role="region" aria-label="Nodes table" tabIndex={0}>
-            <table className="small">
-              <thead>
-                <tr>
-                  <th scope="col">Node</th>
-                  <th scope="col">Type</th>
-                  <th scope="col">Reads from</th>
-                  <th scope="col">Columns out</th>
-                  {canvasRun && <th scope="col">Last run</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {check.nodes.map((s) => {
-                  const ran = canvasRun?.nodes.find((r) => r.node === s.id);
-                  const measured = nodeQualityWords(canvasRun?.quality?.find((q) => q.node === s.id));
-                  return (
-                    <tr key={s.id}>
-                      <th scope="row">
-                        <button
-                          type="button"
-                          className="pl-link mono"
-                          onClick={() => {
-                            if (view === "canvas") {
-                              setSelected(s.id);
-                              setFocusRequest((r) => ({ node: s.id, key: null, n: (r?.n ?? 0) + 1 }));
-                            } else {
-                              editor.current?.goToLine(s.line);
-                            }
-                          }}
-                          aria-label={view === "canvas" ? `${s.id}: select it on the canvas` : `${s.id}: go to line ${s.line}`}
-                        >
-                          {s.id}
-                        </button>
-                        {problemNodes.has(s.id) && <div className="pl-bad">Has a problem</div>}
-                      </th>
-                      <td>{s.type ?? "–"}</td>
-                      <td className="mono">
-                        {check.edges
-                          .filter((e) => e.toNode === s.id)
-                          .map((e) => `${e.fromNode}${e.fromPort === "out" ? "" : `.${e.fromPort}`}${e.toPort === "in" ? "" : ` → ${e.toPort}`}`)
-                          .join(", ") || "–"}
-                      </td>
-                      <td>{columnsText(s)}</td>
-                      {canvasRun && (
-                        <td>
-                          {ran
-                            ? [
-                                ran.rowsOut != null ? `${formatNumber(ran.rowsOut)} rows out` : ran.rowsIn != null ? `${formatNumber(ran.rowsIn)} rows in` : "",
-                                ran.outcome ? ran.outcome.replace("_", " ") : "",
-                                measured ?? "",
-                              ]
-                                .filter(Boolean)
-                                .join(" · ")
-                            : "–"}
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="muted">{checking ? "Checking…" : "The nodes are listed here once the pipeline can be read."}</p>
-        )}
-      </section>
-
-      {!isNew && (
-        <div className="pl-lists">
-          <section aria-labelledby="runs-h" className="panel">
-            <h2 id="runs-h">Runs</h2>
-            {runs === null && <p role="status">Loading…</p>}
-            {runs?.length === 0 && <p>Not run yet.</p>}
-            {runs && runs.length > 0 && (
-              <div className="table-scroll" role="region" aria-label="Runs table" tabIndex={0}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th scope="col">Run</th>
-                      <th scope="col">Status</th>
-                      <th scope="col">Version</th>
-                      <th scope="col">Asked for</th>
-                      <th scope="col">Took</th>
-                      <th scope="col">Rows written</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {runs.map((r) => (
-                      <tr key={r.id}>
-                        <th scope="row">
-                          <a href={href.pipelineRun(r.id)}>Run {r.id}</a>
-                        </th>
-                        <td>
-                          <RunStatus run={r} />
-                          {r.error && <div className="small muted">{r.error}</div>}
-                        </td>
-                        <td>{r.version}</td>
-                        <td className="small">
-                          {formatTime(r.requestedAt)} by {r.requestedBy}
-                        </td>
-                        <td>{runTime(r)}</td>
-                        <td>{formatNumber(r.rowsWritten)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-          <section aria-labelledby="versions-h" className="panel">
-            <h2 id="versions-h">Versions</h2>
-            {versions === null && <p role="status">Loading…</p>}
-            {versions && (
-              <ol className="pl-versions" reversed>
-                {versions.map((v) => (
-                  <li key={v.n}>
-                    <a href={href.pipeline(name!, v.n)} aria-current={version === v.n ? "page" : undefined}>
-                      Version {v.n}
-                    </a>
-                    {v.n === detail?.latestVersion && " (latest)"}
-                    {!v.valid && (
-                      <span className="pl-bad">
-                        {" "}
-                        · {v.problems} {v.problems === 1 ? "problem" : "problems"}
-                      </span>
-                    )}
-                    <div className="small muted">
-                      {formatTime(v.createdAt)} by {v.author}
-                      {v.message && <>: {v.message}</>}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </section>
-        </div>
-      )}
     </>
   );
 }
