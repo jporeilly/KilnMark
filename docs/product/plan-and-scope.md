@@ -120,6 +120,11 @@ Also needed, not yet scheduled:
   limits, saved and versioned like a pipeline or flow. Their tools are Kilnmark's own actions
   (search, read a source, run a pipeline or flow, check quality), under the caller's role and the
   same masking, so an agent can do no more than the person who runs it.
+- **Run tools for agents, and an optimisation agent (parked).** Pipeline and flow runs on the MCP
+  server (timings, rows, peak memory, quarantine share, model tokens), read through the model's
+  sight, then an agent that finds the slowest pipelines and says why. Folded into the Optimise work
+  when it comes; a money cost model only if cloud customers ask. External agent tools (OpenCode)
+  can use the same MCP tools, but are not built into the product (ADR 0007, ADR 0012).
 
 ## Engineering setup
 
