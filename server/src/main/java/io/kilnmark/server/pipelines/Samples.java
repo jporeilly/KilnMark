@@ -449,11 +449,8 @@ public class Samples {
     /**
      * Adds every bundled pipeline whose placeholders are all mapped, each to a saved source. A
      * sample whose name is taken is left as it is; one that checks with problems is saved as a
-     * draft, as any pipeline is.
-     */
-    /**
-     * Adds the samples for a caller seen through {@code sights}: a sample whose read runs a query is
-     * skipped unless they may see unmasked values (ADR 0028), and always when {@code sights} is null.
+     * draft, as any pipeline is. A sample whose read runs a query is skipped unless the caller, seen
+     * through {@code sights}, may see unmasked values (ADR 0028), and always when {@code sights} is null.
      */
     public AddResult add(AddRequest body, String by, io.kilnmark.server.quality.Sights sights) {
         Map<String, String> mapping = new LinkedHashMap<>();

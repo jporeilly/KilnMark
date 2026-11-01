@@ -857,6 +857,9 @@ public class PipelineService {
         }
     }
 
+    /** Recorded with a run's assets when it reads with a query, so its messages are withheld as for marked data. */
+    static final String QUERY_READ = "kilnmark:query-read";
+
     static final String FOR_STEWARDS = "Stewards can see why: the message may hold values from the data.";
     static final String FOR_DESIGNERS = "Only designers who see unmasked values can see why: the message may hold values of "
         + "columns marked sensitive.";
@@ -870,9 +873,6 @@ public class PipelineService {
      * values is, on the assets the run recorded as it started; {@code sights} null is the server's
      * own use.
      */
-    /** Recorded with a run's assets when it reads with a query, so its messages are withheld as for marked data. */
-    static final String QUERY_READ = "kilnmark:query-read";
-
     private String withheld(PipelineStore.Run r, Sights sights) {
         if (sights == null) {
             return null;
