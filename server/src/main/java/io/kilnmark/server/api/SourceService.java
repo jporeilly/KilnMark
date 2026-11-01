@@ -244,7 +244,11 @@ public class SourceService {
     /**
      * Whether two sources of {@code kind} read some of the same files: one folder or prefix inside the
      * other. Errs towards yes: folders are compared after following links and ignoring case, and
-     * every way of naming AWS's own S3 service counts as one endpoint.
+     * every way of naming AWS's own S3 service counts as one endpoint. An S3 access point, named by
+     * its alias (a name ending {@code -s3alias}) or its ARN
+     * ({@code arn:aws:s3:<region>:<account>:accesspoint/<name>}), reads a bucket its name does not
+     * tell, so it counts as reading the same files as any bucket or access point at the same
+     * endpoint, whatever the prefixes: Kilnmark cannot see which bucket is behind it, so it refuses.
      */
     static boolean sameFiles(String kind, Map<String, String> a, Map<String, String> b) {
         if (FOLDER_KIND.equals(kind)) {
@@ -254,8 +258,14 @@ public class SourceService {
         }
         if (S3_KIND.equals(kind)) {
             String bucket = trim(a.get("bucket"));
-            if (bucket == null || !bucket.equalsIgnoreCase(String.valueOf(trim(b.get("bucket"))))
-                || !endpoint(a.get("endpoint")).equals(endpoint(b.get("endpoint")))) {
+            String other = trim(b.get("bucket"));
+            if (bucket == null || other == null || !endpoint(a.get("endpoint")).equals(endpoint(b.get("endpoint")))) {
+                return false;
+            }
+            if (accessPoint(bucket) || accessPoint(other)) {
+                return true;
+            }
+            if (!bucket.equalsIgnoreCase(other)) {
                 return false;
             }
             String p = trim(a.get("prefix")) == null ? "" : trim(a.get("prefix"));
@@ -263,6 +273,15 @@ public class SourceService {
             return p.startsWith(q) || q.startsWith(p);
         }
         return false;
+    }
+
+    /**
+     * Whether an S3 bucket setting names an access point, not a bucket: an alias ({@code -s3alias},
+     * or {@code .mrap} for a multi-Region one) or any ARN (a bucket name never holds a colon).
+     */
+    static boolean accessPoint(String bucket) {
+        String b = bucket.toLowerCase(java.util.Locale.ROOT);
+        return b.endsWith("-s3alias") || b.endsWith(".mrap") || b.startsWith("arn:");
     }
 
     /** A folder as compared: absolute, normalised, links followed where it exists, lower case. */

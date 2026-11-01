@@ -69,6 +69,23 @@ class SourceOverlapTest {
     }
 
     @Test
+    void anAccessPointMayBeAnyBucketAtItsEndpoint() {
+        String alias = "payroll-ap-abc123def456ghi789jkl0mnopq-s3alias";
+        String arn = "arn:aws:s3:eu-west-2:123456789012:accesspoint/payroll-ap";
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", alias), Map.of("bucket", "hr")));
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", "hr", "prefix", "pay/"),
+            Map.of("bucket", arn, "prefix", "raw/")), "an access point refuses whatever the prefixes");
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", alias.toUpperCase(java.util.Locale.ROOT)),
+            Map.of("bucket", arn, "endpoint", "https://s3.eu-west-2.amazonaws.com")));
+        assertTrue(SourceService.sameFiles("s3", Map.of("bucket", "mfzwi23gnjvgw.mrap"), Map.of("bucket", "hr")));
+        // At another endpoint they cannot be the same bucket.
+        assertFalse(SourceService.sameFiles("s3", Map.of("bucket", alias),
+            Map.of("bucket", "hr", "endpoint", "http://minio.local:9000")));
+        assertFalse(SourceService.sameFiles("s3", Map.of("bucket", "hr-s3aliases"), Map.of("bucket", "hr")));
+        assertFalse(SourceService.sameFiles("s3", Map.of("bucket", arn), Map.of("prefix", "raw/")));
+    }
+
+    @Test
     void aLinkIsFollowedBeforeFoldersAreCompared() throws Exception {
         Path real = Files.createTempDirectory("overlap-real");
         Path link = real.resolveSibling(real.getFileName() + "-link");
