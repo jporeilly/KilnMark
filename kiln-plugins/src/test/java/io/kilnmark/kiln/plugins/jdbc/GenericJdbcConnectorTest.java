@@ -176,7 +176,7 @@ class GenericJdbcConnectorTest {
             assertFalse(why.contains("db.example.com"), "never echoes the URL: " + why);
         }
         for (String ok : List.of("jdbc:db2://db.example.com:50000/SALES:currentSchema=S;sslConnection=true;",
-            "jdbc:teradata://db.example.com/DATABASE=x,CHARSET=UTF8", "jdbc:h2:mem:x",
+            "jdbc:teradata://db.example.com/DATABASE=x,CHARSET=UTF8", "jdbc:h2:tcp://db.example.com/sales",
             "jdbc:sqlserver://db.example.com;failoverPartner=standby.example.com",
             "jdbc:db2://[2001:db8::1]:50000/SALES")) {
             assertNull(refusal(ok), ok);
@@ -198,6 +198,53 @@ class GenericJdbcConnectorTest {
         }
     }
 
+    /**
+     * A database the driver opens inside the server could read or write the server's files, or run
+     * code there, with no login of anyone's own (ADR 0027): refused for admins too, whatever the
+     * driver's allow-list.
+     */
+    @Test
+    void aDatabaseOpenedInsideTheServerIsRefused() {
+        String[][] refused = {
+            {"jdbc:h2:mem:sales", "H2 URL other than tcp"},
+            {"jdbc:h2:file:/srv/kilnmark/data", "H2 URL other than tcp"},
+            {"jdbc:h2:~/sales", "H2 URL other than tcp"},
+            {"jdbc:h2:./sales", "H2 URL other than tcp"},
+            {"JDBC:H2:ZIP:/srv/x.zip!/sales", "H2 URL other than tcp"},
+            {"jdbc:h2:tcp://db.example.com/sales;INIT=RUNSCRIPT", "INIT setting runs SQL"},
+            {"jdbc:p6spy:h2:mem:sales", "H2 URL other than tcp"},
+            {"jdbc:sqlite:/srv/kilnmark/app.db", "SQLite"},
+            {"jdbc:sqlite::memory:", "SQLite"},
+            {"jdbc:duckdb:", "DuckDB"},
+            {"jdbc:duckdb:/srv/x.duckdb", "DuckDB"},
+            {"jdbc:hsqldb:file:/srv/sales", "HSQLDB URL other than"},
+            {"jdbc:hsqldb:mem:sales", "HSQLDB URL other than"},
+            {"jdbc:hsqldb:sales", "HSQLDB URL other than"},
+            {"jdbc:derby:sales", "Derby URL without a //host"},
+            {"jdbc:derby:memory:sales;create=true", "Derby URL without a //host"},
+            {"jdbc:derby:directory:/srv/sales", "Derby URL without a //host"},
+            {"jdbc:firebirdsql:embedded:/srv/sales.fdb", "embedded Firebird"},
+        };
+        java.util.List<String> every = new java.util.ArrayList<>();
+        every.addAll(ANY.allowedProperties());
+        every.addAll(List.of("init", "create"));
+        io.kilnmark.kiln.connect.RegisteredDriver allowsAll = new io.kilnmark.kiln.connect.RegisteredDriver("all",
+            "all.jar", "a".repeat(64), "x.Driver", "jdbc:all:", every, "admin", Instant.EPOCH);
+        for (String[] r : refused) {
+            String why = GenericJdbcConnector.refusal(allowsAll, r[0], null);
+            assertTrue(why != null && why.startsWith("url: ") && why.contains(r[1]) && why.contains("inside the "
+                + "Kilnmark server"), r[0] + " gave " + why);
+            assertFalse(why.contains("/srv") || why.contains("db.example.com"), "never echoes the URL: " + why);
+        }
+        for (String ok : List.of("jdbc:h2:tcp://db.example.com:9092/sales", "jdbc:h2:ssl://db.example.com/~/sales",
+            "jdbc:hsqldb:hsql://db.example.com/sales", "jdbc:hsqldb:https://db.example.com/sales",
+            "jdbc:derby://db.example.com:1527/sales;create=true", "jdbc:db2://db.example.com:50000/SALES")) {
+            assertNull(GenericJdbcConnector.refusal(allowsAll, ok, null), ok);
+        }
+        assertTrue(problems("jdbc:h2:mem:other").get(0).contains("opens a file or in-memory database"));
+        assertEquals(List.of(), h2.connector().validate(reader), "an H2 server is reached over the network");
+    }
+
     @Test
     void hostsInSettingsAreCheckedLikeTheUrls() {
         assertEquals(List.of("db.example.com", "standby.example.com"), h2.connector().hosts(h2.source("p",
@@ -206,7 +253,7 @@ class GenericJdbcConnectorTest {
             h2.source("p", Map.of("url", "jdbc:db2://db.example.com:50000/SALES:clientRerouteAlternateServerName="
                 + "alt1.example.com,alt2.example.com;clientRerouteAlternatePortNumber=50000,50000;"))));
         assertEquals(List.of(GenericJdbcConnector.UNREADABLE_HOST, "other.example.com"), h2.connector().hosts(
-            h2.source("p", Map.of("properties", "serverName=other.example.com"))));
+            h2.source("p", Map.of("url", "jdbc:h2:mem:x", "properties", "serverName=other.example.com"))));
     }
 
     @Test
@@ -234,7 +281,9 @@ class GenericJdbcConnectorTest {
     void hostsAreTheUrlsOrAPlaceholderNoAllowListHolds() {
         assertEquals(List.of("db.example.com"), h2.connector().hosts(h2.source("p",
             Map.of("url", "jdbc:h2:tcp://db.example.com:9092/sales"))));
-        assertEquals(List.of(GenericJdbcConnector.UNREADABLE_HOST), h2.connector().hosts(reader));
+        assertEquals(List.of("localhost"), h2.connector().hosts(reader));
+        assertEquals(List.of(GenericJdbcConnector.UNREADABLE_HOST), h2.connector().hosts(h2.source("p",
+            Map.of("url", "jdbc:h2:mem:x"))));
         assertEquals(java.util.Set.of("driver", "url", "username", "properties"), h2.connector().secretScope());
     }
 

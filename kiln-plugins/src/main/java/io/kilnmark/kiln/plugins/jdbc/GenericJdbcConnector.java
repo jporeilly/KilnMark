@@ -28,7 +28,7 @@ import io.kilnmark.kiln.plugins.write.WriteSettings;
 
 /**
  * Any database with a JDBC driver Kilnmark has no dedicated connector for (kind {@code jdbc}): Db2,
- * Teradata, Snowflake, Sybase, Informix, H2 and the like, through a driver an admin registered
+ * Teradata, Snowflake, Sybase, Informix, an H2 server and the like, through a driver an admin registered
  * (docs/design/drivers.md, "Registered drivers"). The driver is used only through the standard
  * JDBC interfaces, loaded on its own from the drivers folder while its jar is the one registered,
  * never through {@link java.sql.DriverManager}.
@@ -38,7 +38,9 @@ import io.kilnmark.kiln.plugins.write.WriteSettings;
  * source's secret, {@code properties} (further driver properties, {@code name=value; ...}),
  * {@code schemas} and {@code read_only} (on by default: connections are marked read-only, and
  * pipelines cannot write). Only admins may set up such a source or change these settings
- * ({@link #adminOnly()}): the URL and properties go to code Kilnmark has not vetted.
+ * ({@link #adminOnly()}): the URL and properties go to code Kilnmark has not vetted. A URL for a
+ * database the driver would open inside the server (SQLite, DuckDB, H2 or HSQLDB files and memory,
+ * embedded Derby) is refused for admins too ({@link #insideTheServer}).
  *
  * <p>The catalogue comes from {@link java.sql.DatabaseMetaData} ({@link GenericCatalog}), types are
  * mapped by {@link GenericTypes}, and rows are read with {@code SELECT *} and the driver's own row
@@ -248,6 +250,10 @@ public class GenericJdbcConnector extends JdbcConnector {
                     return why;
                 }
             }
+            String inside = insideTheServer(url);
+            if (inside != null) {
+                return "url: " + inside;
+            }
         }
         if (extra != null) {
             for (String key : extra.stringPropertyNames()) {
@@ -256,6 +262,58 @@ public class GenericJdbcConnector extends JdbcConnector {
                     return why;
                 }
             }
+        }
+        return null;
+    }
+
+    /** Said of every database a driver would open inside the server. */
+    private static final String INSIDE = " Such a database runs inside the Kilnmark server, so its SQL could read or "
+        + "write the server's own files, or run code there, with no login of anyone's own (ADR 0027). Use a database "
+        + "server reached over the network.";
+
+    /**
+     * Why a URL would have the driver open a database inside the server's own process, or run SQL as
+     * it connects, or null when it reaches a database server: SQLite, DuckDB and embedded Firebird
+     * always; H2 unless {@code tcp://} or {@code ssl://} and without {@code INIT}; HSQLDB unless
+     * {@code hsql://}, {@code hsqls://}, {@code http://} or {@code https://}; Derby unless
+     * {@code //host}. Looked for anywhere in the URL, so a wrapping driver ({@code jdbc:p6spy:h2:...})
+     * is caught too. Never quotes the URL.
+     */
+    static String insideTheServer(String url) {
+        String u = url.toLowerCase(Locale.ROOT);
+        if (u.contains(":sqlite:")) {
+            return "SQLite databases are files the driver opens on the server." + INSIDE;
+        }
+        if (u.contains(":duckdb:")) {
+            return "DuckDB databases are files or memory the driver opens on the server." + INSIDE;
+        }
+        if (u.contains(":firebirdsql:embedded:") || u.contains(":firebird:embedded:")) {
+            return "an embedded Firebird database is opened by the driver on the server." + INSIDE;
+        }
+        int h2 = u.indexOf(":h2:");
+        if (h2 >= 0) {
+            String rest = u.substring(h2 + 4);
+            if (rest.contains("init=")) {
+                return "H2's INIT setting runs SQL, which can read the server's files, as each connection opens."
+                    + INSIDE;
+            }
+            if (!rest.startsWith("tcp://") && !rest.startsWith("ssl://")) {
+                return "an H2 URL other than tcp:// or ssl:// opens a file or in-memory database "
+                    + "on the server." + INSIDE;
+            }
+        }
+        int hsql = u.indexOf(":hsqldb:");
+        if (hsql >= 0) {
+            String rest = u.substring(hsql + 8);
+            if (!rest.startsWith("hsql://") && !rest.startsWith("hsqls://")
+                && !rest.startsWith("http://") && !rest.startsWith("https://")) {
+                return "an HSQLDB URL other than hsql:, hsqls:, http: or https: opens a file or in-memory database on "
+                    + "the server." + INSIDE;
+            }
+        }
+        int derby = u.indexOf(":derby:");
+        if (derby >= 0 && !u.startsWith("//", derby + 7)) {
+            return "a Derby URL without a //host opens an embedded database on the server." + INSIDE;
         }
         return null;
     }

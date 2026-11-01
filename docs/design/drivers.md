@@ -93,7 +93,7 @@ fails if a jar named like one, or holding its classes, is in the release folder.
 ## Registered drivers
 
 The generic JDBC connector (kind `jdbc`) reads databases Kilnmark has no connector of its own for:
-Db2, Teradata, Snowflake, Sybase, Informix, H2 and the like. Their drivers cannot be pinned in
+Db2, Teradata, Snowflake, Sybase, Informix, an H2 server and the like. Their drivers cannot be pinned in
 advance, since Kilnmark does not know which the customer will bring or which version. So instead
 of Kilnmark pinning the jar, **an admin vouches for it** ([ADR 0025](../adr/0025-registered-jdbc-drivers.md)).
 
@@ -154,11 +154,18 @@ Kilnmark could vouch for.
   text, and messages never quote the URL. Only admins may set up a generic JDBC source, change its
   connector settings or check an unsaved one (`Connector.adminOnly()`); stewards still test, scan and
   preview saved ones.
+- *A database inside the server.* A driver that opens its database in the server's own process
+  (SQLite, DuckDB, embedded Firebird, H2 or HSQLDB files and memory, embedded Derby) lets the
+  source's SQL read or write the server's files, or run code there, with no login of anyone's own
+  (ADR 0027). Such URLs are refused for admins too, whatever the allow-list: H2 only as `tcp://` or
+  `ssl://` and never with `INIT`, HSQLDB only as `hsql://`, `hsqls://`, `http://` or `https://`,
+  Derby only with `//host`. The check looks anywhere in the URL, so a wrapping driver is caught too.
 - *Reaching the outside.* Nothing is downloaded. The hosts a source would reach are the URL's and
   those its settings name (failover partners, `*servername`, `alternate*` and the like, and any value
   that is itself a URL), all checked against `kilnmark.sources.allowed-hosts`; with an allow-list
   of hosts, a URL whose host or settings cannot be read is refused.
 
 The test driver is H2 (MPL 2.0 or EPL 1.0, not GPL), a `testRuntimeOnly` dependency of
-`kiln-plugins` that the tests copy into a drivers folder and register through this path.
+`kiln-plugins` that the tests copy into a drivers folder and register through this path; they reach
+their in-memory databases through an H2 server on the test machine, as a customer's would be.
 `checkNoCustomerDrivers` also fails a release holding H2's jar or classes.
