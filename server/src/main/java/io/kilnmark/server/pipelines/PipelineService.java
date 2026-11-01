@@ -285,12 +285,9 @@ public class PipelineService {
      * the request: the suggestions are then Kilnmark's own, and {@code ai} says why.
      */
     public PredictionViews.Advice suggest(String yaml, boolean useAi, String caller, Sights sights) {
+        PredictionCatalogue.Remembering catalogue = suggestionCatalogue(predictions, useAi, sights);
         checkSize(yaml);
         PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes, Map.of(), variables());
-        if (useAi && sights != null) {
-            sights.speakingToModel(); // what the model is shown is never unmasked, whoever asks (ADR 0027)
-        }
-        PredictionCatalogue.Remembering catalogue = predictions.open(sights);
         QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
         PipelineAdvisor advisor = new PipelineAdvisor(catalogue, nodes, json);
         PipelineAdvisor.Model model = null;
@@ -327,6 +324,25 @@ public class PipelineService {
             };
         }
         return PredictionViews.of(advisor.advise(plan, model, status, n -> graph.source(n).orElse(null)));
+    }
+
+    /**
+     * The catalogue suggestions read. With {@code useAi} the caller's sights are told first that the
+     * request answers a model, so what the model is shown is never unmasked, whoever asks, a designer
+     * with the unmask grant included (ADR 0027). A model is never asked without a caller's sights.
+     *
+     * @throws IllegalStateException for {@code useAi} with no sights: a programming error
+     */
+    static PredictionCatalogue.Remembering suggestionCatalogue(PredictionCatalogue predictions, boolean useAi,
+                                                               Sights sights) {
+        if (useAi) {
+            if (sights == null) {
+                throw new IllegalStateException("AI pipeline suggestions need the caller's sights, so that what the "
+                    + "model is shown is masked");
+            }
+            sights.speakingToModel();
+        }
+        return predictions.open(sights);
     }
 
     /**
@@ -393,6 +409,21 @@ public class PipelineService {
     private PipelineViews.VersionDetail version(PipelineStore.Version v) {
         return new PipelineViews.VersionDetail(v.n(), v.yaml(), v.message(), v.author(), v.createdAt(), v.valid(),
             problems(v.problems()));
+    }
+
+    /**
+     * Refuses YAML with a read that runs a query unless the caller may see unmasked values: a query
+     * can read any column of its source, so only a designer holding the unmask grant writes one
+     * (ADR 0028). Runs are not refused: what a query reads is masked as marked for everyone else.
+     */
+    public void allowQueries(String yaml, Sights sights) {
+        if (yaml == null || sights == null || sights.mayUnmask()) {
+            return;
+        }
+        checkSize(yaml);
+        if (PipelinePreviews.hasQueryRead(compiler.check(yaml, nodes, Map.of(), variables()))) {
+            throw fail(Response.Status.FORBIDDEN, PipelinePreviews.QUERY_NEEDS_UNMASK);
+        }
     }
 
     /** Adds a pipeline with its first version; an invalid one is saved as a draft. */
@@ -578,6 +609,10 @@ public class PipelineService {
                 : c.problems();
             throw fail(Response.Status.CONFLICT, "Version " + n + " of " + name + " cannot run until its problems are "
                 + "fixed: " + firstProblems(problems));
+        }
+        if (PipelinePreviews.hasQueryRead(c) && !store.queriesChecked(name, n)) {
+            throw fail(Response.Status.CONFLICT, "Version " + n + " of " + name + " reads with a query and was saved "
+                + "before queries were checked. A designer who may see unmasked values saves it again, then it runs.");
         }
         return new RunnableVersion(n, values);
     }
@@ -842,6 +877,9 @@ public class PipelineService {
         }
     }
 
+    /** Recorded with a run's assets when it reads with a query, so its messages are withheld as for marked data. */
+    static final String QUERY_READ = "kilnmark:query-read";
+
     static final String FOR_STEWARDS = "Stewards can see why: the message may hold values from the data.";
     static final String FOR_DESIGNERS = "Only designers who see unmasked values can see why: the message may hold values of "
         + "columns marked sensitive.";
@@ -864,6 +902,14 @@ public class PipelineService {
         }
         if (sights.mayUnmask()) {
             return null;
+        }
+        JsonNode recorded = tree(r.assets());
+        if (recorded != null) {
+            for (JsonNode n : recorded) {
+                if (QUERY_READ.equals(n.asText())) {
+                    return FOR_DESIGNERS; // a query may have read any column, marked or not
+                }
+            }
         }
         List<String> urns = assets(r);
         sights.load(urns); // a no-op for assets already loaded by prepare()
@@ -997,6 +1043,18 @@ public class PipelineService {
                     + "be read", null);
                 return new ScanService.Result(ScanService.Outcome.FINISHED, null);
             }
+            // Setting a query read up asks the database to plan the query, and its errors may quote it: the
+            // run is recorded as reading with a query before anything is set up (ADR 0028).
+            if (PipelinePreviews.hasQueryRead(compiler.check(v.yaml(), nodes, runParameters, runVariables))) {
+                if (!store.queriesChecked(run.pipeline(), run.version())) {
+                    String why = "The pipeline could not start: this version reads with a query and was saved before "
+                        + "queries were checked. A designer who may see unmasked values saves it again, then it runs.";
+                    ended(log, "failed", why);
+                    store.finishRun(id, "failed", why, null);
+                    return new ScanService.Result(ScanService.Outcome.FINISHED, null);
+                }
+                store.setAssets(id, json.writeValueAsString(List.of(QUERY_READ)));
+            }
             c = context.run(() -> compiler.compile(v.yaml(), nodes, runParameters, runVariables));
             if (!c.valid() || c.graph() == null) {
                 ended(log, "failed", "The pipeline could not start: " + firstProblems(c.problems()));
@@ -1015,6 +1073,9 @@ public class PipelineService {
             java.util.Set<String> assets = new java.util.TreeSet<>(context.reads());
             assets.addAll(PipelineExecution.reads(c, context).values());
             writes.forEach(w -> assets.add(w.urn()));
+            if (PipelinePreviews.hasQueryRead(c)) {
+                assets.add(QUERY_READ); // its messages may quote any value the query read (ADR 0028)
+            }
             store.setAssets(id, json.writeValueAsString(assets));
             // One run writes a table or file at a time: wait a while for another run writing it. The
             // locks are taken on the job's own connection, so a run never holds more than one.
@@ -1031,6 +1092,7 @@ public class PipelineService {
                 }
                 held.add(urn);
             }
+            markQueryWrites(c, writes, context); // the targets are this run's now, and no row has moved yet
             // What the catalogue predicts for each write and gate, stored before a row moves, so the run
             // shows its estimate beside what it measures (docs/design/data-quality.md section 8).
             predicted.addAll(predictRun(c, context));
@@ -1043,7 +1105,9 @@ public class PipelineService {
                 o.status());
             ObjectNode result = json.createObjectNode();
             ArrayNode read = result.putArray("read");
-            PipelineExecution.reads(c, context).values().stream().distinct().forEach(read::add);
+            java.util.Set<String> reads = new java.util.LinkedHashSet<>(PipelineExecution.reads(c, context).values());
+            PipelineExecution.queryReads(c, context).values().forEach(reads::addAll);
+            reads.forEach(read::add);
             ArrayNode notes = json.createArrayNode();
             ArrayNode written = result.putArray("written");
             long total = 0;
@@ -1435,13 +1499,46 @@ public class PipelineService {
             carried.addAll(marked.all() ? List.of(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN)
                 : marked.names());
         }
-        String from = readMarks.entrySet().stream().filter(e -> !e.getValue().isEmpty()).map(Map.Entry::getKey)
-            .findFirst().map(id -> PipelinePreviews.readUrnsOf(c.configs().getOrDefault(id, Map.of()), context)
-                .stream().findFirst().orElse(id)).orElse("");
+        String from = queryFeeds(c, w) ? QUERY_READ : readMarks.entrySet().stream()
+            .filter(e -> !e.getValue().isEmpty()).map(Map.Entry::getKey).sorted().findFirst()
+            .map(id -> PipelinePreviews.readUrnsOf(c.configs().getOrDefault(id, Map.of()), context).stream()
+                .findFirst().orElse(id)).orElse("");
         qualityStore.carry(w.urn(), carried, from, context.pipeline(), context.runId());
         if (marked.all() && written.isEmpty()) {
-            note(notes, w.node() + ": it wrote columns made from columns marked sensitive in ways Kilnmark could not "
-                + "follow, so every column it wrote is marked sensitive", null);
+            note(notes, w.node() + (queryFeeds(c, w)
+                ? ": it wrote rows a read's query read, so every column it wrote is marked sensitive"
+                : ": it wrote columns made from columns marked sensitive in ways Kilnmark could not follow, so every "
+                    + "column it wrote is marked sensitive"), null);
+        }
+    }
+
+    /** Whether a read's query feeds {@code w}: what it reads reaches the write, marked on every column. */
+    private static boolean queryFeeds(PipelineCompilerPort.Compilation c, PipelineExecution.WriteTarget w) {
+        Map<String, java.util.Set<String>> queries = new java.util.HashMap<>();
+        for (PipelineCompilerPort.NodeOutline s : c.nodes()) {
+            if (ReadNodeFactory.TYPE.equals(s.type()) && ReadNodeFactory.isQuery(c.configs().getOrDefault(s.id(),
+                Map.of()))) {
+                queries.put(s.id(), java.util.Set.of(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN));
+            }
+        }
+        return !queries.isEmpty() && NodePreview.marked(c, queries, w.node()).all();
+    }
+
+    /**
+     * Marks every column of each write that a read's query feeds, before any row moves (ADR 0028):
+     * every column a query reads is marked, so this is known before the run, and the rows it writes
+     * stay masked even if the run never reaches its end, where {@link #carryMarks} records the rest.
+     */
+    private void markQueryWrites(PipelineCompilerPort.Compilation c, List<PipelineExecution.WriteTarget> writes,
+                                 RunContext context) {
+        if (qualityStore == null || !PipelinePreviews.hasQueryRead(c)) {
+            return;
+        }
+        for (PipelineExecution.WriteTarget w : writes) {
+            if (queryFeeds(c, w)) {
+                qualityStore.carry(w.urn(), List.of(io.kilnmark.server.quality.QualityStore.EVERY_COLUMN), QUERY_READ,
+                    context.pipeline(), context.runId());
+            }
         }
     }
 

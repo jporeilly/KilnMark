@@ -89,7 +89,7 @@ The samples name their sources by placeholders rather than real sources:
 | --- | --- |
 | `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) |
 | `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) |
-| `files` | File storage the samples write to, under `samples/`; an admin must turn on **Allow writing** for it |
+| `files` | File storage the samples write to, under `samples/`; a designer or an admin must turn on **Allow writing** for it |
 
 1. On the **Pipelines** page, choose **Add samples** (designers and admins).
 2. Under **Or choose your own sources**, choose one of your saved sources for each placeholder, or
@@ -115,10 +115,23 @@ they were, and a change to the YAML redraws the canvas. Kilnmark remembers which
 
 The canvas uses the page's full width. On the left is the node list, which **Nodes** in the canvas
 toolbar hides and shows again; the pipeline fills the rest, with an overview in its corner for
-finding your way around a large one. A click selects a node, so you can move it without anything
-opening. To open its settings, double-click it, or select it and press Enter: they open in a panel
-over the right of the canvas (below it on a narrow screen), follow the node you select while open,
-and close with their **×** or when nothing is selected. A node you add opens its settings at once.
+finding your way around a large one. Nothing covers the canvas: under it is one panel of tabs,
+which **Collapse** in its tab bar folds away to give the canvas more room (Kilnmark remembers which
+you chose):
+
+- **Settings** and **Preview**, for the selected node. They are there only while a node is
+  selected: selecting one (a click, or moving to it with Tab or the arrow keys) shows its
+  **Settings**, and the focus stays where it was. Enter or a double-click also moves you into the
+  settings. When nothing is selected any more, the panel shows **Run** if a run is going or Run
+  was the last of the pipeline's tabs you looked at, else **Nodes**.
+- **Run**: the run the canvas shows (the latest), with its status, when it started and how long it
+  took, the rows read and written, and each node's rows in and out, time, peak memory, quality and
+  error. While it runs it updates every two seconds. **Open run** goes to the run's own page, with
+  its timeline and log.
+- **Suggestions**, **Nodes** (the nodes as a table), **Runs** (every run) and **Versions**.
+
+**Settings**, **Preview** and **Suggestions** need the canvas; **Run**, **Nodes**, **Runs** and
+**Versions** also work beside the YAML. A node you add shows its settings at once.
 
 ### Adding and connecting nodes
 
@@ -224,7 +237,7 @@ and asks you to confirm; save them to run them.
 
 To see the rows leaving a node before you run anything, right-click it (Ctrl+click on a Mac) and
 choose **Preview rows**,
-or select it and open the **Preview** tab beside its settings. From the keyboard, press Shift+F10
+or select it and open the **Preview** tab in the panel under the canvas. From the keyboard, press Shift+F10
 (or the menu key) on a node for the same menu. For a node with more than one output, such as a
 quality gate's **out** and **quarantine** or a filter's **out** and **rejected**, choose the
 **Output**; choose how many **Rows** to see (100 unless you choose another number, at most 1,000).
@@ -260,12 +273,12 @@ out of date; choose **Preview again**.
 ### Using the keyboard
 
 Everything on the canvas can be done without a mouse. Press Tab to move from node to node (each
-node is described when it gets the focus), and on to its settings. Press `?` on the canvas for this
+node is described when it gets the focus), and on to the panel under the canvas. Press `?` on the canvas for this
 list:
 
 | Keys | What they do |
 | --- | --- |
-| Tab, Shift+Tab | Move between nodes, and on to the settings |
+| Tab, Shift+Tab | Move between nodes, and on to the panel under the canvas |
 | Arrow keys | Move to a connected node: right to the next, left to the one before; up and down to the node above or below |
 | Shift+arrow keys | Move the node on the canvas |
 | Alt+arrow keys | Pan the canvas |
@@ -284,7 +297,8 @@ list:
 | Escape | Clear the selection, or close a list |
 
 On a Mac, use Cmd for Ctrl. These keys work on the canvas and its tools, not while you are in the
-settings or the node list. Connections are not in the Tab order: remove one with **Disconnect**
+panel under the canvas or the node list; in its tab bar, the arrow keys, Home and End move between
+its tabs. Connections are not in the Tab order: remove one with **Disconnect**
 in the settings, and add one with **Connect to…**. What each change did is announced to screen readers, the nodes are
 also listed as a table under the canvas, and the canvas does not animate when your system asks for
 reduced motion.
@@ -361,6 +375,41 @@ is handy while you try a pipeline out; 0 reads them all.
 
 The samples `sample-read-columns-where` and `sample-orders-by-status` show both (see
 [Adding the samples](#adding-the-samples)).
+
+#### Reading with a query
+
+On a PostgreSQL source with **Allow SQL** on, a read can run one `SELECT` in place of a table:
+
+```yaml
+  - id: accounts_per_customer
+    type: read
+    source: crm-db
+    query: >-
+      SELECT c.customer_id, c.segment, count(a.account_id) AS accounts
+      FROM crm.customers c LEFT JOIN crm.accounts a ON a.customer_id = c.customer_id
+      GROUP BY c.customer_id, c.segment
+    row_limit: 1000
+```
+
+- A read gives `asset` or `query`, not both. `columns` and `where` do not go with a query: choose
+  the columns and rows in the SQL. `row_limit` does, and the database stops at that many rows.
+- The query is checked as custom SQL rules are (see [Quality rules](quality-rules.md)): one
+  `SELECT` or `WITH`, no `;` between statements, nothing that writes, and no function that reaches
+  outside the query, such as reading files or other databases. It runs on a read-only connection,
+  and not at all when the source's login is a superuser or may read the server's files.
+- Parameters (`${name}`) are not filled in a query yet; write the value in the SQL.
+- Its columns are known only when it runs, so the nodes after it are checked against them then.
+- Only a designer who may see unmasked values saves or previews a pipeline with a query, since a
+  query can read any column the login can. Others, admins included, can run it.
+- Every column the query returns is treated as marked sensitive, since a query can read any table
+  its login can: masked for everyone else, and marked on what a write writes from it. A run's error
+  messages are held back the same way. Once someone has checked that what was written holds nothing
+  sensitive, an admin can clear its marks.
+- Each run records the tables the query reads, as the database plans it, so lineage shows them as
+  the inputs of what the pipeline writes.
+
+The sample `sample-read-query` shows one; adding the samples skips it unless `crm-db` is a
+PostgreSQL source with Allow SQL on.
 
 ### Writing
 
@@ -670,7 +719,7 @@ node does something the estimate could not see).
 
 ### Suggestions
 
-**Suggestions** on the canvas toolbar lists nodes that would raise a write's predicted score, each
+**Suggestions** on the canvas toolbar (or the panel's **Suggestions** tab) lists nodes that would raise a write's predicted score, each
 with its predicted effect (an estimate), such as "Predicted 89% → 94% (+5 points, estimate)":
 
 - trim the spaces from padded text columns;
@@ -713,8 +762,8 @@ number.
 
 Beside the YAML, **Nodes** draws the pipeline as a read-only graph: each node with its input ports
 on the left and output ports on the right, and lines from port to port. Hover over or move the
-focus to a node to see the columns leaving it. **Nodes as a table** says the same in words; choose
-a node's id there to go to its line (or, on the canvas, to select it).
+focus to a node to see the columns leaving it. The **Nodes** tab of the panel under it lists them
+as a table in words; choose a node's id there to go to its line (or, on the canvas, to select it).
 
 ## Saving versions
 
@@ -731,14 +780,15 @@ undo theirs unseen. Your changes stay on the page. **Show my version in the YAML
 text; **Load the latest and keep mine as an undo step** loads the latest version in their place,
 and **Undo** brings yours back, to compare or to make your change again.
 
-The **Versions** list shows every version with who saved it, when and why. Open one to see its
+The **Versions** tab, under the canvas, shows every version with who saved it, when and why. Open one to see its
 YAML exactly as it was saved.
 
 ## Running a pipeline
 
 Choose **Run now**, on the Pipelines page or the pipeline's own page. Kilnmark checks the latest
 version again first, since a source may have changed, then queues the run for a worker. The run
-appears under **Runs** as Queued, then Running.
+appears in the **Runs** tab, under the canvas, as Queued, then Running, and the panel shows the
+**Run** tab, following the run as it goes.
 
 A run uses the version that was latest when you asked, even if someone saves another while it
 waits. A pipeline with parameters runs with their defaults; see
@@ -749,7 +799,7 @@ stops within a few seconds. Rows already written stay written.
 
 ## Reading a run
 
-Open a run from the **Runs** list. The page updates itself until the run ends, and says when its
+Open a run from the **Runs** tab. The page updates itself until the run ends, and says when its
 status changes.
 
 - **Summary:** the status, the version that ran, who asked, when it started and finished, how long

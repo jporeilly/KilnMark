@@ -245,6 +245,20 @@ public class SourceService {
      * Whether two sources of {@code kind} read some of the same files: one folder or prefix inside the
      * other. Errs towards yes: folders are compared after following links and ignoring case, and
      * every way of naming AWS's own S3 service counts as one endpoint.
+     *
+     * <p>An S3 access point reads a bucket its name does not tell, so Kilnmark cannot see which bucket
+     * is behind it: an alias ({@code -s3alias}, Object Lambda's {@code --ol-s3}, Outposts'
+     * {@code --op-s3}, a multi-Region {@code .mrap}), an ARN, or an endpoint host that names a bucket or
+     * an access point itself ({@code <bucket>.s3.<region>.amazonaws.com}, {@code s3-accesspoint},
+     * Object Lambda, Outposts or VPC endpoint hosts: anything at amazonaws.com other than the plain
+     * service hosts). Such a source counts as reading the same files as every other source at the same
+     * endpoint, whatever the prefixes and however that one names its bucket. The one exception is two
+     * ARNs, which name their partition and region ({@code arn:aws:s3:<region>:<account>:accesspoint/
+     * <name>}): an access point reads only a bucket in its own partition and region, so two ARNs in
+     * different partitions, or in different regions when both name one, cannot read the same files.
+     * Their accounts are not compared, since an access point may front a bucket another account owns.
+     * An alias cannot be told apart without asking AWS, and a bucket's region is not in its name, so an
+     * alias, or an ARN beside a bucket name, still counts as the same files.
      */
     static boolean sameFiles(String kind, Map<String, String> a, Map<String, String> b) {
         if (FOLDER_KIND.equals(kind)) {
@@ -254,8 +268,16 @@ public class SourceService {
         }
         if (S3_KIND.equals(kind)) {
             String bucket = trim(a.get("bucket"));
-            if (bucket == null || !bucket.equalsIgnoreCase(String.valueOf(trim(b.get("bucket"))))
-                || !endpoint(a.get("endpoint")).equals(endpoint(b.get("endpoint")))) {
+            String other = trim(b.get("bucket"));
+            if (bucket == null || other == null || !endpoint(a.get("endpoint")).equals(endpoint(b.get("endpoint")))) {
+                return false;
+            }
+            boolean hostA = namesBucket(a.get("endpoint"));
+            boolean hostB = namesBucket(b.get("endpoint"));
+            if (accessPoint(bucket) || accessPoint(other) || hostA || hostB) {
+                return hostA || hostB || !apart(bucket, other);
+            }
+            if (!bucket.equalsIgnoreCase(other)) {
                 return false;
             }
             String p = trim(a.get("prefix")) == null ? "" : trim(a.get("prefix"));
@@ -263,6 +285,91 @@ public class SourceService {
             return p.startsWith(q) || q.startsWith(p);
         }
         return false;
+    }
+
+    /**
+     * Whether an S3 bucket setting names an access point, not a bucket: an alias ({@code -s3alias},
+     * {@code --ol-s3} for Object Lambda, {@code --op-s3} for Outposts, {@code --<zone>--xa-s3} for a
+     * directory bucket's, {@code .mrap} for a multi-Region one) or any ARN (a bucket name never holds
+     * a colon). A directory bucket itself ({@code --x-s3}) is a bucket.
+     */
+    static boolean accessPoint(String bucket) {
+        String b = bucket.toLowerCase(java.util.Locale.ROOT);
+        return b.endsWith("-s3alias") || b.endsWith("--ol-s3") || b.endsWith("--op-s3") || b.endsWith("--xa--s3")
+            || b.endsWith("--xa-s3") || b.endsWith(".mrap") || b.startsWith("arn:");
+    }
+
+    /** An S3 ARN's partition and region (empty for a multi-Region access point). */
+    private record S3Arn(String partition, String region) {
+    }
+
+    /** The partition and region of an S3 ARN ({@code arn:<partition>:s3...:<region>:...}), or null. */
+    private static S3Arn s3Arn(String bucket) {
+        String[] parts = bucket.toLowerCase(java.util.Locale.ROOT).split(":", 6);
+        if (parts.length < 6 || !parts[0].equals("arn") || parts[1].isEmpty() || !parts[2].startsWith("s3")) {
+            return null;
+        }
+        return new S3Arn(parts[1], parts[3]);
+    }
+
+    /**
+     * Whether two access points cannot read the same bucket: only when both are ARNs, in different
+     * partitions, or in different regions where both name one. Anything else may be the same bucket.
+     */
+    private static boolean apart(String a, String b) {
+        S3Arn x = s3Arn(a);
+        S3Arn y = s3Arn(b);
+        if (x == null || y == null) {
+            return false;
+        }
+        if (!x.partition().equals(y.partition())) {
+            return true;
+        }
+        return !x.region().isEmpty() && !y.region().isEmpty() && !x.region().equals(y.region());
+    }
+
+    /**
+     * AWS's plain S3 service hosts, which name no bucket: {@code s3}, {@code s3-fips} or
+     * {@code s3-external-1}, then dual-stack and region labels, at one of AWS's domains ({@link #aws}).
+     * A bucket's name before them ({@code <bucket>.s3...}) never matches.
+     */
+    private static final java.util.regex.Pattern AWS_SERVICE_HOST = java.util.regex.Pattern.compile(
+        "s3(-fips|-external-1)?([.-](dualstack|[a-z]{2,4}(-[a-z]+)+-[0-9]+))*\\.amazonaws\\.(com|com\\.cn|eu)");
+
+    /**
+     * Whether an endpoint's host names a bucket or an access point itself, so the bucket setting does
+     * not tell what is read: any amazonaws.com host but AWS's plain service hosts, such as
+     * {@code <bucket>.s3.<region>.amazonaws.com} or {@code <name>-<account>.s3-accesspoint.<region>
+     * .amazonaws.com}.
+     */
+    static boolean namesBucket(String url) {
+        String host = endpointHost(url);
+        return host != null && aws(host) && !AWS_SERVICE_HOST.matcher(host).matches();
+    }
+
+    /** Whether a host is AWS's: at amazonaws.com, amazonaws.com.cn (China) or amazonaws.eu (sovereign cloud). */
+    private static boolean aws(String host) {
+        return host.equals("amazonaws.com") || host.endsWith(".amazonaws.com") || host.endsWith(".amazonaws.com.cn")
+            || host.endsWith(".amazonaws.eu");
+    }
+
+    /** An endpoint's host, lower case and without a trailing dot, or null when there is none to read. */
+    private static String endpointHost(String url) {
+        String e = trim(url);
+        if (e == null) {
+            return null;
+        }
+        try {
+            // No two slashes inside one literal: SightsUseTest strips line comments before strings.
+            String host = java.net.URI.create(e.contains(":/") ? e : "https:" + "/" + "/" + e).getHost();
+            return host == null ? null : withoutTrailingDot(host.toLowerCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException x) {
+            return null;
+        }
+    }
+
+    private static String withoutTrailingDot(String host) {
+        return host.endsWith(".") ? host.substring(0, host.length() - 1) : host;
     }
 
     /** A folder as compared: absolute, normalised, links followed where it exists, lower case. */
@@ -284,8 +391,9 @@ public class SourceService {
     }
 
     /**
-     * An S3 endpoint as compared: none, or any amazonaws.com host, is AWS's own service; otherwise the
-     * lower-case host with its port, a default port (80, 443) left out.
+     * An S3 endpoint as compared: none, or any of AWS's hosts ({@link #aws}), is AWS's own service;
+     * otherwise the lower-case host without a trailing dot, with its port, a default port (80, 443)
+     * left out.
      */
     static String endpoint(String url) {
         String e = trim(url);
@@ -295,8 +403,9 @@ public class SourceService {
         try {
             // No two slashes inside one literal: SightsUseTest strips line comments before strings.
             java.net.URI u = java.net.URI.create(e.contains(":/") ? e : "https:" + "/" + "/" + e);
-            String host = u.getHost() == null ? e : u.getHost().toLowerCase(java.util.Locale.ROOT);
-            if (host.equals("amazonaws.com") || host.endsWith(".amazonaws.com")) {
+            String host = u.getHost() == null ? e.toLowerCase(java.util.Locale.ROOT)
+                : withoutTrailingDot(u.getHost().toLowerCase(java.util.Locale.ROOT));
+            if (aws(host)) {
                 return "aws";
             }
             int port = u.getPort();
@@ -310,18 +419,19 @@ public class SourceService {
         return s == null || s.isBlank() ? null : s.trim();
     }
 
-    /** Said when someone other than an admin tries to change whether a source may be written to. */
-    static final String WRITING_ADMIN_ONLY = CommonSettings.ALLOW_WRITING + ": only admins can let pipelines write "
-        + "to a source, or make it read-only again. Ask an admin";
+    /** Said when someone other than a designer or an admin tries to change whether a source may be written to. */
+    static final String WRITING_ADMIN_ONLY = CommonSettings.ALLOW_WRITING + ": only designers and admins can let "
+        + "pipelines write to a source, or make it read-only again. Ask a designer or an admin";
 
     /**
-     * The edit form with {@code allow_writing} as only an admin may change it: for anyone else, a
-     * form that leaves it out keeps the stored value, and one that changes it is refused.
+     * The edit form with {@code allow_writing} as only a designer or an admin ({@code designer}: a
+     * role at least designer) may change it: for anyone else, a form that leaves it out keeps the
+     * stored value, and one that changes it is refused.
      *
      * @throws jakarta.ws.rs.WebApplicationException 403 when someone else changes it
      */
-    static SourceForm writingAsAllowed(SourceForm form, Records.Source existing, boolean admin) {
-        if (admin || form == null || form.settings() == null) {
+    static SourceForm writingAsAllowed(SourceForm form, Records.Source existing, boolean designer) {
+        if (designer || form == null || form.settings() == null) {
             return form;
         }
         String stored = existing.settings().get(CommonSettings.ALLOW_WRITING);

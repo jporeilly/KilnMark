@@ -36,7 +36,7 @@ nodes:
   # Add nodes here, from the types this server lists (GET /api/v1/node-types): each names the
   # node feeding it with input: <id>, or input: <id>.<port> for another of its outputs.
 
-  # Write the rows. The source must allow writing: an admin turns on Allow writing for it.
+  # Write the rows. The source must allow writing: a designer or an admin turns on Allow writing for it.
   - id: sample
     type: write
     input: rows

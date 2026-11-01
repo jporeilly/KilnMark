@@ -145,6 +145,35 @@ function TextControl(p: ControlProps & { listId?: string; mono?: boolean }) {
   );
 }
 
+/** A read's query (ADR 0028): SQL over several lines, in a monospace box. */
+function SqlControl(p: ControlProps) {
+  const outside = asText(p.value, p.text);
+  const { draft, setDraft, focusProps } = useDraft(outside);
+  return (
+    <Field spec={p.spec} id={p.id} problems={p.problems}>
+      {(describedBy, invalid) => (
+        <textarea
+          id={p.id}
+          className="mono cv-sql"
+          rows={5}
+          value={draft}
+          readOnly={p.readOnly}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder="SELECT ... FROM schema.table"
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
+          {...focusProps}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            p.onChange(e.target.value.trim() === "" ? undefined : e.target.value);
+          }}
+        />
+      )}
+    </Field>
+  );
+}
+
 function NumberControl(p: ControlProps) {
   const outside = asText(p.value, p.text);
   const { draft, setDraft, focusProps } = useDraft(outside);
@@ -1115,7 +1144,7 @@ export function SettingControl(p: ControlProps) {
     case "rules":
       return <RulesControl {...p} />;
     default:
-      return <TextControl {...p} />;
+      return p.context.nodeType === "read" && p.spec.key === "query" ? <SqlControl {...p} /> : <TextControl {...p} />;
   }
 }
 

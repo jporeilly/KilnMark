@@ -93,7 +93,7 @@ fails if a jar named like one, or holding its classes, is in the release folder.
 ## Registered drivers
 
 The generic JDBC connector (kind `jdbc`) reads databases Kilnmark has no connector of its own for:
-Db2, Teradata, Snowflake, Sybase, Informix, H2 and the like. Their drivers cannot be pinned in
+Db2, Teradata, Snowflake, Sybase, Informix, an H2 server and the like. Their drivers cannot be pinned in
 advance, since Kilnmark does not know which the customer will bring or which version. So instead
 of Kilnmark pinning the jar, **an admin vouches for it** ([ADR 0025](../adr/0025-registered-jdbc-drivers.md)).
 
@@ -148,17 +148,49 @@ Kilnmark could vouch for.
   cannot know every driver's, so the generic connector takes an **allow-list**: every setting in the
   URL, however the driver writes it (`;`, `?`, `&`, Db2's `:key=` after the database, Teradata's
   `/key=...,key=...`, `(key=value)` groups as in MySQL's `address=(...)` and Oracle's descriptors), and
-  every property must be one the admin allowed at registration. A URL with an `=` that belongs to no
+  every property must be one the admin allowed at registration, and an admin may allow only
+  settings Kilnmark has vetted (`RegisteredDriver.VETTED`, ADR 0030). As a second check, no allow-list may hold a property
+  that loads code, reads the server's files or signs in as the server (`RegisteredDriver.readsServerFiles`:
+  files, paths, folders, factories, classes, key and trust stores, interceptors, verifiers, callbacks,
+  providers, strategies, transforms, plugins, checkers, handlers, loggers, locations, client
+  certificates, MySQL's `autoDeserialize` and local-file loading, `integratedSecurity`, and any
+  authentication, Kerberos, JAAS, GSS or security-mechanism setting). A stored registration whose
+  list holds one is not used, and the server log says so. A URL with an `=` that belongs to no
   readable setting, or with quotes, braces, back-slashes, spaces or percent-encoding, is refused.
   Secrets and the user name are refused whatever the list, as settings are stored and shown as plain
   text, and messages never quote the URL. Only admins may set up a generic JDBC source, change its
   connector settings or check an unsaved one (`Connector.adminOnly()`); stewards still test, scan and
   preview saved ones.
+- *A database inside the server.* A driver that opens its database in the server's own process
+  (SQLite, DuckDB, H2 or HSQLDB files and memory, embedded Derby, Access files through UCanAccess,
+  CSV files, Calcite, embedded, local or native Firebird or a Firebird `type`, Oracle other than
+  `thin`, Drill with `zk=local`, Ignite started from `cfg:`, embedded Hive) lets the source's SQL read or write the server's files, or run code there,
+  with no login of anyone's own (ADR 0027). Such URLs are refused for admins too, whatever the
+  property allow-list: H2 only as `tcp://` or `ssl://` and never with `INIT`, in the URL or as a
+  driver property in any case; HSQLDB only as `hsql://`, `hsqls://`, `http://` or `https://`; Derby
+  only with `//host`; Hive only with a host. The names are looked for anywhere in the URL, so a
+  wrapping driver is caught too, and refused with a message saying why.
+- *Only URLs that name a network host.* Beyond those names, the check is an allow-list by shape, as
+  a driver Kilnmark does not know could open anything in the process: the URL must be
+  `jdbc:<subprotocols>://host[:port][,host[:port]...]` (or `@//host` as Oracle's thin URLs have
+  it), with every host a host name or a bracketed IPv6 address and every port digits. A URL with no
+  `//` (`jdbc:x:/path`, `jdbc:x:mem:db`), an empty authority (`jdbc:x:///path`) or one Kilnmark
+  cannot read as hosts (`//C:/path`, `//~/db`, `//host:`) is refused, whether or not an allow-list
+  of hosts is set. The one exception is jConnect's `jdbc:sybase:Tds:host:port`, read as naming its
+  host. Drivers whose URLs name the host otherwise (Drill's `zk=host:2181`, for example) cannot be
+  used through Generic JDBC.
+- *Drivers that move files for SQL.* Snowflake, Vertica and Exasol URLs are refused: their drivers
+  read and write the machine's files for ordinary SQL. MySQL and MariaDB connections always have
+  local-file loading and deserialising turned off (ADR 0030).
+- *Next: a process of its own.* Generic JDBC drivers are to run in a separate, locked-down process
+  with only the network hosts the source names (ADR 0030); then any driver's own settings can be
+  allowed.
 - *Reaching the outside.* Nothing is downloaded. The hosts a source would reach are the URL's and
   those its settings name (failover partners, `*servername`, `alternate*` and the like, and any value
   that is itself a URL), all checked against `kilnmark.sources.allowed-hosts`; with an allow-list
   of hosts, a URL whose host or settings cannot be read is refused.
 
 The test driver is H2 (MPL 2.0 or EPL 1.0, not GPL), a `testRuntimeOnly` dependency of
-`kiln-plugins` that the tests copy into a drivers folder and register through this path.
+`kiln-plugins` that the tests copy into a drivers folder and register through this path; they reach
+their in-memory databases through an H2 server on the test machine, as a customer's would be.
 `checkNoCustomerDrivers` also fails a release holding H2's jar or classes.

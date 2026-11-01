@@ -14,6 +14,8 @@ details.
 - **Allow SQL.** A PostgreSQL source can let SQL a person writes run on it, with the new **Allow SQL**
   setting (`allow_sql`), off by default. Custom SQL quality rules run only on such sources, written
   by designers whose token sees unmasked values (ADR 0028).
+- **Read with a query.** A read node can run one `SELECT` in place of a table, on a PostgreSQL
+  source with Allow SQL on (ADR 0028). The new sample `sample-read-query` shows one.
 
 - **The audit log.** Every change made through the API, every request refused, and the changes
   that decide who sees sensitive values and what reaches a source are recorded, can never be changed
@@ -68,6 +70,51 @@ details.
   accepted and run only where it is on. **`kilnmark.quality.custom-sql` is retired**: it does
   nothing, and a server that sets it to true logs a warning. Turn on Allow SQL for each source whose
   custom rules should keep running, with a login that can read only what the SQL needs.
+- **Generic JDBC reaches database servers only** (ADR 0027). A generic JDBC URL must name a network
+  host, as `//host[:port]` (or `jdbc:sybase:Tds:host:port`); a URL for a database the driver would
+  open inside the Kilnmark server is refused for admins too: H2 files and memory (and H2's `INIT`,
+  now as a driver property too), SQLite, DuckDB, HSQLDB files and memory, embedded Derby,
+  UCanAccess, CSV files, Calcite, embedded, local or native Firebird (and Firebird's `type`, in the URL
+  or as a property), Oracle URLs other than `jdbc:oracle:thin:`, Redshift `iam:` URLs (they sign in as
+  the server's AWS identity), Drill with `zk=local`, Ignite from `cfg:`, Hive with no host, and any
+  other URL with no host Kilnmark can read. No driver's allow-list may hold a property that loads
+  code, reads the server's files or signs in as the server: interceptors, verifiers, callbacks,
+  providers, strategies, transforms, plugins, checkers, handlers, loggers, locations, client
+  certificates (`*cert`, `clientCertificate`), MySQL's `autoDeserialize` and local-file loading,
+  `integratedSecurity`, and any authentication, Kerberos, JAAS, GSS or security-mechanism setting.
+  **A registered driver whose allow-list holds one of these is no longer used** (the server log says
+  which): register it again without them. **Existing
+  generic JDBC sources with such URLs stop connecting**, and their tests, scans and runs say why.
+  Run the database as a server (an H2 or HSQLDB server, Derby's network server and the like) and
+  change the source's URL to its network address.
+- **Generic JDBC takes only vetted settings** (ADR 0030). A registered driver may be allowed only
+  settings Kilnmark has vetted: time limits, TLS, characters, database, schema, catalog, warehouse
+  and role, the application's name, fetch and batch sizes, time zones, keep-alive and failover
+  servers, and a few databases' own (Teradata `TMODE`, Informix `INFORMIXSERVER`). **Registrations
+  whose lists hold anything else are no longer used**; register them again without it. Snowflake,
+  Vertica and Exasol are refused through Generic JDBC, as their drivers move files for ordinary SQL,
+  and MySQL and MariaDB connections never load local files. A URL is checked for what it opens
+  before its settings. Running drivers in a process of their own is next.
+- **S3 access points and overlapping sources.** An S3 source whose bucket is an access point (an
+  `-s3alias`, Object Lambda `--ol-s3`, Outposts `--op-s3`, directory bucket `--<zone>--xa-s3` or `.mrap`
+  alias, or an ARN), or whose
+  endpoint host names a bucket or access point (`<bucket>.s3.<region>.amazonaws.com`,
+  `s3-accesspoint` hosts and the like), counts as reading the same files as any other source at
+  that endpoint, since Kilnmark cannot see the bucket behind it. Two access point ARNs in different
+  regions or partitions are told apart; accounts are not compared, as an access point may front
+  another account's bucket. Endpoint hosts are compared without a trailing dot, and amazonaws.com.cn
+  and amazonaws.eu hosts count as AWS's own service.
+- **A read's `query`** (ADR 0028), in place of `asset`, never with `columns` or `where`. Checked as
+  custom SQL rules are, when the pipeline is checked and again as it runs, on a read-only connection
+  and a login without superuser-like rights; `row_limit` wraps it so the database stops early.
+  `${...}` is refused for now. Only designers whose token sees unmasked values save or preview a
+  pipeline with one (403 otherwise, admins included); anyone who runs pipelines runs it. Every
+  column a query returns is marked (`*`), and a run with one keeps its engine messages for
+  designers with the grant; the writes it feeds are marked before any row moves. A version saved
+  before this (V27, `queries_checked`) that has a query read does not run until saved again. Each run records the tables it reads, from the database's plan
+  (`EXPLAIN`), as reads and as the inputs of what it writes. The canvas edits
+  the query in a box over several lines. Adding the samples skips `sample-read-query` unless
+  `crm-db` is a PostgreSQL source with Allow SQL on, or for a caller who may not see unmasked values.
 
 ## 0.0.9 (31 October 2026)
 

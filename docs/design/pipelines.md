@@ -374,6 +374,48 @@ The guide's "Reading" is the user's view.
 - **Notes.** `NodeFactory.notes` lets a node add notes to a check; the read node says whether the
   database applies `where`, applies part of it (and what it leaves), or not at all.
 
+### The read node's query (decisions, ADR 0028)
+
+- **Settings.** A read gives `asset` or `query`, never both. `query` is one `SELECT` or `WITH`
+  statement; `columns` and `where` do not go with it (the SQL says them), `row_limit` does. Only on
+  a source of kind `postgresql` with `allow_sql` on.
+- **Who.** Saving a pipeline with a query read, and previewing one, need the unmask grant (ADR
+  0027), as custom SQL rules do: the SQL can read any column the login can. Admins and designers
+  without the grant are refused (403), including when saving a new version of a pipeline that
+  already has one. Running a saved pipeline needs only the role that runs pipelines, as for any
+  read; what it reads is masked for them as below. Each version records that it was saved through
+  this check (`queries_checked`, V27); a version saved before the check existed that has a query read
+  does not run (409) until it is saved again.
+- **No parameters yet.** `${...}` in a query is refused: the setting is never filled
+  (`SettingSpec.Parameters.NONE`). Bound values, `?` with each value bound so a value can never
+  name a table or column, come as a later step.
+- **Checked as custom rules are** (`SqlTokens.checkCustomSql`): one statement, no `;`, nothing that
+  writes, no function that reaches out of the query (files, other sessions or databases, large
+  objects, advisory locks, settings). Checked when the pipeline is checked and again when the run
+  sets the node up. Before any row is read the login is checked as for custom SQL rules
+  (`RuleRunner.privileged`): not a superuser, no file or program roles, no user mappings or foreign
+  tables. The query runs on a read-only connection.
+- **Columns are known when it runs.** Until then the node's output schema is unknown, as for an
+  asset not scanned yet, so later nodes' column checks happen at run time. The run takes the
+  columns from the result set.
+- **Lineage from the database.** As the run sets the node up, `EXPLAIN (VERBOSE, FORMAT JSON)` names
+  every table the query reads (a view as the tables it reads), without running it, within 30
+  seconds. Each is recorded as a read of the run (`RunContext.queryRead`) and as an input of every
+  write downstream (`PipelineExecution.queryReads`), so lineage shows it as it shows a read of that
+  asset. Column lineage is not attempted.
+- **Marks: every column, always.** Every column a query returns is marked (`*`), whatever the
+  catalogue says: masked downstream for everyone but designers with the grant, and carried to what
+  a write writes from it. A query can read anything its login can, in any schema and under any
+  saved source on the same database, so neither the source's marks nor the plan's tables are
+  enough to clear it. Kilnmark cannot follow a column through SQL, so it does not try. For the same
+  reason a run with a query read is recorded as such (`kilnmark:query-read` with its assets, before
+  any node is set up), and its engine messages are withheld from everyone but designers with the
+  grant, as for marked data. The writes it feeds are marked `*` before any row moves, so what they
+  wrote stays masked even if the run never reaches its end.
+- **Row limit.** The query is wrapped, on lines of its own so a closing `--` comment cannot end the
+  wrapping: `SELECT * FROM (\n<query>\n) AS kilnmark_query LIMIT n`, so the database stops at `n`
+  rows.
+
 ## 3. Expressions
 
 `filter`, `compute`, `aggregate`, `route` and later the gate use one small expression language,

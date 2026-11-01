@@ -19,7 +19,9 @@ import io.kilnmark.kiln.connect.SourceConfig;
  * H2 registered as an admin registers a customer's driver: the H2 jar on the test class path
  * (a test-only dependency, never shipped) copied into a fresh drivers folder, read and hashed by
  * {@link DriverFolder#inspect}, and registered as {@code h2}. Databases are in memory, one per
- * test class, created and filled through the registered driver itself.
+ * test class, created and filled through the registered driver itself. They are reached through an H2
+ * server on this machine, as a customer's database server would be: the connector refuses a URL that
+ * opens a database inside the process.
  */
 final class H2Drivers {
 
@@ -76,8 +78,27 @@ final class H2Drivers {
         folder.register(r);
         GenericJdbcConnector connector = (GenericJdbcConnector) new GenericJdbcConnector()
             .withContext(new ConnectorContext(Map.of(), folder));
-        String url = "jdbc:h2:mem:kt_" + UUID.randomUUID().toString().replace("-", "") + ";DB_CLOSE_DELAY=-1";
+        String url = "jdbc:h2:tcp://localhost:" + serverPort() + "/mem:kt_" + UUID.randomUUID().toString()
+            .replace("-", "") + ";DB_CLOSE_DELAY=-1";
         return new H2(folder, r, connector, url);
+    }
+
+    private static int port;
+
+    /**
+     * The port of one H2 server for every test, started on first use on a free port, with daemon
+     * threads, creating databases as they are first named. Through reflection: H2 is only on the
+     * test run's class path.
+     */
+    static synchronized int serverPort() throws Exception {
+        if (port == 0) {
+            Class<?> server = Class.forName("org.h2.tools.Server");
+            Object tcp = server.getMethod("createTcpServer", String[].class)
+                .invoke(null, (Object) new String[] {"-tcpPort", "0", "-tcpDaemon", "-ifNotExists"});
+            server.getMethod("start").invoke(tcp);
+            port = (Integer) server.getMethod("getPort").invoke(tcp);
+        }
+        return port;
     }
 
     static H2 registered() throws Exception {

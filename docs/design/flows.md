@@ -208,4 +208,6 @@ index allows one queued or running run per flow. V20 named them `flow_step_run`,
   each linked to its pipeline run (the Gantt component kept for this, see pipelines.md section 5).
 - **F4.** The flow canvas: flow nodes as boxes, connections as labelled edges, a connection
   inspector, a live run overlay; editing as text patches as the pipeline canvas does.
-- Not in this plan: a SQL check node, retries of a node.
+- Not in this plan: retries of a node. A SQL *action* node (statements before or after pipelines,
+  never rows) is decided in [ADR 0028](../adr/0028-sql-in-reads-and-flow-actions.md); a SQL *check*
+  stays a pipeline with a `read` and a `gate`.

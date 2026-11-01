@@ -159,7 +159,8 @@ public final class WriteNodeFactory implements NodeFactory {
                 problems.add("source: there is no saved source called '" + name + "'");
             } else {
                 if (!CommonSettings.allowsWriting(s.get().settings())) {
-                    problems.add("source: " + name + " is read-only. An admin can turn on Allow writing for it");
+                    problems.add("source: " + name + " is read-only. A designer or an admin can turn on Allow "
+                        + "writing for it");
                 }
                 Optional<Connector> c = sources.connector(s.get().kind());
                 if (c.isEmpty()) {

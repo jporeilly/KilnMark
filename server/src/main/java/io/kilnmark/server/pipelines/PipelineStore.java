@@ -167,8 +167,9 @@ public class PipelineStore {
 
     private static void insertVersion(Connection c, String name, int n, String yaml, String message, String by,
                                       boolean valid, String problems) throws SQLException {
+        // queries_checked (V27): every caller checks a query read's author before saving (allowQueries).
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_version (pipeline, n, yaml, "
-            + "message, author, valid, problems) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb)")) {
+            + "message, author, valid, problems, queries_checked) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, true)")) {
             ps.setString(1, name);
             ps.setInt(2, n);
             ps.setString(3, yaml);
@@ -273,6 +274,23 @@ public class PipelineStore {
                 }
             }
             return out;
+        });
+    }
+
+    /**
+     * Whether version {@code n} of {@code name} was saved after the check that a read's query is
+     * written by a designer who may see unmasked values (V27); false for an older or missing version.
+     */
+    public boolean queriesChecked(String name, int n) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT queries_checked FROM kilnmark.pipeline_version "
+                + "WHERE pipeline = ? AND n = ?")) {
+                ps.setString(1, name);
+                ps.setInt(2, n);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() && rs.getBoolean(1);
+                }
+            }
         });
     }
 

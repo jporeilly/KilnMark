@@ -21,7 +21,6 @@ const STATE: Record<string, { tone: Tone; label: string }> = {
 const KNOWN: { label: string; driverClass: string; urlPrefix: string; properties: string }[] = [
   { label: "IBM Db2", driverClass: "com.ibm.db2.jcc.DB2Driver", urlPrefix: "jdbc:db2://", properties: "currentSchema, sslConnection" },
   { label: "Teradata", driverClass: "com.teradata.jdbc.TeraDriver", urlPrefix: "jdbc:teradata://", properties: "DATABASE, CHARSET, TMODE, ENCRYPTDATA" },
-  { label: "Snowflake", driverClass: "net.snowflake.client.jdbc.SnowflakeDriver", urlPrefix: "jdbc:snowflake://", properties: "db, schema, warehouse, role" },
   { label: "Sybase (jConnect)", driverClass: "com.sybase.jdbc4.jdbc.SybDriver", urlPrefix: "jdbc:sybase:Tds:", properties: "CHARSET" },
   { label: "Informix", driverClass: "com.informix.jdbc.IfxDriver", urlPrefix: "jdbc:informix-sqli://", properties: "INFORMIXSERVER, DB_LOCALE" },
   { label: "H2", driverClass: "org.h2.Driver", urlPrefix: "jdbc:h2:", properties: "MODE, SCHEMA" },
@@ -73,7 +72,7 @@ export function JdbcDriversPage() {
         crumbs={[{ label: "Settings", href: href.settings() }, { label: "JDBC drivers" }]}
         lead={
           <>
-            For databases without a connector of their own, such as Db2, Teradata or Snowflake, you bring the database's
+            For databases without a connector of their own, such as Db2, Teradata or Informix, you bring the database's
             JDBC driver and register it here; Generic JDBC sources then use it. For the drivers Kilnmark pins itself, see{" "}
             <a href={href.drivers()}>Drivers</a>.
           </>
