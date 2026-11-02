@@ -233,6 +233,80 @@ public final class SqlTokens {
     }
 
     /**
+     * How a flow's sql node may start (ADR 0028): statements that change data or tables, call a procedure,
+     * or keep a table in order. Never a query (it would return rows), transaction control (the node is
+     * one transaction), {@code SET} (a role or settings), {@code COPY}, {@code DO}, {@code GRANT} or
+     * {@code REVOKE}.
+     */
+    static final Set<String> ACTION_FIRST_WORDS = Set.of("truncate", "insert", "update", "delete", "merge", "create",
+        "drop", "alter", "call", "analyze", "refresh", "comment", "reindex", "cluster", "lock");
+    /**
+     * Words a sql node's statement never holds, unquoted: they create, change or drop logins, rights,
+     * code that runs later, or ways out of the database, or they return rows.
+     */
+    static final Set<String> ACTION_FORBIDDEN_WORDS = Set.of("role", "user", "group", "extension", "server", "foreign",
+        "mapping", "subscription", "publication", "database", "tablespace", "system", "language", "event",
+        "function", "procedure", "trigger", "rule", "policy", "owner", "authorization", "security", "privileges",
+        "operator", "cast", "aggregate", "conversion", "wrapper", "returning", "copy");
+    /** {@link #FORBIDDEN_FUNCTIONS} less those a statement that writes may need: sequences. */
+    static final List<String> ACTION_FORBIDDEN_FUNCTIONS = FORBIDDEN_FUNCTIONS.stream()
+        .filter(f -> !Set.of("nextval", "setval", "currval", "lastval").contains(f)).toList();
+
+    /**
+     * Checks one statement of a flow's sql node and returns it without trailing semicolons. Throws
+     * {@link IllegalArgumentException} saying why it is refused. A first line of defence, as for
+     * custom rules: the node also runs only on a source that allows SQL and writing, in one
+     * transaction with a timeout, and not under a login that is a superuser or may reach files or
+     * other databases.
+     */
+    public static String checkAction(String sql, int maxLength) {
+        String s = sql == null ? "" : sql.strip();
+        List<Token> tokens;
+        try {
+            tokens = new ArrayList<>(tokens(s));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(e.getMessage());
+        }
+        while (!tokens.isEmpty() && tokens.getLast().kind() == Kind.SYMBOL && tokens.getLast().text().equals(";")) {
+            s = s.substring(0, tokens.getLast().at()).strip();
+            tokens.removeLast();
+        }
+        if (tokens.isEmpty() || s.length() > maxLength) {
+            throw new IllegalArgumentException("one SQL statement, at most " + maxLength + " characters");
+        }
+        Token first = tokens.getFirst();
+        if (first.kind() != Kind.WORD || !ACTION_FIRST_WORDS.contains(first.text())) {
+            throw new IllegalArgumentException("a statement starts with " + String.join(", ",
+                ACTION_FIRST_WORDS.stream().sorted().map(w -> w.toUpperCase(Locale.ROOT)).toList()) + ": a sql node "
+                + "changes data or tables and never returns rows; read with a pipeline");
+        }
+        String problem = singleStatement(tokens);
+        if (problem != null) {
+            throw new IllegalArgumentException(problem + "; give each statement as its own item");
+        }
+        for (Token t : tokens) {
+            if (t.kind() == Kind.PARAMETER) {
+                throw new IllegalArgumentException("parameters such as " + t.text() + " are not allowed");
+            }
+            if (t.kind() == Kind.WORD && ACTION_FORBIDDEN_WORDS.contains(t.text())) {
+                throw new IllegalArgumentException("'" + t.text() + "' is not allowed: a sql node does not create or "
+                    + "change logins, rights, code that runs later or ways out of the database, and never returns "
+                    + "rows (quote it, \"" + t.text() + "\", if it is a column or table name)");
+            }
+            if (t.kind() == Kind.WORD || t.kind() == Kind.QUOTED_WORD) {
+                String name = t.text().toLowerCase(Locale.ROOT);
+                for (String f : ACTION_FORBIDDEN_FUNCTIONS) {
+                    if (name.startsWith(f)) {
+                        throw new IllegalArgumentException("'" + t.text() + "' is not allowed: it acts outside the "
+                            + "statement (files, other sessions or databases, settings or locks)");
+                    }
+                }
+            }
+        }
+        return s;
+    }
+
+    /**
      * Null when the tokens are one statement: no {@code ;} and parentheses balanced (never closing
      * more than were opened), so the SQL cannot close the query it is placed in. Otherwise why not.
      */

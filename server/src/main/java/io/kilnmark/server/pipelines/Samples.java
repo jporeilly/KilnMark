@@ -402,7 +402,7 @@ public class Samples {
         String yaml = setupYaml(name, schema);
         String message = "The sample tables, in " + name + "." + schema;
         if (existing == null) {
-            pipelines.create(new PipelineViews.NewPipeline(SETUP, "Sample tables", null, yaml, message), by);
+            pipelines.create(new PipelineViews.NewPipeline(SETUP, "Sample tables", null, yaml, message), by, sights);
         } else {
             // Saved over the version read above only: one saved since is not overwritten (409).
             pipelines.save(SETUP, existing.latestVersion(), new PipelineViews.PipelineChange(yaml, message, null, null),
@@ -508,9 +508,9 @@ public class Samples {
             }
             try {
                 String yaml = withSources(s.yaml(), mapping);
-                pipelines.allowQueries(yaml, sights);
                 PipelineViews.PipelineDetail d = pipelines.create(new PipelineViews.NewPipeline(s.name(), null, null,
-                    schema == null ? yaml : withTables(yaml, schema), "Added from the samples (" + s.file() + ")"), by);
+                    schema == null ? yaml : withTables(yaml, schema), "Added from the samples (" + s.file() + ")"), by,
+                    sights);
                 Boolean valid = d.latest() == null ? null : d.latest().valid();
                 out.add(new Outcome(s.name(), s.file(), "added", null, valid));
                 added++;

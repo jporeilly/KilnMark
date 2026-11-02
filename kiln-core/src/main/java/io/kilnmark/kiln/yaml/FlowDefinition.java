@@ -44,8 +44,14 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     public static final String NOTIFY = "notify";
     /** The node type that waits a while. */
     public static final String WAIT = "wait";
+    /** The node type that runs SQL statements on a source (ADR 0028). */
+    public static final String SQL = "sql";
     /** The node types this version knows. */
-    public static final List<String> TYPES = List.of(RUN_PIPELINE, STOP, NOTIFY, WAIT);
+    public static final List<String> TYPES = List.of(RUN_PIPELINE, STOP, NOTIFY, WAIT, SQL);
+    /** Most statements in one sql node. */
+    public static final int MAX_STATEMENTS = 20;
+    /** Longest statement in a sql node. */
+    public static final int MAX_STATEMENT = 10_000;
     /** How much a notify node's message matters, least first. */
     public static final List<String> SEVERITIES = List.of("info", "low", "medium", "high");
     /** Longest wait. */
@@ -58,6 +64,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         "quarantined_share", FlowCondition.Type.NUMBER,
         "rows_written", FlowCondition.Type.NUMBER,
         "duration_s", FlowCondition.Type.NUMBER);
+    /** What a sql node reports, for conditions, besides {@code status}: the rows its statements changed. */
+    public static final Map<String, FlowCondition.Type> SQL_VALUES = Map.of("rows_affected", FlowCondition.Type.NUMBER);
 
     /** The default of {@code queue_timeout}. */
     public static final Duration DEFAULT_QUEUE_TIMEOUT = Duration.ofMinutes(30);
@@ -72,7 +80,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         RUN_PIPELINE, Set.of("pipeline", "version", "with"),
         STOP, Set.of("status", "message"),
         NOTIFY, Set.of("severity", "title", "message"),
-        WAIT, Set.of("for"));
+        WAIT, Set.of("for"),
+        SQL, Set.of("source", "statements"));
     static final Set<String> CONNECTION_KEYS = Set.of("from", "to", "when");
     private static final Pattern DURATION = Pattern.compile("(\\d{1,6})\\s*(s|m|h)");
 
@@ -81,14 +90,23 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
      * values given to the pipeline's parameters, as written: text, which may name ${...}, a number or
      * true/false) are set for {@link #RUN_PIPELINE}; {@code status} ({@code succeeded} or
      * {@code failed}) and {@code message} for {@link #STOP}; {@code severity}, {@code title} and
-     * {@code message} for {@link #NOTIFY}; {@code waitFor} for {@link #WAIT}.
+     * {@code message} for {@link #NOTIFY}; {@code waitFor} for {@link #WAIT}; {@code source} and
+     * {@code statements} (as written, run in order in one transaction) for {@link #SQL}.
      */
     public record Node(String id, String type, String pipeline, Integer version, String status, String message,
                        Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
-                       String title, Duration waitFor) {
+                       String title, Duration waitFor, String source, List<String> statements) {
 
         public Node {
             with = with == null ? Map.of() : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(with));
+            statements = statements == null ? List.of() : List.copyOf(statements);
+        }
+
+        Node(String id, String type, String pipeline, Integer version, String status, String message,
+             Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
+             String title, Duration waitFor) {
+            this(id, type, pipeline, version, status, message, position, keys, with, severity, title, waitFor, null,
+                null);
         }
 
         /** A node of no type, or before its settings are read. */
@@ -356,6 +374,9 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         if (type.equals(NOTIFY)) {
             return notifyNode(id, m, keys, names, problems);
         }
+        if (type.equals(SQL)) {
+            return sqlNode(id, m, keys, problems);
+        }
         if (type.equals(WAIT)) {
             YamlReader.Entry f = m.entries().get("for");
             Duration d = null;
@@ -445,6 +466,52 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         }
         String message = words(m.entries().get("message"), "message", MAX_MESSAGE, id, names, problems);
         return new Node(id, NOTIFY, null, null, null, message, m.position(), keys, Map.of(), severity, title, null);
+    }
+
+    /**
+     * A sql node: the source it runs on and its statements, as written. Statements never take ${...}:
+     * a value put into SQL could change what it does (ADR 0028). Whether each statement is one the
+     * server runs, and whether the source allows it, is for the server to check.
+     */
+    private static Node sqlNode(String id, YamlReader.Mapping m, Map<String, Position> keys, List<Problem> problems) {
+        YamlReader.Entry src = m.entries().get("source");
+        String source = null;
+        if (src == null) {
+            problems.add(Problem.at(m.position(), id, "Node " + id + " needs a source: the saved source its SQL runs on"));
+        } else {
+            source = text(src, "source", problems);
+        }
+        List<String> statements = new ArrayList<>();
+        YamlReader.Entry st = m.entries().get("statements");
+        if (st == null) {
+            problems.add(Problem.at(m.position(), id, "Node " + id + " needs statements: a list of SQL statements, "
+                + "run in order in one transaction"));
+        } else if (st.value() instanceof YamlReader.Sequence list) {
+            if (list.items().isEmpty() || list.items().size() > MAX_STATEMENTS) {
+                problems.add(Problem.at(list.position(), id, "statements is a list of 1 to " + MAX_STATEMENTS
+                    + " SQL statements"));
+            }
+            for (YamlReader.Node item : list.items()) {
+                String sql = item instanceof YamlReader.Scalar sc && sc.value() != null && !sc.written().isBlank()
+                    ? sc.written() : null;
+                if (sql == null) {
+                    problems.add(Problem.at(item.position(), id, "Each statement is the text of one SQL statement"));
+                } else if (sql.length() > MAX_STATEMENT) {
+                    problems.add(Problem.at(item.position(), id, "A statement is at most "
+                        + String.format("%,d", MAX_STATEMENT) + " characters"));
+                } else if (sql.contains("${")) {
+                    problems.add(Problem.at(item.position(), id, "A statement runs as written: ${...} cannot be used "
+                        + "in SQL, as a value put into it could change what it does"));
+                } else {
+                    statements.add(sql);
+                }
+            }
+        } else {
+            problems.add(Problem.at(st.value().position(), id, "statements is a list, each item one SQL statement: "
+                + "statements: [\"TRUNCATE staging.orders\"]"));
+        }
+        return new Node(id, SQL, null, null, null, null, m.position(), keys, Map.of(), null, null, null, source,
+            statements);
     }
 
     /** A notification's words, which may name the flow's parameters and server variables. */
@@ -585,7 +652,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         if (field.equals("status")) {
             return FlowCondition.Type.TEXT;
         }
-        return RUN_PIPELINE.equals(n.type()) ? PIPELINE_VALUES.get(field) : null;
+        return RUN_PIPELINE.equals(n.type()) ? PIPELINE_VALUES.get(field)
+            : SQL.equals(n.type()) ? SQL_VALUES.get(field) : null;
     }
 
     /**
@@ -658,8 +726,9 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
                             + n.id() + " starts: only nodes on every way into " + n.id() + " can be read, as a branch "
                             + "may skip the others"
                         : nodeValueType(def, name) == null
-                            ? " names " + name + ", which " + other + " does not report: a node reports status, and a "
-                                + "run-pipeline node score, quarantined_share, rows_written and duration_s"
+                            ? " names " + name + ", which " + other + " does not report: a node reports status, a "
+                                + "run-pipeline node score, quarantined_share, rows_written and duration_s, and a sql "
+                                + "node rows_affected"
                             : null;
                     if (why != null) {
                         problems.add(Problem.at(n.position(), n.id(), "Node " + n.id() + why));
@@ -699,6 +768,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             types.put(id + ".status", FlowCondition.Type.TEXT);
             if (s != null && RUN_PIPELINE.equals(s.type())) {
                 PIPELINE_VALUES.forEach((field, type) -> types.put(id + "." + field, type));
+            } else if (s != null && SQL.equals(s.type())) {
+                SQL_VALUES.forEach((field, type) -> types.put(id + "." + field, type));
             }
         }
         FlowCondition.Parsed parsed = FlowCondition.parse(text, new FlowCondition.Scope() {

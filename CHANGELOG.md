@@ -16,6 +16,11 @@ details.
   by designers whose token sees unmasked values (ADR 0028).
 - **Read with a query.** A read node can run one `SELECT` in place of a table, on a PostgreSQL
   source with Allow SQL on (ADR 0028). The new sample `sample-read-query` shows one.
+- **SQL in flows.** A flow's new `sql` node runs statements on a PostgreSQL source before or after
+  its pipelines: empty a staging table, rebuild an index, call a procedure. Its statements run in one
+  transaction and it reports the rows they changed. The source must allow both SQL and writing, and
+  only designers whose token sees unmasked values write one (ADR 0028). The new sample
+  `sample-sql-before-and-after` shows one.
 
 - **The audit log.** Every change made through the API, every request refused, and the changes
   that decide who sees sensitive values and what reaches a source are recorded, can never be changed
@@ -23,6 +28,24 @@ details.
 
 ### Details
 
+- **The flow sql node** (V29, ADR 0028, docs/design/flows.md section 7). `type: sql` with a `source`
+  and 1 to 20 `statements`, each starting `TRUNCATE`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`,
+  `DROP`, `ALTER`, `CALL`, `ANALYZE`, `REFRESH`, `COMMENT`, `REINDEX`, `CLUSTER` or `LOCK`; never a
+  query, transaction control, `SET`, `COPY`, `DO`, `GRANT` or `REVOKE`, `RETURNING`, `${...}`, nor
+  anything that creates or changes logins, rights, functions, triggers or ways out of the database.
+  It runs on a thread of its own beside the flow, under the source's login, which must not be a
+  superuser or reach files, programs or other databases (the check custom rules use), with
+  `kilnmark.pipelines.sql-statement-timeout` (default 30 minutes) per statement. A statement that
+  fails rolls them all back; the node says which failed and its SQLSTATE, never the database's
+  message or the SQL. `<node>.rows_affected` can be read in conditions and notices. Saving a flow with
+  a sql node takes a designer whose token sees unmasked values (`FlowService.save`), and versions saved
+  before this (`flow_version.sql_checked` false) are refused when queued and when they start. Each
+  sql node that starts is an audit event `flow.sql`, shown on the audit log page as **Flow ran SQL**.
+  The flows API is still to come (F3), so flows are saved through the service for now, and Add
+  samples lists the new sample without adding it.
+- **The query check lives in `PipelineService`.** `create` and `save` check a query read's author
+  themselves, so no caller can skip it; without a person asking, a query read is refused. Tests now
+  show a pipeline version saved before V27 refused when queued and when it starts.
 - **Generic JDBC: time limits, SQL Server instances, and the vetted list in full** (ADR 0030). A
   time limit is now a name ending in `timeout`, with or without `ms`, `_ms` or `seconds`, so a
   setting that only holds the word is no longer taken for one. SQL Server's `instanceName` is

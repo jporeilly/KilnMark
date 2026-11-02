@@ -82,6 +82,51 @@ class SafetyTest {
         refused("SELECT * FROM ${table} WHERE pg_catalog.dblink_get_connections() IS NOT NULL");
     }
 
+    private static void refusedAction(String sql, String why) {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> SqlTokens.checkAction(sql, 10_000), sql);
+        assertTrue(e.getMessage().contains(why), sql + " gave " + e.getMessage());
+    }
+
+    /** A flow's sql node (ADR 0028): statements that change data or tables, never a query or a way out. */
+    @Test
+    void aSqlNodeTakesStatementsThatChangeDataOrTables() {
+        for (String ok : List.of("TRUNCATE staging.orders", "INSERT INTO t (id, n) VALUES (1, nextval('s'))",
+            "INSERT INTO t SELECT * FROM s ON CONFLICT (id) DO NOTHING", "UPDATE t SET n = n + 1 WHERE id = 3",
+            "DELETE FROM t WHERE at < now() - interval '30 days'", "CREATE INDEX t_n ON t (n)", "DROP INDEX t_n",
+            "CREATE TABLE IF NOT EXISTS staging.x (id integer, \"user\" text)", "ALTER TABLE t ADD COLUMN m integer",
+            "CALL refresh_totals()", "ANALYZE t", "REFRESH MATERIALIZED VIEW totals", "LOCK TABLE t IN EXCLUSIVE MODE",
+            "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET n = s.n", "TRUNCATE t;")) {
+            assertEquals(ok.endsWith(";") ? ok.substring(0, ok.length() - 1) : ok, SqlTokens.checkAction(ok, 10_000));
+        }
+        // Never a query, transaction control, settings or roles, files, or rights
+        refusedAction("SELECT * FROM t", "a statement starts with");
+        refusedAction("WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x", "a statement starts with");
+        for (String start : List.of("BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT a", "SET ROLE postgres",
+            "SET search_path = x", "RESET ALL", "COPY t FROM '/etc/passwd'", "DO $$ BEGIN END $$", "GRANT ALL ON t TO x",
+            "REVOKE ALL ON t FROM x", "VACUUM t", "EXECUTE p", "LISTEN x", "LOAD 'x'", "SHOW ALL", "EXPLAIN DELETE FROM t")) {
+            refusedAction(start, "a statement starts with");
+        }
+        refusedAction("DELETE FROM t RETURNING id", "'returning' is not allowed");
+        refusedAction("CREATE ROLE x LOGIN", "'role' is not allowed");
+        refusedAction("ALTER USER x WITH SUPERUSER", "'user' is not allowed");
+        refusedAction("CREATE EXTENSION file_fdw", "'extension' is not allowed");
+        refusedAction("CREATE OR REPLACE FUNCTION f() RETURNS int AS 'select 1' LANGUAGE sql", "'function' is not allowed");
+        refusedAction("CREATE SERVER s FOREIGN DATA WRAPPER postgres_fdw", "'server' is not allowed");
+        refusedAction("ALTER TABLE t OWNER TO x", "'owner' is not allowed");
+        refusedAction("ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO x", "'privileges' is not allowed");
+        refusedAction("CREATE SCHEMA s AUTHORIZATION x", "'authorization' is not allowed");
+        refusedAction("ALTER SYSTEM SET work_mem = '1GB'", "'system' is not allowed");
+        refusedAction("CREATE TRIGGER t BEFORE INSERT ON t EXECUTE FUNCTION f()", "'trigger' is not allowed");
+        refusedAction("INSERT INTO t SELECT pg_read_file('/etc/passwd')", "'pg_read_file' is not allowed");
+        refusedAction("INSERT INTO t SELECT * FROM dblink('x', 'y') AS r(a int)", "'dblink' is not allowed");
+        refusedAction("UPDATE t SET n = 1 WHERE id = $1", "parameters such as $1");
+        refusedAction("TRUNCATE t; DROP TABLE s", "one statement only");
+        refusedAction("TRUNCATE t)", "closes more than was opened");
+        refusedAction("  ", "one SQL statement");
+        refusedAction("INSERT INTO t VALUES ('not closed)", "not closed");
+    }
+
     @Test
     void ordinaryReadingSqlIsAccepted() {
         assertEquals("SELECT * FROM ${table} WHERE amount < 0",

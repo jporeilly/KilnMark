@@ -1,8 +1,9 @@
 # Flows
 
 Status: design, 29 October 2026. Round 4. Slices F1 (the engine, storage and the service) and F2
-(parameters passed to pipelines, server variables, notify and wait nodes) are built; the rest (the
-API, the pages and the canvas) is marked **planned** below. ADR 0026 records the decision.
+(parameters passed to pipelines, server variables, notify and wait nodes) are built, and so is the
+`sql` node (ADR 0028, 2 November 2026); the rest (the API, the pages and the canvas) is marked
+**planned** below. ADR 0026 records the decision.
 
 A pipeline moves and checks data. A **flow** runs pipelines in an order, and decides what runs next
 from how each ended and what it measured: carry on only if the gate set aside under 2% of the rows
@@ -50,7 +51,8 @@ layout: { ... }                # where the canvas draws each node; ignored when 
 ```
 
 - Node types: `run-pipeline` (a saved pipeline, by name and optionally version, with `with:` for its
-  parameters), `stop` (ends the flow), `notify` (sends a notice) and `wait` (waits a while).
+  parameters), `stop` (ends the flow), `notify` (sends a notice), `wait` (waits a while) and `sql`
+  (runs statements on a source; section 7).
 - A connection has `from`, `to` and `when`: `success` (the default), `failure`, `always` or a
   condition.
 - Flows written before the rename use `steps:` and `paths:` for these lists; the reader still
@@ -80,7 +82,8 @@ clean.status = 'failed' or (clean.rows_written = 0 and region != 'APAC')
 - **Values.** `<node>.status` is `succeeded`, `failed` or `cancelled` for any node. A
   `run-pipeline` node also reports `<node>.score` (the lowest measured quality score of what it
   wrote, 0 to 1), `<node>.quarantined_share` (the largest share of rows any of its gates set aside),
-  `<node>.rows_written` and `<node>.duration_s`. A parameter is read by its name.
+  `<node>.rows_written` and `<node>.duration_s`; a `sql` node reports `<node>.rows_affected`. A
+  parameter is read by its name.
 - **Quality words** are the lowest score of a band, as the interface shows them: `good` is 0.95,
   `fair` 0.8, `poor` 0.
 - **Syntax.** Numbers (`0.02`, `-1`), text in single quotes, `true` and `false`; `= != < <= > >=`;
@@ -180,6 +183,7 @@ started; a message; what it reported, as JSON); `pipeline_run.flow_run_id` and `
 index allows one queued or running run per flow. V20 named them `flow_step_run`, `step_id` and
 `flow_step`; V21 renamed them to the names above. V22 adds `flow_run.variables` and
 `pipeline_run.parameters` and `variables`, and the server variables (`variable`, `variable_change`).
+V29 adds `flow_version.sql_checked` (section 7).
 
 ## 5. Who may do what
 
@@ -208,6 +212,50 @@ index allows one queued or running run per flow. V20 named them `flow_step_run`,
   each linked to its pipeline run (the Gantt component kept for this, see pipelines.md section 5).
 - **F4.** The flow canvas: flow nodes as boxes, connections as labelled edges, a connection
   inspector, a live run overlay; editing as text patches as the pipeline canvas does.
-- Not in this plan: retries of a node. A SQL *action* node (statements before or after pipelines,
-  never rows) is decided in [ADR 0028](../adr/0028-sql-in-reads-and-flow-actions.md); a SQL *check*
-  stays a pipeline with a `read` and a `gate`.
+- Not in this plan: retries of a node. A SQL *check* stays a pipeline with a `read` and a `gate`.
+
+## 7. The sql node (ADR 0028)
+
+```yaml
+  - id: empty
+    type: sql
+    source: warehouse            # a saved PostgreSQL source with Allow SQL and Allow writing on
+    statements:                  # 1 to 20, each one statement of at most 10,000 characters
+      - TRUNCATE staging.orders
+      - DELETE FROM staging.log WHERE at < now() - interval '30 days'
+```
+
+An action, not a data node: it changes data or tables and never returns rows, so nothing downstream
+reads from it. Connections follow it as any node (`success`, `failure`, a condition on
+`<node>.rows_affected`, the rows its statements changed in total).
+
+- **Statements are written as they run.** `${...}` is refused in them: a value put into SQL could
+  change what it does. Each must start with `TRUNCATE`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`,
+  `CREATE`, `DROP`, `ALTER`, `CALL`, `ANALYZE`, `REFRESH`, `COMMENT`, `REINDEX`, `CLUSTER` or `LOCK`,
+  and be one statement (`SqlTokens.checkAction`). Never a query, transaction control, `SET`, `COPY`,
+  `DO`, `GRANT` or `REVOKE`; never, unquoted, `RETURNING` or the words that create or change logins,
+  rights, code that runs later or ways out of the database (`ROLE`, `USER`, `EXTENSION`, `SERVER`,
+  `FUNCTION`, `TRIGGER`, `OWNER`, `PRIVILEGES`, `SYSTEM`, ...); and never the functions custom rules
+  refuse (files, other sessions or databases, settings, locks), sequences apart. This is a first line
+  of defence: the login check and the source's opt-ins below are what hold.
+- **Checked when saved and when it runs:** the source exists, is PostgreSQL (the only kind for now)
+  and allows both SQL and writing; every statement passes the check. At run time the allowed hosts
+  are checked again, then the login: never a superuser, nor one with file, program, signal or
+  cross-database access (`RuleRunner.privileged`, as for custom rules). Every source that allows SQL
+  should have a login limited to what its SQL needs.
+- **One transaction.** The statements run in order on one connection, with
+  `kilnmark.pipelines.sql-statement-timeout` (default 30 minutes) as each one's timeout, and commit
+  together. If one fails, all roll back, and the node's message says which statement failed and its
+  SQLSTATE: never the database's message or the statement, which can quote values. Cancelling the
+  flow, or a stop node, cancels the statement running and rolls back.
+- **It runs beside the flow**, on a thread of its own, so the flow keeps watching its other nodes
+  while it runs.
+- **Who writes it.** A flow with a sql node is saved only by a designer whose token sees unmasked
+  values (`FlowService.save` with `mayUnmask`; admins see values masked, so not them): SQL can read
+  and change any column its login can. Stewards run what is built. Versions saved before this check
+  (`flow_version.sql_checked`, V29, false) that hold a sql node are refused when queued and when they
+  start, until saved again: before, `sql` was an unknown type, so anyone who saves flows could save
+  one as a draft.
+- **Recorded.** Each sql node that starts is an audit event `flow.sql` (who started the flow, the
+  flow, run and node, the source, how many statements and the version), and its node run says how many
+  statements ran and rows changed.

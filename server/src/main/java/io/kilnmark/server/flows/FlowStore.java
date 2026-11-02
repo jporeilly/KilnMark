@@ -84,6 +84,23 @@ public class FlowStore {
         this.db = db;
     }
 
+    /**
+     * Whether version {@code n} of {@code name} was saved after the check that a sql node is written
+     * by a designer who may see unmasked values (V29); false for an older or missing version.
+     */
+    public boolean sqlChecked(String name, int n) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT sql_checked FROM kilnmark.flow_version "
+                + "WHERE flow = ? AND n = ?")) {
+                ps.setString(1, name);
+                ps.setInt(2, n);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() && rs.getBoolean(1);
+                }
+            }
+        });
+    }
+
     // ---- flows and versions ----
 
     private static final String FLOW_COLUMNS = "f.name, f.display_name, f.description, f.latest_version, f.created_by, "
@@ -172,8 +189,9 @@ public class FlowStore {
                     ps.executeUpdate();
                 }
             }
+            // sql_checked (V29): every caller checks a sql node's author before saving (FlowService.save).
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.flow_version (flow, n, yaml, "
-                + "message, author, valid, problems) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb)")) {
+                + "message, author, valid, problems, sql_checked) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, true)")) {
                 ps.setString(1, name);
                 ps.setInt(2, next);
                 ps.setString(3, yaml);

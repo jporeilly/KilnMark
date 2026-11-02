@@ -70,6 +70,18 @@ public class FlowService {
     @Inject
     VariableService variables;
 
+    /** Saved sources, for sql nodes (ADR 0028); null in tests that build the service by hand. */
+    @Inject
+    io.kilnmark.server.pipelines.PipelineSources sqlSources;
+
+    /** For how long a sql node's statement may run; null in tests that build the service by hand. */
+    @Inject
+    io.kilnmark.server.KilnmarkConfig config;
+
+    /** Each sql node run is recorded here (ADR 0029); null in tests that build the service by hand. */
+    @Inject
+    io.kilnmark.server.audit.AuditLog audit;
+
     @Inject
     public FlowService(FlowStore store, PipelineService pipelines, PipelineStore pipelineStore, ObjectMapper json) {
         this.store = store;
@@ -114,6 +126,10 @@ public class FlowService {
             Map<String, Object> vars = variables();
             for (FlowDefinition.Node s : def.nodes()) {
                 variablesSet(s, vars, problems);
+                if (FlowDefinition.SQL.equals(s.type())) {
+                    sqlProblems(s, problems);
+                    continue;
+                }
                 if (!FlowDefinition.RUN_PIPELINE.equals(s.type()) || s.pipeline() == null) {
                     continue;
                 }
@@ -136,6 +152,36 @@ public class FlowService {
         problems.sort(Problem.BY_POSITION);
         return new Validation(problems.isEmpty() && def != null, def == null ? null : def.name(), problems);
     }
+
+    /**
+     * What is wrong with a sql node on this server: its source must exist, be PostgreSQL and allow SQL
+     * and writing, and each statement must be one a sql node runs (ADR 0028).
+     */
+    private void sqlProblems(FlowDefinition.Node s, List<Problem> problems) {
+        if (s.source() != null) {
+            Position at = s.at("source");
+            Optional<io.kilnmark.graph.store.Records.Source> src = sqlSources == null ? Optional.empty()
+                : sqlSources.source(s.source());
+            String why = src.isEmpty() ? "Node " + s.id() + " runs SQL on the source '" + s.source() + "', which does "
+                + "not exist" : SqlAction.sourceRefusal(s.id(), src.get());
+            if (why != null) {
+                problems.add(new Problem(at.line(), at.column(), s.id(), why));
+            }
+        }
+        Position at = s.at("statements");
+        for (String p : SqlAction.statementProblems(s.statements())) {
+            problems.add(new Problem(at.line(), at.column(), s.id(), "Node " + s.id() + " " + p));
+        }
+    }
+
+    /** Whether a flow has a sql node. */
+    static boolean hasSql(FlowDefinition def) {
+        return def != null && def.nodes().stream().anyMatch(n -> FlowDefinition.SQL.equals(n.type()));
+    }
+
+    /** The refusal when someone who may not see unmasked values saves a flow with a sql node (ADR 0028). */
+    static final String SQL_NEEDS_UNMASK = "A flow with a sql node is saved only by a designer whose token sees "
+        + "unmasked values: SQL can read and change any column its source's login can (ADR 0028)";
 
     /**
      * What is wrong with a run-pipeline node's {@code with:} against the parameters of the pipeline it
@@ -236,12 +282,25 @@ public class FlowService {
      * Saves a flow's YAML as its next version, creating the flow when it is new. A flow with problems
      * is saved as a draft that cannot run. The flow's name is the YAML's and never changes.
      *
-     * @param role     the caller's role: stewards and admins save flows
+     * @param role     the caller's role: designers and admins save flows
      * @param expected the latest version the caller read, or null (409 if another has been saved since)
      */
     public FlowStore.Flow save(String yaml, String message, String by, AccessRole role, Integer expected) {
+        return save(yaml, message, by, role, false, expected);
+    }
+
+    /**
+     * As {@link #save(String, String, String, AccessRole, Integer)}, for a caller who may see unmasked
+     * values when {@code mayUnmask}: only such a caller saves a flow with a sql node, draft or not.
+     */
+    public FlowStore.Flow save(String yaml, String message, String by, AccessRole role, boolean mayUnmask,
+                               Integer expected) {
         if (!role.atLeast(AccessRole.DESIGNER)) {
             throw fail(Response.Status.FORBIDDEN, "Saving a flow takes the designer role");
+        }
+        if (!mayUnmask && yaml != null && yaml.length() <= MAX_YAML_CHARS
+            && hasSql(FlowDefinition.parse(yaml).definition())) {
+            throw fail(Response.Status.FORBIDDEN, SQL_NEEDS_UNMASK);
         }
         Validation check = validate(yaml);
         if (check.name() == null || !FlowDefinition.NAME.matcher(check.name()).matches()) {
@@ -321,6 +380,9 @@ public class FlowService {
                 + "fixed: " + String.join("; ", first.stream().map(p -> "line " + p.line() + ": " + p.message()).toList()));
         }
         FlowDefinition def = FlowDefinition.parse(v.yaml()).definition();
+        if (hasSql(def) && !store.sqlChecked(name, n)) {
+            throw fail(Response.Status.CONFLICT, SQL_NOT_CHECKED.formatted(n, name));
+        }
         Map<String, Object> vars = variables();
         Map<String, Object> resolved = resolveParameters(def, parameters, vars);
         try {
@@ -332,6 +394,10 @@ public class FlowService {
             throw new IllegalArgumentException("parameters: could not be read");
         }
     }
+
+    /** Why a version saved before sql nodes were checked (V29) does not run. */
+    static final String SQL_NOT_CHECKED = "Version %d of %s has a sql node and was saved before Kilnmark checked who "
+        + "writes them. A designer whose token sees unmasked values saves it again, then it can run";
 
     /** The values a run starts with: each parameter as given or by default, checked against its type. */
     static Map<String, Object> resolveParameters(FlowDefinition def, Map<String, Object> given) {
@@ -421,6 +487,9 @@ public class FlowService {
         private final Map<String, Long> pipelineRuns = new HashMap<>();
         private final Map<String, Instant> waitingSince = new HashMap<>();
         private final Set<String> cancelAsked = new HashSet<>();
+        /** The sql nodes running, each on a thread of its own so the flow keeps watching its other nodes. */
+        private final Map<String, java.util.concurrent.CompletableFuture<SqlAction.Outcome>> sqlRuns = new HashMap<>();
+        private final Map<String, SqlAction.Control> sqlControls = new HashMap<>();
         private boolean nodeWasCancelled;
         /** What ${...} reads: the run's parameters and the variables it started with (vars.name). */
         private Map<String, Object> scope = Map.of();
@@ -443,6 +512,12 @@ public class FlowService {
                 told(run.flow(), run.id(), "failed", why);
                 return;
             }
+            if (hasSql(def) && !store.sqlChecked(run.flow(), run.version())) {
+                String why = "The flow could not start: " + SQL_NOT_CHECKED.formatted(run.version(), run.flow());
+                store.finishRun(run.id(), "failed", why);
+                told(run.flow(), run.id(), "failed", why);
+                return;
+            }
             Map<String, Object> params = readParameters(run.parameters());
             runVariables = readParameters(run.variables());
             if (params == null || runVariables == null) {
@@ -459,6 +534,7 @@ public class FlowService {
             boolean cancelling = false;
             while (true) {
                 if (shutdown.getAsBoolean()) {
+                    sqlControls.values().forEach(SqlAction.Control::stop);
                     for (String s : engine.running()) {
                         Long prId = pipelineRuns.get(s);
                         if (prId != null) {
@@ -557,8 +633,64 @@ public class FlowService {
                 save(def, node, "running", null, null, "Waiting " + pretty(s.waitFor()), Map.of());
                 return;
             }
+            if (FlowDefinition.SQL.equals(s.type())) {
+                startSql(def, s);
+                return;
+            }
             save(def, node, "running", null, null, null, Map.of());
             tryQueue(def, engine, s, role);
+        }
+
+        /**
+         * Starts a sql node on a thread of its own, as the person who started the flow, and records that it
+         * ran in the audit log: who, the flow and run, the source and how many statements, never their text.
+         */
+        private void startSql(FlowDefinition def, FlowDefinition.Node s) {
+            save(def, s.id(), "running", null, null, "Running " + s.statements().size()
+                + (s.statements().size() == 1 ? " statement" : " statements") + " on " + s.source(), Map.of());
+            SqlAction.Control control = new SqlAction.Control();
+            sqlControls.put(s.id(), control);
+            java.util.concurrent.CompletableFuture<SqlAction.Outcome> done = new java.util.concurrent.CompletableFuture<>();
+            sqlRuns.put(s.id(), done);
+            Duration timeout = config == null ? Duration.ofMinutes(30) : config.pipelines().sqlStatementTimeout();
+            Thread.ofVirtual().name("flow-" + run.id() + "-sql-" + s.id()).start(() -> {
+                try {
+                    done.complete(sqlSources == null ? SqlAction.Outcome.failed("Node " + s.id() + ": this server "
+                        + "has no sources to run SQL on") : SqlAction.run(s, sqlSources, timeout, control));
+                } catch (RuntimeException e) {
+                    LOG.errorf("Flow run %d, sql node %s failed with %s", run.id(), s.id(), e.getClass().getName());
+                    done.complete(SqlAction.Outcome.failed("Node " + s.id() + " could not be run: an internal error. "
+                        + "Look at the server's log."));
+                }
+            });
+            if (audit != null) {
+                audit.record(new io.kilnmark.server.audit.AuditLog.Actor(run.requestedBy(), null),
+                    io.kilnmark.server.audit.AuditLog.FLOW_SQL, run.flow() + "/" + run.id() + "/" + s.id(),
+                    Map.of("source", s.source(), "statements", s.statements().size(), "version", run.version()));
+            }
+        }
+
+        /** Ends a sql node whose thread has finished: with the rows it changed, or why it did not. */
+        private void pollSql(FlowDefinition def, FlowEngine engine, String node, boolean cancelling) {
+            SqlAction.Control control = sqlControls.get(node);
+            if ((cancelling || engine.halted()) && control != null && !control.stopped()) {
+                control.stop();
+            }
+            java.util.concurrent.CompletableFuture<SqlAction.Outcome> f = sqlRuns.get(node);
+            if (f == null || !f.isDone()) {
+                return;
+            }
+            SqlAction.Outcome o = f.join();
+            sqlRuns.remove(node);
+            sqlControls.remove(node);
+            if (o.succeeded()) {
+                end(def, engine, node, FlowEngine.State.SUCCEEDED, null, o.message(),
+                    Map.of("rows_affected", (double) o.rowsAffected()));
+            } else if (control != null && control.stopped()) {
+                end(def, engine, node, FlowEngine.State.CANCELLED, null, o.message(), Map.of());
+            } else {
+                end(def, engine, node, FlowEngine.State.FAILED, null, o.message(), Map.of());
+            }
         }
 
         /** A notification's words with the run's values put in; a name without one stays as written. */
@@ -699,6 +831,10 @@ public class FlowService {
                 return;
             }
             FlowDefinition.Node s = def.node(node);
+            if (FlowDefinition.SQL.equals(s.type())) {
+                pollSql(def, engine, node, cancelling);
+                return;
+            }
             if (FlowDefinition.WAIT.equals(s.type())) {
                 if (cancelling || engine.halted()) {
                     end(def, engine, node, FlowEngine.State.CANCELLED, null, "Stopped waiting: the flow was stopped",
