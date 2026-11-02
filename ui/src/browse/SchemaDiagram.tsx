@@ -10,8 +10,8 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import { Graph, layout } from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
+import { layoutBoxes } from "./diagramLayout";
 import { formatNumber } from "../api";
 import { go, href } from "../router";
 import type { DiagramTable, Relationship } from "./browseApi";
@@ -80,7 +80,7 @@ const nodeTypes = { table: TableBox };
  * A schema diagram: tables as boxes with their columns (keys marked PK and FK), relationships as
  * lines from the referring column to the referred one. Declared keys are solid, proposed ones
  * dashed with their confidence, accepted ones solid and labelled; rejected ones are not drawn.
- * Laid out left to right with dagre; pan, zoom and fit with the controls.
+ * Laid out to fill the frame (diagramLayout.ts); pan, zoom and fit with the controls.
  */
 export default function SchemaDiagram({
   tables,
@@ -98,23 +98,20 @@ export default function SchemaDiagram({
     const boxes = new Map(tables.map((t) => [t.urn, { table: t, ...visibleColumns(t) }]));
     const drawn = relationships.filter((r) => r.status !== "rejected" && boxes.has(r.from.urn) && boxes.has(r.to.urn));
 
-    const g = new Graph();
-    g.setGraph({ rankdir: "LR", nodesep: 28, ranksep: 90, marginx: 16, marginy: 16 });
-    g.setDefaultEdgeLabel(() => ({}));
-    for (const [urn, b] of boxes) {
-      g.setNode(urn, { width: WIDTH, height: HEADER + ROW * (b.columns.length + (b.hidden > 0 ? 1 : 0)) + 8 });
-    }
-    for (const r of drawn) {
-      if (r.from.urn !== r.to.urn) g.setEdge(r.from.urn, r.to.urn);
-    }
-    layout(g);
+    const at = layoutBoxes(
+      [...boxes.entries()].map(([urn, b]) => ({
+        id: urn,
+        width: WIDTH,
+        height: HEADER + ROW * (b.columns.length + (b.hidden > 0 ? 1 : 0)) + 8,
+      })),
+      drawn.map((r): [string, string] => [r.from.urn, r.to.urn]),
+    );
 
     const nodes: TableNode[] = [...boxes.entries()].map(([urn, b]) => {
-      const n = g.node(urn);
       return {
         id: urn,
         type: "table",
-        position: { x: n.x - n.width / 2, y: n.y - n.height / 2 },
+        position: at.get(urn) ?? { x: 0, y: 0 },
         data: { table: b.table, columns: b.columns, hidden: b.hidden, centre: urn === centre },
         draggable: true,
         ariaLabel: `${b.table.name}, ${formatLabel(b.table.format)}, ${b.table.columns.length} columns`,
@@ -129,9 +126,7 @@ export default function SchemaDiagram({
       const text =
         r.kind === "declared"
           ? undefined
-          : proposed
-            ? `proposed ${r.confidence != null ? percent.format(r.confidence) : ""}`.trim()
-            : "accepted";
+          : `${proposed ? "proposed" : "accepted"} ${r.confidence != null ? percent.format(r.confidence) : ""}`.trim();
       return {
         id: `r${r.id}`,
         source: r.from.urn,
