@@ -37,6 +37,8 @@ public class TokenResource {
 
     private final ApiTokens tokens;
     private final SecurityIdentity identity;
+    @jakarta.inject.Inject
+    io.kilnmark.server.audit.AuditLog audit;
     private final KilnmarkConfig config;
 
     public TokenResource(ApiTokens tokens, SecurityIdentity identity, KilnmarkConfig config) {
@@ -74,6 +76,12 @@ public class TokenResource {
         ApiTokens.Issued issued = tokens.create(body.name(), AccessRole.parse(body.role()), body.expiresAt(), caller(),
             body.unmask());
         ApiTokens.Token t = issued.token();
+        java.util.Map<String, Object> detail = new java.util.LinkedHashMap<>();
+        detail.put("name", t.name());
+        detail.put("role", t.role().id());
+        detail.put("unmask", t.unmask());
+        detail.put("expiresAt", t.expiresAt() == null ? null : t.expiresAt().toString());
+        audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), io.kilnmark.server.audit.AuditLog.TOKEN_CREATED, "token " + t.id(), detail);
         CacheControl noStore = new CacheControl();
         noStore.setNoStore(true);
         return Response.created(URI.create("/api/v1/tokens/" + t.id())).cacheControl(noStore)
@@ -96,7 +104,10 @@ public class TokenResource {
     @Path("tokens/{id}")
     @RolesAllowed(AccessRole.ADMIN_ROLE)
     public Response revoke(@PathParam("id") long id) {
-        tokens.revoke(id, caller()).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND, "No token " + id));
+        ApiTokens.Token t = tokens.revoke(id, caller()).orElseThrow(() -> ApiError.of(Response.Status.NOT_FOUND,
+            "No token " + id));
+        audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), io.kilnmark.server.audit.AuditLog.TOKEN_REVOKED, "token " + t.id(),
+            java.util.Map.of("name", t.name(), "role", t.role().id()));
         return Response.noContent().build();
     }
 

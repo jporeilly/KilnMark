@@ -59,6 +59,8 @@ public class SourceResource {
     private final Connectors connectors;
     private final SourceService sources;
     private final io.quarkus.security.identity.SecurityIdentity identity;
+    @jakarta.inject.Inject
+    io.kilnmark.server.audit.AuditLog audit;
 
     public SourceResource(GraphStore store, SecretBox secrets, ScanService scans, SourceImporter importer,
                           Connectors connectors, SourceService sources,
@@ -100,6 +102,7 @@ public class SourceResource {
         byte[] secret = d.newSecret() == null ? null : secrets.seal(d.newSecret());
         Records.Source s = conflicts(() -> store.addSource(new Records.NewSource(d.config().name(), d.config().kind(),
             d.config().settings(), secret, d.displayName())));
+        audit.sourceSettings(io.kilnmark.server.audit.AuditLog.actor(identity), s.name(), null, s.settings(), "form");
         if (io.kilnmark.server.sources.CommonSettings.allowsSql(s.settings())) {
             org.jboss.logging.Logger.getLogger(SourceResource.class).infof(
                 "Source %s added by %s; SQL a person writes may run on it (allow_sql)", s.name(), who());
@@ -136,6 +139,7 @@ public class SourceResource {
         Records.Source s = conflicts(() -> store.updateSource(existing.id(), new Records.SourceChange(d.displayName(),
             d.config().settings(), d.replaceSecret(), secret, d.keepSecretIf()))).orElseThrow(() -> ApiError.of(
                 Response.Status.NOT_FOUND, "No source called " + name));
+        audit.sourceSettings(io.kilnmark.server.audit.AuditLog.actor(identity), s.name(), existing.settings(), s.settings(), "form");
         boolean sqlBefore = io.kilnmark.server.sources.CommonSettings.allowsSql(existing.settings());
         boolean sqlAfter = io.kilnmark.server.sources.CommonSettings.allowsSql(s.settings());
         org.jboss.logging.Logger.getLogger(SourceResource.class).infof("Source %s changed by %s%s", existing.name(),
@@ -167,6 +171,8 @@ public class SourceResource {
             org.jboss.logging.Logger.getLogger(SourceResource.class).infof(
                 "Source %s deleted by %s, with %d assets and %d runs%s", d.name(), who(), d.assets(), d.runs(),
                 marked ? "; its columns marked sensitive are no longer marked" : "");
+            audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), io.kilnmark.server.audit.AuditLog.SOURCE_DELETED, d.name(), java.util.Map.of(
+                "assets", d.assets(), "runs", d.runs(), "marked", marked));
             return new Views.Deleted(d.name(), d.assets(), d.runs());
         } catch (GraphStore.SourceBusyException e) {
             throw ApiError.of(Response.Status.CONFLICT, e.getMessage());
@@ -304,7 +310,8 @@ public class SourceResource {
                               @QueryParam("remapHosts") boolean remapHosts, @QueryParam("test") boolean test,
                               @QueryParam("scan") boolean scan) {
         return report(conflicts(() -> importer.run(importer.fromCsv(body == null ? "" : body),
-            options(dryRun, onError, remapHosts, test, scan, identity.hasRole(AccessRole.ADMIN_ROLE)), who())));
+            options(dryRun, onError, remapHosts, test, scan, identity.hasRole(AccessRole.ADMIN_ROLE)), who(),
+            io.kilnmark.server.audit.AuditLog.actor(identity))));
     }
 
     /** The same as a JSON array of sources. */
@@ -316,7 +323,8 @@ public class SourceResource {
                                @QueryParam("remapHosts") boolean remapHosts, @QueryParam("test") boolean test,
                                @QueryParam("scan") boolean scan) {
         return report(conflicts(() -> importer.run(importer.fromJson(body == null ? "[]" : body),
-            options(dryRun, onError, remapHosts, test, scan, identity.hasRole(AccessRole.ADMIN_ROLE)), who())));
+            options(dryRun, onError, remapHosts, test, scan, identity.hasRole(AccessRole.ADMIN_ROLE)), who(),
+            io.kilnmark.server.audit.AuditLog.actor(identity))));
     }
 
     private static SourceImporter.Options options(boolean dryRun, String onError, boolean remapHosts, boolean test,

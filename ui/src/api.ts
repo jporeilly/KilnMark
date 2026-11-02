@@ -1649,6 +1649,27 @@ export type MailLogEntry = {
   error: string | null;
 };
 
+/** One event of the audit log (Settings › Audit log, admins only). */
+export type AuditEvent = {
+  id: number;
+  at: string;
+  actor: string;
+  tokenId: number | null;
+  action: string;
+  target: string;
+  detail: Record<string, unknown>;
+};
+
+export const auditApi = {
+  /** A page of events, newest first; `before` is the previous page's `next`. */
+  list: (action: string | null, before: number | null, limit = 100) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (action) q.set("action", action);
+    if (before != null) q.set("before", String(before));
+    return call<{ events: AuditEvent[]; next: number | null }>(`/api/v1/audit?${q.toString()}`);
+  },
+};
+
 /** Notification settings and, for admins, email: the feed is notificationsApi in src/notifications/api.ts. */
 export const notifyApi = {
   mine: () => call<MyNotifications>("/api/v1/me/notifications"),

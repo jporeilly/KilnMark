@@ -102,6 +102,9 @@ public class ApiTokens {
 
     private final Db db;
     private final KilnmarkConfig config;
+    /** Set by CDI; null when built in a test, which then records nothing. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.audit.AuditLog audit;
     private final SecureRandom random = new SecureRandom();
     /** When this process last wrote last_used_at for each token, so a busy token is not written every request. */
     private final Map<Long, Instant> touched = new ConcurrentHashMap<>();
@@ -337,7 +340,9 @@ public class ApiTokens {
             }
         });
         Path file = folder.resolve(ADMIN_TOKEN_FILE);
-        return db.tx(c -> {
+        // What start-up changed, for the audit log once the transaction has committed: action, target, detail.
+        List<Object[]> changes = new ArrayList<>();
+        Optional<Path> written = db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)")) {
                 ps.setInt(1, LOCK_CLASS);
                 ps.setInt(2, LOCK_BOOTSTRAP);
@@ -350,12 +355,18 @@ public class ApiTokens {
                 ps.setString(1, ENVIRONMENT_CHANGED);
                 ps.setString(2, FROM_ENVIRONMENT);
                 ps.setBytes(3, envHash);
-                if (ps.executeUpdate() > 0) {
+                int setAside = ps.executeUpdate();
+                if (setAside > 0) {
                     LOG.info("Set aside the previous KILNMARK_ADMIN_TOKEN, which is no longer set");
+                    changes.add(new Object[] {io.kilnmark.server.audit.AuditLog.TOKEN_REVOKED, "KILNMARK_ADMIN_TOKEN",
+                        Map.of("reason", "set aside: no longer set", "tokens", setAside)});
                 }
             }
             if (envToken.isPresent()) {
-                acceptEnvironmentToken(c, envHash);
+                if (acceptEnvironmentToken(c, envHash)) {
+                    changes.add(new Object[] {io.kilnmark.server.audit.AuditLog.TOKEN_CREATED, "KILNMARK_ADMIN_TOKEN",
+                        Map.of("role", "admin", "unmask", false, "via", "environment")});
+                }
             }
             if (usableAdmins(c) > 0) {
                 return Optional.<Path>empty();
@@ -368,16 +379,28 @@ public class ApiTokens {
             LOG.infof("No admin API token was usable, so token %d was created. It is in %s (readable only by this "
                 + "user) and works for 24 hours: sign in with it, create a permanent admin token under API tokens, "
                 + "then delete the file.", t.id(), file);
+            changes.add(new Object[] {io.kilnmark.server.audit.AuditLog.TOKEN_CREATED, "token " + t.id(), Map.of("name", t.name(),
+                "role", "admin", "unmask", false, "expiresAt", String.valueOf(t.expiresAt()), "via", "first start")});
             return Optional.of(file);
         });
+        if (audit != null) {
+            for (Object[] e : changes) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> detail = (Map<String, Object>) e[2];
+                audit.record(io.kilnmark.server.audit.AuditLog.Actor.server("start-up"), (String) e[0], (String) e[1], detail);
+            }
+        }
+        return written;
     }
 
-    private static void acceptEnvironmentToken(Connection c, byte[] envHash) throws SQLException {
+    /** Stores the environment's admin token; true when it was new or is back in use. */
+    private static boolean acceptEnvironmentToken(Connection c, byte[] envHash) throws SQLException {
+        boolean changed;
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.api_token (name, role, hash, created_by) "
             + "VALUES ('KILNMARK_ADMIN_TOKEN', 'admin', ?, ?) ON CONFLICT (hash) DO NOTHING")) {
             ps.setBytes(1, envHash);
             ps.setString(2, FROM_ENVIRONMENT);
-            ps.executeUpdate();
+            changed = ps.executeUpdate() > 0;
         }
         // Back in use if only the start-up check had set it aside; a revocation by an admin stands.
         try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.api_token SET revoked_at = NULL, "
@@ -387,6 +410,7 @@ public class ApiTokens {
             ps.setString(3, ENVIRONMENT_CHANGED);
             if (ps.executeUpdate() > 0) {
                 LOG.info("KILNMARK_ADMIN_TOKEN is set to an earlier value again, so that token works again");
+                changed = true;
             }
         }
         try (PreparedStatement ps = c.prepareStatement(
@@ -403,6 +427,7 @@ public class ApiTokens {
                 }
             }
         }
+        return changed;
     }
 
     private static int usableAdmins(Connection c) throws SQLException {

@@ -84,7 +84,7 @@ export const NAV: NavItem[] = [
     href: href.settings(),
     icon: "settings",
     tint: "slate",
-    current: on("settings", "tokens", "ai", "ai-usage", "notifications", "email", "email-log"),
+    current: on("settings", "tokens", "ai", "ai-usage", "notifications", "email", "email-log", "audit"),
     group: "secondary",
   },
 ];

@@ -123,6 +123,9 @@ public class SourceImporter {
     private final Connectors connectors;
     private final SourceService sources;
     private final ImportBatches batches;
+    /** Set by CDI; null when built in a test, which then records nothing. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.audit.AuditLog audit;
 
     public SourceImporter(GraphStore store, SecretBox secrets, KilnmarkConfig config, ObjectMapper json,
                           Connectors connectors, SourceService sources, ImportBatches batches) {
@@ -141,6 +144,11 @@ public class SourceImporter {
     }
 
     public Report run(List<Row> rows, Options options, String who) {
+        return run(rows, options, who, new io.kilnmark.server.audit.AuditLog.Actor(who, null));
+    }
+
+    /** As {@link #run(List, Options, String)}, recording changes to Allow writing and Allow SQL as {@code actor}. */
+    public Report run(List<Row> rows, Options options, String who, io.kilnmark.server.audit.AuditLog.Actor actor) {
         if (rows.isEmpty()) {
             throw new IllegalArgumentException("The file has no sources in it");
         }
@@ -207,6 +215,16 @@ public class SourceImporter {
             creates.stream().filter(c -> io.kilnmark.server.sources.CommonSettings.allowsSql(c.settings()))
                 .forEach(c -> log.infof("Source %s added by import (%s); SQL a person writes may run on it (allow_sql)",
                     c.name(), who));
+            if (audit != null) {
+                creates.forEach(c -> audit.sourceSettings(actor, c.name(), null, c.settings(), "import"));
+                for (Plan p : plans) {
+                    if (p.update() != null) {
+                        Records.Source was = existing.get(p.result().name());
+                        audit.sourceSettings(actor, p.result().name(), was == null ? null : was.settings(),
+                            p.update().settings(), "import");
+                    }
+                }
+            }
             for (Plan p : plans) {
                 if (p.update() == null) {
                     continue;

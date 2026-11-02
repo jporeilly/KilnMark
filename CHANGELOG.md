@@ -17,7 +17,23 @@ details.
 - **Read with a query.** A read node can run one `SELECT` in place of a table, on a PostgreSQL
   source with Allow SQL on (ADR 0028). The new sample `sample-read-query` shows one.
 
+- **The audit log.** Every change made through the API, every request refused, and the changes
+  that decide who sees sensitive values and what reaches a source are recorded, can never be changed
+  or deleted, and can be sent to a SIEM. Admins read it under Settings, Audit log (ADR 0029).
+
 ### Details
+
+- **The audit log** (V28, ADR 0029). `kilnmark.audit_event` is append-only: a trigger refuses
+  `UPDATE`, `DELETE` and `TRUNCATE`. Events: `token.created` (with role, unmask and expiry),
+  `token.revoked`, `mark.set`, `mark.cleared`, `source.deleted`, `source.allow_writing` and
+  `source.allow_sql` (from the form or an import), `api.request` for every `POST`, `PUT`, `PATCH`
+  or `DELETE` that succeeded, and `api.refused` for every 403, and every 401 on a change. Only the
+  method, path, status and caller's address of a request are kept, never its body or query string.
+  Start-up records the admin tokens it makes or sets aside. Rows are stored in the background, in
+  order; refusals are kept at most 30 a minute for each caller, and a flood of requests never keeps
+  a token, mark or source event out. `GET /api/v1/audit` (admins)
+  pages through them; each is also one JSON line on the `kilnmark.audit` log category, sent to a
+  syslog collector with the `siem` profile and `KILNMARK_AUDIT_SYSLOG_ENDPOINT`.
 
 - **Unmasking is a grant of its own** (V26, ADR 0027). Tokens have `unmask`, true only on designer
   tokens (the default for them; create one with `"unmask": false` to leave it out); the API and a
