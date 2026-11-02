@@ -105,7 +105,15 @@ docs in the same release:
   with marked columns).
 - `CALL` runs an existing procedure with whatever rights it was created with, a `SECURITY DEFINER`
   one's included. The procedure is the database owner's choice, not the statement's: the login
-  should be granted `EXECUTE` only on procedures meant for it.
+  should be granted `EXECUTE` only on procedures meant for it. Rows it returns through `INOUT`
+  parameters are discarded.
+- **Expressions stored for later** (accepted, 2 November 2026): a column `DEFAULT`, a `CHECK`, a
+  domain's check or extended statistics can call an existing function, which then runs whenever a
+  row is inserted, with the rights of whoever inserts. Creating functions is refused, so only
+  functions already in the database, with their own rights, can be named; the login's grants decide
+  which. A review may ask to refuse these too.
+- **Query reads stay read-only in the transaction itself** (`SET TRANSACTION READ ONLY`), not only
+  through the driver, and a PostgreSQL URL may not say `readOnlyMode` or `preferQueryMode`.
 - The flows design's "Not in this plan: a SQL check node" is superseded by this record. The flow
   node is an action, not a check: a check (rows in a table, say) is a pipeline with a `read` and a
   `gate`, as before.

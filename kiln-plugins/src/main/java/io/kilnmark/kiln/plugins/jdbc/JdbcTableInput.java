@@ -241,6 +241,11 @@ public final class JdbcTableInput implements Node {
                 // A query a person wrote, checked as PostgreSQL reads it with standard_conforming_strings on:
                 // it runs only with it on, whatever the database, login or URL says (ADR 0028).
                 PostgresConnector.conformingStrings(connection);
+                // Read-only in the transaction itself, not only through the driver, which a URL can tell to
+                // ignore it (readOnlyMode=ignore): a query may call a function that writes.
+                try (Statement st = connection.createStatement()) {
+                    st.execute("SET TRANSACTION READ ONLY");
+                }
             }
             if (context.settings().containsKey(ISOLATION)) {
                 connection.setTransactionIsolation(Integer.parseInt(context.setting(ISOLATION)));

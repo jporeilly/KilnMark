@@ -338,7 +338,10 @@ public final class SqlTokens {
         // a view runs later with its owner's rights, for whoever reads it; a routine's settings are code
         "view", "routine",
         // rights, also where CREATE SCHEMA holds them
-        "grant", "revoke");
+        "grant", "revoke",
+        // a schema named as the login comes first on its search path ("$user"), and changes what every
+        // unqualified name later means
+        "schema");
     /** {@link #FORBIDDEN_FUNCTIONS} less those a statement that writes may need: sequences. */
     static final List<String> ACTION_FORBIDDEN_FUNCTIONS = FORBIDDEN_FUNCTIONS.stream()
         .filter(f -> !Set.of("nextval", "setval", "currval", "lastval").contains(f)).toList();

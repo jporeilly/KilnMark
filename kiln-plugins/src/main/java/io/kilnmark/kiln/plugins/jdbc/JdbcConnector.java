@@ -154,6 +154,11 @@ public abstract class JdbcConnector implements Connector {
             return "url: the property " + name + " would send SQL over PostgreSQL's simple protocol, which runs "
                 + "every statement a text holds. Take it out of the URL";
         }
+        // pgjdbc can be told to ignore a read-only connection: reads, previews and checks must stay read-only.
+        if (n.equals("readonlymode")) {
+            return "url: the property " + name + " would let reads that are meant to be read-only write. Take it "
+                + "out of the URL";
+        }
         boolean denied = DENIED_PROPERTIES.contains(n) || n.endsWith("file") || n.endsWith("path")
             || n.endsWith("factory") || n.endsWith("class") || n.endsWith("classname")
             || n.equals("authentication") && !AUTHENTICATION_ALLOWED.contains(v);

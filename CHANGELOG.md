@@ -59,6 +59,11 @@ details.
   Refused too: `pg_settings` everywhere (its rules change settings), text that is not valid
   Unicode (a lone surrogate reaches the database as `?`), and in sql nodes, views, `ALTER ROUTINE`
   (code that runs later) and `GRANT` or `REVOKE` anywhere, `CREATE SCHEMA` included.
+- **Reads stay read-only.** A PostgreSQL source whose URL sets `readOnlyMode` is refused (pgjdbc
+  would ignore read-only, so a query read calling a function that writes could write), and query
+  reads also set `SET TRANSACTION READ ONLY` themselves. Sql nodes refuse `SCHEMA` (a schema named as
+  the login changes what every unqualified name means). Stored defaults and checks that call an
+  existing function are accepted for now (ADR 0028).
 - **Query reads run.** A read with a query failed when its pipeline ran ("needs the setting
   'asset-urn'"): it has no single asset, and now records no row count for one.
 - **The query check lives in `PipelineService`.** `create` and `save` check a query read's author

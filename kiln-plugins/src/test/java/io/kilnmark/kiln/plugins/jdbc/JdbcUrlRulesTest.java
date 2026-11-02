@@ -58,7 +58,9 @@ class JdbcUrlRulesTest {
             "jdbc:postgresql://allowed.example.com/db?ssl%6Bey=/x",
             // the simple protocol runs every statement a text holds (ADR 0028)
             "jdbc:postgresql://allowed.example.com/db?preferQueryMode=simple",
-            "jdbc:postgresql://allowed.example.com/db?PREFERQUERYMODE=extendedForPrepared")) {
+            "jdbc:postgresql://allowed.example.com/db?PREFERQUERYMODE=extendedForPrepared",
+            // reads stay read-only whatever the driver is told
+            "jdbc:postgresql://allowed.example.com/db?readOnlyMode=ignore")) {
             List<String> p = pg.validate(src(pg, url));
             assertEquals(1, p.size(), url);
             assertTrue(p.get(0).startsWith("url: the property"), p.get(0));

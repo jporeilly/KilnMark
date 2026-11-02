@@ -115,7 +115,8 @@ class SafetyTest {
         refusedAction("CREATE SERVER s FOREIGN DATA WRAPPER postgres_fdw", "'server' is not allowed");
         refusedAction("ALTER TABLE t OWNER TO x", "'owner' is not allowed");
         refusedAction("ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO x", "'privileges' is not allowed");
-        refusedAction("CREATE SCHEMA s AUTHORIZATION x", "'authorization' is not allowed");
+        refusedAction("CREATE SCHEMA s AUTHORIZATION x", "'schema' is not allowed");
+        refusedAction("ALTER TABLE t OWNER TO x AUTHORIZATION y", "'owner' is not allowed");
         refusedAction("ALTER SYSTEM SET work_mem = '1GB'", "'system' is not allowed");
         refusedAction("CREATE TRIGGER t BEFORE INSERT ON t EXECUTE FUNCTION f()", "'trigger' is not allowed");
         refusedAction("INSERT INTO t SELECT pg_read_file('/etc/passwd')", "'pg_read_file' is not allowed");
@@ -191,9 +192,13 @@ class SafetyTest {
         assertEquals("INSERT INTO t VALUES ('\uD83D\uDE00')",
             SqlTokens.checkAction("INSERT INTO t VALUES ('\uD83D\uDE00')", 10_000), "a pair is a character");
         refusedAction("CREATE SCHEMA s2 CREATE TABLE s2.x (a int) GRANT ALL ON TABLE public.t TO PUBLIC",
-            "'grant' is not allowed");
-        refusedAction("CREATE SCHEMA s2 CREATE TABLE s2.x (a int) REVOKE ALL ON TABLE public.t FROM x",
-            "'revoke' is not allowed");
+            "is not allowed");
+        // GRANT and REVOKE are refused wherever they stand, not only through the schema they sat in
+        refusedAction("CREATE TABLE s2.x (a int) GRANT ALL ON TABLE public.t TO PUBLIC", "'grant' is not allowed");
+        refusedAction("CREATE TABLE s2.x (a int) REVOKE ALL ON TABLE public.t FROM x", "'revoke' is not allowed");
+        // The fifth review: a schema named as the login changes what unqualified names mean
+        refusedAction("CREATE SCHEMA kiln", "'schema' is not allowed");
+        refusedAction("ALTER SCHEMA s2 RENAME TO kiln", "'schema' is not allowed");
         assertEquals(null, SqlTokens.driverSplits("INSERT INTO t VALUES ('a;b')"));
         assertEquals("one statement only", SqlTokens.driverSplits("INSERT INTO t VALUES (1); DELETE FROM t"));
     }
