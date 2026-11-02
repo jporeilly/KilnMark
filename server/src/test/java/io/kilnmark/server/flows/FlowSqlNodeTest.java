@@ -393,8 +393,29 @@ class FlowSqlNodeTest {
         assertEquals(1, count("SELECT count(*) FROM fsql.backslash_out"), "the one row the SELECT returns");
     }
 
+    /**
+     * A superuser login that acts as another role from its first moment (role set in the URL's options) is
+     * still refused: its session's settings came from the superuser (the sixth review of the sql node).
+     */
     @Test
     @Order(11)
+    void aLoginActingAsAnotherRoleIsRefused() throws Exception {
+        save(LOAD.replace("name: fsql-load", "name: fsql-as-other").replace("source: fsql-db", "source: fsql-as"));
+        String as = url + (url.contains("?") ? "&" : "?") + "options=-c%20role=" + WRITER;
+        Map<String, String> settings = new HashMap<>(Map.of("url", as, "username", user, "schemas", "fsql",
+            "allow_sql", "true", "allow_writing", "true"));
+        admin().contentType(ContentType.JSON).body(Map.of("name", "fsql-as", "kind", "postgresql", "password",
+            password, "settings", settings)).post("/api/v1/sources").then().statusCode(201);
+        long target = count("SELECT count(*) FROM fsql.target");
+        long run = start("fsql-as-other");
+        assertEquals("failed", finished(run).status());
+        FlowStore.NodeRun load = node(run, "load");
+        assertTrue(load.message().contains("acts as another role than the one it signed in as"), load.message());
+        assertEquals(target, count("SELECT count(*) FROM fsql.target"), "the TRUNCATE never ran");
+    }
+
+    @Test
+    @Order(12)
     void cleanUp() throws Exception {
         superuser("DROP SCHEMA fsql CASCADE", "DROP OWNED BY " + WRITER);
     }

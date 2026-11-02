@@ -64,6 +64,12 @@ details.
   reads also set `SET TRANSACTION READ ONLY` themselves. Sql nodes refuse `SCHEMA` (a schema named as
   the login changes what every unqualified name means). Stored defaults and checks that call an
   existing function are accepted for now (ADR 0028).
+- **SQL never runs under a login acting as another role.** A superuser login whose URL's `options`
+  or settings set `role` passed the login check (which looked at the role it acts as), with its
+  superuser settings in force. The check now refuses a session whose `session_user` is not its
+  `current_user`, for sql nodes, query reads and custom rules alike. Sql nodes and query reads also
+  check the source's URL rules again when they run, so a source saved before a rule existed is
+  refused until saved again, and a query read's plan runs read-only.
 - **Query reads run.** A read with a query failed when its pipeline ran ("needs the setting
   'asset-urn'"): it has no single asset, and now records no row count for one.
 - **The query check lives in `PipelineService`.** `create` and `save` check a query read's author

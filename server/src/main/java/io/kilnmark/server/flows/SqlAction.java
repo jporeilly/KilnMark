@@ -126,6 +126,11 @@ final class SqlAction {
             return Outcome.failed("Node " + id + ": this server cannot run SQL on " + s.name());
         }
         SourceConfig config = new SourceConfig(s.name(), s.kind(), s.settings(), sources.secret(s));
+        // The URL's rules again: a source saved before a rule existed (preferQueryMode, readOnlyMode) keeps it
+        if (!jdbc.validate(config).isEmpty()) {
+            return Outcome.failed("Node " + id + ": " + s.name() + "'s settings are no longer accepted; open the source "
+                + "and save it again to see why");
+        }
         try {
             sources.hosts().check(connector, config);
         } catch (IllegalArgumentException e) {

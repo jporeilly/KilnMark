@@ -99,16 +99,17 @@ public final class RuleRunner {
      */
     static final String PRIVILEGED_LOGIN = """
         SELECT CASE
-                 WHEN r.rolsuper OR pg_has_role(current_user, 'pg_read_server_files', 'MEMBER')
-                      OR pg_has_role(current_user, 'pg_write_server_files', 'MEMBER')
-                      OR pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')
-                      OR pg_has_role(current_user, 'pg_signal_backend', 'MEMBER') THEN 'roles'
+                 WHEN session_user::text <> current_user::text THEN 'other'
+                 WHEN r.rolsuper OR pg_catalog.pg_has_role(current_user, 'pg_read_server_files', 'MEMBER')
+                      OR pg_catalog.pg_has_role(current_user, 'pg_write_server_files', 'MEMBER')
+                      OR pg_catalog.pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')
+                      OR pg_catalog.pg_has_role(current_user, 'pg_signal_backend', 'MEMBER') THEN 'roles'
                  WHEN x.schema IS NOT NULL THEN 'dblink:' || x.schema
                  WHEN v.server IS NOT NULL THEN 'server:' || v.server
                  WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_user_mappings) THEN 'mapping'
                  WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_foreign_table) THEN 'foreign'
                END
-        FROM pg_roles r
+        FROM pg_catalog.pg_roles r
         LEFT JOIN LATERAL (SELECT string_agg(d.objid::regprocedure::text, ', ' ORDER BY d.objid::regprocedure::text)
                                   AS schema
                            FROM pg_catalog.pg_extension e
@@ -138,6 +139,11 @@ public final class RuleRunner {
             return "Custom SQL does not run under this source's login: it may use the foreign server " + server
                 + ", which reaches another database. Revoke it: REVOKE USAGE ON FOREIGN SERVER " + server + " FROM "
                 + "PUBLIC (and from the login and its roles).";
+        }
+        if (reason.equals("other")) {
+            // The session's settings came from a login that may be a superuser, whatever role it acts as now.
+            return "Custom SQL does not run under this source's login: it acts as another role than the one it signed "
+                + "in as (its URL's options or its settings set role). Give the source a login that acts as itself.";
         }
         if (reason.equals("mapping") || reason.equals("foreign")) {
             return "Custom SQL does not run on this database: it has " + (reason.equals("mapping") ? "user mappings"
