@@ -40,14 +40,8 @@ export const NAV: NavItem[] = [
     tint: "sky",
     current: (r) => (r.page === "sources" ? "page" : r.page === "source" ? "true" : undefined),
   },
-  {
-    id: "pipelines",
-    label: "Pipelines",
-    href: href.pipelines(),
-    icon: "pipelines",
-    tint: "mint",
-    current: (r) => (r.page === "pipelines" ? "page" : r.page === "pipeline" || r.page === "pipeline-run" ? "true" : undefined),
-  },
+  // In the order the work goes: find the data, see how it joins, set what good looks like, then
+  // build the pipeline; issues last.
   { id: "browse", label: "Browse", href: href.browse(), icon: "browse", tint: "violet", current: on("browse") },
   {
     id: "relationships",
@@ -58,6 +52,14 @@ export const NAV: NavItem[] = [
     current: on("relationships"),
   },
   { id: "rules", label: "Quality rules", href: href.rules(), icon: "rules", tint: "green", current: on("rules") },
+  {
+    id: "pipelines",
+    label: "Pipelines",
+    href: href.pipelines(),
+    icon: "pipelines",
+    tint: "mint",
+    current: (r) => (r.page === "pipelines" ? "page" : r.page === "pipeline" || r.page === "pipeline-run" ? "true" : undefined),
+  },
   { id: "issues", label: "Issues", href: href.issues(), icon: "issues", tint: "red", current: on("issues"), badge: "issues" },
   {
     id: "whats-new",

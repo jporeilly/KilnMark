@@ -9,6 +9,8 @@ import { arrivingColumns, columnSide, kindWord, problemSetting, problemWords, sh
 import { portOfLink, portsOf, refText, type Catalogue, type GraphEdge, type GraphNode, type Value } from "./model";
 import { SettingControl } from "./SettingControls";
 import { runWords, NodeIcon, type NodeRunInfo } from "./NodeCard";
+import { NodeMetricsList } from "../NodeMetricsList";
+import type { NodeMetrics } from "../nodeMetrics";
 
 const assetCache = new Map<string, Promise<string[]>>();
 
@@ -92,6 +94,7 @@ export function SettingsPanel({
   run,
   quality = null,
   predicted = null,
+  metrics = null,
   parameters = [],
   onSetting,
   onRename,
@@ -112,6 +115,8 @@ export function SettingsPanel({
   quality?: PipelineNodeQuality | null;
   /** The node's predicted quality as the pipeline stands, for writes and gates (an estimate). */
   predicted?: PredictedQuality | null;
+  /** The node's time, rate, memory and how its time went, from the last run once it has ended. */
+  metrics?: NodeMetrics | null;
   /** The parameters the pipeline declares, offered as `${name}` in expressions. */
   parameters?: string[];
   onSetting: (key: string, value: Value | undefined, kind: string) => void;
@@ -162,6 +167,7 @@ export function SettingsPanel({
 
   return (
     <div className="cv-panel-body">
+      <div className="cv-set-side">
       <div className="cv-panel-head">
         <span className={`cv-kind-chip cv-kind-${type?.kind ?? "unknown"}`}>
           <NodeIcon type={node.type} kind={type?.kind} size={16} />
@@ -261,9 +267,10 @@ export function SettingsPanel({
           ))}
         </ul>
       )}
+      </div>
 
       {type && (
-        <section className="cv-section" aria-labelledby={`${base}-settings`}>
+        <section className="cv-section cv-set-main" aria-labelledby={`${base}-settings`}>
           <h4 id={`${base}-settings`}>Settings</h4>
           {specs.length === 0 && extra.length === 0 && <p className="small muted">This node has no settings.</p>}
           {specs.map((spec) => (
@@ -319,6 +326,7 @@ export function SettingsPanel({
         </section>
       )}
 
+      <div className="cv-set-run">
       <section className="cv-section" aria-labelledby={`${base}-cols`}>
         <h4 id={`${base}-cols`}>Columns leaving this node</h4>
         <p className="small">{outline ? columnsText(outline) : "Known once the pipeline has been checked."}</p>
@@ -331,6 +339,7 @@ export function SettingsPanel({
           <h4 id={`${base}-run`}>Last run</h4>
           <p className="small">{runWords(run)}</p>
           {run.error && <p className="small pl-bad">{run.error}</p>}
+          {metrics && <NodeMetricsList m={metrics} label={`Metrics of ${node.id} in the last run`} />}
           {quality && (
             <>
               <p className="small">{nodeQualityWords(quality)}</p>
@@ -361,6 +370,7 @@ export function SettingsPanel({
           )}
         </section>
       )}
+      </div>
     </div>
   );
 }

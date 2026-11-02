@@ -23,6 +23,17 @@ details.
 
 ### Details
 
+- **The panel under the canvas, reviewed.** Nodes is the first tab, as choosing a node there opens its
+  settings. The Nodes table shows each node's metrics from the last run: rows in and out, time, rows
+  a second, how its time went (working, waiting for rows, held up by the next node, as a bar), peak
+  memory, and the node that held the run back most; its columns fold into a count. A node's settings
+  show the same metrics under Last run, and are laid out in three areas (the node, its settings in
+  as many columns as fit, what leaves it and its last run) by the panel's own width, so a long
+  setting no longer splits across columns and a rule's checkbox keeps its label beside it.
+- **Sidebar in the order the work goes**: Browse, Relationships, Quality rules, then Pipelines.
+- **The connector gallery's "Install the driver" link** sits inside its card.
+- **A new release shows at once**: the web app's page is sent with `Cache-Control: no-cache` (it was
+  cached for a day, so browsers kept the old release's screens after an upgrade).
 - **Generic JDBC: time limits, SQL Server instances, and the vetted list in full** (ADR 0030). A
   time limit is now a name ending in `timeout`, with or without `ms`, `_ms` or `seconds`, so a
   setting that only holds the word is no longer taken for one. SQL Server's `instanceName` is

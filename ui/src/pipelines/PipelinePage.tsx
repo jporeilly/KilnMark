@@ -17,7 +17,9 @@ import {
 import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
-import { RunStatus, runTime } from "./RunStatus";
+import { RunStatus, formatBytes, formatDuration, runTime } from "./RunStatus";
+import { nodeMetrics, shareOf, splitWords } from "./nodeMetrics";
+import { rateWords } from "./live";
 import { columnsText } from "./outline";
 import { nodeQualityWords } from "./quality";
 import { emptyYaml, findStarterPicks, renamed, starterYaml, withoutLayout } from "./template";
@@ -235,13 +237,14 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
     [runShown, viewing],
   );
 
-  // The panel under the canvas, one tab at a time: the selected node's settings and preview (only
-  // while a node is selected), then the pipeline's run, suggestions, nodes, runs and versions.
+  // The panel under the canvas, one tab at a time: the nodes first (choosing one there, or on the
+  // canvas, opens its settings), the selected node's settings and preview (only while a node is
+  // selected), then the pipeline's run, suggestions, runs and versions.
   const dockTabs: DockTab[] = [
+    "nodes",
     ...(selected != null ? (["settings", "preview"] as const) : []),
     ...(isNew ? [] : (["run"] as const)),
     "suggestions",
-    "nodes",
     ...(isNew ? [] : (["runs", "versions"] as const)),
   ];
   // When the tab shown goes (the node was deselected or removed): the Run tab if a run is going or
@@ -747,13 +750,25 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                         <th scope="col">Type</th>
                         <th scope="col">Reads from</th>
                         <th scope="col">Columns out</th>
-                        {canvasRun && <th scope="col">Last run</th>}
+                        {canvasRun && (
+                          <>
+                            <th scope="col" className="num">Rows in</th>
+                            <th scope="col" className="num">Rows out</th>
+                            <th scope="col" className="num">Time</th>
+                            <th scope="col" className="num">Rows a second</th>
+                            <th scope="col">How its time went</th>
+                            <th scope="col" className="num">Peak memory</th>
+                            <th scope="col">Last run</th>
+                          </>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
                       {check.nodes.map((s) => {
                         const ran = canvasRun?.nodes.find((r) => r.node === s.id);
                         const measured = nodeQualityWords(canvasRun?.quality?.find((q) => q.node === s.id));
+                        const m = ran ? nodeMetrics(ran, canvasRun?.progress?.slowest ?? null) : null;
+                        const outs = Object.values(s.columns).reduce((n, cols) => n + (cols?.length ?? 0), 0);
                         return (
                           <tr key={s.id}>
                             <th scope="row">
@@ -781,19 +796,44 @@ export function PipelinePage({ name, version, role }: { name: string | null; ver
                                 .map((e) => `${e.fromNode}${e.fromPort === "out" ? "" : `.${e.fromPort}`}${e.toPort === "in" ? "" : ` → ${e.toPort}`}`)
                                 .join(", ") || "–"}
                             </td>
-                            <td>{columnsText(s)}</td>
+                            <td className="pl-nodes-cols">
+                              {Object.keys(s.columns).length === 0 ? (
+                                "No outputs"
+                              ) : (
+                                <details>
+                                  <summary>
+                                    {outs} {outs === 1 ? "column" : "columns"}
+                                  </summary>
+                                  {columnsText(s)}
+                                </details>
+                              )}
+                            </td>
                             {canvasRun && (
-                              <td>
-                                {ran
-                                  ? [
-                                      ran.rowsOut != null ? `${formatNumber(ran.rowsOut)} rows out` : ran.rowsIn != null ? `${formatNumber(ran.rowsIn)} rows in` : "",
-                                      ran.outcome ? ran.outcome.replace("_", " ") : "",
-                                      measured ?? "",
-                                    ]
-                                      .filter(Boolean)
-                                      .join(" · ")
-                                  : "–"}
-                              </td>
+                              <>
+                                <td className="num">{m?.rowsIn == null ? "–" : formatNumber(m.rowsIn)}</td>
+                                <td className="num">{m?.rowsOut == null ? "–" : formatNumber(m.rowsOut)}</td>
+                                <td className="num">{m ? formatDuration(m.durationMs) : "–"}</td>
+                                <td className="num">{m?.rate == null ? "–" : rateWords(m.rate)}</td>
+                                <td>
+                                  {m?.split ? (
+                                    <span className="pl-split-cell">
+                                      <span className="pl-split-bar" role="img" aria-label={splitWords(m) ?? ""}>
+                                        <span className="pl-split-work" style={{ width: shareOf(m.split.workingMs, m.durationMs ?? 0) }} />
+                                        <span className="pl-split-wait" style={{ width: shareOf(m.split.waitingMs, m.durationMs ?? 0) }} />
+                                        <span className="pl-split-held" style={{ width: shareOf(m.split.heldUpMs, m.durationMs ?? 0) }} />
+                                      </span>
+                                      <span className="small">{shareOf(m.split.heldUpMs, m.durationMs ?? 0)} held up</span>
+                                    </span>
+                                  ) : (
+                                    "–"
+                                  )}
+                                  {m?.slowest && <div className="small pl-split-slowest">Held the run back most</div>}
+                                </td>
+                                <td className="num">{m ? formatBytes(m.peakMemory) : "–"}</td>
+                                <td>
+                                  {ran ? [ran.outcome ? ran.outcome.replace("_", " ") : "", measured ?? ""].filter(Boolean).join(" · ") || "–" : "–"}
+                                </td>
+                              </>
                             )}
                           </tr>
                         );

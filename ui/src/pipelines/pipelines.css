@@ -535,16 +535,161 @@ main:has(.pl-wide) {
   margin: 14px 0 6px;
 }
 
-/* A node's settings use the panel's width: their fields run on in columns. */
+/*
+ * A node's settings use the panel's width in three areas: the node itself (what it is, its id, what
+ * it reads, its actions) on the left; its settings across the middle, in as many columns as fit,
+ * with wide controls (rules, expressions, SQL, lists) across all of them; what leaves it and its last
+ * run on the right. A grid, not text columns, so a long setting never splits over two columns.
+ */
 .pl-dock .cv-dock-settings .cv-panel-body {
-  display: block;
-  columns: 300px;
-  column-gap: 28px;
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr) minmax(220px, 300px);
+  align-items: start;
+  gap: 16px 28px;
 }
 
-.pl-dock .cv-dock-settings .cv-panel-body > * {
-  break-inside: avoid;
-  margin: 0 0 14px;
+.pl-dock .cv-dock-settings .cv-set-side,
+.pl-dock .cv-dock-settings .cv-set-run {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.pl-dock .cv-dock-settings .cv-set-main {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  align-items: start;
+  gap: 14px 24px;
+  min-width: 0;
+}
+
+.pl-dock .cv-dock-settings .cv-set-main > h4,
+.pl-dock .cv-dock-settings .cv-set-main > p,
+.pl-dock .cv-dock-settings .cv-set-main > ul,
+.pl-dock .cv-dock-settings .cv-set-main > .cv-field:has(textarea, .cv-pairs, .cv-checklist, .cv-chip-row) {
+  grid-column: 1 / -1;
+}
+
+.pl-dock .cv-dock-settings .cv-set-main > h4 {
+  margin: 0;
+}
+
+.pl-dock .cv-dock-settings .cv-section > .cv-field + .cv-field {
+  margin-top: 0;
+}
+
+/*
+ * By the panel's own width, not the window's (the node list beside the canvas takes some): a narrower
+ * panel puts the node's run under its settings, and a narrow one puts everything in one column.
+ */
+.pl-dock-panel {
+  container-type: inline-size;
+}
+
+@container (max-width: 1100px) {
+  .pl-dock .cv-dock-settings .cv-panel-body {
+    grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  }
+
+  .pl-dock .cv-dock-settings .cv-set-run {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+    align-items: start;
+  }
+}
+
+@container (max-width: 640px) {
+  .pl-dock .cv-dock-settings .cv-panel-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The Nodes table's numbers stay on one line. */
+.pl-dock td.num,
+.pl-dock th.num {
+  white-space: nowrap;
+}
+
+/* A node's metrics from its last run: numbers in a small grid, and how its time went as a bar. */
+.pl-metrics-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px 12px;
+  margin: 8px 0;
+}
+
+.pl-metrics-list dt {
+  font-size: var(--km-text-xs);
+  color: var(--km-muted);
+}
+
+.pl-metrics-list dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.pl-split-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--km-divider);
+}
+
+.pl-split-cell {
+  display: inline-grid;
+  grid-template-columns: 80px auto;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.pl-split-work {
+  background: var(--km-good);
+}
+
+.pl-split-wait {
+  background: var(--km-muted);
+}
+
+.pl-split-held {
+  background: var(--km-warn);
+}
+
+.pl-split-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 6px 0 0;
+}
+
+.pl-split-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 6px;
+}
+
+.pl-split-slowest {
+  margin: 6px 0 0;
+  font-weight: 600;
+}
+
+.pl-nodes-cols {
+  max-width: 420px;
+}
+
+.pl-nodes-cols summary {
+  cursor: pointer;
+}
+
+@media (forced-colors: active) {
+  .pl-split-bar span {
+    forced-color-adjust: none;
+    border-right: 1px solid CanvasText;
+  }
 }
 
 @media (max-width: 700px) {

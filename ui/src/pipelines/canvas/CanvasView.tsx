@@ -78,6 +78,7 @@ import { NodePreviewPanel, type PreviewAsk, type PreviewResult } from "./NodePre
 import { CANVAS_TABS, NODE_TABS, type DockControl } from "../PipelineDock";
 import { useRole } from "../../components/role";
 import { NodeCard, badgeRows, runWords, type NodeCardType, type NodeRunInfo } from "./NodeCard";
+import { nodeMetrics, type NodeMetrics } from "../nodeMetrics";
 import "./canvas.css";
 
 export type CanvasRun = {
@@ -1017,6 +1018,13 @@ function Canvas(props: CanvasProps) {
   };
   const offers = connectFor && graph ? possibleConnections(graph, connectFor, catalogue) : [];
 
+  /** A node's metrics from the run shown, once it has ended (a run that goes shows its rows live on the card). */
+  const metricsOf = (id: string): NodeMetrics | null => {
+    if (run == null || run.status === "queued" || run.status === "running") return null;
+    const r = run.nodes.find((n) => n.node === id);
+    return r ? nodeMetrics(r, run.progress?.slowest ?? null) : null;
+  };
+
   /** The Settings, Preview or Suggestions tab of the panel under the canvas. */
   const dockBody = () => {
     let body;
@@ -1075,6 +1083,7 @@ function Canvas(props: CanvasProps) {
           run={runNodes.get(selectedNode.id) ?? null}
           quality={runQuality.get(selectedNode.id) ?? null}
           predicted={predicted.get(selectedNode.id) ?? null}
+          metrics={metricsOf(selectedNode.id)}
           parameters={graph?.parameters ?? []}
           onSetting={(key, value, kind) => setOne(selectedNode.id, key, value, kind)}
           onRename={(to) => rename(selectedNode.id, to)}

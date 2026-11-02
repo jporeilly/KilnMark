@@ -161,7 +161,7 @@ export function ConnectorGallery({
                 )}
                 <ul className="cards">
                   {g.cards.map((c) => (
-                    <li key={c.name}>
+                    <li key={c.name} className={c.built && needsDriver(c.connector) ? "card-with-link" : undefined}>
                       {c.built ? (
                         <button
                           type="button"
