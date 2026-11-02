@@ -13,6 +13,7 @@ import io.kilnmark.graph.store.Records;
 import io.kilnmark.kiln.connect.Connector;
 import io.kilnmark.kiln.connect.SourceConfig;
 import io.kilnmark.kiln.plugins.jdbc.JdbcConnector;
+import io.kilnmark.kiln.plugins.jdbc.PostgresConnector;
 import io.kilnmark.kiln.plugins.jdbc.SqlDialect;
 import io.kilnmark.kiln.yaml.FlowDefinition;
 import io.kilnmark.server.pipelines.PipelineSources;
@@ -157,21 +158,30 @@ final class SqlAction {
         long rows = 0;
         int n = 0;
         try {
-            List<String> setup = new ArrayList<>(d.timeout(timeout.toMillis()));
-            // Backslashes in plain strings are plain characters, as the check reads them, whatever the
-            // database or the login says.
-            setup.add("SET LOCAL standard_conforming_strings = on");
-            for (String q : setup) {
+            for (String q : d.timeout(timeout.toMillis())) {
                 try (Statement st = c.createStatement()) {
                     st.execute(q);
                 }
             }
+            // Backslashes in plain strings are plain characters, as the check reads them, whatever the
+            // database, the login or the URL says.
+            PostgresConnector.conformingStrings(c);
             for (String sql : node.statements()) {
                 if (control.stopped()) {
                     c.rollback();
                     return Outcome.failed(STOPPED);
                 }
                 n++;
+                // An earlier statement may have turned it off (through pg_settings, say): the check, and the
+                // driver's split, read this one with it on, so it runs only with it on.
+                try {
+                    PostgresConnector.requireConformingStrings(c);
+                } catch (SQLException e) {
+                    c.rollback();
+                    return Outcome.failed("Node " + node.id() + ": statement " + n + " of " + node.statements().size()
+                        + " was not run: standard_conforming_strings was off, so it could not be read as it was "
+                        + "checked. Nothing was changed");
+                }
                 try (java.sql.PreparedStatement st = c.prepareStatement(
                     SqlTokens.checkAction(sql, FlowDefinition.MAX_STATEMENT))) {
                     control.current.set(st);

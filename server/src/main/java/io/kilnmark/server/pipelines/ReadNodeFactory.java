@@ -514,6 +514,8 @@ public final class ReadNodeFactory implements NodeFactory {
             }
             String plan;
             try (Statement st = c.createStatement()) {
+                // The query was checked as PostgreSQL reads it with this on (ADR 0028)
+                io.kilnmark.kiln.plugins.jdbc.PostgresConnector.conformingStrings(c);
                 st.setQueryTimeout(PLAN_TIMEOUT_SECONDS);
                 try (ResultSet rs = st.executeQuery("EXPLAIN (VERBOSE, FORMAT JSON) " + checked)) {
                     plan = rs.next() ? rs.getString(1) : "[]";

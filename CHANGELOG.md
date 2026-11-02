@@ -51,6 +51,15 @@ details.
   characters other than whitespace, and `ts_stat` and `ts_rewrite`. **A PostgreSQL source whose URL
   sets `preferQueryMode` is refused**: take the setting out. **A custom rule written with an `E'...'`
   string stops running** until it is written with plain quotes.
+- **SQL a person wrote runs only with `standard_conforming_strings` on** (third review of the sql
+  node). With it off, a backslash ends a string where the check did not expect, and a source whose
+  URL set `options=-c standard_conforming_strings=off` (or a login or database with it off) could
+  make a query read leave its read-only transaction and write. Query reads, custom SQL rules and sql
+  nodes now turn it on for their transaction and check before each statement that it is still on.
+  Refused too: `pg_settings` everywhere (its rules change settings), and in sql nodes, views and
+  `ALTER ROUTINE` (code that runs later).
+- **Query reads run.** A read with a query failed when its pipeline ran ("needs the setting
+  'asset-urn'"): it has no single asset, and now records no row count for one.
 - **The query check lives in `PipelineService`.** `create` and `save` check a query read's author
   themselves, so no caller can skip it; without a person asking, a query read is refused. Tests now
   show a pipeline version saved before V27 refused when queued and when it starts.

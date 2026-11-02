@@ -339,8 +339,62 @@ class FlowSqlNodeTest {
         assertEquals(0, count("SELECT count(*) FROM pg_tables WHERE schemaname = 'fsql' AND tablename = 'query_out'"));
     }
 
+    /**
+     * SQL a person wrote is checked as PostgreSQL reads it with standard_conforming_strings on, so it
+     * never runs with it off, however it was turned off (the third review of the sql node).
+     */
     @Test
     @Order(10)
+    void sqlAPersonWroteNeverRunsWithBackslashesAsEscapes() throws Exception {
+        try (Connection c = DriverManager.getConnection(url, user, password); Statement s = c.createStatement()) {
+            c.setAutoCommit(false);
+            s.execute("SET standard_conforming_strings = off");
+            assertThrows(SQLException.class,
+                () -> io.kilnmark.kiln.plugins.jdbc.PostgresConnector.requireConformingStrings(c));
+            io.kilnmark.kiln.plugins.jdbc.PostgresConnector.conformingStrings(c);
+            io.kilnmark.kiln.plugins.jdbc.PostgresConnector.requireConformingStrings(c);
+            c.rollback();
+        }
+        // A source whose URL turns it off: the query that would have ended its string at the backslash, and
+        // deleted rows, reads as the one SELECT it was checked as.
+        String off = url + (url.contains("?") ? "&" : "?") + "options=-c%20standard_conforming_strings%3Doff";
+        Map<String, String> settings = new HashMap<>(Map.of("url", off, "username", WRITER, "schemas", "fsql",
+            "allow_sql", "true", "allow_writing", "true"));
+        admin().contentType(ContentType.JSON).body(Map.of("name", "fsql-off", "kind", "postgresql", "password",
+            WRITER_PW, "settings", settings)).post("/api/v1/sources").then().statusCode(201);
+        long staging = count("SELECT count(*) FROM fsql.staging");
+        String yaml = """
+            kilnmark: pipeline/v1
+            name: fsql-backslash
+            nodes:
+              - id: q
+                type: read
+                source: fsql-off
+                query: >-
+                  SELECT '\\' AS a, '; COMMIT; DELETE FROM fsql.staging; SELECT 1 -- ' AS b
+              - id: out
+                type: write
+                input: q
+                source: fsql-db
+                table: fsql.backslash_out
+                mode: replace
+            """;
+        io.restassured.path.json.JsonPath saved = as(designer).contentType(ContentType.JSON)
+            .body(Map.of("name", "fsql-backslash", "yaml", yaml)).post("/api/v1/pipelines").then().statusCode(201)
+            .extract().jsonPath();
+        assertTrue(saved.getBoolean("latest.valid"), saved.prettify());
+        long id = as(designer).contentType(ContentType.JSON).body(Map.of()).post("/api/v1/pipelines/fsql-backslash/runs")
+            .then().statusCode(202).extract().jsonPath().getLong("id");
+        PipelineStore.Run done = await("pipeline run " + id, () -> pipelineStore.run(id).orElseThrow(),
+            PipelineStore.Run::finished);
+        assertEquals(staging, count("SELECT count(*) FROM fsql.staging"), "nothing deleted: " + done.status()
+            + " " + done.error());
+        assertEquals("succeeded", done.status(), done.error());
+        assertEquals(1, count("SELECT count(*) FROM fsql.backslash_out"), "the one row the SELECT returns");
+    }
+
+    @Test
+    @Order(11)
     void cleanUp() throws Exception {
         superuser("DROP SCHEMA fsql CASCADE", "DROP OWNED BY " + WRITER);
     }

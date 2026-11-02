@@ -38,7 +38,9 @@ public final class SqlTokens {
         "pg_backup", "pg_start_backup", "pg_stop_backup", "pg_logdir", "pg_import", "pg_replication",
         "pg_logical", "txid_", "pg_current_xact", "nextval", "setval", "currval", "lastval", "pg_log_",
         // run a query held in a string, out of this check's sight
-        "ts_stat", "ts_rewrite");
+        "ts_stat", "ts_rewrite",
+        // its rules call set_config: a session's settings, standard_conforming_strings among them
+        "pg_settings");
 
     private SqlTokens() {
     }
@@ -324,7 +326,9 @@ public final class SqlTokens {
     static final Set<String> ACTION_FORBIDDEN_WORDS = Set.of("role", "user", "group", "extension", "server", "foreign",
         "mapping", "subscription", "publication", "database", "tablespace", "system", "language", "event",
         "function", "procedure", "trigger", "rule", "policy", "owner", "authorization", "security", "privileges",
-        "operator", "cast", "aggregate", "conversion", "wrapper", "returning", "copy");
+        "operator", "cast", "aggregate", "conversion", "wrapper", "returning", "copy",
+        // a view runs later with its owner's rights, for whoever reads it; a routine's settings are code
+        "view", "routine");
     /** {@link #FORBIDDEN_FUNCTIONS} less those a statement that writes may need: sequences. */
     static final List<String> ACTION_FORBIDDEN_FUNCTIONS = FORBIDDEN_FUNCTIONS.stream()
         .filter(f -> !Set.of("nextval", "setval", "currval", "lastval").contains(f)).toList();
@@ -374,7 +378,9 @@ public final class SqlTokens {
             if (escapeString(t) != null) {
                 throw new IllegalArgumentException(escapeString(t));
             }
-            if (t.kind() == Kind.WORD && ACTION_FORBIDDEN_WORDS.contains(t.text())) {
+            // REFRESH MATERIALIZED VIEW only fills a view that is there
+            boolean refresh = first.text().equals("refresh") && t.text().equals("view");
+            if (t.kind() == Kind.WORD && ACTION_FORBIDDEN_WORDS.contains(t.text()) && !refresh) {
                 throw new IllegalArgumentException("'" + t.text() + "' is not allowed: a sql node does not create or "
                     + "change logins, rights, code that runs later or ways out of the database, and never returns "
                     + "rows (quote it, \"" + t.text() + "\", if it is a column or table name)");

@@ -207,7 +207,9 @@ public final class JdbcTableInput implements Node {
     public void init(NodeContext context) throws NodeException {
         batchSize = Integer.parseInt(context.setting("batch-size", "8192"));
         rowLimit = Long.parseLong(context.setting("row-limit", "0"));
-        assetUrn = context.setting("asset-urn");
+        // A query reads no one asset: its tables are recorded by the read node (ADR 0028), and it has no row count
+        assetUrn = context.settings().containsKey("query") ? context.setting("asset-urn", null)
+            : context.setting("asset-urn");
         String label;
         String sql;
         if (context.settings().containsKey("query")) {
@@ -228,6 +230,11 @@ public final class JdbcTableInput implements Node {
                     throw e;
                 }
                 // advice the driver does not take: the read is a SELECT either way
+            }
+            if (context.settings().containsKey("query")) {
+                // A query a person wrote, checked as PostgreSQL reads it with standard_conforming_strings on:
+                // it runs only with it on, whatever the database, login or URL says (ADR 0028).
+                PostgresConnector.conformingStrings(connection);
             }
             if (context.settings().containsKey(ISOLATION)) {
                 connection.setTransactionIsolation(Integer.parseInt(context.setting(ISOLATION)));
@@ -331,7 +338,10 @@ public final class JdbcTableInput implements Node {
             if (zeroDates > 0) {
                 attributes.put("zero_dates", Long.toString(zeroDates));
             }
-            context.metadata().emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.ROW_COUNT, attributes, Instant.now()));
+            if (assetUrn != null) {
+                context.metadata().emit(new MetadataEvent(assetUrn, MetadataEvent.Kind.ROW_COUNT, attributes,
+                    Instant.now()));
+            }
         }
         return !exhausted;
     }

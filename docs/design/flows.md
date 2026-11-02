@@ -235,7 +235,8 @@ reads from it. Connections follow it as any node (`success`, `failure`, a condit
   and be one statement (`SqlTokens.checkAction`). Never a query, transaction control, `SET`, `COPY`,
   `DO`, `GRANT` or `REVOKE`; never, unquoted, `RETURNING` or the words that create or change logins,
   rights, code that runs later or ways out of the database (`ROLE`, `USER`, `EXTENSION`, `SERVER`,
-  `FUNCTION`, `TRIGGER`, `OWNER`, `PRIVILEGES`, `SYSTEM`, ...); and never the functions custom rules
+  `FUNCTION`, `TRIGGER`, `OWNER`, `PRIVILEGES`, `SYSTEM`, `VIEW` (outside `REFRESH MATERIALIZED
+  VIEW`), `ROUTINE`, ...); and never `pg_settings` (its rules change settings) or the functions custom rules
   refuse (files, other sessions or databases, settings, locks, and `ts_stat` and `ts_rewrite`, which
   run a query held in a string), sequences apart. `E'...'` strings and `U&"..."` names are refused,
   and the text may hold no control character but PostgreSQL's whitespace. The tokenizer reads
@@ -244,7 +245,10 @@ reads from it. Connections follow it as any node (`success`, `failure`, a condit
   the login check and the source's opt-ins below are what hold.
 - **Sent as one prepared statement**, over the extended protocol, which PostgreSQL refuses to read as
   several statements; a source set to `preferQueryMode` is refused (the simple protocol runs every
-  statement a text holds), and `standard_conforming_strings` is on for the transaction. A `?` in a
+  statement a text holds). `standard_conforming_strings` is turned on for the transaction, and the
+  driver is asked before every statement that it is still on: everything is checked as PostgreSQL
+  reads it with that setting on, and with it off a backslash could end a string elsewhere and hide a
+  statement (`PostgresConnector.conformingStrings`). Query reads and custom rules do the same. A `?` in a
   statement is read as a parameter, so it fails: write jsonb's `?` operators as their functions.
 - **Checked when saved and when it runs:** the source exists, is PostgreSQL (the only kind for now)
   and allows both SQL and writing; every statement passes the check. At run time the allowed hosts

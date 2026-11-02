@@ -174,6 +174,15 @@ class SafetyTest {
         refused("SELECT E'x'\n'\\' || '; DELETE FROM t; --' AS a");
         // A word written straight after a number is still a word
         refusedAction("DELETE FROM t WHERE a = 1returning a", "'returning' is not allowed");
+        // The third review: pg_settings changes a session's settings through its rules, views and
+        // routines are code that runs later
+        refusedAction("UPDATE pg_settings SET setting = 'off' WHERE name = 'standard_conforming_strings'",
+            "'pg_settings' is not allowed");
+        refused("SELECT * FROM pg_catalog.pg_settings");
+        refusedAction("CREATE OR REPLACE VIEW v AS SELECT * FROM t", "'view' is not allowed");
+        refusedAction("CREATE MATERIALIZED VIEW m AS SELECT * FROM t", "'view' is not allowed");
+        refusedAction("ALTER VIEW v SET (security_invoker = false)", "'view' is not allowed");
+        refusedAction("ALTER ROUTINE f() SET search_path = evil", "'routine' is not allowed");
         assertEquals(null, SqlTokens.driverSplits("INSERT INTO t VALUES ('a;b')"));
         assertEquals("one statement only", SqlTokens.driverSplits("INSERT INTO t VALUES (1); DELETE FROM t"));
     }

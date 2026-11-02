@@ -247,6 +247,10 @@ public final class RuleRunner {
                     st.execute(s);
                 }
             }
+            if (rule.type() == RuleType.CUSTOM_SQL) {
+                // Checked as PostgreSQL reads it with standard_conforming_strings on: never run with it off
+                io.kilnmark.kiln.plugins.jdbc.PostgresConnector.requireConformingStrings(c);
+            }
             Evaluation e;
             try (Statement st = c.createStatement()) {
                 st.setQueryTimeout((int) Math.max(1, queryTimeout.toSeconds()));
