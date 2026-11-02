@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Background,
   Controls,
@@ -94,6 +94,10 @@ export default function SchemaDiagram({
   label: string;
 }) {
   const scheme = useColourScheme();
+  // The table pointed at, or pinned with a click: its relationships stand out and the rest fade.
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [pinned, setPinned] = useState<string | null>(null);
+  const focus = pinned ?? hovered;
   const { nodes, edges } = useMemo(() => {
     const boxes = new Map(tables.map((t) => [t.urn, { table: t, ...visibleColumns(t) }]));
     const drawn = relationships.filter((r) => r.status !== "rejected" && boxes.has(r.from.urn) && boxes.has(r.to.urn));
@@ -123,18 +127,29 @@ export default function SchemaDiagram({
     };
     const edges: Edge[] = drawn.map((r) => {
       const proposed = r.status === "proposed";
+      // The confidence as a pill in the line's colour: a tick for accepted, a question mark for proposed.
       const text =
-        r.kind === "declared"
-          ? undefined
-          : `${proposed ? "proposed" : "accepted"} ${r.confidence != null ? percent.format(r.confidence) : ""}`.trim();
+        r.kind === "declared" ? undefined : `${proposed ? "?" : "✓"} ${r.confidence != null ? percent.format(r.confidence) : ""}`.trim();
+      // The badges' tints, whose contrast the theme check covers, edged in the line's colour.
+      const tint = proposed ? "amber" : "green";
       return {
         id: `r${r.id}`,
         source: r.from.urn,
         target: r.to.urn,
         sourceHandle: handle(r.from.urn, r.from.fields[0], "out"),
         targetHandle: handle(r.to.urn, r.to.fields[0], "in"),
-        type: "smoothstep",
+        // Curves rather than steps: steps share the same lanes and lie on top of each other.
+        type: "default",
         label: text,
+        labelStyle: { fill: `var(--km-tint-${tint}-fg)`, fontWeight: 700, fontSize: 12 },
+        labelBgStyle: {
+          fill: `var(--km-tint-${tint}-bg)`,
+          fillOpacity: 1,
+          stroke: proposed ? "var(--km-warn)" : "var(--km-good)",
+          strokeWidth: 1,
+        },
+        labelBgPadding: [6, 3] as [number, number],
+        labelBgBorderRadius: 10,
         className: `dg-edge dg-edge-${r.kind} dg-edge-${r.status}`,
         style: proposed ? { strokeDasharray: "6 4" } : undefined,
         // Arrowheads take the edge's colour from the tokens (xyflow's default grey is too faint).
@@ -156,11 +171,22 @@ export default function SchemaDiagram({
     return { nodes, edges };
   }, [tables, relationships, centre]);
 
+  const shownEdges = useMemo(
+    () =>
+      focus == null
+        ? edges
+        : edges.map((e) => {
+            const near = e.source === focus || e.target === focus;
+            return { ...e, className: `${e.className}${near ? " is-near" : " is-faded"}`, zIndex: near ? 10 : 0 };
+          }),
+    [edges, focus],
+  );
+
   return (
     <div className="dg-frame" role="group" aria-label={label}>
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={shownEdges}
         nodeTypes={nodeTypes}
         fitView
         minZoom={0.1}
@@ -170,6 +196,10 @@ export default function SchemaDiagram({
         edgesFocusable={false}
         elementsSelectable={false}
         onNodeDoubleClick={(_, n) => go(href.asset(n.id))}
+        onNodeMouseEnter={(_, n) => setHovered(n.id)}
+        onNodeMouseLeave={() => setHovered(null)}
+        onNodeClick={(_, n) => setPinned((p) => (p === n.id ? null : n.id))}
+        onPaneClick={() => setPinned(null)}
         proOptions={{ hideAttribution: false }}
         ariaLabelConfig={{
           "node.a11yDescription.default":

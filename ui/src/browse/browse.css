@@ -251,13 +251,24 @@ table.rel td:nth-child(2) {
   stroke: var(--km-good);
 }
 
-.dg-frame .react-flow__edge-textbg {
-  fill: var(--km-surface);
+/* A table pointed at, or pinned with a click: its relationships stand out, the others fade. */
+.dg-frame .react-flow__edge.is-faded {
+  opacity: 0.12;
 }
 
-.dg-frame .react-flow__edge-text {
-  fill: var(--km-ink);
-  font-size: 11px;
+.dg-frame .react-flow__edge.is-near .react-flow__edge-path {
+  stroke-width: 3;
+}
+
+@media (forced-colors: active) {
+  .dg-frame .react-flow__edge-textbg {
+    fill: Canvas;
+    stroke: CanvasText;
+  }
+
+  .dg-frame .react-flow__edge-text {
+    fill: CanvasText;
+  }
 }
 
 .dg-frame .react-flow__node:focus-visible {
