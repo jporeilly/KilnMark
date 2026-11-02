@@ -75,9 +75,11 @@ public class PipelineResource {
         @APIResponse(responseCode = "400", description = "No YAML, a name that cannot be used, or YAML over the size "
             + "limit"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a designer"),
+        @APIResponse(responseCode = "403", description = "Not a designer, or a read runs a query and the caller may "
+            + "not see unmasked values"),
         @APIResponse(responseCode = "409", description = "A pipeline with that name exists")})
     public Response create(PipelineViews.NewPipeline body) {
+        pipelines.allowQueries(body == null ? null : body.yaml(), sights);
         PipelineViews.PipelineDetail d = pipelines.create(body, who());
         return Response.created(URI.create("/api/v1/pipelines/" + d.name())).tag(etag(d)).entity(d).build();
     }
@@ -223,11 +225,13 @@ public class PipelineResource {
         @APIResponse(responseCode = "400", description = "No YAML, YAML over the size limit, or an If-Match that is "
             + "not a version number"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
-        @APIResponse(responseCode = "403", description = "Not a designer"),
+        @APIResponse(responseCode = "403", description = "Not a designer, or a read runs a query and the caller may "
+            + "not see unmasked values"),
         @APIResponse(responseCode = "404", description = "No such pipeline"),
         @APIResponse(responseCode = "409", description = "Someone else saved a version after the one in If-Match")})
     public Response save(@PathParam("name") String name, @HeaderParam("If-Match") String ifMatch,
                          PipelineViews.PipelineChange body) {
+        pipelines.allowQueries(body == null ? null : body.yaml(), sights);
         PipelineViews.PipelineDetail d = pipelines.save(name, PipelineService.readVersion(ifMatch), body, who(),
             sights);
         return Response.ok(d).tag(etag(d)).build();

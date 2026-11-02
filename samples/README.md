@@ -47,7 +47,7 @@ to a source you have saved:
 
 | Placeholder | Stands for | Used by |
 | --- | --- | --- |
-| `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) | read and write, limit, compute, dedupe, union, quarantine gate |
+| `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) | read and write, read with a query (PostgreSQL with Allow SQL on), limit, compute, dedupe, union, quarantine gate |
 | `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) | filter, route, select, lookup, both aggregates, warn and stop gates, both parameter samples |
 | `files` | File storage the samples write to, under `samples/`; it must allow writing | every pipeline |
 
@@ -91,6 +91,7 @@ preview a node, and choose **Run now**.
 | `01-read-and-write` | `sample-read-write-csv` | Read a table, write a CSV file (`mode: replace`) |
 | | `sample-write-parquet` | Write Parquet (`format: parquet`) |
 | | `sample-read-columns-where` | Read only some columns and rows: `columns`, `where`, and who applies it |
+| | `sample-read-query` | Read with one `SELECT` (`query`); needs a PostgreSQL `crm-db` with Allow SQL on |
 | `02-filter-and-route` | `sample-filter` | Keep rows meeting a condition; the rest through `rejected` |
 | | `sample-route` | Send rows different ways, the first route that fits winning |
 | | `sample-limit` | Pass on the first rows only, and stop reading early |

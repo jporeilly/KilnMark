@@ -43,7 +43,7 @@ class SampleTablesTest {
             s.connectors.put(kind, all.get(kind).orElseThrow());
         }
         s.add("my-db", "postgresql", Map.of("url", "jdbc:postgresql://db.example.com:5432/app", "username", "app",
-            "schemas", SCHEMA, "allow_writing", "true"), "secret");
+            "schemas", SCHEMA, "allow_writing", "true", "allow_sql", "true"), "secret");
         s.add("my-bucket", "s3", Map.of("endpoint", "https://objects.example.com", "bucket", "exports",
             "access_key_id", "key", "allow_writing", "true"), "secret");
         s.add(Samples.SAMPLE_DATA, "sample-data", Map.of(), null);
@@ -89,18 +89,21 @@ class SampleTablesTest {
             }
             String yaml = Samples.withTables(Samples.withSources(sample.yaml(), mapping), SCHEMA);
             assertFalse(yaml.contains("asset: crm.") || yaml.contains("asset: shop."), yaml);
+            assertFalse(yaml.contains(" crm.") || yaml.contains(" shop."), yaml); // queries too
             PipelineCompilerPort.Compilation c = new KilnPipelineCompiler().check(yaml, nodes(s), Map.of(),
                 LabPipelinesTest.SAMPLE_VARIABLES);
             assertEquals(List.of(), c.problems(), sample.file());
             for (PipelineCompilerPort.NodeOutline node : c.nodes()) {
-                if (!"sink".equals(node.kind())) {
+                // a query's columns are known when it runs (ADR 0028)
+                if (!"sink".equals(node.kind()) && !ReadNodeFactory.isQuery(c.configs().getOrDefault(node.id(),
+                    Map.of()))) {
                     assertTrue(node.columns().get("out") != null, sample.file() + ": the columns leaving "
                         + node.id() + " are known");
                 }
             }
             checked++;
         }
-        assertEquals(19, checked);
+        assertEquals(20, checked);
     }
 
     @Test
