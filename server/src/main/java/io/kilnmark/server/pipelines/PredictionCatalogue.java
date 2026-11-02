@@ -56,7 +56,10 @@ public class PredictionCatalogue {
     static final Set<String> VALUE_STATS = Set.of("top", "quantiles", "fence_low", "fence_high", "min", "max",
         "median", "p25", "p75", "sum");
 
-    /** A view for one prediction, remembering what it read, for the server's own use (a run starting). */
+    /**
+     * A view for one prediction, remembering what it read, for the server's own use (a run starting).
+     * With no caller to ask, columns marked sensitive are seen masked.
+     */
     Remembering open() {
         return new Remembering(null);
     }
@@ -64,7 +67,8 @@ public class PredictionCatalogue {
     /**
      * A view for one prediction asked for by {@code sights}' caller: a column's values (most common
      * values, quantiles) are used only when the caller may see them, as the quality views decide:
-     * not at all for a role that may not see data, and for a column marked sensitive only for an admin.
+     * not at all for a role that may not see data, and for a column marked sensitive only with the
+     * unmask grant. {@code sights} null is the masked view, as {@link #open()}.
      */
     Remembering open(Sights sights) {
         return new Remembering(sights);
@@ -95,6 +99,11 @@ public class PredictionCatalogue {
             f.estimate(), f.primaryKey(), fields);
     }
 
+    /** The facts of an asset's latest profile, as stored. */
+    Optional<ProfileFacts> latest(String urn) {
+        return quality.latestFacts(urn);
+    }
+
     final class Remembering implements QualityPredictor.Catalogue {
         private final Sights sights;
 
@@ -112,9 +121,15 @@ public class PredictionCatalogue {
         public ProfileFacts facts(String urn) {
             return facts.computeIfAbsent(urn, u -> {
                 try {
-                    Optional<ProfileFacts> f = quality.latestFacts(u);
-                    if (sights == null || f.isEmpty()) {
+                    Optional<ProfileFacts> f = latest(u);
+                    if (f.isEmpty()) {
                         return f;
+                    }
+                    if (sights == null) {
+                        // No caller (the server's own use): the masked view, so nothing read here can carry a
+                        // marked column's values to whoever sees the result.
+                        Set<String> marks = store.sensitive(u);
+                        return Optional.ofNullable(withheld(f.get(), true, marks == null ? Set.of() : marks, false));
                     }
                     boolean data = sights.data();
                     boolean unmask = sights.mayUnmask();

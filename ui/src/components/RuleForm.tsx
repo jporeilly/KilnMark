@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { Switch } from "./ui";
 import { docHref } from "../docs/links";
 import {
+  api,
   ApiError,
   formatShare,
   HIDDEN_WEBHOOK,
@@ -444,7 +445,10 @@ export function RuleForm({
   onReload,
 }: {
   urn: string;
-  /** Whether custom SQL rules may be written (designers and admins). */
+  /**
+   * Whether the caller may write custom SQL rules: a designer whose token holds the unmask grant
+   * (ADR 0027). The check is offered only where the rule's source also has Allow SQL on (ADR 0028).
+   */
   customSql: boolean;
   rule?: QualityRule;
   onSaved: (name: string) => void;
@@ -488,6 +492,24 @@ export function RuleForm({
   const { asset, loading, error: assetError } = assetDetails;
   const ref = useAsset(type === "references" ? f.refUrn : "");
   const fields: Field[] = asset?.fields ?? [];
+  // Custom SQL runs only where the asset's source has Allow SQL on (allow_sql, ADR 0028).
+  const assetSource = asset?.source ?? "";
+  const [sqlSource, setSqlSource] = useState<{ source: string; allows: boolean } | null>(null);
+  useEffect(() => {
+    if (!customSql || !assetSource) return;
+    let live = true;
+    api
+      .source(assetSource)
+      .then((s) => live && setSqlSource({ source: assetSource, allows: s.settings.allow_sql === "true" }))
+      .catch(() => live && setSqlSource({ source: assetSource, allows: false }));
+    return () => {
+      live = false;
+    };
+  }, [customSql, assetSource]);
+  const sourceAllowsSql = sqlSource != null && sqlSource.source === assetSource && sqlSource.allows;
+  // A custom rule already written stays in the list, so it can still be edited or switched off.
+  const offered = (t: RuleType) =>
+    t !== "custom_sql" || (customSql && sourceAllowsSql) || t === rule?.type || t === type;
   const options = fields.filter((c) => !spec.suits || spec.suits(c.kind));
   const kind = fields.find((c) => c.name === column)?.kind ?? null;
   const set = <K extends keyof Fields>(key: K, value: Fields[K]) => setF((old) => ({ ...old, [key]: value }));
@@ -774,7 +796,7 @@ export function RuleForm({
               disabled={keepHidden}
               aria-describedby={keepHidden ? "rule-type-hint rule-hidden-hint" : "rule-type-hint"}
             >
-              {CHECKS.filter((c) => customSql || c.type !== "custom_sql" || c.type === rule?.type).map((c) => (
+              {CHECKS.filter((c) => offered(c.type)).map((c) => (
                 <option key={c.type} value={c.type}>
                   {c.label}
                 </option>
@@ -1117,10 +1139,16 @@ export function RuleForm({
               <p id="rule-sql-hint" className="hint">
                 One SELECT listing the failing rows, such as{" "}
                 <code className="mono">{"SELECT * FROM ${table} WHERE amount < 0"}</code>. {"${table}"} and{" "}
-                {"${column}"} are filled in. PostgreSQL sources only, when the administrator has turned custom SQL on.
+                {"${column}"} are filled in. PostgreSQL sources only, where the source has Allow SQL on.
                 It runs in a read-only transaction with a time limit, but can read anything the source's login can
                 see, so give sources a read-only login.
               </p>
+              {asset && sqlSource?.source === assetSource && !sourceAllowsSql && (
+                <p id="rule-sql-off" className="hint">
+                  This asset's source does not have Allow SQL on, so this rule cannot run. You can still change it or
+                  switch it off; a designer or an admin turns Allow SQL on in the source's settings.
+                </p>
+              )}
             </div>
           )}
           </>

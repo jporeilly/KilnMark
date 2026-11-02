@@ -6,8 +6,8 @@ guide explains the modes, the file formats, the rights a write needs, and what `
 
 ## Before you start
 
-- **The source must allow writing.** Sources are read-only until an admin ticks **Allow writing**
-  on the source. A pipeline that writes to a read-only source is refused before it runs.
+- **The source must allow writing.** Sources are read-only until a designer or an admin ticks
+  **Allow writing** on the source. A pipeline that writes to a read-only source is refused before it runs.
 - **The write uses the source's own login.** Kilnmark never writes with an identity of its own,
   so the login saved with the source needs the rights described under
   [Rights the login needs](#rights-the-login-needs). Scanning only needs a read-only login; if

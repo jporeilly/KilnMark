@@ -11,6 +11,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import io.kilnmark.kiln.SettingSpec;
@@ -28,7 +29,7 @@ import io.kilnmark.kiln.plugins.write.WriteSettings;
 
 /**
  * Any database with a JDBC driver Kilnmark has no dedicated connector for (kind {@code jdbc}): Db2,
- * Teradata, Snowflake, Sybase, Informix, H2 and the like, through a driver an admin registered
+ * Teradata, Snowflake, Sybase, Informix, an H2 server and the like, through a driver an admin registered
  * (docs/design/drivers.md, "Registered drivers"). The driver is used only through the standard
  * JDBC interfaces, loaded on its own from the drivers folder while its jar is the one registered,
  * never through {@link java.sql.DriverManager}.
@@ -38,7 +39,10 @@ import io.kilnmark.kiln.plugins.write.WriteSettings;
  * source's secret, {@code properties} (further driver properties, {@code name=value; ...}),
  * {@code schemas} and {@code read_only} (on by default: connections are marked read-only, and
  * pipelines cannot write). Only admins may set up such a source or change these settings
- * ({@link #adminOnly()}): the URL and properties go to code Kilnmark has not vetted.
+ * ({@link #adminOnly()}): the URL and properties go to code Kilnmark has not vetted. A URL that
+ * does not name a network host as {@code //host}, or that names a database the driver would open
+ * inside the server (SQLite, DuckDB, H2 or HSQLDB files and memory, embedded Derby and the like), is
+ * refused for admins too ({@link #insideTheServer}).
  *
  * <p>The catalogue comes from {@link java.sql.DatabaseMetaData} ({@link GenericCatalog}), types are
  * mapped by {@link GenericTypes}, and rows are read with {@code SELECT *} and the driver's own row
@@ -248,8 +252,20 @@ public class GenericJdbcConnector extends JdbcConnector {
                     return why;
                 }
             }
+            String inside = insideTheServer(url);
+            if (inside != null) {
+                return "url: " + inside;
+            }
         }
         if (extra != null) {
+            if (url != null && url.toLowerCase(Locale.ROOT).contains(":h2:")
+                && extra.stringPropertyNames().stream().anyMatch(k -> k.equalsIgnoreCase("init"))) {
+                return "properties: " + H2_INIT;
+            }
+            if (url != null && firebird(url.toLowerCase(Locale.ROOT))
+                && extra.stringPropertyNames().stream().anyMatch(k -> k.equalsIgnoreCase("type"))) {
+                return "properties: " + FIREBIRD_TYPE;
+            }
             for (String key : extra.stringPropertyNames()) {
                 String why = refusedName(r, key, "properties", "as a property");
                 if (why != null) {
@@ -258,6 +274,178 @@ public class GenericJdbcConnector extends JdbcConnector {
             }
         }
         return null;
+    }
+
+    /** Said of every database a driver would open inside the server. */
+    private static final String INSIDE = " Such a database runs inside the Kilnmark server, so its SQL could read or "
+        + "write the server's own files, or run code there, with no login of anyone's own (ADR 0027). Use a database "
+        + "server reached over the network.";
+
+    /** Drill's {@code zk=local}, which runs a Drillbit in the process, and not {@code zk=localhost}. */
+    private static final Pattern DRILL_LOCAL = Pattern.compile("zk=local(?![a-z0-9._-])");
+
+    /** Firebird's {@code type}, in the URL or as a property: EMBEDDED and NATIVE load its library into the server. */
+    private static final String FIREBIRD_TYPE = "a Firebird type setting can open the database embedded or load "
+        + "Firebird's native library inside the server; leave it out to use the network protocol." + INSIDE;
+
+    private static boolean firebird(String lowerUrl) {
+        return lowerUrl.contains(":firebirdsql:") || lowerUrl.contains(":firebird:");
+    }
+
+    /** H2's {@code INIT}, in the URL or as a property. */
+    private static final String H2_INIT = "H2's INIT setting runs SQL, which can read the server's files, as each "
+        + "connection opens." + INSIDE;
+
+    /**
+     * Why a URL would have the driver open a database inside the server's own process, or run SQL as
+     * it connects, or null when it reaches a database server. Refused by name, looked for anywhere in
+     * the URL so a wrapping driver ({@code jdbc:p6spy:h2:...}) is caught too: SQLite, DuckDB, UCanAccess,
+     * the CSV driver ({@code relique:csv:}), Calcite, embedded, local and native Firebird, Drill with
+     * {@code zk=local}, Ignite started from a configuration ({@code ignite:cfg:}) and Hive with no host
+     * (embedded); H2 unless {@code tcp://} or {@code ssl://} and without {@code INIT}; HSQLDB unless
+     * {@code hsql://}, {@code hsqls://}, {@code http://} or {@code https://}; Derby unless
+     * {@code //host}. Then, as an allow-list by shape, every other URL that does not name a network
+     * host ({@link #networkHosts}): a driver Kilnmark does not know could open anything else in the
+     * process, so only a URL of the form {@code jdbc:...://host[:port][,host...]} goes to it, whether
+     * or not an allow-list of hosts is set. Never quotes the URL.
+     */
+    static String insideTheServer(String url) {
+        String u = url.toLowerCase(Locale.ROOT);
+        if (u.contains(":sqlite:")) {
+            return "SQLite databases are files the driver opens on the server." + INSIDE;
+        }
+        if (u.contains(":duckdb:")) {
+            return "DuckDB databases are files or memory the driver opens on the server." + INSIDE;
+        }
+        if (u.contains(":firebirdsql:embedded:") || u.contains(":firebird:embedded:")) {
+            return "an embedded Firebird database is opened by the driver on the server." + INSIDE;
+        }
+        if (u.contains(":firebirdsql:local:") || u.contains(":firebird:local:")
+            || u.contains(":firebirdsql:native:") || u.contains(":firebird:native:")) {
+            return "a local or native Firebird URL loads Firebird's own library into the server." + INSIDE;
+        }
+        int oracle = u.indexOf(":oracle:");
+        if (oracle >= 0 && !u.startsWith("thin:", oracle + 8)) {
+            return "an Oracle URL other than jdbc:oracle:thin: loads Oracle's native client library or runs inside "
+                + "a database; use jdbc:oracle:thin:." + INSIDE;
+        }
+        if (firebird(u) && (u.contains("?type=") || u.contains("&type=") || u.contains(";type="))) {
+            return FIREBIRD_TYPE;
+        }
+        if (u.contains(":redshift:iam:")) {
+            return "a Redshift IAM URL signs in with the Kilnmark server's own AWS identity; give the source a "
+                + "database user and password instead." + INSIDE;
+        }
+        if (u.contains(":ucanaccess:")) {
+            return "UCanAccess opens Access database files on the server." + INSIDE;
+        }
+        if (u.contains(":relique:csv:")) {
+            return "the CSV driver reads files with SQL on the server." + INSIDE;
+        }
+        if (u.contains(":calcite:")) {
+            return "Calcite runs its SQL and adapters on the server." + INSIDE;
+        }
+        if (u.contains(":drill:") && DRILL_LOCAL.matcher(u).find()) {
+            return "a Drill URL with zk=local starts Drill on the server." + INSIDE;
+        }
+        if (u.contains(":ignite:cfg:")) {
+            return "an Ignite cfg: URL starts an Ignite node on the server from a configuration file." + INSIDE;
+        }
+        int hive = u.indexOf(":hive2://");
+        if (hive >= 0 && (hive + 9 == u.length() || "/;?#".indexOf(u.charAt(hive + 9)) >= 0)) {
+            return "a Hive URL without a host runs Hive embedded on the server." + INSIDE;
+        }
+        int h2 = u.indexOf(":h2:");
+        if (h2 >= 0) {
+            String rest = u.substring(h2 + 4);
+            if (rest.contains("init=")) {
+                return H2_INIT;
+            }
+            if (!rest.startsWith("tcp://") && !rest.startsWith("ssl://")) {
+                return "an H2 URL other than tcp:// or ssl:// opens a file or in-memory database "
+                    + "on the server." + INSIDE;
+            }
+        }
+        int hsql = u.indexOf(":hsqldb:");
+        if (hsql >= 0) {
+            String rest = u.substring(hsql + 8);
+            if (!rest.startsWith("hsql://") && !rest.startsWith("hsqls://")
+                && !rest.startsWith("http://") && !rest.startsWith("https://")) {
+                return "an HSQLDB URL other than hsql:, hsqls:, http: or https: opens a file or in-memory database on "
+                    + "the server." + INSIDE;
+            }
+        }
+        int derby = u.indexOf(":derby:");
+        if (derby >= 0 && !u.startsWith("//", derby + 7)) {
+            return "a Derby URL without a //host opens an embedded database on the server." + INSIDE;
+        }
+        if (networkHosts(url) == null) {
+            return "the URL does not name a network host as //host or //host:port, so the driver could open a "
+                + "database on the server." + INSIDE;
+        }
+        return null;
+    }
+
+    /**
+     * The start of a URL that names its hosts: {@code jdbc}, one or more {@code :subprotocol}s, then
+     * {@code //} (after {@code @} too, as Oracle's thin URLs have it).
+     */
+    private static final Pattern NETWORK_URL = Pattern.compile("(?i)jdbc(:[a-z][a-z0-9+.-]*)+:@?//");
+
+    /** The one common driver whose URLs name the host without {@code //}: {@code jdbc:sybase:Tds:host:port}. */
+    private static final Pattern SYBASE_TDS = Pattern.compile("(?i)jdbc:sybase:tds:");
+
+    /** A host name (labels of letters, digits, {@code -} and {@code _}) or a bracketed IPv6 address. */
+    private static final Pattern NETWORK_HOST = Pattern.compile(
+        "[a-z0-9]([a-z0-9_-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9_-]*[a-z0-9])?)*|\\[[0-9a-f:.]+(%[a-z0-9._-]+)?]",
+        Pattern.CASE_INSENSITIVE);
+
+    /** A port after a host. */
+    private static final Pattern PORT = Pattern.compile(":[0-9]{1,5}");
+
+    /**
+     * The network hosts a URL names straight after its subprotocols ({@code jdbc:db2://host:50000/x},
+     * {@code jdbc:sqlserver://a,b;...}, and jConnect's {@code jdbc:sybase:Tds:host:port}), or null
+     * when it names none Kilnmark can read: no {@code //},
+     * an empty authority ({@code jdbc:hive2:///}), or one that is not {@code host[:port]} entries
+     * separated by commas ({@code //C:/data}, {@code //~/x}, {@code //host:}). A {@code user@} before
+     * the hosts is skipped. Only the URL's own address counts here, not a URL inside its settings.
+     */
+    static List<String> networkHosts(String url) {
+        if (url == null) {
+            return null;
+        }
+        Matcher m = NETWORK_URL.matcher(url);
+        if (!m.lookingAt()) {
+            m = SYBASE_TDS.matcher(url);
+            if (!m.lookingAt()) {
+                return null;
+            }
+        }
+        int start = m.end();
+        int end = start;
+        while (end < url.length() && "/;?#\\ \t\r\n".indexOf(url.charAt(end)) < 0) {
+            end++;
+        }
+        String authority = url.substring(start, end);
+        authority = authority.substring(authority.lastIndexOf('@') + 1);
+        if (authority.isEmpty()) {
+            return null;
+        }
+        List<String> hosts = new ArrayList<>();
+        for (String entry : authority.split(",", -1)) {
+            int split = entry.startsWith("[") ? entry.indexOf(']') + 1 : entry.indexOf(':');
+            if (split <= 0) {
+                split = entry.startsWith("[") ? 0 : entry.length();
+            }
+            String host = entry.substring(0, split);
+            String port = entry.substring(split);
+            if (!NETWORK_HOST.matcher(host).matches() || (!port.isEmpty() && !PORT.matcher(port).matches())) {
+                return null;
+            }
+            hosts.add(host);
+        }
+        return hosts;
     }
 
     private static String refusedName(RegisteredDriver r, String key, String setting, String where) {
@@ -338,9 +526,14 @@ public class GenericJdbcConnector extends JdbcConnector {
     public List<String> hosts(SourceConfig source) {
         String url = source.setting("url");
         List<String> hosts = new ArrayList<>(UrlHosts.hosts(url));
+        List<String> named = networkHosts(url);
+        if (hosts.isEmpty() && named != null) {
+            hosts.addAll(named); // jdbc:sybase:Tds:host:port, which has no //
+        }
         JdbcUrlSettings.Parsed parsed = JdbcUrlSettings.parse(url);
-        // a URL whose settings cannot be read could name hosts that cannot be seen: an allow-list refuses it
-        boolean fromUrl = !hosts.isEmpty() && parsed.problem() == null;
+        // a URL whose settings cannot be read could name hosts that cannot be seen, and one that names no
+        // network host of its own is refused anyway: an allow-list refuses both
+        boolean fromUrl = named != null && parsed.problem() == null;
         Map<String, String> settings = new java.util.LinkedHashMap<>();
         parsed.pairs().forEach(pair -> settings.put(pair.key() + "#" + settings.size(), pair.value()));
         driverSettings(source).forEach((k, v) -> settings.put(k + "#" + settings.size(), String.valueOf(v)));

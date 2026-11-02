@@ -94,7 +94,11 @@ In **Sources**, **Add a connection**, choose **Generic JDBC**:
 
 - **JDBC driver**: one of the registered drivers.
 - **JDBC URL**: as the driver's documentation gives it, starting as the driver's URLs do, for
-  example `jdbc:db2://db.example.com:50000/SALES`. Never put the password in it.
+  example `jdbc:db2://db.example.com:50000/SALES`. Never put the password in it. The URL must name
+  the database server's host, as `//host` or `//host:port` (or Sybase's `jdbc:sybase:Tds:host:port`):
+  a URL for a database file or an in-memory database, which the driver would open inside the
+  Kilnmark server (SQLite, DuckDB, H2 or HSQLDB files, embedded Derby and the like), is refused, for
+  admins too. Run such a database as a server and give its network address instead.
 - **User name** and **password**: the password is stored encrypted, as for every source.
 - **Driver properties** (optional): further settings as `name=value`, separated by semicolons, such
   as `sslConnection=true; currentSchema=SALES`. Here and in the URL, only the properties the driver

@@ -285,12 +285,9 @@ public class PipelineService {
      * the request: the suggestions are then Kilnmark's own, and {@code ai} says why.
      */
     public PredictionViews.Advice suggest(String yaml, boolean useAi, String caller, Sights sights) {
+        PredictionCatalogue.Remembering catalogue = suggestionCatalogue(predictions, useAi, sights);
         checkSize(yaml);
         PipelineCompilerPort.Compilation c = compiler.check(yaml, nodes, Map.of(), variables());
-        if (useAi && sights != null) {
-            sights.speakingToModel(); // what the model is shown is never unmasked, whoever asks (ADR 0027)
-        }
-        PredictionCatalogue.Remembering catalogue = predictions.open(sights);
         QualityPredictor.Plan plan = QualityPredictor.Plan.of(c, designReads(c, catalogue));
         PipelineAdvisor advisor = new PipelineAdvisor(catalogue, nodes, json);
         PipelineAdvisor.Model model = null;
@@ -327,6 +324,25 @@ public class PipelineService {
             };
         }
         return PredictionViews.of(advisor.advise(plan, model, status, n -> graph.source(n).orElse(null)));
+    }
+
+    /**
+     * The catalogue suggestions read. With {@code useAi} the caller's sights are told first that the
+     * request answers a model, so what the model is shown is never unmasked, whoever asks, a designer
+     * with the unmask grant included (ADR 0027). A model is never asked without a caller's sights.
+     *
+     * @throws IllegalStateException for {@code useAi} with no sights: a programming error
+     */
+    static PredictionCatalogue.Remembering suggestionCatalogue(PredictionCatalogue predictions, boolean useAi,
+                                                               Sights sights) {
+        if (useAi) {
+            if (sights == null) {
+                throw new IllegalStateException("AI pipeline suggestions need the caller's sights, so that what the "
+                    + "model is shown is masked");
+            }
+            sights.speakingToModel();
+        }
+        return predictions.open(sights);
     }
 
     /**

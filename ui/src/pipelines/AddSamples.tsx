@@ -219,7 +219,7 @@ export function AddSamples({ onAdded }: { onAdded: () => void }) {
                       : databases.length === 0
                         ? " (no database does yet)"
                         : " (no file source does yet)"}
-                    : an admin turns on <strong>Allow writing</strong> under <a href={href.sources()}>Sources</a>. Or
+                    : a designer or an admin turns on <strong>Allow writing</strong> under <a href={href.sources()}>Sources</a>. Or
                     choose sources of your own below.
                   </p>
                 ) : (

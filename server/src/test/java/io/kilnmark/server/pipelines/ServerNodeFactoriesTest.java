@@ -115,7 +115,8 @@ class ServerNodeFactoriesTest {
     void writeNeedsASourceThatAllowsWriting() {
         List<String> readOnly = write.check(Map.of("source", "lab-db", "table", "billing.spend"));
         assertEquals(1, readOnly.size(), readOnly.toString());
-        assertTrue(readOnly.get(0).startsWith("source: lab-db is read-only. An admin can turn on Allow writing"));
+        assertTrue(readOnly.get(0).startsWith("source: lab-db is read-only. A designer or an admin can turn on "
+            + "Allow writing"));
         assertEquals(List.of(), write.check(Map.of("source", "warehouse", "table", "billing.spend", "mode", "replace")));
     }
 

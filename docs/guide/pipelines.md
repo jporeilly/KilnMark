@@ -89,7 +89,7 @@ The samples name their sources by placeholders rather than real sources:
 | --- | --- |
 | `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) |
 | `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) |
-| `files` | File storage the samples write to, under `samples/`; an admin must turn on **Allow writing** for it |
+| `files` | File storage the samples write to, under `samples/`; a designer or an admin must turn on **Allow writing** for it |
 
 1. On the **Pipelines** page, choose **Add samples** (designers and admins).
 2. Under **Or choose your own sources**, choose one of your saved sources for each placeholder, or

@@ -54,6 +54,32 @@ details.
   accepted and run only where it is on. **`kilnmark.quality.custom-sql` is retired**: it does
   nothing, and a server that sets it to true logs a warning. Turn on Allow SQL for each source whose
   custom rules should keep running, with a login that can read only what the SQL needs.
+- **Generic JDBC reaches database servers only** (ADR 0027). A generic JDBC URL must name a network
+  host, as `//host[:port]` (or `jdbc:sybase:Tds:host:port`); a URL for a database the driver would
+  open inside the Kilnmark server is refused for admins too: H2 files and memory (and H2's `INIT`,
+  now as a driver property too), SQLite, DuckDB, HSQLDB files and memory, embedded Derby,
+  UCanAccess, CSV files, Calcite, embedded, local or native Firebird (and Firebird's `type`, in the URL
+  or as a property), Oracle URLs other than `jdbc:oracle:thin:`, Redshift `iam:` URLs (they sign in as
+  the server's AWS identity), Drill with `zk=local`, Ignite from `cfg:`, Hive with no host, and any
+  other URL with no host Kilnmark can read. No driver's allow-list may hold a property that loads
+  code, reads the server's files or signs in as the server: interceptors, verifiers, callbacks,
+  providers, strategies, transforms, plugins, checkers, handlers, loggers, locations, client
+  certificates (`*cert`, `clientCertificate`), MySQL's `autoDeserialize` and local-file loading,
+  `integratedSecurity`, and any authentication, Kerberos, JAAS, GSS or security-mechanism setting.
+  **A registered driver whose allow-list holds one of these is no longer used** (the server log says
+  which): register it again without them. **Existing
+  generic JDBC sources with such URLs stop connecting**, and their tests, scans and runs say why.
+  Run the database as a server (an H2 or HSQLDB server, Derby's network server and the like) and
+  change the source's URL to its network address.
+- **S3 access points and overlapping sources.** An S3 source whose bucket is an access point (an
+  `-s3alias`, Object Lambda `--ol-s3`, Outposts `--op-s3`, directory bucket `--<zone>--xa-s3` or `.mrap`
+  alias, or an ARN), or whose
+  endpoint host names a bucket or access point (`<bucket>.s3.<region>.amazonaws.com`,
+  `s3-accesspoint` hosts and the like), counts as reading the same files as any other source at
+  that endpoint, since Kilnmark cannot see the bucket behind it. Two access point ARNs in different
+  regions or partitions are told apart; accounts are not compared, as an access point may front
+  another account's bucket. Endpoint hosts are compared without a trailing dot, and amazonaws.com.cn
+  and amazonaws.eu hosts count as AWS's own service.
 - **A read's `query`** (ADR 0028), in place of `asset`, never with `columns` or `where`. Checked as
   custom SQL rules are, when the pipeline is checked and again as it runs, on a read-only connection
   and a login without superuser-like rights; `row_limit` wraps it so the database stops early.
