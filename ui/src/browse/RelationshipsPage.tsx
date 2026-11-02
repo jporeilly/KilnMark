@@ -5,6 +5,7 @@ import { useRole } from "../components/role";
 import { useTitle } from "../components/useTitle";
 import { go, href } from "../router";
 import { browseApi, type BrowseSource, type Page, type Relationship } from "./browseApi";
+import { BrowseTabs } from "./BrowseTabs";
 import { RelationshipTable } from "./RelationshipTable";
 import "./browse.css";
 
@@ -54,15 +55,18 @@ export function RelationshipsPage({ status }: { status: string }) {
     <>
       <PageHeader
         title="Relationships"
+        crumbs={[{ label: "Browse", href: href.browse() }, { label: "Relationships" }]}
         lead={
           <>
-            Keys the sources declare, and joins Kilnmark found in names and values.{" "}
+            Keys the sources declare, and joins Kilnmark found in names and values. Joins found with 95% confidence
+            or more are accepted automatically; the rest wait here.{" "}
             {allows(role, "steward")
               ? "Accept the proposals that are real joins and reject the rest; your decisions are kept on every scan."
               : "A steward accepts or rejects the proposals."}
           </>
         }
       />
+      <BrowseTabs current="relationships" />
       {/* Changing a filter changes the address; keep focus on the control rather than the heading. */}
       <div className="dg-controls" data-keeps-focus>
         <div className="field">

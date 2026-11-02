@@ -1,6 +1,6 @@
 # 0019 Relationships: declared and inferred, in PostgreSQL tables, proposed for people to decide
 
-Status: Accepted (24 October 2026)
+Status: Accepted (24 October 2026); amended 2 November 2026 (inferred joins at 95% or more accepted automatically)
 
 ## Decision
 
@@ -16,10 +16,16 @@ with a kind, a status, a confidence, its evidence, and who decided and when.
   scanned. They are always `accepted`; a rescan replaces them with what the source declares now.
 - **Inferred** relationships are proposals: a column whose name says it refers to another
   table's key, whose type matches, whose target is unique, and whose values lie inside the
-  target's as far as their sketches tell. They start `proposed`. A steward accepts or rejects
-  them; nothing is applied without a person (ADR 0012). A rescan updates their confidence and
-  evidence and keeps the decision; a proposal not found again is withdrawn; a rejected one is
-  never proposed again while its fields exist.
+  target's as far as their sketches tell. Below 95% confidence they start `proposed`, and a steward
+  accepts or rejects them. **At 95% or more they are accepted automatically** (owner, 2 November
+  2026: reviewing joins that certain one by one was work without value), recorded as decided by
+  "Kilnmark (95% or more confident)" and shown with their confidence; a steward can still reject
+  one. A rescan updates their confidence and evidence: a person's decision is kept, one made for the
+  confidence follows the new confidence. A proposal, or a join accepted for its confidence, that is
+  not found again is withdrawn; a rejected one is never proposed again while its fields exist.
+- **No joins across sources that repeat one within a source.** A join is not proposed between the
+  same table read through two sources (two sources on one database), nor to another source's table
+  when the first source holds a table of that path with that column itself.
 - Either asset going (a source deleted) takes the relationship with it (`ON DELETE CASCADE`).
 
 ## How the connector interface carries them

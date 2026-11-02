@@ -125,10 +125,37 @@ public class RelationshipService {
                 r.pairsScored(), r.pairsSkipped());
         }
         RelationshipStore.Refresh refresh = store.refreshInferred(source.id(), r.proposals().stream()
+            .filter(p -> !acrossSourcesForNothing(p, columns))
             .map(p -> new RelationshipStore.Inferred(p.from().assetUrn(), p.from().field(), p.to().assetUrn(),
                 p.to().field(), p.confidence(), evidence(p.evidence())))
             .toList());
         return new Outcome(saved, refresh.added(), refresh.removed(), null);
+    }
+
+    /**
+     * Whether a proposal joins two sources when the join is already there within one: the same table
+     * read through two sources (two sources on one database, say), or a target its own source also
+     * holds, under the same path with the same column. Such proposals only repeat others.
+     */
+    static boolean acrossSourcesForNothing(KeyInference.Proposal p, List<RelationshipStore.KeyColumn> columns) {
+        String from = p.from().source();
+        String to = p.to().source();
+        if (from.equals(to)) {
+            return false;
+        }
+        String toPath = path(p.to().assetUrn(), to);
+        if (toPath != null && toPath.equals(path(p.from().assetUrn(), from))) {
+            return true;
+        }
+        return toPath != null && columns.stream().anyMatch(k -> k.source().equals(from)
+            && toPath.equals(path(k.assetUrn(), from)) && k.field().equals(p.to().field()));
+    }
+
+    /** An asset's path within its source, from its URN, or null if the URN is not that source's. */
+    private static String path(String urn, String source) {
+        String prefix = new Urn(source, "x").toString();
+        prefix = prefix.substring(0, prefix.length() - 1);
+        return urn != null && urn.startsWith(prefix) ? urn.substring(prefix.length()) : null;
     }
 
     private static String urn(Records.Source source, String path) {
