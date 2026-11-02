@@ -57,9 +57,13 @@ Delete it and install the driver again.
 
 ## Databases without a connector of their own
 
-For a database Kilnmark has no connector for, such as **Db2**, **Teradata**, **Snowflake**,
-**Sybase** or **Informix**, you bring its JDBC driver from the database's vendor and connect
-through **Generic JDBC**.
+For a database Kilnmark has no connector for, such as **Db2**, **Teradata**, **Sybase** or
+**Informix**, you bring its JDBC driver from the database's vendor and connect through **Generic
+JDBC**. Generic JDBC reaches database servers over the network only, and its drivers may be given
+only settings Kilnmark has vetted (below), so no driver can run code in Kilnmark, read its files or
+sign in as it. Snowflake, Vertica and Exasol are not used through Generic JDBC: their drivers read
+and write files on the machine they run on for ordinary SQL (`PUT` and `GET`, `COPY FROM LOCAL`,
+`IMPORT` and `EXPORT ... LOCAL`).
 
 ### Register the driver (admins)
 
@@ -73,8 +77,14 @@ Open **Settings**, **JDBC drivers**.
    choose, such as `db2`), its **driver class**, how its **URLs start**, and the **properties sources
    may set**, such as `currentSchema, sslConnection`. **Fill in for a known database** suggests them
    for common drivers; check them against the driver's documentation. A source may use only the
-   properties listed here, in its URL or as driver properties: list none that reads files, runs
-   scripts or names another server. Passwords, keys and tokens can never be listed.
+   properties listed here, in its URL or as driver properties, and only settings Kilnmark has vetted
+   may be listed: time limits (any name with `timeout`), TLS (`ssl`, `sslMode`, `sslConnection`,
+   `encrypt`, `trustServerCertificate`, and the like), characters (`charset`, `encoding`), where to
+   read (`database`, `schema`, `currentSchema`, `catalog`, `warehouse`, `role`), the application's
+   name, fetch and batch sizes, time zones, keep-alive and failover servers, and a few databases'
+   own harmless settings (Teradata's `TMODE`, Informix's `INFORMIXSERVER`). Anything else is refused,
+   as are passwords, keys and tokens. Whatever the list, Kilnmark turns off a MySQL or MariaDB
+   driver's loading of local files.
 3. Tick that the jar comes from the database's vendor or another source you trust, and press
    **Register driver**.
 

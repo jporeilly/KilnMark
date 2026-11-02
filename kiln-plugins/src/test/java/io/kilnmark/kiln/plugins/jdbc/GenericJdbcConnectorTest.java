@@ -115,7 +115,8 @@ class GenericJdbcConnectorTest {
             .startsWith("url: take the user name and password out"));
         assertTrue(problems(h2.url() + ";socketFactory=x.Y").get(0).contains("not registered to take the property "
             + "socketFactory"));
-        assertTrue(problems(h2.url() + ";INIT=RUNSCRIPT").get(0).contains("not registered to take the property INIT"));
+        assertTrue(problems(h2.url() + ";INIT=RUNSCRIPT").get(0).contains("H2's INIT setting runs SQL"),
+            "what the URL opens is checked first");
         assertTrue(problems(h2.url() + ";INIT=RUNSCRIPT FROM 'http://files.example.com/x.sql'").get(0)
             .contains("cannot read the settings in this URL"));
         assertTrue(problems("jdbc:h2:mem:x\nother").get(0).contains("a space or control character"));
@@ -146,18 +147,18 @@ class GenericJdbcConnectorTest {
     @Test
     void everySettingInAUrlMustBeOnTheDriversAllowList() {
         String[][] refused = {
-            {"jdbc:h2:mem:x;INIT=RUNSCRIPT", "property INIT"},
+            {"jdbc:h2:mem:x;INIT=RUNSCRIPT", "H2's INIT"},
             {"jdbc:h2:mem:x;INIT=RUNSCRIPT FROM 'http://files.example.com/x.sql'", "cannot read the settings"},
             {"jdbc:mysql://db.example.com/shop?autoDeserialize=true", "property autoDeserialize"},
             {"jdbc:mysql://db.example.com/shop?useSSL=true&allowLoadLocalInfile=true", "property useSSL"},
             {"jdbc:mysql://db.example.com/shop?currentSchema=a&queryInterceptors=x.Y", "property queryInterceptors"},
-            {"jdbc:derby:sales;restoreFrom=/srv/backup/sales", "property restoreFrom"},
+            {"jdbc:derby://db.example.com/sales;restoreFrom=/srv/backup/sales", "property restoreFrom"},
             {"jdbc:sqlserver://db.example.com;databaseName=x", "property databaseName"},
             {"jdbc:db2://db.example.com:50000/SALES:traceFile=/tmp/db2.trc;", "property traceFile"},
             {"jdbc:db2://db.example.com:50000/SALES:currentSchema=S;traceDirectory=/tmp;", "property traceDirectory"},
-            {"jdbc:mysql://address=(host=elsewhere.example.com)(port=3306)/shop", "property address"},
+            {"jdbc:mysql://address=(host=elsewhere.example.com)(port=3306)/shop", "does not name a network host"},
             {"jdbc:mysql://db.example.com/shop?currentSchema=a&(host=x)", "property host"},
-            {"jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=elsewhere)))", "property DESCRIPTION"},
+            {"jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=elsewhere)))", "does not name a network host"},
             {"jdbc:x://db.example.com/sales?javax.net.ssl.trustStore=/etc/x", "property javax.net.ssl.trustStore"},
             {"jdbc:x://db.example.com/sales;oracle.net.tns_admin=/etc", "property oracle.net.tns_admin"},
             {"jdbc:teradata://db.example.com/DATABASE=x,CHARSET=UTF8,LOGMECH=LDAP", "property LOGMECH"},
@@ -167,7 +168,7 @@ class GenericJdbcConnectorTest {
             {"jdbc:x://db.example.com/sales?pwd=x", "user name or secret"},
             {"jdbc:x://db.example.com/sales?sslpassword=x", "user name or secret"},
             {"jdbc:x://db.example.com/sales?token=x", "user name or secret"},
-            {"jdbc:snowflake://acct.example.com/?private_key_file_pwd=x", "user name or secret"},
+            {"jdbc:x://acct.example.com/?private_key_file_pwd=x", "user name or secret"},
             {"jdbc:x://db.example.com/sales;passwd=x", "user name or secret"},
             {"jdbc:x://db.example.com/sales;user=x", "user name or secret"},
         };
@@ -207,6 +208,12 @@ class GenericJdbcConnectorTest {
                 || io.kilnmark.kiln.connect.RegisteredDriver.isSecretName(lower), n);
             assertFalse(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(List.of(lower)).isEmpty(), n);
         }
+        // Settings Kilnmark has not vetted are refused too, whatever they do (ADR 0030).
+        for (String n : List.of("zk", "url", "model", "cache", "serverName", "searchPath", "logmech", "browser",
+            "dnsResolver", "tracing", "debug", "clientRerouteServerListJNDIName", "custom_http_params")) {
+            assertFalse(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(
+                List.of(n.toLowerCase(java.util.Locale.ROOT))).isEmpty(), n);
+        }
         // Normal settings stay allowed.
         for (String n : List.of("trustServerCertificate", "hostNameInCertificate", "loginTimeout", "charset", "tmode",
             "sslmode", "applicationName")) {
@@ -222,6 +229,13 @@ class GenericJdbcConnectorTest {
      */
     @Test
     void aDatabaseOpenedInsideTheServerIsRefused() {
+        // Drivers that move the server's files for ordinary SQL (ADR 0030)
+        for (String url : List.of("jdbc:snowflake://acct.snowflakecomputing.com/", "jdbc:vertica://db.example.com:5433/s",
+            "jdbc:exa:db.example.com:8563", "jdbc:clickhouse://db.example.com:8123/s", "jdbc:ch://db.example.com/s",
+            "jdbc:netezza://db.example.com:5480/s")) {
+            String why = GenericJdbcConnector.insideTheServer(url);
+            assertTrue(why != null && why.contains("reads and writes files on the Kilnmark server"), url + " gave " + why);
+        }
         // Firebird's type, whatever the driver allows: in the URL, refused even before the allow-list
         assertTrue(GenericJdbcConnector.insideTheServer("jdbc:firebirdsql://db.example.com:3050/sales?type=EMBEDDED")
             .contains("Firebird type setting"));
@@ -282,7 +296,7 @@ class GenericJdbcConnectorTest {
         };
         java.util.List<String> every = new java.util.ArrayList<>();
         every.addAll(ANY.allowedProperties());
-        every.addAll(List.of("init", "create", "schema", "transportmode", "url", "model", "zk", "cache"));
+        every.addAll(List.of("create", "schema", "transportmode")); // what the URLs below use, all vetted
         io.kilnmark.kiln.connect.RegisteredDriver allowsAll = new io.kilnmark.kiln.connect.RegisteredDriver("all",
             "all.jar", "a".repeat(64), "x.Driver", "jdbc:all:", every, "admin", Instant.EPOCH);
         for (String[] r : refused) {
@@ -298,8 +312,7 @@ class GenericJdbcConnectorTest {
             "jdbc:ignite:thin://ignite.example.com:10800", "jdbc:firebirdsql://db.example.com:3050//srv/sales.fdb",
             "jdbc:oracle:thin:@//db.example.com:1521/SALES", "jdbc:jtds:sybase://db.example.com:5000/sales",
             "jdbc:sqlserver://db.example.com:1433;failoverPartner=standby.example.com",
-            "jdbc:informix-sqli://db.example.com:1533/sales", "jdbc:snowflake://acct.snowflakecomputing.com/",
-            "jdbc:db2://[2001:db8::1]:50000/SALES", "jdbc:all://db_1.internal:5000/zk=localhost",
+            "jdbc:informix-sqli://db.example.com:1533/sales", "jdbc:db2://[2001:db8::1]:50000/SALES",
             "jdbc:sybase:Tds:db.example.com:5000/sales")) {
             assertNull(GenericJdbcConnector.refusal(allowsAll, ok, null), ok);
         }
@@ -313,8 +326,8 @@ class GenericJdbcConnectorTest {
         }
         java.util.Properties init = new java.util.Properties();
         init.setProperty("init", "x");
-        assertNull(GenericJdbcConnector.refusal(allowsAll, "jdbc:db2://db.example.com:50000/SALES", init),
-            "only H2 reads INIT as SQL");
+        assertTrue(GenericJdbcConnector.refusal(allowsAll, "jdbc:db2://db.example.com:50000/SALES", init)
+            .contains("not registered to take"), "elsewhere init is just a setting no driver may be allowed");
         assertEquals(GenericJdbcConnector.UNREADABLE_HOST, h2.connector().hosts(h2.source("p",
             Map.of("url", "jdbc:all://C:/srv/sales.db"))).get(0), "an allow-list refuses a host it cannot read too");
         assertEquals(List.of("db.example.com"), h2.connector().hosts(h2.source("p",

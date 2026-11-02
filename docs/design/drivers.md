@@ -148,7 +148,8 @@ Kilnmark could vouch for.
   cannot know every driver's, so the generic connector takes an **allow-list**: every setting in the
   URL, however the driver writes it (`;`, `?`, `&`, Db2's `:key=` after the database, Teradata's
   `/key=...,key=...`, `(key=value)` groups as in MySQL's `address=(...)` and Oracle's descriptors), and
-  every property must be one the admin allowed at registration. No allow-list may hold a property
+  every property must be one the admin allowed at registration, and an admin may allow only
+  settings Kilnmark has vetted (`RegisteredDriver.VETTED`, ADR 0030). As a second check, no allow-list may hold a property
   that loads code, reads the server's files or signs in as the server (`RegisteredDriver.readsServerFiles`:
   files, paths, folders, factories, classes, key and trust stores, interceptors, verifiers, callbacks,
   providers, strategies, transforms, plugins, checkers, handlers, loggers, locations, client
@@ -178,6 +179,12 @@ Kilnmark could vouch for.
   of hosts is set. The one exception is jConnect's `jdbc:sybase:Tds:host:port`, read as naming its
   host. Drivers whose URLs name the host otherwise (Drill's `zk=host:2181`, for example) cannot be
   used through Generic JDBC.
+- *Drivers that move files for SQL.* Snowflake, Vertica and Exasol URLs are refused: their drivers
+  read and write the machine's files for ordinary SQL. MySQL and MariaDB connections always have
+  local-file loading and deserialising turned off (ADR 0030).
+- *Next: a process of its own.* Generic JDBC drivers are to run in a separate, locked-down process
+  with only the network hosts the source names (ADR 0030); then any driver's own settings can be
+  allowed.
 - *Reaching the outside.* Nothing is downloaded. The hosts a source would reach are the URL's and
   those its settings name (failover partners, `*servername`, `alternate*` and the like, and any value
   that is itself a URL), all checked against `kilnmark.sources.allowed-hosts`; with an allow-list

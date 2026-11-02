@@ -35,6 +35,42 @@ public record RegisteredDriver(String name, String fileName, String sha256, Stri
     private static final Pattern PREFIX = Pattern.compile("jdbc:[A-Za-z][A-Za-z0-9+._-]*:[A-Za-z0-9:/@+._-]*");
     private static final Pattern SHA = Pattern.compile("[0-9a-f]{64}");
     private static final Pattern PROPERTY = Pattern.compile("[a-z0-9][a-z0-9._-]{0,99}");
+    /**
+     * The settings any registered driver may be allowed (ADR 0030): names Kilnmark knows only tune a
+     * connection to a database server, never load code, read the server's files or sign in as the
+     * server. Anything else is refused, whatever the admin types.
+     */
+    static final List<String> VETTED = List.of(
+        // time limits
+        ".*timeout.*",
+        // TLS: on, its mode and protocols, how the server's certificate is checked
+        "ssl", "usessl", "requiressl", "sslmode", "sslconnection", "sslenabled", "sslprotocol", "encrypt", "tls",
+        "tlsmode", "enabledtlsprotocols", "trustservercertificate", "hostnameincertificate", "validatecertificate",
+        "verifyservercertificate",
+        // characters
+        "charset", "characterset", "characterencoding", "encoding", "clientcharset", "useunicode",
+        // where to read: database, schema, catalog, warehouse, role
+        "database", "databasename", "db", "schema", "currentschema", "catalog", "warehouse", "role", "currentsqlid",
+        // how the connection names itself
+        "applicationname", "application_name", "appname", "programname", "clientprogramname", "applicationintent",
+        // how much travels at once
+        "fetchsize", "defaultrowfetchsize", "batchsize", "packetsize", "prefetch", "prefetchsize", "maxrows",
+        "usecursorfetch", "compress", "compression", "usecompression",
+        // time zones and dates
+        "timezone", "servertimezone", "sessiontimezone", "connectiontimezone", "zerodatetimebehavior",
+        // keeping the connection up, and the other servers to try (their hosts are checked as the URL's)
+        "tcpkeepalive", "keepalive", "failoverpartner", "multisubnetfailover", "loadbalancehosts",
+        "targetservertype", "clientreroutealternateservername", "clientreroutealternateportnumber",
+        // a few databases' own harmless settings
+        "readonly", "tmode", "dbs_port", "encryptdata", "informixserver", "db_locale", "mode", "db_close_delay",
+        "create", "transportmode");
+    private static final List<Pattern> VETTED_PATTERNS = VETTED.stream().map(Pattern::compile).toList();
+
+    /** Whether {@code name} (lower case) is one of the settings a driver may be allowed ({@link #VETTED}). */
+    public static boolean vetted(String name) {
+        return name != null && VETTED_PATTERNS.stream().anyMatch(p -> p.matcher(name).matches());
+    }
+
     /** Names that hold a secret: never allowed, as settings and URLs are stored and shown as plain text. */
     private static final Pattern SECRET = Pattern.compile(".*(pass|pwd|secret|token|key|credential).*");
 
@@ -101,6 +137,11 @@ public record RegisteredDriver(String name, String fileName, String sha256, Stri
             } else if (readsServerFiles(n)) {
                 out.add("allowedProperties: " + n + " names a file, folder, class or key store on the Kilnmark "
                     + "server, which no source may set");
+            } else if (!vetted(n)) {
+                out.add("allowedProperties: " + n + " is not a setting Kilnmark has vetted; a driver may be allowed "
+                    + "only time limits, TLS settings, characters, database, schema, catalog, warehouse or role, "
+                    + "the application name, fetch and batch sizes, time zones, keep-alive and failover servers "
+                    + "(docs/guide/drivers.md)");
             }
         }
         return out;
