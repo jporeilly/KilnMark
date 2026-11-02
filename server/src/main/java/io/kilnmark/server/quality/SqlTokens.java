@@ -41,17 +41,28 @@ public final class SqlTokens {
     private SqlTokens() {
     }
 
-    /** The tokens of {@code sql}; throws if a string, quoted name or comment is not closed. */
+    /**
+     * The tokens of {@code sql}; throws if a string, quoted name or comment is not closed, or if it
+     * holds a control character other than PostgreSQL's whitespace. Whitespace and the end of a line
+     * comment are PostgreSQL's exactly ({@code \r} ends a comment as {@code \n} does), so nothing the
+     * database reads as SQL can hide in what this reads as a comment.
+     */
     public static List<Token> tokens(String sql) {
         List<Token> out = new ArrayList<>();
         int n = sql.length();
+        for (int k = 0; k < n; k++) {
+            char c = sql.charAt(k);
+            if ((c < 0x20 || c == 0x7f) && !isSpace(c)) {
+                throw new IllegalArgumentException("a control character (code " + (int) c + ") is not allowed");
+            }
+        }
         int i = 0;
         while (i < n) {
             char c = sql.charAt(i);
-            if (Character.isWhitespace(c)) {
+            if (isSpace(c)) {
                 i++;
             } else if (c == '-' && at(sql, i + 1, '-')) {
-                while (i < n && sql.charAt(i) != '\n') {
+                while (i < n && sql.charAt(i) != '\n' && sql.charAt(i) != '\r') {
                     i++;
                 }
             } else if (c == '/' && at(sql, i + 1, '*')) {
@@ -143,6 +154,20 @@ public final class SqlTokens {
         return out;
     }
 
+    /** PostgreSQL's whitespace: space, tab, newline, carriage return, form feed and vertical tab. */
+    private static boolean isSpace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == 0x0b;
+    }
+
+    /**
+     * Why a token may not be used whatever the statement, or null: a {@code U&"..."} name, whose
+     * escapes could spell a refused function this check would not recognise.
+     */
+    private static String unicodeName(Token t) {
+        return t.kind() == Kind.QUOTED_WORD && (t.text().startsWith("U&") || t.text().startsWith("u&"))
+            ? "names written as U&\"...\" are not allowed; write the name plainly" : null;
+    }
+
     private static boolean at(String s, int i, char c) {
         return i < s.length() && s.charAt(i) == c;
     }
@@ -214,6 +239,9 @@ public final class SqlTokens {
         for (Token t : tokens) {
             if (t.kind() == Kind.PARAMETER) {
                 throw new IllegalArgumentException("params.sql: parameters such as " + t.text() + " are not allowed");
+            }
+            if (unicodeName(t) != null) {
+                throw new IllegalArgumentException("params.sql: " + unicodeName(t));
             }
             if (t.kind() == Kind.WORD && FORBIDDEN_WORDS.contains(t.text())) {
                 throw new IllegalArgumentException("params.sql: '" + t.text() + "' is not allowed; custom rules only "
@@ -287,6 +315,9 @@ public final class SqlTokens {
         for (Token t : tokens) {
             if (t.kind() == Kind.PARAMETER) {
                 throw new IllegalArgumentException("parameters such as " + t.text() + " are not allowed");
+            }
+            if (unicodeName(t) != null) {
+                throw new IllegalArgumentException(unicodeName(t));
             }
             if (t.kind() == Kind.WORD && ACTION_FORBIDDEN_WORDS.contains(t.text())) {
                 throw new IllegalArgumentException("'" + t.text() + "' is not allowed: a sql node does not create or "

@@ -243,6 +243,44 @@ class FlowSqlNodeTest {
 
     @Test
     @Order(6)
+    void cancellingTheFlowStopsTheStatementAndRollsBack() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fsql-blocked
+            nodes:
+              - id: blocked
+                type: sql
+                source: fsql-db
+                statements:
+                  - INSERT INTO fsql.target VALUES (300)
+                  - INSERT INTO fsql.target VALUES (301)
+            """);
+        long run;
+        FlowStore.Run done;
+        try (Connection hold = DriverManager.getConnection(url, user, password)) {
+            // Another session holds the table, so the node's first statement waits on it.
+            hold.setAutoCommit(false);
+            try (Statement s = hold.createStatement()) {
+                s.execute("LOCK TABLE fsql.target IN ACCESS EXCLUSIVE MODE");
+            }
+            run = start("fsql-blocked");
+            long id = run;
+            await("the sql node to start", () -> flows.nodeRuns(id).stream().anyMatch(n -> n.nodeId().equals("blocked")
+                && n.status().equals("running")), Boolean::booleanValue);
+            Thread.sleep(500);
+            flows.cancel(run, "tester", AccessRole.STEWARD);
+            done = finished(run);
+            hold.rollback();
+        }
+        assertEquals("cancelled", done.status(), done.error());
+        FlowStore.NodeRun blocked = node(run, "blocked");
+        assertEquals("cancelled", blocked.status(), blocked.message());
+        assertTrue(blocked.message().contains("nothing was changed"), blocked.message());
+        assertEquals(0, count("SELECT count(*) FROM fsql.target WHERE id IN (300, 301)"));
+    }
+
+    @Test
+    @Order(7)
     void aSuperuserLoginIsRefusedBeforeAnythingRuns() throws Exception {
         save(LOAD.replace("name: fsql-load", "name: fsql-super-load").replace("source: fsql-db", "source: fsql-super"));
         long before = count("SELECT count(*) FROM fsql.target");
@@ -256,7 +294,7 @@ class FlowSqlNodeTest {
     }
 
     @Test
-    @Order(7)
+    @Order(8)
     void aVersionSavedBeforeSqlNodesWereCheckedDoesNotRun() throws Exception {
         superuser("UPDATE kilnmark.flow_version SET sql_checked = false WHERE flow = 'fsql-load'");
         WebApplicationException e = assertThrows(WebApplicationException.class, () -> start("fsql-load"));
@@ -286,7 +324,7 @@ class FlowSqlNodeTest {
         """;
 
     @Test
-    @Order(8)
+    @Order(9)
     void aPipelineVersionSavedBeforeQueriesWereCheckedDoesNotRun() throws Exception {
         as(designer).contentType(ContentType.JSON).body(Map.of("name", "fsql-query", "yaml", QUERY))
             .post("/api/v1/pipelines").then().statusCode(201).body("latest.valid", org.hamcrest.Matchers.is(true));
@@ -302,7 +340,7 @@ class FlowSqlNodeTest {
     }
 
     @Test
-    @Order(9)
+    @Order(10)
     void cleanUp() throws Exception {
         superuser("DROP SCHEMA fsql CASCADE", "DROP OWNED BY " + WRITER);
     }

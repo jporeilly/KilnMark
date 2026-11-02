@@ -467,9 +467,12 @@ public class FlowService {
             }
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Flow run " + id + " was cancelled");
         }
+        Execution execution = new Execution(run, shutdown);
         try {
-            new Execution(run, shutdown).run();
+            execution.run();
         } catch (RuntimeException e) {
+            // A sql node still running must not commit after the run is recorded as failed.
+            execution.sqlControls.values().forEach(SqlAction.Control::stop);
             // Not the exception's text: it could quote anything. The class is enough for the log.
             LOG.errorf("Flow run %d failed with %s", id, e.getClass().getName());
             String why = "The flow could not be run to the end: an internal error. Look at the server's log.";
@@ -536,6 +539,10 @@ public class FlowService {
                 if (shutdown.getAsBoolean()) {
                     sqlControls.values().forEach(SqlAction.Control::stop);
                     for (String s : engine.running()) {
+                        if (sqlRuns.containsKey(s)) {
+                            save(def, s, "failed", null, Instant.now(), stoppedSql(s), Map.of());
+                            continue;
+                        }
                         Long prId = pipelineRuns.get(s);
                         if (prId != null) {
                             try {
@@ -589,7 +596,26 @@ public class FlowService {
                 Thread.sleep(pollMillis);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                sqlControls.values().forEach(SqlAction.Control::stop);
                 throw new IllegalStateException("interrupted");
+            }
+        }
+
+        /**
+         * What a sql node did when the worker stopped: it is told to stop, and given a few seconds to
+         * roll back, or to say that it had committed just before.
+         */
+        private String stoppedSql(String node) {
+            try {
+                SqlAction.Outcome o = sqlRuns.get(node).get(10, java.util.concurrent.TimeUnit.SECONDS);
+                return o.succeeded() ? "The worker running this flow stopped just after this node committed: "
+                    + o.message() : "The worker running this flow stopped; " + o.message();
+            } catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException e) {
+                return "The worker running this flow stopped while this node ran; its statement was cancelled, and "
+                    + "nothing it ran was committed";
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return "The worker running this flow stopped while this node ran; nothing it ran was committed";
             }
         }
 

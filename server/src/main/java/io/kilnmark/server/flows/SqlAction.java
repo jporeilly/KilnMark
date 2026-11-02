@@ -47,9 +47,13 @@ final class SqlAction {
     static final class Control {
         private final AtomicReference<Statement> current = new AtomicReference<>();
         private final AtomicBoolean stopped = new AtomicBoolean();
+        /** Held while committing, so a stop comes either before the commit (rolled back) or after it. */
+        private final Object commit = new Object();
 
         void stop() {
-            stopped.set(true);
+            synchronized (commit) {
+                stopped.set(true);
+            }
             Statement st = current.get();
             if (st != null) {
                 try {
@@ -167,11 +171,13 @@ final class SqlAction {
                     control.current.set(null);
                 }
             }
-            if (control.stopped()) {
-                c.rollback();
-                return Outcome.failed(STOPPED);
+            synchronized (control.commit) {
+                if (control.stopped()) {
+                    c.rollback();
+                    return Outcome.failed(STOPPED);
+                }
+                c.commit();
             }
-            c.commit();
             return new Outcome(true, rows, "Ran " + n + (n == 1 ? " statement" : " statements") + " on "
                 + node.source() + "; " + rows + (rows == 1 ? " row" : " rows") + " changed");
         } catch (SQLException e) {

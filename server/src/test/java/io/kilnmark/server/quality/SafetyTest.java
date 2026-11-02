@@ -127,6 +127,33 @@ class SafetyTest {
         refusedAction("INSERT INTO t VALUES ('not closed)", "not closed");
     }
 
+    /**
+     * What PostgreSQL reads as SQL never hides in what the check reads as a comment: a carriage return
+     * ends a line comment for both (found by the review of the sql node), and a U&"..." name, whose
+     * escapes could spell a refused function, is refused. Both checks share the tokenizer.
+     */
+    @Test
+    void nothingHidesInACommentOrAnEscapedName() {
+        refusedAction("CREATE --x\rFUNCTION f() RETURNS int SECURITY DEFINER LANGUAGE sql AS 'select 1'",
+            "'function' is not allowed");
+        refusedAction("ALTER --x\rTABLE t DISABLE ROW LEVEL SECURITY", "'security' is not allowed");
+        refusedAction("INSERT INTO t VALUES (1) --c\r; GRANT ALL ON t TO PUBLIC", "one statement only");
+        refusedAction("INSERT INTO t VALUES (1) --c\r\n; COMMIT", "one statement only");
+        refusedAction("INSERT INTO t SELECT 1 FROM (SELECT U&\"set_config\"('role', 'x', true)) s",
+            "names written as U&");
+        refusedAction("INSERT INTO t SELECT u&\"pg_terminate_backend\"(1)", "names written as U&");
+        refusedAction("INSERT INTO t VALUES (1)\u0000; DROP TABLE t", "a control character");
+        refusedAction("TRUNCATE\u001ct", "a control character");
+        // A comment still ends the line it is on, whichever line ending was pasted
+        assertEquals("TRUNCATE t -- empty it", SqlTokens.checkAction("TRUNCATE t -- empty it\r\n", 10_000));
+        assertEquals("UPDATE t SET n = 1 -- all\n WHERE id = 2",
+            SqlTokens.checkAction("UPDATE t SET n = 1 -- all\n WHERE id = 2", 10_000));
+        // Custom rules share the tokenizer
+        refused("SELECT * FROM t --x\r; DELETE FROM t");
+        refused("SELECT U&\"pg_read_file\"('x')");
+        SqlTokens.checkCustomSql("SELECT *\r\nFROM t -- note\r\nWHERE a > 0", 10_000);
+    }
+
     @Test
     void ordinaryReadingSqlIsAccepted() {
         assertEquals("SELECT * FROM ${table} WHERE amount < 0",
