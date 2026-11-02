@@ -236,8 +236,16 @@ reads from it. Connections follow it as any node (`success`, `failure`, a condit
   `DO`, `GRANT` or `REVOKE`; never, unquoted, `RETURNING` or the words that create or change logins,
   rights, code that runs later or ways out of the database (`ROLE`, `USER`, `EXTENSION`, `SERVER`,
   `FUNCTION`, `TRIGGER`, `OWNER`, `PRIVILEGES`, `SYSTEM`, ...); and never the functions custom rules
-  refuse (files, other sessions or databases, settings, locks), sequences apart. This is a first line
-  of defence: the login check and the source's opt-ins below are what hold.
+  refuse (files, other sessions or databases, settings, locks, and `ts_stat` and `ts_rewrite`, which
+  run a query held in a string), sequences apart. `E'...'` strings and `U&"..."` names are refused,
+  and the text may hold no control character but PostgreSQL's whitespace. The tokenizer reads
+  comments, whitespace, dollar-quote tags and identifiers as PostgreSQL does, and on top of it the
+  PostgreSQL driver's own parser must find exactly one statement. This is a first line of defence:
+  the login check and the source's opt-ins below are what hold.
+- **Sent as one prepared statement**, over the extended protocol, which PostgreSQL refuses to read as
+  several statements; a source set to `preferQueryMode` is refused (the simple protocol runs every
+  statement a text holds), and `standard_conforming_strings` is on for the transaction. A `?` in a
+  statement is read as a parameter, so it fails: write jsonb's `?` operators as their functions.
 - **Checked when saved and when it runs:** the source exists, is PostgreSQL (the only kind for now)
   and allows both SQL and writing; every statement passes the check. At run time the allowed hosts
   are checked again, then the login: never a superuser, nor one with file, program, signal or

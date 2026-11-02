@@ -132,6 +132,13 @@ final class SqlAction {
         }
         try (Connection c = jdbc.connect(config)) {
             c.setAutoCommit(false);
+            // Each statement goes as one prepared statement, which PostgreSQL refuses to read as several:
+            // never over the simple protocol, which would run whatever the text holds.
+            if (c.unwrap(org.postgresql.PGConnection.class).getPreferQueryMode()
+                == org.postgresql.jdbc.PreferQueryMode.SIMPLE) {
+                return Outcome.failed("Node " + id + ": " + s.name() + " sends SQL over the simple protocol "
+                    + "(preferQueryMode=simple), which a sql node never uses. Remove that setting from the source");
+            }
             String login = RuleRunner.privileged(c);
             if (login != null) {
                 return Outcome.failed("Node " + id + ": " + forNode(login));
@@ -150,9 +157,13 @@ final class SqlAction {
         long rows = 0;
         int n = 0;
         try {
-            for (String setup : d.timeout(timeout.toMillis())) {
+            List<String> setup = new ArrayList<>(d.timeout(timeout.toMillis()));
+            // Backslashes in plain strings are plain characters, as the check reads them, whatever the
+            // database or the login says.
+            setup.add("SET LOCAL standard_conforming_strings = on");
+            for (String q : setup) {
                 try (Statement st = c.createStatement()) {
-                    st.execute(setup);
+                    st.execute(q);
                 }
             }
             for (String sql : node.statements()) {
@@ -161,10 +172,11 @@ final class SqlAction {
                     return Outcome.failed(STOPPED);
                 }
                 n++;
-                try (Statement st = c.createStatement()) {
+                try (java.sql.PreparedStatement st = c.prepareStatement(
+                    SqlTokens.checkAction(sql, FlowDefinition.MAX_STATEMENT))) {
                     control.current.set(st);
                     st.setQueryTimeout((int) Math.max(1, timeout.toSeconds()));
-                    st.execute(SqlTokens.checkAction(sql, FlowDefinition.MAX_STATEMENT));
+                    st.execute();
                     int changed = st.getUpdateCount();
                     rows += Math.max(0, changed);
                 } finally {

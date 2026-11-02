@@ -36,7 +36,9 @@ public final class SqlTokens {
         "pg_advisory", "pg_try_advisory", "pg_notify", "query_to_xml", "table_to_xml", "cursor_to_xml",
         "schema_to_xml", "database_to_xml", "pg_switch_wal", "pg_create_", "pg_drop_", "pg_promote",
         "pg_backup", "pg_start_backup", "pg_stop_backup", "pg_logdir", "pg_import", "pg_replication",
-        "pg_logical", "txid_", "pg_current_xact", "nextval", "setval", "currval", "lastval", "pg_log_");
+        "pg_logical", "txid_", "pg_current_xact", "nextval", "setval", "currval", "lastval", "pg_log_",
+        // run a query held in a string, out of this check's sight
+        "ts_stat", "ts_rewrite");
 
     private SqlTokens() {
     }
@@ -106,18 +108,19 @@ public final class SqlTokens {
                 i = end;
             } else if (c == '$') {
                 int j = i + 1;
-                if (j < n && Character.isDigit(sql.charAt(j))) {
-                    while (j < n && Character.isDigit(sql.charAt(j))) {
+                if (j < n && isDigit(sql.charAt(j))) {
+                    while (j < n && isDigit(sql.charAt(j))) {
                         j++;
                     }
                     out.add(new Token(Kind.PARAMETER, sql.substring(i, j), i));
                     i = j;
                     continue;
                 }
-                while (j < n && (Character.isLetterOrDigit(sql.charAt(j)) || sql.charAt(j) == '_')) {
+                // A tag is read as PostgreSQL reads it: an identifier's characters, so any non-ASCII one
+                while (j < n && isWordPart(sql.charAt(j)) && sql.charAt(j) != '$') {
                     j++;
                 }
-                if (j < n && sql.charAt(j) == '$' && (j == i + 1 || !Character.isDigit(sql.charAt(i + 1)))) {
+                if (j < n && sql.charAt(j) == '$') {
                     String tag = sql.substring(i, j + 1);
                     int end = sql.indexOf(tag, j + 1);
                     if (end < 0) {
@@ -129,17 +132,19 @@ public final class SqlTokens {
                     out.add(new Token(Kind.SYMBOL, "$", i));
                     i++;
                 }
-            } else if (Character.isLetter(c) || c == '_' || c > 127) {
+            } else if (isWordStart(c)) {
                 int j = i + 1;
-                while (j < n && (Character.isLetterOrDigit(sql.charAt(j)) || sql.charAt(j) == '_'
-                    || sql.charAt(j) == '$' || sql.charAt(j) > 127)) {
+                while (j < n && isWordPart(sql.charAt(j))) {
                     j++;
                 }
                 out.add(new Token(Kind.WORD, sql.substring(i, j).toLowerCase(Locale.ROOT), i));
                 i = j;
-            } else if (Character.isDigit(c) || (c == '.' && i + 1 < n && Character.isDigit(sql.charAt(i + 1)))) {
+            } else if (isDigit(c) || (c == '.' && i + 1 < n && isDigit(sql.charAt(i + 1)))) {
                 int j = i + 1;
-                while (j < n && (Character.isLetterOrDigit(sql.charAt(j)) || sql.charAt(j) == '.' || sql.charAt(j) == '_'
+                // Digits, a point and an exponent only: letters after a number start a word, so a word
+                // such as RETURNING written straight after one is still seen.
+                while (j < n && (isDigit(sql.charAt(j)) || sql.charAt(j) == '.' || sql.charAt(j) == '_'
+                    || sql.charAt(j) == 'e' || sql.charAt(j) == 'E'
                     || ((sql.charAt(j) == '+' || sql.charAt(j) == '-') && (sql.charAt(j - 1) == 'e'
                     || sql.charAt(j - 1) == 'E')))) {
                     j++;
@@ -152,6 +157,44 @@ public final class SqlTokens {
             }
         }
         return out;
+    }
+
+    /** An ASCII digit: PostgreSQL reads no other digit as one. */
+    private static boolean isDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    /** How PostgreSQL starts an identifier: an ASCII letter, {@code _} or any non-ASCII character. */
+    private static boolean isWordStart(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c > 127;
+    }
+
+    /** What may follow in an identifier: those, digits and {@code $}. */
+    private static boolean isWordPart(char c) {
+        return isWordStart(c) || isDigit(c) || c == '$';
+    }
+
+    /**
+     * Why the PostgreSQL driver would not send {@code sql} as one statement, or null when it would:
+     * the driver's own parser decides where statements end, so a text this check reads as one
+     * statement is refused if the driver would split it.
+     */
+    static String driverSplits(String sql) {
+        try {
+            int n = org.postgresql.core.Parser.parseJdbcSql(sql, true, false, true, false, false).size();
+            return n <= 1 ? null : "one statement only";
+        } catch (java.sql.SQLException e) {
+            return "the database driver cannot read it as one statement";
+        }
+    }
+
+    /**
+     * Why a string may not be used, or null: an {@code E'...'} string, whose backslash escapes can
+     * carry on into a following string in a way that hides where it ends.
+     */
+    private static String escapeString(Token t) {
+        return t.kind() == Kind.STRING && (t.text().startsWith("E'") || t.text().startsWith("e'"))
+            ? "E'...' strings are not allowed; write the value in plain quotes" : null;
     }
 
     /** PostgreSQL's whitespace: space, tab, newline, carriage return, form feed and vertical tab. */
@@ -233,6 +276,9 @@ public final class SqlTokens {
             throw new IllegalArgumentException("params.sql: must start with SELECT or WITH");
         }
         String problem = singleStatement(tokens);
+        if (problem == null) {
+            problem = driverSplits(s);
+        }
         if (problem != null) {
             throw new IllegalArgumentException("params.sql: " + problem);
         }
@@ -242,6 +288,9 @@ public final class SqlTokens {
             }
             if (unicodeName(t) != null) {
                 throw new IllegalArgumentException("params.sql: " + unicodeName(t));
+            }
+            if (escapeString(t) != null) {
+                throw new IllegalArgumentException("params.sql: " + escapeString(t));
             }
             if (t.kind() == Kind.WORD && FORBIDDEN_WORDS.contains(t.text())) {
                 throw new IllegalArgumentException("params.sql: '" + t.text() + "' is not allowed; custom rules only "
@@ -309,6 +358,9 @@ public final class SqlTokens {
                 + "changes data or tables and never returns rows; read with a pipeline");
         }
         String problem = singleStatement(tokens);
+        if (problem == null) {
+            problem = driverSplits(s);
+        }
         if (problem != null) {
             throw new IllegalArgumentException(problem + "; give each statement as its own item");
         }
@@ -318,6 +370,9 @@ public final class SqlTokens {
             }
             if (unicodeName(t) != null) {
                 throw new IllegalArgumentException(unicodeName(t));
+            }
+            if (escapeString(t) != null) {
+                throw new IllegalArgumentException(escapeString(t));
             }
             if (t.kind() == Kind.WORD && ACTION_FORBIDDEN_WORDS.contains(t.text())) {
                 throw new IllegalArgumentException("'" + t.text() + "' is not allowed: a sql node does not create or "

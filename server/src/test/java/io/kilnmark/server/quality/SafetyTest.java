@@ -154,6 +154,30 @@ class SafetyTest {
         SqlTokens.checkCustomSql("SELECT *\r\nFROM t -- note\r\nWHERE a > 0", 10_000);
     }
 
+    /**
+     * The second review of the sql node: a dollar-quote tag is read as PostgreSQL and the driver read
+     * it (any non-ASCII character), a query held in a string is refused, E'' strings are refused, and
+     * whatever the driver would split into statements is refused whatever this check made of it.
+     */
+    @Test
+    void dollarTagsStringsAndTheDriverAgreeOnOneStatement() {
+        String tag = "UPDATE victim SET a = a WHERE a::text <> $\u20ac$ ' $\u20ac$ ; COMMIT; DELETE FROM victim; --'";
+        refusedAction(tag, "one statement only");
+        refused("SELECT $\u20ac$ ' $\u20ac$ AS x; COMMIT; CREATE TABLE leak AS SELECT 1 AS y; --'");
+        // A tag of non-ASCII letters still quotes: nothing inside it is read as SQL
+        assertEquals("UPDATE t SET note = $\u00e9t\u00e9$ ; DROP TABLE t $\u00e9t\u00e9$",
+            SqlTokens.checkAction("UPDATE t SET note = $\u00e9t\u00e9$ ; DROP TABLE t $\u00e9t\u00e9$", 10_000));
+        refusedAction("UPDATE victim SET a = a WHERE EXISTS (SELECT 1 FROM ts_stat('SELECT to_tsvector("
+            + "set_config(''role'', ''admin_grp'', false))'))", "'ts_stat' is not allowed");
+        refused("SELECT * FROM ts_rewrite('a'::tsquery, 'SELECT t, s FROM aliases')");
+        refusedAction("UPDATE t SET a = E'x'\n'\\' || '; COMMIT; DELETE FROM t; --'", "E'...' strings are not allowed");
+        refused("SELECT E'x'\n'\\' || '; DELETE FROM t; --' AS a");
+        // A word written straight after a number is still a word
+        refusedAction("DELETE FROM t WHERE a = 1returning a", "'returning' is not allowed");
+        assertEquals(null, SqlTokens.driverSplits("INSERT INTO t VALUES ('a;b')"));
+        assertEquals("one statement only", SqlTokens.driverSplits("INSERT INTO t VALUES (1); DELETE FROM t"));
+    }
+
     @Test
     void ordinaryReadingSqlIsAccepted() {
         assertEquals("SELECT * FROM ${table} WHERE amount < 0",
@@ -161,7 +185,9 @@ class SafetyTest {
         SqlTokens.checkCustomSql("WITH x AS (SELECT 1 AS a) SELECT * FROM x", 10_000);
         SqlTokens.checkCustomSql("SELECT * FROM t WHERE note = 'delete me; now' AND \"update\" > 0 /* drop; */", 10_000);
         SqlTokens.checkCustomSql("SELECT CASE WHEN a > 0 THEN 'x' ELSE $tag$it's; fine$tag$ END FROM t", 10_000);
-        SqlTokens.checkCustomSql("SELECT E'it\\'s' FROM t -- comment; DROP TABLE t", 10_000);
+        SqlTokens.checkCustomSql("SELECT 'it''s' FROM t -- comment; DROP TABLE t", 10_000);
+        // E'' strings are refused: their escapes can hide where a string ends (review of the sql node)
+        refused("SELECT E'it\\'s' FROM t");
         SqlTokens.checkCustomSql("SELECT * FROM t WHERE \"set\" = 1 AND amount > 1e3", 10_000);
     }
 

@@ -148,6 +148,12 @@ public abstract class JdbcConnector implements Connector {
             return "url: the property " + name + " would change the time limits Kilnmark sets for connecting and "
                 + "reading. Take it out of the URL";
         }
+        // pgjdbc's simple protocol runs every statement a text holds: SQL a person writes must never go
+        // that way (ADR 0028).
+        if (n.equals("preferquerymode")) {
+            return "url: the property " + name + " would send SQL over PostgreSQL's simple protocol, which runs "
+                + "every statement a text holds. Take it out of the URL";
+        }
         boolean denied = DENIED_PROPERTIES.contains(n) || n.endsWith("file") || n.endsWith("path")
             || n.endsWith("factory") || n.endsWith("class") || n.endsWith("classname")
             || n.equals("authentication") && !AUTHENTICATION_ALLOWED.contains(v);

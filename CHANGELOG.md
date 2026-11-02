@@ -43,6 +43,14 @@ details.
   sql node that starts is an audit event `flow.sql`, shown on the audit log page as **Flow ran SQL**.
   The flows API is still to come (F3), so flows are saved through the service for now, and Add
   samples lists the new sample without adding it.
+- **SQL checks read as PostgreSQL does** (two reviews of the sql node; custom SQL rules and query
+  reads share the check). A carriage return ends a `--` comment, dollar-quote tags and names take any
+  non-ASCII character, and the PostgreSQL driver's own parser must find one statement, so no second
+  statement hides in what the check read as a comment or string. Refused now in custom SQL rules and
+  query reads too: `E'...'` strings (write the value in plain quotes), `U&"..."` names, control
+  characters other than whitespace, and `ts_stat` and `ts_rewrite`. **A PostgreSQL source whose URL
+  sets `preferQueryMode` is refused**: take the setting out. **A custom rule written with an `E'...'`
+  string stops running** until it is written with plain quotes.
 - **The query check lives in `PipelineService`.** `create` and `save` check a query read's author
   themselves, so no caller can skip it; without a person asking, a query read is refused. Tests now
   show a pipeline version saved before V27 refused when queued and when it starts.
