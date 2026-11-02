@@ -210,13 +210,16 @@ class GenericJdbcConnectorTest {
         }
         // Settings Kilnmark has not vetted are refused too, whatever they do (ADR 0030).
         for (String n : List.of("zk", "url", "model", "cache", "serverName", "searchPath", "logmech", "browser",
-            "dnsResolver", "tracing", "debug", "clientRerouteServerListJNDIName", "custom_http_params")) {
+            "dnsResolver", "tracing", "debug", "clientRerouteServerListJNDIName", "custom_http_params",
+            // a name that only holds the word timeout is not a time limit
+            "timeoutAction", "queryTimeoutKillsConnection", "socketTimeoutScript")) {
             assertFalse(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(
                 List.of(n.toLowerCase(java.util.Locale.ROOT))).isEmpty(), n);
         }
         // Normal settings stay allowed.
         for (String n : List.of("trustServerCertificate", "hostNameInCertificate", "loginTimeout", "charset", "tmode",
-            "sslmode", "applicationName")) {
+            "sslmode", "applicationName", "socketTimeout", "connectTimeoutMs", "query_timeout_ms",
+            "lockTimeoutSeconds", "instanceName", "compress", "readonly", "mode", "create")) {
             assertTrue(io.kilnmark.kiln.connect.RegisteredDriver.propertyProblems(
                 List.of(n.toLowerCase(java.util.Locale.ROOT))).isEmpty(), n);
         }
@@ -296,7 +299,8 @@ class GenericJdbcConnectorTest {
         };
         java.util.List<String> every = new java.util.ArrayList<>();
         every.addAll(ANY.allowedProperties());
-        every.addAll(List.of("create", "schema", "transportmode")); // what the URLs below use, all vetted
+        // what the URLs below use, all vetted
+        every.addAll(List.of("create", "schema", "transportmode", "instancename"));
         io.kilnmark.kiln.connect.RegisteredDriver allowsAll = new io.kilnmark.kiln.connect.RegisteredDriver("all",
             "all.jar", "a".repeat(64), "x.Driver", "jdbc:all:", every, "admin", Instant.EPOCH);
         for (String[] r : refused) {
@@ -312,10 +316,14 @@ class GenericJdbcConnectorTest {
             "jdbc:ignite:thin://ignite.example.com:10800", "jdbc:firebirdsql://db.example.com:3050//srv/sales.fdb",
             "jdbc:oracle:thin:@//db.example.com:1521/SALES", "jdbc:jtds:sybase://db.example.com:5000/sales",
             "jdbc:sqlserver://db.example.com:1433;failoverPartner=standby.example.com",
+            "jdbc:sqlserver://db.example.com;instanceName=SALES",
             "jdbc:informix-sqli://db.example.com:1533/sales", "jdbc:db2://[2001:db8::1]:50000/SALES",
             "jdbc:sybase:Tds:db.example.com:5000/sales")) {
             assertNull(GenericJdbcConnector.refusal(allowsAll, ok, null), ok);
         }
+        // A named instance goes in instanceName: the host\instance form is refused for its backslash
+        assertTrue(GenericJdbcConnector.refusal(allowsAll, "jdbc:sqlserver://db.example.com\\SALES", null)
+            .contains("the character \\"));
         // H2's INIT as a driver property runs SQL as surely as in the URL, whatever its case
         for (String name : List.of("INIT", "init", "Init")) {
             java.util.Properties init = new java.util.Properties();
