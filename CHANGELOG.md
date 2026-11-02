@@ -23,6 +23,15 @@ details.
 
 ### Details
 
+- **Generic JDBC: time limits, SQL Server instances, and the vetted list in full** (ADR 0030). A
+  time limit is now a name ending in `timeout`, with or without `ms`, `_ms` or `seconds`, so a
+  setting that only holds the word is no longer taken for one. SQL Server's `instanceName` is
+  vetted, so a named instance without a port can be used
+  (`jdbc:sqlserver://host;instanceName=SALES`). The registration error, the drivers guide and
+  ADR 0030 now list every kind of vetted setting, compression, `readonly`, `mode` and `create`
+  included, and the ADR says that the MySQL and MariaDB local-file settings are forced only on
+  those drivers' URLs. **A registration listing a name that holds `timeout` without ending in it
+  is no longer used**; register it again without that name.
 - **The audit log** (V28, ADR 0029). `kilnmark.audit_event` is append-only: a trigger refuses
   `UPDATE`, `DELETE` and `TRUNCATE`. Events: `token.created` (with role, unmask and expiry),
   `token.revoked`, `mark.set`, `mark.cleared`, `source.deleted`, `source.allow_writing` and

@@ -41,8 +41,9 @@ public record RegisteredDriver(String name, String fileName, String sha256, Stri
      * server. Anything else is refused, whatever the admin types.
      */
     static final List<String> VETTED = List.of(
-        // time limits
-        ".*timeout.*",
+        // time limits: names ending in timeout, with or without a unit, so a name that only holds the
+        // word (a timeout handler's class, say) is not taken for one
+        ".*timeout(ms|_ms|seconds)?",
         // TLS: on, its mode and protocols, how the server's certificate is checked
         "ssl", "usessl", "requiressl", "sslmode", "sslconnection", "sslenabled", "sslprotocol", "encrypt", "tls",
         "tlsmode", "enabledtlsprotocols", "trustservercertificate", "hostnameincertificate", "validatecertificate",
@@ -61,9 +62,9 @@ public record RegisteredDriver(String name, String fileName, String sha256, Stri
         // keeping the connection up, and the other servers to try (their hosts are checked as the URL's)
         "tcpkeepalive", "keepalive", "failoverpartner", "multisubnetfailover", "loadbalancehosts",
         "targetservertype", "clientreroutealternateservername", "clientreroutealternateportnumber",
-        // a few databases' own harmless settings
+        // a few databases' own harmless settings, SQL Server's named instance on the URL's host among them
         "readonly", "tmode", "dbs_port", "encryptdata", "informixserver", "db_locale", "mode", "db_close_delay",
-        "create", "transportmode");
+        "create", "transportmode", "instancename");
     private static final List<Pattern> VETTED_PATTERNS = VETTED.stream().map(Pattern::compile).toList();
 
     /** Whether {@code name} (lower case) is one of the settings a driver may be allowed ({@link #VETTED}). */
@@ -140,8 +141,9 @@ public record RegisteredDriver(String name, String fileName, String sha256, Stri
             } else if (!vetted(n)) {
                 out.add("allowedProperties: " + n + " is not a setting Kilnmark has vetted; a driver may be allowed "
                     + "only time limits, TLS settings, characters, database, schema, catalog, warehouse or role, "
-                    + "the application name, fetch and batch sizes, time zones, keep-alive and failover servers "
-                    + "(docs/guide/drivers.md)");
+                    + "the application name, fetch and batch sizes, compression, time zones, keep-alive, failover "
+                    + "servers, and a few databases' own (readonly, mode, create, tmode, informixserver, "
+                    + "instancename and the like) (docs/guide/drivers.md)");
             }
         }
         return out;

@@ -78,13 +78,19 @@ Open **Settings**, **JDBC drivers**.
    may set**, such as `currentSchema, sslConnection`. **Fill in for a known database** suggests them
    for common drivers; check them against the driver's documentation. A source may use only the
    properties listed here, in its URL or as driver properties, and only settings Kilnmark has vetted
-   may be listed: time limits (any name with `timeout`), TLS (`ssl`, `sslMode`, `sslConnection`,
-   `encrypt`, `trustServerCertificate`, and the like), characters (`charset`, `encoding`), where to
-   read (`database`, `schema`, `currentSchema`, `catalog`, `warehouse`, `role`), the application's
-   name, fetch and batch sizes, time zones, keep-alive and failover servers, and a few databases'
-   own harmless settings (Teradata's `TMODE`, Informix's `INFORMIXSERVER`). Anything else is refused,
-   as are passwords, keys and tokens. Whatever the list, Kilnmark turns off a MySQL or MariaDB
-   driver's loading of local files.
+   may be listed: time limits (names ending in `timeout`, with or without `Ms` or `Seconds`), TLS
+   (`ssl`, `sslMode`, `sslConnection`, `encrypt`, `trustServerCertificate`, and the like),
+   characters (`charset`, `encoding`), where to read (`database`, `schema`, `currentSchema`,
+   `catalog`, `warehouse`, `role`), the application's name, fetch and batch sizes, compression
+   (`compress`, `compression`), time zones, keep-alive and failover servers, and a few databases'
+   own harmless settings (`readOnly`, H2's `MODE`, Derby's `create`, Teradata's `TMODE`, Informix's
+   `INFORMIXSERVER`, SQL Server's `instanceName`). Anything else is refused, as are passwords, keys
+   and tokens. Whatever the list, Kilnmark turns off a MySQL or MariaDB driver's loading of local
+   files.
+
+   A SQL Server named instance without a port is given as `instanceName`, as in
+   `jdbc:sqlserver://db.example.com;instanceName=SALES`, once the driver allows it. The
+   `host\SALES` form is refused, as Kilnmark refuses a backslash anywhere in a URL.
 3. Tick that the jar comes from the database's vendor or another source you trust, and press
    **Register driver**.
 
