@@ -1026,6 +1026,7 @@ public abstract class JdbcConnector implements Connector {
         driverSettings(source).forEach((k, v) -> s.put(JdbcTableInput.DRIVER_PREFIX + k, String.valueOf(v)));
         // On lines of its own, so a query ending in a -- comment cannot comment out the closing parenthesis.
         s.put("query", rowLimit > 0 ? "SELECT * FROM (\n" + sql + "\n) AS kilnmark_query LIMIT " + rowLimit : sql);
+        s.put(JdbcTableInput.WRITTEN_QUERY, "true");
         s.put("label", label);
         s.put("row-limit", "0"); // the query applies the limit itself
         s.put("batch-size", Integer.toString(batchSize));

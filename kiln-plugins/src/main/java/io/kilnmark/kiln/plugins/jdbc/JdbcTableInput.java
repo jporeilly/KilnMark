@@ -115,6 +115,11 @@ public final class JdbcTableInput implements Node {
 
     /** Settings starting with this are driver properties, passed to the driver without it. */
     public static final String DRIVER_PREFIX = "driver.";
+    /**
+     * {@code true} when {@code query} is SQL a person wrote (a read with a query, ADR 0028), not one the
+     * connector built: it then runs only with {@code standard_conforming_strings} on, and reads no one asset.
+     */
+    public static final String WRITTEN_QUERY = "written-query";
     /** The setting holding the transaction isolation level the read runs at, as a JDBC level number. */
     public static final String ISOLATION = "transaction-isolation";
     /** Setting: sample tables estimated above this many rows. */
@@ -207,9 +212,10 @@ public final class JdbcTableInput implements Node {
     public void init(NodeContext context) throws NodeException {
         batchSize = Integer.parseInt(context.setting("batch-size", "8192"));
         rowLimit = Long.parseLong(context.setting("row-limit", "0"));
-        // A query reads no one asset: its tables are recorded by the read node (ADR 0028), and it has no row count
-        assetUrn = context.settings().containsKey("query") ? context.setting("asset-urn", null)
-            : context.setting("asset-urn");
+        // A query a person wrote reads no one asset: its tables are recorded by the read node (ADR 0028), and it
+        // has no row count of one
+        boolean written = "true".equals(context.setting(WRITTEN_QUERY, "false"));
+        assetUrn = written ? context.setting("asset-urn", null) : context.setting("asset-urn");
         String label;
         String sql;
         if (context.settings().containsKey("query")) {
@@ -231,7 +237,7 @@ public final class JdbcTableInput implements Node {
                 }
                 // advice the driver does not take: the read is a SELECT either way
             }
-            if (context.settings().containsKey("query")) {
+            if (written) {
                 // A query a person wrote, checked as PostgreSQL reads it with standard_conforming_strings on:
                 // it runs only with it on, whatever the database, login or URL says (ADR 0028).
                 PostgresConnector.conformingStrings(connection);
