@@ -276,7 +276,10 @@ admins, who see sensitive values masked, cannot write or run one
 ([ADR 0027](../adr/0027-unmasking-is-a-grant.md)). Its failing rows and error text are withheld
 from everyone else while any table of the source has a column marked sensitive.
 
-- It is **off by default.** An administrator turns it on with `kilnmark.quality.custom-sql=true`.
+- It is **off by default, source by source.** A designer or an admin turns on **Allow SQL**
+  (`allow_sql`) for the source: open it, choose **Edit**, and set it on the last step
+  ([ADR 0028](../adr/0028-sql-in-reads-and-flow-actions.md)). The server-wide
+  `kilnmark.quality.custom-sql` switch is retired and does nothing.
 - **PostgreSQL sources only.** There, Kilnmark can hold the query to a read-only transaction.
 - Write **one `SELECT` that returns the failing rows.** `${table}` is replaced with the asset's
   table, and `${column}` with the rule's column when you give one:
@@ -328,5 +331,5 @@ you try it with your token.
 | *freshness needs a date or timestamp field* | Pick a column whose type is a date or timestamp. A date stored as text needs a pattern rule instead |
 | *references rules run in the database* | References need a database source. On files, use Allowed values |
 | *… is not on this server's webhook allow-list* | Ask an administrator to add the address prefix |
-| *custom SQL rules are turned off on this server* | Ask an administrator, or use a library check |
+| *this source does not allow SQL a person writes* | Ask a designer to turn on **Allow SQL** for the source, or use a library check |
 | **Could not run** after a schema change | The column was renamed or dropped. Choose **Edit** and pick the new column, or switch the rule off |

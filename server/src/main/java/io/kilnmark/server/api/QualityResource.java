@@ -829,7 +829,7 @@ public class QualityResource {
 
             @Override
             public boolean customSqlEnabled() {
-                return quality.settings().customSql();
+                return io.kilnmark.server.sources.CommonSettings.allowsSql(s.settings());
             }
         };
     }
