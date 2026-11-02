@@ -23,6 +23,14 @@ details.
 
 ### Details
 
+- **Relationships: confident joins accepted automatically, and Browse holds them** (ADR 0019,
+  amended). Inferred joins found with 95% confidence or more are accepted without a person, shown
+  as "Automatically, at 95% or more" with their confidence; a steward can still reject one, and a
+  person's decisions are never overridden by a rescan. Joins across sources that only repeat a join
+  within one source (the same table through two sources on one database) are no longer proposed.
+  Relationships is a view of Browse now (Catalogue and Relationships tabs), not a sidebar entry of
+  its own; its address still works. On Browse, the filter and tree sit beside what the schema holds,
+  and the diagram, with its relationships, takes the whole width under them.
 - **Generic JDBC: time limits, SQL Server instances, and the vetted list in full** (ADR 0030). A
   time limit is now a name ending in `timeout`, with or without `ms`, `_ms` or `seconds`, so a
   setting that only holds the word is no longer taken for one. SQL Server's `instanceName` is
