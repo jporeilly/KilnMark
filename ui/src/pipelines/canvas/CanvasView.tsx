@@ -14,7 +14,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import {
   IconArrowBackUp,
   IconArrowForwardUp,
@@ -26,7 +26,6 @@ import {
   IconPlug,
   IconSparkles,
   IconTextSize,
-  IconX,
   IconZoomIn,
   IconZoomOut,
 } from "@tabler/icons-react";
@@ -76,7 +75,7 @@ import { Palette, rememberUsed } from "./Palette";
 import { SettingsPanel } from "./SettingsPanel";
 import { NodeMenu, type NodeMenuItem } from "./NodeMenu";
 import { NodePreviewPanel, type PreviewAsk, type PreviewResult } from "./NodePreviewPanel";
-import { TabPanel, Tabs, useTabsId } from "../../components/ui";
+import { CANVAS_TABS, NODE_TABS, type DockControl } from "../PipelineDock";
 import { useRole } from "../../components/role";
 import { NodeCard, badgeRows, runWords, type NodeCardType, type NodeRunInfo } from "./NodeCard";
 import "./canvas.css";
@@ -110,6 +109,8 @@ export type CanvasProps = {
   title: string;
   /** Kept by the page across switches to the YAML tab: the last graph that could be read. */
   memory: { lastGood?: Graph | null };
+  /** The panel under the canvas: the canvas shows its Settings, Preview and Suggestions tabs there. */
+  dock: DockControl;
 };
 
 let catalogueLoad: Promise<NodeType[]> | null = null;
@@ -172,24 +173,21 @@ function Canvas(props: CanvasProps) {
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [connectFor, setConnectFor] = useState<string | null>(null);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
-  const [suggestOpen, setSuggestOpen] = useState(false);
-  // The node's context menu, the drawer's tab, and previews at a node.
+  // The panel under the canvas: selecting a node shows its settings there (Enter, a double-click and
+  // the node's menu also move the focus into them).
+  const { dock } = props;
+  const dockRef = useRef(dock);
+  dockRef.current = dock;
+  const suggestOpen = dock.tab === "suggestions";
+  // Set when Suggestions on the toolbar opens them, so their heading takes the focus once drawn.
+  const [suggestFocus, setSuggestFocus] = useState(0);
+  // The node's context menu, and previews at a node.
   const [menu, setMenu] = useState<{ node: string; x: number; y: number } | null>(null);
-  const [drawerTab, setDrawerTab] = useState<"settings" | "preview">("settings");
-  // Whether the selected node's settings are open: selecting a node (to move it, say) does not open
-  // them; a double-click, Enter, the node's menu or adding a node does.
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  // With nothing selected (Escape, a click on the canvas, a removed node) the settings close, so the
-  // next node selected does not open them.
-  useEffect(() => {
-    if (!selected) setDrawerOpen(false);
-  }, [selected]);
   const [previewAsk, setPreviewAsk] = useState<PreviewAsk | null>(null);
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
   const role = useRole();
-  const drawerTabs = useTabsId();
-  // A right-click (or Ctrl+click on a Mac) focuses the node without selecting it, so the drawer does
-  // not open under the pointer before the menu does. Cleared however the press ends.
+  // A right-click (or Ctrl+click on a Mac) focuses the node without selecting it, so its settings do
+  // not change under the pointer before the menu opens. Cleared however the press ends.
   const menuPress = useRef(false);
   const askCount = useRef(0);
   useEffect(() => {
@@ -328,29 +326,39 @@ function Canvas(props: CanvasProps) {
   // not fit between saved positions (a layout saved before a run). The YAML is not changed until a
   // node is moved or Auto-layout is chosen.
   const shown = useMemo(() => makeRoom(positions, heights, sizes.labels), [positions, heights, sizes]);
-  // Choosing a node shows its settings in place of the suggestions.
-  const lastSelected = useRef(selected);
-  useEffect(() => {
-    if (selected && selected !== lastSelected.current) setSuggestOpen(false);
-    lastSelected.current = selected;
-  }, [selected]);
-
   const say = useCallback((words: string) => {
     // Cleared first, so the same words twice are read out twice.
     setAnnounce("");
     window.setTimeout(() => setAnnounce(words), 30);
   }, []);
 
-  /** The part of the canvas not under the node list or the settings drawer, in canvas pixels. */
+  /** The part of the canvas not under the node list, in canvas pixels. */
   const visibleArea = useCallback(() => {
     const box = flowBox.current?.getBoundingClientRect();
     if (!box) return null;
     const stage = flowBox.current!.parentElement!;
     const list = stage.querySelector<HTMLElement>(".cv-palette-panel")?.getBoundingClientRect();
-    const drawer = stage.querySelector<HTMLElement>(".cv-drawer")?.getBoundingClientRect();
     const left = list && list.right > box.left ? list.right - box.left : 0;
-    const right = drawer && drawer.left < box.right && getComputedStyle(stage.querySelector(".cv-drawer")!).position === "absolute" ? box.right - drawer.left : 0;
-    return { left, top: 0, width: Math.max(120, box.width - left - right), height: box.height };
+    return { left, top: 0, width: Math.max(120, box.width - left), height: box.height };
+  }, []);
+
+  /**
+   * Selects a node and shows the panel under the canvas with its Settings (its Preview stays shown if
+   * it was): a click, the focus moving to a node and the arrow keys all do this. The focus stays where
+   * it is; Enter moves it into the settings.
+   */
+  const selectNode = useCallback(
+    (id: string) => {
+      onSelect(id);
+      const d = dockRef.current;
+      d.show(NODE_TABS.has(d.tab) ? d.tab : "settings");
+    },
+    [onSelect],
+  );
+
+  /** Moves the focus to the first field of the settings in the panel under the canvas, once drawn. */
+  const focusSettings = useCallback(() => {
+    window.setTimeout(() => dockRef.current.host?.querySelector<HTMLElement>("input, select, textarea")?.focus(), 30);
   }, []);
 
   /** Focuses a node, moving the view to it when it is outside. */
@@ -367,7 +375,7 @@ function Canvas(props: CanvasProps) {
         const l = box.left + area.left;
         const out = r.left < l || r.right > l + area.width || r.top < box.top || r.bottom > box.bottom;
         if (out) {
-          // Centred in the part of the canvas not under the node list or the drawer.
+          // Centred in the part of the canvas not under the node list.
           const z = flow.getZoom();
           const cx = area.left + area.width / 2;
           const cy = area.height / 2;
@@ -463,8 +471,7 @@ function Canvas(props: CanvasProps) {
     const made = apply(c, label, { pin: id ? { [id]: spot } : true });
     if (made) {
       onSelect(made);
-      setDrawerOpen(true);
-      setDrawerTab("settings");
+      dock.show("settings");
       pendingFocus.current = made;
     }
   };
@@ -477,9 +484,13 @@ function Canvas(props: CanvasProps) {
     const c = removeNode(yamlRef.current, id, catalogue);
     apply(c, `Removed node ${id} and its connections.`, { pin: true });
     if (!("error" in c)) {
-      onSelect(next);
-      if (next) pendingFocus.current = next;
-      else flowBox.current?.focus();
+      if (next) {
+        selectNode(next);
+        pendingFocus.current = next;
+      } else {
+        onSelect(null);
+        flowBox.current?.focus();
+      }
     }
   };
 
@@ -492,7 +503,7 @@ function Canvas(props: CanvasProps) {
     const spot = at ? { x: at.x + 40, y: at.y + 140 } : undefined;
     const made = apply(c, newId ? `Duplicated ${id} as ${newId}.` : "", { pin: newId && spot ? { [newId]: spot } : true });
     if (made) {
-      onSelect(made);
+      selectNode(made);
       pendingFocus.current = made;
     }
   };
@@ -695,10 +706,9 @@ function Canvas(props: CanvasProps) {
     const r = props.focusRequest;
     if (!r) return;
     onSelect(r.node);
-    setDrawerOpen(true);
-    setDrawerTab("settings");
+    dock.show("settings");
     window.setTimeout(() => {
-      const panel = wrap.current?.querySelector<HTMLElement>(".cv-drawer");
+      const panel = dockRef.current.host;
       const field = r.key ? panel?.querySelector<HTMLElement>(`[data-setting="${CSS.escape(r.key)}"]`) : null;
       const target = field?.querySelector<HTMLElement>("input, textarea, select, button") ?? null;
       if (target) {
@@ -924,8 +934,8 @@ function Canvas(props: CanvasProps) {
     if (k === "Enter" || k === " ") {
       done();
       onSelect(id);
-      setDrawerOpen(true);
-      window.setTimeout(() => wrap.current?.querySelector<HTMLElement>(".cv-drawer input, .cv-drawer select, .cv-drawer textarea")?.focus(), 30);
+      dock.show("settings");
+      focusSettings();
       return;
     }
     if (k.startsWith("Arrow")) {
@@ -941,7 +951,7 @@ function Canvas(props: CanvasProps) {
       }
       const next = neighbour(id, k);
       if (next) {
-        onSelect(next);
+        selectNode(next);
         focusNode(next);
       } else {
         say(k === "ArrowRight" ? `Nothing reads from ${id}.` : k === "ArrowLeft" ? `${id} reads from no node.` : `No node ${k === "ArrowUp" ? "above" : "below"} ${id}.`);
@@ -961,13 +971,13 @@ function Canvas(props: CanvasProps) {
   };
   const previewNode = (id: string) => {
     flush();
-    setSuggestOpen(false);
     onSelect(id);
-    setDrawerOpen(true);
-    setDrawerTab("preview");
+    dock.show("preview");
     // Counted here, not from the last ask, which the panel clears once it has run it.
     askCount.current += 1;
     setPreviewAsk({ node: id, n: askCount.current });
+    // The menu has closed: the focus goes to the preview, under the canvas.
+    window.setTimeout(() => dockRef.current.panel()?.focus(), 30);
   };
   const menuItems = (id: string): NodeMenuItem[] => {
     const writes = kindOf(id) === "sink";
@@ -991,9 +1001,8 @@ function Canvas(props: CanvasProps) {
         label: "Settings",
         onSelect: () => {
           onSelect(id);
-          setDrawerOpen(true);
-          setDrawerTab("settings");
-          window.setTimeout(() => wrap.current?.querySelector<HTMLElement>(".cv-drawer input, .cv-drawer select, .cv-drawer textarea")?.focus(), 30);
+          dock.show("settings");
+          focusSettings();
         },
       },
     ];
@@ -1007,6 +1016,86 @@ function Canvas(props: CanvasProps) {
     return items;
   };
   const offers = connectFor && graph ? possibleConnections(graph, connectFor, catalogue) : [];
+
+  /** The Settings, Preview or Suggestions tab of the panel under the canvas. */
+  const dockBody = () => {
+    let body;
+    if (dock.tab === "suggestions") {
+      body = graph?.nodes.length ? (
+        <Suspense fallback={<p className="small" role="status">Loading suggestions…</p>}>
+          <SuggestionsPanel
+            yaml={yaml}
+            readOnly={readOnly}
+            onAdd={addSuggestion}
+            focusAsk={suggestFocus}
+            onFocused={() => setSuggestFocus(0)}
+          />
+        </Suspense>
+      ) : (
+        <p className="hint cv-dock-none">Suggestions appear here once the pipeline has nodes.</p>
+      );
+    } else if (!selectedNode) {
+      body = (
+        <p className="hint cv-dock-none">
+          No node is selected. Click a node on the canvas, or move to one with Tab and press Enter, to{" "}
+          {dock.tab === "preview" ? "preview the rows leaving it" : "see its settings"} here.
+        </p>
+      );
+    } else if (dock.tab === "preview") {
+      body = (
+        <>
+          <h3 className="cv-side-title">
+            Preview of <span className="mono">{selectedNode.id}</span>
+          </h3>
+          <NodePreviewPanel
+            key={selectedNode.id}
+            yaml={yaml}
+            node={selectedNode.id}
+            outputs={portsOf(selectedNode, catalogue).outputs}
+            kind={kindOf(selectedNode.id)}
+            role={role}
+            ask={previewAsk}
+            last={previewResult}
+            onResult={setPreviewResult}
+            onAsked={() => setPreviewAsk(null)}
+          />
+        </>
+      );
+    } else {
+      body = (
+        <SettingsPanel
+          key={selectedNode.id}
+          node={selectedNode}
+          type={selectedNode.type ? catalogue.get(selectedNode.type) : undefined}
+          catalogue={catalogue}
+          check={check}
+          problems={problems.get(selectedNode.id) ?? []}
+          sources={sources}
+          readOnly={readOnly}
+          run={runNodes.get(selectedNode.id) ?? null}
+          quality={runQuality.get(selectedNode.id) ?? null}
+          predicted={predicted.get(selectedNode.id) ?? null}
+          parameters={graph?.parameters ?? []}
+          onSetting={(key, value, kind) => setOne(selectedNode.id, key, value, kind)}
+          onRename={(to) => rename(selectedNode.id, to)}
+          onDisconnect={unlink}
+          onConnectMenu={() => openConnect(selectedNode.id)}
+          onDelete={() => remove(selectedNode.id)}
+          onDuplicate={() => duplicate(selectedNode.id)}
+        />
+      );
+    }
+    return (
+      <div
+        className={`cv-dock-body cv-dock-${dock.tab}`}
+        onBlur={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) flush();
+        }}
+      >
+        {body}
+      </div>
+    );
+  };
 
   return (
     <div className="cv-wrap" ref={wrap} onKeyDown={onKeyDown}>
@@ -1076,11 +1165,12 @@ function Canvas(props: CanvasProps) {
         </button>
         <button
           type="button"
-          className={`cv-tool${suggestOpen ? " is-on" : ""}`}
-          aria-pressed={suggestOpen}
+          className={`cv-tool${suggestOpen && dock.open ? " is-on" : ""}`}
+          title="Show the suggestions in the panel under the canvas"
           onClick={() => {
             flush();
-            setSuggestOpen((o) => !o);
+            dock.show("suggestions");
+            setSuggestFocus((n) => n + 1);
           }}
           disabled={!graph?.nodes.length}
         >
@@ -1094,7 +1184,7 @@ function Canvas(props: CanvasProps) {
         )}
       </div>
 
-      <div className={`cv-stage${(selectedNode && drawerOpen) || suggestOpen ? " has-drawer" : ""}${paletteOpen ? "" : " no-list"}`}>
+      <div className={`cv-stage${paletteOpen ? "" : " no-list"}`}>
         <Palette
           types={types}
           usedTypes={graph?.nodes.map((s) => s.type ?? "") ?? []}
@@ -1134,7 +1224,7 @@ function Canvas(props: CanvasProps) {
               quietFocus.current = null;
               return;
             }
-            if (id && id !== selected) onSelect(id);
+            if (id && id !== selected) selectNode(id);
           }}
           role="region"
           aria-label={`Canvas of ${props.title}: ${graph?.nodes.length ?? 0} nodes. Press question mark for keyboard shortcuts.`}
@@ -1146,15 +1236,13 @@ function Canvas(props: CanvasProps) {
             onNodesChange={onNodesChange}
             onNodeClick={(_, n) => {
               setSelectedEdge(null);
-              onSelect(n.id);
+              selectNode(n.id);
             }}
             onNodeDoubleClick={(_, n) => {
               setSelectedEdge(null);
               flush();
               onSelect(n.id);
-              setSuggestOpen(false);
-              setDrawerOpen(true);
-              setDrawerTab("settings");
+              dock.show("settings");
             }}
             onEdgeClick={(_, e) => {
               setSelectedEdge(e.id);
@@ -1163,7 +1251,6 @@ function Canvas(props: CanvasProps) {
             onPaneClick={() => {
               setSelectedEdge(null);
               onSelect(null);
-              setDrawerOpen(false);
             }}
             onNodeContextMenu={(e, n) => {
               e.preventDefault();
@@ -1220,92 +1307,8 @@ function Canvas(props: CanvasProps) {
           )}
         </div>
 
-        {suggestOpen && (
-          <Suspense fallback={<aside className="cv-drawer cv-suggest" aria-busy="true"><p className="small">Loading suggestions…</p></aside>}>
-            <SuggestionsPanel yaml={yaml} readOnly={readOnly} onAdd={addSuggestion} onClose={() => setSuggestOpen(false)} />
-          </Suspense>
-        )}
-        {selectedNode && drawerOpen && !suggestOpen && (
-          <aside
-            className={`cv-drawer${drawerTab === "preview" ? " is-wide" : ""}`}
-            aria-labelledby="cv-panel-h"
-            onBlur={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) flush();
-            }}
-          >
-            <div className="cv-drawer-head">
-              <h3 id="cv-panel-h" className="cv-side-title">
-                Selected node
-              </h3>
-              <button
-                type="button"
-                className="cv-mini"
-                aria-label="Close the settings"
-                onClick={() => {
-                  const id = selectedNode.id;
-                  flush();
-                  setDrawerOpen(false);
-                  // Back to the node, which stays selected.
-                  quietFocus.current = id;
-                  focusNode(id);
-                }}
-              >
-                <IconX size={16} stroke={2} aria-hidden="true" />
-              </button>
-            </div>
-            <Tabs
-              idBase={drawerTabs}
-              label={`Node ${selectedNode.id}`}
-              selected={drawerTab}
-              onSelect={(t) => {
-                flush();
-                setDrawerTab(t as "settings" | "preview");
-              }}
-              tabs={[
-                { id: "settings", label: "Settings" },
-                { id: "preview", label: "Preview" },
-              ]}
-            />
-            <TabPanel idBase={drawerTabs} selected={drawerTab}>
-            {drawerTab === "preview" ? (
-              <NodePreviewPanel
-                key={selectedNode.id}
-                yaml={yaml}
-                node={selectedNode.id}
-                outputs={portsOf(selectedNode, catalogue).outputs}
-                kind={kindOf(selectedNode.id)}
-                role={role}
-                ask={previewAsk}
-                last={previewResult}
-                onResult={setPreviewResult}
-                onAsked={() => setPreviewAsk(null)}
-              />
-            ) : (
-            <SettingsPanel
-              key={selectedNode.id}
-              node={selectedNode}
-              type={selectedNode.type ? catalogue.get(selectedNode.type) : undefined}
-              catalogue={catalogue}
-              check={check}
-              problems={problems.get(selectedNode.id) ?? []}
-              sources={sources}
-              readOnly={readOnly}
-              run={runNodes.get(selectedNode.id) ?? null}
-              quality={runQuality.get(selectedNode.id) ?? null}
-              predicted={predicted.get(selectedNode.id) ?? null}
-              parameters={graph?.parameters ?? []}
-              onSetting={(key, value, kind) => setOne(selectedNode.id, key, value, kind)}
-              onRename={(to) => rename(selectedNode.id, to)}
-              onDisconnect={unlink}
-              onConnectMenu={() => openConnect(selectedNode.id)}
-              onDelete={() => remove(selectedNode.id)}
-              onDuplicate={() => duplicate(selectedNode.id)}
-            />
-            )}
-            </TabPanel>
-          </aside>
-        )}
       </div>
+      {dock.host && CANVAS_TABS.has(dock.tab) && createPortal(dockBody(), dock.host)}
       <p className="visually-hidden" aria-live="polite" aria-atomic="true">
         {announce}
       </p>

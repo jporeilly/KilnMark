@@ -99,6 +99,13 @@ describe("each setting kind gets its control, with help and default", () => {
     expect(html(spec("keep", "columns"), [], { side: "lookup", nodeType: "lookup" })).toMatch(/<option value="id">id \(int64\)<\/option>/);
   });
 
+  test("A read node's query: SQL in a monospace box over several lines; other text stays one line", () => {
+    const out = html(spec("query", "text"), "SELECT 1\nFROM t", { nodeType: "read" });
+    expect(out).toMatch(/<textarea[^>]*class="mono cv-sql"/);
+    expect(out).toContain("SELECT 1\nFROM t");
+    expect(html(spec("query", "text"), undefined, { nodeType: "filter" })).toMatch(/<input/);
+  });
+
   test("A read node's COLUMNS: a box per column of the table, ticked in the order chosen", () => {
     const none = html(spec("columns", "columns"), undefined, { nodeType: "read" });
     expect(none).toContain("None ticked: every column is read.");

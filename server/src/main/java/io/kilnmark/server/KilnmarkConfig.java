@@ -330,9 +330,10 @@ public interface KilnmarkConfig {
         int sampleMaxMb();
 
         /**
-         * Whether custom SQL rules may be written (by admins) and run. Off by default: a query a
-         * person writes can read anything the source's login can see.
+         * Retired (ADR 0028): custom SQL rules now run where the source has {@code allow_sql=true}.
+         * Kept so a server that still sets it starts; it changes nothing, and true logs a warning.
          */
+        @Deprecated
         @WithDefault("false")
         boolean customSql();
 

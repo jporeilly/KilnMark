@@ -44,7 +44,7 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
         /** URL prefixes webhooks may call; set by the administrator. */
         List<String> webhookAllowList();
 
-        /** Whether the administrator turned custom SQL rules on ({@code kilnmark.quality.custom-sql}). */
+        /** Whether the rule's source allows SQL a person writes ({@code allow_sql}, ADR 0028). */
         default boolean customSqlEnabled() {
             return false;
         }
@@ -325,9 +325,12 @@ public record RuleDraft(String assetUrn, String field, String name, String type,
                 out.put("field", targetField);
             }
             case CUSTOM_SQL -> {
-                if (!context.customSqlEnabled()) {
-                    throw new IllegalArgumentException("type: custom SQL rules are turned off on this server. An "
-                        + "administrator can turn them on with kilnmark.quality.custom-sql=true.");
+                // A rule saved switched off never runs, so it needs no Allow SQL: a rule written before the
+                // source lost it can still be renamed, edited or switched off. Switching it on needs it again.
+                if (!context.customSqlEnabled() && !Boolean.FALSE.equals(enabled)) {
+                    throw new IllegalArgumentException("type: this source does not allow SQL a person writes. A "
+                        + "designer or an admin turns on Allow SQL (allow_sql) for it, with a login that can read only "
+                        + "what the SQL needs.");
                 }
                 if (!"postgresql".equals(context.sourceKind())) {
                     throw new IllegalArgumentException("type: custom SQL rules run only on PostgreSQL sources, where "

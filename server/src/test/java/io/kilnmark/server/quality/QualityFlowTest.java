@@ -161,10 +161,13 @@ class QualityFlowTest {
         loaded = true;
     }
 
-    /** A source on the test database: as the read-only qa_reader, or as the test's superuser. */
+    /**
+     * A source on the test database: as the read-only qa_reader, or as the test's superuser. Each
+     * allows SQL a person writes, for the custom rules (ADR 0028).
+     */
     private Map<String, Object> source(String name, Map<String, String> extra, boolean reader) {
         Map<String, String> settings = new HashMap<>(Map.of("url", url, "username", reader ? "qa_reader" : user,
-            "schemas", "qa", "sample_rows", "200"));
+            "schemas", "qa", "sample_rows", "200", "allow_sql", "true"));
         settings.putAll(extra);
         return Map.of("name", name, "kind", "postgresql", "password", reader ? "qa-reader-pw" : password,
             "settings", settings);

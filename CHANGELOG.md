@@ -5,6 +5,67 @@ details.
 
 ## Unreleased
 
+### What's new
+
+- **Designers, and who sees sensitive values.** A designer role sits between steward and admin:
+  designers build pipelines, flows and sources, and stewards run them. Only designers see values of
+  columns marked sensitive; admins see them masked, as everyone else does, and a designer token can
+  be made without that sight (ADR 0027).
+- **Allow SQL.** A PostgreSQL source can let SQL a person writes run on it, with the new **Allow SQL**
+  setting (`allow_sql`), off by default. Custom SQL quality rules run only on such sources, written
+  by designers whose token sees unmasked values (ADR 0028).
+- **Read with a query.** A read node can run one `SELECT` in place of a table, on a PostgreSQL
+  source with Allow SQL on (ADR 0028). The new sample `sample-read-query` shows one.
+
+### Details
+
+- **Unmasking is a grant of its own** (V26, ADR 0027). Tokens have `unmask`, true only on designer
+  tokens (the default for them; create one with `"unmask": false` to leave it out); the API and a
+  database check refuse it on any other role. Every view of data values asks for the grant, not a
+  role: admins, stewards, viewers and sign-in-off callers see sensitive values masked, in previews,
+  run errors, document text and search too, and a model never sees them. The Tokens page shows which
+  tokens hold it and who made them, and the server logs each such token and each mark cleared.
+  Custom SQL rules need the grant to be written, changed or run. Deleting a source with marks is for
+  admins. A second folder or bucket source over the same files is refused.
+- **Marks follow the data** (V25). A column a pipeline writes from a column marked sensitive is
+  marked on what it writes: passed on, renamed, looked up or worked out from one (a computed column,
+  an aggregate's value or group), followed through the pipeline as previews already follow it, for
+  every run whoever asked for it and however it ended. These marks are recorded for every write as
+  the run ends, before the written asset is catalogued (and on its catalogued columns when they
+  could not be told before), and stay when it is removed and found again (`carried_mark`; the
+  stewards' own marks are now `column_mark`, and `sensitive_column` is a view of both). Masks match
+  column names ignoring case; a write Kilnmark cannot follow is marked on every column (`*`), even
+  when its run failed. Only admins clear a mark, as before. Write paths must be written as the
+  source lists them (`/` between folders, no empty or `.` folders), so marks land where a scan finds
+  the file. Before this, copying a marked column elsewhere and previewing the copy showed its values
+  to stewards and viewers.
+- **A designer role, between steward and admin** (V24). Designers build: they add, change,
+  preview and delete pipelines and flows, add, import, change and delete sources, turn on writing
+  and change where a writable source points, write custom SQL rules, set server variables and add
+  the samples. They see values of columns marked sensitive, since they cannot transform data they
+  cannot see; admins, stewards and viewers see them masked (ADR 0027). **Stewards keep running pipelines and flows,
+  cancelling runs, testing, scanning and previewing sources and looking after quality, but no
+  longer build: existing steward tokens lose editing pipelines, flows, sources and server
+  variables.** Give a designer token to whoever builds. Admins keep the Settings pages, tokens,
+  admin-only connectors (generic JDBC), clearing a mark and deleting a source with marks; designers
+  may now run source imports. Tokens can be made for the new role under API tokens.
+- **Allow SQL** (`allow_sql`, ADR 0028), a setting every source has, for PostgreSQL sources only:
+  designers and admins turn it on or off, and the server logs it. Custom SQL quality rules are
+  accepted and run only where it is on. **`kilnmark.quality.custom-sql` is retired**: it does
+  nothing, and a server that sets it to true logs a warning. Turn on Allow SQL for each source whose
+  custom rules should keep running, with a login that can read only what the SQL needs.
+- **A read's `query`** (ADR 0028), in place of `asset`, never with `columns` or `where`. Checked as
+  custom SQL rules are, when the pipeline is checked and again as it runs, on a read-only connection
+  and a login without superuser-like rights; `row_limit` wraps it so the database stops early.
+  `${...}` is refused for now. Only designers whose token sees unmasked values save or preview a
+  pipeline with one (403 otherwise, admins included); anyone who runs pipelines runs it. Every
+  column a query returns is marked (`*`), and a run with one keeps its engine messages for
+  designers with the grant; the writes it feeds are marked before any row moves. A version saved
+  before this (V27, `queries_checked`) that has a query read does not run until saved again. Each run records the tables it reads, from the database's plan
+  (`EXPLAIN`), as reads and as the inputs of what it writes. The canvas edits
+  the query in a box over several lines. Adding the samples skips `sample-read-query` unless
+  `crm-db` is a PostgreSQL source with Allow SQL on, or for a caller who may not see unmasked values.
+
 ## 0.0.9 (31 October 2026)
 
 ### What's new
@@ -31,28 +92,6 @@ details.
 
 ### Details
 
-- **Marks follow the data** (V25). A column a pipeline writes from a column marked sensitive is
-  marked on what it writes: passed on, renamed, looked up or worked out from one (a computed column,
-  an aggregate's value or group), followed through the pipeline as previews already follow it, for
-  every run whoever asked for it and however it ended. These marks are recorded for every write as
-  the run ends, before the written asset is catalogued (and on its catalogued columns when they
-  could not be told before), and stay when it is removed and found again (`carried_mark`; the
-  stewards' own marks are now `column_mark`, and `sensitive_column` is a view of both). Masks match
-  column names ignoring case; a write Kilnmark cannot follow is marked on every column (`*`), even
-  when its run failed. Only admins clear a mark, as before. Write paths must be written as the
-  source lists them (`/` between folders, no empty or `.` folders), so marks land where a scan finds
-  the file. Before this, copying a marked column elsewhere and previewing the copy showed its values
-  to stewards and viewers.
-- **A designer role, between steward and admin** (V24). Designers build: they add, change,
-  preview and delete pipelines and flows, add, import, change and delete sources, turn on writing
-  and change where a writable source points, write custom SQL rules, set server variables and add
-  the samples. They see values of columns marked sensitive, as admins do, since they cannot
-  transform data they cannot see; stewards and viewers see them masked. **Stewards keep running pipelines and flows,
-  cancelling runs, testing, scanning and previewing sources and looking after quality, but no
-  longer build: existing steward tokens lose editing pipelines, flows, sources and server
-  variables.** Give a designer token to whoever builds. Admins keep the Settings pages, tokens,
-  admin-only connectors (generic JDBC) and clearing a mark; designers may now run source imports.
-  Tokens can be made for the new role under API tokens.
 - **Samples can be turned off.** Admins have **Offer the samples** under Settings, Administration
   (on by default; stored in the new `server_setting` table, V23, with `GET`/`PUT
   /api/v1/samples/offered`). Off, the Pipelines page shows no **Add samples** and the samples API

@@ -145,13 +145,17 @@ class SafetyTest {
     void customSqlIsOffByDefaultAndRefusedOnSqlServer() throws Exception {
         IllegalArgumentException off = assertThrows(IllegalArgumentException.class,
             () -> custom("SELECT * FROM ${table}").check(context("postgresql", true, false), "admin"));
-        assertTrue(off.getMessage().contains("turned off"), off.getMessage());
+        assertTrue(off.getMessage().contains("allow_sql"), off.getMessage());
+        // A rule saved switched off never runs, so a source without Allow SQL still takes it (to rename or turn off).
+        assertNotNull(new RuleDraft(URN, null, null, "custom_sql", null,
+            Facts.JSON.readTree("{\"sql\":\"SELECT * FROM ${table}\"}"), null, null, null, null, false)
+            .check(context("postgresql", true, false), "admin"), "a rule switched off saves without allow_sql");
         IllegalArgumentException mssql = assertThrows(IllegalArgumentException.class,
             () -> custom("SELECT * FROM ${table}").check(context("sqlserver", true, true), "admin"));
         assertTrue(mssql.getMessage().contains("only on PostgreSQL"), mssql.getMessage());
         assertNotNull(custom("SELECT * FROM ${table}").check(context("postgresql", true, true), "admin"));
 
-        // And at run time, whatever is stored: off on this server, or a SQL Server source.
+        // And at run time, whatever is stored: a source without allow_sql, or a SQL Server source.
         Rule rule = custom("SELECT * FROM ${table}").check(context("postgresql", true, true), "admin");
         SqlRules.Plan pg = SqlRules.plan(rule, SqlDialect.POSTGRESQL, new SqlRules.Table("s", "t"), Map.of(), u -> null);
         SqlRules.Plan ms = SqlRules.plan(rule, SqlDialect.SQL_SERVER, new SqlRules.Table("s", "t"), Map.of(), u -> null);

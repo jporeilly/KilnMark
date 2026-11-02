@@ -24,8 +24,8 @@ class CommonSettingsTest {
         assertTrue(CommonSettings.problems(Map.of("ai_egress", "cloud")).get(0).startsWith("ai_egress:"));
         assertTrue(CommonSettings.problems(Map.of("description", "x".repeat(2001))).get(0).startsWith("description:"));
         assertTrue(CommonSettings.problems(Map.of("include", "*.{csv")).get(0).startsWith("include:"));
-        assertEquals(List.of("description", "ai_egress", "include", "exclude", "allow_writing", "keep_samples",
-                "sample_rows", "table_sample_above_rows"),
+        assertEquals(List.of("description", "ai_egress", "include", "exclude", "allow_writing", "allow_sql",
+                "keep_samples", "sample_rows", "table_sample_above_rows"),
             CommonSettings.definitions().stream().map(CommonSettings.Definition::key).toList());
     }
 
@@ -34,7 +34,7 @@ class CommonSettingsTest {
         Map<String, String> kinds = new java.util.LinkedHashMap<>();
         CommonSettings.definitions().forEach(d -> kinds.put(d.key(), d.kind().name()));
         assertEquals(Map.of("description", "TEXT", "ai_egress", "CHOICE", "include", "TEXT", "exclude", "TEXT",
-            "allow_writing", "BOOLEAN", "keep_samples", "BOOLEAN", "sample_rows", "NUMBER",
+            "allow_writing", "BOOLEAN", "allow_sql", "BOOLEAN", "keep_samples", "BOOLEAN", "sample_rows", "NUMBER",
             "table_sample_above_rows", "NUMBER"), kinds);
         // The kind follows the choices when a definition gives none, as before kinds.
         assertEquals("CHOICE", new CommonSettings.Definition("k", "K", "", false, List.of("a"), "a").kind().name());

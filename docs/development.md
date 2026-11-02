@@ -322,7 +322,7 @@ Kilnmark's user and people trusted with what it may write.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `kilnmark.quality.custom-sql` | `false` | Whether admins may write and run custom SQL rules |
+| `kilnmark.quality.custom-sql` | `false` | Retired (ADR 0028): does nothing. Custom SQL rules run on sources with Allow SQL (`allow_sql`) on, written by designers whose token sees unmasked values; `true` logs a warning at start-up |
 | `kilnmark.quality.sample-max-mb` | `8` | The most memory one asset's sample may hold |
 
 Webhooks are called once per evaluation that warns, fails or recovers. There are no retries: a

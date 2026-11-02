@@ -202,6 +202,23 @@ public class SourceImporter {
             if (!creates.isEmpty() || !updates.isEmpty()) {
                 store.saveSources(creates, updates).forEach(s -> ids.put(s.name(), s.id()));
             }
+            // Whether SQL a person writes may run on a source is logged, as an edit in the form logs it (ADR 0028).
+            org.jboss.logging.Logger log = org.jboss.logging.Logger.getLogger(SourceImporter.class);
+            creates.stream().filter(c -> io.kilnmark.server.sources.CommonSettings.allowsSql(c.settings()))
+                .forEach(c -> log.infof("Source %s added by import (%s); SQL a person writes may run on it (allow_sql)",
+                    c.name(), who));
+            for (Plan p : plans) {
+                if (p.update() == null) {
+                    continue;
+                }
+                Records.Source before = existing.get(p.result().name());
+                boolean was = before != null && io.kilnmark.server.sources.CommonSettings.allowsSql(before.settings());
+                boolean now = io.kilnmark.server.sources.CommonSettings.allowsSql(p.update().settings());
+                if (was != now) {
+                    log.infof("Source %s changed by import (%s); SQL a person writes may %s run on it (allow_sql)",
+                        p.result().name(), who, now ? "now" : "no longer");
+                }
+            }
         }
         int created = count(plans, "created");
         int updated = count(plans, "updated");

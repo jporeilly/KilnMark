@@ -117,7 +117,7 @@ public class SampleResource {
         @APIResponse(responseCode = "403", description = "Not a designer")})
     public Samples.AddResult add(Samples.AddRequest body) {
         requireOffered();
-        return samples.add(body, who());
+        return samples.add(body, who(), sights);
     }
 
     @POST

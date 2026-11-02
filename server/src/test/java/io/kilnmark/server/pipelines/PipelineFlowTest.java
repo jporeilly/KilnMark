@@ -146,7 +146,7 @@ class PipelineFlowTest {
         JsonPath nodes = as(viewer).get("/api/v1/node-types").then().statusCode(200).extract().jsonPath();
         assertTrue(nodes.getList("type").containsAll(List.of("read", "write")), nodes.prettify());
         assertEquals("source", nodes.getString("find { it.type == 'read' }.kind"));
-        assertEquals(List.of("source", "asset", "columns", "where", "row_limit"), nodes.getList("find { it.type == 'read' }.settings.key"));
+        assertEquals(List.of("source", "asset", "query", "columns", "where", "row_limit"), nodes.getList("find { it.type == 'read' }.settings.key"));
         assertEquals(List.of("create", "append", "replace", "upsert"),
             nodes.getList("find { it.type == 'write' }.settings.find { it.key == 'mode' }.choices"));
         // The writer settings each kind of source takes, for the canvas; other nodes have none.

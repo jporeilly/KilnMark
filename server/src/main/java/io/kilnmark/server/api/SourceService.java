@@ -196,6 +196,11 @@ public class SourceService {
             connector.secretScope().forEach(k -> scope.put(k, existing.settings().get(k)));
             keepSecretIf = scope;
         }
+        if (CommonSettings.allowsSql(settings) && !SQL_KIND.equals(kind)) {
+            throw new IllegalArgumentException(CommonSettings.ALLOW_SQL + ": only PostgreSQL sources can run SQL a person "
+                + "writes for now, where Kilnmark can hold it to a read-only transaction (ADR 0028). Leave it off for "
+                + "this " + kind + " source");
+        }
         SourceConfig config = new SourceConfig(name, kind, settings, secret);
         String problem = SourceRules.check(connectors, config);
         if (problem != null) {
@@ -333,6 +338,42 @@ public class SourceService {
         if (CommonSettings.allowsWriting(Map.of(CommonSettings.ALLOW_WRITING, sent))
             != CommonSettings.allowsWriting(existing.settings())) {
             throw ApiError.of(Response.Status.FORBIDDEN, WRITING_ADMIN_ONLY);
+        }
+        return form;
+    }
+
+    /** The one kind of source that may allow SQL a person writes, for now (ADR 0028). */
+    static final String SQL_KIND = "postgresql";
+
+    /** Said when someone below a designer tries to change whether SQL a person writes may run on a source. */
+    static final String SQL_DESIGNERS_ONLY = CommonSettings.ALLOW_SQL + ": only designers and admins can let SQL a "
+        + "person writes run on a source, or turn it off again. Ask a designer";
+
+    /**
+     * The edit form with {@code allow_sql} as only a designer or an admin may change it, as
+     * {@link #writingAsAllowed} does for writing: for anyone else, a form that leaves it out keeps the
+     * stored value, and one that changes it is refused.
+     *
+     * @throws jakarta.ws.rs.WebApplicationException 403 when someone else changes it
+     */
+    static SourceForm sqlAsAllowed(SourceForm form, Records.Source existing, boolean designer) {
+        if (designer || form == null || form.settings() == null) {
+            return form;
+        }
+        String stored = existing.settings().get(CommonSettings.ALLOW_SQL);
+        String sent = form.settings().get(CommonSettings.ALLOW_SQL);
+        if (sent == null || sent.isBlank()) {
+            if (stored == null) {
+                return form;
+            }
+            Map<String, String> kept = new HashMap<>(form.settings());
+            kept.put(CommonSettings.ALLOW_SQL, stored);
+            return new SourceForm(form.name(), form.kind(), kept, form.password(), form.clearPassword(), form.source(),
+                form.displayName());
+        }
+        if (CommonSettings.allowsSql(Map.of(CommonSettings.ALLOW_SQL, sent))
+            != CommonSettings.allowsSql(existing.settings())) {
+            throw ApiError.of(Response.Status.FORBIDDEN, SQL_DESIGNERS_ONLY);
         }
         return form;
     }
