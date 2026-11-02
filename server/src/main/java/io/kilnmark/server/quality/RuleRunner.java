@@ -100,7 +100,8 @@ public final class RuleRunner {
     static final String PRIVILEGED_LOGIN = """
         SELECT CASE
                  WHEN session_user::text <> current_user::text THEN 'other'
-                 WHEN r.rolsuper OR pg_catalog.pg_has_role(current_user, 'pg_read_server_files', 'MEMBER')
+                 WHEN pg_catalog.current_setting('session_replication_role') <> 'origin' THEN 'replication'
+                 WHEN r.rolsuper OR r.rolcreaterole OR pg_catalog.pg_has_role(current_user, 'pg_read_server_files', 'MEMBER')
                       OR pg_catalog.pg_has_role(current_user, 'pg_write_server_files', 'MEMBER')
                       OR pg_catalog.pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')
                       OR pg_catalog.pg_has_role(current_user, 'pg_signal_backend', 'MEMBER') THEN 'roles'
@@ -140,6 +141,12 @@ public final class RuleRunner {
                 + ", which reaches another database. Revoke it: REVOKE USAGE ON FOREIGN SERVER " + server + " FROM "
                 + "PUBLIC (and from the login and its roles).";
         }
+        if (reason.equals("replication")) {
+            // A login granted this superuser setting skips foreign keys and triggers for whatever it changes.
+            return "Custom SQL does not run under this source's login: its session_replication_role is not origin "
+                + "(set by its URL's options or its settings), which skips foreign keys and triggers. Take that "
+                + "setting off the login and the source.";
+        }
         if (reason.equals("other")) {
             // The session's settings came from a login that may be a superuser, whatever role it acts as now.
             return "Custom SQL does not run under this source's login: it acts as another role than the one it signed "
@@ -153,8 +160,8 @@ public final class RuleRunner {
         return PRIVILEGED_REFUSAL;
     }
 
-    static final String PRIVILEGED_REFUSAL = "Custom SQL does not run under this source's login: it is a superuser "
-        + "or may read or write the server's files, run programs or stop other sessions. Give the source a read-only "
+    static final String PRIVILEGED_REFUSAL = "Custom SQL does not run under this source's login: it is a superuser, "
+        + "may create roles, or may read or write the server's files, run programs or stop other sessions. Give the source a read-only "
         + "login without those rights.";
 
     /** Why custom SQL may not run on {@code c}'s login and database, or null; {@code c} is not in auto-commit. */
@@ -195,6 +202,8 @@ public final class RuleRunner {
                 }
             }
             if (plans.stream().anyMatch(java.util.Objects::nonNull)) {
+                // The URL's rules again: a source saved before a rule existed (preferQueryMode, readOnlyMode) keeps it
+                boolean urlAccepted = jdbc.validate(t.source()).isEmpty();
                 try (Connection c = jdbc.connect(t.source())) {
                     c.setAutoCommit(false);
                     c.setReadOnly(true);
@@ -205,6 +214,11 @@ public final class RuleRunner {
                             continue;
                         }
                         if (rules.get(i).type() == RuleType.CUSTOM_SQL) {
+                            if (!urlAccepted) {
+                                out.put(i, Evaluation.error("sql", "Custom SQL does not run on this source: its "
+                                    + "settings are no longer accepted. Open the source and save it again to see why."));
+                                continue;
+                            }
                             if (!loginChecked) {
                                 unsafeLogin = privileged(c);
                                 loginChecked = true;

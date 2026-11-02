@@ -112,6 +112,14 @@ docs in the same release:
   row is inserted, with the rights of whoever inserts. Creating functions is refused, so only
   functions already in the database, with their own rights, can be named; the login's grants decide
   which. A review may ask to refuse these too.
+- **The login check** refuses, before any SQL a person wrote runs: a superuser; a login that may
+  create roles; one in a role that reads or writes the server's files, runs programs or stops other
+  sessions; one acting as another role than it signed in as; one whose `session_replication_role` is
+  not `origin`; one that may run dblink or use a foreign server; and a database with user mappings or
+  foreign tables. **Open owner decisions** (seven reviews, 2 November 2026): whether to refuse logins
+  with `BYPASSRLS` or in `pg_read_all_data` / `pg_write_all_data` (they widen what reads and custom
+  rules see, not what they can do), and whether to refuse a source that points at Kilnmark's own
+  database (a sql node there could change Kilnmark's own tables if its login may).
 - **Query reads stay read-only in the transaction itself** (`SET TRANSACTION READ ONLY`), not only
   through the driver, and a PostgreSQL URL may not say `readOnlyMode` or `preferQueryMode`.
 - The flows design's "Not in this plan: a SQL check node" is superseded by this record. The flow

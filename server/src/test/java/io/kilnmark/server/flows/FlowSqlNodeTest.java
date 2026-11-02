@@ -414,9 +414,44 @@ class FlowSqlNodeTest {
         assertEquals(target, count("SELECT count(*) FROM fsql.target"), "the TRUNCATE never ran");
     }
 
+    /**
+     * A login that may create roles, or whose session skips foreign keys and triggers
+     * (session_replication_role, which PostgreSQL 15 lets a login be granted), is refused (the seventh
+     * review of the sql node).
+     */
     @Test
     @Order(12)
+    void loginsThatMayCreateRolesOrSkipTriggersAreRefused() throws Exception {
+        superuser("DROP ROLE IF EXISTS fsql_maker", "DROP ROLE IF EXISTS fsql_replica",
+            "CREATE ROLE fsql_maker LOGIN CREATEROLE PASSWORD 'fsql-maker-pw'",
+            "GRANT USAGE ON SCHEMA fsql TO fsql_maker",
+            "GRANT SELECT, INSERT, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA fsql TO fsql_maker",
+            "CREATE ROLE fsql_replica LOGIN PASSWORD 'fsql-replica-pw'",
+            "GRANT USAGE ON SCHEMA fsql TO fsql_replica",
+            "GRANT SELECT, INSERT, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA fsql TO fsql_replica",
+            "GRANT SET ON PARAMETER session_replication_role TO fsql_replica");
+        source("fsql-maker", "fsql_maker", "fsql-maker-pw", true, true);
+        String replica = url + (url.contains("?") ? "&" : "?") + "options=-c%20session_replication_role%3Dreplica";
+        admin().contentType(ContentType.JSON).body(Map.of("name", "fsql-replica", "kind", "postgresql", "password",
+            "fsql-replica-pw", "settings", Map.of("url", replica, "username", "fsql_replica", "schemas", "fsql",
+                "allow_sql", "true", "allow_writing", "true"))).post("/api/v1/sources").then().statusCode(201);
+        long target = count("SELECT count(*) FROM fsql.target");
+        for (String[] c : List.of(new String[] {"fsql-maker", "may create roles"},
+            new String[] {"fsql-replica", "session_replication_role is not origin"})) {
+            String name = c[0] + "-load";
+            save(LOAD.replace("name: fsql-load", "name: " + name).replace("source: fsql-db", "source: " + c[0]));
+            long run = start(name);
+            assertEquals("failed", finished(run).status());
+            FlowStore.NodeRun load = node(run, "load");
+            assertTrue(load.message().contains(c[1]), load.message());
+        }
+        assertEquals(target, count("SELECT count(*) FROM fsql.target"), "the TRUNCATE never ran");
+    }
+
+    @Test
+    @Order(13)
     void cleanUp() throws Exception {
-        superuser("DROP SCHEMA fsql CASCADE", "DROP OWNED BY " + WRITER);
+        superuser("DROP SCHEMA fsql CASCADE", "DROP OWNED BY " + WRITER, "DROP OWNED BY fsql_maker",
+            "DROP OWNED BY fsql_replica", "DROP ROLE fsql_maker", "DROP ROLE fsql_replica");
     }
 }

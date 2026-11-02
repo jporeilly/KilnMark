@@ -70,6 +70,10 @@ details.
   `current_user`, for sql nodes, query reads and custom rules alike. Sql nodes and query reads also
   check the source's URL rules again when they run, so a source saved before a rule existed is
   refused until saved again, and a query read's plan runs read-only.
+- **The login check refuses more**: a login that may create roles, and one whose
+  `session_replication_role` is not `origin` (PostgreSQL 15 lets a login be granted that setting,
+  which skips foreign keys and triggers). Custom rules check the source's URL rules again when they
+  run, as sql nodes and query reads do.
 - **Query reads run.** A read with a query failed when its pipeline ran ("needs the setting
   'asset-urn'"): it has no single asset, and now records no row count for one.
 - **The query check lives in `PipelineService`.** `create` and `save` check a query read's author
