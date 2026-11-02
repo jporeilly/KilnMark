@@ -183,6 +183,17 @@ class SafetyTest {
         refusedAction("CREATE MATERIALIZED VIEW m AS SELECT * FROM t", "'view' is not allowed");
         refusedAction("ALTER VIEW v SET (security_invoker = false)", "'view' is not allowed");
         refusedAction("ALTER ROUTINE f() SET search_path = evil", "'routine' is not allowed");
+        // The fourth review: a lone surrogate reaches the database as ?, and GRANT can sit inside CREATE SCHEMA
+        refusedAction("UPDATE t SET a = a WHERE '{}'::jsonb \uD800set_config('role', 'other', true) IS NOT NULL",
+            "not valid text");
+        refused("SELECT 1 WHERE '{}'::jsonb \uDC00set_config('search_path', 'evil', true) IS NOT NULL");
+        refusedAction("INSERT INTO t VALUES ('\uD83D')", "not valid text");
+        assertEquals("INSERT INTO t VALUES ('\uD83D\uDE00')",
+            SqlTokens.checkAction("INSERT INTO t VALUES ('\uD83D\uDE00')", 10_000), "a pair is a character");
+        refusedAction("CREATE SCHEMA s2 CREATE TABLE s2.x (a int) GRANT ALL ON TABLE public.t TO PUBLIC",
+            "'grant' is not allowed");
+        refusedAction("CREATE SCHEMA s2 CREATE TABLE s2.x (a int) REVOKE ALL ON TABLE public.t FROM x",
+            "'revoke' is not allowed");
         assertEquals(null, SqlTokens.driverSplits("INSERT INTO t VALUES ('a;b')"));
         assertEquals("one statement only", SqlTokens.driverSplits("INSERT INTO t VALUES (1); DELETE FROM t"));
     }

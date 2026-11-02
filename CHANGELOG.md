@@ -56,8 +56,9 @@ details.
   URL set `options=-c standard_conforming_strings=off` (or a login or database with it off) could
   make a query read leave its read-only transaction and write. Query reads, custom SQL rules and sql
   nodes now turn it on for their transaction and check before each statement that it is still on.
-  Refused too: `pg_settings` everywhere (its rules change settings), and in sql nodes, views and
-  `ALTER ROUTINE` (code that runs later).
+  Refused too: `pg_settings` everywhere (its rules change settings), text that is not valid
+  Unicode (a lone surrogate reaches the database as `?`), and in sql nodes, views, `ALTER ROUTINE`
+  (code that runs later) and `GRANT` or `REVOKE` anywhere, `CREATE SCHEMA` included.
 - **Query reads run.** A read with a query failed when its pipeline ran ("needs the setting
   'asset-urn'"): it has no single asset, and now records no row count for one.
 - **The query check lives in `PipelineService`.** `create` and `save` check a query read's author
