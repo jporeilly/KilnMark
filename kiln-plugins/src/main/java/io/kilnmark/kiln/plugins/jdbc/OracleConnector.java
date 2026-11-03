@@ -111,6 +111,14 @@ public class OracleConnector extends JdbcConnector {
         return "Oracle";
     }
 
+    /** Encrypted with {@code tls} (TCPS) or {@code required} (Oracle's native encryption, insisted on); not with {@code accepted}. */
+    @Override
+    public String unencryptedReason(SourceConfig source) {
+        String e = encryption(source);
+        return e.equals("tls") || e.equals("required") ? null
+            : "encryption: " + e + " leaves the connection unencrypted unless the server asks; choose tls or required";
+    }
+
     @Override
     public String monogram() {
         return "Ora";

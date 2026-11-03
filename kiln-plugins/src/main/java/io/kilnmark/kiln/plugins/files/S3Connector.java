@@ -178,7 +178,20 @@ public final class S3Connector extends FileSourceConnector {
             return io.kilnmark.kiln.connect.UrlHosts.hosts(source.setting("endpoint"));
         }
         String region = source.setting("region") == null ? S3FileStore.DEFAULT_REGION : source.setting("region");
-        return List.of("s3." + region + ".amazonaws.com");
+        return List.of(S3FileStore.awsHost(region));
+    }
+
+    /**
+     * Without an endpoint the SDK reaches AWS's own endpoint over HTTPS, never one from this server's
+     * environment ({@link S3FileStore} turns those off); another endpoint must be an {@code https://} URL.
+     */
+    @Override
+    public String unencryptedReason(SourceConfig source) {
+        String endpoint = source.setting("endpoint");
+        if (endpoint == null || endpoint.strip().regionMatches(true, 0, "https://", 0, 8)) {
+            return null;
+        }
+        return "endpoint: requests to it are not encrypted; use its https:// address";
     }
 
     @Override

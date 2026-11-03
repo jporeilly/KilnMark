@@ -128,6 +128,10 @@ In **Sources**, **Add a connection**, choose **Generic JDBC**:
 Only admins can add a Generic JDBC source or change these settings, because the URL goes to a
 driver Kilnmark cannot vet. Stewards can still test, scan and preview it.
 
+A server that requires encrypted connections to sources (`kilnmark.sources.require-tls`) refuses
+Generic JDBC sources, saved ones included: Kilnmark cannot tell how an arbitrary driver encrypts, so
+it cannot promise the connection is encrypted, whatever `sslConnection` or similar says.
+
 Kilnmark reads the tables' columns with their types: whole numbers, decimals (never rounded),
 dates, times and timestamps keep their type; a type Kilnmark does not know is read as text, and its
 column says so. Quality rules for these sources are checked on the rows read.

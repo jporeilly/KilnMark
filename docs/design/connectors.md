@@ -30,6 +30,7 @@ line in a services file; nothing in the server changes.
 | `asset(source, path)` | Optional. One asset with its fields, as the catalogue records it (default: the full catalogue) |
 | `preview(source, asset, rows)` | Optional. The first rows, built on `reader` with a row limit, so every connector has it; override only to add details |
 | `hosts(source)` | Optional. Every host the source would reach, for the server's allowed-hosts list (default: the hosts in `addressKeys` URLs) |
+| `unencryptedReason(source)` | Why a connection could cross the network unencrypted, naming the setting to change (never the host), or null when every connection is encrypted or the source reaches no network; asked when `kilnmark.sources.require-tls` is on (ADR 0034). The default cannot tell, so a server requiring TLS refuses the connector's sources until it says |
 | `secretScope()` | Optional. Settings that decide where the secret goes; changing one needs the secret again (default: every setting) |
 | `addressSettings(host, port, database)` | Optional. Settings built from a host, port and database, for bulk import (default: none) |
 | `catalogWithRelationships(source)` | Optional (default: `catalog` with no relationships). The catalogue plus the relationships the source declares, such as foreign keys; the scan calls this one |

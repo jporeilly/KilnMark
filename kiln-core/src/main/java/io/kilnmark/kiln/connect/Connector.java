@@ -160,6 +160,16 @@ public interface Connector {
     }
 
     /**
+     * Why a connection to {@code source} could cross the network unencrypted, naming the setting to
+     * change, or null when every connection is encrypted (or fails) or the source reaches no network,
+     * for servers that require TLS to sources (ADR 0034). The default cannot tell, so it gives a
+     * reason: a connector that reaches the network says for itself how its connections are encrypted.
+     */
+    default String unencryptedReason(SourceConfig source) {
+        return "Kilnmark cannot tell whether " + displayName() + " connections are encrypted";
+    }
+
+    /**
      * The settings that decide where the source's secret is sent (a URL, an endpoint, a user
      * name). Changing one of them on a saved source needs the secret entered again, so a stored
      * secret is never sent somewhere new. The default is every setting.

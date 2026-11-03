@@ -57,6 +57,21 @@ public final class S3FileStore implements FileStore {
 
     static final String DEFAULT_REGION = "us-east-1";
 
+    // A source names its endpoint, or none for AWS itself: the SDK must never take one from this
+    // server's environment (AWS_ENDPOINT_URL, aws.endpointUrl, a profile's endpoint_url), which could
+    // be plain HTTP or a host the allowed-hosts list was not told of (ADR 0034). As a system property
+    // this outranks the environment and profiles; AWS's own endpoints (FIPS, dual-stack, every
+    // partition) are still worked out as usual.
+    static {
+        System.setProperty(software.amazon.awssdk.core.SdkSystemSetting.AWS_IGNORE_CONFIGURED_ENDPOINT_URLS.property(),
+            "true");
+    }
+
+    /** AWS's own S3 host for a region (the main partition), for the allowed-hosts list. */
+    static String awsHost(String region) {
+        return "s3." + region + ".amazonaws.com";
+    }
+
     private final Settings settings;
     private final S3Client s3;
     private final Set<ResponseInputStream<GetObjectResponse>> active = ConcurrentHashMap.newKeySet();
@@ -77,6 +92,12 @@ public final class S3FileStore implements FileStore {
      *                    for checks, which must end in time
      */
     public S3FileStore(Settings settings, boolean allowDefaultCredentials, Duration callTimeout) throws IOException {
+        this(settings, allowDefaultCredentials, callTimeout, null);
+    }
+
+    /** As above, with an interceptor that sees each request before it is sent: for tests. */
+    S3FileStore(Settings settings, boolean allowDefaultCredentials, Duration callTimeout,
+                software.amazon.awssdk.core.interceptor.ExecutionInterceptor interceptor) throws IOException {
         this.settings = settings;
         if (settings.endpoint() != null && settings.endpoint().contains("@")) {
             throw new IOException("The endpoint must not hold a user name or password: put the access key ID in "
@@ -104,9 +125,14 @@ public final class S3FileStore implements FileStore {
         if (settings.endpoint() != null) {
             builder.endpointOverride(URI.create(settings.endpoint()));
         }
-        if (callTimeout != null) {
-            builder.overrideConfiguration(o -> o.apiCallTimeout(callTimeout).apiCallAttemptTimeout(callTimeout));
-        }
+        builder.overrideConfiguration(o -> {
+            if (callTimeout != null) {
+                o.apiCallTimeout(callTimeout).apiCallAttemptTimeout(callTimeout);
+            }
+            if (interceptor != null) {
+                o.addExecutionInterceptor(interceptor);
+            }
+        });
         this.s3 = builder.build();
     }
 

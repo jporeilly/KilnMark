@@ -4,7 +4,7 @@ What is decided and not yet done, in the order it will be worked. Each item name
 decided. When an item ships, it moves to the changelog and leaves this list. Longer-range items
 stay in [Plan & Scope](plan-and-scope.md) under "Beyond v0.1".
 
-Last reviewed: 3 November 2026 (after #61-#67 merged; #68 and the supply chain in review).
+Last reviewed: 3 November 2026 (after #61-#69 merged).
 
 ## Now
 
@@ -15,9 +15,8 @@ Last reviewed: 3 November 2026 (after #61-#67 merged; #68 and the supply chain i
 2. **Hardening for regulated customers** (brief of 28 October; owner, 1 November: Kilnmark must be
    deployable in banks, EU and US federal and state, and meet DORA, NYDFS Part 500 and the rest).
    The order is in [Compliance](compliance.md#order-of-work). Shipped: the audit log (#58), HTTPS
-   and security headers (#67); in review: TLS to Kilnmark's own database (#68), SBOMs, scanning and
-   signed releases (ADR 0033). Next:
-   - TLS to sources: a setting that refuses sources reached without it;
+   and security headers (#67), TLS to Kilnmark's own database (#68), SBOMs, scanning and signed
+   releases (#69); in review: encrypted connections to sources (ADR 0034). Next:
    - OIDC sign-in with MFA, brought forward from v0.2 ([ADR 0014](../adr/0014-authentication.md));
    - access reviews and token policy; backup and restore with a runbook; the evidence pack, with an
      SSDF self-assessment;
