@@ -22,11 +22,27 @@ details.
   only designers whose token sees unmasked values write one (ADR 0028). The new sample
   `sample-sql-before-and-after` shows one.
 
+- **Flows in the app.** A new **Flows** page, after Pipelines, lists every flow. Designers write a
+  flow's YAML on its page, checked as they type, and save it with every version; stewards run it,
+  giving values for its parameters, and cancel runs. A run's page shows each node's status, time and
+  message, with a link to the pipeline run it started. The flow canvas comes later.
+
 - **The audit log.** Every change made through the API, every request refused, and the changes
   that decide who sees sensitive values and what reaches a source are recorded, can never be changed
   or deleted, and can be sent to a SIEM. Admins read it under Settings, Audit log (ADR 0029).
 
 ### Details
+
+- **The flows API** (docs/design/flows.md, F3): `GET/POST /api/v1/flows`, `POST
+  /api/v1/flows/validate`, `GET/PUT /api/v1/flows/{name}` (the ETag is the latest version; a `PUT`
+  with an older `If-Match` is refused with 409), `GET .../versions` and `.../versions/{n}`, `POST
+  .../{name}/validate`, `POST` and `GET .../{name}/runs` (with `parameters`), `GET
+  /api/v1/flow-runs/{id}` (the run with every node of its version, each with its status, times,
+  message, what it reported and the pipeline run it started) and `POST
+  /api/v1/flow-runs/{id}/cancel`. Viewers read, designers save, stewards run and cancel. Saving
+  passes the caller's unmask grant, so a flow with a `sql` node is saved only by a designer whose
+  token sees unmasked values (ADR 0028). There is no delete yet. User guide: "Building and running a
+  flow".
 
 - **The allowed-hosts list sees the S3 hosts requests really reach** (ADR 0035). The AWS SDK works
   the host out, as for a read, and nothing is sent: usually with the bucket in it

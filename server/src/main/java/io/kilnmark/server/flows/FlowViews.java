@@ -1,0 +1,89 @@
+package io.kilnmark.server.flows;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+/** What the flows API takes and returns (docs/design/flows.md, F3). */
+public final class FlowViews {
+
+    private FlowViews() {
+    }
+
+    // ---- requests ----
+
+    /** {@code POST /api/v1/flows} and {@code PUT /api/v1/flows/{name}}: the YAML and what changed. */
+    public record FlowChange(String yaml, String message) {
+    }
+
+    /** {@code POST .../validate}: YAML to check. */
+    public record ValidateRequest(String yaml) {
+    }
+
+    /** {@code POST .../runs}: the version to run (the latest when left out) and parameter values. */
+    public record RunRequest(Integer version, Map<String, Object> parameters) {
+    }
+
+    // ---- responses ----
+
+    /** One problem: its line and column (from 1), the node it is in (or null) and what is wrong. */
+    public record Problem(int line, int column, String node, String message) {
+    }
+
+    /** What checking found; {@code name} is null when the YAML gave none. */
+    public record Validation(boolean valid, String name, List<Problem> problems, List<Parameter> parameters) {
+    }
+
+    /**
+     * A parameter the flow declares: its name, its type as written ({@code text}, {@code number},
+     * {@code boolean}, {@code text list}, {@code number list}), its default (null when a run must give
+     * it) and its description.
+     */
+    public record Parameter(String name, String type, Object defaultValue, boolean required, String description) {
+    }
+
+    /**
+     * A flow run, without its nodes. {@code parameters} are the values it started with. {@code error}
+     * is in Kilnmark's words and the flow's own, never a pipeline's error.
+     */
+    public record RunSummary(long id, String flow, int version, String status, String requestedBy,
+                             String requestedRole, Instant requestedAt, Instant startedAt, Instant finishedAt,
+                             boolean cancelRequested, String error, JsonNode parameters) {
+    }
+
+    /** A flow in the list. {@code valid} is whether its latest version can run. */
+    public record FlowSummary(String name, String displayName, String description, int latestVersion, boolean valid,
+                              String updatedBy, Instant updatedAt, RunSummary lastRun) {
+    }
+
+    public record VersionSummary(int n, String message, String author, Instant createdAt, boolean valid,
+                                 int problems) {
+    }
+
+    public record VersionDetail(int n, String yaml, String message, String author, Instant createdAt, boolean valid,
+                                List<Problem> problems, List<Parameter> parameters) {
+    }
+
+    /** A flow with its latest version. Its ETag is the latest version's number. */
+    public record FlowDetail(String name, String displayName, String description, int latestVersion,
+                             String createdBy, Instant createdAt, String updatedBy, Instant updatedAt,
+                             VersionDetail latest, RunSummary lastRun) {
+    }
+
+    /**
+     * One node's part in a run: {@code status} is pending (not started yet), running, succeeded,
+     * failed, cancelled or skipped; when it started and ended; the pipeline run it started, for a
+     * run-pipeline node; its message, in Kilnmark's words; and what it reported (status, score,
+     * quarantined_share, rows_written, duration_s; rows_affected for a sql node), or null.
+     */
+    public record NodeRunView(String node, String type, int position, String status, Instant startedAt,
+                              Instant finishedAt, Long pipelineRunId, String pipeline, String message,
+                              JsonNode reported) {
+    }
+
+    /** A flow run with every node of its version, in the order the YAML gives them. */
+    public record RunDetail(RunSummary run, List<NodeRunView> nodes) {
+    }
+}

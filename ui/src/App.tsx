@@ -28,6 +28,9 @@ const TokensPage = page(() => import("./pages/TokensPage"), "TokensPage");
 const PipelinesPage = page(() => import("./pipelines/PipelinesPage"), "PipelinesPage");
 const PipelinePage = page(() => import("./pipelines/PipelinePage"), "PipelinePage");
 const PipelineRunPage = page(() => import("./pipelines/PipelineRunPage"), "PipelineRunPage");
+const FlowsPage = page(() => import("./flows/FlowsPage"), "FlowsPage");
+const FlowPage = page(() => import("./flows/FlowPage"), "FlowPage");
+const FlowRunPage = page(() => import("./flows/FlowRunPage"), "FlowRunPage");
 const RulesPage = page(() => import("./pages/RulesPage"), "RulesPage");
 const RelationshipsPage = page(() => import("./browse/RelationshipsPage"), "RelationshipsPage");
 const NotificationsPage = page(() => import("./pages/NotificationsPage"), "NotificationsPage");
@@ -346,6 +349,11 @@ function Shell({ me }: { me: Me }) {
             <PipelinePage key={route.name ?? "#new"} name={route.name} version={route.version} role={me.role} />
           )}
           {route.page === "pipeline-run" && <PipelineRunPage id={route.id} role={me.role} />}
+          {route.page === "flows" && <FlowsPage role={me.role} />}
+          {route.page === "flow" && (
+            <FlowPage key={route.name ?? "#new"} name={route.name} version={route.version} role={me.role} />
+          )}
+          {route.page === "flow-run" && <FlowRunPage id={route.id} role={me.role} />}
           {route.page === "docs" && <DocsPage doc={route.doc} section={route.section} />}
           {route.page === "notifications" && <NotificationsPage confirm={route.confirm} />}
           {(route.page === "email" || route.page === "email-log") &&

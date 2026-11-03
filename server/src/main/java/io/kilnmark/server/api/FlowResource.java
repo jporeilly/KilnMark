@@ -1,0 +1,235 @@
+package io.kilnmark.server.api;
+
+import java.net.URI;
+import java.util.List;
+import java.util.Map;
+
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
+
+import io.kilnmark.server.auth.AccessRole;
+import io.kilnmark.server.flows.FlowService;
+import io.kilnmark.server.flows.FlowStore;
+import io.kilnmark.server.flows.FlowViews;
+import io.kilnmark.server.pipelines.PipelineService;
+import io.quarkus.security.identity.SecurityIdentity;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.HeaderParam;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
+
+/**
+ * Flows (docs/design/flows.md): saved as YAML with every version, checked as they are written, and
+ * run by workers, node by node. Viewers read; designers save; stewards run and cancel. A flow with a
+ * sql node is saved only by a designer whose token sees unmasked values (ADR 0028). There is no
+ * delete yet.
+ */
+@Path("/api/v1/flows")
+@Produces(MediaType.APPLICATION_JSON)
+@RolesAllowed(AccessRole.VIEWER_ROLE)
+public class FlowResource {
+
+    private final FlowService flows;
+    private final SecurityIdentity identity;
+
+    /** Who is saving: only a caller who may see unmasked values saves a flow with a sql node. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.Sights sights;
+
+    public FlowResource(FlowService flows, SecurityIdentity identity) {
+        this.flows = flows;
+        this.identity = identity;
+    }
+
+    @GET
+    @Operation(summary = "List flows", description = "Every flow by name, with its latest version, whether that "
+        + "version can run, and its latest run. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The flows"),
+        @APIResponse(responseCode = "401", description = "Not signed in")})
+    public List<FlowViews.FlowSummary> list() {
+        return flows.list();
+    }
+
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
+    @Operation(summary = "Add a flow", description = "Saves a new flow with its YAML as version 1. The name is the "
+        + "YAML's: a small letter followed by small letters, digits and dashes, at most 63 characters, and it cannot "
+        + "change. A flow with problems is saved as a draft (valid false) and cannot run until they are fixed. A flow "
+        + "with a sql node is saved only by a designer whose token sees unmasked values. The ETag is the latest "
+        + "version, to send back in If-Match when saving the next. Role: designer.")
+    @APIResponses({
+        @APIResponse(responseCode = "201", description = "Added; the body is the flow with its version and problems"),
+        @APIResponse(responseCode = "400", description = "No YAML, no name or one that cannot be used, or YAML over "
+            + "the size limit"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not a designer, or the flow has a sql node and the caller "
+            + "may not see unmasked values"),
+        @APIResponse(responseCode = "409", description = "A flow with that name exists")})
+    public Response create(FlowViews.FlowChange body) {
+        FlowStore.Flow f = flows.create(yaml(body), body.message(), who(), role(), sights.mayUnmask());
+        FlowViews.FlowDetail d = flows.detail(f.name());
+        return Response.created(URI.create("/api/v1/flows/" + d.name())).tag(etag(d)).entity(d).build();
+    }
+
+    @POST
+    @Path("validate")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Operation(summary = "Check flow YAML", description = "Checks YAML without saving or running it: its shape, "
+        + "connections and conditions, and that every pipeline it runs exists. Gives the problems, each with its "
+        + "line, column and node, and the parameters the flow declares. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "What the check found; valid is false when there are problems"),
+        @APIResponse(responseCode = "400", description = "No YAML, or YAML over the size limit"),
+        @APIResponse(responseCode = "401", description = "Not signed in")})
+    public FlowViews.Validation validateNew(FlowViews.ValidateRequest body) {
+        if (body == null) {
+            throw new IllegalArgumentException("Send {\"yaml\": \"...\"}");
+        }
+        return flows.check(body.yaml(), null);
+    }
+
+    @GET
+    @Path("{name}")
+    @Operation(summary = "A flow", description = "The flow with its latest version's YAML, problems and parameters, "
+        + "and its latest run. The ETag is the latest version's number, for If-Match. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The flow"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "404", description = "No such flow")})
+    public Response get(@PathParam("name") String name) {
+        FlowViews.FlowDetail d = flows.detail(name);
+        return Response.ok(d).tag(etag(d)).build();
+    }
+
+    @PUT
+    @Path("{name}")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @RolesAllowed(AccessRole.DESIGNER_ROLE)
+    @Operation(summary = "Save a new version", description = "Saves the YAML as the flow's next version, with a "
+        + "message saying what changed; earlier versions stay as they were. The YAML keeps the flow's name. With "
+        + "If-Match set to the latest version as you read it (the ETag), the save is refused (409) when someone has "
+        + "saved another since. Role: designer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "Saved; the body is the flow with the new version"),
+        @APIResponse(responseCode = "400", description = "No YAML, YAML over the size limit or naming another flow, "
+            + "or an If-Match that is not a version number"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not a designer, or the flow has a sql node and the caller "
+            + "may not see unmasked values"),
+        @APIResponse(responseCode = "404", description = "No such flow"),
+        @APIResponse(responseCode = "409", description = "Someone else saved a version after the one in If-Match")})
+    public Response save(@PathParam("name") String name, @HeaderParam("If-Match") String ifMatch,
+                         FlowViews.FlowChange body) {
+        Integer expected = PipelineService.readVersion(ifMatch);
+        flows.update(name, yaml(body), body.message(), who(), role(), sights.mayUnmask(), expected);
+        FlowViews.FlowDetail d = flows.detail(name);
+        return Response.ok(d).tag(etag(d)).build();
+    }
+
+    @GET
+    @Path("{name}/versions")
+    @Operation(summary = "A flow's versions", description = "Every saved version, newest first: who saved it, when, "
+        + "the message, whether it could run and how many problems it had. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The versions"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "404", description = "No such flow")})
+    public List<FlowViews.VersionSummary> versions(@PathParam("name") String name) {
+        return flows.versions(name);
+    }
+
+    @GET
+    @Path("{name}/versions/{n}")
+    @Operation(summary = "One version", description = "A saved version with its YAML, the problems found when it "
+        + "was saved and the parameters it declares. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The version"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "404", description = "No such flow or version")})
+    public FlowViews.VersionDetail version(@PathParam("name") String name, @PathParam("n") int n) {
+        return flows.versionDetail(name, n);
+    }
+
+    @POST
+    @Path("{name}/validate")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Operation(summary = "Check YAML for this flow", description = "As POST /api/v1/flows/validate, and a YAML naming "
+        + "another flow is a problem, since a flow's name cannot change. Nothing is saved. Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "What the check found"),
+        @APIResponse(responseCode = "400", description = "No YAML, or YAML over the size limit"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "404", description = "No such flow")})
+    public FlowViews.Validation validate(@PathParam("name") String name, FlowViews.ValidateRequest body) {
+        if (body == null) {
+            throw new IllegalArgumentException("Send {\"yaml\": \"...\"}");
+        }
+        return flows.check(body.yaml(), name);
+    }
+
+    @POST
+    @Path("{name}/runs")
+    @Consumes({MediaType.APPLICATION_JSON, MediaType.WILDCARD})
+    @RolesAllowed(AccessRole.STEWARD_ROLE)
+    @Operation(summary = "Run a flow", description = "Queues a run of one version (the latest when version is left "
+        + "out) with values for its parameters (the others take their defaults; one with no default must be given). "
+        + "The version is checked again first, since pipelines may have changed: one with problems is refused, and "
+        + "so is a second run while one is queued or running. The pipelines it runs run as you, with your role. "
+        + "Role: steward.")
+    @APIResponses({
+        @APIResponse(responseCode = "202", description = "Queued; the body is the run, and Location its address"),
+        @APIResponse(responseCode = "400", description = "A parameter it does not declare, a value of the wrong "
+            + "kind, or a parameter with no default left out"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "403", description = "Not a steward"),
+        @APIResponse(responseCode = "404", description = "No such flow or version"),
+        @APIResponse(responseCode = "409", description = "The version has problems that stop it running, or a run "
+            + "is already queued or running")})
+    public Response run(@PathParam("name") String name, FlowViews.RunRequest body) {
+        FlowViews.RunSummary run = flows.queueRunView(name, body == null ? null : body.version(),
+            body == null || body.parameters() == null ? Map.of() : body.parameters(), who(), role());
+        return Response.accepted(run).location(URI.create("/api/v1/flow-runs/" + run.id())).build();
+    }
+
+    @GET
+    @Path("{name}/runs")
+    @Operation(summary = "A flow's runs", description = "The latest runs, newest first (20 by default, at most 200). "
+        + "Role: viewer.")
+    @APIResponses({
+        @APIResponse(responseCode = "200", description = "The runs"),
+        @APIResponse(responseCode = "401", description = "Not signed in"),
+        @APIResponse(responseCode = "404", description = "No such flow")})
+    public List<FlowViews.RunSummary> runs(@PathParam("name") String name, @QueryParam("limit") Integer limit) {
+        return flows.runViews(name, limit == null ? 20 : limit);
+    }
+
+    private static String yaml(FlowViews.FlowChange body) {
+        if (body == null) {
+            throw new IllegalArgumentException("Send {\"yaml\": \"...\", \"message\": \"...\"}");
+        }
+        return body.yaml();
+    }
+
+    private AccessRole role() {
+        return AccessRole.highest(identity::hasRole);
+    }
+
+    private static jakarta.ws.rs.core.EntityTag etag(FlowViews.FlowDetail d) {
+        return new jakarta.ws.rs.core.EntityTag(Integer.toString(d.latestVersion()));
+    }
+
+    private String who() {
+        return identity.isAnonymous() ? "anonymous" : identity.getPrincipal().getName().replaceAll("\\p{Cntrl}", "?");
+    }
+}
