@@ -28,6 +28,9 @@ details.
 
 ### Details
 
+- **The release key** is in place: `config/release/cosign.pub` is the public half of the key that
+  signs every file of a release from now on. Check a release with it as INSTALL.md, "Check a
+  release", says.
 - **The allowed-hosts list sees the S3 hosts requests really reach** (ADR 0035). The AWS SDK works
   the host out, as for a read, and nothing is sent: usually with the bucket in it
   (`mybucket.storage.example.com`, `mybucket.s3.eu-west-2.amazonaws.com`) unless `path_style` is
