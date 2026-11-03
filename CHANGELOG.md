@@ -35,6 +35,8 @@ details.
   encrypted**, as read from the connection pool's own settings and the driver's own parser: an installation with its own PostgreSQL turns TLS on there and sets the sslmode
   (`verify-full` with its CA is best); INSTALL.md, "Kilnmark's own database".
   `kilnmark.database.require-tls=false` turns the check off, for a developer's own database.
+  The database migrations now run after the check, through the checked pool: `quarkus.flyway.*-at-start`
+  settings, or a Flyway URL or login of its own, stop the server while the check is on.
 - **HTTPS and security headers** (ADR 0031). Every response carries a Content-Security-Policy that
   lets only Kilnmark's own files run or load (no inline script or style, no framing by other
   sites), with `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,

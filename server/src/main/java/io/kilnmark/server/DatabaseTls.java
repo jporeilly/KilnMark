@@ -6,6 +6,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
 
+import org.flywaydb.core.Flyway;
 import org.jboss.logging.Logger;
 
 import org.postgresql.jdbc.SslMode;
@@ -13,10 +14,14 @@ import org.postgresql.jdbc.SslMode;
 import io.agroal.api.AgroalDataSource;
 import io.agroal.api.configuration.AgroalConnectionFactoryConfiguration;
 import io.agroal.api.security.AgroalSecurityProvider;
+import io.quarkus.datasource.common.runtime.DataSourceUtil;
+import io.quarkus.flyway.runtime.FlywayDataSourceRuntimeConfig;
+import io.quarkus.flyway.runtime.FlywayRuntimeConfig;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
+import jakarta.enterprise.inject.Instance;
 
 /**
  * Stops the server at start unless its own database is reached over TLS (ADR 0032): the connection
@@ -25,9 +30,12 @@ import jakarta.enterprise.event.Observes;
  * back to plain text without a word, and one encrypted session says nothing about the next. The
  * settings are the pool's own (its URL, its driver properties and what its credentials add, built as
  * the pool builds them) read by the PostgreSQL driver's own parser, so the check sees the mode the
- * driver will use, never another reading of the configuration. It runs before Kilnmark's other start-up work; Quarkus runs
- * Flyway's migrations earlier still. {@code kilnmark.database.require-tls=false} turns it off, for a
- * developer's own database.
+ * driver will use, never another reading of the configuration. It is the first start-up step, and
+ * the database migrations run here, after it, through the checked pool: Flyway does nothing at start
+ * on its own ({@code quarkus.flyway.migrate-at-start=false}), and with the check on, a start-up job of
+ * Flyway's or a Flyway URL or login of its own (which would open connections the check never sees)
+ * stops the server. {@code kilnmark.database.require-tls=false} turns the check off, for a
+ * developer's own database; the migrations still run.
  */
 @ApplicationScoped
 public class DatabaseTls {
@@ -36,21 +44,39 @@ public class DatabaseTls {
 
     private final KilnmarkConfig config;
     private final AgroalDataSource source;
+    private final FlywayRuntimeConfig flywayConfig;
+    private final Instance<Flyway> flyway;
 
-    public DatabaseTls(KilnmarkConfig config, AgroalDataSource source) {
+    public DatabaseTls(KilnmarkConfig config, AgroalDataSource source, FlywayRuntimeConfig flywayConfig,
+                       Instance<Flyway> flyway) {
         this.config = config;
         this.source = source;
+        this.flywayConfig = flywayConfig;
+        this.flyway = flyway;
     }
 
     void onStart(@Observes @Priority(1) StartupEvent event) {
-        if (!config.database().requireTls()) {
+        if (config.database().requireTls()) {
+            check();
+        } else {
             LOG.warn("kilnmark.database.require-tls is off: Kilnmark's own database may be reached without TLS");
-            return;
         }
+        if (flyway.isResolvable()) {
+            flyway.get().migrate();
+        }
+    }
+
+    private void check() {
         // What the pool itself will use, not the configuration keys: Quarkus accepts the same setting
         // under more than one name, and a credentials provider adds driver properties of its own.
         var factory = source.getConfiguration().connectionPoolConfiguration().connectionFactoryConfiguration();
-        String problem = settingProblem(factory.jdbcUrl(), driverProperties(factory));
+        String problem = flywayProblem(flywayConfig.datasources().get(DataSourceUtil.DEFAULT_DATASOURCE_NAME));
+        if (problem == null) {
+            problem = providerProblem(factory.connectionProviderClass());
+        }
+        if (problem == null) {
+            problem = settingProblem(factory.jdbcUrl(), driverProperties(factory));
+        }
         if (problem == null) {
             try (Connection c = source.getConnection()) {
                 problem = encrypted(c) ? null : "Kilnmark's own database session is not encrypted, though TLS was asked "
@@ -68,10 +94,47 @@ public class DatabaseTls {
     }
 
     /**
+     * Why Flyway could reach the database other than through the checked pool, or null when it cannot:
+     * a job Flyway runs at start (it would run before this check), or a Flyway URL or login of its own
+     * (Quarkus then opens Flyway's connections from that URL, or from the pool's URL without the pool's
+     * driver properties).
+     */
+    static String flywayProblem(FlywayDataSourceRuntimeConfig f) {
+        if (f == null) {
+            return null;
+        }
+        if (f.migrateAtStart().orElse(false) || f.cleanAtStart().orElse(false) || f.validateAtStart()
+            || f.repairAtStart() || f.baselineAtStart()) {
+            return "Flyway is set to work on Kilnmark's own database at start, before this check: Kilnmark runs "
+                + "its migrations itself, after it. Remove the quarkus.flyway.*-at-start settings.";
+        }
+        if (f.jdbcUrl().isPresent() || f.username().isPresent() || f.password().isPresent()) {
+            return "Flyway is set to reach Kilnmark's own database with a URL or login of its own, which this "
+                + "check cannot see: Kilnmark migrates through its own connection pool. Remove "
+                + "quarkus.flyway.jdbc-url, username and password.";
+        }
+        return null;
+    }
+
+    /**
+     * Why the pool's way of opening connections is one this check cannot vouch for, or null: only a
+     * {@link java.sql.Driver} lets the URL's {@code sslmode} win, as the check assumes (a DataSource
+     * class lets the properties win instead).
+     */
+    static String providerProblem(Class<?> provider) {
+        if (provider == null || java.sql.Driver.class.isAssignableFrom(provider)) {
+            return null;
+        }
+        return "Kilnmark's own database pool opens connections through a DataSource class, which this check "
+            + "cannot vouch for: use the PostgreSQL driver.";
+    }
+
+    /**
      * The driver properties the pool passes with its URL, as Agroal builds them: its JDBC properties,
-     * then whatever each security provider makes of each credential (a credentials provider can add
-     * {@code sslmode}), later ones winning. The user name and password are left out: they say nothing
-     * about TLS, and this never holds a secret longer than it must.
+     * then, for each credential, what the first security provider with an answer makes of it (a
+     * credentials provider can add {@code sslmode}), later credentials winning. The user name and
+     * password are left out: they say nothing about TLS, and this never holds a secret longer than it
+     * must.
      */
     static Properties driverProperties(AgroalConnectionFactoryConfiguration factory) {
         Properties props = new Properties();
@@ -81,6 +144,7 @@ public class DatabaseTls {
                 Properties added = provider.getSecurityProperties(credential);
                 if (added != null) {
                     props.putAll(added);
+                    break;
                 }
             }
         }

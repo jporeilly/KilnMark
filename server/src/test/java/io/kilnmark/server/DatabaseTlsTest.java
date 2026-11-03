@@ -72,6 +72,62 @@ class DatabaseTlsTest {
         assertFalse(DatabaseTls.driverProperties(factory).containsKey("password"), "never holds the password");
     }
 
+    @jakarta.inject.Inject
+    io.quarkus.flyway.runtime.FlywayRuntimeConfig flywayConfig;
+
+    /**
+     * Flyway reaches the database only through the checked pool, and only after the check: a job it
+     * would run at start, or a URL or login of its own, stops the server. The shipped settings pass.
+     */
+    @Test
+    void flywayGoesThroughTheCheckedPoolOnly() {
+        assertNull(DatabaseTls.flywayProblem(flywayConfig.datasources()
+            .get(io.quarkus.datasource.common.runtime.DataSourceUtil.DEFAULT_DATASOURCE_NAME)));
+        assertNull(DatabaseTls.flywayProblem(flyway(java.util.Map.of())));
+        for (var bad : java.util.List.<java.util.Map<String, Object>>of(
+            java.util.Map.of("migrateAtStart", java.util.Optional.of(true)),
+            java.util.Map.of("cleanAtStart", java.util.Optional.of(true)),
+            java.util.Map.of("validateAtStart", true), java.util.Map.of("repairAtStart", true),
+            java.util.Map.of("baselineAtStart", true))) {
+            assertTrue(String.valueOf(DatabaseTls.flywayProblem(flyway(bad))).contains("at start"), bad.toString());
+        }
+        for (String own : java.util.List.of("jdbcUrl", "username", "password")) {
+            String why = DatabaseTls.flywayProblem(flyway(java.util.Map.of(own, java.util.Optional.of("x"))));
+            assertTrue(why != null && why.contains("of its own"), own + " gave " + why);
+        }
+    }
+
+    /** Only a Driver lets the URL's sslmode win, as the check assumes; a DataSource class is refused. */
+    @Test
+    void onlyADriverOpensThePoolsConnections() {
+        assertNull(DatabaseTls.providerProblem(null));
+        assertNull(DatabaseTls.providerProblem(org.postgresql.Driver.class));
+        assertTrue(DatabaseTls.providerProblem(org.postgresql.ds.PGSimpleDataSource.class) != null);
+        assertTrue(DatabaseTls.providerProblem(org.postgresql.xa.PGXADataSource.class) != null);
+    }
+
+    /** Flyway's settings with the given values, and empty or false for the rest. */
+    private static io.quarkus.flyway.runtime.FlywayDataSourceRuntimeConfig flyway(java.util.Map<String, Object> set) {
+        return (io.quarkus.flyway.runtime.FlywayDataSourceRuntimeConfig) java.lang.reflect.Proxy.newProxyInstance(
+            DatabaseTlsTest.class.getClassLoader(),
+            new Class<?>[] {io.quarkus.flyway.runtime.FlywayDataSourceRuntimeConfig.class}, (proxy, m, args) -> {
+                if (set.containsKey(m.getName())) {
+                    return set.get(m.getName());
+                }
+                Class<?> t = m.getReturnType();
+                if (t == boolean.class) {
+                    return false;
+                }
+                if (t == java.util.Optional.class) {
+                    return java.util.Optional.empty();
+                }
+                if (t == java.util.OptionalInt.class) {
+                    return java.util.OptionalInt.empty();
+                }
+                return t == java.util.Map.class ? java.util.Map.of() : null;
+            });
+    }
+
     /** What a credentials provider adds counts, as the pool passes it to the driver after the JDBC properties. */
     @Test
     void aCredentialsProviderCannotLowerTheMode() {
