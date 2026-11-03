@@ -1,9 +1,9 @@
 # Flows
 
 Status: design, 29 October 2026. Round 4. Slices F1 (the engine, storage and the service) and F2
-(parameters passed to pipelines, server variables, notify and wait nodes) are built, and so is the
-`sql` node (ADR 0028, 2 November 2026); the rest (the API, the pages and the canvas) is marked
-**planned** below. ADR 0026 records the decision.
+(parameters passed to pipelines, server variables, notify and wait nodes) are built, and so are the
+`sql` node (ADR 0028, 2 November 2026) and F3, the API and the pages (3 November 2026); the canvas
+and the run chart (F4) are marked **planned** below. ADR 0026 records the decision.
 
 A pipeline moves and checks data. A **flow** runs pipelines in an order, and decides what runs next
 from how each ended and what it measured: carry on only if the gate set aside under 2% of the rows
@@ -187,10 +187,13 @@ V29 adds `flow_version.sql_checked` (section 7).
 
 ## 5. Who may do what
 
-- **Saving, running and cancelling a flow take the steward role** (`FlowService` checks; viewers see
-  flows once the API and pages exist, **planned**). The pipeline runs it queues run as the person who
-  started it, with their role, so a write node still needs a steward and a source that allows
-  writing, and a flow cannot do what its starter could not **at the moment it starts**. The role is
+- **Saving a flow takes a designer, running and cancelling one a steward** (`FlowService` checks,
+  and the API's roles). A flow with a `sql` node is saved only by a designer whose token sees
+  unmasked values (section 7); the API passes the caller's grant. Viewers see flows and their runs
+  (F3), but not the values a run started with, nor node messages that quote them (a notice's title,
+  the values a pipeline refused): those can hold server variables, which only stewards read. The
+  pipeline runs a flow queues run as the person who started it, with their role, so a write node
+  still needs a steward and a source that allows writing, and a flow cannot do what its starter could not **at the moment it starts**. The role is
   fixed when the run is queued: a token revoked afterwards does not stop a flow already running
   (cancel it), and a node may start up to `queue_timeout` after the flow did.
 - Flows are checked again when they are run: pipelines may have been deleted or changed since the
@@ -207,11 +210,18 @@ V29 adds `flow_version.sql_checked` (section 7).
 - **F2b.** Projects (`${project.x}`, values and variables scoped to a project), pipeline `outputs:`
   (values a run works out, such as the latest date it wrote, read by later nodes) and a `run-flow`
   node that gives a child flow its parameters.
-- **F3.** API (`/api/v1/flows`, `/api/v1/flow-runs`, validate, versions with `If-Match`, run, cancel)
-  and the run page with a Gantt chart: a bar per flow node, coloured by status, skipped nodes hatched,
-  each linked to its pipeline run (the Gantt component kept for this, see pipelines.md section 5).
+- **F3, built.** The API (`FlowResource`, `FlowRunResource`: `/api/v1/flows` to list, add, read,
+  check (new and saved), save with `If-Match` (409 on an older version), list versions and runs, and
+  run with parameter values; `/api/v1/flow-runs/{id}` with every node of the run's version, those not
+  yet started shown `pending`, and its cancel) and the pages: Flows in the sidebar after Pipelines, a
+  flow page with the YAML editor, checked as it is typed, Run now with a dialog for parameter values,
+  and a run page listing each node's status, time and message, linked to the pipeline run it
+  started. No delete: a flow's runs and the pipeline runs they started stay linked, and deleting
+  waits until what that means is decided. The sample flows are not yet added by Add samples.
 - **F4.** The flow canvas: flow nodes as boxes, connections as labelled edges, a connection
-  inspector, a live run overlay; editing as text patches as the pipeline canvas does.
+  inspector, a live run overlay; editing as text patches as the pipeline canvas does. The run page's
+  Gantt chart: a bar per flow node, coloured by status, skipped nodes hatched, each linked to its
+  pipeline run (the Gantt component kept for this, see pipelines.md section 5).
 - Not in this plan: retries of a node. A SQL *check* stays a pipeline with a `read` and a `gate`.
 
 ## 7. The sql node (ADR 0028)

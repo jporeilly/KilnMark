@@ -32,7 +32,11 @@ export type Route =
   // Pipelines: the list, one pipeline (a new one when name is null), and one run
   | { page: "pipelines" }
   | { page: "pipeline"; name: string | null; version: number | null }
-  | { page: "pipeline-run"; id: number };
+  | { page: "pipeline-run"; id: number }
+  // Flows: the list, one flow (a new one when name is null), and one run
+  | { page: "flows" }
+  | { page: "flow"; name: string | null; version: number | null }
+  | { page: "flow-run"; id: number };
 
 /** A path part decoded, or as it is when it is not valid percent-encoding. */
 function decode(part: string): string {
@@ -88,6 +92,16 @@ export function parse(hash: string): Route {
     const id = Number(path.slice("/pipeline-runs/".length));
     if (Number.isInteger(id) && id > 0) return { page: "pipeline-run", id };
   }
+  if (path === "/flows") return { page: "flows" };
+  if (path === "/flows/new") return { page: "flow", name: null, version: null };
+  if (path.startsWith("/flows/")) {
+    const v = Number(params.get("version"));
+    return { page: "flow", name: decode(path.slice("/flows/".length)), version: Number.isInteger(v) && v > 0 ? v : null };
+  }
+  if (path.startsWith("/flow-runs/")) {
+    const id = Number(path.slice("/flow-runs/".length));
+    if (Number.isInteger(id) && id > 0) return { page: "flow-run", id };
+  }
   if (path === "/relationships") return { page: "relationships", status: params.get("status") ?? "proposed" };
   return { page: "home" };
 }
@@ -130,6 +144,11 @@ export const href = {
   pipeline: (name: string, version?: number) =>
     `#/pipelines/${encodeURIComponent(name)}${version ? `?version=${version}` : ""}`,
   pipelineRun: (id: number) => `#/pipeline-runs/${id}`,
+  flows: () => "#/flows",
+  newFlow: () => "#/flows/new",
+  /** A flow; with a version, that saved version is shown read-only. */
+  flow: (name: string, version?: number) => `#/flows/${encodeURIComponent(name)}${version ? `?version=${version}` : ""}`,
+  flowRun: (id: number) => `#/flow-runs/${id}`,
   relationships: (status = "proposed") => `#/relationships?status=${encodeURIComponent(status)}`,
 };
 

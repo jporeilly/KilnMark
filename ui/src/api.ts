@@ -1507,6 +1507,121 @@ export const pipelinesApi = {
     call<NodePreview>("/api/v1/pipelines/preview", { method: "POST", body: JSON.stringify(p), signal }),
 };
 
+// ---- Flows (docs/design/flows.md) ----
+
+export type FlowProblem = { line: number; column: number; node: string | null; message: string };
+/**
+ * A parameter a flow declares. defaultVariable: its default is that server variable (${vars.name}),
+ * whose value is not shown. required: it has no default, so a run must give it.
+ */
+export type FlowParameter = {
+  name: string;
+  type: "text" | "number" | "boolean" | "text list" | "number list";
+  defaultValue: unknown;
+  defaultVariable: string | null;
+  required: boolean;
+  description: string | null;
+};
+export type FlowValidation = { valid: boolean; name: string | null; problems: FlowProblem[]; parameters: FlowParameter[] };
+export type FlowRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type FlowRun = {
+  id: number;
+  flow: string;
+  version: number;
+  status: FlowRunStatus;
+  requestedBy: string;
+  requestedRole: string | null;
+  requestedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  cancelRequested: boolean;
+  /** In Kilnmark's words and the flow's own, never a pipeline's error. */
+  error: string | null;
+  /** The parameter values the run started with. */
+  parameters: Record<string, unknown> | null;
+};
+export type FlowSummary = {
+  name: string;
+  displayName: string;
+  description: string | null;
+  latestVersion: number;
+  valid: boolean;
+  updatedBy: string;
+  updatedAt: string;
+  lastRun: FlowRun | null;
+};
+export type FlowVersionSummary = PipelineVersionSummary;
+export type FlowVersion = {
+  n: number;
+  yaml: string;
+  message: string | null;
+  author: string;
+  createdAt: string;
+  valid: boolean;
+  problems: FlowProblem[];
+  parameters: FlowParameter[];
+};
+export type FlowDetail = {
+  name: string;
+  displayName: string;
+  description: string | null;
+  latestVersion: number;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+  latest: FlowVersion | null;
+  lastRun: FlowRun | null;
+};
+export type FlowNodeStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
+/** One node's part in a flow run; pipelineRunId is the pipeline run a run-pipeline node started. */
+export type FlowNodeRun = {
+  node: string;
+  type: string;
+  position: number;
+  status: FlowNodeStatus;
+  startedAt: string | null;
+  finishedAt: string | null;
+  pipelineRunId: number | null;
+  pipeline: string | null;
+  message: string | null;
+  /** What it reported: status, score, quarantined_share, rows_written, duration_s; rows_affected for sql. */
+  reported: Record<string, unknown> | null;
+};
+export type FlowRunDetail = { run: FlowRun; nodes: FlowNodeRun[] };
+
+const flowPath = (name: string) => `/api/v1/flows/${encodeURIComponent(name)}`;
+
+export const flowsApi = {
+  list: () => call<FlowSummary[]>("/api/v1/flows"),
+  get: (name: string) => call<FlowDetail>(flowPath(name)),
+  /** The name is the YAML's. */
+  create: (p: { yaml: string; message?: string }) =>
+    call<FlowDetail>("/api/v1/flows", { method: "POST", body: JSON.stringify(p) }),
+  /** version: the latest version as read; the server refuses the save (409) if someone has saved another since. */
+  save: (name: string, p: { yaml: string; message: string }, version?: number) =>
+    call<FlowDetail>(flowPath(name), {
+      method: "PUT",
+      body: JSON.stringify(p),
+      headers: version ? { "If-Match": `"${version}"` } : undefined,
+    }),
+  validate: (yaml: string, name?: string) =>
+    call<FlowValidation>(name ? `${flowPath(name)}/validate` : "/api/v1/flows/validate", {
+      method: "POST",
+      body: JSON.stringify({ yaml }),
+    }),
+  versions: (name: string) => call<FlowVersionSummary[]>(`${flowPath(name)}/versions`),
+  version: (name: string, n: number) => call<FlowVersion>(`${flowPath(name)}/versions/${n}`),
+  run: (name: string, parameters: Record<string, unknown> = {}, version?: number) =>
+    call<FlowRun>(`${flowPath(name)}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ version: version ?? null, parameters }),
+    }),
+  runs: (name: string) => call<FlowRun[]>(`${flowPath(name)}/runs?limit=50`),
+  runDetail: (id: number) => call<FlowRunDetail>(`/api/v1/flow-runs/${id}`),
+  cancel: (id: number) => call<FlowRun>(`/api/v1/flow-runs/${id}/cancel`, { method: "POST" }),
+};
+
 /**
  * A preview at a node: shaped as a source's preview (asset is "node.port"), plus whether these are
  * all the node's rows, how long it took, the columns whose values are hidden (made from columns

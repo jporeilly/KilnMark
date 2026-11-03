@@ -137,6 +137,49 @@ public class FlowStore {
         });
     }
 
+    /** A flow in the list: whether its latest version can run, and its latest run (or null). */
+    public record Summary(Flow flow, boolean valid, Run lastRun) {
+    }
+
+    /** Every flow by name, each with its latest version's validity and its latest run, in one query. */
+    public List<Summary> summaries() {
+        return db.tx(c -> {
+            List<Summary> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT " + FLOW_COLUMNS + ", v.valid, " + RUN_COLUMNS
+                + " FROM kilnmark.flow f JOIN kilnmark.flow_version v ON v.flow = f.name AND v.n = f.latest_version"
+                + " LEFT JOIN LATERAL (SELECT * FROM kilnmark.flow_run x WHERE x.flow = f.name ORDER BY x.id DESC"
+                + " LIMIT 1) r ON true ORDER BY f.name");
+                 ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Flow f = flow(rs);
+                    boolean valid = rs.getBoolean(9);
+                    rs.getLong(10);
+                    out.add(new Summary(f, valid, rs.wasNull() ? null : run(rs, 9)));
+                }
+            }
+            return out;
+        });
+    }
+
+    /** A flow's versions, newest first, without their YAML. */
+    public List<FlowViews.VersionSummary> versions(String flow) {
+        return db.tx(c -> {
+            List<FlowViews.VersionSummary> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT n, message, author, created_at, valid, "
+                + "coalesce(jsonb_array_length(problems), 0) FROM kilnmark.flow_version WHERE flow = ? "
+                + "ORDER BY n DESC")) {
+                ps.setString(1, flow);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(new FlowViews.VersionSummary(rs.getInt(1), rs.getString(2), rs.getString(3),
+                            rs.getTimestamp(4).toInstant(), rs.getBoolean(5), rs.getInt(6)));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
     /**
      * Saves a flow's next version, creating the flow when there is none ({@code expected} null).
      *
@@ -239,8 +282,14 @@ public class FlowStore {
     }
 
     private static Run run(ResultSet rs) throws SQLException {
-        return new Run(rs.getLong(1), rs.getString(2), rs.getInt(3), rs.getString(4), rs.getString(5), rs.getString(6),
-            at(rs, 7), at(rs, 8), at(rs, 9), rs.getBoolean(10), rs.getString(11), rs.getString(12), rs.getString(13));
+        return run(rs, 0);
+    }
+
+    /** The run in RUN_COLUMNS from column {@code from + 1}. */
+    private static Run run(ResultSet rs, int from) throws SQLException {
+        return new Run(rs.getLong(from + 1), rs.getString(from + 2), rs.getInt(from + 3), rs.getString(from + 4),
+            rs.getString(from + 5), rs.getString(from + 6), at(rs, from + 7), at(rs, from + 8), at(rs, from + 9),
+            rs.getBoolean(from + 10), rs.getString(from + 11), rs.getString(from + 12), rs.getString(from + 13));
     }
 
     /**
