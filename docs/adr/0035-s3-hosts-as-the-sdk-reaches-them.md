@@ -40,7 +40,12 @@ The list checked one host while requests went to another.
   `*.s3-accesspoint.eu-west-2.amazonaws.com` for access points), or turn `path_style` on for a
   store that allows it. The refusal names the host to add. **Never `*.amazonaws.com`**: it also
   admits hosts anyone can set up on AWS (API Gateway, load balancers, EC2 public names), and a
-  source naming one as its endpoint would send its reads and writes there.
+  source naming one as its endpoint would send its reads and writes there. A wildcard never covers
+  the host it ends with (`s3.eu-west-2.amazonaws.com` itself, reached with `path_style` or a bucket
+  with dots), and us-east-1 reaches `*.s3.amazonaws.com`: list those as the refusals name them.
+- The list limits which networks and services sources reach, not whose buckets: under
+  `*.s3.eu-west-2.amazonaws.com` a source may name any bucket in that region, its owner's or
+  another's, with the keys it is given. Who may add and edit sources is the control for that.
 - us-east-1 without an endpoint reaches AWS's global host, `mybucket.s3.amazonaws.com`.
 - Each check builds a client, which costs milliseconds; it happens only when an allow-list is set,
   once per check, never per row. Clients use the SDK's legacy defaults mode whatever the server's

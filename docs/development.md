@@ -560,7 +560,8 @@ forgery). To limit it:
   `path_style` is on, and AWS's FIPS, dual-stack, partition and access-point hosts as they apply;
   [ADR 0035](adr/0035-s3-hosts-as-the-sdk-reaches-them.md); list narrow wildcards such as
   `*.s3.eu-west-2.amazonaws.com`, never `*.amazonaws.com`, which admits hosts anyone can set up on
-  AWS) whenever a source is added,
+  AWS; a wildcard does not cover the host it ends with, and us-east-1 reaches `*.s3.amazonaws.com`.
+  The list limits which services sources reach, not whose buckets) whenever a source is added,
   edited, imported, tested or listed, and again just before every scan, quality run, preview, test
   or on-demand read connects: narrow the list (and restart) and saved sources naming other hosts stop
   at once, their jobs failing with a message that names the host. Names are compared as written;
