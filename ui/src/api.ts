@@ -1827,6 +1827,37 @@ export const auditApi = {
   },
 };
 
+/** One line of the access review (ADR 0037): an API token, or a person who signs in with the identity provider. */
+export type AccessReviewEntry = {
+  kind: "token" | "provider";
+  name: string;
+  role: AccessRole | null;
+  unmask: boolean;
+  status: string;
+  createdBy: string | null;
+  createdAt: string | null;
+  expiresAt: string | null;
+  /** For a token, its last use; for a person, their last sign-in. */
+  lastUsedAt: string | null;
+  signIns: number | null;
+};
+
+/** Settings › Access review: who can do what, for admins. */
+export type AccessReview = {
+  generatedAt: string;
+  /** The longest a token may last, in days; null when tokens may never expire. */
+  tokenMaxLifetimeDays: number | null;
+  entries: AccessReviewEntry[];
+};
+
+export const accessReviewApi = {
+  get: () => call<AccessReview>("/api/v1/access-review"),
+  /** The review as CSV, for keeping as evidence; each download is in the audit log. */
+  csv: () => callText("/api/v1/access-review?format=csv", "text/csv"),
+  /** The longest a new token may last, in days, or null for no limit. */
+  tokenPolicy: () => call<{ maxLifetimeDays: number | null }>("/api/v1/tokens/policy"),
+};
+
 /** Notification settings and, for admins, email: the feed is notificationsApi in src/notifications/api.ts. */
 export const notifyApi = {
   mine: () => call<MyNotifications>("/api/v1/me/notifications"),

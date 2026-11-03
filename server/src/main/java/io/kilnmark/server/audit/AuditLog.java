@@ -87,10 +87,13 @@ public class AuditLog {
     /** Someone signed out of a provider sign-in. */
     public static final String SIGN_OUT = "auth.sign_out";
 
+    /** An admin downloaded the access review (ADR 0037); detail: format. */
+    public static final String ACCESS_REVIEW = "access.review";
+
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
-        SIGN_OUT);
+        SIGN_OUT, ACCESS_REVIEW);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;
@@ -123,6 +126,70 @@ public class AuditLog {
     /** One event as read back. */
     public record Event(long id, Instant at, String actor, Long tokenId, String action, String target,
                         Map<String, Object> detail) {
+    }
+
+    /**
+     * A person who has signed in with the identity provider and been given a role, as the audit log
+     * knows them (ADR 0037): when they last signed in, the role and grant their last sign-in with a
+     * role gave, and how many sign-ins gave them one. {@code refused} is the reason their latest
+     * sign-in was given no role, when it was; the role is cleared only when that reason is that none
+     * of their groups has one any more (a sign-in without MFA, say, does not take a role away).
+     */
+    public record ProviderAccess(String name, Instant lastSignIn, String role, boolean unmask, long signIns,
+                                 String refused) {
+    }
+
+    /** Everyone who has signed in with the identity provider and been given a role, most recent first. */
+    public List<ProviderAccess> providerAccess() {
+        return db.tx(c -> {
+            List<ProviderAccess> out = new ArrayList<>();
+            // every sign-in event, newest first per person: the latest says what happened last, the
+            // latest with a role says what their groups gave them
+            try (PreparedStatement ps = c.prepareStatement("SELECT actor, at, action, detail::text FROM "
+                + "kilnmark.audit_event WHERE action IN (?, ?) ORDER BY actor, at DESC")) {
+                ps.setString(1, SIGN_IN);
+                ps.setString(2, SIGN_IN_REFUSED);
+                try (ResultSet rs = ps.executeQuery()) {
+                    String actor = null;
+                    Instant last = null;
+                    String refused = null;
+                    Map<String, Object> given = null;
+                    long count = 0;
+                    while (true) {
+                        boolean more = rs.next();
+                        String next = more ? rs.getString(1) : null;
+                        if (actor != null && (!more || !actor.equals(next))) {
+                            if (given != null) {
+                                boolean gone = io.kilnmark.server.auth.OidcAccess.NO_GROUP.equals(refused);
+                                out.add(new ProviderAccess(actor, last, gone || given.get("role") == null ? null
+                                    : String.valueOf(given.get("role")), !gone && Boolean.TRUE.equals(given.get("unmask")),
+                                    count, refused));
+                            }
+                            actor = null;
+                        }
+                        if (!more) {
+                            break;
+                        }
+                        if (actor == null) {
+                            actor = next;
+                            last = Db.instant(rs.getTimestamp(2));
+                            refused = SIGN_IN_REFUSED.equals(rs.getString(3))
+                                ? String.valueOf(detail(rs.getString(4)).getOrDefault("reason", "")) : null;
+                            given = null;
+                            count = 0;
+                        }
+                        if (SIGN_IN.equals(rs.getString(3))) {
+                            count++;
+                            if (given == null) {
+                                given = detail(rs.getString(4));
+                            }
+                        }
+                    }
+                }
+            }
+            out.sort(java.util.Comparator.comparing(ProviderAccess::lastSignIn).reversed());
+            return out;
+        });
     }
 
     private final Db db;

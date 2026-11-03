@@ -7,6 +7,13 @@ details.
 
 ### What's new
 
+- **Access review, and a longest token lifetime** (ADR 0037). **Settings**, **Access review** lists
+  who can do what: every API token with its role, whether it sees sensitive values, its expiry and
+  last use, and everyone who signs in with your identity provider, with the role of their last
+  sign-in. Download it as CSV for your auditors; each download is in the audit log. Set
+  `KILNMARK_TOKEN_MAX_LIFETIME` (for example `90d`) and every new token must expire within it, while
+  older tokens stop working: check the review first.
+
 - **Sign in with your organisation's identity provider** (ADR 0036). Entra ID, Okta, Ping, ADFS,
   Keycloak or any OpenID Connect provider: the sign-in page offers **Sign in with** it, roles come
   from the provider's groups as the settings map them, and only designers in an unmask group see

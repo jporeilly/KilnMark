@@ -93,6 +93,18 @@ public class TokenResource {
             .build();
     }
 
+    /** The server's token policy: the longest a token may last, in days, or null for no limit (ADR 0037). */
+    public record TokenPolicy(Long maxLifetimeDays) {
+    }
+
+    /** What a new token may be: the longest lifetime the server allows. The UI offers only expiries within it. */
+    @GET
+    @Path("tokens/policy")
+    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    public TokenPolicy policy() {
+        return new TokenPolicy(tokens.maxLifetime().map(d -> d.toDays()).orElse(null));
+    }
+
     /** Every token, newest first, with its status. Secrets are never returned. */
     @GET
     @Path("tokens")

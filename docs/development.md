@@ -238,6 +238,16 @@ curl -X POST http://localhost:8780/api/v1/tokens -H "Authorization: Bearer $KILN
 The response holds the token once; only its SHA-256 is stored. `DELETE /api/v1/tokens/{id}`
 revokes one at once.
 
+**Token lifetime and the access review** (ADR 0037). `kilnmark.auth.token-max-lifetime`
+(`KILNMARK_AUTH_TOKEN_MAX_LIFETIME`, for example `90d`; unset by default) is the longest an API
+token may last: new tokens must expire within it, and a token older than it stops working whatever
+its own expiry, except the one from `KILNMARK_ADMIN_TOKEN`. Check **Settings**, **Access review**
+before setting it: tokens already older stop at once. `GET /api/v1/tokens/policy` says the limit.
+`GET /api/v1/access-review` (admins; `?format=csv` for a spreadsheet) lists every token with its
+role, grant, status, expiry and last use, and everyone who has signed in with the identity provider
+with the role of their last sign-in; each view and download is an audit event. Set the limit on every
+Kilnmark process (api, worker, scheduler): each judges tokens, and notifications, by its own setting.
+
 **Sign-in with the identity provider** (ADR 0036). With Quarkus's OIDC client set up
 (`QUARKUS_OIDC_TENANT_ENABLED=true`, `QUARKUS_OIDC_AUTH_SERVER_URL`, `QUARKUS_OIDC_CLIENT_ID`,
 `QUARKUS_OIDC_CREDENTIALS_SECRET`; INSTALL.md says how), the sign-in page offers **Sign in with**

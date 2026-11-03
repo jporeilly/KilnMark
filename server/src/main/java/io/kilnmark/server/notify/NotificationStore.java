@@ -37,6 +37,16 @@ public class NotificationStore {
 
     private final Db db;
 
+    /** Whether a token works now, as sign-in judges it (ADR 0037); unset in tests that build this by hand. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.auth.ApiTokens tokens;
+
+    /** SQL true while token {@code t} works: revoked, expired and past the longest lifetime all stop it. */
+    private String works(String t) {
+        return tokens == null ? "(" + t + ".revoked_at IS NULL AND (" + t + ".expires_at IS NULL OR " + t
+            + ".expires_at > now()))" : tokens.worksSql(t);
+    }
+
     public NotificationStore(Db db) {
         this.db = db;
     }
@@ -156,9 +166,14 @@ public class NotificationStore {
         }
     }
 
+    /** The subscriber columns, with whether its token works now as sign-in judges it ({@link #works}). */
+    private String subscriberColumns() {
+        return SUBSCRIBER_COLUMNS.replace("TOKEN_WORKS", works("t"));
+    }
+
     private static final String SUBSCRIBER_COLUMNS = """
         s.id, s.token_id, t.name, t.role,
-        (t.id IS NOT NULL AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > now())),
+        (t.id IS NOT NULL AND TOKEN_WORKS),
         s.team_name, s.email, s.enabled, s.kinds, s.min_severity, s.mode, s.digest_hour, s.sources, s.created_by,
         s.created_at, s.updated_at, s.in_app_kinds, s.email_confirmed_at, s.confirm_sent_at, s.paused
         FROM kilnmark.notify_subscriber s LEFT JOIN kilnmark.api_token t ON t.id = s.token_id""";
@@ -188,26 +203,26 @@ public class NotificationStore {
     }
 
     public Optional<Subscriber> forToken(long tokenId) {
-        return one("SELECT " + SUBSCRIBER_COLUMNS + " WHERE s.token_id = ?", ps -> ps.setLong(1, tokenId));
+        return one("SELECT " + subscriberColumns() + " WHERE s.token_id = ?", ps -> ps.setLong(1, tokenId));
     }
 
     public Optional<Subscriber> subscriber(long id) {
-        return one("SELECT " + SUBSCRIBER_COLUMNS + " WHERE s.id = ?", ps -> ps.setLong(1, id));
+        return one("SELECT " + subscriberColumns() + " WHERE s.id = ?", ps -> ps.setLong(1, id));
     }
 
     public List<Subscriber> teams() {
-        return list("SELECT " + SUBSCRIBER_COLUMNS + " WHERE s.token_id IS NULL ORDER BY lower(s.team_name), s.id",
+        return list("SELECT " + subscriberColumns() + " WHERE s.token_id IS NULL ORDER BY lower(s.team_name), s.id",
             ps -> { });
     }
 
     /** Addresses paused for now, people's and teams'. */
     public List<Subscriber> paused() {
-        return list("SELECT " + SUBSCRIBER_COLUMNS + " WHERE s.paused IS NOT NULL ORDER BY s.id", ps -> { });
+        return list("SELECT " + subscriberColumns() + " WHERE s.paused IS NOT NULL ORDER BY s.id", ps -> { });
     }
 
-    private static List<Subscriber> all(Connection c) throws SQLException {
+    private List<Subscriber> all(Connection c) throws SQLException {
         List<Subscriber> out = new ArrayList<>();
-        try (PreparedStatement ps = c.prepareStatement("SELECT " + SUBSCRIBER_COLUMNS);
+        try (PreparedStatement ps = c.prepareStatement("SELECT " + subscriberColumns());
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 out.add(subscriber(rs));
@@ -455,7 +470,7 @@ public class NotificationStore {
      * lately, still working, not an AI assistant's) whose choices (or the defaults: every kind) want
      * it, with the detail written for their role.
      */
-    private static int inbox(Connection c, long event, NotificationEvent e, Exposure x, Duration activeFor)
+    private int inbox(Connection c, long event, NotificationEvent e, Exposure x, Duration activeFor)
         throws SQLException {
         NotificationStore.InAppWriter.Item admin = InAppFeed.write(e, AccessRole.ADMIN, x);
         NotificationStore.InAppWriter.Item steward = InAppFeed.write(e, AccessRole.STEWARD, x);
@@ -466,11 +481,11 @@ public class NotificationStore {
             FROM kilnmark.notify_person p
             JOIN kilnmark.api_token t ON t.id = p.token_id
             LEFT JOIN kilnmark.notify_subscriber s ON s.token_id = t.id
-            WHERE t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > now()) AND NOT t.local_assistant
+            WHERE TOKEN_WORKS AND NOT t.local_assistant
               AND p.last_seen_at > now() - make_interval(secs => ?)
               AND (s.id IS NULL OR ? = ANY (s.in_app_kinds))
               AND (s.sources IS NULL OR ?::text IS NULL OR ? = ANY (s.sources))
-            ON CONFLICT (token_id, event_id) DO NOTHING""")) {
+            ON CONFLICT (token_id, event_id) DO NOTHING""".replace("TOKEN_WORKS", works("t")))) {
             ps.setLong(1, event);
             ps.setString(2, e.kind().id());
             ps.setString(3, viewer.severity().id());
