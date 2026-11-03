@@ -9,7 +9,7 @@ releases. Upgrade to the latest release to get them.
 
 Please report a vulnerability privately, never in a public issue, discussion or pull request.
 
-**Contact:** OWNER TO SET BEFORE THE FIRST RELEASE (a monitored address for security reports).
+**Contact:** email jp.oreilly@hotmail.com, with "Kilnmark security" in the subject.
 
 Include what you can of:
 

@@ -38,6 +38,5 @@ Last reviewed: 3 November 2026 (after #61-#67 merged; #68 and the supply chain i
 
 ## Owner's items
 
-- The security contact in `SECURITY.md`, and the release key (docs/development.md, "Releasing"),
-  before the first signed release.
+- The release key (docs/development.md, "Releasing"), before the first signed release.
 - The demo deck and the partnership status slide, last made for 0.0.8.
