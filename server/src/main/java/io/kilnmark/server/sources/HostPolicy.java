@@ -11,8 +11,8 @@ import io.kilnmark.kiln.connect.SourceConfig;
  * The hosts sources may connect to, from the administrator's {@code kilnmark.sources.allowed-hosts}:
  * exact host names or addresses, or {@code *.example.com} for any host in a domain. Empty (the
  * default) allows any host. Applied to every host a connector says it would reach
- * ({@link Connector#hosts}): JDBC URL hosts and the hosts their properties name, S3 endpoints (or
- * AWS's S3 host when there is none), whenever a source is added, edited, imported or checked, and
+ * ({@link Connector#hosts}): JDBC URL hosts and the hosts their properties name, and for S3 the host
+ * the AWS SDK sends the bucket's requests to (ADR 0035), whenever a source is added, edited, imported or checked, and
  * again immediately before every connection a scan, quality run, preview, listing, test or
  * on-demand read makes ({@link #refusal}), so a list narrowed since a source was saved holds at once.
  *

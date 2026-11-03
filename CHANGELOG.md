@@ -28,6 +28,14 @@ details.
 
 ### Details
 
+- **The allowed-hosts list sees the S3 hosts requests really reach** (ADR 0035). The AWS SDK works
+  the host out, as for a read, and nothing is sent: usually with the bucket in it
+  (`mybucket.storage.example.com`, `mybucket.s3.eu-west-2.amazonaws.com`) unless `path_style` is
+  on, and AWS's FIPS, dual-stack, partition and access-point hosts where they apply. **A list that
+  named only `storage.example.com` or `s3.<region>.amazonaws.com` now refuses those sources:** add
+  the host the refusal names, or a narrow wildcard such as `*.storage.example.com` or
+  `*.s3.eu-west-2.amazonaws.com`. Never `*.amazonaws.com`, which admits hosts anyone can set up on AWS.
+
 - **Encrypted connections to sources, when required** (ADR 0034). With
   `kilnmark.sources.require-tls=true` (off by default), a source whose connections could go
   unencrypted is refused when it is saved, and nothing connects to one saved earlier: PostgreSQL

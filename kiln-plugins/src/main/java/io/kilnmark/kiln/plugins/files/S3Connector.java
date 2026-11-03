@@ -171,14 +171,19 @@ public final class S3Connector extends FileSourceConnector {
         return Set.of("endpoint");
     }
 
-    /** The endpoint's host, or AWS's S3 host for the region when there is no endpoint. */
+    /**
+     * The host requests for the bucket really go to, as the AWS SDK works it out with these settings
+     * (ADR 0035): with the bucket in its name unless path_style is on, AWS's FIPS, dual-stack and
+     * partition hosts, access points. Nothing is sent.
+     */
     @Override
     public List<String> hosts(SourceConfig source) {
-        if (source.setting("endpoint") != null) {
+        if (source.setting("bucket") == null) {
             return io.kilnmark.kiln.connect.UrlHosts.hosts(source.setting("endpoint"));
         }
-        String region = source.setting("region") == null ? S3FileStore.DEFAULT_REGION : source.setting("region");
-        return List.of(S3FileStore.awsHost(region));
+        return List.of(S3FileStore.hostReached(new S3FileStore.Settings(source.setting("endpoint"),
+            source.setting("region"), source.setting("bucket"), null, null, null,
+            Boolean.parseBoolean(source.setting("path_style")))));
     }
 
     /**

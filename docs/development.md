@@ -555,7 +555,13 @@ forgery). To limit it:
 - **Allowed hosts.** `kilnmark.sources.allowed-hosts` (`KILNMARK_SOURCES_ALLOWED_HOSTS`) lists the
   hosts sources may reach: names, addresses or `*.example.com`, comma-separated. Every host a
   source names is checked (each host of a PostgreSQL host list, SQL Server's `serverName` and
-  `failoverPartner`, S3 endpoints, and AWS's S3 host when there is none) whenever a source is added,
+  `failoverPartner`, and for S3 the host the AWS SDK sends the bucket's requests to: usually with
+  the bucket in it, `mybucket.storage.example.com` or `mybucket.s3.eu-west-2.amazonaws.com`, unless
+  `path_style` is on, and AWS's FIPS, dual-stack, partition and access-point hosts as they apply;
+  [ADR 0035](adr/0035-s3-hosts-as-the-sdk-reaches-them.md); list narrow wildcards such as
+  `*.s3.eu-west-2.amazonaws.com`, never `*.amazonaws.com`, which admits hosts anyone can set up on
+  AWS; a wildcard does not cover the host it ends with, and us-east-1 reaches `*.s3.amazonaws.com`.
+  The list limits which services sources reach, not whose buckets) whenever a source is added,
   edited, imported, tested or listed, and again just before every scan, quality run, preview, test
   or on-demand read connects: narrow the list (and restart) and saved sources naming other hosts stop
   at once, their jobs failing with a message that names the host. Names are compared as written;
