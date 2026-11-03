@@ -13,6 +13,7 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "source.deleted", label: "Source deleted", tone: "warn" },
   { value: "source.allow_writing", label: "Allow writing changed", tone: "warn" },
   { value: "source.allow_sql", label: "Allow SQL changed", tone: "warn" },
+  { value: "flow.sql", label: "Flow ran SQL", tone: "warn" },
   { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
 ];
@@ -24,6 +25,10 @@ export function describe(e: AuditEvent): string {
   const d = e.detail ?? {};
   if (e.action === "source.allow_writing" || e.action === "source.allow_sql") {
     return `${d.on ? "Turned on" : "Turned off"}${d.via ? ` (${String(d.via)})` : ""}`;
+  }
+  if (e.action === "flow.sql") {
+    const n = Number(d.statements ?? 0);
+    return `${n} ${n === 1 ? "statement" : "statements"} on ${String(d.source ?? "")}, version ${String(d.version ?? "")}`;
   }
   if (e.action === "token.created") {
     const parts = [String(d.role ?? "")];

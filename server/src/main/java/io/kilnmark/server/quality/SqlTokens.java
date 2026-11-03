@@ -36,22 +36,45 @@ public final class SqlTokens {
         "pg_advisory", "pg_try_advisory", "pg_notify", "query_to_xml", "table_to_xml", "cursor_to_xml",
         "schema_to_xml", "database_to_xml", "pg_switch_wal", "pg_create_", "pg_drop_", "pg_promote",
         "pg_backup", "pg_start_backup", "pg_stop_backup", "pg_logdir", "pg_import", "pg_replication",
-        "pg_logical", "txid_", "pg_current_xact", "nextval", "setval", "currval", "lastval", "pg_log_");
+        "pg_logical", "txid_", "pg_current_xact", "nextval", "setval", "currval", "lastval", "pg_log_",
+        // run a query held in a string, out of this check's sight
+        "ts_stat", "ts_rewrite",
+        // its rules call set_config: a session's settings, standard_conforming_strings among them
+        "pg_settings");
 
     private SqlTokens() {
     }
 
-    /** The tokens of {@code sql}; throws if a string, quoted name or comment is not closed. */
+    /**
+     * The tokens of {@code sql}; throws if a string, quoted name or comment is not closed, or if it
+     * holds a control character other than PostgreSQL's whitespace. Whitespace and the end of a line
+     * comment are PostgreSQL's exactly ({@code \r} ends a comment as {@code \n} does), so nothing the
+     * database reads as SQL can hide in what this reads as a comment.
+     */
     public static List<Token> tokens(String sql) {
         List<Token> out = new ArrayList<>();
         int n = sql.length();
+        for (int k = 0; k < n; k++) {
+            char c = sql.charAt(k);
+            if ((c < 0x20 || c == 0x7f) && !isSpace(c)) {
+                throw new IllegalArgumentException("a control character (code " + (int) c + ") is not allowed");
+            }
+            // A surrogate not in a pair cannot be sent as UTF-8: the driver would send ? in its place,
+            // a character this check never saw (the jsonb ? operator, say).
+            if (Character.isHighSurrogate(c) && k + 1 < n && Character.isLowSurrogate(sql.charAt(k + 1))) {
+                k++;
+            } else if (Character.isSurrogate(c)) {
+                throw new IllegalArgumentException("a character that is not valid text (code " + (int) c + ") is "
+                    + "not allowed");
+            }
+        }
         int i = 0;
         while (i < n) {
             char c = sql.charAt(i);
-            if (Character.isWhitespace(c)) {
+            if (isSpace(c)) {
                 i++;
             } else if (c == '-' && at(sql, i + 1, '-')) {
-                while (i < n && sql.charAt(i) != '\n') {
+                while (i < n && sql.charAt(i) != '\n' && sql.charAt(i) != '\r') {
                     i++;
                 }
             } else if (c == '/' && at(sql, i + 1, '*')) {
@@ -95,18 +118,19 @@ public final class SqlTokens {
                 i = end;
             } else if (c == '$') {
                 int j = i + 1;
-                if (j < n && Character.isDigit(sql.charAt(j))) {
-                    while (j < n && Character.isDigit(sql.charAt(j))) {
+                if (j < n && isDigit(sql.charAt(j))) {
+                    while (j < n && isDigit(sql.charAt(j))) {
                         j++;
                     }
                     out.add(new Token(Kind.PARAMETER, sql.substring(i, j), i));
                     i = j;
                     continue;
                 }
-                while (j < n && (Character.isLetterOrDigit(sql.charAt(j)) || sql.charAt(j) == '_')) {
+                // A tag is read as PostgreSQL reads it: an identifier's characters, so any non-ASCII one
+                while (j < n && isWordPart(sql.charAt(j)) && sql.charAt(j) != '$') {
                     j++;
                 }
-                if (j < n && sql.charAt(j) == '$' && (j == i + 1 || !Character.isDigit(sql.charAt(i + 1)))) {
+                if (j < n && sql.charAt(j) == '$') {
                     String tag = sql.substring(i, j + 1);
                     int end = sql.indexOf(tag, j + 1);
                     if (end < 0) {
@@ -118,17 +142,19 @@ public final class SqlTokens {
                     out.add(new Token(Kind.SYMBOL, "$", i));
                     i++;
                 }
-            } else if (Character.isLetter(c) || c == '_' || c > 127) {
+            } else if (isWordStart(c)) {
                 int j = i + 1;
-                while (j < n && (Character.isLetterOrDigit(sql.charAt(j)) || sql.charAt(j) == '_'
-                    || sql.charAt(j) == '$' || sql.charAt(j) > 127)) {
+                while (j < n && isWordPart(sql.charAt(j))) {
                     j++;
                 }
                 out.add(new Token(Kind.WORD, sql.substring(i, j).toLowerCase(Locale.ROOT), i));
                 i = j;
-            } else if (Character.isDigit(c) || (c == '.' && i + 1 < n && Character.isDigit(sql.charAt(i + 1)))) {
+            } else if (isDigit(c) || (c == '.' && i + 1 < n && isDigit(sql.charAt(i + 1)))) {
                 int j = i + 1;
-                while (j < n && (Character.isLetterOrDigit(sql.charAt(j)) || sql.charAt(j) == '.' || sql.charAt(j) == '_'
+                // Digits, a point and an exponent only: letters after a number start a word, so a word
+                // such as RETURNING written straight after one is still seen.
+                while (j < n && (isDigit(sql.charAt(j)) || sql.charAt(j) == '.' || sql.charAt(j) == '_'
+                    || sql.charAt(j) == 'e' || sql.charAt(j) == 'E'
                     || ((sql.charAt(j) == '+' || sql.charAt(j) == '-') && (sql.charAt(j - 1) == 'e'
                     || sql.charAt(j - 1) == 'E')))) {
                     j++;
@@ -141,6 +167,58 @@ public final class SqlTokens {
             }
         }
         return out;
+    }
+
+    /** An ASCII digit: PostgreSQL reads no other digit as one. */
+    private static boolean isDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    /** How PostgreSQL starts an identifier: an ASCII letter, {@code _} or any non-ASCII character. */
+    private static boolean isWordStart(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c > 127;
+    }
+
+    /** What may follow in an identifier: those, digits and {@code $}. */
+    private static boolean isWordPart(char c) {
+        return isWordStart(c) || isDigit(c) || c == '$';
+    }
+
+    /**
+     * Why the PostgreSQL driver would not send {@code sql} as one statement, or null when it would:
+     * the driver's own parser decides where statements end, so a text this check reads as one
+     * statement is refused if the driver would split it.
+     */
+    static String driverSplits(String sql) {
+        try {
+            int n = org.postgresql.core.Parser.parseJdbcSql(sql, true, false, true, false, false).size();
+            return n <= 1 ? null : "one statement only";
+        } catch (java.sql.SQLException e) {
+            return "the database driver cannot read it as one statement";
+        }
+    }
+
+    /**
+     * Why a string may not be used, or null: an {@code E'...'} string, whose backslash escapes can
+     * carry on into a following string in a way that hides where it ends.
+     */
+    private static String escapeString(Token t) {
+        return t.kind() == Kind.STRING && (t.text().startsWith("E'") || t.text().startsWith("e'"))
+            ? "E'...' strings are not allowed; write the value in plain quotes" : null;
+    }
+
+    /** PostgreSQL's whitespace: space, tab, newline, carriage return, form feed and vertical tab. */
+    private static boolean isSpace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == 0x0b;
+    }
+
+    /**
+     * Why a token may not be used whatever the statement, or null: a {@code U&"..."} name, whose
+     * escapes could spell a refused function this check would not recognise.
+     */
+    private static String unicodeName(Token t) {
+        return t.kind() == Kind.QUOTED_WORD && (t.text().startsWith("U&") || t.text().startsWith("u&"))
+            ? "names written as U&\"...\" are not allowed; write the name plainly" : null;
     }
 
     private static boolean at(String s, int i, char c) {
@@ -208,12 +286,21 @@ public final class SqlTokens {
             throw new IllegalArgumentException("params.sql: must start with SELECT or WITH");
         }
         String problem = singleStatement(tokens);
+        if (problem == null) {
+            problem = driverSplits(s);
+        }
         if (problem != null) {
             throw new IllegalArgumentException("params.sql: " + problem);
         }
         for (Token t : tokens) {
             if (t.kind() == Kind.PARAMETER) {
                 throw new IllegalArgumentException("params.sql: parameters such as " + t.text() + " are not allowed");
+            }
+            if (unicodeName(t) != null) {
+                throw new IllegalArgumentException("params.sql: " + unicodeName(t));
+            }
+            if (escapeString(t) != null) {
+                throw new IllegalArgumentException("params.sql: " + escapeString(t));
             }
             if (t.kind() == Kind.WORD && FORBIDDEN_WORDS.contains(t.text())) {
                 throw new IllegalArgumentException("params.sql: '" + t.text() + "' is not allowed; custom rules only "
@@ -225,6 +312,98 @@ public final class SqlTokens {
                     if (name.startsWith(f)) {
                         throw new IllegalArgumentException("params.sql: '" + t.text() + "' is not allowed: it acts "
                             + "outside the query (files, other sessions or databases, settings, locks or sequences)");
+                    }
+                }
+            }
+        }
+        return s;
+    }
+
+    /**
+     * How a flow's sql node may start (ADR 0028): statements that change data or tables, call a procedure,
+     * or keep a table in order. Never a query (it would return rows), transaction control (the node is
+     * one transaction), {@code SET} (a role or settings), {@code COPY}, {@code DO}, {@code GRANT} or
+     * {@code REVOKE}.
+     */
+    static final Set<String> ACTION_FIRST_WORDS = Set.of("truncate", "insert", "update", "delete", "merge", "create",
+        "drop", "alter", "call", "analyze", "refresh", "comment", "reindex", "cluster", "lock");
+    /**
+     * Words a sql node's statement never holds, unquoted: they create, change or drop logins, rights,
+     * code that runs later, or ways out of the database, or they return rows.
+     */
+    static final Set<String> ACTION_FORBIDDEN_WORDS = Set.of("role", "user", "group", "extension", "server", "foreign",
+        "mapping", "subscription", "publication", "database", "tablespace", "system", "language", "event",
+        "function", "procedure", "trigger", "rule", "policy", "owner", "authorization", "security", "privileges",
+        "operator", "cast", "aggregate", "conversion", "wrapper", "returning", "copy",
+        // a view runs later with its owner's rights, for whoever reads it; a routine's settings are code
+        "view", "routine",
+        // rights, also where CREATE SCHEMA holds them
+        "grant", "revoke",
+        // a schema named as the login comes first on its search path ("$user"), and changes what every
+        // unqualified name later means
+        "schema");
+    /** {@link #FORBIDDEN_FUNCTIONS} less those a statement that writes may need: sequences. */
+    static final List<String> ACTION_FORBIDDEN_FUNCTIONS = FORBIDDEN_FUNCTIONS.stream()
+        .filter(f -> !Set.of("nextval", "setval", "currval", "lastval").contains(f)).toList();
+
+    /**
+     * Checks one statement of a flow's sql node and returns it without trailing semicolons. Throws
+     * {@link IllegalArgumentException} saying why it is refused. A first line of defence, as for
+     * custom rules: the node also runs only on a source that allows SQL and writing, in one
+     * transaction with a timeout, and not under a login that is a superuser or may reach files or
+     * other databases.
+     */
+    public static String checkAction(String sql, int maxLength) {
+        String s = sql == null ? "" : sql.strip();
+        List<Token> tokens;
+        try {
+            tokens = new ArrayList<>(tokens(s));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(e.getMessage());
+        }
+        while (!tokens.isEmpty() && tokens.getLast().kind() == Kind.SYMBOL && tokens.getLast().text().equals(";")) {
+            s = s.substring(0, tokens.getLast().at()).strip();
+            tokens.removeLast();
+        }
+        if (tokens.isEmpty() || s.length() > maxLength) {
+            throw new IllegalArgumentException("one SQL statement, at most " + maxLength + " characters");
+        }
+        Token first = tokens.getFirst();
+        if (first.kind() != Kind.WORD || !ACTION_FIRST_WORDS.contains(first.text())) {
+            throw new IllegalArgumentException("a statement starts with " + String.join(", ",
+                ACTION_FIRST_WORDS.stream().sorted().map(w -> w.toUpperCase(Locale.ROOT)).toList()) + ": a sql node "
+                + "changes data or tables and never returns rows; read with a pipeline");
+        }
+        String problem = singleStatement(tokens);
+        if (problem == null) {
+            problem = driverSplits(s);
+        }
+        if (problem != null) {
+            throw new IllegalArgumentException(problem + "; give each statement as its own item");
+        }
+        for (Token t : tokens) {
+            if (t.kind() == Kind.PARAMETER) {
+                throw new IllegalArgumentException("parameters such as " + t.text() + " are not allowed");
+            }
+            if (unicodeName(t) != null) {
+                throw new IllegalArgumentException(unicodeName(t));
+            }
+            if (escapeString(t) != null) {
+                throw new IllegalArgumentException(escapeString(t));
+            }
+            // REFRESH MATERIALIZED VIEW only fills a view that is there
+            boolean refresh = first.text().equals("refresh") && t.text().equals("view");
+            if (t.kind() == Kind.WORD && ACTION_FORBIDDEN_WORDS.contains(t.text()) && !refresh) {
+                throw new IllegalArgumentException("'" + t.text() + "' is not allowed: a sql node does not create or "
+                    + "change logins, rights, code that runs later or ways out of the database, and never returns "
+                    + "rows (quote it, \"" + t.text() + "\", if it is a column or table name)");
+            }
+            if (t.kind() == Kind.WORD || t.kind() == Kind.QUOTED_WORD) {
+                String name = t.text().toLowerCase(Locale.ROOT);
+                for (String f : ACTION_FORBIDDEN_FUNCTIONS) {
+                    if (name.startsWith(f)) {
+                        throw new IllegalArgumentException("'" + t.text() + "' is not allowed: it acts outside the "
+                            + "statement (files, other sessions or databases, settings or locks)");
                     }
                 }
             }

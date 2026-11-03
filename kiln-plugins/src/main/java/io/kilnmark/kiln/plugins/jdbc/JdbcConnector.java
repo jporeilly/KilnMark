@@ -148,6 +148,17 @@ public abstract class JdbcConnector implements Connector {
             return "url: the property " + name + " would change the time limits Kilnmark sets for connecting and "
                 + "reading. Take it out of the URL";
         }
+        // pgjdbc's simple protocol runs every statement a text holds: SQL a person writes must never go
+        // that way (ADR 0028).
+        if (n.equals("preferquerymode")) {
+            return "url: the property " + name + " would send SQL over PostgreSQL's simple protocol, which runs "
+                + "every statement a text holds. Take it out of the URL";
+        }
+        // pgjdbc can be told to ignore a read-only connection: reads, previews and checks must stay read-only.
+        if (n.equals("readonlymode")) {
+            return "url: the property " + name + " would let reads that are meant to be read-only write. Take it "
+                + "out of the URL";
+        }
         boolean denied = DENIED_PROPERTIES.contains(n) || n.endsWith("file") || n.endsWith("path")
             || n.endsWith("factory") || n.endsWith("class") || n.endsWith("classname")
             || n.equals("authentication") && !AUTHENTICATION_ALLOWED.contains(v);
@@ -1020,6 +1031,7 @@ public abstract class JdbcConnector implements Connector {
         driverSettings(source).forEach((k, v) -> s.put(JdbcTableInput.DRIVER_PREFIX + k, String.valueOf(v)));
         // On lines of its own, so a query ending in a -- comment cannot comment out the closing parenthesis.
         s.put("query", rowLimit > 0 ? "SELECT * FROM (\n" + sql + "\n) AS kilnmark_query LIMIT " + rowLimit : sql);
+        s.put(JdbcTableInput.WRITTEN_QUERY, "true");
         s.put("label", label);
         s.put("row-limit", "0"); // the query applies the limit itself
         s.put("batch-size", Integer.toString(batchSize));

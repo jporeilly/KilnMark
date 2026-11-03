@@ -95,6 +95,33 @@ docs in the same release:
   its own two homes, each opted into per source, each checked, each versioned.
 - A SQL action can do anything the login can. The opt-in, the login check, the versioning and the
   log are the controls; a limited login is the one that matters most, and the guide says so.
+- **Marks do not follow what a SQL action copies** (accepted risk, 2 November 2026). A statement such
+  as `INSERT INTO open.t SELECT ssn FROM crm.customers` or `CREATE TABLE ... AS` puts a marked column's
+  values in a table that carries no mark, and people without the unmask grant then see them in that
+  table's profiles and samples. Kilnmark cannot follow a column through SQL. What limits this: only a
+  designer with the unmask grant writes the statements, each version is kept with its author, every
+  run is in the audit log, and the login can be denied the marked tables. An owner decision is open on
+  whether to go further (mark every table a SQL action writes to, or refuse a SQL action on a source
+  with marked columns).
+- `CALL` runs an existing procedure with whatever rights it was created with, a `SECURITY DEFINER`
+  one's included. The procedure is the database owner's choice, not the statement's: the login
+  should be granted `EXECUTE` only on procedures meant for it. Rows it returns through `INOUT`
+  parameters are discarded.
+- **Expressions stored for later** (accepted, 2 November 2026): a column `DEFAULT`, a `CHECK`, a
+  domain's check or extended statistics can call an existing function, which then runs whenever a
+  row is inserted, with the rights of whoever inserts. Creating functions is refused, so only
+  functions already in the database, with their own rights, can be named; the login's grants decide
+  which. A review may ask to refuse these too.
+- **The login check** refuses, before any SQL a person wrote runs: a superuser; a login that may
+  create roles; one in a role that reads or writes the server's files, runs programs or stops other
+  sessions; one acting as another role than it signed in as; one whose `session_replication_role` is
+  not `origin`; one that may run dblink or use a foreign server; and a database with user mappings or
+  foreign tables. **Open owner decisions** (seven reviews, 2 November 2026): whether to refuse logins
+  with `BYPASSRLS` or in `pg_read_all_data` / `pg_write_all_data` (they widen what reads and custom
+  rules see, not what they can do), and whether to refuse a source that points at Kilnmark's own
+  database (a sql node there could change Kilnmark's own tables if its login may).
+- **Query reads stay read-only in the transaction itself** (`SET TRANSACTION READ ONLY`), not only
+  through the driver, and a PostgreSQL URL may not say `readOnlyMode` or `preferQueryMode`.
 - The flows design's "Not in this plan: a SQL check node" is superseded by this record. The flow
   node is an action, not a check: a check (rows in a table, say) is a pipeline with a `read` and a
   `gate`, as before.

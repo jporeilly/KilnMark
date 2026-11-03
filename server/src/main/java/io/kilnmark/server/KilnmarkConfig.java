@@ -382,6 +382,13 @@ public interface KilnmarkConfig {
         @WithDefault("30s")
         Duration previewTimeout();
 
+        /**
+         * How long one statement of a flow's sql node may run in its source before it is cancelled and
+         * the node's transaction rolled back (ADR 0028).
+         */
+        @WithDefault("30m")
+        Duration sqlStatementTimeout();
+
         /** Previews at a node one person may start in any minute. */
         @WithDefault("6")
         int previewsPerMinute();

@@ -2690,6 +2690,26 @@ a.km-stat--link:hover {
   margin-top: 0.25rem;
 }
 
+/*
+ * A card whose driver must be installed: the link sits inside the card's border, at its foot. It
+ * cannot be inside the card's button (a link in a button is neither), so the card leaves room for it.
+ */
+.cards > li.card-with-link {
+  position: relative;
+}
+
+.card-with-link > .card {
+  padding-bottom: 40px;
+}
+
+.card-with-link > .card-driver-link {
+  position: absolute;
+  left: 15px;
+  right: 15px;
+  bottom: 12px;
+  margin: 0;
+}
+
 .card-formats {
   flex-basis: 100%;
 }
