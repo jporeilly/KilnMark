@@ -88,6 +88,37 @@ public interface KilnmarkConfig {
         boolean requireTls();
     }
 
+    /** What every response says to the browser about how it may be used (ADR 0031). */
+    Http http();
+
+    /** When HSTS is sent: {@code when-https}, {@code always} or {@code never}; any other value stops the server. */
+    enum Hsts { WHEN_HTTPS, ALWAYS, NEVER }
+
+    /** What plain HTTP from other machines gets: {@code enabled}, {@code redirect} or {@code disabled}. */
+    enum Plain { ENABLED, REDIRECT, DISABLED }
+
+    interface Http {
+        /**
+         * When responses tell browsers to use HTTPS only, for a year ({@code Strict-Transport-Security}):
+         * {@code when-https} (the default), for requests that came over HTTPS to Kilnmark itself;
+         * {@code always}, when a proxy in front of it ends TLS and passes plain HTTP on; {@code never}.
+         */
+        @WithDefault("when-https")
+        Hsts hsts();
+
+        /**
+         * Plain HTTP from other machines: {@code enabled} (the default), {@code redirect} to HTTPS on
+         * {@link #httpsPort()}, or {@code disabled} (refused). Plain HTTP from the server's own address
+         * (the container's health check) always works. Any other value stops the server at start.
+         */
+        @WithDefault("enabled")
+        Plain plain();
+
+        /** The HTTPS port browsers reach Kilnmark on, for redirects from plain HTTP. */
+        @WithDefault("8443")
+        int httpsPort();
+    }
+
     /** Defaults for the mail settings; see {@link io.kilnmark.server.notify.MailSettings}. */
     interface Mail {
         /** The SMTP server, such as {@code smtp.example.com}. */

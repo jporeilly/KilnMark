@@ -58,6 +58,16 @@ services:
       # Optional host names bulk import rewrites when asked to (remapHosts=true), as from=to pairs,
       # for example localhost=host.docker.internal. Unset by default.
       KILNMARK_SOURCES_HOST_MAP: ${KILNMARK_SOURCES_HOST_MAP:-}
+      # HTTPS on Kilnmark itself (INSTALL.md, "HTTPS"): the certificate (with its chain) and its key,
+      # as PEM files in ./tls, mounted below. Unset, Kilnmark serves plain HTTP for a proxy to end TLS.
+      KILNMARK_TLS_CERT_FILE: ${KILNMARK_TLS_CERT_FILE:-}
+      KILNMARK_TLS_KEY_FILE: ${KILNMARK_TLS_KEY_FILE:-}
+      # With HTTPS on: what plain HTTP from other machines does (enabled, redirect or disabled), and
+      # the HTTPS port browsers use, for redirects. Behind a proxy that ends TLS, set
+      # KILNMARK_HTTP_HSTS=always so browsers still keep to HTTPS.
+      KILNMARK_HTTP_PLAIN: ${KILNMARK_HTTP_PLAIN:-enabled}
+      KILNMARK_HTTP_HTTPS_PORT: ${KILNMARK_HTTPS_PORT:-8443}
+      KILNMARK_HTTP_HSTS: ${KILNMARK_HTTP_HSTS:-when-https}
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
     volumes:
@@ -69,6 +79,8 @@ services:
       # (Documentation, "Branding and appearance"). Kilnmark reads /etc/kilnmark/branding; without
       # it, Kilnmark's own name and letter tiles are shown.
       # - ./branding:/etc/kilnmark/branding:ro,Z
+      # Certificate and key for HTTPS (INSTALL.md, "HTTPS"), read-only.
+      # - ./tls:/etc/kilnmark/tls:ro,Z
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,6 +98,8 @@ services:
     ports:
       # 8780, not 8080, which Tomcat and many Java servers use. Change the host side with KILNMARK_PORT.
       - "${KILNMARK_PORT:-8780}:8780"
+      # HTTPS, once a certificate is set (above). Change the host side with KILNMARK_HTTPS_PORT.
+      - "${KILNMARK_HTTPS_PORT:-8443}:8443"
 
   # AI models, started only when asked for. llama.cpp's llama-server serves GGUF model files from
   # the models volume through the OpenAI API, inside this stack's network. Download the models first:

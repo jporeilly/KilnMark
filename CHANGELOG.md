@@ -35,6 +35,16 @@ details.
   encrypted**: an installation with its own PostgreSQL turns TLS on there and sets the sslmode
   (`verify-full` with its CA is best); INSTALL.md, "Kilnmark's own database".
   `kilnmark.database.require-tls=false` turns the check off, for a developer's own database.
+- **HTTPS and security headers** (ADR 0031). Every response carries a Content-Security-Policy that
+  lets only Kilnmark's own files run or load (no inline script or style, no framing by other
+  sites), with `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, a Permissions-Policy and same-origin opener and resource
+  policies; the API's own page (`/api/docs`) alone may run its inline start. Over HTTPS, responses
+  carry HSTS for a year (`KILNMARK_HTTP_HSTS=always` behind a proxy that ends TLS). Kilnmark serves
+  HTTPS itself on 8443 when given a certificate and key as PEM files (`KILNMARK_TLS_CERT_FILE`,
+  `KILNMARK_TLS_KEY_FILE`), TLS 1.3 and 1.2 with forward-secret AEAD suites only, with plain HTTP
+  from other machines enabled, redirected or disabled (`KILNMARK_HTTP_PLAIN`; an unknown value stops
+  the server); INSTALL.md, "HTTPS". The page's theme script moved to a file of its own.
 - **Relationships: confident joins accepted automatically, and Browse holds them** (ADR 0019,
   amended). Inferred joins found with 95% confidence or more are accepted without a person, shown
   as "Automatically, at 95% or more" with their confidence; a steward can still reject one, and a
