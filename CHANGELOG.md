@@ -16,6 +16,11 @@ details.
   by designers whose token sees unmasked values (ADR 0028).
 - **Read with a query.** A read node can run one `SELECT` in place of a table, on a PostgreSQL
   source with Allow SQL on (ADR 0028). The new sample `sample-read-query` shows one.
+- **SQL in flows.** A flow's new `sql` node runs statements on a PostgreSQL source before or after
+  its pipelines: empty a staging table, rebuild an index, call a procedure. Its statements run in one
+  transaction and it reports the rows they changed. The source must allow both SQL and writing, and
+  only designers whose token sees unmasked values write one (ADR 0028). The new sample
+  `sample-sql-before-and-after` shows one.
 
 - **The audit log.** Every change made through the API, every request refused, and the changes
   that decide who sees sensitive values and what reaches a source are recorded, can never be changed
@@ -23,6 +28,57 @@ details.
 
 ### Details
 
+- **The flow sql node** (V29, ADR 0028, docs/design/flows.md section 7). `type: sql` with a `source`
+  and 1 to 20 `statements`, each starting `TRUNCATE`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`,
+  `DROP`, `ALTER`, `CALL`, `ANALYZE`, `REFRESH`, `COMMENT`, `REINDEX`, `CLUSTER` or `LOCK`; never a
+  query, transaction control, `SET`, `COPY`, `DO`, `GRANT` or `REVOKE`, `RETURNING`, `${...}`, nor
+  anything that creates or changes logins, rights, functions, triggers or ways out of the database.
+  It runs on a thread of its own beside the flow, under the source's login, which must not be a
+  superuser or reach files, programs or other databases (the check custom rules use), with
+  `kilnmark.pipelines.sql-statement-timeout` (default 30 minutes) per statement. A statement that
+  fails rolls them all back; the node says which failed and its SQLSTATE, never the database's
+  message or the SQL. `<node>.rows_affected` can be read in conditions and notices. Saving a flow with
+  a sql node takes a designer whose token sees unmasked values (`FlowService.save`), and versions saved
+  before this (`flow_version.sql_checked` false) are refused when queued and when they start. Each
+  sql node that starts is an audit event `flow.sql`, shown on the audit log page as **Flow ran SQL**.
+  The flows API is still to come (F3), so flows are saved through the service for now, and Add
+  samples lists the new sample without adding it.
+- **SQL checks read as PostgreSQL does** (two reviews of the sql node; custom SQL rules and query
+  reads share the check). A carriage return ends a `--` comment, dollar-quote tags and names take any
+  non-ASCII character, and the PostgreSQL driver's own parser must find one statement, so no second
+  statement hides in what the check read as a comment or string. Refused now in custom SQL rules and
+  query reads too: `E'...'` strings (write the value in plain quotes), `U&"..."` names, control
+  characters other than whitespace, and `ts_stat` and `ts_rewrite`. **A PostgreSQL source whose URL
+  sets `preferQueryMode` is refused**: take the setting out. **A custom rule written with an `E'...'`
+  string stops running** until it is written with plain quotes.
+- **SQL a person wrote runs only with `standard_conforming_strings` on** (third review of the sql
+  node). With it off, a backslash ends a string where the check did not expect, and a source whose
+  URL set `options=-c standard_conforming_strings=off` (or a login or database with it off) could
+  make a query read leave its read-only transaction and write. Query reads, custom SQL rules and sql
+  nodes now turn it on for their transaction and check before each statement that it is still on.
+  Refused too: `pg_settings` everywhere (its rules change settings), text that is not valid
+  Unicode (a lone surrogate reaches the database as `?`), and in sql nodes, views, `ALTER ROUTINE`
+  (code that runs later) and `GRANT` or `REVOKE` anywhere, `CREATE SCHEMA` included.
+- **Reads stay read-only.** A PostgreSQL source whose URL sets `readOnlyMode` is refused (pgjdbc
+  would ignore read-only, so a query read calling a function that writes could write), and query
+  reads also set `SET TRANSACTION READ ONLY` themselves. Sql nodes refuse `SCHEMA` (a schema named as
+  the login changes what every unqualified name means). Stored defaults and checks that call an
+  existing function are accepted for now (ADR 0028).
+- **SQL never runs under a login acting as another role.** A superuser login whose URL's `options`
+  or settings set `role` passed the login check (which looked at the role it acts as), with its
+  superuser settings in force. The check now refuses a session whose `session_user` is not its
+  `current_user`, for sql nodes, query reads and custom rules alike. Sql nodes and query reads also
+  check the source's URL rules again when they run, so a source saved before a rule existed is
+  refused until saved again, and a query read's plan runs read-only.
+- **The login check refuses more**: a login that may create roles, and one whose
+  `session_replication_role` is not `origin` (PostgreSQL 15 lets a login be granted that setting,
+  which skips foreign keys and triggers). Custom rules check the source's URL rules again when they
+  run, as sql nodes and query reads do.
+- **Query reads run.** A read with a query failed when its pipeline ran ("needs the setting
+  'asset-urn'"): it has no single asset, and now records no row count for one.
+- **The query check lives in `PipelineService`.** `create` and `save` check a query read's author
+  themselves, so no caller can skip it; without a person asking, a query read is refused. Tests now
+  show a pipeline version saved before V27 refused when queued and when it starts.
 - **Generic JDBC: time limits, SQL Server instances, and the vetted list in full** (ADR 0030). A
   time limit is now a name ending in `timeout`, with or without `ms`, `_ms` or `seconds`, so a
   setting that only holds the word is no longer taken for one. SQL Server's `instanceName` is

@@ -415,9 +415,11 @@ public class PipelineService {
      * Refuses YAML with a read that runs a query unless the caller may see unmasked values: a query
      * can read any column of its source, so only a designer holding the unmask grant writes one
      * (ADR 0028). Runs are not refused: what a query reads is masked as marked for everyone else.
+     * Called by {@link #create} and {@link #save} themselves, so no caller can skip it; without
+     * {@code sights} (no person asking) a query read is refused.
      */
-    public void allowQueries(String yaml, Sights sights) {
-        if (yaml == null || sights == null || sights.mayUnmask()) {
+    void allowQueries(String yaml, Sights sights) {
+        if (yaml == null || (sights != null && sights.mayUnmask())) {
             return;
         }
         checkSize(yaml);
@@ -426,11 +428,15 @@ public class PipelineService {
         }
     }
 
-    /** Adds a pipeline with its first version; an invalid one is saved as a draft. */
-    public PipelineViews.PipelineDetail create(PipelineViews.NewPipeline body, String by) {
+    /**
+     * Adds a pipeline with its first version; an invalid one is saved as a draft. A read that runs a
+     * query is refused unless {@code sights} may see unmasked values ({@link #allowQueries}).
+     */
+    public PipelineViews.PipelineDetail create(PipelineViews.NewPipeline body, String by, Sights sights) {
         if (body == null) {
             throw new IllegalArgumentException("Send the pipeline as JSON with a name and its YAML");
         }
+        allowQueries(body.yaml(), sights);
         String problem = nameProblem(body.name());
         if (problem != null) {
             throw new IllegalArgumentException(problem);
@@ -460,6 +466,7 @@ public class PipelineService {
         if (body == null) {
             throw new IllegalArgumentException("Send the new version as JSON with its YAML and a message");
         }
+        allowQueries(body.yaml(), sights);
         PipelineViews.Validation v = validate(body.yaml(), name);
         String display = clip(body.displayName(), MAX_DISPLAY_NAME, "displayName");
         String description = body.description() != null ? clip(body.description(), MAX_DESCRIPTION, "description")

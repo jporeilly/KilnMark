@@ -134,6 +134,61 @@ class FlowDefinitionTest {
             .anyMatch(x -> x.message().contains("Unknown value 'statuses'")));
     }
 
+    private static final String SQL = """
+        kilnmark: flow/v1
+        name: reload
+        nodes:
+          - id: empty
+            type: sql
+            source: warehouse
+            statements:
+              - TRUNCATE staging.orders
+              - "DELETE FROM staging.log WHERE at < now() - interval '30 days'"
+          - id: load
+            type: run-pipeline
+            pipeline: orders-load
+          - id: tell
+            type: notify
+            title: "Emptied ${empty.rows_affected} rows"
+        connections:
+          - { from: empty, to: load, when: "empty.rows_affected >= 0" }
+          - { from: load, to: tell }
+        """;
+
+    @Test
+    void readsASqlNode() {
+        FlowDefinition.Parsed p = FlowDefinition.parse(SQL);
+        assertTrue(p.valid(), p.problems().toString());
+        FlowDefinition.Node empty = p.definition().node("empty");
+        assertEquals("warehouse", empty.source());
+        assertEquals(List.of("TRUNCATE staging.orders",
+            "DELETE FROM staging.log WHERE at < now() - interval '30 days'"), empty.statements());
+        assertEquals(FlowCondition.Type.NUMBER, FlowDefinition.nodeValueType(p.definition(), "empty.rows_affected"));
+        assertEquals(null, FlowDefinition.nodeValueType(p.definition(), "empty.rows_written"));
+    }
+
+    @Test
+    void checksASqlNode() {
+        // Never a value put into SQL (ADR 0028)
+        assertTrue(firstProblem(SQL.replace("TRUNCATE staging.orders", "TRUNCATE staging.${table}"))
+            .contains("${...} cannot be used in SQL"));
+        assertTrue(firstProblem(SQL.replace("    source: warehouse\n", "")).contains("needs a source"));
+        assertTrue(firstProblem(SQL.replace("""
+                statements:
+                  - TRUNCATE staging.orders
+                  - "DELETE FROM staging.log WHERE at < now() - interval '30 days'"
+            """, "    statements: TRUNCATE staging.orders\n")).contains("statements is a list"));
+        assertTrue(firstProblem(SQL.replace("""
+                  - TRUNCATE staging.orders
+                  - "DELETE FROM staging.log WHERE at < now() - interval '30 days'"
+            """, "      - \"" + "x".repeat(FlowDefinition.MAX_STATEMENT + 1) + "\"\n")).contains("at most 10,000"));
+        assertTrue(firstProblem(SQL.replace("    source: warehouse\n", "    source: warehouse\n    with: {a: 1}\n"))
+            .contains("has no setting 'with'"));
+        // A sql node reports rows_affected and status, nothing else
+        assertTrue(firstProblem(SQL.replace("${empty.rows_affected}", "${empty.rows_written}"))
+            .contains("a sql node rows_affected"));
+    }
+
     @Test
     void readsAFlow() {
         FlowDefinition.Parsed p = FlowDefinition.parse(GOOD);

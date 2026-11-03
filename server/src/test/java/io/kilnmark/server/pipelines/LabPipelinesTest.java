@@ -211,7 +211,15 @@ class LabPipelinesTest {
                     file + ": source " + m.group(3) + " is not a placeholder");
             }
             assertFalse(lab.matcher(text).find(), file + ": mentions the lab, but the samples ship");
-            assertEquals(Samples.sourcesOf(text).isEmpty(), isFlow(file), file + ": a pipeline names placeholders");
+            if (!isFlow(file)) {
+                assertFalse(Samples.sourcesOf(text).isEmpty(), file + ": a pipeline names placeholders");
+            } else {
+                // A flow names a source only for a sql node to run on (ADR 0028).
+                FlowDefinition flow = FlowDefinition.parse(text).definition();
+                List<String> sql = flow.nodes().stream().filter(n -> FlowDefinition.SQL.equals(n.type()))
+                    .map(FlowDefinition.Node::source).distinct().toList();
+                assertEquals(sql, Samples.sourcesOf(text), file + ": a flow names sources only in sql nodes");
+            }
         }
     }
 

@@ -25,6 +25,9 @@ group("the audit log page", () => {
       "POST 401, from 10.0.0.9, 12 more not kept before this",
     );
     expect(describe(event("mark.cleared", { field: "email" }))).toBe("field: email");
+    expect(describe(event("flow.sql", { source: "warehouse", statements: 2, version: 3 }))).toBe(
+      "2 statements on warehouse, version 3",
+    );
   });
 
   test("offers every action the server records", () => {
@@ -32,6 +35,7 @@ group("the audit log page", () => {
       [
         "api.refused",
         "api.request",
+        "flow.sql",
         "mark.cleared",
         "mark.set",
         "source.allow_sql",
