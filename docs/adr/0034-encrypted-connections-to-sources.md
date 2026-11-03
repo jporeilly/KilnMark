@@ -36,8 +36,8 @@ defaults fall back to plain text without a word: PostgreSQL's `sslmode=prefer`, 
      endpoint URLs configured on this server (`aws.ignoreConfiguredEndpointUrls`, which outranks
      `AWS_ENDPOINT_URL`, `aws.endpointUrl` and a profile's `endpoint_url`), so a source without an
      endpoint only ever reaches AWS's own endpoints for its region, over HTTPS. Those are worked
-     out as before (FIPS, dual-stack, every partition); the allowed-hosts list still names only
-     `s3.<region>.amazonaws.com` for them, a separate gap.
+     out as before (FIPS, dual-stack, every partition); the allowed-hosts list sees the host each
+     request really reaches (ADR 0035).
    - **Files in a folder and the sample data**: Kilnmark opens no network connection of its own. A
      root that is a mounted network share (NFS, SMB, a UNC path) crosses the network as the
      operating system mounted it: its encryption is the administrator's, who sets the roots

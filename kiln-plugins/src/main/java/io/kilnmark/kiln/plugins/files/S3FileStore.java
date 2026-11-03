@@ -67,9 +67,48 @@ public final class S3FileStore implements FileStore {
             "true");
     }
 
-    /** AWS's own S3 host for a region (the main partition), for the allowed-hosts list. */
-    static String awsHost(String region) {
-        return "s3." + region + ".amazonaws.com";
+    /** Thrown to stop a request just before it is sent, once its address is known. */
+    private static final class Stopped extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        Stopped() {
+            super("stopped before sending", null, false, false);
+        }
+    }
+
+    /**
+     * The host a request for this source's bucket really goes to, for the allowed-hosts list (ADR
+     * 0035): the client is built exactly as for reading and a listing is started, then stopped just
+     * before it is sent, so the SDK's own rules decide (the bucket in the host name, FIPS, dual-stack,
+     * other partitions, access points, directory buckets) and nothing leaves this server. Signed with
+     * throwaway credentials, so neither the source's nor the server's are looked up.
+     *
+     * @throws IllegalArgumentException when the SDK refuses the settings before sending
+     */
+    static String hostReached(Settings settings) {
+        java.util.concurrent.atomic.AtomicReference<URI> sent = new java.util.concurrent.atomic.AtomicReference<>();
+        software.amazon.awssdk.core.interceptor.ExecutionInterceptor stop =
+            new software.amazon.awssdk.core.interceptor.ExecutionInterceptor() {
+                @Override
+                public void beforeTransmission(software.amazon.awssdk.core.interceptor.Context.BeforeTransmission c,
+                                               software.amazon.awssdk.core.interceptor.ExecutionAttributes a) {
+                    sent.compareAndSet(null, c.httpRequest().getUri());
+                    throw new Stopped();
+                }
+            };
+        AwsCredentialsProvider throwaway = StaticCredentialsProvider.create(
+            AwsBasicCredentials.create("KILNMARKHOSTCHECK", "not-a-secret"));
+        try (S3Client probe = builder(settings, throwaway, null, stop).build()) {
+            probe.listObjectsV2(ListObjectsV2Request.builder().bucket(settings.bucket()).maxKeys(1).build());
+        } catch (RuntimeException e) {
+            // Stopped, as intended, or the SDK refused the settings before sending
+        }
+        URI uri = sent.get();
+        if (uri == null || uri.getHost() == null) {
+            throw new IllegalArgumentException("bucket: Kilnmark cannot tell which host requests for this bucket "
+                + "would reach; check the bucket, region and endpoint");
+        }
+        return uri.getHost();
     }
 
     private final Settings settings;
@@ -112,6 +151,13 @@ public final class S3FileStore implements FileStore {
         } else {
             throw new IOException(S3Connector.NO_DEFAULT_CREDENTIALS);
         }
+        this.s3 = builder(settings, credentials, callTimeout, interceptor).build();
+    }
+
+    /** The client for a source, one way for reading and for {@link #hostReached}, so both reach the same host. */
+    private static software.amazon.awssdk.services.s3.S3ClientBuilder builder(Settings settings,
+            AwsCredentialsProvider credentials, Duration callTimeout,
+            software.amazon.awssdk.core.interceptor.ExecutionInterceptor interceptor) {
         var builder = S3Client.builder()
             .region(Region.of(settings.region() == null ? DEFAULT_REGION : settings.region()))
             .credentialsProvider(credentials)
@@ -133,7 +179,7 @@ public final class S3FileStore implements FileStore {
                 o.addExecutionInterceptor(interceptor);
             }
         });
-        this.s3 = builder.build();
+        return builder;
     }
 
     @Override
