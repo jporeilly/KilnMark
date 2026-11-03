@@ -1,5 +1,7 @@
 # Version updates for what Kilnmark is built from (docs/design/supply-chain.md): monthly, grouped so
 # each ecosystem opens at most one pull request, which CI and the supply-chain scan then check.
+# Minor and patch versions only: a major version (Tika 4, JUnit 6) changes APIs and needs its own
+# pull request with the code it takes, so Dependabot leaves those to a person.
 # Security updates for a vulnerable dependency come separately, as soon as GitHub knows of one,
 # when Dependabot security updates are on in the repository's settings.
 version: 2
@@ -9,27 +11,39 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 1
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       gradle:
         patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: npm
     directory: "/ui"
     schedule:
       interval: monthly
     open-pull-requests-limit: 1
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: monthly
     open-pull-requests-limit: 1
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       actions:
         patterns: ["*"]
+        update-types: [minor, patch]
 
   # The base images the release builds on (PostgreSQL, Temurin).
   - package-ecosystem: docker
@@ -37,6 +51,10 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 1
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       images:
         patterns: ["*"]
+        update-types: [minor, patch]

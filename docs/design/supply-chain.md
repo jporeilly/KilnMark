@@ -29,7 +29,8 @@ To scan locally, with Trivy installed: `trivy sbom --severity HIGH,CRITICAL --ig
 dist/build/server/sbom/kilnmark-server.cdx.json`.
 
 Dependabot (`.github/dependabot.yml`) opens one grouped pull request a month for each of Gradle,
-npm, GitHub Actions and the base images.
+npm, GitHub Actions and the base images, with minor and patch versions only. A major version changes
+APIs, so it gets a pull request of its own, written by a person with the code changes it needs.
 
 ## Releases
 
