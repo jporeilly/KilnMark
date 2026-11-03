@@ -1,5 +1,6 @@
 package io.kilnmark.server.api;
 
+import io.kilnmark.server.SecretBox;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -19,6 +20,16 @@ public record ApiError(String error) {
         @Override
         public Response toResponse(IllegalArgumentException e) {
             return Response.status(Response.Status.BAD_REQUEST).type(MediaType.APPLICATION_JSON)
+                .entity(new ApiError(e.getMessage())).build();
+        }
+    }
+
+    /** A stored password sealed with another key (ADR 0039): 409, saying what to do. */
+    @Provider
+    public static class WrongKey implements ExceptionMapper<SecretBox.WrongKey> {
+        @Override
+        public Response toResponse(SecretBox.WrongKey e) {
+            return Response.status(Response.Status.CONFLICT).type(MediaType.APPLICATION_JSON)
                 .entity(new ApiError(e.getMessage())).build();
         }
     }

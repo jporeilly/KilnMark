@@ -7,6 +7,14 @@ details.
 
 ### What's new
 
+- **Backup and restore** (ADR 0039). `./backup.sh` in the release folder saves the database and the
+  keys that open stored source passwords, as two files to keep apart; `./restore.sh` puts them back,
+  on the same machine or a new one, and the audit log shows the restore. The runbook,
+  [Backing up and restoring Kilnmark](docs/guide/backup-and-restore.md), covers scheduling, what to
+  check after a restore (tokens revoked since the backup work again), and a quarterly restore
+  test. A database restored without its keys is now named in the log at start, and testing a
+  source says what to do instead of failing with a server error.
+
 - **Two people for sensitive values** (ADR 0038). With sign-in through your identity provider and
   `KILNMARK_UNMASK_APPROVAL=true`, a designer token asked to see values of columns marked sensitive
   is made without, and a second person approves or refuses it under **API tokens**; the asker, under

@@ -164,6 +164,16 @@ approves membership of the unmask group at the provider
 - Designer tokens given sensitive values before you turned it on keep them: find them in the access
   review (no "approved by") and revoke any that should not.
 
+### Back up and restore
+
+From the release folder, while Kilnmark runs, `./backup.sh /path/to/backups` writes a new folder
+holding the database and the keys that open stored source passwords. Keep the keys file apart from
+the database dumps. `./restore.sh /path/to/backups/kilnmark-<time>` puts both back on this or a new
+machine. Schedule a daily backup, back up before every upgrade, and test a restore every quarter:
+the runbook, with what to check after a restore, is
+[Backing up and restoring Kilnmark](docs/guide/backup-and-restore.md)
+([ADR 0039](docs/adr/0039-backup-and-restore.md)).
+
 ## B. From source, with the reference lab and the samples
 
 1. `git clone https://github.com/jporeilly/KilnMark.git` and `cd KilnMark`.

@@ -70,7 +70,12 @@ tasks.register<Sync>("assembleRelease") {
     from("containers/release.env.example") { rename { ".env.example" } }
     from("containers") {
         into("containers")
-        exclude("compose.release.yaml", "release.env.example")
+        exclude("compose.release.yaml", "release.env.example", "backup.sh", "restore.sh")
+    }
+    // Backup and restore (ADR 0039), run from the release folder beside compose.yaml.
+    from("containers") {
+        include("backup.sh", "restore.sh")
+        filePermissions { unix("rwxr-xr-x") }
     }
     // The samples, as templates to read or add through the API (the server also bundles them).
     from("samples") {

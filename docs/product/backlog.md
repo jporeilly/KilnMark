@@ -19,9 +19,9 @@ Last reviewed: 3 November 2026 (after #61-#69 merged).
    releases (#69); in review: encrypted connections to sources (ADR 0034). Next:
    - OIDC sign-in with MFA, brought forward from v0.2 ([ADR 0014](../adr/0014-authentication.md)):
      in review (ADR 0036); then the Keycloak profile for customers without a provider;
-   - access reviews and token policy (ADR 0037, #81); separation of duties for the unmask grant:
-     in review (ADR 0038);
-   - backup and restore with a runbook; the evidence pack, with an SSDF self-assessment;
+   - access reviews and token policy (ADR 0037, #81); separation of duties for the unmask grant
+     (ADR 0038, #82); backup and restore with a runbook: in review (ADR 0039);
+   - the evidence pack, with an SSDF self-assessment; a full export in open formats, for exit;
    - Generic JDBC drivers in a process of their own (ADR 0030, decision 5);
    - change approval and environments;
    - `KILNMARK_DB_PASSWORD` in the dev compose, a JDBC `socketTimeout`, masking on the run quality
