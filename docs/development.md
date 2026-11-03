@@ -576,7 +576,7 @@ forgery). To limit it:
   | SQL Server | no `encrypt` (the driver encrypts by default), `encrypt=true`, `mandatory` or `strict` | `encrypt=false` or `optional` |
   | MySQL, MariaDB | `tls_mode` `required`, `verify-ca` or `verify-full` | `preferred` (the default), `disabled` |
   | Oracle | `encryption` `tls` (TCPS) or `required` (Oracle's native encryption, insisted on) | `accepted` (the default) |
-  | S3 | AWS itself (no endpoint: always AWS's own `https://` endpoint, never one from the server's environment), or an `https://` endpoint | an `http://` endpoint |
+  | S3 | AWS itself (no endpoint: AWS over HTTPS; endpoint URLs set in the server's environment or AWS profile are ignored), or an `https://` endpoint | an `http://` endpoint |
   | Files in a folder, sample data | always: Kilnmark opens no connection (a root on a network share is encrypted, or not, as the administrator mounted it) | |
   | Generic JDBC | | always: Kilnmark cannot tell how an arbitrary driver encrypts |
 

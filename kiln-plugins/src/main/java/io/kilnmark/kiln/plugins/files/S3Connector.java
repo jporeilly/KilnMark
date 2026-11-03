@@ -182,8 +182,8 @@ public final class S3Connector extends FileSourceConnector {
     }
 
     /**
-     * Without an endpoint the client is always given AWS's own {@code https://} endpoint (never one
-     * from this server's environment); another endpoint must be an {@code https://} URL.
+     * Without an endpoint the SDK reaches AWS's own endpoint over HTTPS, never one from this server's
+     * environment ({@link S3FileStore} turns those off); another endpoint must be an {@code https://} URL.
      */
     @Override
     public String unencryptedReason(SourceConfig source) {

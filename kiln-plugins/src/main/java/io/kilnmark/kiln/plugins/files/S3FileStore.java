@@ -57,7 +57,17 @@ public final class S3FileStore implements FileStore {
 
     static final String DEFAULT_REGION = "us-east-1";
 
-    /** AWS's own S3 host for a region, which a source without an endpoint reaches over HTTPS. */
+    // A source names its endpoint, or none for AWS itself: the SDK must never take one from this
+    // server's environment (AWS_ENDPOINT_URL, aws.endpointUrl, a profile's endpoint_url), which could
+    // be plain HTTP or a host the allowed-hosts list was not told of (ADR 0034). As a system property
+    // this outranks the environment and profiles; AWS's own endpoints (FIPS, dual-stack, every
+    // partition) are still worked out as usual.
+    static {
+        System.setProperty(software.amazon.awssdk.core.SdkSystemSetting.AWS_IGNORE_CONFIGURED_ENDPOINT_URLS.property(),
+            "true");
+    }
+
+    /** AWS's own S3 host for a region (the main partition), for the allowed-hosts list. */
     static String awsHost(String region) {
         return "s3." + region + ".amazonaws.com";
     }
@@ -82,6 +92,12 @@ public final class S3FileStore implements FileStore {
      *                    for checks, which must end in time
      */
     public S3FileStore(Settings settings, boolean allowDefaultCredentials, Duration callTimeout) throws IOException {
+        this(settings, allowDefaultCredentials, callTimeout, null);
+    }
+
+    /** As above, with an interceptor that sees each request before it is sent: for tests. */
+    S3FileStore(Settings settings, boolean allowDefaultCredentials, Duration callTimeout,
+                software.amazon.awssdk.core.interceptor.ExecutionInterceptor interceptor) throws IOException {
         this.settings = settings;
         if (settings.endpoint() != null && settings.endpoint().contains("@")) {
             throw new IOException("The endpoint must not hold a user name or password: put the access key ID in "
@@ -96,9 +112,8 @@ public final class S3FileStore implements FileStore {
         } else {
             throw new IOException(S3Connector.NO_DEFAULT_CREDENTIALS);
         }
-        String region = settings.region() == null ? DEFAULT_REGION : settings.region();
         var builder = S3Client.builder()
-            .region(Region.of(region))
+            .region(Region.of(settings.region() == null ? DEFAULT_REGION : settings.region()))
             .credentialsProvider(credentials)
             .forcePathStyle(settings.pathStyle())
             .httpClientBuilder(UrlConnectionHttpClient.builder()
@@ -107,20 +122,18 @@ public final class S3FileStore implements FileStore {
             // S3-compatible stores do not all support the newer default checksums
             .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
             .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED);
-        // Always an endpoint of the source's own: without one the SDK would take AWS_ENDPOINT_URL, the
-        // aws.endpointUrl property or a profile's endpoint_url from this server, which could be plain
-        // HTTP or another host than the allow-list was told (ADR 0034).
-        builder.endpointOverride(URI.create(settings.endpoint() != null ? settings.endpoint()
-            : "https://" + awsHost(region)));
-        if (callTimeout != null) {
-            builder.overrideConfiguration(o -> o.apiCallTimeout(callTimeout).apiCallAttemptTimeout(callTimeout));
+        if (settings.endpoint() != null) {
+            builder.endpointOverride(URI.create(settings.endpoint()));
         }
+        builder.overrideConfiguration(o -> {
+            if (callTimeout != null) {
+                o.apiCallTimeout(callTimeout).apiCallAttemptTimeout(callTimeout);
+            }
+            if (interceptor != null) {
+                o.addExecutionInterceptor(interceptor);
+            }
+        });
         this.s3 = builder.build();
-    }
-
-    /** The endpoint the client sends every request to, for tests. */
-    URI endpoint() {
-        return s3.serviceClientConfiguration().endpointOverride().orElse(null);
     }
 
     @Override

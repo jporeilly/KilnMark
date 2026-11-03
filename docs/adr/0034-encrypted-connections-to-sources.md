@@ -32,10 +32,11 @@ defaults fall back to plain text without a word: PostgreSQL's `sslmode=prefer`, 
      by `required`, counts: it encrypts every byte with AES, many banks run Oracle that way, and
      requiring TCPS alone would refuse them. The setting's name says TLS because that is what
      every other kind uses.
-   - **S3**: an `https://` endpoint, or none, which means AWS: the client is then always given
-     AWS's own `https://` endpoint for the region, so the SDK never takes one from this server's
-     environment (`AWS_ENDPOINT_URL`, `aws.endpointUrl`, a profile's `endpoint_url`), which could
-     be plain HTTP or a host the allowed-hosts list was not told of.
+   - **S3**: an `https://` endpoint, or none, which means AWS over HTTPS. The SDK is told to ignore
+     endpoint URLs configured on this server (`aws.ignoreConfiguredEndpointUrls`, which outranks
+     `AWS_ENDPOINT_URL`, `aws.endpointUrl` and a profile's `endpoint_url`), so a source without an
+     endpoint never reaches a plain-HTTP endpoint or a host the allowed-hosts list was not told
+     of, while AWS's own endpoints (FIPS, dual-stack, every partition) are worked out as before.
    - **Files in a folder and the sample data**: Kilnmark opens no network connection of its own. A
      root that is a mounted network share (NFS, SMB, a UNC path) crosses the network as the
      operating system mounted it: its encryption is the administrator's, who sets the roots
