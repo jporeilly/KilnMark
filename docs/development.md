@@ -245,7 +245,8 @@ its own expiry, except the one from `KILNMARK_ADMIN_TOKEN`. Check **Settings**, 
 before setting it: tokens already older stop at once. `GET /api/v1/tokens/policy` says the limit.
 `GET /api/v1/access-review` (admins; `?format=csv` for a spreadsheet) lists every token with its
 role, grant, status, expiry and last use, and everyone who has signed in with the identity provider
-with the role of their last sign-in; each download is an audit event.
+with the role of their last sign-in; each view and download is an audit event. Set the limit on every
+Kilnmark process (api, worker, scheduler): each judges tokens, and notifications, by its own setting.
 
 **Sign-in with the identity provider** (ADR 0036). With Quarkus's OIDC client set up
 (`QUARKUS_OIDC_TENANT_ENABLED=true`, `QUARKUS_OIDC_AUTH_SERVER_URL`, `QUARKUS_OIDC_CLIENT_ID`,

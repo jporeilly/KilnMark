@@ -154,6 +154,35 @@ class TokenLifetimeTest {
         assertTrue(audit.list(AuditLog.ACCESS_REVIEW, null, 10).size() >= 2, "each download is in the audit log");
     }
 
+    /**
+     * The review never hides access: a sign-in refused for want of MFA leaves the role the person's
+     * groups gave; only "no group gives a role any more" takes it away; someone only ever refused
+     * never had access and is not listed.
+     */
+    @Test
+    void theReviewTakesARoleAwayOnlyWhenTheGroupIsGone() {
+        String who = "sso:review-" + System.nanoTime();
+        String never = "sso:never-" + System.nanoTime();
+        AuditLog.Actor a = new AuditLog.Actor(who, null);
+        audit.record(a, AuditLog.SIGN_IN, "session", Map.of("role", "admin", "unmask", false));
+        audit.record(a, AuditLog.SIGN_IN_REFUSED, "session", Map.of("reason", OidcAccess.NO_MFA));
+        audit.record(new AuditLog.Actor(never, null), AuditLog.SIGN_IN_REFUSED, "session",
+            Map.of("reason", OidcAccess.NO_GROUP));
+        audit.awaitStored(5000);
+        AuditLog.ProviderAccess p = audit.providerAccess().stream().filter(x -> x.name().equals(who)).findFirst()
+            .orElseThrow();
+        assertEquals("admin", p.role(), "a refusal for want of MFA does not hide an admin");
+        assertEquals(OidcAccess.NO_MFA, p.refused());
+        assertEquals(1, p.signIns());
+        assertTrue(audit.providerAccess().stream().noneMatch(x -> x.name().equals(never)), "never had access");
+
+        audit.record(a, AuditLog.SIGN_IN_REFUSED, "session", Map.of("reason", OidcAccess.NO_GROUP));
+        audit.awaitStored(5000);
+        AuditLog.ProviderAccess gone = audit.providerAccess().stream().filter(x -> x.name().equals(who)).findFirst()
+            .orElseThrow();
+        assertNull(gone.role(), "no group gives a role any more");
+    }
+
     /** A name a person chose cannot run as a formula in the spreadsheet the auditors open. */
     @Test
     void csvCellsCannotRunAsFormulas() {

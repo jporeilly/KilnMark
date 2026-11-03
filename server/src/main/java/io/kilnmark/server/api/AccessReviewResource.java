@@ -82,8 +82,9 @@ public class AccessReviewResource {
                 t.createdAt(), t.expiresAt(), t.lastUsedAt(), null));
         }
         for (AuditLog.ProviderAccess p : audit.providerAccess()) {
-            out.add(new Entry("provider", p.name(), p.role(), p.unmask(), p.refused() ? "last sign-in given no role"
-                : "signs in with the identity provider", null, null, null, p.lastSignIn(), p.signIns()));
+            out.add(new Entry("provider", p.name(), p.role(), p.unmask(), p.refused() == null
+                ? "signs in with the identity provider" : p.role() == null ? "no group gives a role any more"
+                : "last sign-in refused: " + p.refused(), null, null, null, p.lastSignIn(), p.signIns()));
         }
         Long days = tokens.maxLifetime().map(d -> d.toDays()).orElse(null);
         return new Review(now, days, out);

@@ -23,6 +23,8 @@ from a provider sign-in that needs MFA (ADR 0036), turning an 8-hour session int
      token works, for sign-in, for the count of usable admins (so the first-start token is written
      when the last admin token passes the limit) and for notifications; the list and the review show
      that effective expiry. Creation allows five minutes' slack for a browser clock running ahead.
+   - Every Kilnmark process (api, worker, scheduler) judges tokens by its own setting, so it is set
+     on all of them; a bad value stops a process at start, before its mail and notification work.
    - The token from `KILNMARK_ADMIN_TOKEN` is not limited: it is the operator's, set in the
      server's environment and replaced by changing that setting. The 24-hour first-start token
      already expires.
@@ -33,8 +35,10 @@ from a provider sign-in that needs MFA (ADR 0036), turning an 8-hour session int
      grant of their last sign-in, when it was, and how many times, from the audit log (people have
      no account in Kilnmark: their role comes from their groups at each sign-in);
    - the longest token lifetime, if one is set.
-   Each view and download is an audit event (`access.review`). A person whose last sign-in was
-   refused (their group taken away, say) shows with no role. CSV cells that a spreadsheet would run as a
+   Each view and download is an audit event (`access.review`). A person whose latest sign-in was
+   refused because no group gives them a role any more shows with none; one refused for another
+   reason (no second factor, say) keeps the role their groups gave, with the refusal noted, so an
+   admin is never hidden from the reviewer. CSV cells that a spreadsheet would run as a
    formula (a name starting `=`, `+`, `-` or `@`) start with a quote.
 3. **Not yet: separation of duties for the unmask grant.** Admins make tokens, so an admin can make
    a designer token that sees unmasked values. A second person approving the grant is a later step;

@@ -200,7 +200,7 @@ public class ApiTokens {
                 + days(max.get()) + " (kilnmark.auth.token-max-lifetime); choose an expiry no later than that");
         }
         String secret = newSecret();
-        Token t = db.tx(c -> insert(c, clean, role, grant, hash(secret), createdBy, expiresAt));
+        Token t = limited(db.tx(c -> insert(c, clean, role, grant, hash(secret), createdBy, expiresAt)));
         LOG.infof("API token %d (%s, %s%s) created by %s", t.id(), loggable(t.name()), t.role().id(),
             t.unmask() ? ", sees unmasked values" : "", loggable(createdBy));
         return new Issued(t, secret);
@@ -218,7 +218,11 @@ public class ApiTokens {
 
     /** A token as it works now: its expiry no later than the longest lifetime allows (ADR 0037). */
     private Token token(ResultSet rs) throws SQLException {
-        Token t = row(rs);
+        return limited(row(rs));
+    }
+
+    /** {@code t} with the expiry it really has: its own, or its creation plus the longest lifetime, whichever is sooner. */
+    private Token limited(Token t) {
         Instant limited = expiry(t.createdBy(), t.createdAt(), t.expiresAt());
         return limited == t.expiresAt() ? t : new Token(t.id(), t.name(), t.role(), t.unmask(), t.createdBy(),
             t.createdAt(), limited, t.lastUsedAt(), t.revokedAt(), t.revokedReason());
@@ -289,7 +293,7 @@ public class ApiTokens {
             ps.setTimestamp(6, Db.timestamp(expiresAt));
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
-                return row(rs); // new: its expiry is already within the longest lifetime (create checks it)
+                return row(rs); // as stored; create shows it limited()
             }
         }
     }
@@ -409,7 +413,9 @@ public class ApiTokens {
         return b.toString();
     }
 
-    void onStart(@Observes StartupEvent event) {
+    // Straight after Kilnmark's own database check and migrations (DatabaseTls, priority 1), before the
+    // mail and notification workers start: a bad longest lifetime stops the server before anything uses it.
+    void onStart(@Observes @jakarta.annotation.Priority(2) StartupEvent event) {
         AuthMode.check(config.auth().mode(), httpHost);
         checkLimit(maxLifetime());
         if (config.auth().mode() == AuthMode.OFF) {
