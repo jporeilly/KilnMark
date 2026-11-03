@@ -1,20 +1,20 @@
 package io.kilnmark.server;
 
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Locale;
 import java.util.Optional;
-import java.util.Set;
+import java.util.Properties;
 
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.jboss.logging.Logger;
 
+import org.postgresql.jdbc.SslMode;
+
 import io.agroal.api.AgroalDataSource;
 import io.quarkus.runtime.StartupEvent;
+import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
 
@@ -22,16 +22,16 @@ import jakarta.enterprise.event.Observes;
  * Stops the server at start unless its own database is reached over TLS (ADR 0032): the connection
  * settings must demand TLS ({@code sslmode} {@code require}, {@code verify-ca} or {@code verify-full}),
  * and the session must be encrypted. Both, as {@code sslmode=prefer} (the driver's default) falls
- * back to plain text without a word, and one encrypted session says nothing about the next.
- * {@code kilnmark.database.require-tls=false} turns the check off, for a developer's own database.
+ * back to plain text without a word, and one encrypted session says nothing about the next. The
+ * settings are read by the PostgreSQL driver's own parser, so the check sees the mode the driver will
+ * use, never another reading of the URL. It runs before Kilnmark's other start-up work; Quarkus runs
+ * Flyway's migrations earlier still. {@code kilnmark.database.require-tls=false} turns it off, for a
+ * developer's own database.
  */
 @ApplicationScoped
 public class DatabaseTls {
 
     private static final Logger LOG = Logger.getLogger(DatabaseTls.class);
-
-    /** The sslmode values under which the driver never sends anything in plain text. */
-    static final Set<String> DEMANDING = Set.of("require", "verify-ca", "verify-full");
 
     private final KilnmarkConfig config;
     private final AgroalDataSource source;
@@ -41,7 +41,7 @@ public class DatabaseTls {
         this.source = source;
     }
 
-    void onStart(@Observes StartupEvent event) {
+    void onStart(@Observes @Priority(1) StartupEvent event) {
         if (!config.database().requireTls()) {
             LOG.warn("kilnmark.database.require-tls is off: Kilnmark's own database may be reached without TLS");
             return;
@@ -68,35 +68,32 @@ public class DatabaseTls {
     }
 
     /**
-     * Why the database settings do not demand TLS, or null when they do: the sslmode in the URL, or
-     * given as a driver property (which wins, as the driver reads it last).
+     * Why the database settings do not demand TLS, or null when they do: the mode the PostgreSQL driver
+     * will use, worked out by the driver itself from the URL and the driver property {@code sslmode}
+     * (the URL wins, keys are matched exactly, and {@code ssl=true} alone means verify-full, all as the
+     * driver reads them).
      */
     static String settingProblem(String url, String property) {
-        String mode = property != null && !property.isBlank() ? property : urlParameter(url, "sslmode");
-        if (mode != null && DEMANDING.contains(mode.trim().toLowerCase(Locale.ROOT))) {
+        Properties given = new Properties();
+        if (property != null) {
+            given.setProperty("sslmode", property);
+        }
+        Properties p = url == null ? null : org.postgresql.Driver.parseURL(url, given);
+        if (p == null) {
+            return "Kilnmark's own database address is not a PostgreSQL JDBC URL.";
+        }
+        SslMode mode;
+        try {
+            mode = SslMode.of(p);
+        } catch (java.sql.SQLException e) {
+            return "Kilnmark's own database connection has an sslmode the driver does not know.";
+        }
+        if (mode.requireEncryption()) {
             return null;
         }
-        return "Kilnmark's own database connection does not demand TLS: its sslmode is "
-            + (mode == null ? "not set (the driver then falls back to plain text)" : "'" + mode.trim() + "'")
-            + ". Add ?sslmode=require to QUARKUS_DATASOURCE_JDBC_URL, or verify-full with the database's CA "
-            + "(sslrootcert).";
-    }
-
-    /** A query parameter of a JDBC URL, by name ignoring case; the last one wins, as the driver reads it. */
-    static String urlParameter(String url, String name) {
-        int q = url == null ? -1 : url.indexOf('?');
-        if (q < 0) {
-            return null;
-        }
-        String found = null;
-        for (String pair : url.substring(q + 1).split("&")) {
-            int eq = pair.indexOf('=');
-            String key = URLDecoder.decode(eq < 0 ? pair : pair.substring(0, eq), StandardCharsets.UTF_8);
-            if (key.equalsIgnoreCase(name)) {
-                found = eq < 0 ? "" : URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
-            }
-        }
-        return found;
+        return "Kilnmark's own database connection does not demand TLS: the driver would use sslmode="
+            + mode.value + ", which falls back to plain text. Add ?sslmode=require to QUARKUS_DATASOURCE_JDBC_URL "
+            + "(the name in lower case), or verify-full with the database's CA (sslrootcert).";
     }
 
     /** Whether this session to PostgreSQL is encrypted, as the server itself says. */

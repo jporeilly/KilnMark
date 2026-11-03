@@ -1,6 +1,5 @@
 package io.kilnmark.server;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -31,27 +30,31 @@ class DatabaseTlsTest {
     @ConfigProperty(name = "quarkus.datasource.password")
     String password;
 
+    /** Accepted exactly when the PostgreSQL driver itself would demand TLS (its own parser decides). */
     @Test
-    void onlySettingsThatDemandTlsAreAccepted() {
+    void onlySettingsUnderWhichTheDriverDemandsTlsAreAccepted() {
         for (String ok : java.util.List.of("jdbc:postgresql://db:5432/kilnmark?sslmode=require",
             "jdbc:postgresql://db/kilnmark?sslmode=verify-full&sslrootcert=/etc/ca.pem",
-            "jdbc:postgresql://db/kilnmark?ApplicationName=k&SSLMODE=Verify-CA")) {
+            "jdbc:postgresql://db/kilnmark?ApplicationName=k&sslmode=verify-ca",
+            // ssl=true alone is verify-full to the driver
+            "jdbc:postgresql://db/kilnmark?ssl=true")) {
             assertNull(DatabaseTls.settingProblem(ok, null), ok);
         }
         for (String bad : java.util.List.of("jdbc:postgresql://db:5432/kilnmark",
             "jdbc:postgresql://db/kilnmark?sslmode=prefer", "jdbc:postgresql://db/kilnmark?sslmode=allow",
             "jdbc:postgresql://db/kilnmark?sslmode=disable",
-            // the driver reads the last one
-            "jdbc:postgresql://db/kilnmark?sslmode=require&sslmode=disable")) {
+            // the driver matches the key exactly and does not decode it: these leave it on prefer
+            "jdbc:postgresql://db/kilnmark?SSLMODE=require", "jdbc:postgresql://db/kilnmark?ApplicationName=k&SSLMODE=Verify-CA",
+            "jdbc:postgresql://db/kilnmark?ssl%6dode=require")) {
             String why = DatabaseTls.settingProblem(bad, null);
-            assertTrue(why != null && why.contains("does not demand TLS"), bad);
+            assertTrue(why != null && why.contains("does not demand TLS"), bad + " gave " + why);
             assertFalse(why.contains("db:5432") || why.contains("//db"), "never echoes the URL: " + why);
         }
-        // A driver property wins over the URL, as the driver reads it last
+        // The driver property counts where the URL says nothing, and the URL wins where it does
         assertNull(DatabaseTls.settingProblem("jdbc:postgresql://db/kilnmark", "require"));
-        assertTrue(DatabaseTls.settingProblem("jdbc:postgresql://db/kilnmark?sslmode=require", "prefer") != null);
-        assertEquals("verify-full", DatabaseTls.urlParameter("jdbc:x://h/d?a=1&sslMode=verify-full", "sslmode"));
-        assertNull(DatabaseTls.urlParameter("jdbc:x://h/d", "sslmode"));
+        assertTrue(DatabaseTls.settingProblem("jdbc:postgresql://db/kilnmark?sslmode=prefer", "require") != null,
+            "the URL's prefer wins over the property's require, as in the driver");
+        assertTrue(DatabaseTls.settingProblem("jdbc:mysql://db/kilnmark?sslMode=REQUIRED", null) != null);
     }
 
     @Test

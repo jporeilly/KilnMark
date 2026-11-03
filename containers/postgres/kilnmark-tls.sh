@@ -12,9 +12,12 @@ if [ ! -s "$dir/server.key" ] || [ ! -s "$dir/server.crt" ]; then
     -subj "/CN=kilnmark-postgres" -addext "subjectAltName=DNS:postgres,DNS:localhost,IP:127.0.0.1" \
     -keyout "$dir/server.key" -out "$dir/server.crt" 2>/dev/null
 fi
-# PostgreSQL refuses a key anyone but its owner can read.
+# PostgreSQL refuses a key anyone but its owner can read. An operator's own files on a read-only
+# mount cannot be changed here: they must already be owned by postgres (uid 999) with the key 0600.
 chown -R postgres:postgres "$dir" 2>/dev/null || true
-chmod 700 "$dir"
-chmod 600 "$dir/server.key"
+chmod 700 "$dir" 2>/dev/null || true
+chmod 600 "$dir/server.key" 2>/dev/null || true
+# TLS 1.2 or later, and for TLS 1.2 only forward-secret AEAD suites (no CBC or SHA-1), which a bank's
+# TLS scan otherwise marks weak.
 exec docker-entrypoint.sh "$@" -c ssl=on -c "ssl_cert_file=$dir/server.crt" -c "ssl_key_file=$dir/server.key" \
-  -c ssl_min_protocol_version=TLSv1.2
+  -c ssl_min_protocol_version=TLSv1.2 -c "ssl_ciphers=ECDHE+AESGCM:ECDHE+CHACHA20:!aNULL"

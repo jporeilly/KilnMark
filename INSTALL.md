@@ -49,7 +49,8 @@ Kilnmark reaches its database over TLS only, and does not start otherwise
 - **The bundled PostgreSQL** makes its own certificate on its first start and speaks TLS;
   `compose.yaml` connects with `sslmode=require`. Nothing to do. To have the certificate verified,
   put one from your authority as `server.crt` and `server.key` in `/var/lib/postgresql/tls` in its
-  volume, and use `verify-full` as below.
+  volume (owned by uid 999, the key readable by its owner only, `chmod 600`), and use `verify-full`
+  as below.
 - **Your own PostgreSQL** (a managed or shared server): turn TLS on in it, and set
   `QUARKUS_DATASOURCE_JDBC_URL` to its address with `?sslmode=verify-full&sslrootcert=/path/to/ca.pem`
   (mount the CA certificate into the container). `sslmode=require` also works, but encrypts without

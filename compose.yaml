@@ -29,8 +29,9 @@ services:
       retries: 20
     ports:
       # Published on 5442 so it never clashes with another PostgreSQL on this machine
-      # (another product's repository often uses 5432). Change with KILNMARK_DB_PORT.
-      - "${KILNMARK_DB_PORT:-5442}:5432"
+      # (another product's repository often uses 5432), and on this machine only: PostgreSQL
+      # still accepts plain-text logins. Change with KILNMARK_DB_PORT.
+      - "127.0.0.1:${KILNMARK_DB_PORT:-5442}:5432"
 
   kilnmark:
     image: localhost/kilnmark-server:dev
