@@ -13,19 +13,61 @@
   margin-top: 16px;
 }
 
+/* Browse's two views, Catalogue and Relationships: links drawn as the app's tabs. */
+.browse-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--km-border);
+  margin: 4px 0 16px;
+}
+
+.browse-tabs a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--km-control-h);
+  padding: 10px 16px;
+  border-bottom: 3px solid transparent;
+  color: var(--km-muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.browse-tabs a:hover {
+  color: var(--km-ink);
+}
+
+.browse-tabs a[aria-current="page"] {
+  border-bottom-color: var(--km-accent);
+  color: var(--km-ink-strong);
+}
+
+/*
+ * The filter and tree beside what the chosen schema holds, then the diagram (and its relationships)
+ * across the whole width under both, where it has the most room. The main column's panels are the
+ * grid's own items, so the diagram can span both columns.
+ */
 .browse-side {
   background: var(--km-surface);
   border-radius: var(--km-radius-card);
   box-shadow: var(--km-shadow-card);
   padding: 14px;
-  position: sticky;
-  top: calc(var(--km-topbar-h) + 12px);
-  max-height: calc(100vh - var(--km-topbar-h) - 24px);
+  max-height: 460px;
   overflow: auto;
+  align-self: stretch;
 }
 
-.browse-main > .panel:first-child {
+.browse-main {
+  display: contents;
+}
+
+.browse-main > .panel {
   margin-top: 0;
+  min-width: 0;
+}
+
+.browse-main > .browse-wide {
+  grid-column: 1 / -1;
 }
 
 .browse-tree .field {
@@ -209,13 +251,24 @@ table.rel td:nth-child(2) {
   stroke: var(--km-good);
 }
 
-.dg-frame .react-flow__edge-textbg {
-  fill: var(--km-surface);
+/* A table pointed at, or pinned with a click: its relationships stand out, the others fade. */
+.dg-frame .react-flow__edge.is-faded {
+  opacity: 0.12;
 }
 
-.dg-frame .react-flow__edge-text {
-  fill: var(--km-ink);
-  font-size: 11px;
+.dg-frame .react-flow__edge.is-near .react-flow__edge-path {
+  stroke-width: 3;
+}
+
+@media (forced-colors: active) {
+  .dg-frame .react-flow__edge-textbg {
+    fill: Canvas;
+    stroke: CanvasText;
+  }
+
+  .dg-frame .react-flow__edge-text {
+    fill: CanvasText;
+  }
 }
 
 .dg-frame .react-flow__node:focus-visible {
@@ -435,8 +488,6 @@ tr.is-open > td {
   }
 
   .browse-side {
-    position: static;
-    top: auto;
     max-height: 420px;
   }
 

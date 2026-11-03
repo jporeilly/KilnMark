@@ -7,6 +7,9 @@ import { browseApi, type Relationship, type RelationshipEnd } from "./browseApi"
 
 const percent = new Intl.NumberFormat("en-GB", { style: "percent", maximumFractionDigits: 0 });
 
+/** Who the server names for a relationship accepted for its confidence (RelationshipStore.AUTO_ACCEPTED_BY). */
+export const AUTO_ACCEPTED_BY = "Kilnmark (95% or more confident)";
+
 const STATUS: Record<Relationship["status"], string> = {
   proposed: "Proposed",
   accepted: "Accepted",
@@ -146,10 +149,14 @@ export function RelationshipTable({
                     <span className={`badge badge-rel-${r.status}`}>{STATUS[r.status]}</span>
                     <span className="small">
                       {r.kind === "declared"
-                        ? "Declared"
-                        : `Inferred${r.confidence != null ? `, ${percent.format(r.confidence)} confident` : ""}`}
+                        ? "Declared by the source"
+                        : `Inferred${r.confidence != null ? ` · ${percent.format(r.confidence)} confidence` : ""}`}
                     </span>
-                    {r.decidedBy && <span className="muted small">by {r.decidedBy}</span>}
+                    {r.decidedBy && (
+                      <span className="muted small">
+                        {r.decidedBy === AUTO_ACCEPTED_BY ? "Automatically, at 95% or more" : `by ${r.decidedBy}`}
+                      </span>
+                    )}
                   </div>
                 </td>
                 <td className="small rel-why">{why(r)}</td>

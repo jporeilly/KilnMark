@@ -38,6 +38,25 @@ details.
   `KILNMARK_TLS_KEY_FILE`), TLS 1.3 and 1.2 with forward-secret AEAD suites only, with plain HTTP
   from other machines enabled, redirected or disabled (`KILNMARK_HTTP_PLAIN`; an unknown value stops
   the server); INSTALL.md, "HTTPS". The page's theme script moved to a file of its own.
+- **Relationships: confident joins accepted automatically, and Browse holds them** (ADR 0019,
+  amended). Inferred joins found with 95% confidence or more are accepted without a person, shown
+  as "Automatically, at 95% or more" with their confidence; a steward can still reject one, and a
+  person's decisions are never overridden by a rescan. Joins across sources that only repeat a join
+  within one source (the same table through two sources on one database) are no longer proposed.
+  Relationships is a view of Browse now (Catalogue and Relationships tabs), not a sidebar entry of
+  its own; its address still works. On Browse, the filter and tree sit beside what the schema holds,
+  and the diagram, with its relationships, takes the whole width under them.
+- **The panel under the canvas, reviewed.** Nodes is the first tab, as choosing a node there opens its
+  settings. The Nodes table shows each node's metrics from the last run: rows in and out, time, rows
+  a second, how its time went (working, waiting for rows, held up by the next node, as a bar), peak
+  memory, and the node that held the run back most; its columns fold into a count. A node's settings
+  show the same metrics under Last run, and are laid out in three areas (the node, its settings in
+  as many columns as fit, what leaves it and its last run) by the panel's own width, so a long
+  setting no longer splits across columns and a rule's checkbox keeps its label beside it.
+- **Sidebar in the order the work goes**: Browse, Relationships, Quality rules, then Pipelines.
+- **The connector gallery's "Install the driver" link** sits inside its card.
+- **A new release shows at once**: the web app's page is sent with `Cache-Control: no-cache` (it was
+  cached for a day, so browsers kept the old release's screens after an upgrade).
 - **The flow sql node** (V29, ADR 0028, docs/design/flows.md section 7). `type: sql` with a `source`
   and 1 to 20 `statements`, each starting `TRUNCATE`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`,
   `DROP`, `ALTER`, `CALL`, `ANALYZE`, `REFRESH`, `COMMENT`, `REINDEX`, `CLUSTER` or `LOCK`; never a

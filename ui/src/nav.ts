@@ -40,6 +40,18 @@ export const NAV: NavItem[] = [
     tint: "sky",
     current: (r) => (r.page === "sources" ? "page" : r.page === "source" ? "true" : undefined),
   },
+  // In the order the work goes: find the data and how it joins (Browse holds the catalogue and the
+  // relationships between its tables, as two views), set what good looks like, then build the
+  // pipeline; issues last.
+  {
+    id: "browse",
+    label: "Browse",
+    href: href.browse(),
+    icon: "browse",
+    tint: "violet",
+    current: (r) => (r.page === "browse" ? "page" : r.page === "relationships" ? "true" : undefined),
+  },
+  { id: "rules", label: "Quality rules", href: href.rules(), icon: "rules", tint: "green", current: on("rules") },
   {
     id: "pipelines",
     label: "Pipelines",
@@ -48,16 +60,6 @@ export const NAV: NavItem[] = [
     tint: "mint",
     current: (r) => (r.page === "pipelines" ? "page" : r.page === "pipeline" || r.page === "pipeline-run" ? "true" : undefined),
   },
-  { id: "browse", label: "Browse", href: href.browse(), icon: "browse", tint: "violet", current: on("browse") },
-  {
-    id: "relationships",
-    label: "Relationships",
-    href: href.relationships(),
-    icon: "relationships",
-    tint: "pink",
-    current: on("relationships"),
-  },
-  { id: "rules", label: "Quality rules", href: href.rules(), icon: "rules", tint: "green", current: on("rules") },
   { id: "issues", label: "Issues", href: href.issues(), icon: "issues", tint: "red", current: on("issues"), badge: "issues" },
   {
     id: "whats-new",

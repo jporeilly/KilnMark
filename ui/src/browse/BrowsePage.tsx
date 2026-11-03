@@ -3,6 +3,7 @@ import { PageHeader } from "../components/ui";
 import { api, formatNumber, type Asset } from "../api";
 import { useTitle } from "../components/useTitle";
 import { href } from "../router";
+import { BrowseTabs } from "./BrowseTabs";
 import { BrowseTree } from "./BrowseTree";
 import { DiagramSection } from "./DiagramSection";
 import { browseApi, type BrowseAsset, type BrowseContainer, type BrowseSource, type Page } from "./browseApi";
@@ -57,6 +58,7 @@ export function BrowsePage({
         ]}
         meta={!source && !asset ? "Every source, schema, folder, table and file Kilnmark has scanned" : undefined}
       />
+      <BrowseTabs current="catalogue" />
       {error && (
         <p role="alert" className="error">
           {error}
