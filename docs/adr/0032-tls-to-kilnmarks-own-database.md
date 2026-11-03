@@ -31,7 +31,12 @@ plain-text connection either.
    (`Driver.parseURL`, `SslMode.of`), never a reading of Kilnmark's own: the driver lets the URL win
    over the driver property, matches the key `sslmode` exactly (`SSLMODE` is ignored) and does not
    decode it, and an own reading that differed would pass a connection the driver makes with
-   `prefer`. The check is the first of Kilnmark's start-up steps; Quarkus applies Flyway's
+   `prefer`. What the driver is given is the pool's own (Agroal's URL and driver properties, plus
+   whatever each security provider adds for each credential, in the pool's order), never
+   configuration keys: Quarkus also takes the default datasource's URL as
+   `quarkus.datasource."<default>".jdbc.url`, and a credentials provider can add `sslmode`, both of
+   which a key lookup would miss. A provider asked again later could answer differently; it is
+   trusted as the source of the database password already. The check is the first of Kilnmark's start-up steps; Quarkus applies Flyway's
    migrations before any of them, so a misconfigured connection carries those (schema only, no data
    or secrets) before the server stops. `kilnmark.database.require-tls=false` turns it off, for a
    developer's own database only.

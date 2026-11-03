@@ -32,7 +32,7 @@ details.
   on its first start (existing volumes too, with their data as it was) and speaks TLS 1.2 or later;
   Kilnmark connects with `sslmode=require`. **The server no longer starts unless its database
   connection demands TLS** (`sslmode` `require`, `verify-ca` or `verify-full`) **and the session is
-  encrypted**: an installation with its own PostgreSQL turns TLS on there and sets the sslmode
+  encrypted**, as read from the connection pool's own settings and the driver's own parser: an installation with its own PostgreSQL turns TLS on there and sets the sslmode
   (`verify-full` with its CA is best); INSTALL.md, "Kilnmark's own database".
   `kilnmark.database.require-tls=false` turns the check off, for a developer's own database.
 - **HTTPS and security headers** (ADR 0031). Every response carries a Content-Security-Policy that

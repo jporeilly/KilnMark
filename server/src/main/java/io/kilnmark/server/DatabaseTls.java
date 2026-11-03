@@ -4,15 +4,15 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Optional;
 import java.util.Properties;
 
-import org.eclipse.microprofile.config.ConfigProvider;
 import org.jboss.logging.Logger;
 
 import org.postgresql.jdbc.SslMode;
 
 import io.agroal.api.AgroalDataSource;
+import io.agroal.api.configuration.AgroalConnectionFactoryConfiguration;
+import io.agroal.api.security.AgroalSecurityProvider;
 import io.quarkus.runtime.StartupEvent;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -23,8 +23,9 @@ import jakarta.enterprise.event.Observes;
  * settings must demand TLS ({@code sslmode} {@code require}, {@code verify-ca} or {@code verify-full}),
  * and the session must be encrypted. Both, as {@code sslmode=prefer} (the driver's default) falls
  * back to plain text without a word, and one encrypted session says nothing about the next. The
- * settings are read by the PostgreSQL driver's own parser, so the check sees the mode the driver will
- * use, never another reading of the URL. It runs before Kilnmark's other start-up work; Quarkus runs
+ * settings are the pool's own (its URL, its driver properties and what its credentials add, built as
+ * the pool builds them) read by the PostgreSQL driver's own parser, so the check sees the mode the
+ * driver will use, never another reading of the configuration. It runs before Kilnmark's other start-up work; Quarkus runs
  * Flyway's migrations earlier still. {@code kilnmark.database.require-tls=false} turns it off, for a
  * developer's own database.
  */
@@ -46,11 +47,10 @@ public class DatabaseTls {
             LOG.warn("kilnmark.database.require-tls is off: Kilnmark's own database may be reached without TLS");
             return;
         }
-        var cfg = ConfigProvider.getConfig();
-        String url = cfg.getOptionalValue("quarkus.datasource.jdbc.url", String.class).orElse("");
-        Optional<String> property = cfg.getOptionalValue(
-            "quarkus.datasource.jdbc.additional-jdbc-properties.sslmode", String.class);
-        String problem = settingProblem(url, property.orElse(null));
+        // What the pool itself will use, not the configuration keys: Quarkus accepts the same setting
+        // under more than one name, and a credentials provider adds driver properties of its own.
+        var factory = source.getConfiguration().connectionPoolConfiguration().connectionFactoryConfiguration();
+        String problem = settingProblem(factory.jdbcUrl(), driverProperties(factory));
         if (problem == null) {
             try (Connection c = source.getConnection()) {
                 problem = encrypted(c) ? null : "Kilnmark's own database session is not encrypted, though TLS was asked "
@@ -68,16 +68,43 @@ public class DatabaseTls {
     }
 
     /**
-     * Why the database settings do not demand TLS, or null when they do: the mode the PostgreSQL driver
-     * will use, worked out by the driver itself from the URL and the driver property {@code sslmode}
-     * (the URL wins, keys are matched exactly, and {@code ssl=true} alone means verify-full, all as the
-     * driver reads them).
+     * The driver properties the pool passes with its URL, as Agroal builds them: its JDBC properties,
+     * then whatever each security provider makes of each credential (a credentials provider can add
+     * {@code sslmode}), later ones winning. The user name and password are left out: they say nothing
+     * about TLS, and this never holds a secret longer than it must.
      */
+    static Properties driverProperties(AgroalConnectionFactoryConfiguration factory) {
+        Properties props = new Properties();
+        props.putAll(factory.jdbcProperties());
+        for (Object credential : factory.credentials()) {
+            for (AgroalSecurityProvider provider : factory.securityProviders()) {
+                Properties added = provider.getSecurityProperties(credential);
+                if (added != null) {
+                    props.putAll(added);
+                }
+            }
+        }
+        props.remove("user");
+        props.remove("password");
+        return props;
+    }
+
+    /** {@link #settingProblem(String, Properties)} with at most the one property {@code sslmode}. */
     static String settingProblem(String url, String property) {
         Properties given = new Properties();
         if (property != null) {
             given.setProperty("sslmode", property);
         }
+        return settingProblem(url, given);
+    }
+
+    /**
+     * Why the database settings do not demand TLS, or null when they do: the mode the PostgreSQL driver
+     * will use, worked out by the driver itself from the URL and the driver properties (the URL wins,
+     * keys are matched exactly, and {@code ssl=true} alone means verify-full, all as the driver reads
+     * them).
+     */
+    static String settingProblem(String url, Properties given) {
         Properties p = url == null ? null : org.postgresql.Driver.parseURL(url, given);
         if (p == null) {
             return "Kilnmark's own database address is not a PostgreSQL JDBC URL.";
