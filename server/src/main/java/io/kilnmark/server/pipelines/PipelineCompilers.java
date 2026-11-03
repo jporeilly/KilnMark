@@ -47,7 +47,7 @@ public class PipelineCompilers {
     @ApplicationScoped
     PipelineSources sources(GraphStore store, SecretBox secrets, Connectors connectors, KilnmarkConfig config,
                             io.kilnmark.server.quality.QualityService quality) {
-        HostPolicy hosts = new HostPolicy(config.sources().allowedHosts().orElse(List.of()));
+        HostPolicy hosts = HostPolicy.of(config);
         return new PipelineSources() {
             @Override
             public Optional<Records.Source> source(String name) {

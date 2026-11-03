@@ -126,6 +126,14 @@ public class MySqlConnector extends JdbcConnector {
         return product.displayName;
     }
 
+    /** Encrypted with {@code required}, {@code verify-ca} or {@code verify-full}; {@code preferred} falls back to plain text. */
+    @Override
+    public String unencryptedReason(SourceConfig source) {
+        String tls = source.setting("tls_mode") == null ? "preferred" : source.setting("tls_mode").toLowerCase(Locale.ROOT);
+        return Set.of("required", "verify-ca", "verify-full").contains(tls) ? null
+            : "tls_mode: " + tls + " lets the connection go unencrypted; choose required, verify-ca or verify-full";
+    }
+
     @Override
     public String monogram() {
         return product.monogram;

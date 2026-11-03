@@ -181,6 +181,16 @@ public final class S3Connector extends FileSourceConnector {
         return List.of("s3." + region + ".amazonaws.com");
     }
 
+    /** AWS's own endpoint is HTTPS; another endpoint must be an {@code https://} URL. */
+    @Override
+    public String unencryptedReason(SourceConfig source) {
+        String endpoint = source.setting("endpoint");
+        if (endpoint == null || endpoint.strip().regionMatches(true, 0, "https://", 0, 8)) {
+            return null;
+        }
+        return "endpoint: requests to it are not encrypted; use its https:// address";
+    }
+
     @Override
     protected String prefix(SourceConfig source) {
         String prefix = source.setting("prefix");

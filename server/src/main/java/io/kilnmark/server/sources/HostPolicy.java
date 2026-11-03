@@ -17,15 +17,29 @@ import io.kilnmark.kiln.connect.SourceConfig;
  * on-demand read makes ({@link #refusal}), so a list narrowed since a source was saved holds at once.
  *
  * <p>Hosts are compared by name or address as written; what a name resolves to is not checked.
+ *
+ * <p>With {@code kilnmark.sources.require-tls} on, the same checks also refuse a source whose
+ * connections could go unencrypted, as its connector says ({@link Connector#unencryptedReason}),
+ * so every place that checks hosts checks encryption too (ADR 0034).
  */
 public final class HostPolicy {
 
     /** The setting, for messages. */
     public static final String SETTING = "kilnmark.sources.allowed-hosts";
 
-    private final List<String> allowed;
+    /** The setting that requires encrypted connections, for messages. */
+    public static final String TLS_SETTING = "kilnmark.sources.require-tls";
 
+    private final List<String> allowed;
+    private final boolean requireTls;
+
+    /** Hosts only, no encryption required: for tests. */
     public HostPolicy(List<String> allowed) {
+        this(allowed, false);
+    }
+
+    public HostPolicy(List<String> allowed, boolean requireTls) {
+        this.requireTls = requireTls;
         List<String> out = new ArrayList<>();
         for (String a : allowed == null ? List.<String>of() : allowed) {
             if (a != null && !a.isBlank()) {
@@ -35,9 +49,9 @@ public final class HostPolicy {
         this.allowed = List.copyOf(out);
     }
 
-    /** The administrator's list, from {@code kilnmark.sources.allowed-hosts}. */
+    /** The administrator's settings: {@code kilnmark.sources.allowed-hosts} and {@code require-tls}. */
     public static HostPolicy of(io.kilnmark.server.KilnmarkConfig config) {
-        return new HostPolicy(config.sources().allowedHosts().orElse(List.of()));
+        return new HostPolicy(config.sources().allowedHosts().orElse(List.of()), config.sources().requireTls());
     }
 
     /** Whether a host may be reached. */
@@ -64,6 +78,13 @@ public final class HostPolicy {
      * @throws IllegalArgumentException naming the first host not allowed, for a 400 answer
      */
     public void check(Connector connector, SourceConfig source) {
+        if (requireTls) {
+            String reason = connector.unencryptedReason(source);
+            if (reason != null) {
+                throw new IllegalArgumentException(reason + ". This server only connects to sources over encrypted "
+                    + "connections (" + TLS_SETTING + ")");
+            }
+        }
         if (allowed.isEmpty()) {
             return;
         }
@@ -77,10 +98,34 @@ public final class HostPolicy {
     }
 
     /**
+     * Why the saved source may not be reached now because its connections could go unencrypted, or
+     * null when encryption is not required or every connection is encrypted. Names a setting and its
+     * value, never a host. Called just before connecting.
+     */
+    public String encryptionRefusal(Connector connector, SourceConfig source) {
+        if (!requireTls) {
+            return null;
+        }
+        String reason;
+        try {
+            reason = connector.unencryptedReason(source);
+        } catch (RuntimeException e) {
+            reason = "Kilnmark cannot tell whether its connections are encrypted";
+        }
+        return reason == null ? null : "Source " + source.name() + " could be reached over an unencrypted connection ("
+            + reason + "), and this server only connects to sources over encrypted ones (" + TLS_SETTING + "), so "
+            + "Kilnmark did not connect. Edit the source.";
+    }
+
+    /**
      * Why the saved source may not be reached now, in plain words for a job's detail or a check's
      * answer; null when every host it names is allowed. Called just before connecting.
      */
     public String refusal(Connector connector, SourceConfig source) {
+        String unencrypted = encryptionRefusal(connector, source);
+        if (unencrypted != null) {
+            return unencrypted;
+        }
         if (allowed.isEmpty()) {
             return null;
         }

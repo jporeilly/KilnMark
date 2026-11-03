@@ -563,6 +563,25 @@ forgery). To limit it:
   properties that would name another host, port or database (PostgreSQL `PGHOST`, `PGPORT`,
   `PGDBNAME`; SQL Server `server`, `address`, `addr`, `network address`) are refused, so the
   address is always the URL's. Empty, the default, allows any host.
+- **Encrypted connections only.** `kilnmark.sources.require-tls=true`
+  (`KILNMARK_SOURCES_REQUIRE_TLS`, off by default) refuses a source whose connections could cross
+  the network unencrypted, saying which setting to change, at the same moments as the allowed hosts:
+  when a source is added, edited, imported, tested or listed, and again just before every
+  connection, so sources saved before it was turned on stop at once. What counts, per kind
+  ([ADR 0034](adr/0034-encrypted-connections-to-sources.md)):
+
+  | Kind | Encrypted with | Refused |
+  | --- | --- | --- |
+  | PostgreSQL | `sslmode=require`, `verify-ca` or `verify-full` in the URL (or `ssl=true`), as the driver reads it | no `sslmode` (the driver then uses `prefer`), `prefer`, `allow`, `disable` |
+  | SQL Server | no `encrypt` (the driver encrypts by default), `encrypt=true`, `mandatory` or `strict` | `encrypt=false` or `optional` |
+  | MySQL, MariaDB | `tls_mode` `required`, `verify-ca` or `verify-full` | `preferred` (the default), `disabled` |
+  | Oracle | `encryption` `tls` (TCPS) or `required` (Oracle's native encryption, insisted on) | `accepted` (the default) |
+  | S3 | AWS itself (no endpoint), or an `https://` endpoint | an `http://` endpoint |
+  | Files in a folder, sample data | always: they reach no network | |
+  | Generic JDBC | | always: Kilnmark cannot tell how an arbitrary driver encrypts |
+
+  `require` and `encrypt=true` with `trust_server_certificate` encrypt without checking the server's
+  certificate; `verify-full` (PostgreSQL, MySQL) and TCPS (Oracle) also check it.
 - **The server's own identity and files.** JDBC URL properties that make the driver act as the
   server or touch its files are refused when a source is checked or scanned, as the driver reads
   them (braces, quotes and percent-encoding do not hide them): SQL Server `integratedSecurity`,

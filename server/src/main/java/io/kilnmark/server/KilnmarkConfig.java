@@ -491,6 +491,15 @@ public interface KilnmarkConfig {
          * test connects. None (the default) allows any host.
          */
         Optional<List<String>> allowedHosts();
+
+        /**
+         * Whether every source must be reached over an encrypted connection (ADR 0034): a source
+         * whose settings would let a connection go unencrypted (PostgreSQL's sslmode prefer, MySQL's
+         * tls_mode preferred, an http:// S3 endpoint, and so on) is refused when it is saved, and no
+         * connection is made to one saved earlier. Off by default.
+         */
+        @WithDefault("false")
+        boolean requireTls();
     }
 
     /** The catalogue of connectors. */

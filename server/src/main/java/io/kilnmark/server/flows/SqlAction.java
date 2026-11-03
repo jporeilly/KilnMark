@@ -131,6 +131,10 @@ final class SqlAction {
             return Outcome.failed("Node " + id + ": " + s.name() + "'s settings are no longer accepted; open the source "
                 + "and save it again to see why");
         }
+        String unencrypted = sources.hosts().encryptionRefusal(connector, config);
+        if (unencrypted != null) {
+            return Outcome.failed("Node " + id + ": " + unencrypted);
+        }
         try {
             sources.hosts().check(connector, config);
         } catch (IllegalArgumentException e) {

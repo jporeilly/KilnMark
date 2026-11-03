@@ -59,7 +59,7 @@ public class SourceService {
         this.secrets = secrets;
         this.connectors = connectors;
         this.checks = checks;
-        this.hosts = new HostPolicy(config.sources().allowedHosts().orElse(List.of()));
+        this.hosts = HostPolicy.of(config);
     }
 
     /**

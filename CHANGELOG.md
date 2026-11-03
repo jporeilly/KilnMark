@@ -28,6 +28,13 @@ details.
 
 ### Details
 
+- **Encrypted connections to sources, when required** (ADR 0034). With
+  `kilnmark.sources.require-tls=true` (off by default), a source whose connections could go
+  unencrypted is refused when it is saved, and nothing connects to one saved earlier: PostgreSQL
+  without `sslmode=require` or stronger, SQL Server with `encrypt=false` or `optional`, MySQL and
+  MariaDB with `tls_mode` `preferred` or `disabled`, Oracle with `encryption` `accepted`, S3 with an
+  `http://` endpoint, and every Generic JDBC source. The message names the setting to change.
+
 - **SBOMs, scanning and signed releases** (ADR 0033, docs/design/supply-chain.md). Every release
   carries CycloneDX SBOMs of the server's libraries and the web UI's packages, in its `sbom` folder.
   CI scans them with Trivy on every change and every Monday, and fails on a high or critical

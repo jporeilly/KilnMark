@@ -50,6 +50,43 @@ class HostPolicyTest {
             null));
     }
 
+    /**
+     * With kilnmark.sources.require-tls on, a source whose connections could go unencrypted is
+     * refused when saved and before every connection, wherever hosts are checked (ADR 0034).
+     */
+    @Test
+    void requiringTlsRefusesSourcesThatCouldGoUnencrypted() {
+        HostPolicy tls = new HostPolicy(List.of(), true);
+        PostgresConnector pg = new PostgresConnector();
+        SourceConfig plain = new SourceConfig("crm", "postgresql", Map.of("url", "jdbc:postgresql://db.example.net/x"),
+            null);
+        SourceConfig encrypted = new SourceConfig("crm", "postgresql",
+            Map.of("url", "jdbc:postgresql://db.example.net/x?sslmode=require"), null);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> tls.check(pg, plain));
+        assertTrue(e.getMessage().startsWith("url:") && e.getMessage().contains(HostPolicy.TLS_SETTING), e.getMessage());
+        tls.check(pg, encrypted);
+
+        String why = tls.refusal(pg, plain);
+        assertTrue(why != null && why.startsWith("Source crm") && why.contains(HostPolicy.TLS_SETTING), why);
+        assertFalse(why.contains("db.example.net"), "names the setting, never the host: " + why);
+        assertTrue(why.equals(tls.encryptionRefusal(pg, plain)));
+        assertNull(tls.refusal(pg, encrypted));
+
+        // Off (the default): nothing about encryption is refused
+        HostPolicy off = new HostPolicy(List.of());
+        off.check(pg, plain);
+        assertNull(off.refusal(pg, plain));
+        assertNull(off.encryptionRefusal(pg, plain));
+
+        // Both on: encryption is checked first, and an allowed host still needs it
+        HostPolicy both = new HostPolicy(List.of("db.example.net"), true);
+        assertTrue(both.refusal(pg, plain).contains(HostPolicy.TLS_SETTING));
+        assertNull(both.refusal(pg, encrypted));
+        assertTrue(both.refusal(pg, new SourceConfig("crm", "postgresql",
+            Map.of("url", "jdbc:postgresql://other.example.net/x?sslmode=require"), null)).contains(HostPolicy.SETTING));
+    }
+
     @Test
     void aSavedSourceIsCheckedAgainstTheCurrentListBeforeEveryConnection() {
         // Saved while the list allowed it; the list has since been narrowed.

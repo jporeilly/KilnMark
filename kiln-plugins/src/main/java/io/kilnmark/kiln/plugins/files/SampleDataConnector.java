@@ -29,6 +29,12 @@ public final class SampleDataConnector extends FileSourceConnector {
         return "Kilnmark sample data";
     }
 
+    /** Bundled with the server: nothing crosses a network. */
+    @Override
+    public String unencryptedReason(io.kilnmark.kiln.connect.SourceConfig source) {
+        return null;
+    }
+
     @Override
     public String family() {
         return "built in";

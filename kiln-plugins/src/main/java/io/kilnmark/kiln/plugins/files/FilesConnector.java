@@ -99,6 +99,12 @@ public final class FilesConnector extends FileSourceConnector {
         return "Files in a folder";
     }
 
+    /** Folders on this server's own disks: nothing crosses a network. */
+    @Override
+    public String unencryptedReason(SourceConfig source) {
+        return null;
+    }
+
     @Override
     public List<Setting> settings() {
         return List.of(

@@ -21,6 +21,27 @@ public final class PostgresConnector extends JdbcConnector {
         return "PostgreSQL";
     }
 
+    /**
+     * The sslmode the driver will use, worked out by the driver's own parser from the URL and the
+     * properties this source adds (the URL wins, as when connecting): require, verify-ca and
+     * verify-full always encrypt; prefer, the default, falls back to plain text.
+     */
+    @Override
+    public String unencryptedReason(io.kilnmark.kiln.connect.SourceConfig source) {
+        String url = jdbcUrl(source);
+        java.util.Properties p = url == null ? null : org.postgresql.Driver.parseURL(url, driverSettings(source));
+        if (p == null) {
+            return "url: not a PostgreSQL JDBC URL";
+        }
+        try {
+            org.postgresql.jdbc.SslMode mode = org.postgresql.jdbc.SslMode.of(p);
+            return mode.requireEncryption() ? null : "url: with sslmode=" + mode.value + " the connection may fall back "
+                + "to plain text; add sslmode=require (or verify-full) to the URL";
+        } catch (java.sql.SQLException e) {
+            return "url: an sslmode the PostgreSQL driver does not know";
+        }
+    }
+
     @Override
     public String monogram() {
         return "Pg";

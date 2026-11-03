@@ -81,6 +81,23 @@ public final class SqlServerConnector extends JdbcConnector {
         return "SQL Server";
     }
 
+    /**
+     * The {@code encrypt} the driver itself reads from the URL (its own parser, so encodings and braces
+     * are undone): {@code true} (its default), {@code mandatory} and {@code strict} encrypt; {@code false}
+     * and {@code optional} may not. A URL the driver cannot read is refused rather than guessed.
+     */
+    @Override
+    public String unencryptedReason(SourceConfig source) {
+        Map<String, String> driver = driverProperties(jdbcUrl(source));
+        if (driver.isEmpty()) {
+            return "url: the SQL Server driver cannot read it, so Kilnmark cannot tell whether it encrypts";
+        }
+        String encrypt = bareValue(driver.getOrDefault("encrypt", "true")).toLowerCase(Locale.ROOT);
+        return Set.of("true", "mandatory", "strict").contains(encrypt) ? null
+            : "url: encrypt=" + encrypt + " lets the connection go unencrypted; take it out (the driver encrypts by "
+                + "default) or set encrypt=strict";
+    }
+
     @Override
     public String monogram() {
         return "SQL";
