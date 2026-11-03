@@ -739,7 +739,8 @@ p.cv-field-problems {
   padding: 2px 0;
 }
 
-.cv-field .cv-checklist input {
+.cv-field .cv-checklist input,
+.cv-field .cv-check input {
   width: auto;
   flex: none;
 }

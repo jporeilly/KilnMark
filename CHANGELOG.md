@@ -28,6 +28,17 @@ details.
 
 ### Details
 
+- **The panel under the canvas, reviewed.** Nodes is the first tab, as choosing a node there opens its
+  settings. The Nodes table shows each node's metrics from the last run: rows in and out, time, rows
+  a second, how its time went (working, waiting for rows, held up by the next node, as a bar), peak
+  memory, and the node that held the run back most; its columns fold into a count. A node's settings
+  show the same metrics under Last run, and are laid out in three areas (the node, its settings in
+  as many columns as fit, what leaves it and its last run) by the panel's own width, so a long
+  setting no longer splits across columns and a rule's checkbox keeps its label beside it.
+- **Sidebar in the order the work goes**: Browse, Relationships, Quality rules, then Pipelines.
+- **The connector gallery's "Install the driver" link** sits inside its card.
+- **A new release shows at once**: the web app's page is sent with `Cache-Control: no-cache` (it was
+  cached for a day, so browsers kept the old release's screens after an upgrade).
 - **The flow sql node** (V29, ADR 0028, docs/design/flows.md section 7). `type: sql` with a `source`
   and 1 to 20 `statements`, each starting `TRUNCATE`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`,
   `DROP`, `ALTER`, `CALL`, `ANALYZE`, `REFRESH`, `COMMENT`, `REINDEX`, `CLUSTER` or `LOCK`; never a
