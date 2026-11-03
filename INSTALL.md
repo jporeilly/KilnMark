@@ -60,6 +60,24 @@ Sigstore's public log, which is what `--insecure-ignore-tlog` acknowledges; the 
 The SBOMs, `kilnmark-<version>-server.cdx.json` and `-ui.cdx.json` (also in the release's `sbom`
 folder), list every library and package it contains, for your own scanners.
 
+### Kilnmark's own database
+
+Kilnmark reaches its database over TLS only, and does not start otherwise
+([ADR 0032](docs/adr/0032-tls-to-kilnmarks-own-database.md)).
+
+- **The bundled PostgreSQL** makes its own certificate on its first start and speaks TLS;
+  `compose.yaml` connects with `sslmode=require`. Nothing to do. To have the certificate verified,
+  put one from your authority as `server.crt` and `server.key` in `/var/lib/postgresql/tls` in its
+  volume (owned by uid 999, the key readable by its owner only, `chmod 600`), and use `verify-full`
+  as below.
+- **Your own PostgreSQL** (a managed or shared server): turn TLS on in it, and set
+  `QUARKUS_DATASOURCE_JDBC_URL` to its address with `?sslmode=verify-full&sslrootcert=/path/to/ca.pem`
+  (mount the CA certificate into the container). `sslmode=require` also works, but encrypts without
+  checking who answers.
+
+If the server stops with "does not demand TLS" or "not encrypted", its log says which and what to
+change.
+
 ### HTTPS
 
 Kilnmark should be reached over HTTPS only. Either:

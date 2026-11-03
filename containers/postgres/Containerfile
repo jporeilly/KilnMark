@@ -12,3 +12,11 @@ RUN apt-get update \
 RUN sed -i "s/^#\?shared_preload_libraries = .*/shared_preload_libraries = 'age'/" \
       /usr/share/postgresql/postgresql.conf.sample \
  && grep -q "^shared_preload_libraries = 'age'" /usr/share/postgresql/postgresql.conf.sample
+
+# TLS on (ADR 0032): a certificate made on first start in the data volume, then the image's own
+# entrypoint with the TLS settings added. The command stays the image's, so tools that pass their
+# own still work.
+COPY kilnmark-tls.sh /usr/local/bin/kilnmark-tls.sh
+RUN chmod 755 /usr/local/bin/kilnmark-tls.sh
+ENTRYPOINT ["kilnmark-tls.sh"]
+CMD ["postgres"]
