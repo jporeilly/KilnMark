@@ -1,7 +1,7 @@
 import { href } from "../router";
 import { PageHeader, Switch } from "../components/ui";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { aiApi, api, formatTime, type AccessRole, type ApiToken, type CreatedToken, type Me } from "../api";
+import { accessReviewApi, aiApi, api, formatTime, type AccessRole, type ApiToken, type CreatedToken, type Me } from "../api";
 import { useTitle } from "../components/useTitle";
 
 const ROLES: { value: AccessRole; label: string }[] = [
@@ -17,6 +17,18 @@ const EXPIRY: { value: string; label: string }[] = [
   { value: "365", label: "In a year" },
   { value: "never", label: "Never" },
 ];
+
+/**
+ * The expiries a new token may have under the server's longest lifetime (ADR 0037): those within it,
+ * the longest itself when no listed one is, and never only when there is no limit.
+ */
+export function expiryChoices(maxDays: number | null): { value: string; label: string }[] {
+  if (maxDays == null) return EXPIRY;
+  const within = EXPIRY.filter((x) => x.value !== "never" && Number(x.value) <= maxDays);
+  return within.some((x) => Number(x.value) === maxDays)
+    ? within
+    : [...within, { value: String(maxDays), label: `In ${maxDays} days (the longest allowed)` }];
+}
 
 const STATUS: Record<ApiToken["status"], string> = {
   active: "Active",
@@ -197,9 +209,23 @@ function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
   const [role, setRole] = useState<AccessRole>("viewer");
   const [unmask, setUnmask] = useState(true);
   const [expiry, setExpiry] = useState("90");
+  const [maxDays, setMaxDays] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
+  const choices = expiryChoices(maxDays);
+
+  // The server's longest lifetime: only expiries within it are offered (ADR 0037)
+  useEffect(() => {
+    accessReviewApi
+      .tokenPolicy()
+      .then((p) => {
+        setMaxDays(p.maxLifetimeDays);
+        const offered = expiryChoices(p.maxLifetimeDays);
+        setExpiry((now) => (offered.some((x) => x.value === now) ? now : offered[offered.length - 1].value));
+      })
+      .catch(() => setMaxDays(null)); // an older server: every choice, and the server still checks
+  }, []);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -253,13 +279,16 @@ function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
             <label htmlFor="tok-expiry">Expires</label>
             <select id="tok-expiry" value={expiry} onChange={(e) => setExpiry(e.target.value)}
               aria-describedby="tok-expiry-hint">
-              {EXPIRY.map((x) => (
+              {choices.map((x) => (
                 <option key={x.value} value={x.value}>
                   {x.label}
                 </option>
               ))}
             </select>
-            <p id="tok-expiry-hint" className="hint">Give the least role and the shortest life that will do.</p>
+            <p id="tok-expiry-hint" className="hint">
+              Give the least role and the shortest life that will do.
+              {maxDays != null && ` This server allows at most ${maxDays} days.`}
+            </p>
           </div>
         </div>
         {role === "designer" && (

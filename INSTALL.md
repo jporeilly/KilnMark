@@ -135,6 +135,17 @@ given no role, is in **Settings**, **Audit log**, under `sso:` and the person's 
 Kilnmark must be reached over HTTPS for this (see HTTPS above): its session cookies are sent over
 HTTPS only. Behind a proxy that ends TLS, also set `KILNMARK_OIDC_BEHIND_TLS_PROXY=true`.
 
+### Review who has access
+
+**Settings**, **Access review** lists every API token (role, whether it sees sensitive values,
+expiry, last use) and everyone who signs in with your identity provider, with the role of their last
+sign-in. **Download CSV** keeps it as evidence for your auditors; each download is in the audit log.
+
+To limit how long tokens last, set `KILNMARK_TOKEN_MAX_LIFETIME` in `.env`, for example `90d`, and
+restart. New tokens must then expire within it, and **tokens already older than it stop working**:
+check the review first, and replace any a script still needs. The admin token from
+`KILNMARK_ADMIN_TOKEN` is not limited ([ADR 0037](docs/adr/0037-token-lifetime-and-access-review.md)).
+
 ## B. From source, with the reference lab and the samples
 
 1. `git clone https://github.com/jporeilly/KilnMark.git` and `cd KilnMark`.

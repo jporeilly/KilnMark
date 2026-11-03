@@ -87,10 +87,13 @@ public class AuditLog {
     /** Someone signed out of a provider sign-in. */
     public static final String SIGN_OUT = "auth.sign_out";
 
+    /** An admin downloaded the access review (ADR 0037); detail: format. */
+    public static final String ACCESS_REVIEW = "access.review";
+
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
-        SIGN_OUT);
+        SIGN_OUT, ACCESS_REVIEW);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;
@@ -123,6 +126,35 @@ public class AuditLog {
     /** One event as read back. */
     public record Event(long id, Instant at, String actor, Long tokenId, String action, String target,
                         Map<String, Object> detail) {
+    }
+
+    /**
+     * A person who has signed in with the identity provider, as the audit log knows them (ADR 0037):
+     * their last sign-in given a role, with that role and grant, and how many sign-ins in all.
+     */
+    public record ProviderAccess(String name, Instant lastSignIn, String role, boolean unmask, long signIns) {
+    }
+
+    /** Everyone who has signed in with the identity provider and been given a role, most recent first. */
+    public List<ProviderAccess> providerAccess() {
+        return db.tx(c -> {
+            List<ProviderAccess> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT DISTINCT ON (actor) actor, at, detail::text, "
+                + "count(*) OVER (PARTITION BY actor) FROM kilnmark.audit_event WHERE action = ? "
+                + "ORDER BY actor, at DESC")) {
+                ps.setString(1, SIGN_IN);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> d = detail(rs.getString(3));
+                        out.add(new ProviderAccess(rs.getString(1), Db.instant(rs.getTimestamp(2)),
+                            d.get("role") == null ? null : String.valueOf(d.get("role")),
+                            Boolean.TRUE.equals(d.get("unmask")), rs.getLong(4)));
+                    }
+                }
+            }
+            out.sort(java.util.Comparator.comparing(ProviderAccess::lastSignIn).reversed());
+            return out;
+        });
     }
 
     private final Db db;

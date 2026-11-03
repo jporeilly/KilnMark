@@ -37,6 +37,7 @@ const NotificationsPage = page(() => import("./pages/NotificationsPage"), "Notif
 const EmailSettingsPage = page(() => import("./pages/EmailSettingsPage"), "EmailSettingsPage");
 const SentEmailsPage = page(() => import("./pages/SentEmailsPage"), "SentEmailsPage");
 const AuditLogPage = page(() => import("./pages/AuditLogPage"), "AuditLogPage");
+const AccessReviewPage = page(() => import("./pages/AccessReviewPage"), "AccessReviewPage");
 const DriversPage = page(() => import("./pages/DriversPage"), "DriversPage");
 const JdbcDriversPage = page(() => import("./pages/JdbcDriversPage"), "JdbcDriversPage");
 import { Icon } from "./components/icons";
@@ -383,6 +384,12 @@ function Shell({ me }: { me: Me }) {
               <AuditLogPage />
             ) : (
               <NotAllowed title="Audit log">Only admins can read the audit log.</NotAllowed>
+            ))}
+          {route.page === "access-review" &&
+            (allows(me.role, "admin") ? (
+              <AccessReviewPage />
+            ) : (
+              <NotAllowed title="Access review">Only admins can review who has access.</NotAllowed>
             ))}
           {route.page === "drivers" &&
             (allows(me.role, "admin") ? (

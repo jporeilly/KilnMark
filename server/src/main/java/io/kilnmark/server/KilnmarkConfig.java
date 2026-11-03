@@ -269,6 +269,14 @@ public interface KilnmarkConfig {
         @WithDefault("tokens")
         io.kilnmark.server.auth.AuthMode mode();
 
+        /**
+         * The longest an API token may last (ADR 0037), for example {@code 90d}: every new token must
+         * expire within it, and a token older than it stops working whatever its own expiry says.
+         * The token from {@code KILNMARK_ADMIN_TOKEN} is not limited (it is replaced by changing the
+         * setting). None (the default): tokens may never expire.
+         */
+        Optional<Duration> tokenMaxLifetime();
+
         /** Sign-in through the customer's identity provider (ADR 0036), beside API tokens. */
         Oidc oidc();
     }

@@ -42,6 +42,7 @@ group("the audit log page", () => {
         "auth.sign_in",
         "auth.sign_in_refused",
         "auth.sign_out",
+        "access.review",
         "flow.sql",
         "mark.cleared",
         "mark.set",

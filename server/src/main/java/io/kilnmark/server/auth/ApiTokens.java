@@ -118,6 +118,12 @@ public class ApiTokens {
         this.httpHost = httpHost;
     }
 
+    /** A lifetime in words: whole days where it is, else hours. */
+    static String days(Duration d) {
+        long hours = d.toHours();
+        return hours % 24 == 0 ? hours / 24 + (hours == 24 ? " day" : " days") : hours + " hours";
+    }
+
     /** A new random token: {@code km_} and 43 base64url characters. */
     String newSecret() {
         byte[] raw = new byte[SECRET_BYTES];
@@ -186,6 +192,11 @@ public class ApiTokens {
         if (expiresAt != null && !expiresAt.isAfter(Instant.now())) {
             throw new IllegalArgumentException("expiresAt: choose a time in the future, or leave it out for no expiry");
         }
+        Optional<Duration> max = maxLifetime();
+        if (max.isPresent() && (expiresAt == null || expiresAt.isAfter(Instant.now().plus(max.get())))) {
+            throw new IllegalArgumentException("expiresAt: this server requires every token to expire within "
+                + days(max.get()) + " (kilnmark.auth.token-max-lifetime); choose an expiry no later than that");
+        }
         String secret = newSecret();
         Token t = db.tx(c -> insert(c, clean, role, grant, hash(secret), createdBy, expiresAt));
         LOG.infof("API token %d (%s, %s%s) created by %s", t.id(), loggable(t.name()), t.role().id(),
@@ -196,10 +207,38 @@ public class ApiTokens {
     private static final String COLUMNS =
         "id, name, role, created_by, created_at, expires_at, last_used_at, revoked_at, revoked_reason, unmask";
 
-    private static Token token(ResultSet rs) throws SQLException {
+    /** A token as stored. */
+    private static Token row(ResultSet rs) throws SQLException {
         return new Token(rs.getLong(1), rs.getString(2), AccessRole.parse(rs.getString(3)), rs.getBoolean(10),
             rs.getString(4), Db.instant(rs.getTimestamp(5)), Db.instant(rs.getTimestamp(6)),
             Db.instant(rs.getTimestamp(7)), Db.instant(rs.getTimestamp(8)), rs.getString(9));
+    }
+
+    /** A token as it works now: its expiry no later than the longest lifetime allows (ADR 0037). */
+    private Token token(ResultSet rs) throws SQLException {
+        Token t = row(rs);
+        Instant limited = expiry(t.createdBy(), t.createdAt(), t.expiresAt());
+        return limited == t.expiresAt() ? t : new Token(t.id(), t.name(), t.role(), t.unmask(), t.createdBy(),
+            t.createdAt(), limited, t.lastUsedAt(), t.revokedAt(), t.revokedReason());
+    }
+
+    /** The longest a token may last, from {@code kilnmark.auth.token-max-lifetime}; empty: no limit. */
+    public Optional<Duration> maxLifetime() {
+        return config == null ? Optional.empty() : config.auth().tokenMaxLifetime().filter(d -> !d.isNegative()
+            && !d.isZero());
+    }
+
+    /**
+     * When a token stops working: its own expiry, or its creation plus the longest lifetime, whichever
+     * comes first. The environment's admin token is not limited: it is replaced by changing the setting.
+     */
+    Instant expiry(String createdBy, Instant createdAt, Instant expiresAt) {
+        Optional<Duration> max = maxLifetime();
+        if (max.isEmpty() || FROM_ENVIRONMENT.equals(createdBy) || createdAt == null) {
+            return expiresAt;
+        }
+        Instant limit = createdAt.plus(max.get());
+        return expiresAt == null || limit.isBefore(expiresAt) ? limit : expiresAt;
     }
 
     private static Token insert(Connection c, String name, AccessRole role, boolean unmask, byte[] hash,
@@ -214,7 +253,7 @@ public class ApiTokens {
             ps.setTimestamp(6, Db.timestamp(expiresAt));
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
-                return token(rs);
+                return row(rs); // new: its expiry is already within the longest lifetime (create checks it)
             }
         }
     }
@@ -281,13 +320,15 @@ public class ApiTokens {
             Instant lastUsed;
             Instant now;
             try (PreparedStatement ps = c.prepareStatement("SELECT id, name, role, hash, expires_at, last_used_at, "
-                + "revoked_at, now(), unmask FROM kilnmark.api_token WHERE hash = ?")) {
+                + "revoked_at, now(), unmask, created_by, created_at FROM kilnmark.api_token WHERE hash = ?")) {
                 ps.setBytes(1, wanted);
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next() || !MessageDigest.isEqual(wanted, rs.getBytes(4))) {
                         return Optional.empty();
                     }
-                    Instant expires = Db.instant(rs.getTimestamp(5));
+                    // its own expiry, or the longest lifetime the server allows, whichever is sooner
+                    Instant expires = expiry(rs.getString(10), Db.instant(rs.getTimestamp(11)),
+                        Db.instant(rs.getTimestamp(5)));
                     now = Db.instant(rs.getTimestamp(8));
                     if (rs.getTimestamp(7) != null || (expires != null && !expires.isAfter(now))) {
                         return Optional.empty();

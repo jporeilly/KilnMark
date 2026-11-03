@@ -21,6 +21,7 @@ it (behind a proxy, as its forwarding settings say).
 | Signed in (`auth.sign_in`) | Someone signed in with your organisation's identity provider | The role their groups gave them, and whether they see unmasked values |
 | Sign-in given no role (`auth.sign_in_refused`) | Someone signed in with the provider but was given no role | Why: no second factor, or none of their groups has a role |
 | Signed out (`auth.sign_out`) | Someone signed out of a provider sign-in | |
+| Access review downloaded (`access.review`) | An admin downloaded the access review (Settings, Access review) | Its format and how many entries it had |
 | Column marked sensitive (`mark.set`) | A column was marked | The column |
 | Sensitive mark cleared (`mark.cleared`) | A mark was cleared: the column's values are no longer masked | The column |
 | Source deleted (`source.deleted`) | A source and what was recorded about it were deleted | Its assets and runs, and whether it had marks (deleting it cleared them) |
