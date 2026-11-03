@@ -66,7 +66,7 @@ public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
 
     private static String clean(String s) {
         // control, format (bidi, zero-width) and unassigned characters: none may make one name look like another
-        String c = s == null ? "" : s.replaceAll("\\p{C}", "?").strip();
+        String c = s == null ? "" : s.replaceAll("[\\p{C}\\p{Zl}\\p{Zp}]", "?").strip();
         return c.length() > 120 ? c.substring(0, 120) : c;
     }
 

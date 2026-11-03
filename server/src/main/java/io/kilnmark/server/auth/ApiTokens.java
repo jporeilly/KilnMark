@@ -139,6 +139,24 @@ public class ApiTokens {
         return create(name, role, expiresAt, createdBy, null);
     }
 
+    /** Letters and symbols that draw nothing: the Hangul fillers (choseong, jungseong, compatibility, half-width) and blank braille. */
+    private static final java.util.Set<Integer> BLANK = java.util.Set.of(0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800);
+
+    /**
+     * Whether a token name would read as a provider sign-in's ({@code sso:...}), however it is
+     * written: compatibility forms folded (full-width letters and colons), accents and other marks
+     * dropped, and anything before the first letter or digit ignored: spaces of every kind, and the
+     * letters and symbols that draw nothing (the Hangul fillers, the blank braille pattern).
+     */
+    static boolean looksLikeProviderName(String name) {
+        String n = java.text.Normalizer.normalize(name, java.text.Normalizer.Form.NFKC).replaceAll("\\p{M}", "");
+        int i = 0;
+        while (i < n.length() && (!Character.isLetterOrDigit(n.codePointAt(i)) || BLANK.contains(n.codePointAt(i)))) {
+            i += Character.charCount(n.codePointAt(i));
+        }
+        return n.regionMatches(true, i, OidcIdentityAugmentor.PREFIX, 0, OidcIdentityAugmentor.PREFIX.length());
+    }
+
     /**
      * Creates a token. {@code expiresAt} may be null for one that never expires. {@code unmask}
      * says whether it holds {@link AccessRole#UNMASK_GRANT}; null means yes for a designer token and
@@ -153,7 +171,7 @@ public class ApiTokens {
             throw new IllegalArgumentException("name: use letters, digits, spaces and punctuation only, without line "
                 + "breaks or other control characters");
         }
-        if (clean.regionMatches(true, 0, OidcIdentityAugmentor.PREFIX, 0, OidcIdentityAugmentor.PREFIX.length())) {
+        if (looksLikeProviderName(clean)) {
             throw new IllegalArgumentException("name: names starting " + OidcIdentityAugmentor.PREFIX + " are kept for "
                 + "people who sign in with the identity provider; choose another");
         }
