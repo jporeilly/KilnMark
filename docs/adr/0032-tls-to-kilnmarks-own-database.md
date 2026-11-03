@@ -37,7 +37,8 @@ plain-text connection either.
    `quarkus.datasource."<default>".jdbc.url`, and a credentials provider can add `sslmode`, both of
    which a key lookup would miss. A provider asked again later could answer differently; it is
    trusted as the source of the database password already. The pool must open connections through
-   the driver (a DataSource class would let properties beat the URL, the other way round). The
+   the PostgreSQL driver itself (a DataSource class would let properties beat the URL, the other way
+   round, and another driver could read `sslmode` its own way). The
    check is the first start-up step, and nothing reaches the database before it: Flyway does
    nothing at start on its own (`quarkus.flyway.migrate-at-start=false`), and the migrations run
    from the check, after it, through the checked pool. A start-up job of Flyway's (any
@@ -45,7 +46,12 @@ plain-text connection either.
    would open connections the check never sees (with only a Flyway login, Quarkus uses the pool's
    URL without its driver properties, so `sslmode` set as a property is lost and the migration
    owner's password could cross in plain text). `kilnmark.database.require-tls=false` turns the
-   check off, for a developer's own database only; the migrations still run.
+   check off, for a developer's own database only; the migrations still run. One thing comes
+   before the check: Quarkus creates the pool at start, and with
+   `quarkus.datasource.jdbc.initial-size` above 0 the pool logs in that many times at once. With a
+   URL that does not demand TLS, those logins can cross in plain text before the server refuses to
+   start; Kilnmark leaves `initial-size` at 0, and SCRAM (PostgreSQL's default) never sends the
+   password itself.
 4. **Tests run with it on**: the test database is the same image, and the tests connect with
    `sslmode=require`, so every test start passes the check.
 

@@ -97,13 +97,14 @@ class DatabaseTlsTest {
         }
     }
 
-    /** Only a Driver lets the URL's sslmode win, as the check assumes; a DataSource class is refused. */
+    /** Only the PostgreSQL driver reads the settings as the check does; a DataSource class or another driver is refused. */
     @Test
     void onlyADriverOpensThePoolsConnections() {
         assertNull(DatabaseTls.providerProblem(null));
         assertNull(DatabaseTls.providerProblem(org.postgresql.Driver.class));
         assertTrue(DatabaseTls.providerProblem(org.postgresql.ds.PGSimpleDataSource.class) != null);
         assertTrue(DatabaseTls.providerProblem(org.postgresql.xa.PGXADataSource.class) != null);
+        assertTrue(DatabaseTls.providerProblem(java.sql.Driver.class) != null, "only the PostgreSQL driver itself");
     }
 
     /** Flyway's settings with the given values, and empty or false for the rest. */

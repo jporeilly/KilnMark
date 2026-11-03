@@ -61,7 +61,9 @@ public class DatabaseTls {
         } else {
             LOG.warn("kilnmark.database.require-tls is off: Kilnmark's own database may be reached without TLS");
         }
-        if (flyway.isResolvable()) {
+        FlywayDataSourceRuntimeConfig f = flywayConfig.datasources().get(DataSourceUtil.DEFAULT_DATASOURCE_NAME);
+        boolean active = f == null || f.active().orElse(true);
+        if (active && flyway.isResolvable()) {
             flyway.get().migrate();
         }
     }
@@ -117,16 +119,16 @@ public class DatabaseTls {
     }
 
     /**
-     * Why the pool's way of opening connections is one this check cannot vouch for, or null: only a
-     * {@link java.sql.Driver} lets the URL's {@code sslmode} win, as the check assumes (a DataSource
-     * class lets the properties win instead).
+     * Why the pool's way of opening connections is one this check cannot vouch for, or null: only the
+     * PostgreSQL driver itself reads the settings as the check does (its parser, the URL winning); a
+     * DataSource class lets the properties win instead, and another driver may read sslmode its own way.
      */
     static String providerProblem(Class<?> provider) {
-        if (provider == null || java.sql.Driver.class.isAssignableFrom(provider)) {
+        if (provider == null || provider == org.postgresql.Driver.class) {
             return null;
         }
-        return "Kilnmark's own database pool opens connections through a DataSource class, which this check "
-            + "cannot vouch for: use the PostgreSQL driver.";
+        return "Kilnmark's own database pool opens connections through something other than the PostgreSQL "
+            + "driver, which this check cannot vouch for: use the PostgreSQL driver.";
     }
 
     /**
