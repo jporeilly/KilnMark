@@ -105,6 +105,36 @@ Either way, every response carries the security headers in
 [ADR 0031](docs/adr/0031-https-and-security-headers.md): a Content-Security-Policy allowing only
 Kilnmark's own files, no framing by other sites, no referrer, and HSTS over HTTPS.
 
+### Sign in with your identity provider
+
+People can sign in with your organisation's identity provider over OpenID Connect (Microsoft Entra
+ID, Okta, Ping, ADFS, Keycloak and others), with its second factor
+([ADR 0036](docs/adr/0036-sign-in-with-the-identity-provider.md)). API tokens keep working for
+scripts.
+
+1. In the provider, register Kilnmark as a web application. Its redirect URI is
+   `https://<Kilnmark's address>/api/v1/auth/login`. Have the provider put the person's groups in
+   the ID token's `groups` claim, and require MFA for the application.
+2. In `.env`, set `KILNMARK_OIDC_ENABLED=true`, `KILNMARK_OIDC_ISSUER` (the provider's issuer URL),
+   `KILNMARK_OIDC_CLIENT_ID`, `KILNMARK_OIDC_CLIENT_SECRET` and, for the button,
+   `KILNMARK_OIDC_PROVIDER_NAME`.
+3. Say which groups give which role, comma-separated, exactly as the provider names them:
+   `KILNMARK_OIDC_VIEWER_GROUPS`, `..._STEWARD_GROUPS`, `..._DESIGNER_GROUPS`, `..._ADMIN_GROUPS`.
+   Designers in `KILNMARK_OIDC_UNMASK_GROUPS` see values of columns marked sensitive. A person in
+   none of them signs in with no role, and is told so.
+4. Restart: `podman compose up -d`. The sign-in page now shows **Sign in with** your provider.
+
+Kilnmark requires a second factor: the provider must say so in the ID token's `amr` (`mfa`, or two
+methods of two kinds, such as a password and a one-time code; one method alone, or two of one kind,
+is not enough), or in its `acr` with a value you
+list in `KILNMARK_OIDC_MFA_ACR`. A sign-in that shows none gets no role. A sign-in lasts at most 8
+hours from the person's last sign-in at the provider (`KILNMARK_OIDC_MAX_SESSION`); the ID token
+must say when that was (`auth_time`), which every provider can send. Every sign-in, and every one
+given no role, is in **Settings**, **Audit log**, under `sso:` and the person's name.
+
+Kilnmark must be reached over HTTPS for this (see HTTPS above): its session cookies are sent over
+HTTPS only. Behind a proxy that ends TLS, also set `KILNMARK_OIDC_BEHIND_TLS_PROXY=true`.
+
 ## B. From source, with the reference lab and the samples
 
 1. `git clone https://github.com/jporeilly/KilnMark.git` and `cd KilnMark`.

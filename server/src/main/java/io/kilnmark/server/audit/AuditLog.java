@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.kilnmark.server.Db;
 import io.kilnmark.server.auth.ApiTokenIdentityProvider;
+import io.kilnmark.server.auth.OidcIdentityAugmentor;
 import io.kilnmark.server.auth.ApiTokens;
 import io.kilnmark.server.sources.CommonSettings;
 import io.quarkus.security.identity.SecurityIdentity;
@@ -79,9 +80,17 @@ public class AuditLog {
     /** A request was refused for want of sign-in or a role; detail: method, status. Target: the path. */
     public static final String API_REFUSED = "api.refused";
 
+    /** Someone signed in with the identity provider (ADR 0036); detail: role, unmask. */
+    public static final String SIGN_IN = "auth.sign_in";
+    /** Someone signed in with the identity provider but was given no role; detail: reason. */
+    public static final String SIGN_IN_REFUSED = "auth.sign_in_refused";
+    /** Someone signed out of a provider sign-in. */
+    public static final String SIGN_OUT = "auth.sign_out";
+
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
-        SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED);
+        SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
+        SIGN_OUT);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;
@@ -200,7 +209,11 @@ public class AuditLog {
         }
         boolean keep = true;
         if (API_REFUSED.equals(action)) {
-            Integer skipped = refusalSkips(actor.tokenId() == null ? ANONYMOUS : "token " + actor.tokenId());
+            // Each token, each provider sign-in (its sso: name), and everyone not signed in together
+            String who = actor.tokenId() != null ? "token " + actor.tokenId()
+                : actor.name() != null && actor.name().startsWith(OidcIdentityAugmentor.PREFIX) ? actor.name()
+                : ANONYMOUS;
+            Integer skipped = refusalSkips(who);
             keep = skipped != null; // over this minute's share: the JSON line only, counted for the next row kept
             if (skipped != null && skipped > 0) {
                 Map<String, Object> more = new LinkedHashMap<>(detail == null ? Map.of() : detail);

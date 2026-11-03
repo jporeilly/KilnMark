@@ -7,6 +7,13 @@ details.
 
 ### What's new
 
+- **Sign in with your organisation's identity provider** (ADR 0036). Entra ID, Okta, Ping, ADFS,
+  Keycloak or any OpenID Connect provider: the sign-in page offers **Sign in with** it, roles come
+  from the provider's groups as the settings map them, and only designers in an unmask group see
+  sensitive values. A second factor is required, a sign-in lasts at most 8 hours, and every sign-in
+  is in the audit log. API tokens keep working for scripts. INSTALL.md, "Sign in with your
+  identity provider".
+
 - **Designers, and who sees sensitive values.** A designer role sits between steward and admin:
   designers build pipelines, flows and sources, and stewards run them. Only designers see values of
   columns marked sensitive; admins see them masked, as everyone else does, and a designer token can

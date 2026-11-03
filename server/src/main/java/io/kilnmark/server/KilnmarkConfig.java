@@ -268,6 +268,61 @@ public interface KilnmarkConfig {
          */
         @WithDefault("tokens")
         io.kilnmark.server.auth.AuthMode mode();
+
+        /** Sign-in through the customer's identity provider (ADR 0036), beside API tokens. */
+        Oidc oidc();
+    }
+
+    /**
+     * Who may do what after signing in with the identity provider (ADR 0036). Sign-in itself is
+     * Quarkus's OIDC client, on when {@code quarkus.oidc.tenant-enabled=true} with the provider's
+     * address, client ID and secret; these settings turn what the provider says into Kilnmark's roles.
+     */
+    interface Oidc {
+        /** The name shown on the sign-in button: "Sign in with ...". */
+        @WithDefault("your organisation")
+        String providerName();
+
+        /** The ID token claim that lists the person's groups (Entra ID, Okta and Keycloak can all send one). */
+        @WithDefault("groups")
+        String groupsClaim();
+
+        /** Groups whose members are viewers. A person in several groups gets the highest role among them. */
+        Optional<List<String>> viewerGroups();
+
+        /** Groups whose members are stewards. */
+        Optional<List<String>> stewardGroups();
+
+        /** Groups whose members are designers. */
+        Optional<List<String>> designerGroups();
+
+        /** Groups whose members are admins. */
+        Optional<List<String>> adminGroups();
+
+        /**
+         * Groups whose members see values of columns marked sensitive unmasked; only designers
+         * ever hold the grant, whatever group they are in (ADR 0027).
+         */
+        Optional<List<String>> unmaskGroups();
+
+        /**
+         * Whether the provider must have used more than one factor: the ID token's {@code amr}
+         * holds {@code mfa}, or methods of two different kinds (known, held, the person's own, as
+         * RFC 8176 names them); or its {@code acr} is one of {@link #mfaAcr()}. Without it the
+         * person is signed in with no role and told why.
+         */
+        @WithDefault("true")
+        boolean requireMfa();
+
+        /** {@code acr} values that mean the provider required a second factor (as some providers send). */
+        Optional<List<String>> mfaAcr();
+
+        /**
+         * The longest a sign-in lasts, counted from when the person last signed in at the provider
+         * ({@code auth_time}, which the ID token must carry): after it they sign in again.
+         */
+        @WithDefault("8h")
+        Duration maxSession();
     }
 
     /** The worker role: how it pulls jobs from the queue. */
