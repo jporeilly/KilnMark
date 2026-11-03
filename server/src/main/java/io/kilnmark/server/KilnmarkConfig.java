@@ -76,6 +76,30 @@ public interface KilnmarkConfig {
     /** Email notifications: retries, rate limit and log (docs/design/notifications.md). */
     Notifications notifications();
 
+    /** What every response says to the browser about how it may be used (ADR 0031). */
+    Http http();
+
+    interface Http {
+        /**
+         * When responses tell browsers to use HTTPS only, for a year ({@code Strict-Transport-Security}):
+         * {@code when-https} (the default), for requests that came over HTTPS to Kilnmark itself;
+         * {@code always}, when a proxy in front of it ends TLS and passes plain HTTP on; {@code never}.
+         */
+        @WithDefault("when-https")
+        String hsts();
+
+        /**
+         * Plain HTTP from other machines: {@code enabled} (the default), {@code redirect} to HTTPS on
+         * {@link #httpsPort()}, or {@code disabled} (refused). Plain HTTP from this machine always works.
+         */
+        @WithDefault("enabled")
+        String plain();
+
+        /** The HTTPS port browsers reach Kilnmark on, for redirects from plain HTTP. */
+        @WithDefault("8443")
+        int httpsPort();
+    }
+
     /** Defaults for the mail settings; see {@link io.kilnmark.server.notify.MailSettings}. */
     interface Mail {
         /** The SMTP server, such as {@code smtp.example.com}. */

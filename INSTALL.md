@@ -41,6 +41,32 @@ On Windows and macOS, start the Podman machine once per boot: `podman machine st
    placeholders the samples use (`crm-db`, `shop-db`, `files`). See
    [samples/README.md](samples/README.md). The samples are also in the release's `samples` folder.
 
+### HTTPS
+
+Kilnmark should be reached over HTTPS only. Either:
+
+- **A proxy in front ends TLS** (your load balancer or reverse proxy). Leave Kilnmark on plain HTTP
+  behind it, reachable only from the proxy, and set `KILNMARK_HTTP_HSTS=always` in `.env` so
+  browsers are told to keep to HTTPS.
+- **Kilnmark ends TLS itself.** Put the certificate (with its chain) and its private key, as PEM
+  files, in a `tls` folder beside `compose.yaml`; uncomment the `./tls` volume in `compose.yaml`;
+  and set in `.env`:
+
+  ```
+  KILNMARK_TLS_CERT_FILE=/etc/kilnmark/tls/server.crt
+  KILNMARK_TLS_KEY_FILE=/etc/kilnmark/tls/server.key
+  KILNMARK_HTTP_PLAIN=redirect
+  ```
+
+  Kilnmark then answers HTTPS on port 8443 (`KILNMARK_HTTPS_PORT` changes the published port),
+  with TLS 1.3 or 1.2 only, and sends plain HTTP on 8780 from other machines to HTTPS (`disabled`
+  refuses it instead). Plain HTTP from the same machine still works, for the container's health
+  check and for a proxy beside Kilnmark.
+
+Either way, every response carries the security headers in
+[ADR 0031](docs/adr/0031-https-and-security-headers.md): a Content-Security-Policy allowing only
+Kilnmark's own files, no framing by other sites, no referrer, and HSTS over HTTPS.
+
 ## B. From source, with the reference lab and the samples
 
 1. `git clone https://github.com/jporeilly/KilnMark.git` and `cd KilnMark`.
