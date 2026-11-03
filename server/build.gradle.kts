@@ -2,10 +2,13 @@
 import com.github.jk1.license.filter.LicenseBundleNormalizer
 import com.github.jk1.license.render.InventoryMarkdownReportRenderer
 import com.github.jk1.license.render.JsonReportRenderer
+import org.cyclonedx.gradle.CyclonedxDirectTask
+import org.cyclonedx.model.Component
 
 plugins {
     alias(libs.plugins.quarkus)
     id("com.github.jk1.dependency-license-report")
+    id("org.cyclonedx.bom")
 }
 
 // Third-party licences of everything the server ships (ADR 0007). `checkLicense` fails the build on
@@ -18,7 +21,44 @@ licenseReport {
     allowedLicensesFile = rootProject.file("config/allowed-licenses.json")
 }
 
+// The server's SBOM (CycloneDX JSON): every library on the runtime classpath, which is what the
+// release's server folder holds. No build or repository address: the release names neither.
+tasks.named<CyclonedxDirectTask>("cyclonedxDirectBom") {
+    includeConfigs = listOf("runtimeClasspath")
+    projectType = Component.Type.APPLICATION
+    componentGroup = "io.kilnmark"
+    componentName = "kilnmark-server"
+    includeBuildSystem = false
+    jsonOutput = layout.buildDirectory.file("sbom/kilnmark-server.cdx.json")
+    xmlOutput.convention(null as RegularFile?)
+    // The plugin adds the Git remote as a VCS reference unless one is given, and the repository is private.
+    doLast {
+        val file = jsonOutput.get().asFile
+        @Suppress("UNCHECKED_CAST")
+        val bom = groovy.json.JsonSlurper().parse(file) as MutableMap<String, Any?>
+        @Suppress("UNCHECKED_CAST")
+        val main = (bom["metadata"] as MutableMap<String, Any?>)["component"] as MutableMap<String, Any?>
+        main.remove("externalReferences")
+        file.writeText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(bom)) + "\n")
+    }
+}
+
 description = "Kilnmark server"
+
+// Security fixes newer than the Quarkus platform's pins (the SBOM scan in CI finds them): the
+// enforced platform would otherwise hold these libraries at its own versions.
+val securityPins = mapOf(
+    "at.yawk.lz4:lz4-java" to libs.versions.lz4.java.get(),
+    "org.xerial.snappy:snappy-java" to libs.versions.snappy.java.get(),
+)
+configurations.configureEach {
+    resolutionStrategy.eachDependency {
+        securityPins["${requested.group}:${requested.name}"]?.let {
+            useVersion(it)
+            because("security fix newer than the Quarkus platform's version")
+        }
+    }
+}
 
 dependencies {
     "implementation"(enforcedPlatform(libs.quarkus.bom))
@@ -129,6 +169,23 @@ val buildUi by tasks.registering(Exec::class) {
     inputs.files(rootProject.fileTree("docs/guide") { include("*.md") }, rootProject.file("CHANGELOG.md"))
     inputs.dir(rootProject.file("tests/docs"))
     outputs.dir(uiOut)
+}
+
+// The web UI's SBOM (CycloneDX JSON), from npm itself: the packages the built UI bundles (no
+// development tools), read from the lock file, so it needs no install.
+val uiSbomFile = rootProject.layout.projectDirectory.file("dist/ui-sbom/kilnmark-ui.cdx.json")
+val uiSbom by tasks.registering(Exec::class) {
+    description = "Writes the web UI's CycloneDX SBOM to dist/ui-sbom (npm sbom)."
+    onlyIf { !skipUi }
+    workingDir = uiDir.asFile
+    commandLine(npm, "sbom", "--omit=dev", "--sbom-format=cyclonedx", "--package-lock-only")
+    inputs.files(uiDir.file("package.json"), uiDir.file("package-lock.json"))
+    outputs.file(uiSbomFile)
+    val out = uiSbomFile.asFile
+    doFirst {
+        out.parentFile.mkdirs()
+        standardOutput = out.outputStream()
+    }
 }
 
 // The user guides and the changelog, for the assistant (docs/design/assistant.md): the same files

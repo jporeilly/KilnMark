@@ -28,6 +28,17 @@ details.
 
 ### Details
 
+- **SBOMs, scanning and signed releases** (ADR 0033, docs/design/supply-chain.md). Every release
+  carries CycloneDX SBOMs of the server's libraries and the web UI's packages, in its `sbom` folder.
+  CI scans them with Trivy on every change and every Monday, and fails on a high or critical
+  vulnerability that has a fix; the base images are reported, not failed. A version tag builds the
+  release, signs every file with the release key and leaves a draft GitHub release; INSTALL.md,
+  "Check a release", says how to verify one. Dependabot proposes updates monthly, one pull request
+  per ecosystem. `SECURITY.md` says how to report a vulnerability.
+- **Security:** lz4-java 1.11.4 and snappy-java 1.1.10.12, over the Quarkus platform's versions, for
+  three high vulnerabilities the new scan found (lz4-java's temporary files; snappy-java's memory use
+  and buffer overflow on malformed input).
+
 - **HTTPS and security headers** (ADR 0031). Every response carries a Content-Security-Policy that
   lets only Kilnmark's own files run or load (no inline script or style, no framing by other
   sites), with `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,

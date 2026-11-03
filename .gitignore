@@ -24,3 +24,7 @@ Thumbs.db
 
 # Drivers the lab scripts download for the developer (lab.sh driver oracle); never committed
 /lab/drivers/
+
+# A release signing key (docs/development.md, "Releasing"): only its public half is committed
+cosign.key
+*.key

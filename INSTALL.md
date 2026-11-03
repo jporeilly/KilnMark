@@ -41,6 +41,24 @@ On Windows and macOS, start the Podman machine once per boot: `podman machine st
    placeholders the samples use (`crm-db`, `shop-db`, `files`). See
    [samples/README.md](samples/README.md). The samples are also in the release's `samples` folder.
 
+### Check a release
+
+A release from GitHub comes as `kilnmark-<version>.tar.gz` or `.zip`, two SBOMs, `SHA256SUMS`, and
+a `.sigstore.json` signature beside each. Check the one you downloaded before unpacking it, with
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) and Kilnmark's public key
+(`cosign.pub`, from the release's owner or `config/release/cosign.pub` in the repository):
+
+```
+cosign verify-blob --key cosign.pub --insecure-ignore-tlog=true \
+  --bundle kilnmark-<version>.tar.gz.sigstore.json kilnmark-<version>.tar.gz
+```
+
+`Verified OK` means the file is the one Kilnmark signed. (The signatures are deliberately kept off
+Sigstore's public log, which is what `--insecure-ignore-tlog` acknowledges; the key is the proof.)
+`sha256sum -c SHA256SUMS --ignore-missing` checks the files against the signed list of checksums.
+The SBOMs, `kilnmark-<version>-server.cdx.json` and `-ui.cdx.json` (also in the release's `sbom`
+folder), list every library and package it contains, for your own scanners.
+
 ### HTTPS
 
 Kilnmark should be reached over HTTPS only. Either:

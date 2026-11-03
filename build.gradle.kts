@@ -5,6 +5,8 @@
 plugins {
     alias(libs.plugins.quarkus) apply false
     id("com.github.jk1.dependency-license-report") version "3.1.4" apply false
+    // A CycloneDX SBOM of what the server ships, with every release (docs/design/supply-chain.md).
+    id("org.cyclonedx.bom") version "3.5.1" apply false
 }
 
 val distDir = layout.projectDirectory.dir("dist")
@@ -52,7 +54,7 @@ val releaseVersion = project.version.toString()
 tasks.register<Sync>("assembleRelease") {
     group = "distribution"
     description = "Copies the release's files into dist/release (release also checks them)."
-    dependsOn(":server:quarkusBuild", ":server:checkLicense")
+    dependsOn(":server:quarkusBuild", ":server:checkLicense", ":server:cyclonedxDirectBom", ":server:uiSbom")
     into(distDir.dir("release/kilnmark-${project.version}"))
     from(distDir.dir("build/server/quarkus-app")) {
         into("server")
@@ -79,6 +81,9 @@ tasks.register<Sync>("assembleRelease") {
     // The full text of licences NOTICE names, such as the LGPL of the MySQL and MariaDB driver.
     from("config/licenses") { into("licenses") }
     from(distDir.dir("licenses")) { include("THIRD-PARTY-NOTICES.md") }
+    // CycloneDX SBOMs of the server's libraries and the web UI's packages (docs/design/supply-chain.md).
+    from(distDir.file("build/server/sbom/kilnmark-server.cdx.json")) { into("sbom") }
+    from(distDir.dir("ui-sbom")) { include("*.cdx.json"); into("sbom") }
     // The web UI's packages and their licences, written by the UI build (ui/scripts/ui-notices.mjs).
     from(distDir.dir("ui")) {
         include("third-party-notices.txt")
