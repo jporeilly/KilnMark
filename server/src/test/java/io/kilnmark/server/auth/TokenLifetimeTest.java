@@ -91,6 +91,55 @@ class TokenLifetimeTest {
         assertEquals(soon, tokens.expiry("x", Instant.now(), soon), "its own expiry, when sooner");
     }
 
+    /**
+     * One SQL expression says whether a token works, for sign-in, the count of usable admins and
+     * notifications: an admin token past the limit is no way in, so the first-start token is written
+     * when it was the last; the environment's admin token is never limited.
+     */
+    @Test
+    void theAdminCountAndNotificationsJudgeTokensAsSignInDoes() throws Exception {
+        String old = token("admin");
+        String env = token("admin");
+        db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.api_token SET created_at = now() - "
+                + "interval '31 days', expires_at = NULL, created_by = CASE WHEN hash = ? THEN 'environment' "
+                + "ELSE created_by END WHERE hash IN (?, ?)")) {
+                ps.setBytes(1, ApiTokens.hash(env));
+                ps.setBytes(2, ApiTokens.hash(old));
+                ps.setBytes(3, ApiTokens.hash(env));
+                return ps.executeUpdate();
+            }
+        });
+        assertEquals(Boolean.FALSE, works(old), "past the limit: does not work");
+        assertEquals(Boolean.TRUE, works(env), "the environment's token is not limited");
+        as(old).get("/api/v1/me").then().statusCode(401);
+        as(env).get("/api/v1/me").then().statusCode(200);
+    }
+
+    private Boolean works(String secret) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT " + tokens.worksSql("t")
+                + " FROM kilnmark.api_token t WHERE t.hash = ?")) {
+                ps.setBytes(1, ApiTokens.hash(secret));
+                try (var rs = ps.executeQuery()) {
+                    return rs.next() ? rs.getBoolean(1) : null;
+                }
+            }
+        });
+    }
+
+    /** A limit under a day or over ten years stops the server, so a slip never means no limit at all. */
+    @Test
+    void aLimitOutsideOneDayToTenYearsIsRefused() {
+        for (String bad : java.util.List.of("PT0S", "PT-24H", "PT12H", "PT87648H")) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> ApiTokens.checkLimit(java.util.Optional.of(Duration.parse(bad))), bad);
+        }
+        ApiTokens.checkLimit(java.util.Optional.of(Duration.ofDays(1)));
+        ApiTokens.checkLimit(java.util.Optional.of(Duration.ofDays(90)));
+        ApiTokens.checkLimit(java.util.Optional.empty());
+    }
+
     @Test
     void theAccessReviewListsEveryTokenForAdminsAndIsRecorded() {
         admin().get("/api/v1/access-review").then().statusCode(200)

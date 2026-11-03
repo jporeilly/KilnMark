@@ -13,13 +13,16 @@ from a provider sign-in that needs MFA (ADR 0036), turning an 8-hour session int
 
 ## Decision
 
-1. **A longest token lifetime**, `kilnmark.auth.token-max-lifetime` (for example `90d`), off by
-   default so existing installations and scripts keep working; a bank sets it.
+1. **A longest token lifetime**, `kilnmark.auth.token-max-lifetime` (for example `90d`, between 1
+   and 3650 days, or the server does not start), off by default so existing installations and
+   scripts keep working; a bank sets it.
    - Every new token must then expire within it: one that never expires, or later, is refused,
      naming the limit. The UI offers only expiries within it.
    - A token older than it stops working, whatever its own expiry says, so tokens made before the
-     limit was set, or with a longer expiry, are caught too. The list and the review show that
-     effective expiry.
+     limit was set, or with a longer expiry, are caught too. One SQL expression decides whether a
+     token works, for sign-in, for the count of usable admins (so the first-start token is written
+     when the last admin token passes the limit) and for notifications; the list and the review show
+     that effective expiry. Creation allows five minutes' slack for a browser clock running ahead.
    - The token from `KILNMARK_ADMIN_TOKEN` is not limited: it is the operator's, set in the
      server's environment and replaced by changing that setting. The 24-hour first-start token
      already expires.
@@ -30,7 +33,8 @@ from a provider sign-in that needs MFA (ADR 0036), turning an 8-hour session int
      grant of their last sign-in, when it was, and how many times, from the audit log (people have
      no account in Kilnmark: their role comes from their groups at each sign-in);
    - the longest token lifetime, if one is set.
-   Each download is an audit event (`access.review`). CSV cells that a spreadsheet would run as a
+   Each view and download is an audit event (`access.review`). A person whose last sign-in was
+   refused (their group taken away, say) shows with no role. CSV cells that a spreadsheet would run as a
    formula (a name starting `=`, `+`, `-` or `@`) start with a quote.
 3. **Not yet: separation of duties for the unmask grant.** Admins make tokens, so an admin can make
    a designer token that sees unmasked values. A second person approving the grant is a later step;

@@ -130,25 +130,31 @@ public class AuditLog {
 
     /**
      * A person who has signed in with the identity provider, as the audit log knows them (ADR 0037):
-     * their last sign-in given a role, with that role and grant, and how many sign-ins in all.
+     * their last sign-in and the role and grant it gave, or none when it was refused (their group taken
+     * away, say), and how many sign-ins gave them a role in all.
      */
-    public record ProviderAccess(String name, Instant lastSignIn, String role, boolean unmask, long signIns) {
+    public record ProviderAccess(String name, Instant lastSignIn, String role, boolean unmask, long signIns,
+                                 boolean refused) {
     }
 
     /** Everyone who has signed in with the identity provider and been given a role, most recent first. */
     public List<ProviderAccess> providerAccess() {
         return db.tx(c -> {
             List<ProviderAccess> out = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement("SELECT DISTINCT ON (actor) actor, at, detail::text, "
-                + "count(*) OVER (PARTITION BY actor) FROM kilnmark.audit_event WHERE action = ? "
-                + "ORDER BY actor, at DESC")) {
+            // each person's latest sign-in, given a role or refused: what they can do now is what it said
+            try (PreparedStatement ps = c.prepareStatement("SELECT DISTINCT ON (actor) actor, at, action, detail::text, "
+                + "count(*) FILTER (WHERE action = ?) OVER (PARTITION BY actor) FROM kilnmark.audit_event "
+                + "WHERE action IN (?, ?) ORDER BY actor, at DESC")) {
                 ps.setString(1, SIGN_IN);
+                ps.setString(2, SIGN_IN);
+                ps.setString(3, SIGN_IN_REFUSED);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
-                        Map<String, Object> d = detail(rs.getString(3));
+                        boolean refused = SIGN_IN_REFUSED.equals(rs.getString(3));
+                        Map<String, Object> d = detail(rs.getString(4));
                         out.add(new ProviderAccess(rs.getString(1), Db.instant(rs.getTimestamp(2)),
-                            d.get("role") == null ? null : String.valueOf(d.get("role")),
-                            Boolean.TRUE.equals(d.get("unmask")), rs.getLong(4)));
+                            refused || d.get("role") == null ? null : String.valueOf(d.get("role")),
+                            !refused && Boolean.TRUE.equals(d.get("unmask")), rs.getLong(5), refused));
                     }
                 }
             }

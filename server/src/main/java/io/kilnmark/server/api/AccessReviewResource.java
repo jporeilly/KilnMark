@@ -27,7 +27,7 @@ import jakarta.ws.rs.core.Response;
  * The access review (ADR 0037): who can do what in Kilnmark, for the periodic review a bank's
  * auditors ask for. Every API token with its role, unmask grant, status, expiry and last use, and
  * everyone who has signed in with the identity provider with the role and grant of their last
- * sign-in. Admins only; each download is in the audit log.
+ * sign-in. Admins only; each view and download is in the audit log.
  */
 @Path("/api/v1/access-review")
 @RolesAllowed(AccessRole.ADMIN_ROLE)
@@ -56,7 +56,7 @@ public class AccessReviewResource {
     @Operation(summary = "The access review", description = "Every API token (role, unmask grant, status, who "
         + "created it, expiry, last use) and everyone who has signed in with the identity provider (the role and "
         + "grant of their last sign-in, when, and how many times). format=csv for a spreadsheet. Role: admin; "
-        + "each download is recorded in the audit log.")
+        + "each view and download is recorded in the audit log.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The review"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
@@ -82,8 +82,8 @@ public class AccessReviewResource {
                 t.createdAt(), t.expiresAt(), t.lastUsedAt(), null));
         }
         for (AuditLog.ProviderAccess p : audit.providerAccess()) {
-            out.add(new Entry("provider", p.name(), p.role(), p.unmask(), "signs in with the identity provider", null,
-                null, null, p.lastSignIn(), p.signIns()));
+            out.add(new Entry("provider", p.name(), p.role(), p.unmask(), p.refused() ? "last sign-in given no role"
+                : "signs in with the identity provider", null, null, null, p.lastSignIn(), p.signIns()));
         }
         Long days = tokens.maxLifetime().map(d -> d.toDays()).orElse(null);
         return new Review(now, days, out);

@@ -17,7 +17,7 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "auth.sign_in", label: "Signed in", tone: "neutral" },
   { value: "auth.sign_in_refused", label: "Sign-in given no role", tone: "bad" },
   { value: "auth.sign_out", label: "Signed out", tone: "neutral" },
-  { value: "access.review", label: "Access review downloaded", tone: "neutral" },
+  { value: "access.review", label: "Access review viewed", tone: "neutral" },
   { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
 ];
