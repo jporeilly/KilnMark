@@ -10,6 +10,7 @@ import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
 
 import io.kilnmark.server.KilnmarkConfig;
 import io.kilnmark.server.audit.AuditLog;
+import io.kilnmark.server.auth.MaxAgeRedirect;
 import io.kilnmark.server.auth.OidcIdentityAugmentor;
 import io.quarkus.oidc.OidcSession;
 import io.quarkus.security.Authenticated;
@@ -20,6 +21,7 @@ import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
@@ -74,13 +76,15 @@ public class AuthResource {
         + "organisation's identity provider, and back to Kilnmark once signed in. For browsers, not scripts: "
         + "scripts use API tokens.")
     @APIResponses({@APIResponse(responseCode = "303", description = "Signed in; on to the web UI")})
-    public Response login() {
-        // A session that was given no role (no second factor, no group) is ended first, so this sends
-        // the person back to the provider to sign in again rather than straight on with the same one.
-        if (OidcIdentityAugmentor.fromProvider(identity) && identity.getAttribute(OidcIdentityAugmentor.REFUSAL) != null
-            && session.isResolvable()) {
+    public Response login(@QueryParam("again") boolean again) {
+        // Asked to sign in again (the page's button, after a sign-in given no role): end that session
+        // and go back to the provider, asking it to sign the person in afresh (prompt=login,
+        // MaxAgeRedirect). Never otherwise: the provider's redirect back lands here too, and a refused
+        // session sent round again would loop through the provider for ever.
+        if (again && OidcIdentityAugmentor.fromProvider(identity)
+            && identity.getAttribute(OidcIdentityAugmentor.REFUSAL) != null && session.isResolvable()) {
             session.get().logout().await().indefinitely();
-            return Response.seeOther(URI.create("/api/v1/auth/login")).build();
+            return Response.seeOther(URI.create("/api/v1/auth/login?" + MaxAgeRedirect.AFRESH + "=true")).build();
         }
         return Response.seeOther(URI.create("/")).build();
     }

@@ -125,7 +125,8 @@ scripts.
 4. Restart: `podman compose up -d`. The sign-in page now shows **Sign in with** your provider.
 
 Kilnmark requires a second factor: the provider must say so in the ID token's `amr` (`mfa`, or two
-methods such as `pwd` and `otp`; one method alone is not enough), or in its `acr` with a value you
+methods of two kinds, such as a password and a one-time code; one method alone, or two of one kind,
+is not enough), or in its `acr` with a value you
 list in `KILNMARK_OIDC_MFA_ACR`. A sign-in that shows none gets no role. A sign-in lasts at most 8
 hours from the person's last sign-in at the provider (`KILNMARK_OIDC_MAX_SESSION`); the ID token
 must say when that was (`auth_time`), which every provider can send. Every sign-in, and every one

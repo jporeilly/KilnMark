@@ -170,15 +170,16 @@ class OidcSignInTest {
     }
 
     /**
-     * A provider that ignores max_age and answers with a sign-in older than the longest session gets
-     * no session at all: Kilnmark refuses it on the way back.
+     * A provider that ignores max_age and answers with a sign-in older than the longest session: no
+     * role, the page says why, and the audit log records it.
      */
     @Test
     void aSignInOlderThanTheLongestSessionIsNotAccepted() {
-        Response back = callback(idToken("oli", List.of("km-admins"), List.of("mfa"),
+        Map<String, String> old = signIn(idToken("oli", List.of("km-admins"), List.of("mfa"),
             Instant.now().minus(Duration.ofHours(9))));
-        assertEquals(401, back.statusCode(), back.asString());
-        assertTrue(sessionCookies(back).isEmpty(), "no session");
+        given().cookies(old).get("/api/v1/me").then().statusCode(403);
+        given().cookies(old).get("/api/v1/auth/status").then().statusCode(200)
+            .body("signedIn", equalTo(true)).body("refusal", equalTo(OidcAccess.TOO_OLD));
         audit.awaitStored(5000);
         assertTrue(audit.list(AuditLog.SIGN_IN_REFUSED, null, 50).stream().anyMatch(e -> "sso:oli".equals(e.actor())
             && OidcAccess.TOO_OLD.equals(e.detail().get("reason"))), "the refusal is in the audit log");
@@ -191,15 +192,34 @@ class OidcSignInTest {
         given().cookies(s).get("/api/v1/me").then().statusCode(200).body("name", equalTo("sso:anonymous"));
     }
 
-    /** "Sign in with ..." after a sign-in given no role ends that session and goes back to the provider. */
+    /**
+     * The provider's redirect back lands on /api/v1/auth/login: a refused session goes on to the page,
+     * which says why, never round through the provider again (it would answer with the same sign-in).
+     */
     @Test
-    void aSessionGivenNoRoleCanBeReplaced() {
+    void aRefusedSignInGoesToThePageNotRoundAgain() {
         Map<String, String> refused = signIn(idToken("pat", List.of("km-admins"), List.of("pwd"), Instant.now()));
-        Response again = given().redirects().follow(false).cookies(refused).get("/api/v1/auth/login");
+        Response landed = given().redirects().follow(false).cookies(refused).get("/api/v1/auth/login");
+        assertEquals(303, landed.statusCode(), landed.asString());
+        assertEquals("/", landed.header("Location").replaceFirst("^https?://[^/]+", ""));
+    }
+
+    /** Asked to sign in again, the refused session ends and the provider is asked to sign the person in afresh. */
+    @Test
+    void signingInAgainAsksTheProviderAfresh() {
+        Map<String, String> refused = signIn(idToken("pat", List.of("km-admins"), List.of("pwd"), Instant.now()));
+        Response again = given().redirects().follow(false).cookies(refused).get("/api/v1/auth/login?again=true");
         assertEquals(303, again.statusCode(), again.asString());
-        assertEquals("/api/v1/auth/login", URI.create(again.header("Location")).getPath());
+        URI next = URI.create(again.header("Location"));
+        assertEquals("/api/v1/auth/login", next.getPath());
         assertTrue(again.getDetailedCookies().asList().stream().anyMatch(c -> c.getName().startsWith("q_session")
             && (c.getMaxAge() == 0 || c.getValue().isEmpty())), "the refused session is ended");
+        Response toProvider = given().redirects().follow(false).get(next.getPath() + "?" + next.getRawQuery());
+        assertEquals(302, toProvider.statusCode(), toProvider.asString());
+        assertEquals("login", query(URI.create(toProvider.header("Location"))).get("prompt"));
+        // A plain sign-in does not force a prompt
+        Response plain = given().redirects().follow(false).get("/api/v1/auth/login");
+        assertEquals(null, query(URI.create(plain.header("Location"))).get("prompt"));
     }
 
     /** A change made with the session cookie must come from Kilnmark's pages; scripts and tokens are unaffected. */
@@ -210,6 +230,9 @@ class OidcSignInTest {
         given().cookies(s).contentType("application/json").body(body).post("/api/v1/tokens").then().statusCode(403);
         given().cookies(s).header(SessionRequests.HEADER, SessionRequests.VALUE).contentType("application/json")
             .body(body).post("/api/v1/tokens").then().statusCode(201);
+        // No token may take a name kept for provider sign-ins
+        given().cookies(s).header(SessionRequests.HEADER, SessionRequests.VALUE).contentType("application/json")
+            .body("{\"name\":\"SSO:ada\",\"role\":\"viewer\"}").post("/api/v1/tokens").then().statusCode(400);
     }
 
     /** Without credentials, the API answers 401 as scripts expect, never a redirect to the provider. */

@@ -307,16 +307,12 @@ public interface KilnmarkConfig {
 
         /**
          * Whether the provider must have used more than one factor: the ID token's {@code amr}
-         * holds {@code mfa}, or two different methods, one of them in {@link #mfaMethods()}; or its
-         * {@code acr} is one of {@link #mfaAcr()}. Without it the person is signed in with no role
-         * and told why.
+         * holds {@code mfa}, or methods of two different kinds (known, held, the person's own, as
+         * RFC 8176 names them); or its {@code acr} is one of {@link #mfaAcr()}. Without it the
+         * person is signed in with no role and told why.
          */
         @WithDefault("true")
         boolean requireMfa();
-
-        /** {@code amr} values (RFC 8176) that are a second factor when another method was used too. */
-        @WithDefault("mfa,otp,hwk,swk,sms,tel,fpt,face,iris,retina,vbm,sc")
-        List<String> mfaMethods();
 
         /** {@code acr} values that mean the provider required a second factor (as some providers send). */
         Optional<List<String>> mfaAcr();

@@ -32,7 +32,6 @@ class OidcAccessTest {
             public Optional<List<String>> adminGroups() { return Optional.of(List.of("km-admins")); }
             public Optional<List<String>> unmaskGroups() { return Optional.of(List.of("km-unmask")); }
             public boolean requireMfa() { return requireMfa; }
-            public List<String> mfaMethods() { return List.of("mfa", "otp", "hwk"); }
             public Optional<List<String>> mfaAcr() { return Optional.ofNullable(acr); }
             public Duration maxSession() { return Duration.ofHours(8); }
         };
@@ -89,7 +88,13 @@ class OidcAccessTest {
             assertEquals(OidcAccess.NO_MFA, decide(c, "amr", List.of(one), "groups", List.of("km-admins")).refusal(), one);
         }
         assertEquals(OidcAccess.NO_MFA, decide(c, "amr", List.of("pwd", "kba"), "groups", List.of("km-admins")).refusal(),
-            "two methods, neither a second factor");
+            "two methods, both something known");
+        // Two methods of one kind, a blank, or a method that is no factor at all: still one factor
+        for (List<String> one : List.of(List.of("sms", "tel"), List.of("otp", ""), List.of("otp", " "),
+            List.of("hwk", "user"), List.of("swk", "pop"))) {
+            assertEquals(OidcAccess.NO_MFA, decide(c, "amr", one, "groups", List.of("km-admins")).refusal(), one.toString());
+        }
+        assertTrue(decide(c, "amr", List.of("hwk", "fpt"), "groups", List.of("km-admins")).allowed(), "held and own");
         assertTrue(decide(c, "acr", "urn:example:mfa", "groups", List.of("km-admins")).allowed(), "an accepted acr");
         // Turned off, a password alone is enough
         assertTrue(decide(config(false, null), "amr", "pwd", "groups", List.of("km-admins")).allowed());

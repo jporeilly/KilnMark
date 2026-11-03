@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -82,21 +83,36 @@ public final class OidcAccess {
     }
 
     /**
-     * Whether the provider says it used more than one factor: {@code amr} holds {@code mfa}, or two
-     * different methods at least one of which is a second factor ({@code pwd} and {@code otp}, say);
-     * or the {@code acr} is one the settings accept. One method alone ({@code sms}, {@code otp},
-     * {@code face}) is one factor, however strong, so it is not enough.
+     * The kind of factor each {@code amr} method (RFC 8176) is: something known, something held, or
+     * something the person is. Methods that are no factor ({@code user}, {@code pop}, {@code geo},
+     * {@code rba}, {@code mca}, {@code wia} and any not listed) count for nothing.
+     */
+    private static final Map<String, String> FACTOR = Map.ofEntries(
+        Map.entry("pwd", "know"), Map.entry("pin", "know"), Map.entry("kba", "know"),
+        Map.entry("otp", "have"), Map.entry("hwk", "have"), Map.entry("swk", "have"), Map.entry("sms", "have"),
+        Map.entry("tel", "have"), Map.entry("sc", "have"),
+        Map.entry("fpt", "are"), Map.entry("face", "are"), Map.entry("iris", "are"), Map.entry("retina", "are"),
+        Map.entry("vbm", "are"));
+
+    /**
+     * Whether the provider says it used more than one factor: {@code amr} holds {@code mfa}, or
+     * methods of two different kinds ({@code pwd} with {@code otp}, {@code hwk} with {@code fpt});
+     * or the {@code acr} is one the settings accept. Two methods of one kind ({@code sms} and
+     * {@code tel}, both the phone) are one factor, as is one method alone, however strong.
      */
     static boolean usedSecondFactor(KilnmarkConfig.Oidc config, Function<String, Object> claim) {
-        Set<String> factors = lower(config.mfaMethods());
-        Set<String> methods = new java.util.HashSet<>();
+        Set<String> kinds = new java.util.HashSet<>();
         for (String method : strings(claim.apply("amr"))) {
-            methods.add(method.strip().toLowerCase(Locale.ROOT));
+            String m = method.strip().toLowerCase(Locale.ROOT);
+            if (m.equals("mfa")) {
+                return true;
+            }
+            String kind = FACTOR.get(m);
+            if (kind != null) {
+                kinds.add(kind);
+            }
         }
-        if (methods.contains("mfa")) {
-            return true;
-        }
-        if (methods.size() >= 2 && methods.stream().anyMatch(factors::contains)) {
+        if (kinds.size() >= 2) {
             return true;
         }
         List<String> acr = strings(claim.apply("acr"));
@@ -119,14 +135,6 @@ public final class OidcAccess {
             }
         }
         return false;
-    }
-
-    private static Set<String> lower(List<String> values) {
-        Set<String> out = new java.util.HashSet<>();
-        for (String v : values) {
-            out.add(v.strip().toLowerCase(Locale.ROOT));
-        }
-        return out;
     }
 
     /** A claim as strings: one string, or each string in a collection or JSON array. */

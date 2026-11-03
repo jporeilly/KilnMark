@@ -1,15 +1,12 @@
 package io.kilnmark.server.auth;
 
 import java.time.Instant;
-import java.util.Map;
 import java.util.Set;
 
 import org.eclipse.microprofile.jwt.JsonWebToken;
 
 import io.kilnmark.server.KilnmarkConfig;
-import io.kilnmark.server.audit.AuditLog;
 import io.quarkus.oidc.IdTokenCredential;
-import io.quarkus.security.AuthenticationFailedException;
 import io.quarkus.security.identity.AuthenticationRequestContext;
 import io.quarkus.security.identity.SecurityIdentity;
 import io.quarkus.security.identity.SecurityIdentityAugmentor;
@@ -22,9 +19,9 @@ import jakarta.enterprise.context.ApplicationScoped;
  * {@link OidcAccess}. The identity is built afresh, so no role the OIDC client read from the token
  * (it maps a {@code groups} claim to roles by itself) survives: a provider group called "admin"
  * grants nothing unless the settings say so. Its name is {@link #actorName}, which no token, the
- * server or an anonymous caller can have. A sign-in older than the longest session fails, so the
- * person signs in at the provider again, and is recorded; one with no second factor or no group gets
- * no role, and {@link #REFUSAL} says why.
+ * server or an anonymous caller can have. A sign-in with no second factor, no group, or older than
+ * the longest session gets no role, and {@link #REFUSAL} says why; signing in again replaces it
+ * ({@code /api/v1/auth/login?again=true}).
  */
 @ApplicationScoped
 public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
@@ -40,11 +37,9 @@ public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
     public static final String PREFIX = "sso:";
 
     private final KilnmarkConfig config;
-    private final AuditLog audit;
 
-    public OidcIdentityAugmentor(KilnmarkConfig config, AuditLog audit) {
+    public OidcIdentityAugmentor(KilnmarkConfig config) {
         this.config = config;
-        this.audit = audit;
     }
 
     /** Whether this identity came from the identity provider: its principal is the ID token. */
@@ -70,7 +65,8 @@ public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
     }
 
     private static String clean(String s) {
-        String c = s == null ? "" : s.replaceAll("\\p{Cntrl}", "?").strip();
+        // control, format (bidi, zero-width) and unassigned characters: none may make one name look like another
+        String c = s == null ? "" : s.replaceAll("\\p{C}", "?").strip();
         return c.length() > 120 ? c.substring(0, 120) : c;
     }
 
@@ -82,12 +78,6 @@ public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
         JsonWebToken token = (JsonWebToken) identity.getPrincipal();
         OidcAccess.Decision d = OidcAccess.decide(config.auth().oidc(), token::getClaim, Instant.now());
         String name = actorName(token);
-        if (OidcAccess.TOO_OLD.equals(d.refusal())) {
-            // The OIDC client clears the session with this failure, so it is recorded once per stale session
-            audit.record(new AuditLog.Actor(name, null), AuditLog.SIGN_IN_REFUSED, "session",
-                Map.of("reason", OidcAccess.TOO_OLD));
-            return Uni.createFrom().failure(new AuthenticationFailedException(OidcAccess.TOO_OLD));
-        }
         QuarkusSecurityIdentity.Builder b = QuarkusSecurityIdentity.builder()
             .setPrincipal(new Named(token, name))
             .addCredentials(identity.getCredentials())

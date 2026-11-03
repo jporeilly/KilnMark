@@ -153,6 +153,10 @@ public class ApiTokens {
             throw new IllegalArgumentException("name: use letters, digits, spaces and punctuation only, without line "
                 + "breaks or other control characters");
         }
+        if (clean.regionMatches(true, 0, OidcIdentityAugmentor.PREFIX, 0, OidcIdentityAugmentor.PREFIX.length())) {
+            throw new IllegalArgumentException("name: names starting " + OidcIdentityAugmentor.PREFIX + " are kept for "
+                + "people who sign in with the identity provider; choose another");
+        }
         if (role == null) {
             throw new IllegalArgumentException("role: use viewer, steward, designer or admin");
         }

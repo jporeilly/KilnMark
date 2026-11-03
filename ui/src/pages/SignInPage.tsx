@@ -75,7 +75,10 @@ export function SignInPage({ notice, onSignedIn }: { notice: SignInNotice | null
       )}
       {status?.provider && (
         <div className="km-card form">
-          <a className="km-button primary" href="/api/v1/auth/login">
+          <a
+            className="km-button primary"
+            href={status.signedIn && status.refusal ? "/api/v1/auth/login?again=true" : "/api/v1/auth/login"}
+          >
             Sign in with {status.providerName}
           </a>
           <p className="hint">Your organisation's usual sign-in, with its second factor.</p>
