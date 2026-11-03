@@ -11,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+import io.kilnmark.server.KilnmarkConfig.Hsts;
+import io.kilnmark.server.KilnmarkConfig.Plain;
 import io.quarkus.test.junit.QuarkusTest;
 
 /** Every response carries the headers a bank's scanner looks for (ADR 0031). */
@@ -19,8 +21,12 @@ class SecurityHeadersTest {
 
     @Test
     void everyResponseSaysHowABrowserMayUseIt() {
-        for (String path : java.util.List.of("/", "/api/v1/info", "/api/v1/sources", "/q/health/ready")) {
-            given().get(path).then()
+        // The page, the API, a refusal for want of sign-in, a page that is not there, and health
+        record Seen(String path, int status) {
+        }
+        for (Seen s : java.util.List.of(new Seen("/", 200), new Seen("/api/v1/info", 200),
+            new Seen("/api/v1/sources", 401), new Seen("/no-such-file.js", 404), new Seen("/q/health/ready", 200))) {
+            given().get(s.path()).then().statusCode(s.status())
                 .header("Content-Security-Policy", equalTo(SecurityHeaders.CSP))
                 .header("X-Content-Type-Options", equalTo("nosniff"))
                 .header("X-Frame-Options", equalTo("DENY"))
@@ -42,18 +48,23 @@ class SecurityHeadersTest {
             .header("Content-Security-Policy", containsString("script-src 'self' 'unsafe-inline'"));
         given().get("/api/v1/info").then()
             .header("Content-Security-Policy", not(containsString("unsafe-inline")));
+        // Exactly the page and its files, not anything whose name starts the same way
+        assertTrue(SecurityHeaders.apiDocs("/api/docs"));
+        assertTrue(SecurityHeaders.apiDocs("/api/docs/index.html"));
+        assertFalse(SecurityHeaders.apiDocs("/api/docsx"));
+        assertFalse(SecurityHeaders.apiDocs("/api/docs-anything"));
     }
 
     @Test
-    void plainHttpFromOtherMachinesFollowsTheSettingAndThisMachineIsAlwaysServed() {
-        assertEquals("serve", SecurityHeaders.plainAnswer(false, false, "enabled"));
-        assertEquals("redirect", SecurityHeaders.plainAnswer(false, false, "redirect"));
-        assertEquals("refuse", SecurityHeaders.plainAnswer(false, false, "disabled"));
-        // The container's health check and a proxy beside Kilnmark
-        assertEquals("serve", SecurityHeaders.plainAnswer(false, true, "disabled"));
-        assertEquals("serve", SecurityHeaders.plainAnswer(false, true, "redirect"));
+    void plainHttpFromOtherMachinesFollowsTheSettingAndTheHealthCheckIsAlwaysServed() {
+        assertEquals("serve", SecurityHeaders.plainAnswer(false, false, Plain.ENABLED));
+        assertEquals("redirect", SecurityHeaders.plainAnswer(false, false, Plain.REDIRECT));
+        assertEquals("refuse", SecurityHeaders.plainAnswer(false, false, Plain.DISABLED));
+        // The container's health check
+        assertEquals("serve", SecurityHeaders.plainAnswer(false, true, Plain.DISABLED));
+        assertEquals("serve", SecurityHeaders.plainAnswer(false, true, Plain.REDIRECT));
         // HTTPS is always served
-        assertEquals("serve", SecurityHeaders.plainAnswer(true, false, "disabled"));
+        assertEquals("serve", SecurityHeaders.plainAnswer(true, false, Plain.DISABLED));
         for (String local : java.util.List.of("127.0.0.1", "127.0.0.2", "::1", "0:0:0:0:0:0:0:1")) {
             assertTrue(SecurityHeaders.local(local), local);
         }
@@ -70,10 +81,11 @@ class SecurityHeadersTest {
 
     @Test
     void hstsFollowsTheSetting() {
-        assertTrue(SecurityHeaders.sendsHsts(true, "when-https"));
-        assertFalse(SecurityHeaders.sendsHsts(false, "when-https"));
-        assertTrue(SecurityHeaders.sendsHsts(false, "always"), "behind a proxy that ends TLS");
-        assertFalse(SecurityHeaders.sendsHsts(true, "never"));
-        assertTrue(SecurityHeaders.sendsHsts(true, "anything else"), "an unknown value is the default");
+        assertTrue(SecurityHeaders.sendsHsts(true, Hsts.WHEN_HTTPS));
+        assertFalse(SecurityHeaders.sendsHsts(false, Hsts.WHEN_HTTPS));
+        assertTrue(SecurityHeaders.sendsHsts(false, Hsts.ALWAYS), "behind a proxy that ends TLS");
+        assertFalse(SecurityHeaders.sendsHsts(true, Hsts.NEVER));
+        // Never every name under a shared domain
+        assertFalse(SecurityHeaders.HSTS.contains("includeSubDomains"));
     }
 }

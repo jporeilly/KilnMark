@@ -35,8 +35,9 @@ details.
   policies; the API's own page (`/api/docs`) alone may run its inline start. Over HTTPS, responses
   carry HSTS for a year (`KILNMARK_HTTP_HSTS=always` behind a proxy that ends TLS). Kilnmark serves
   HTTPS itself on 8443 when given a certificate and key as PEM files (`KILNMARK_TLS_CERT_FILE`,
-  `KILNMARK_TLS_KEY_FILE`), TLS 1.3 and 1.2 only, with plain HTTP enabled, redirected or disabled
-  (`KILNMARK_HTTP_PLAIN`); INSTALL.md, "HTTPS". The page's theme script moved to a file of its own.
+  `KILNMARK_TLS_KEY_FILE`), TLS 1.3 and 1.2 with forward-secret AEAD suites only, with plain HTTP
+  from other machines enabled, redirected or disabled (`KILNMARK_HTTP_PLAIN`; an unknown value stops
+  the server); INSTALL.md, "HTTPS". The page's theme script moved to a file of its own.
 - **The flow sql node** (V29, ADR 0028, docs/design/flows.md section 7). `type: sql` with a `source`
   and 1 to 20 `statements`, each starting `TRUNCATE`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`,
   `DROP`, `ALTER`, `CALL`, `ANALYZE`, `REFRESH`, `COMMENT`, `REINDEX`, `CLUSTER` or `LOCK`; never a

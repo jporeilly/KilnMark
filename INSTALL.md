@@ -58,10 +58,11 @@ Kilnmark should be reached over HTTPS only. Either:
   KILNMARK_HTTP_PLAIN=redirect
   ```
 
-  Kilnmark then answers HTTPS on port 8443 (`KILNMARK_HTTPS_PORT` changes the published port),
-  with TLS 1.3 or 1.2 only, and sends plain HTTP on 8780 from other machines to HTTPS (`disabled`
-  refuses it instead). Plain HTTP from the same machine still works, for the container's health
-  check and for a proxy beside Kilnmark.
+  Kilnmark then answers HTTPS on port 8443 (`KILNMARK_HTTPS_PORT` changes the published port; use
+  443 in production, as browsers that have seen HTTPS keep to it on every port), with TLS 1.3 or
+  1.2 only, and sends plain HTTP on 8780 to HTTPS (`disabled` refuses it instead). Only the
+  container's own health check still uses plain HTTP: a browser or proxy on the host counts as
+  another machine. Open `https://<host>:8443` (or your HTTPS port) from then on.
 
 Either way, every response carries the security headers in
 [ADR 0031](docs/adr/0031-https-and-security-headers.md): a Content-Security-Policy allowing only

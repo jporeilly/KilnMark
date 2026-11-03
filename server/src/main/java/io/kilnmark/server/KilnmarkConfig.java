@@ -79,6 +79,12 @@ public interface KilnmarkConfig {
     /** What every response says to the browser about how it may be used (ADR 0031). */
     Http http();
 
+    /** When HSTS is sent: {@code when-https}, {@code always} or {@code never}; any other value stops the server. */
+    enum Hsts { WHEN_HTTPS, ALWAYS, NEVER }
+
+    /** What plain HTTP from other machines gets: {@code enabled}, {@code redirect} or {@code disabled}. */
+    enum Plain { ENABLED, REDIRECT, DISABLED }
+
     interface Http {
         /**
          * When responses tell browsers to use HTTPS only, for a year ({@code Strict-Transport-Security}):
@@ -86,14 +92,15 @@ public interface KilnmarkConfig {
          * {@code always}, when a proxy in front of it ends TLS and passes plain HTTP on; {@code never}.
          */
         @WithDefault("when-https")
-        String hsts();
+        Hsts hsts();
 
         /**
          * Plain HTTP from other machines: {@code enabled} (the default), {@code redirect} to HTTPS on
-         * {@link #httpsPort()}, or {@code disabled} (refused). Plain HTTP from this machine always works.
+         * {@link #httpsPort()}, or {@code disabled} (refused). Plain HTTP from the server's own address
+         * (the container's health check) always works. Any other value stops the server at start.
          */
         @WithDefault("enabled")
-        String plain();
+        Plain plain();
 
         /** The HTTPS port browsers reach Kilnmark on, for redirects from plain HTTP. */
         @WithDefault("8443")
