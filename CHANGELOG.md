@@ -39,7 +39,9 @@ details.
   .../{name}/validate`, `POST` and `GET .../{name}/runs` (with `parameters`), `GET
   /api/v1/flow-runs/{id}` (the run with every node of its version, each with its status, times,
   message, what it reported and the pipeline run it started) and `POST
-  /api/v1/flow-runs/{id}/cancel`. Viewers read, designers save, stewards run and cancel. Saving
+  /api/v1/flow-runs/{id}/cancel`. Viewers read, designers save, stewards run and cancel. Viewers do
+  not see the values a run started with, nor node messages quoting them, since they can hold server
+  variables. Saving
   passes the caller's unmask grant, so a flow with a `sql` node is saved only by a designer whose
   token sees unmasked values (ADR 0028). There is no delete yet. User guide: "Building and running a
   flow".

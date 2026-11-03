@@ -38,15 +38,18 @@ public final class FlowViews {
 
     /**
      * A parameter the flow declares: its name, its type as written ({@code text}, {@code number},
-     * {@code boolean}, {@code text list}, {@code number list}), its default (null when a run must give
-     * it) and its description.
+     * {@code boolean}, {@code text list}, {@code number list}), its default, or the server variable its
+     * default is ({@code ${vars.name}}; its value is not shown here), and its description. Required
+     * when it has neither: a run must give it.
      */
-    public record Parameter(String name, String type, Object defaultValue, boolean required, String description) {
+    public record Parameter(String name, String type, Object defaultValue, String defaultVariable, boolean required,
+                            String description) {
     }
 
     /**
-     * A flow run, without its nodes. {@code parameters} are the values it started with. {@code error}
-     * is in Kilnmark's words and the flow's own, never a pipeline's error.
+     * A flow run, without its nodes. {@code parameters} are the values it started with, for stewards
+     * and above; null for viewers, since they can hold server variables. {@code error} is in
+     * Kilnmark's words and the flow's own, never a pipeline's error.
      */
     public record RunSummary(long id, String flow, int version, String status, String requestedBy,
                              String requestedRole, Instant requestedAt, Instant startedAt, Instant finishedAt,

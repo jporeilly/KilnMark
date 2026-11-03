@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { FlowParameter } from "../api";
-import { defaultText, runValues } from "./parameters";
+import { defaultText, defaultWords, runValues } from "./parameters";
 
 const p = (name: string, type: FlowParameter["type"], defaultValue: unknown = null): FlowParameter => ({
   name,
   type,
   defaultValue,
+  defaultVariable: null,
   required: defaultValue == null,
   description: null,
 });
@@ -29,6 +30,15 @@ describe("run values", () => {
     const { problems } = runValues(params, { share: "a lot", ids: "1, two" });
     expect(Object.keys(problems)).toEqual(["label", "share", "ids"]);
     expect(problems.label).toContain("no default");
+  });
+
+  it("leaves a server variable's default to the server, saying so", () => {
+    const region: FlowParameter = { ...p("region", "text"), defaultVariable: "region", required: false };
+    const on: FlowParameter = { ...p("on", "boolean"), defaultVariable: "flag", required: false };
+    expect(defaultText(region)).toBe("");
+    expect(defaultWords(region)).toContain("server variable region");
+    expect(runValues([region, on], {})).toEqual({ values: {}, problems: {} });
+    expect(runValues([region, on], { region: "APAC", on: "true" }).values).toEqual({ region: "APAC", on: true });
   });
 
   it("shows a list default comma-separated", () => {

@@ -1510,11 +1510,15 @@ export const pipelinesApi = {
 // ---- Flows (docs/design/flows.md) ----
 
 export type FlowProblem = { line: number; column: number; node: string | null; message: string };
-/** A parameter a flow declares; required: it has no default, so a run must give it. */
+/**
+ * A parameter a flow declares. defaultVariable: its default is that server variable (${vars.name}),
+ * whose value is not shown. required: it has no default, so a run must give it.
+ */
 export type FlowParameter = {
   name: string;
   type: "text" | "number" | "boolean" | "text list" | "number list";
   defaultValue: unknown;
+  defaultVariable: string | null;
   required: boolean;
   description: string | null;
 };

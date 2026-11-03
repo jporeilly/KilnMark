@@ -106,7 +106,9 @@ running at a time.
 
 Open a run from the flow's **Runs** list. The run page shows:
 
-- its status, the version that ran, who started it, and the values it ran with;
+- its status, the version that ran, who started it, and, for stewards and above, the values it ran
+  with (viewers do not see them, nor the messages that quote them, since they can hold server
+  variables);
 - every node of that version in order: its status (Not started, Running, Succeeded, Failed,
   Cancelled or Skipped), when it started, how long it took, and what happened, such as the rows a
   pipeline wrote and its score;

@@ -1,6 +1,6 @@
 import { useRef, useState, type FormEvent } from "react";
 import { flowsApi, type FlowParameter, type FlowRun, type FlowRunStatus, type FlowNodeStatus } from "../api";
-import { defaultText, runValues } from "./parameters";
+import { defaultText, defaultWords, runValues } from "./parameters";
 
 const LABEL: Record<FlowRunStatus | FlowNodeStatus, string> = {
   pending: "Not started",
@@ -126,7 +126,8 @@ export function RunFlowButton({
         <form onSubmit={submit} noValidate>
           <h2 id={`run-${name}-h`}>Run {name}</h2>
           <p className="hint">
-            Values for this run. A value left as its default runs with the default; lists are separated by commas.
+            Values for this run. A field left as its default, or empty, runs with the default; lists are separated by
+            commas.
           </p>
           {params.map((p) => (
             <div className="field" key={p.name}>
@@ -142,7 +143,9 @@ export function RunFlowButton({
                   aria-invalid={problems[p.name] ? true : undefined}
                   aria-describedby={`${fieldId(p.name)}-hint`}
                 >
-                  {p.required && <option value="">Choose…</option>}
+                  {(p.required || p.defaultVariable) && (
+                    <option value="">{p.defaultVariable ? `The server variable ${p.defaultVariable}` : "Choose…"}</option>
+                  )}
                   <option value="true">true</option>
                   <option value="false">false</option>
                 </select>
@@ -159,10 +162,7 @@ export function RunFlowButton({
                 />
               )}
               <p id={`${fieldId(p.name)}-hint`} className={problems[p.name] ? "hint pl-bad" : "hint"}>
-                {problems[p.name] ??
-                  [p.description, p.required ? "No default: give a value." : `Default: ${defaultText(p) || "empty"}.`]
-                    .filter(Boolean)
-                    .join(" ")}
+                {problems[p.name] ?? [p.description, defaultWords(p)].filter(Boolean).join(" ")}
               </p>
             </div>
           ))}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { allows, flowsApi, formatNumber, formatTime, type AccessRole, type FlowNodeRun, type FlowRunDetail } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
@@ -51,14 +51,20 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
   const [notice, setNotice] = useState("");
   const [cancelling, setCancelling] = useState(false);
 
+  // Only the latest answer counts: an earlier look can arrive after a later one.
+  const sequence = useRef(0);
   const load = useCallback(() => {
+    const mine = ++sequence.current;
     flowsApi
       .runDetail(id)
       .then((d) => {
+        if (sequence.current !== mine) return;
         setDetail(d);
         setError(null);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => {
+        if (sequence.current === mine) setError(e.message);
+      });
   }, [id]);
 
   useEffect(() => {

@@ -107,16 +107,14 @@ export function FlowPage({ name, version, role }: { name: string | null; version
     };
   }, [isNew]);
 
-  // Keep the runs table current while a run is queued or running.
+  // Keep the runs table current while a run is queued or running. Only the lists: reloading the
+  // flow would replace text being edited, and take in someone else's save without the conflict.
   const active = runs?.some((r) => r.status === "queued" || r.status === "running");
   useEffect(() => {
     if (!active) return;
-    const t = window.setInterval(() => {
-      loadLists();
-      void load().catch(() => {});
-    }, 4000);
+    const t = window.setInterval(loadLists, 4000);
     return () => window.clearInterval(t);
-  }, [active, loadLists, load]);
+  }, [active, loadLists]);
 
   const text = viewing ? (shown?.yaml ?? "") : yaml;
 

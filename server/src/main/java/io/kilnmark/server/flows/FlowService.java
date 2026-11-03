@@ -456,20 +456,23 @@ public class FlowService {
 
     // ---- views, for the API ----
 
-    /** Every flow by name, with whether its latest version can run and its latest run. */
-    public List<FlowViews.FlowSummary> list() {
+    /**
+     * Every flow by name, with whether its latest version can run and its latest run. {@code values}:
+     * whether the caller may see the values runs started with (stewards and above, {@code Sights.data()}).
+     */
+    public List<FlowViews.FlowSummary> list(boolean values) {
         return store.summaries().stream().map(s -> new FlowViews.FlowSummary(s.flow().name(), s.flow().displayName(),
             s.flow().description(), s.flow().latestVersion(), s.valid(), s.flow().updatedBy(), s.flow().updatedAt(),
-            s.lastRun() == null ? null : view(s.lastRun()))).toList();
+            s.lastRun() == null ? null : view(s.lastRun(), values))).toList();
     }
 
-    /** A flow with its latest version and latest run; 404 when there is none. */
-    public FlowViews.FlowDetail detail(String name) {
+    /** A flow with its latest version and latest run; 404 when there is none. {@code values} as for list. */
+    public FlowViews.FlowDetail detail(String name, boolean values) {
         FlowStore.Flow f = flow(name);
         List<FlowStore.Run> last = store.runs(name, 1);
         return new FlowViews.FlowDetail(f.name(), f.displayName(), f.description(), f.latestVersion(), f.createdBy(),
             f.createdAt(), f.updatedBy(), f.updatedAt(), versionDetail(name, f.latestVersion()),
-            last.isEmpty() ? null : view(last.get(0)));
+            last.isEmpty() ? null : view(last.get(0), values));
     }
 
     /** Every version of a flow, newest first; 404 when there is no such flow. */
@@ -506,16 +509,18 @@ public class FlowService {
     }
 
     /** A flow's runs as the API shows them, newest first; 404 when there is no such flow. */
-    public List<FlowViews.RunSummary> runViews(String name, int limit) {
+    public List<FlowViews.RunSummary> runViews(String name, int limit, boolean values) {
         flow(name);
-        return runs(name, limit).stream().map(this::view).toList();
+        return runs(name, limit).stream().map(r -> view(r, values)).toList();
     }
 
     /**
      * A flow run with every node of its version: those that have not started yet are pending, each
-     * with the pipeline it runs and the pipeline run it started.
+     * with the pipeline it runs and the pipeline run it started. Without {@code values} (viewers), the
+     * values the run started with, and messages that quote values (a notice's title, the values a
+     * pipeline refused), are withheld: they can hold server variables, which only stewards read.
      */
-    public FlowViews.RunDetail runDetail(long id) {
+    public FlowViews.RunDetail runDetail(long id, boolean values) {
         FlowStore.Run r = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow run " + id));
         FlowDefinition def = store.version(r.flow(), r.version()).map(v -> FlowDefinition.parse(v.yaml()).definition())
             .orElse(null);
@@ -532,36 +537,57 @@ public class FlowService {
             nodes.add(s == null
                 ? new FlowViews.NodeRunView(n.id(), n.type(), position, "pending", null, null, null, n.pipeline(), null,
                     null)
-                : nodeView(s, n.pipeline()));
+                : nodeView(s, n.pipeline(), values));
             position++;
         }
-        recorded.values().forEach(s -> nodes.add(nodeView(s, null)));
-        return new FlowViews.RunDetail(view(r), nodes);
+        recorded.values().forEach(s -> nodes.add(nodeView(s, null, values)));
+        return new FlowViews.RunDetail(view(r, values), nodes);
     }
 
     /** Asks a run to stop, as {@link #cancel(long, String, AccessRole)}, answering as the API shows runs. */
     public FlowViews.RunSummary cancelView(long id, String by, AccessRole role) {
-        return view(cancel(id, by, role));
+        return view(cancel(id, by, role), true);
     }
 
     /** Queues a run, as {@link #queueRun}, answering as the API shows runs. */
     public FlowViews.RunSummary queueRunView(String name, Integer version, Map<String, Object> parameters, String by,
                                              AccessRole role) {
-        return view(queueRun(name, version, parameters, by, role));
+        return view(queueRun(name, version, parameters, by, role), true);
     }
 
     private FlowStore.Flow flow(String name) {
         return store.find(name).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow called " + name));
     }
 
-    private FlowViews.NodeRunView nodeView(FlowStore.NodeRun s, String pipeline) {
+    private FlowViews.NodeRunView nodeView(FlowStore.NodeRun s, String pipeline, boolean values) {
         return new FlowViews.NodeRunView(s.nodeId(), s.type(), s.position(), s.status(), s.startedAt(), s.finishedAt(),
-            s.pipelineRunId(), pipeline, s.message(), tree(s.reported()));
+            s.pipelineRunId(), pipeline, values ? s.message() : withoutValues(s), tree(s.reported()));
     }
 
-    private FlowViews.RunSummary view(FlowStore.Run r) {
+    /** What a message from which values are left out says instead of them. */
+    static final String VALUES_WITHHELD = "the values are shown to stewards";
+
+    /**
+     * A node's message with the values it quotes left out: a notice's title, which has the run's
+     * values put in, and the values a pipeline refused or would not take. Other messages are in
+     * Kilnmark's words and quote none.
+     */
+    static String withoutValues(FlowStore.NodeRun s) {
+        String m = s.message();
+        if (m == null) {
+            return null;
+        }
+        if (FlowDefinition.NOTIFY.equals(s.type())) {
+            return m.startsWith("Sent: ") ? "Sent a notice (" + VALUES_WITHHELD + ")" : m;
+        }
+        int at = m.indexOf(" with these values");
+        return at < 0 ? m : m.substring(0, at) + " with the values this run gave it (" + VALUES_WITHHELD + ")";
+    }
+
+    private FlowViews.RunSummary view(FlowStore.Run r, boolean values) {
         return new FlowViews.RunSummary(r.id(), r.flow(), r.version(), r.status(), r.requestedBy(), r.requestedRole(),
-            r.requestedAt(), r.startedAt(), r.finishedAt(), r.cancelRequested(), r.error(), tree(r.parameters()));
+            r.requestedAt(), r.startedAt(), r.finishedAt(), r.cancelRequested(), r.error(),
+            values ? tree(r.parameters()) : null);
     }
 
     private com.fasterxml.jackson.databind.JsonNode tree(String text) {
@@ -591,8 +617,12 @@ public class FlowService {
         if (def == null) {
             return List.of();
         }
-        return def.parameters().stream().map(p -> new FlowViews.Parameter(p.name(), p.kind(), p.defaultValue(),
-            p.defaultValue() == null, p.description())).toList();
+        return def.parameters().stream().map(p -> {
+            String variable = p.defaultValue() instanceof Parameters.VarRef v ? v.variable() : null;
+            Object value = variable == null ? p.defaultValue() : null;
+            return new FlowViews.Parameter(p.name(), p.kind(), value, variable, value == null && variable == null,
+                p.description());
+        }).toList();
     }
 
     /** Asks a run to stop: a queued run is cancelled at once, a running one within a moment. */

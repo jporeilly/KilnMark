@@ -57,7 +57,7 @@ public class FlowResource {
         @APIResponse(responseCode = "200", description = "The flows"),
         @APIResponse(responseCode = "401", description = "Not signed in")})
     public List<FlowViews.FlowSummary> list() {
-        return flows.list();
+        return flows.list(sights.data());
     }
 
     @POST
@@ -78,7 +78,7 @@ public class FlowResource {
         @APIResponse(responseCode = "409", description = "A flow with that name exists")})
     public Response create(FlowViews.FlowChange body) {
         FlowStore.Flow f = flows.create(yaml(body), body.message(), who(), role(), sights.mayUnmask());
-        FlowViews.FlowDetail d = flows.detail(f.name());
+        FlowViews.FlowDetail d = flows.detail(f.name(), sights.data());
         return Response.created(URI.create("/api/v1/flows/" + d.name())).tag(etag(d)).entity(d).build();
     }
 
@@ -108,7 +108,7 @@ public class FlowResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "404", description = "No such flow")})
     public Response get(@PathParam("name") String name) {
-        FlowViews.FlowDetail d = flows.detail(name);
+        FlowViews.FlowDetail d = flows.detail(name, sights.data());
         return Response.ok(d).tag(etag(d)).build();
     }
 
@@ -131,9 +131,9 @@ public class FlowResource {
         @APIResponse(responseCode = "409", description = "Someone else saved a version after the one in If-Match")})
     public Response save(@PathParam("name") String name, @HeaderParam("If-Match") String ifMatch,
                          FlowViews.FlowChange body) {
-        Integer expected = PipelineService.readVersion(ifMatch);
+        Integer expected = expected(ifMatch);
         flows.update(name, yaml(body), body.message(), who(), role(), sights.mayUnmask(), expected);
-        FlowViews.FlowDetail d = flows.detail(name);
+        FlowViews.FlowDetail d = flows.detail(name, sights.data());
         return Response.ok(d).tag(etag(d)).build();
     }
 
@@ -211,7 +211,7 @@ public class FlowResource {
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "404", description = "No such flow")})
     public List<FlowViews.RunSummary> runs(@PathParam("name") String name, @QueryParam("limit") Integer limit) {
-        return flows.runViews(name, limit == null ? 20 : limit);
+        return flows.runViews(name, limit == null ? 20 : limit, sights.data());
     }
 
     private static String yaml(FlowViews.FlowChange body) {
@@ -219,6 +219,16 @@ public class FlowResource {
             throw new IllegalArgumentException("Send {\"yaml\": \"...\", \"message\": \"...\"}");
         }
         return body.yaml();
+    }
+
+    /** The version If-Match names, or null for none; read as for pipelines, refused in the flows' words. */
+    private static Integer expected(String ifMatch) {
+        try {
+            return PipelineService.readVersion(ifMatch);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("If-Match: the flow's latest version as you last read it, for example "
+                + "\"3\"");
+        }
     }
 
     private AccessRole role() {

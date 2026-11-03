@@ -187,11 +187,13 @@ V29 adds `flow_version.sql_checked` (section 7).
 
 ## 5. Who may do what
 
-- **Saving, running and cancelling a flow take the steward role** (`FlowService` checks; viewers see
-  flows and their runs, F3). Saving takes a designer, and a flow with a `sql` node a designer whose
-  token sees unmasked values (section 7); the API passes the caller's grant. The pipeline runs it queues run as the person who
-  started it, with their role, so a write node still needs a steward and a source that allows
-  writing, and a flow cannot do what its starter could not **at the moment it starts**. The role is
+- **Saving a flow takes a designer, running and cancelling one a steward** (`FlowService` checks,
+  and the API's roles). A flow with a `sql` node is saved only by a designer whose token sees
+  unmasked values (section 7); the API passes the caller's grant. Viewers see flows and their runs
+  (F3), but not the values a run started with, nor node messages that quote them (a notice's title,
+  the values a pipeline refused): those can hold server variables, which only stewards read. The
+  pipeline runs a flow queues run as the person who started it, with their role, so a write node
+  still needs a steward and a source that allows writing, and a flow cannot do what its starter could not **at the moment it starts**. The role is
   fixed when the run is queued: a token revoked afterwards does not stop a flow already running
   (cancel it), and a node may start up to `queue_timeout` after the flow did.
 - Flows are checked again when they are run: pipelines may have been deleted or changed since the

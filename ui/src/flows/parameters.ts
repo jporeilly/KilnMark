@@ -1,18 +1,28 @@
 import type { FlowParameter } from "../api";
 
-/** A parameter's default as it is typed in the run dialog: lists comma-separated, nothing for none. */
+/**
+ * A parameter's default as it is typed in the run dialog: lists comma-separated; nothing when it
+ * has none, or when it is a server variable (whose value the dialog does not know).
+ */
 export function defaultText(p: FlowParameter): string {
   const d = p.defaultValue;
-  if (d == null) return "";
+  if (d == null || p.defaultVariable) return "";
   if (Array.isArray(d)) return d.map(String).join(", ");
   return String(d);
 }
 
+/** A parameter's default in words, for the hint under its field. */
+export function defaultWords(p: FlowParameter): string {
+  if (p.defaultVariable) return `Left empty, the server variable ${p.defaultVariable}.`;
+  if (p.required) return "No default: give a value.";
+  return `Default: ${defaultText(p) || "empty"}. Left empty, the default.`;
+}
+
 /**
  * The values to send for a run, from what was typed in the run dialog: a field left as its
- * default is not sent, so the server applies the default; one with no default must be filled.
- * Numbers must be numbers; lists are comma-separated. Returns the values, or the problems, each
- * naming its parameter.
+ * default, or empty, is not sent, so the server applies the default; one with no default must be
+ * filled. Numbers must be numbers; lists are comma-separated. Returns the values, or the problems,
+ * each naming its parameter.
  */
 export function runValues(
   params: FlowParameter[],

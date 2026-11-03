@@ -353,7 +353,7 @@ function Shell({ me }: { me: Me }) {
           {route.page === "flow" && (
             <FlowPage key={route.name ?? "#new"} name={route.name} version={route.version} role={me.role} />
           )}
-          {route.page === "flow-run" && <FlowRunPage id={route.id} role={me.role} />}
+          {route.page === "flow-run" && <FlowRunPage key={route.id} id={route.id} role={me.role} />}
           {route.page === "docs" && <DocsPage doc={route.doc} section={route.section} />}
           {route.page === "notifications" && <NotificationsPage confirm={route.confirm} />}
           {(route.page === "email" || route.page === "email-log") &&

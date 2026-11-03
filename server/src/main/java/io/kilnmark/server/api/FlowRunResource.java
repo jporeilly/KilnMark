@@ -25,6 +25,10 @@ public class FlowRunResource {
     private final FlowService flows;
     private final SecurityIdentity identity;
 
+    /** Who is looking: the values a run started with, and messages quoting them, are for stewards and above. */
+    @jakarta.inject.Inject
+    io.kilnmark.server.quality.Sights sights;
+
     public FlowRunResource(FlowService flows, SecurityIdentity identity) {
         this.flows = flows;
         this.identity = identity;
@@ -36,13 +40,14 @@ public class FlowRunResource {
         + "and, for every node of its version in order: its status (pending until it starts, then running, "
         + "succeeded, failed, cancelled or skipped), when it started and ended, its message, what it reported, and "
         + "the pipeline run it started. Messages are in Kilnmark's words, never a pipeline's error: the pipeline "
-        + "run's own page shows that to those who may see it. Role: viewer.")
+        + "run's own page shows that to those who may see it. Viewers do not see the values the run started with, "
+        + "nor messages quoting them, which can hold server variables. Role: viewer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The run"),
         @APIResponse(responseCode = "401", description = "Not signed in"),
         @APIResponse(responseCode = "404", description = "No such run")})
     public FlowViews.RunDetail get(@PathParam("id") long id) {
-        return flows.runDetail(id);
+        return flows.runDetail(id, sights.data());
     }
 
     @POST

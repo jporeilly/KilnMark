@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -260,6 +261,43 @@ class FlowApiTest {
         Tokens.as(viewer).get("/api/v1/flow-runs/999999999").then().statusCode(404);
         // A finished run cannot be cancelled.
         as(steward).post("/api/v1/flow-runs/" + id + "/cancel").then().statusCode(409);
+
+        // The values it ran with are for stewards and above: they can hold server variables.
+        assertNull(done.get("run.parameters"));
+        Tokens.as(viewer).get("/api/v1/flows/fa-flow/runs").then().body("[0].parameters", equalTo(null));
+        Tokens.as(steward).get("/api/v1/flow-runs/" + id).then().statusCode(200)
+            .body("run.parameters.label", equalTo("nightly"));
+    }
+
+    @Test
+    @Order(8)
+    void viewersDoNotSeeValuesAServerVariableGave() throws Exception {
+        as(designer).body(Map.of("type", "text", "value", "EMEA-secret-region")).put("/api/v1/variables/fa_region")
+            .then().statusCode(200);
+        String tells = """
+            kilnmark: flow/v1
+            name: fa-tells
+            parameters:
+              region: { type: text, default: "${vars.fa_region}" }
+            nodes:
+              - { id: tell, type: notify, title: "Done for ${region}" }
+            """;
+        as(designer).body(Map.of("yaml", tells)).post("/api/v1/flows").then().statusCode(201)
+            .body("latest.parameters[0].defaultVariable", equalTo("fa_region"))
+            .body("latest.parameters[0].defaultValue", equalTo(null))
+            .body("latest.parameters[0].required", equalTo(false));
+        long id = as(steward).body(Map.of()).post("/api/v1/flows/fa-tells/runs").then().statusCode(202).extract()
+            .jsonPath().getLong("id");
+        await("flow run " + id, () -> run(id), j -> "succeeded".equals(j.getString("run.status")));
+
+        String seen = Tokens.as(viewer).get("/api/v1/flow-runs/" + id).then().statusCode(200).extract().asString();
+        assertFalse(seen.contains("EMEA-secret-region"), seen);
+        Tokens.as(viewer).get("/api/v1/flow-runs/" + id).then().body("nodes[0].message", containsString("stewards"));
+        Tokens.as(steward).get("/api/v1/flow-runs/" + id).then()
+            .body("nodes[0].message", equalTo("Sent: Done for EMEA-secret-region"))
+            .body("run.parameters.region", equalTo("EMEA-secret-region"));
+        // Other tests list the server's variables.
+        as(designer).delete("/api/v1/variables/fa_region").then().statusCode(204);
     }
 
     @Test
