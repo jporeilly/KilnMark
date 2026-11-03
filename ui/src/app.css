@@ -2514,6 +2514,17 @@ a.km-stat--link:hover {
   margin-bottom: 16px;
 }
 
+/* Sign in with the identity provider above, the API token form below (ADR 0036). */
+.signin .form .km-button {
+  align-self: flex-start;
+}
+
+.signin-or {
+  margin: 24px 0 12px;
+  font-size: 1rem;
+  color: var(--km-ink-soft);
+}
+
 .new-token {
   box-shadow: inset 0 0 0 2px var(--km-warn), var(--km-shadow-card);
 }

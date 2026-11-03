@@ -189,9 +189,19 @@ public final class Views {
                            String token) {
     }
 
-    /** Who is signed in; {@code unmask}: whether they see values of columns marked sensitive. */
+    /**
+     * Who is signed in; {@code unmask}: whether they see values of columns marked sensitive;
+     * {@code via}: {@code token}, {@code provider} (the identity provider, ADR 0036) or {@code off}.
+     */
     public record Me(String name, String role, Long tokenId, Instant expiresAt, boolean signInRequired,
-                     boolean unmask) {
+                     boolean unmask, String via) {
+    }
+
+    /**
+     * Sign-in as the sign-in page needs it, signed in or not: whether the identity provider is set up
+     * and its name, whether a session with it is open, and why it gives no role when it does not.
+     */
+    public record AuthStatus(boolean provider, String providerName, boolean signedIn, String refusal) {
     }
 
     /**

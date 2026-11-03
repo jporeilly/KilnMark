@@ -55,8 +55,11 @@ public class TokenResource {
         AccessRole role = identity.getAttribute(ApiTokenIdentityProvider.ROLE);
         Long id = identity.getAttribute(ApiTokenIdentityProvider.TOKEN_ID);
         Instant expires = identity.getAttribute(ApiTokenIdentityProvider.EXPIRES_AT);
+        boolean off = config.auth().mode() == AuthMode.OFF;
+        String via = off ? "off" : io.kilnmark.server.auth.OidcIdentityAugmentor.fromProvider(identity) ? "provider"
+            : "token";
         return new Views.Me(identity.getPrincipal().getName(), role.id(), id == null || id == 0 ? null : id, expires,
-            config.auth().mode() != AuthMode.OFF, identity.hasRole(AccessRole.UNMASK_GRANT));
+            !off, identity.hasRole(AccessRole.UNMASK_GRANT), via);
     }
 
     /** Creates a token and returns it this once; only its hash is kept. */

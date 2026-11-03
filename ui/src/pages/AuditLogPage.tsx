@@ -14,6 +14,9 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "source.allow_writing", label: "Allow writing changed", tone: "warn" },
   { value: "source.allow_sql", label: "Allow SQL changed", tone: "warn" },
   { value: "flow.sql", label: "Flow ran SQL", tone: "warn" },
+  { value: "auth.sign_in", label: "Signed in", tone: "neutral" },
+  { value: "auth.sign_in_refused", label: "Sign-in given no role", tone: "bad" },
+  { value: "auth.sign_out", label: "Signed out", tone: "neutral" },
   { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
 ];
@@ -35,6 +38,12 @@ export function describe(e: AuditEvent): string {
     if (d.unmask) parts.push("sees unmasked values");
     parts.push(d.expiresAt ? `expires ${formatTime(String(d.expiresAt))}` : "never expires");
     return `${d.name ? `${String(d.name)}: ` : ""}${parts.filter(Boolean).join(", ")}`;
+  }
+  if (e.action === "auth.sign_in") {
+    return `${String(d.role ?? "")}${d.unmask ? ", sees unmasked values" : ""}`;
+  }
+  if (e.action === "auth.sign_in_refused") {
+    return String(d.reason ?? "");
   }
   if (e.action === "api.request" || e.action === "api.refused") {
     const call = `${String(d.method ?? "")} ${String(d.status ?? "")}`.trim();

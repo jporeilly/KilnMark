@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, ApiError, type Me } from "../api";
+import { api, ApiError, type AuthStatus, type Me } from "../api";
 import { useTitle } from "../components/useTitle";
 import { Brand, useProductName } from "../components/Brand";
 
 /** Why the sign-in page is showing: after signing out (info) or after the token stopped working (error). */
 export type SignInNotice = { kind: "info" | "error"; text: string };
 
-/** Asks for an API token, checks it with the server, and keeps it for this browser tab. */
+/**
+ * Offers sign-in with the organisation's identity provider when the server has one (ADR 0036), and
+ * says why when a provider sign-in gives no role; below, asks for an API token, checks it with the
+ * server, and keeps it for this browser tab.
+ */
 export function SignInPage({ notice, onSignedIn }: { notice: SignInNotice | null; onSignedIn: (me: Me) => void }) {
   useTitle("Sign in");
   const product = useProductName();
@@ -15,6 +19,14 @@ export function SignInPage({ notice, onSignedIn }: { notice: SignInNotice | null
   const [busy, setBusy] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const [status, setStatus] = useState<AuthStatus | null>(null);
+
+  useEffect(() => {
+    api
+      .authStatus()
+      .then(setStatus)
+      .catch(() => setStatus(null)); // an older server, or none: the token form still works
+  }, []);
 
   // Arriving here after signing out or being signed out: start screen readers at the heading.
   useEffect(() => {
@@ -56,6 +68,20 @@ export function SignInPage({ notice, onSignedIn }: { notice: SignInNotice | null
           {notice.text}
         </p>
       )}
+      {status?.refusal && (
+        <p role="alert" className="error">
+          {status.refusal}
+        </p>
+      )}
+      {status?.provider && (
+        <div className="km-card form">
+          <a className="km-button primary" href="/api/v1/auth/login">
+            Sign in with {status.providerName}
+          </a>
+          <p className="hint">Your organisation's usual sign-in, with its second factor.</p>
+        </div>
+      )}
+      {status?.provider && <h2 className="signin-or">Or use an API token</h2>}
       <form className="km-card form" onSubmit={submit} noValidate>
         <div className="field">
           <label htmlFor="token">API token</label>

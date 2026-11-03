@@ -79,9 +79,17 @@ public class AuditLog {
     /** A request was refused for want of sign-in or a role; detail: method, status. Target: the path. */
     public static final String API_REFUSED = "api.refused";
 
+    /** Someone signed in with the identity provider (ADR 0036); detail: role, unmask. */
+    public static final String SIGN_IN = "auth.sign_in";
+    /** Someone signed in with the identity provider but was given no role; detail: reason. */
+    public static final String SIGN_IN_REFUSED = "auth.sign_in_refused";
+    /** Someone signed out of a provider sign-in. */
+    public static final String SIGN_OUT = "auth.sign_out";
+
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
-        SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED);
+        SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
+        SIGN_OUT);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;

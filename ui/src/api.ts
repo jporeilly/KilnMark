@@ -15,6 +15,19 @@ export type Me = {
   signInRequired: boolean;
   /** Whether this token sees values of columns marked sensitive: designer tokens only (ADR 0027). */
   unmask: boolean;
+  /** How they signed in: an API token, the organisation's identity provider (ADR 0036), or sign-in is off. */
+  via: "token" | "provider" | "off";
+};
+
+/** Sign-in as the sign-in page needs it (ADR 0036). */
+export type AuthStatus = {
+  /** Whether sign-in with the organisation's identity provider is set up. */
+  provider: boolean;
+  providerName: string;
+  /** Whether this browser has a session with the provider. */
+  signedIn: boolean;
+  /** Why that session gives no role, or null. */
+  refusal: string | null;
 };
 
 export type ApiToken = {
@@ -87,16 +100,41 @@ export const SIGNED_OUT = "kilnmark:signed-out";
 const NOT_ACCEPTED =
   "You have been signed out: your API token was not accepted. It may have expired or been revoked. Sign in again.";
 
+const SESSION_ENDED = "Your sign-in has ended. Sign in again.";
+
+/** Whether this tab is signed in with the identity provider (a session cookie), not a token. */
+let providerSession = false;
+export const markProviderSession = (on: boolean) => {
+  providerSession = on;
+};
+
+/**
+ * Every request says it comes from Kilnmark's own pages (X-Requested-With): the server refuses
+ * changes made with a provider session without it, and answers 499 rather than redirecting when
+ * the session has ended (ADR 0036).
+ */
 function headers(extra: Record<string, string> = {}, token = currentToken()): Record<string, string> {
-  return { Accept: "application/json", ...extra, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  return {
+    Accept: "application/json",
+    "X-Requested-With": "JavaScript",
+    ...extra,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
 }
 
-/** A 401 with a token means the token stopped working: drop it and return to sign-in. */
+/** A 401 with a token means the token stopped working; one in a provider session means it ended. Back to sign-in. */
 function signedOut(sentToken: boolean) {
-  if (!sentToken) return;
-  session.clear();
-  window.dispatchEvent(new CustomEvent(SIGNED_OUT, { detail: NOT_ACCEPTED }));
+  if (sentToken) {
+    session.clear();
+    window.dispatchEvent(new CustomEvent(SIGNED_OUT, { detail: NOT_ACCEPTED }));
+  } else if (providerSession) {
+    providerSession = false;
+    window.dispatchEvent(new CustomEvent(SIGNED_OUT, { detail: SESSION_ENDED }));
+  }
 }
+
+/** 401, or 499: the OIDC client's answer to a page's request once its session has ended. */
+const notSignedIn = (status: number) => status === 401 || status === 499;
 
 export type Run = {
   id: number;
@@ -373,8 +411,9 @@ export async function call<T>(path: string, init?: RequestInit, contentType = "a
   if ((response.status === 422 && body?.rows) || response.status === 204) {
     return body as T; // an import report listing what to fix
   }
-  if (response.status === 401) {
+  if (notSignedIn(response.status)) {
     signedOut(token != null);
+    if (response.status === 499) throw new ApiError(SESSION_ENDED, 401);
   }
   if (!response.ok) {
     throw new ApiError(body?.error ?? `The server answered ${response.status}`, response.status);
@@ -392,7 +431,7 @@ export async function callText(path: string, accept: string): Promise<string> {
     throw new ApiError("Cannot reach the Kilnmark server. Is it running?", 0);
   }
   const text = await response.text();
-  if (response.status === 401) signedOut(token != null);
+  if (notSignedIn(response.status)) signedOut(token != null);
   if (!response.ok) {
     let message = `The server answered ${response.status}`;
     try {
@@ -510,6 +549,9 @@ export type DriverRegistration = {
 
 export const api = {
   me: () => call<Me>("/api/v1/me"),
+  authStatus: () => call<AuthStatus>("/api/v1/auth/status"),
+  /** Ends this browser's session with the identity provider's sign-in. */
+  signOutProvider: () => call<void>("/api/v1/auth/sign-out", { method: "POST" }),
   signIn: async (token: string) => {
     const me = await checkToken(token);
     session.save(token);

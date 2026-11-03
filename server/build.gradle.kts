@@ -65,6 +65,8 @@ dependencies {
     "implementation"("io.quarkus:quarkus-arc")
     "implementation"("io.quarkus:quarkus-rest-jackson")
     "implementation"("io.quarkus:quarkus-security")
+    // Sign-in through the customer's identity provider (ADR 0014, ADR 0036): off unless configured.
+    "implementation"("io.quarkus:quarkus-oidc")
     "implementation"("io.quarkus:quarkus-smallrye-health")
     "implementation"("io.quarkus:quarkus-smallrye-openapi")
     "implementation"("io.quarkus:quarkus-jdbc-postgresql")
@@ -96,6 +98,9 @@ dependencies {
     // An SMTP server in the test's own process (Apache-2.0, test only), so mail tests need no container.
     "testImplementation"(libs.greenmail)
     "testImplementation"("io.rest-assured:rest-assured")
+    // A stand-in identity provider (WireMock) and OIDC identities for tests of sign-in (ADR 0036).
+    "testImplementation"("io.quarkus:quarkus-test-oidc-server")
+    "testImplementation"("io.quarkus:quarkus-test-security-oidc")
     // Validates the data quality exports against the published OpenLineage and ODCS schemas (Apache-2.0, test only).
     "testImplementation"(libs.json.schema.validator)
 }

@@ -17,7 +17,8 @@ Last reviewed: 3 November 2026 (after #61-#69 merged).
    The order is in [Compliance](compliance.md#order-of-work). Shipped: the audit log (#58), HTTPS
    and security headers (#67), TLS to Kilnmark's own database (#68), SBOMs, scanning and signed
    releases (#69); in review: encrypted connections to sources (ADR 0034). Next:
-   - OIDC sign-in with MFA, brought forward from v0.2 ([ADR 0014](../adr/0014-authentication.md));
+   - OIDC sign-in with MFA, brought forward from v0.2 ([ADR 0014](../adr/0014-authentication.md)):
+     in review (ADR 0036); then the Keycloak profile for customers without a provider;
    - access reviews and token policy; backup and restore with a runbook; the evidence pack, with an
      SSDF self-assessment;
    - Generic JDBC drivers in a process of their own (ADR 0030, decision 5);

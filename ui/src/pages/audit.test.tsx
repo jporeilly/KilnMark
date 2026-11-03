@@ -25,6 +25,10 @@ group("the audit log page", () => {
       "POST 401, from 10.0.0.9, 12 more not kept before this",
     );
     expect(describe(event("mark.cleared", { field: "email" }))).toBe("field: email");
+    expect(describe(event("auth.sign_in", { role: "designer", unmask: true }))).toBe(
+      "designer, sees unmasked values",
+    );
+    expect(describe(event("auth.sign_in_refused", { reason: "No second factor." }))).toBe("No second factor.");
     expect(describe(event("flow.sql", { source: "warehouse", statements: 2, version: 3 }))).toBe(
       "2 statements on warehouse, version 3",
     );
@@ -35,6 +39,9 @@ group("the audit log page", () => {
       [
         "api.refused",
         "api.request",
+        "auth.sign_in",
+        "auth.sign_in_refused",
+        "auth.sign_out",
         "flow.sql",
         "mark.cleared",
         "mark.set",

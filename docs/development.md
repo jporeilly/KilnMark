@@ -187,9 +187,9 @@ set `DOCKER_HOST` to the address `podman machine inspect` reports, and
 
 ## Sign in
 
-Every API call needs an API token except three public ones: `GET /api/v1/info`, the health
-checks under `/q/health`, and the API description at `/q/openapi` (it lists endpoints, never
-data). The token goes in a header:
+Every API call needs an API token, or a provider sign-in (below), except a few public ones:
+`GET /api/v1/info`, `GET /api/v1/auth/status`, the health checks under `/q/health`, and the API
+description at `/q/openapi` (it lists endpoints, never data). The token goes in a header:
 `Authorization: Bearer km_...`. The web UI asks for one on its sign-in page and keeps it only
 for that browser tab. A token has one role, and each role includes the ones before it:
 
@@ -237,6 +237,17 @@ curl -X POST http://localhost:8780/api/v1/tokens -H "Authorization: Bearer $KILN
 
 The response holds the token once; only its SHA-256 is stored. `DELETE /api/v1/tokens/{id}`
 revokes one at once.
+
+**Sign-in with the identity provider** (ADR 0036). With Quarkus's OIDC client set up
+(`QUARKUS_OIDC_TENANT_ENABLED=true`, `QUARKUS_OIDC_AUTH_SERVER_URL`, `QUARKUS_OIDC_CLIENT_ID`,
+`QUARKUS_OIDC_CREDENTIALS_SECRET`; INSTALL.md says how), the sign-in page offers **Sign in with**
+the provider, through `/api/v1/auth/login`. Roles come from `kilnmark.auth.oidc.<role>-groups`,
+the unmask grant from `unmask-groups` (designers only); MFA is required (`require-mfa`, from the
+ID token's `amr` or `acr`), and a sign-in lasts at most `max-session` (8 hours). Requests that
+change something with the session cookie must carry `X-Requested-With: JavaScript`, as the web UI
+does. Token sign-in is unchanged and tried first: a request without credentials gets 401, never a
+redirect. `GET /api/v1/auth/status` (open) says whether a provider is set up and why a sign-in has
+no role; `POST /api/v1/auth/sign-out` ends the session.
 
 **Lab use only:** `KILNMARK_AUTH_MODE=off` turns sign-in off: anyone who can reach the server
 is an admin, and no tokens can be created. The server only starts this way when it listens on a
