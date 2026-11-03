@@ -49,6 +49,21 @@ public class OidcIdentityAugmentor implements SecurityIdentityAugmentor {
     }
 
     /**
+     * The person behind a provider sign-in, as the provider fixes them: its issuer and their subject,
+     * which no name change alters; null for anything else (a token names no person). What the unmask
+     * grant's two people are compared by (ADR 0038).
+     */
+    public static String personKey(SecurityIdentity identity) {
+        if (!fromProvider(identity)) {
+            return null;
+        }
+        JsonWebToken t = (JsonWebToken) identity.getPrincipal();
+        String iss = t.getIssuer();
+        String sub = t.getSubject();
+        return iss == null || sub == null || sub.isBlank() ? null : "oidc:" + iss + "|" + sub;
+    }
+
+    /**
      * The name a provider sign-in goes by in the audit log, usage records and "created by" columns:
      * {@code sso:} with the person's name and, in brackets, the provider's fixed ID for them
      * ({@code sub}). The name is whatever the provider sends, which some let people choose, so the

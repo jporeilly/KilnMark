@@ -35,7 +35,7 @@ public class AccessReviewResource {
 
     /** One line of the review: a token, or a person who signs in with the identity provider. */
     public record Entry(String kind, String name, String role, boolean unmask, String status, String createdBy,
-                        Instant createdAt, Instant expiresAt, Instant lastUsedAt, Long signIns) {
+                        Instant createdAt, Instant expiresAt, Instant lastUsedAt, Long signIns, String unmaskApprovedBy) {
     }
 
     /** The review: when it was made, the longest token lifetime the server allows (days, or null), and every entry. */
@@ -79,12 +79,12 @@ public class AccessReviewResource {
         List<Entry> out = new ArrayList<>();
         for (ApiTokens.Token t : tokens.list()) {
             out.add(new Entry("token", t.name(), t.role().id(), t.unmask(), t.status(now), t.createdBy(),
-                t.createdAt(), t.expiresAt(), t.lastUsedAt(), null));
+                t.createdAt(), t.expiresAt(), t.lastUsedAt(), null, t.unmaskApprovedBy()));
         }
         for (AuditLog.ProviderAccess p : audit.providerAccess()) {
             out.add(new Entry("provider", p.name(), p.role(), p.unmask(), p.refused() == null
                 ? "signs in with the identity provider" : p.role() == null ? "no group gives a role any more"
-                : "last sign-in refused: " + p.refused(), null, null, null, p.lastSignIn(), p.signIns()));
+                : "last sign-in refused: " + p.refused(), null, null, null, p.lastSignIn(), p.signIns(), null));
         }
         Long days = tokens.maxLifetime().map(d -> d.toDays()).orElse(null);
         return new Review(now, days, out);
@@ -93,11 +93,12 @@ public class AccessReviewResource {
     /** The review as CSV, one entry a row; cells that a spreadsheet would run as a formula are quoted safe. */
     static String csv(Review r) {
         StringBuilder b = new StringBuilder("kind,name,role,unmask,status,created_by,created_at,expires_at,"
-            + "last_used_at,sign_ins\r\n");
+            + "last_used_at,sign_ins,unmask_approved_by\r\n");
         for (Entry e : r.entries()) {
             b.append(String.join(",", cell(e.kind()), cell(e.name()), cell(e.role()), cell(String.valueOf(e.unmask())),
                 cell(e.status()), cell(e.createdBy()), cell(e.createdAt()), cell(e.expiresAt()), cell(e.lastUsedAt()),
-                cell(e.signIns() == null ? null : e.signIns().toString()))).append("\r\n");
+                cell(e.signIns() == null ? null : e.signIns().toString()), cell(e.unmaskApprovedBy())))
+                .append("\r\n");
         }
         return b.toString();
     }

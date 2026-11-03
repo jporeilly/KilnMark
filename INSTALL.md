@@ -148,12 +148,21 @@ check the review first, and replace any a script still needs. The admin token fr
 
 ### Two people for sensitive values
 
-Designer tokens can see values of columns marked sensitive. To make that take two people, set
-`KILNMARK_UNMASK_APPROVAL=true` in `.env` and restart: a designer token asked to see them is made
-without, and shows **Approve** and **Refuse** under **API tokens** for another admin; the admin who
-asked cannot approve it. Each step is in the audit log. For people who sign in with your identity
-provider, the second person is whoever approves membership of the unmask group there
+Designer tokens can see values of columns marked sensitive. To make that take two people, set up
+sign-in with your identity provider (above), then set `KILNMARK_UNMASK_APPROVAL=true` in `.env` and
+restart. A designer token asked to see them can then be made only by someone signed in with the
+provider, and is made without; another person, also signed in with it, approves it under **API
+tokens**. Tokens cannot ask or approve, because a token names no one, and the provider's fixed id
+tells the two people apart even if one renames themselves. Each step is in the audit log, and the
+access review shows who approved each grant. For people's own sign-ins, the second person is whoever
+approves membership of the unmask group at the provider
 ([ADR 0038](docs/adr/0038-a-second-admin-approves-the-unmask-grant.md)).
+
+- Use one issuer for your own organisation: never a multi-tenant endpoint or
+  `QUARKUS_OIDC_TOKEN_ISSUER=any`, which would let one person arrive as two.
+- Set it on every Kilnmark api process alike.
+- Designer tokens given sensitive values before you turned it on keep them: find them in the access
+  review (no "approved by") and revoke any that should not.
 
 ## B. From source, with the reference lab and the samples
 

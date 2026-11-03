@@ -278,9 +278,9 @@ public interface KilnmarkConfig {
         Optional<Duration> tokenMaxLifetime();
 
         /**
-         * Whether a second admin must approve the unmask grant (ADR 0038): a designer token asked to
-         * see unmasked values is made without it, and waits until another admin approves (or refuses)
-         * it under API tokens. Off by default.
+         * Whether the unmask grant takes two people (ADR 0038): a designer token asked to see
+         * unmasked values can be made only by a person signed in with the identity provider, without
+         * the grant, until another such person approves it. Needs provider sign-in. Off by default.
          */
         @WithDefault("false")
         boolean unmaskApproval();

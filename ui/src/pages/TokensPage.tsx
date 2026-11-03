@@ -171,7 +171,7 @@ export function TokensPage({ me }: { me: Me }) {
                       {t.unmask ? <strong>Unmasked</strong> : "Masked"}
                       {t.unmaskRequestedBy && (
                         <div className="small">
-                          <span className="muted">Asked by {t.unmaskRequestedBy}; another admin must approve</span>
+                          <span className="muted">Asked by {t.unmaskRequestedBy}; another person, signed in with your identity provider, must approve</span>
                           <div className="copy-row">
                             <button type="button" onClick={() => decide(t, true)} aria-label={`Approve ${t.name} seeing sensitive values`}>
                               Approve
@@ -329,7 +329,9 @@ function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
             />
             <p id="tok-unmask-hint" className="hint">
               Only designer tokens can. Turn it off for a designer who builds without needing the real values.
-              {approval && unmask && " On this server another admin must approve it: until then the token sees them masked."}
+              {approval &&
+                unmask &&
+                " On this server it takes two people signed in with your identity provider: ask while signed in with it, and another person approves it. Until then the token sees them masked."}
             </p>
           </div>
         )}

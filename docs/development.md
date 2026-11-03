@@ -249,9 +249,11 @@ with the role of their last sign-in; each view and download is an audit event. S
 Kilnmark process (api, worker, scheduler): each judges tokens, and notifications, by its own setting.
 
 **Two people for the unmask grant** (ADR 0038). `kilnmark.auth.unmask-approval=true`
-(`KILNMARK_AUTH_UNMASK_APPROVAL`, off by default): a designer token asked to see unmasked values
-is made without the grant, with `unmaskRequestedBy` set; `POST /api/v1/tokens/{id}/unmask/approve`
-by another admin gives it (the asker gets 403), `.../refuse` clears the request.
+(`KILNMARK_AUTH_UNMASK_APPROVAL`, off by default; needs provider sign-in or the server does not
+start): only a person signed in with the provider may make a designer token asking for the grant,
+and it is made without it (`unmaskRequestedBy`); `POST /api/v1/tokens/{id}/unmask/approve` by
+another person signed in with the provider gives it (`unmaskApprovedBy`), compared by issuer and
+subject; tokens and the asker get 403. `.../refuse` clears the request.
 `GET /api/v1/tokens/policy` says whether approval is on. Audit events `unmask.requested`,
 `unmask.approved`, `unmask.refused`.
 

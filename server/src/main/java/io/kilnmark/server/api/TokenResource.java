@@ -77,7 +77,7 @@ public class TokenResource {
                 + "admin), and optionally expiresAt and unmask (designer tokens only)");
         }
         ApiTokens.Issued issued = tokens.create(body.name(), AccessRole.parse(body.role()), body.expiresAt(), caller(),
-            body.unmask());
+            body.unmask(), io.kilnmark.server.auth.OidcIdentityAugmentor.personKey(identity));
         ApiTokens.Token t = issued.token();
         java.util.Map<String, Object> detail = new java.util.LinkedHashMap<>();
         detail.put("name", t.name());
@@ -122,14 +122,16 @@ public class TokenResource {
     }
 
     /**
-     * Gives a designer token the unmask grant it asked for (ADR 0038). Only a second admin may: the
-     * one who asked is refused (403).
+     * Gives a designer token the unmask grant it asked for (ADR 0038). Only a second person, signed in
+     * with the identity provider, may: the one who asked, and any token, are refused (403).
      */
     @POST
     @Path("tokens/{id}/unmask/approve")
     @RolesAllowed(AccessRole.ADMIN_ROLE)
     public Views.Token approveUnmask(@PathParam("id") long id) {
-        return decided(id, tokens.approveUnmask(id, caller()), io.kilnmark.server.audit.AuditLog.UNMASK_APPROVED);
+        signInOn();
+        return decided(id, tokens.approveUnmask(id, caller(), io.kilnmark.server.auth.OidcIdentityAugmentor
+            .personKey(identity)), io.kilnmark.server.audit.AuditLog.UNMASK_APPROVED);
     }
 
     /** Refuses a designer token's request for the unmask grant; the token stays, without it. */
@@ -137,22 +139,36 @@ public class TokenResource {
     @Path("tokens/{id}/unmask/refuse")
     @RolesAllowed(AccessRole.ADMIN_ROLE)
     public Views.Token refuseUnmask(@PathParam("id") long id) {
+        signInOn();
         return decided(id, tokens.refuseUnmask(id, caller()), io.kilnmark.server.audit.AuditLog.UNMASK_REFUSED);
+    }
+
+    /** With sign-in off every caller is an admin, so no decision about the grant can stand for a person. */
+    private void signInOn() {
+        if (config.auth().mode() == AuthMode.OFF) {
+            throw ApiError.of(Response.Status.CONFLICT, "Sign-in is off (kilnmark.auth.mode=off), so no one can be "
+                + "told apart. Turn sign-in on to approve or refuse sensitive values.");
+        }
     }
 
     private Views.Token decided(long id, ApiTokens.GrantDecision d, String action) {
         if (d.problem() != null) {
             throw switch (d.problem()) {
-                case NOT_FOUND -> ApiError.of(Response.Status.NOT_FOUND, "No token " + id + ", or it was revoked");
+                case NOT_FOUND -> ApiError.of(Response.Status.NOT_FOUND, "No token " + id + " that still works: it "
+                    + "may have been revoked or have expired");
                 case NOTHING_ASKED -> ApiError.of(Response.Status.CONFLICT, "Token " + id + " is not waiting for the "
                     + "unmask grant: it was already approved or refused, or never asked for it");
                 case SAME_PERSON -> ApiError.of(Response.Status.FORBIDDEN, "You asked for this grant, so another "
-                    + "admin must approve it: seeing sensitive values needs two people (kilnmark.auth.unmask-approval)");
+                    + "person must approve it: seeing sensitive values needs two people (kilnmark.auth.unmask-approval)");
+                case NOT_A_PERSON -> ApiError.of(Response.Status.FORBIDDEN, "Approve this as a person signed in with "
+                    + "your identity provider: a token names no one, so it cannot be the second person");
             };
         }
         ApiTokens.Token t = d.token();
-        audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), action, "token " + t.id(),
-            java.util.Map.of("name", t.name()));
+        java.util.Map<String, Object> detail = new java.util.LinkedHashMap<>();
+        detail.put("name", t.name());
+        detail.put("askedBy", d.askedBy());
+        audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), action, "token " + t.id(), detail);
         return Views.Token.of(t, Instant.now());
     }
 
