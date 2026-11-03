@@ -13,6 +13,7 @@
     "build": "tsc --noEmit && vitest run && node scripts/check-contrast.mjs && vite build && node scripts/ui-notices.mjs",
     "check:contrast": "node scripts/check-contrast.mjs",
     "preview": "vite preview",
+    "sbom": "node scripts/ui-sbom.mjs",
     "test": "vitest run"
   },
   "dependencies": {

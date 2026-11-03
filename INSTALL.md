@@ -45,7 +45,8 @@ On Windows and macOS, start the Podman machine once per boot: `podman machine st
 
 A release from GitHub comes as `kilnmark-<version>.tar.gz` or `.zip`, two SBOMs, `SHA256SUMS`, and
 a `.sigstore.json` signature beside each. Check the one you downloaded before unpacking it, with
-[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) and Kilnmark's public key
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) 3.0 or later (earlier versions
+cannot read the signatures) and Kilnmark's public key
 (`cosign.pub`, from the release's owner or `config/release/cosign.pub` in the repository):
 
 ```

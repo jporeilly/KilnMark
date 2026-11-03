@@ -19,8 +19,10 @@ checked them for vulnerabilities, and nothing proved where it came from.
    - `kilnmark-server.cdx.json`: every library on the server's runtime classpath, from the
      CycloneDX Gradle plugin (Apache-2.0, build time only). The plugin adds the repository's Git
      address; the build removes it, as the repository is private.
-   - `kilnmark-ui.cdx.json`: the packages the web UI bundles (no development tools), from npm's own
-     `npm sbom`, so no extra tool.
+   - `kilnmark-ui.cdx.json`: the packages the web UI bundles (no development tools or types), from
+     npm's own `npm sbom`, so no extra tool, kept to the packages the UI's licence notices list.
+     `npm sbom --omit=dev` is not used: it drops a runtime package that a build tool also names as
+     an optional peer (`yaml`, through Vite).
 2. **Scanning in CI** with Trivy (Apache-2.0), downloaded from its release and checked against a
    pinned checksum, never through a third-party action. It runs on every pull request, on main,
    and every Monday, so a vulnerability published after a merge is found without waiting for one:

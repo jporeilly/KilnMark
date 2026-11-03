@@ -159,7 +159,7 @@ and leaves a draft GitHub release to publish ([Supply chain](design/supply-chain
 Once, before the first signed release, the owner makes the release key on their own machine:
 
 ```
-cosign generate-key-pair          # asks for a password; writes cosign.key and cosign.pub
+cosign generate-key-pair          # asks for a password (required); writes cosign.key and cosign.pub
 ```
 
 Then:

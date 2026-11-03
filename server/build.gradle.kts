@@ -171,21 +171,16 @@ val buildUi by tasks.registering(Exec::class) {
     outputs.dir(uiOut)
 }
 
-// The web UI's SBOM (CycloneDX JSON), from npm itself: the packages the built UI bundles (no
-// development tools), read from the lock file, so it needs no install.
+// The web UI's SBOM (CycloneDX JSON): the packages the built UI bundles, chosen as its licence
+// notices are (scripts/ui-sbom.mjs), read from the lock file, so it needs no install.
 val uiSbomFile = rootProject.layout.projectDirectory.file("dist/ui-sbom/kilnmark-ui.cdx.json")
 val uiSbom by tasks.registering(Exec::class) {
-    description = "Writes the web UI's CycloneDX SBOM to dist/ui-sbom (npm sbom)."
+    description = "Writes the web UI's CycloneDX SBOM to dist/ui-sbom (scripts/ui-sbom.mjs)."
     onlyIf { !skipUi }
     workingDir = uiDir.asFile
-    commandLine(npm, "sbom", "--omit=dev", "--sbom-format=cyclonedx", "--package-lock-only")
-    inputs.files(uiDir.file("package.json"), uiDir.file("package-lock.json"))
+    commandLine(npm, "run", "--silent", "sbom", "--", uiSbomFile.asFile.absolutePath)
+    inputs.files(uiDir.file("package.json"), uiDir.file("package-lock.json"), uiDir.file("scripts/ui-sbom.mjs"))
     outputs.file(uiSbomFile)
-    val out = uiSbomFile.asFile
-    doFirst {
-        out.parentFile.mkdirs()
-        standardOutput = out.outputStream()
-    }
 }
 
 // The user guides and the changelog, for the assistant (docs/design/assistant.md): the same files

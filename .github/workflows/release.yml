@@ -2,13 +2,14 @@ name: Release
 
 # Builds a release from a version tag the owner pushes (vX.Y.Z, matching gradle.properties), signs
 # every file with the release key, and leaves it as a draft GitHub release for the owner to publish
-# (docs/design/supply-chain.md, ADR 0033). A pull request that changes this workflow rehearses it
-# instead: a throwaway key, the same signing and verifying, and no release.
+# (docs/design/supply-chain.md, ADR 0033). A pull request that changes this workflow, or the builds
+# that make the release's files, rehearses it instead: a throwaway key, the same signing and verifying, and no release.
 on:
   push:
     tags: ["v*"]
   pull_request:
-    paths: [".github/workflows/release.yml"]
+    # what the rehearsal exercises: the workflow and the builds that make the release's files
+    paths: [".github/workflows/release.yml", "build.gradle.kts", "server/build.gradle.kts", "ui/scripts/ui-sbom.mjs"]
 
 permissions:
   contents: read

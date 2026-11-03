@@ -9,7 +9,7 @@ controls they answer are in [Compliance](../product/compliance.md).
 | File | What it lists | Made by |
 | --- | --- | --- |
 | `sbom/kilnmark-server.cdx.json` | Every library on the server's runtime classpath | `./gradlew :server:cyclonedxDirectBom` (CycloneDX Gradle plugin), in `dist/build/server/sbom` |
-| `sbom/kilnmark-ui.cdx.json` | The packages the web UI bundles, without development tools | `./gradlew :server:uiSbom` (`npm sbom`, from the lock file), in `dist/ui-sbom` |
+| `sbom/kilnmark-ui.cdx.json` | The packages the web UI bundles, without development tools | `./gradlew :server:uiSbom` (`ui/scripts/ui-sbom.mjs`: npm's SBOM, kept to the packages the licence notices list), in `dist/ui-sbom` |
 
 `./gradlew release` makes both and puts them in the release folder. They are CycloneDX JSON, which
 most scanners and vendor-risk tools read.
@@ -44,6 +44,7 @@ npm, GitHub Actions and the base images.
 4. verifies every signature against `config/release/cosign.pub`;
 5. creates a draft GitHub release with all of it, for the owner to publish.
 
-A pull request that changes the workflow rehearses steps 1 to 4 with a throwaway key.
+A pull request that changes the workflow, or the builds that make the release's files, rehearses
+steps 1 to 4 with a throwaway key.
 [Development](../development.md#releasing) says how the owner sets up the key; INSTALL.md says how a
 customer checks a release.
