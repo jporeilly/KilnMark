@@ -18,6 +18,9 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "auth.sign_in_refused", label: "Sign-in given no role", tone: "bad" },
   { value: "auth.sign_out", label: "Signed out", tone: "neutral" },
   { value: "access.review", label: "Access review viewed", tone: "neutral" },
+  { value: "unmask.requested", label: "Sensitive values asked for", tone: "warn" },
+  { value: "unmask.approved", label: "Sensitive values approved", tone: "warn" },
+  { value: "unmask.refused", label: "Sensitive values refused", tone: "neutral" },
   { value: "api.request", label: "Request", tone: "neutral" },
   { value: "api.refused", label: "Request refused", tone: "bad" },
 ];

@@ -87,6 +87,17 @@ export function TokensPage({ me }: { me: Me }) {
     }
   };
 
+  /** Approve or refuse a waiting unmask grant (ADR 0038); the server refuses the admin who asked. */
+  const decide = async (t: ApiToken, approve: boolean) => {
+    try {
+      await (approve ? api.approveUnmask(t.id) : api.refuseUnmask(t.id));
+      setNotice(approve ? `${t.name} now sees sensitive values.` : `${t.name} will see sensitive values masked.`);
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -156,7 +167,22 @@ export function TokensPage({ me }: { me: Me }) {
                       {me.tokenId === t.id && <div className="small muted">You are signed in with this one</div>}
                     </th>
                     <td>{t.role}</td>
-                    <td>{t.unmask ? <strong>Unmasked</strong> : "Masked"}</td>
+                    <td>
+                      {t.unmask ? <strong>Unmasked</strong> : "Masked"}
+                      {t.unmaskRequestedBy && (
+                        <div className="small">
+                          <span className="muted">Asked by {t.unmaskRequestedBy}; another person, signed in with your identity provider, must approve</span>
+                          <div className="copy-row">
+                            <button type="button" onClick={() => decide(t, true)} aria-label={`Approve ${t.name} seeing sensitive values`}>
+                              Approve
+                            </button>
+                            <button type="button" onClick={() => decide(t, false)} aria-label={`Refuse ${t.name} seeing sensitive values`}>
+                              Refuse
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </td>
                     <td>
                       <span className={`badge badge-token-${t.status}`}>{STATUS[t.status]}</span>
                       {t.revokedAt && <div className="small muted">{formatTime(t.revokedAt)}</div>}
@@ -210,6 +236,7 @@ function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
   const [unmask, setUnmask] = useState(true);
   const [expiry, setExpiry] = useState("90");
   const [maxDays, setMaxDays] = useState<number | null>(null);
+  const [approval, setApproval] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
@@ -221,6 +248,7 @@ function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
       .tokenPolicy()
       .then((p) => {
         setMaxDays(p.maxLifetimeDays);
+        setApproval(p.unmaskApproval === true);
         const offered = expiryChoices(p.maxLifetimeDays);
         setExpiry((now) => (offered.some((x) => x.value === now) ? now : offered[offered.length - 1].value));
       })
@@ -301,6 +329,9 @@ function CreateToken({ onCreated }: { onCreated: (t: CreatedToken) => void }) {
             />
             <p id="tok-unmask-hint" className="hint">
               Only designer tokens can. Turn it off for a designer who builds without needing the real values.
+              {approval &&
+                unmask &&
+                " On this server it takes two people signed in with your identity provider: ask while signed in with it, and another person approves it. Until then the token sees them masked."}
             </p>
           </div>
         )}
@@ -345,6 +376,7 @@ function NewTokenPanel({ created, onDone }: { created: CreatedToken; onDone: () 
         <label htmlFor="new-token">
           Token for {created.name} ({created.role}
           {created.unmask ? ", sees sensitive values" : ""}
+          {created.unmaskRequestedBy ? ", waiting for another admin to approve sensitive values" : ""}
           {created.expiresAt ? `, expires ${formatTime(created.expiresAt)}` : ", never expires"})
         </label>
         <div className="copy-row">

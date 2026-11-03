@@ -124,6 +124,9 @@ tasks.withType<Test>().configureEach {
 // gate of ADR 0012; -Pkilnmark.eval.update-baseline=true accepts the new scores instead.
 tasks.named<Test>("test") {
     useJUnitPlatform { excludeTags("ai-eval") }
+    // Each test profile starts the application again in the same JVM; Gradle's default 512 MB ran out
+    // once the sign-in and token profiles (ADR 0036-0038) were added.
+    maxHeapSize = "1536m"
 }
 
 tasks.register<Test>("aiEval") {

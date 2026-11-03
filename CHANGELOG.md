@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **Two people for sensitive values** (ADR 0038). With sign-in through your identity provider and
+  `KILNMARK_UNMASK_APPROVAL=true`, a designer token asked to see values of columns marked sensitive
+  is made without, and a second person approves or refuses it under **API tokens**; the asker, under
+  any name, and tokens cannot approve. Every step is in the audit log, and the access review shows
+  who approved.
+
 - **Access review, and a longest token lifetime** (ADR 0037). **Settings**, **Access review** lists
   who can do what: every API token with its role, whether it sees sensitive values, its expiry and
   last use, and everyone who signs in with your identity provider, with the role of their last

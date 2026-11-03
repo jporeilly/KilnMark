@@ -174,19 +174,23 @@ public final class Views {
 
     /**
      * An API token as listed: never its secret or hash. {@code status} is active, expired or revoked;
-     * {@code unmask} says whether it sees values of columns marked sensitive (designer tokens only).
+     * {@code unmask} says whether it sees values of columns marked sensitive (designer tokens only);
+     * {@code unmaskRequestedBy}, who asked for that grant while it waits for a second person, and
+     * {@code unmaskApprovedBy}, who approved it (ADR 0038).
      */
     public record Token(long id, String name, String role, boolean unmask, String status, String createdBy,
-                        Instant createdAt, Instant expiresAt, Instant lastUsedAt, Instant revokedAt) {
+                        Instant createdAt, Instant expiresAt, Instant lastUsedAt, Instant revokedAt,
+                        String unmaskRequestedBy, String unmaskApprovedBy) {
         static Token of(io.kilnmark.server.auth.ApiTokens.Token t, Instant now) {
             return new Token(t.id(), t.name(), t.role().id(), t.unmask(), t.status(now), t.createdBy(), t.createdAt(),
-                t.expiresAt(), t.lastUsedAt(), t.revokedAt());
+                t.expiresAt(), t.lastUsedAt(), t.revokedAt(), t.revokedAt() == null ? t.unmaskRequestedBy() : null,
+                t.unmaskApprovedBy());
         }
     }
 
     /** A token just created. {@code token} is shown this once and cannot be read again. */
     public record NewToken(long id, String name, String role, boolean unmask, Instant createdAt, Instant expiresAt,
-                           String token) {
+                           String token, String unmaskRequestedBy) {
     }
 
     /**
