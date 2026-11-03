@@ -13,7 +13,6 @@ import io.kilnmark.server.audit.AuditLog;
 import io.kilnmark.server.auth.OidcIdentityAugmentor;
 import io.quarkus.oidc.OidcSession;
 import io.quarkus.security.Authenticated;
-import io.quarkus.security.AuthenticationFailedException;
 import io.quarkus.security.identity.SecurityIdentity;
 import jakarta.annotation.security.PermitAll;
 import jakarta.inject.Inject;
@@ -56,16 +55,11 @@ public class AuthResource {
     @APIResponses({@APIResponse(responseCode = "200", description = "The status")})
     public Views.AuthStatus status() {
         String name = config.auth().oidc().providerName();
-        try {
-            if (identity.isAnonymous() || !OidcIdentityAugmentor.fromProvider(identity)) {
-                return new Views.AuthStatus(provider, name, false, null);
-            }
-            String refusal = identity.getAttribute(OidcIdentityAugmentor.REFUSAL);
-            return new Views.AuthStatus(provider, name, true, refusal);
-        } catch (AuthenticationFailedException e) {
-            // a session older than the longest one allowed: the person signs in again
-            return new Views.AuthStatus(provider, name, false, io.kilnmark.server.auth.OidcAccess.TOO_OLD);
+        if (identity.isAnonymous() || !OidcIdentityAugmentor.fromProvider(identity)) {
+            return new Views.AuthStatus(provider, name, false, null);
         }
+        String refusal = identity.getAttribute(OidcIdentityAugmentor.REFUSAL);
+        return new Views.AuthStatus(provider, name, true, refusal);
     }
 
     /**
@@ -81,6 +75,13 @@ public class AuthResource {
         + "scripts use API tokens.")
     @APIResponses({@APIResponse(responseCode = "303", description = "Signed in; on to the web UI")})
     public Response login() {
+        // A session that was given no role (no second factor, no group) is ended first, so this sends
+        // the person back to the provider to sign in again rather than straight on with the same one.
+        if (OidcIdentityAugmentor.fromProvider(identity) && identity.getAttribute(OidcIdentityAugmentor.REFUSAL) != null
+            && session.isResolvable()) {
+            session.get().logout().await().indefinitely();
+            return Response.seeOther(URI.create("/api/v1/auth/login")).build();
+        }
         return Response.seeOther(URI.create("/")).build();
     }
 

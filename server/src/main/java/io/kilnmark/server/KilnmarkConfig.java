@@ -306,14 +306,15 @@ public interface KilnmarkConfig {
         Optional<List<String>> unmaskGroups();
 
         /**
-         * Whether the provider must have used more than a password: the ID token's {@code amr}
-         * holds one of {@link #mfaMethods()}, or its {@code acr} is one of {@link #mfaAcr()}.
-         * Without it the person is signed in with no role and told why.
+         * Whether the provider must have used more than one factor: the ID token's {@code amr}
+         * holds {@code mfa}, or two different methods, one of them in {@link #mfaMethods()}; or its
+         * {@code acr} is one of {@link #mfaAcr()}. Without it the person is signed in with no role
+         * and told why.
          */
         @WithDefault("true")
         boolean requireMfa();
 
-        /** {@code amr} values (RFC 8176) that show a second factor was used. */
+        /** {@code amr} values (RFC 8176) that are a second factor when another method was used too. */
         @WithDefault("mfa,otp,hwk,swk,sms,tel,fpt,face,iris,retina,vbm,sc")
         List<String> mfaMethods();
 
@@ -322,7 +323,7 @@ public interface KilnmarkConfig {
 
         /**
          * The longest a sign-in lasts, counted from when the person last signed in at the provider
-         * ({@code auth_time}, or the token's issue time): after it they sign in again.
+         * ({@code auth_time}, which the ID token must carry): after it they sign in again.
          */
         @WithDefault("8h")
         Duration maxSession();

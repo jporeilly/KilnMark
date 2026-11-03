@@ -39,6 +39,10 @@ public final class OidcAccess {
     public static final String NO_GROUP = "You signed in, but none of your groups is given a role in Kilnmark. Ask a "
         + "Kilnmark administrator to add one of your groups to the role you need.";
 
+    /** Why a sign-in that does not say when the person signed in is refused. */
+    public static final String NO_AUTH_TIME = "Your organisation's sign-in did not say when you signed in (auth_time), "
+        + "so Kilnmark cannot limit how long it lasts. Ask your administrator to have the provider send it.";
+
     /** Why a sign-in older than the longest session is refused. */
     public static final String TOO_OLD = "Your sign-in is older than Kilnmark allows. Sign in again.";
 
@@ -54,11 +58,13 @@ public final class OidcAccess {
         if (config.requireMfa() && !usedSecondFactor(config, claim)) {
             return Decision.refused(NO_MFA);
         }
+        // Never the token's issue time instead: each token the provider re-issues has a new one, which
+        // would restart the longest session for ever. Kilnmark sends max_age, so auth_time is required.
         Instant signedInAt = instant(claim.apply("auth_time"));
         if (signedInAt == null) {
-            signedInAt = instant(claim.apply("iat"));
+            return Decision.refused(NO_AUTH_TIME);
         }
-        if (signedInAt == null || signedInAt.plus(config.maxSession()).isBefore(now)) {
+        if (signedInAt.plus(config.maxSession()).isBefore(now)) {
             return Decision.refused(TOO_OLD);
         }
         Set<String> groups = Set.copyOf(strings(claim.apply(config.groupsClaim())));
@@ -75,13 +81,23 @@ public final class OidcAccess {
         return new Decision(role, unmask, null);
     }
 
-    /** Whether the provider says it used more than a password: an {@code amr} or {@code acr} the settings accept. */
+    /**
+     * Whether the provider says it used more than one factor: {@code amr} holds {@code mfa}, or two
+     * different methods at least one of which is a second factor ({@code pwd} and {@code otp}, say);
+     * or the {@code acr} is one the settings accept. One method alone ({@code sms}, {@code otp},
+     * {@code face}) is one factor, however strong, so it is not enough.
+     */
     static boolean usedSecondFactor(KilnmarkConfig.Oidc config, Function<String, Object> claim) {
-        Set<String> accepted = lower(config.mfaMethods());
+        Set<String> factors = lower(config.mfaMethods());
+        Set<String> methods = new java.util.HashSet<>();
         for (String method : strings(claim.apply("amr"))) {
-            if (accepted.contains(method.toLowerCase(Locale.ROOT))) {
-                return true;
-            }
+            methods.add(method.strip().toLowerCase(Locale.ROOT));
+        }
+        if (methods.contains("mfa")) {
+            return true;
+        }
+        if (methods.size() >= 2 && methods.stream().anyMatch(factors::contains)) {
+            return true;
         }
         List<String> acr = strings(claim.apply("acr"));
         return !acr.isEmpty() && config.mfaAcr().map(a -> a.contains(acr.getFirst())).orElse(false);

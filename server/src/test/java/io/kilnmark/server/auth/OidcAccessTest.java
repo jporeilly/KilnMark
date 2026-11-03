@@ -83,29 +83,35 @@ class OidcAccessTest {
         assertEquals(OidcAccess.NO_MFA, decide(c, "amr", List.of("pwd"), "groups", List.of("km-admins")).refusal());
         assertEquals(OidcAccess.NO_MFA, decide(c, "amr", "pwd", "acr", "1", "groups", List.of("km-admins")).refusal());
         assertTrue(decide(c, "amr", List.of("pwd", "OTP"), "groups", List.of("km-admins")).allowed(), "case ignored");
+        assertTrue(decide(c, "amr", "mfa", "groups", List.of("km-admins")).allowed(), "the provider says mfa");
+        // One method alone is one factor, however strong: a passwordless SMS, code or face sign-in
+        for (String one : List.of("sms", "otp", "hwk")) {
+            assertEquals(OidcAccess.NO_MFA, decide(c, "amr", List.of(one), "groups", List.of("km-admins")).refusal(), one);
+        }
+        assertEquals(OidcAccess.NO_MFA, decide(c, "amr", List.of("pwd", "kba"), "groups", List.of("km-admins")).refusal(),
+            "two methods, neither a second factor");
         assertTrue(decide(c, "acr", "urn:example:mfa", "groups", List.of("km-admins")).allowed(), "an accepted acr");
         // Turned off, a password alone is enough
         assertTrue(decide(config(false, null), "amr", "pwd", "groups", List.of("km-admins")).allowed());
     }
 
-    /** Counted from the last sign-in at the provider (auth_time), or the token's issue time without one. */
+    /** Counted from the last sign-in at the provider (auth_time), which the token must carry. */
     @Test
     void aSessionLastsNoLongerThanTheLongestAllowed() {
         KilnmarkConfig.Oidc c = config(true, null);
         assertEquals(OidcAccess.TOO_OLD, decide(c, "amr", "mfa", "groups", List.of("km-admins"), "auth_time",
             NOW.minus(Duration.ofHours(9)).getEpochSecond()).refusal());
+        // Never the issue time instead: a re-issued token's is always new, and would restart the session for ever
         Map<String, Object> noAuthTime = new HashMap<>(Map.of("amr", "mfa", "groups", List.of("km-admins"),
-            "iat", NOW.minus(Duration.ofHours(9)).getEpochSecond()));
-        assertEquals(OidcAccess.TOO_OLD, OidcAccess.decide(c, noAuthTime::get, NOW).refusal());
-        Map<String, Object> neither = new HashMap<>(Map.of("amr", "mfa", "groups", List.of("km-admins")));
-        assertEquals(OidcAccess.TOO_OLD, OidcAccess.decide(c, neither::get, NOW).refusal(), "cannot tell: refused");
+            "iat", NOW.getEpochSecond()));
+        assertEquals(OidcAccess.NO_AUTH_TIME, OidcAccess.decide(c, noAuthTime::get, NOW).refusal());
     }
 
     @Test
     void jsonClaimsAreReadToo() {
         KilnmarkConfig.Oidc c = config(true, null);
         jakarta.json.JsonArray groups = jakarta.json.Json.createArrayBuilder().add("km-stewards").build();
-        jakarta.json.JsonArray amr = jakarta.json.Json.createArrayBuilder().add("hwk").build();
+        jakarta.json.JsonArray amr = jakarta.json.Json.createArrayBuilder().add("pwd").add("hwk").build();
         assertEquals(AccessRole.STEWARD, decide(c, "amr", amr, "groups", groups).role());
     }
 }

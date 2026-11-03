@@ -40,7 +40,7 @@ public class SignInEvents {
         } else {
             detail.put("reason", d.refusal());
         }
-        audit.record(new AuditLog.Actor(token.getName(), null), d.allowed() ? AuditLog.SIGN_IN
+        audit.record(new AuditLog.Actor(OidcIdentityAugmentor.actorName(token), null), d.allowed() ? AuditLog.SIGN_IN
             : AuditLog.SIGN_IN_REFUSED, "session", detail);
     }
 }

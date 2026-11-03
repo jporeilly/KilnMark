@@ -28,13 +28,17 @@ pasted into the sign-in page.
    role, as for tokens (ADR 0027). The identity is built afresh from those settings: the OIDC client
    maps a `groups` claim to roles by itself, and none of that survives, so a provider group called
    "admin" grants nothing unless a setting names it.
-3. **MFA required by default.** The ID token's `amr` must hold a second-factor method (RFC 8176:
-   `mfa`, `otp`, `hwk`, `swk`, `sms`, ...), or its `acr` one the administrator lists. Without it,
+3. **MFA required by default.** The ID token's `amr` must hold `mfa`, or two different methods at
+   least one of which is a second factor (RFC 8176: `otp`, `hwk`, `swk`, `sms`, ...), as `pwd` with
+   `otp`; or its `acr` must be one the administrator lists. One method alone (a passwordless SMS,
+   code or face sign-in) is one factor, however strong, and is refused. Without it,
    and without a group that has a role, the person is signed in with no role; the sign-in page says
    why, and the audit log records it. Kilnmark cannot make the provider ask for a second factor;
    the provider's own policy does, and this check refuses a sign-in that shows none.
 4. **Sessions end.** The longest session (`kilnmark.auth.oidc.max-session`, 8 hours) is counted
-   from the person's last sign-in at the provider (`auth_time`). Every redirect to the provider
+   from the person's last sign-in at the provider (`auth_time`), which the ID token must carry
+   (OpenID Connect requires it when `max_age` is sent): never the token's issue time instead, which
+   is new on every token the provider re-issues and would restart the session for ever. Every redirect to the provider
    carries `max_age`, so the provider asks them to sign in again after it; a provider that ignores
    it and answers with an older sign-in gets no session. The ID token's own expiry ends a session
    sooner, and a fresh one comes from the provider without a prompt while its session lasts.
@@ -43,7 +47,16 @@ pasted into the sign-in page.
    make a browser send the cookie but not that header. The same header makes the OIDC client answer
    499, not a redirect, when a page's session has ended.
 6. **Audit.** Each provider sign-in is an event (`auth.sign_in`, with its role and grant, or
-   `auth.sign_in_refused`, with the reason), and so is signing out (`auth.sign_out`) (ADR 0029).
+   `auth.sign_in_refused`, with the reason, too old included), and so is signing out
+   (`auth.sign_out`) (ADR 0029). A provider sign-in is named `sso:<name> (<sub>)` everywhere Kilnmark
+   names a caller (the audit log, usage, "created by"): the name is whatever the provider sends, which
+   some let people choose, so the prefix and the provider's fixed ID keep it from passing for an
+   anonymous caller, a token or the server. Its refused requests are counted apart from others'.
+7. **A sign-in given no role can be replaced**: **Sign in with** ends it and goes back to the
+   provider, rather than on with the same session.
+8. **HTTPS.** In production the session cookies are Secure, so a provider sign-in needs Kilnmark on
+   HTTPS; behind a proxy that ends TLS, `KILNMARK_OIDC_BEHIND_TLS_PROXY=true` makes the redirect URI
+   the provider sees `https://`.
 
 ## Consequences
 
@@ -56,4 +69,7 @@ pasted into the sign-in page.
 - Kilnmark checks what the provider says (`amr`, `acr`, `auth_time`); a provider that sends none
   of them cannot be used with MFA required, and its administrator either configures the claims or
   turns the requirement off.
+- An admin signed in with the provider can create API tokens, which need neither MFA nor a session
+  limit; the audit log shows who did (`sso:...`). Requiring an expiry for tokens is on the backlog
+  (token policy).
 - ADR 0014's Keycloak profile, for customers without a provider, is still to come.

@@ -142,13 +142,13 @@ class OidcSignInTest {
             .body("provider", equalTo(true)).body("providerName", equalTo("Example SSO"))
             .body("signedIn", equalTo(true)).body("refusal", nullValue());
         audit.awaitStored(5000);
-        assertTrue(audit.list(AuditLog.SIGN_IN, null, 50).stream().anyMatch(e -> "ada".equals(e.actor())),
-            "the sign-in is in the audit log");
+        assertTrue(audit.list(AuditLog.SIGN_IN, null, 50).stream().anyMatch(e -> "sso:ada".equals(e.actor())),
+            "the sign-in is in the audit log, under its sso: name");
     }
 
     @Test
     void aDesignerInTheUnmaskGroupSeesUnmaskedValues() {
-        Map<String, String> s = signIn(idToken("dee", List.of("km-designers", "km-unmask"), List.of("hwk"),
+        Map<String, String> s = signIn(idToken("dee", List.of("km-designers", "km-unmask"), List.of("pwd", "hwk"),
             Instant.now()));
         given().cookies(s).get("/api/v1/me").then().statusCode(200)
             .body("role", equalTo("designer")).body("unmask", equalTo(true));
@@ -166,7 +166,7 @@ class OidcSignInTest {
         given().cookies(admin).get("/api/v1/auth/status").then().body("refusal", equalTo(OidcAccess.NO_GROUP));
         audit.awaitStored(5000);
         assertTrue(audit.list(AuditLog.SIGN_IN_REFUSED, null, 50).stream()
-            .anyMatch(e -> "pat".equals(e.actor())), "the refused sign-in is in the audit log");
+            .anyMatch(e -> "sso:pat".equals(e.actor())), "the refused sign-in is in the audit log");
     }
 
     /**
@@ -179,6 +179,27 @@ class OidcSignInTest {
             Instant.now().minus(Duration.ofHours(9))));
         assertEquals(401, back.statusCode(), back.asString());
         assertTrue(sessionCookies(back).isEmpty(), "no session");
+        audit.awaitStored(5000);
+        assertTrue(audit.list(AuditLog.SIGN_IN_REFUSED, null, 50).stream().anyMatch(e -> "sso:oli".equals(e.actor())
+            && OidcAccess.TOO_OLD.equals(e.detail().get("reason"))), "the refusal is in the audit log");
+    }
+
+    /** A name the person may choose cannot pass for an anonymous caller, a token or the server. */
+    @Test
+    void aProviderSignInIsNamedSoNoOneElseCanBeMistakenForIt() {
+        Map<String, String> s = signIn(idToken("anonymous", List.of("km-admins"), List.of("mfa"), Instant.now()));
+        given().cookies(s).get("/api/v1/me").then().statusCode(200).body("name", equalTo("sso:anonymous"));
+    }
+
+    /** "Sign in with ..." after a sign-in given no role ends that session and goes back to the provider. */
+    @Test
+    void aSessionGivenNoRoleCanBeReplaced() {
+        Map<String, String> refused = signIn(idToken("pat", List.of("km-admins"), List.of("pwd"), Instant.now()));
+        Response again = given().redirects().follow(false).cookies(refused).get("/api/v1/auth/login");
+        assertEquals(303, again.statusCode(), again.asString());
+        assertEquals("/api/v1/auth/login", URI.create(again.header("Location")).getPath());
+        assertTrue(again.getDetailedCookies().asList().stream().anyMatch(c -> c.getName().startsWith("q_session")
+            && (c.getMaxAge() == 0 || c.getValue().isEmpty())), "the refused session is ended");
     }
 
     /** A change made with the session cookie must come from Kilnmark's pages; scripts and tokens are unaffected. */

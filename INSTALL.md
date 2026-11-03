@@ -124,11 +124,15 @@ scripts.
    none of them signs in with no role, and is told so.
 4. Restart: `podman compose up -d`. The sign-in page now shows **Sign in with** your provider.
 
-Kilnmark requires a second factor: the provider must say it used one, in the ID token's `amr`
-(`mfa`, `otp`, `hwk` and the like), or in its `acr` with the value you list in
-`KILNMARK_OIDC_MFA_ACR`. A sign-in that shows none gets no role. A sign-in lasts at most 8 hours
-from the person's last sign-in at the provider (`KILNMARK_OIDC_MAX_SESSION`). Every sign-in, and
-every one given no role, is in **Settings**, **Audit log**.
+Kilnmark requires a second factor: the provider must say so in the ID token's `amr` (`mfa`, or two
+methods such as `pwd` and `otp`; one method alone is not enough), or in its `acr` with a value you
+list in `KILNMARK_OIDC_MFA_ACR`. A sign-in that shows none gets no role. A sign-in lasts at most 8
+hours from the person's last sign-in at the provider (`KILNMARK_OIDC_MAX_SESSION`); the ID token
+must say when that was (`auth_time`), which every provider can send. Every sign-in, and every one
+given no role, is in **Settings**, **Audit log**, under `sso:` and the person's name.
+
+Kilnmark must be reached over HTTPS for this (see HTTPS above): its session cookies are sent over
+HTTPS only. Behind a proxy that ends TLS, also set `KILNMARK_OIDC_BEHIND_TLS_PROXY=true`.
 
 ## B. From source, with the reference lab and the samples
 
