@@ -159,6 +159,9 @@ public final class S3FileStore implements FileStore {
             AwsCredentialsProvider credentials, Duration callTimeout,
             software.amazon.awssdk.core.interceptor.ExecutionInterceptor interceptor) {
         var builder = S3Client.builder()
+            // Legacy (the SDK's own default), whatever AWS_DEFAULTS_MODE or a profile says: auto would
+            // ask the instance metadata service about its surroundings on every build (ADR 0035).
+            .defaultsMode(software.amazon.awssdk.awscore.defaultsmode.DefaultsMode.LEGACY)
             .region(Region.of(settings.region() == null ? DEFAULT_REGION : settings.region()))
             .credentialsProvider(credentials)
             .forcePathStyle(settings.pathStyle())

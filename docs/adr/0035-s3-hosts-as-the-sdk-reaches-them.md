@@ -35,9 +35,14 @@ The list checked one host while requests went to another.
 
 - An administrator's list must name the hosts requests really reach. A list that named exactly
   `storage.example.com` or `s3.eu-west-2.amazonaws.com` now refuses sources that reach
-  `mybucket.storage.example.com` or `mybucket.s3.eu-west-2.amazonaws.com`: add those hosts, a wildcard
-  such as `*.storage.example.com` or `*.amazonaws.com`, or turn `path_style` on for a store that
-  allows it. The refusal names the host to add.
+  `mybucket.storage.example.com` or `mybucket.s3.eu-west-2.amazonaws.com`: add those hosts, a narrow
+  wildcard such as `*.storage.example.com` or `*.s3.eu-west-2.amazonaws.com` (and
+  `*.s3-accesspoint.eu-west-2.amazonaws.com` for access points), or turn `path_style` on for a
+  store that allows it. The refusal names the host to add. **Never `*.amazonaws.com`**: it also
+  admits hosts anyone can set up on AWS (API Gateway, load balancers, EC2 public names), and a
+  source naming one as its endpoint would send its reads and writes there.
 - us-east-1 without an endpoint reaches AWS's global host, `mybucket.s3.amazonaws.com`.
 - Each check builds a client, which costs milliseconds; it happens only when an allow-list is set,
-  once per check, never per row.
+  once per check, never per row. Clients use the SDK's legacy defaults mode whatever the server's
+  environment says: `defaults_mode=auto` would make every client build ask the instance metadata
+  service about its surroundings, which can hold a check for seconds.
