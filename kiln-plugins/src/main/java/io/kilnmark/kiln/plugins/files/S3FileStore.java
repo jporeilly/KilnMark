@@ -57,6 +57,11 @@ public final class S3FileStore implements FileStore {
 
     static final String DEFAULT_REGION = "us-east-1";
 
+    /** AWS's own S3 host for a region, which a source without an endpoint reaches over HTTPS. */
+    static String awsHost(String region) {
+        return "s3." + region + ".amazonaws.com";
+    }
+
     private final Settings settings;
     private final S3Client s3;
     private final Set<ResponseInputStream<GetObjectResponse>> active = ConcurrentHashMap.newKeySet();
@@ -91,8 +96,9 @@ public final class S3FileStore implements FileStore {
         } else {
             throw new IOException(S3Connector.NO_DEFAULT_CREDENTIALS);
         }
+        String region = settings.region() == null ? DEFAULT_REGION : settings.region();
         var builder = S3Client.builder()
-            .region(Region.of(settings.region() == null ? DEFAULT_REGION : settings.region()))
+            .region(Region.of(region))
             .credentialsProvider(credentials)
             .forcePathStyle(settings.pathStyle())
             .httpClientBuilder(UrlConnectionHttpClient.builder()
@@ -101,13 +107,20 @@ public final class S3FileStore implements FileStore {
             // S3-compatible stores do not all support the newer default checksums
             .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
             .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED);
-        if (settings.endpoint() != null) {
-            builder.endpointOverride(URI.create(settings.endpoint()));
-        }
+        // Always an endpoint of the source's own: without one the SDK would take AWS_ENDPOINT_URL, the
+        // aws.endpointUrl property or a profile's endpoint_url from this server, which could be plain
+        // HTTP or another host than the allow-list was told (ADR 0034).
+        builder.endpointOverride(URI.create(settings.endpoint() != null ? settings.endpoint()
+            : "https://" + awsHost(region)));
         if (callTimeout != null) {
             builder.overrideConfiguration(o -> o.apiCallTimeout(callTimeout).apiCallAttemptTimeout(callTimeout));
         }
         this.s3 = builder.build();
+    }
+
+    /** The endpoint the client sends every request to, for tests. */
+    URI endpoint() {
+        return s3.serviceClientConfiguration().endpointOverride().orElse(null);
     }
 
     @Override

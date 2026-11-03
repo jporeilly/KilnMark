@@ -99,7 +99,12 @@ public final class FilesConnector extends FileSourceConnector {
         return "Files in a folder";
     }
 
-    /** Folders on this server's own disks: nothing crosses a network. */
+    /**
+     * Folders under the administrator's roots ({@code kilnmark.files.roots}): Kilnmark opens no
+     * network connection of its own. A root that is a mounted network share (NFS, SMB, a UNC path)
+     * crosses the network as the operating system mounted it, so its encryption is the
+     * administrator's to arrange (ADR 0034).
+     */
     @Override
     public String unencryptedReason(SourceConfig source) {
         return null;

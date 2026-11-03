@@ -576,12 +576,13 @@ forgery). To limit it:
   | SQL Server | no `encrypt` (the driver encrypts by default), `encrypt=true`, `mandatory` or `strict` | `encrypt=false` or `optional` |
   | MySQL, MariaDB | `tls_mode` `required`, `verify-ca` or `verify-full` | `preferred` (the default), `disabled` |
   | Oracle | `encryption` `tls` (TCPS) or `required` (Oracle's native encryption, insisted on) | `accepted` (the default) |
-  | S3 | AWS itself (no endpoint), or an `https://` endpoint | an `http://` endpoint |
-  | Files in a folder, sample data | always: they reach no network | |
+  | S3 | AWS itself (no endpoint: always AWS's own `https://` endpoint, never one from the server's environment), or an `https://` endpoint | an `http://` endpoint |
+  | Files in a folder, sample data | always: Kilnmark opens no connection (a root on a network share is encrypted, or not, as the administrator mounted it) | |
   | Generic JDBC | | always: Kilnmark cannot tell how an arbitrary driver encrypts |
 
-  `require` and `encrypt=true` with `trust_server_certificate` encrypt without checking the server's
-  certificate; `verify-full` (PostgreSQL, MySQL) and TCPS (Oracle) also check it.
+  `require`, `required`, Oracle's native encryption, and SQL Server with `trust_server_certificate`
+  (or `trustServerCertificate` in its URL) encrypt without checking the server's certificate;
+  `verify-full` (PostgreSQL, MySQL) and TCPS (Oracle) also check it.
 - **The server's own identity and files.** JDBC URL properties that make the driver act as the
   server or touch its files are refused when a source is checked or scanned, as the driver reads
   them (braces, quotes and percent-encoding do not hide them): SQL Server `integratedSecurity`,

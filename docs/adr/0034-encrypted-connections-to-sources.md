@@ -32,8 +32,14 @@ defaults fall back to plain text without a word: PostgreSQL's `sslmode=prefer`, 
      by `required`, counts: it encrypts every byte with AES, many banks run Oracle that way, and
      requiring TCPS alone would refuse them. The setting's name says TLS because that is what
      every other kind uses.
-   - **S3**: AWS itself (no endpoint, the SDK uses HTTPS) or an `https://` endpoint.
-   - **Files in a folder and the sample data** reach no network.
+   - **S3**: an `https://` endpoint, or none, which means AWS: the client is then always given
+     AWS's own `https://` endpoint for the region, so the SDK never takes one from this server's
+     environment (`AWS_ENDPOINT_URL`, `aws.endpointUrl`, a profile's `endpoint_url`), which could
+     be plain HTTP or a host the allowed-hosts list was not told of.
+   - **Files in a folder and the sample data**: Kilnmark opens no network connection of its own. A
+     root that is a mounted network share (NFS, SMB, a UNC path) crosses the network as the
+     operating system mounted it: its encryption is the administrator's, who sets the roots
+     (`kilnmark.files.roots`).
    - **Generic JDBC** is refused: Kilnmark cannot tell how an arbitrary driver encrypts, and an
      administrator's word for it would be a hole in a control meant to need no one's word.
 3. **Checked where hosts are checked.** The allowed-hosts policy (`HostPolicy`) already runs when a
@@ -46,9 +52,10 @@ defaults fall back to plain text without a word: PostgreSQL's `sslmode=prefer`, 
 
 - With the setting on, a customer can show that Kilnmark never moves their data or credentials
   over a plain-text connection, whoever adds the source.
-- `require` (PostgreSQL), `required` (MySQL) and `encrypt=true` with `trust_server_certificate`
-  (SQL Server) encrypt without checking the server's certificate, so an attacker on the path could
-  still stand in for the server. Checking certificates is the next step: `verify-full` and TCPS
+- `require` (PostgreSQL), `required` (MySQL), Oracle's native encryption, and SQL Server with
+  `trust_server_certificate` (or `trustServerCertificate` or `hostNameInCertificate` in its URL)
+  encrypt without checking the server's certificate, so an attacker on the path could still stand
+  in for the server. Checking certificates is the next step: `verify-full` and TCPS
   already do, and a later setting could require them.
 - Generic JDBC sources cannot be used while the setting is on. Databases that need one get a
   connector of their own (Snowflake, Vertica and Exasol are on the backlog).
