@@ -39,7 +39,7 @@ services:
       dockerfile: containers/server/Containerfile
     environment:
       KILNMARK_ROLES: api,scheduler,worker
-      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/kilnmark
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/kilnmark?sslmode=require
       QUARKUS_DATASOURCE_USERNAME: kilnmark
       QUARKUS_DATASOURCE_PASSWORD: ${KILNMARK_DB_PASSWORD:-kilnmark}
       # Optional admin API token (km_ + 43 or more base64url characters). Unset, the first start

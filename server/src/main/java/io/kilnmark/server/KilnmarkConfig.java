@@ -76,6 +76,18 @@ public interface KilnmarkConfig {
     /** Email notifications: retries, rate limit and log (docs/design/notifications.md). */
     Notifications notifications();
 
+    /** Kilnmark's own database (ADR 0032). */
+    Database database();
+
+    interface Database {
+        /**
+         * Stop the server at start unless its own database is reached over TLS: the connection must
+         * demand it (sslmode require, verify-ca or verify-full) and the session be encrypted.
+         */
+        @WithDefault("true")
+        boolean requireTls();
+    }
+
     /** Defaults for the mail settings; see {@link io.kilnmark.server.notify.MailSettings}. */
     interface Mail {
         /** The SMTP server, such as {@code smtp.example.com}. */

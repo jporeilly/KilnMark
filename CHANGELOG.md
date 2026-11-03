@@ -28,6 +28,13 @@ details.
 
 ### Details
 
+- **Kilnmark's own database over TLS only** (ADR 0032). The bundled PostgreSQL makes a certificate
+  on its first start (existing volumes too, with their data as it was) and speaks TLS 1.2 or later;
+  Kilnmark connects with `sslmode=require`. **The server no longer starts unless its database
+  connection demands TLS** (`sslmode` `require`, `verify-ca` or `verify-full`) **and the session is
+  encrypted**: an installation with its own PostgreSQL turns TLS on there and sets the sslmode
+  (`verify-full` with its CA is best); INSTALL.md, "Kilnmark's own database".
+  `kilnmark.database.require-tls=false` turns the check off, for a developer's own database.
 - **Relationships: confident joins accepted automatically, and Browse holds them** (ADR 0019,
   amended). Inferred joins found with 95% confidence or more are accepted without a person, shown
   as "Automatically, at 95% or more" with their confidence; a steward can still reject one, and a

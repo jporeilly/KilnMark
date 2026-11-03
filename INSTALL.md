@@ -41,6 +41,23 @@ On Windows and macOS, start the Podman machine once per boot: `podman machine st
    placeholders the samples use (`crm-db`, `shop-db`, `files`). See
    [samples/README.md](samples/README.md). The samples are also in the release's `samples` folder.
 
+### Kilnmark's own database
+
+Kilnmark reaches its database over TLS only, and does not start otherwise
+([ADR 0032](docs/adr/0032-tls-to-kilnmarks-own-database.md)).
+
+- **The bundled PostgreSQL** makes its own certificate on its first start and speaks TLS;
+  `compose.yaml` connects with `sslmode=require`. Nothing to do. To have the certificate verified,
+  put one from your authority as `server.crt` and `server.key` in `/var/lib/postgresql/tls` in its
+  volume, and use `verify-full` as below.
+- **Your own PostgreSQL** (a managed or shared server): turn TLS on in it, and set
+  `QUARKUS_DATASOURCE_JDBC_URL` to its address with `?sslmode=verify-full&sslrootcert=/path/to/ca.pem`
+  (mount the CA certificate into the container). `sslmode=require` also works, but encrypts without
+  checking who answers.
+
+If the server stops with "does not demand TLS" or "not encrypted", its log says which and what to
+change.
+
 ## B. From source, with the reference lab and the samples
 
 1. `git clone https://github.com/jporeilly/KilnMark.git` and `cd KilnMark`.

@@ -47,7 +47,7 @@ services:
         APP_DIR: server     # the built server in this folder
     environment:
       KILNMARK_ROLES: api,scheduler,worker
-      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/kilnmark
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/kilnmark?sslmode=require
       QUARKUS_DATASOURCE_USERNAME: kilnmark
       QUARKUS_DATASOURCE_PASSWORD: ${KILNMARK_DB_PASSWORD:?Set KILNMARK_DB_PASSWORD to a strong password before starting Kilnmark (see .env.example)}
       # The admin API token: km_ followed by 43 or more letters, digits, - or _ (see .env.example).
