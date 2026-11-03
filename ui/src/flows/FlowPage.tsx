@@ -1,0 +1,482 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  allows,
+  ApiError,
+  flowsApi,
+  formatTime,
+  pipelinesApi,
+  type AccessRole,
+  type FlowDetail,
+  type FlowProblem,
+  type FlowRun,
+  type FlowValidation,
+  type FlowVersion,
+  type FlowVersionSummary,
+} from "../api";
+import { go, href } from "../router";
+import { useTitle } from "../components/useTitle";
+import { docHref } from "../docs/links";
+import { YamlEditor, type YamlEditorHandle } from "../pipelines/YamlEditor";
+import { FlowRunStatus, RunFlowButton } from "./RunFlow";
+import { starterFlow } from "./template";
+import "../pipelines/pipelines.css";
+
+const CHECK_DELAY_MS = 600;
+
+/**
+ * One flow, written as YAML: checked a moment after each change, with the problems listed below
+ * (choosing one moves the caret to its line). Designers save it with a message; stewards run the
+ * saved version, with a dialog for its parameters. Its versions and runs below. With name null, a
+ * new flow from a starter; with a version, that saved version, read-only. The canvas comes later.
+ */
+export function FlowPage({ name, version, role }: { name: string | null; version: number | null; role: AccessRole }) {
+  const steward = allows(role, "steward");
+  const designer = allows(role, "designer");
+  const isNew = name == null;
+  const viewing = version != null;
+  const editable = designer && !viewing;
+  useTitle(isNew ? "New flow" : viewing ? `${name}, version ${version}` : (name ?? "Flow"));
+
+  const [detail, setDetail] = useState<FlowDetail | null>(null);
+  const [shown, setShown] = useState<FlowVersion | null>(null);
+  const [yaml, setYaml] = useState(isNew ? starterFlow() : "");
+  const [savedYaml, setSavedYaml] = useState<string | null>(null);
+  const [mine, setMine] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const [check, setCheck] = useState<FlowValidation | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
+  const [conflict, setConflict] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [versions, setVersions] = useState<FlowVersionSummary[] | null>(null);
+  const [runs, setRuns] = useState<FlowRun[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const editor = useRef<YamlEditorHandle>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const sequence = useRef(0);
+
+  useEffect(() => {
+    if (failures > 0) errorRef.current?.focus();
+  }, [failures]);
+
+  const load = useCallback(async () => {
+    if (isNew || name == null) return;
+    try {
+      const d = await flowsApi.get(name);
+      setDetail(d);
+      if (version != null) {
+        setShown(await flowsApi.version(name, version));
+      } else if (d.latest) {
+        setYaml(d.latest.yaml);
+        setSavedYaml(d.latest.yaml);
+      }
+      setLoadError(null);
+    } catch (e) {
+      setLoadError((e as Error).message);
+    }
+  }, [isNew, name, version]);
+
+  const loadLists = useCallback(() => {
+    if (isNew || name == null) return;
+    flowsApi.versions(name).then(setVersions).catch((e: Error) => setLoadError(e.message));
+    flowsApi.runs(name).then(setRuns).catch((e: Error) => setLoadError(e.message));
+  }, [isNew, name]);
+
+  useEffect(() => {
+    void load();
+    loadLists();
+  }, [load, loadLists]);
+
+  // A new flow's starter runs one of the person's pipelines once they are known, unless the YAML
+  // has been changed by then.
+  useEffect(() => {
+    if (!isNew) return;
+    let live = true;
+    pipelinesApi
+      .list()
+      .then((ps) => {
+        if (!live || ps.length === 0) return;
+        setYaml((y) => (y === starterFlow() ? starterFlow(ps[0].name) : y));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [isNew]);
+
+  // Keep the runs table current while a run is queued or running. Only the lists: reloading the
+  // flow would replace text being edited, and take in someone else's save without the conflict.
+  const active = runs?.some((r) => r.status === "queued" || r.status === "running");
+  useEffect(() => {
+    if (!active) return;
+    const t = window.setInterval(loadLists, 4000);
+    return () => window.clearInterval(t);
+  }, [active, loadLists]);
+
+  const text = viewing ? (shown?.yaml ?? "") : yaml;
+
+  // Check the YAML a moment after typing stops. Only the latest answer counts.
+  useEffect(() => {
+    if (!text.trim()) return;
+    const n = ++sequence.current;
+    setChecking(true);
+    const t = window.setTimeout(() => {
+      flowsApi
+        .validate(text, isNew ? undefined : (name ?? undefined))
+        .then((v) => {
+          if (sequence.current !== n) return;
+          setCheck(v);
+          setCheckError(null);
+        })
+        .catch((e: Error) => {
+          if (sequence.current === n) setCheckError(e.message);
+        })
+        .finally(() => {
+          if (sequence.current === n) setChecking(false);
+        });
+    }, CHECK_DELAY_MS);
+    return () => window.clearTimeout(t);
+  }, [text, isNew, name]);
+
+  const problems = useMemo(() => check?.problems ?? [], [check]);
+  const problemLines = useMemo(() => new Set(problems.filter((p) => p.line > 0).map((p) => p.line)), [problems]);
+  const dirty = !viewing && (isNew || (savedYaml != null && yaml !== savedYaml));
+
+  const fail = (e: unknown) => {
+    setError((e as Error).message);
+    setConflict(e instanceof ApiError && e.status === 409 && !isNew);
+    setFailures((n) => n + 1);
+  };
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    if (saving || (!dirty && !isNew)) return;
+    setError(null);
+    setConflict(false);
+    setNotice("");
+    if (!isNew && !message.trim()) {
+      fail(new Error("Say what you changed in the message, so the version list makes sense later."));
+      return;
+    }
+    setSaving(true);
+    try {
+      if (isNew) {
+        const d = await flowsApi.create({ yaml, message: message.trim() || undefined });
+        go(href.flow(d.name));
+        return;
+      }
+      const d = await flowsApi.save(name!, { yaml, message: message.trim() }, detail?.latestVersion);
+      setDetail(d);
+      setSavedYaml(yaml);
+      setMine(null);
+      setMessage("");
+      setNotice(
+        `Saved as version ${d.latestVersion}${d.latest && !d.latest.valid ? ", as a draft: fix its problems before running it" : ""}.`,
+      );
+      loadLists();
+    } catch (err) {
+      fail(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** Loads the latest saved version in place of the text here, keeping that text to put back. */
+  const reloadLatest = async () => {
+    if (!name) return;
+    try {
+      const d = await flowsApi.get(name);
+      setDetail(d);
+      if (d.latest) {
+        setMine(yaml);
+        setYaml(d.latest.yaml);
+        setSavedYaml(d.latest.yaml);
+      }
+      setConflict(false);
+      setError(null);
+      loadLists();
+      setNotice(`Loaded version ${d.latestVersion}. Your text is kept: choose Put my changes back to see it again.`);
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  const goTo = (p: FlowProblem) => {
+    if (p.line > 0) editor.current?.goToLine(p.line, p.column);
+  };
+
+  const queued = (run: FlowRun) => {
+    setError(null);
+    setNotice(`Run ${run.id} of version ${run.version} is queued.`);
+    loadLists();
+  };
+
+  const title = detail?.displayName ?? name ?? check?.name ?? "the new flow";
+  const summary = checkError
+    ? `Could not check the YAML: ${checkError}`
+    : !check
+      ? checking
+        ? "Checking…"
+        : ""
+      : problems.length === 0
+        ? "No problems found."
+        : `${problems.length} ${problems.length === 1 ? "problem" : "problems"} found.`;
+  const unsavedRun = dirty && !isNew;
+
+  if (loadError && !detail && !isNew) {
+    return (
+      <>
+        <h1 tabIndex={-1}>{name}</h1>
+        <p role="alert" className="error">
+          {loadError}
+        </p>
+        <p>
+          <a href={href.flows()}>Back to flows</a>
+        </p>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <p className="small">
+        <a href={href.flows()}>Flows</a>
+      </p>
+      <div className="pl-head">
+        <h1 tabIndex={-1}>{isNew ? "New flow" : viewing ? `${title}, version ${version}` : title}</h1>
+        {!isNew && !viewing && steward && name && (
+          <div className="pl-head-actions">
+            <RunFlowButton
+              name={name}
+              label={`Run ${title} now`}
+              parameters={detail?.latest?.parameters}
+              disabled={!detail?.latest?.valid}
+              title={detail?.latest?.valid ? undefined : "Fix its problems first"}
+              primary
+              onQueued={queued}
+              onError={(m) => fail(new Error(m))}
+            />
+          </div>
+        )}
+      </div>
+      {!isNew && !viewing && steward && (
+        <p id="fl-run-hint" className="small muted pl-run-hint">
+          {unsavedRun ? `Run now runs the saved version ${detail?.latestVersion}, not your unsaved changes.` : ""}
+        </p>
+      )}
+      {detail?.description && <p className="lead">{detail.description}</p>}
+      {isNew && (
+        <p className="lead">
+          Write the flow&apos;s YAML: its nodes, and the connections that say what runs after what. It is checked as you
+          type; the name on its <span className="mono">name:</span> line is fixed once saved.{" "}
+          <a href={docHref("flows")}>How flows are built</a>.
+        </p>
+      )}
+      {!isNew && !viewing && detail?.latest && (
+        <p className="small muted">
+          Version {detail.latestVersion}, saved {formatTime(detail.updatedAt)} by {detail.updatedBy}.
+          {!detail.latest.valid && " It has problems, so it cannot run."}
+          {detail.lastRun && (
+            <>
+              {" "}
+              Last run: <FlowRunStatus run={detail.lastRun} />{" "}
+              <a href={href.flowRun(detail.lastRun.id)}>run {detail.lastRun.id}</a>.
+            </>
+          )}
+        </p>
+      )}
+      {viewing && shown && (
+        <p className="small muted">
+          Saved {formatTime(shown.createdAt)} by {shown.author}
+          {shown.message && <>: “{shown.message}”</>}. Read-only.{" "}
+          {name && <a href={href.flow(name)}>Back to the latest version</a>}
+        </p>
+      )}
+      <p role="status" className="notice">
+        {notice}
+      </p>
+      {error && (
+        <p role="alert" className="error" tabIndex={-1} ref={errorRef}>
+          {error}
+        </p>
+      )}
+      {conflict && (
+        <div className="pl-conflict">
+          <p className="small">Your changes are still here, not saved.</p>
+          <div className="buttons">
+            <button type="button" onClick={reloadLatest}>
+              Load the latest version and keep my text
+            </button>
+          </div>
+        </div>
+      )}
+      {mine != null && editable && (
+        <div className="buttons">
+          <button
+            type="button"
+            onClick={() => {
+              setYaml(mine);
+              setMine(null);
+            }}
+          >
+            Put my changes back
+          </button>
+        </div>
+      )}
+
+      <section aria-labelledby="fl-yaml-h" className="panel">
+        <h2 id="fl-yaml-h">YAML</h2>
+        <p id="fl-yaml-hint" className="hint">
+          {editable
+            ? "Tab indents by two spaces; press Escape, then Tab, to move on. Problems are listed below with their lines."
+            : viewing
+              ? "A saved version, shown as it was saved."
+              : "Your role can read this flow. Designers change it."}
+        </p>
+        <YamlEditor
+          ref={editor}
+          id="fl-yaml"
+          label={`YAML of ${title}`}
+          value={text}
+          onChange={setYaml}
+          readOnly={!editable}
+          problemLines={problemLines}
+          describedBy="fl-yaml-hint fl-check-summary"
+        />
+        <div className="pl-problems">
+          <p id="fl-check-summary" className={problems.length > 0 ? "pl-summary pl-bad" : "pl-summary"} aria-live="polite">
+            {summary}
+          </p>
+          {problems.length > 0 && (
+            <ul className="pl-problem-list" aria-label="Problems">
+              {problems.map((p, i) => (
+                <li key={i}>
+                  {p.line > 0 ? (
+                    <button type="button" className="pl-problem" onClick={() => goTo(p)}>
+                      <span className="pl-problem-at">Line {p.line}</span>
+                      {p.node && <span className="mono"> ({p.node})</span>}: {p.message}
+                    </button>
+                  ) : (
+                    <span className="pl-problem">
+                      {p.node && <span className="mono">{p.node}: </span>}
+                      {p.message}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {check && check.parameters.length > 0 && (
+            <p className="small muted">
+              Parameters:{" "}
+              {check.parameters.map((p, i) => (
+                <span key={p.name}>
+                  {i > 0 && ", "}
+                  <span className="mono">{p.name}</span> ({p.type}
+                  {p.required ? ", needed when it runs" : ""})
+                </span>
+              ))}
+              .
+            </p>
+          )}
+        </div>
+        {editable && (
+          <form className="pl-save" onSubmit={save}>
+            <div className="field">
+              <label htmlFor="fl-message">{isNew ? "Message (optional)" : "What changed"}</label>
+              <input
+                id="fl-message"
+                value={message}
+                maxLength={500}
+                placeholder={isNew ? "First version" : "For example: stop when over 5% is set aside"}
+                onChange={(e) => setMessage(e.target.value)}
+              />
+            </div>
+            <div className="buttons">
+              <button type="submit" className="primary" aria-disabled={saving || (!dirty && !isNew)}>
+                {saving ? "Saving…" : isNew ? "Save flow" : "Save new version"}
+              </button>
+              {!isNew && dirty && savedYaml != null && (
+                <button type="button" onClick={() => setYaml(savedYaml)}>
+                  Undo my changes
+                </button>
+              )}
+            </div>
+            <p className="hint">
+              {problems.length > 0
+                ? "A flow with problems can be saved as a draft, but it cannot run until they are fixed."
+                : dirty
+                  ? "Unsaved changes."
+                  : "No unsaved changes."}
+            </p>
+          </form>
+        )}
+      </section>
+
+      {!isNew && (
+        <section aria-labelledby="fl-runs-h" className="panel">
+          <h2 id="fl-runs-h">Runs</h2>
+          {runs === null && <p role="status">Loading…</p>}
+          {runs?.length === 0 && <p>No runs yet.{steward ? " Run now runs the saved version." : ""}</p>}
+          {runs && runs.length > 0 && (
+            <div className="table-scroll" role="region" aria-label="Runs (scrolls sideways on small screens)" tabIndex={0}>
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Run</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Version</th>
+                    <th scope="col">Started by</th>
+                    <th scope="col">When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((r) => (
+                    <tr key={r.id}>
+                      <th scope="row">
+                        <a href={href.flowRun(r.id)}>Run {r.id}</a>
+                      </th>
+                      <td>
+                        <FlowRunStatus run={r} />
+                        {r.error && <div className="small muted">{r.error}</div>}
+                      </td>
+                      <td>{r.version}</td>
+                      <td>{r.requestedBy}</td>
+                      <td>{formatTime(r.finishedAt ?? r.startedAt ?? r.requestedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {!isNew && (
+        <section aria-labelledby="fl-versions-h" className="panel">
+          <h2 id="fl-versions-h">Versions</h2>
+          {versions === null && <p role="status">Loading…</p>}
+          {versions && versions.length > 0 && (
+            <ol className="pl-versions" reversed>
+              {versions.map((v) => (
+                <li key={v.n}>
+                  <a href={href.flow(name!, v.n)}>Version {v.n}</a>, {formatTime(v.createdAt)} by {v.author}
+                  {v.message && <>: “{v.message}”</>}
+                  {!v.valid && (
+                    <span className="small pl-bad">
+                      {" "}
+                      (draft, {v.problems} {v.problems === 1 ? "problem" : "problems"})
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
+    </>
+  );
+}

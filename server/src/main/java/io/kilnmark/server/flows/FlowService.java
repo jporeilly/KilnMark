@@ -295,6 +295,31 @@ public class FlowService {
      */
     public FlowStore.Flow save(String yaml, String message, String by, AccessRole role, boolean mayUnmask,
                                Integer expected) {
+        return save(yaml, message, by, role, mayUnmask, expected, null, false);
+    }
+
+    /** Saves a new flow as version 1; 409 when a flow with the YAML's name exists. */
+    public FlowStore.Flow create(String yaml, String message, String by, AccessRole role, boolean mayUnmask) {
+        return save(yaml, message, by, role, mayUnmask, null, null, true);
+    }
+
+    /**
+     * Saves the next version of the flow {@code name}: 404 when there is none, and the YAML must keep
+     * the flow's name.
+     */
+    public FlowStore.Flow update(String name, String yaml, String message, String by, AccessRole role,
+                                 boolean mayUnmask, Integer expected) {
+        if (!role.atLeast(AccessRole.DESIGNER)) {
+            throw fail(Response.Status.FORBIDDEN, "Saving a flow takes the designer role");
+        }
+        if (store.find(name).isEmpty()) {
+            throw fail(Response.Status.NOT_FOUND, "No flow called " + name);
+        }
+        return save(yaml, message, by, role, mayUnmask, expected, name, false);
+    }
+
+    private FlowStore.Flow save(String yaml, String message, String by, AccessRole role, boolean mayUnmask,
+                                Integer expected, String named, boolean create) {
         if (!role.atLeast(AccessRole.DESIGNER)) {
             throw fail(Response.Status.FORBIDDEN, "Saving a flow takes the designer role");
         }
@@ -306,6 +331,10 @@ public class FlowService {
         if (check.name() == null || !FlowDefinition.NAME.matcher(check.name()).matches()) {
             throw new IllegalArgumentException("yaml: the flow needs a name, such as name: nightly-customers");
         }
+        if (named != null && !named.equals(check.name())) {
+            throw new IllegalArgumentException("yaml: the name is " + check.name() + ", but this flow is " + named
+                + " and a flow's name cannot change");
+        }
         if (message != null && message.length() > MAX_MESSAGE) {
             throw new IllegalArgumentException("message: at most " + MAX_MESSAGE + " characters");
         }
@@ -315,7 +344,7 @@ public class FlowService {
             throw new IllegalArgumentException("description: at most 2000 characters");
         }
         String problems = problemsJson(check.problems());
-        boolean exists = store.find(check.name()).isPresent();
+        boolean exists = !create && store.find(check.name()).isPresent();
         try {
             return store.save(check.name(), expected, !exists, check.name(), description, yaml, message, by,
                 check.valid(), problems);
@@ -423,6 +452,177 @@ public class FlowService {
 
     public List<FlowStore.Run> runs(String flow, int limit) {
         return store.runs(flow, Math.max(1, Math.min(limit, 200)));
+    }
+
+    // ---- views, for the API ----
+
+    /**
+     * Every flow by name, with whether its latest version can run and its latest run. {@code values}:
+     * whether the caller may see the values runs started with (stewards and above, {@code Sights.data()}).
+     */
+    public List<FlowViews.FlowSummary> list(boolean values) {
+        return store.summaries().stream().map(s -> new FlowViews.FlowSummary(s.flow().name(), s.flow().displayName(),
+            s.flow().description(), s.flow().latestVersion(), s.valid(), s.flow().updatedBy(), s.flow().updatedAt(),
+            s.lastRun() == null ? null : view(s.lastRun(), values))).toList();
+    }
+
+    /** A flow with its latest version and latest run; 404 when there is none. {@code values} as for list. */
+    public FlowViews.FlowDetail detail(String name, boolean values) {
+        FlowStore.Flow f = flow(name);
+        List<FlowStore.Run> last = store.runs(name, 1);
+        return new FlowViews.FlowDetail(f.name(), f.displayName(), f.description(), f.latestVersion(), f.createdBy(),
+            f.createdAt(), f.updatedBy(), f.updatedAt(), versionDetail(name, f.latestVersion()),
+            last.isEmpty() ? null : view(last.get(0), values));
+    }
+
+    /** Every version of a flow, newest first; 404 when there is no such flow. */
+    public List<FlowViews.VersionSummary> versions(String name) {
+        flow(name);
+        return store.versions(name);
+    }
+
+    /** One saved version with its YAML, problems and parameters; 404 when there is none. */
+    public FlowViews.VersionDetail versionDetail(String name, int n) {
+        FlowStore.Version v = store.version(name, n).orElseThrow(() -> fail(Response.Status.NOT_FOUND,
+            store.find(name).isEmpty() ? "No flow called " + name : name + " has no version " + n));
+        return new FlowViews.VersionDetail(v.n(), v.yaml(), v.message(), v.author(), v.createdAt(), v.valid(),
+            savedProblems(v.problems()), parameters(FlowDefinition.parse(v.yaml()).definition()));
+    }
+
+    /**
+     * Checks YAML without saving it. With {@code name}, for a saved flow (404 when there is none), a
+     * YAML naming another flow is a problem: a flow's name cannot change.
+     */
+    public FlowViews.Validation check(String yaml, String name) {
+        if (name != null) {
+            flow(name);
+        }
+        Validation v = validate(yaml);
+        List<FlowViews.Problem> problems = new ArrayList<>();
+        if (name != null && v.name() != null && !name.equals(v.name())) {
+            problems.add(new FlowViews.Problem(1, 1, null, "The name is " + v.name() + ", but this flow is " + name
+                + " and a flow's name cannot change"));
+        }
+        v.problems().forEach(p -> problems.add(new FlowViews.Problem(p.line(), p.column(), p.nodeId(), p.message())));
+        return new FlowViews.Validation(v.valid() && problems.size() == v.problems().size(), v.name(), problems,
+            parameters(FlowDefinition.parse(yaml).definition()));
+    }
+
+    /** A flow's runs as the API shows them, newest first; 404 when there is no such flow. */
+    public List<FlowViews.RunSummary> runViews(String name, int limit, boolean values) {
+        flow(name);
+        return runs(name, limit).stream().map(r -> view(r, values)).toList();
+    }
+
+    /**
+     * A flow run with every node of its version: those that have not started yet are pending, each
+     * with the pipeline it runs and the pipeline run it started. Without {@code values} (viewers), the
+     * values the run started with, and messages that quote values (a notice's title, the values a
+     * pipeline refused), are withheld: they can hold server variables, which only stewards read.
+     */
+    public FlowViews.RunDetail runDetail(long id, boolean values) {
+        FlowStore.Run r = store.run(id).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow run " + id));
+        FlowDefinition def = store.version(r.flow(), r.version()).map(v -> FlowDefinition.parse(v.yaml()).definition())
+            .orElse(null);
+        Map<String, FlowDefinition.Node> declared = new LinkedHashMap<>();
+        if (def != null) {
+            def.nodes().forEach(n -> declared.put(n.id(), n));
+        }
+        Map<String, FlowStore.NodeRun> recorded = new LinkedHashMap<>();
+        store.nodeRuns(id).forEach(n -> recorded.put(n.nodeId(), n));
+        List<FlowViews.NodeRunView> nodes = new ArrayList<>();
+        int position = 0;
+        for (FlowDefinition.Node n : declared.values()) {
+            FlowStore.NodeRun s = recorded.remove(n.id());
+            nodes.add(s == null
+                ? new FlowViews.NodeRunView(n.id(), n.type(), position, "pending", null, null, null, n.pipeline(), null,
+                    null)
+                : nodeView(s, n.pipeline(), values));
+            position++;
+        }
+        recorded.values().forEach(s -> nodes.add(nodeView(s, null, values)));
+        return new FlowViews.RunDetail(view(r, values), nodes);
+    }
+
+    /** Asks a run to stop, as {@link #cancel(long, String, AccessRole)}, answering as the API shows runs. */
+    public FlowViews.RunSummary cancelView(long id, String by, AccessRole role) {
+        return view(cancel(id, by, role), true);
+    }
+
+    /** Queues a run, as {@link #queueRun}, answering as the API shows runs. */
+    public FlowViews.RunSummary queueRunView(String name, Integer version, Map<String, Object> parameters, String by,
+                                             AccessRole role) {
+        return view(queueRun(name, version, parameters, by, role), true);
+    }
+
+    private FlowStore.Flow flow(String name) {
+        return store.find(name).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow called " + name));
+    }
+
+    private FlowViews.NodeRunView nodeView(FlowStore.NodeRun s, String pipeline, boolean values) {
+        return new FlowViews.NodeRunView(s.nodeId(), s.type(), s.position(), s.status(), s.startedAt(), s.finishedAt(),
+            s.pipelineRunId(), pipeline, values ? s.message() : withoutValues(s), tree(s.reported()));
+    }
+
+    /** What a message from which values are left out says instead of them. */
+    static final String VALUES_WITHHELD = "the values are shown to stewards";
+
+    /**
+     * A node's message with the values it quotes left out: a notice's title, which has the run's
+     * values put in, and the values a pipeline refused or would not take. Other messages are in
+     * Kilnmark's words and quote none.
+     */
+    static String withoutValues(FlowStore.NodeRun s) {
+        String m = s.message();
+        if (m == null) {
+            return null;
+        }
+        if (FlowDefinition.NOTIFY.equals(s.type())) {
+            return m.startsWith("Sent: ") ? "Sent a notice (" + VALUES_WITHHELD + ")" : m;
+        }
+        int at = m.indexOf(" with these values");
+        return at < 0 ? m : m.substring(0, at) + " with the values this run gave it (" + VALUES_WITHHELD + ")";
+    }
+
+    private FlowViews.RunSummary view(FlowStore.Run r, boolean values) {
+        return new FlowViews.RunSummary(r.id(), r.flow(), r.version(), r.status(), r.requestedBy(), r.requestedRole(),
+            r.requestedAt(), r.startedAt(), r.finishedAt(), r.cancelRequested(), r.error(),
+            values ? tree(r.parameters()) : null);
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode tree(String text) {
+        if (text == null) {
+            return null;
+        }
+        try {
+            return json.readTree(text);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
+    }
+
+    private List<FlowViews.Problem> savedProblems(String text) {
+        if (text == null) {
+            return List.of();
+        }
+        try {
+            return json.readValue(text, new TypeReference<List<FlowViews.Problem>>() { });
+        } catch (JsonProcessingException e) {
+            return List.of();
+        }
+    }
+
+    /** The parameters a flow declares, as the API shows them; none when the YAML could not be read. */
+    static List<FlowViews.Parameter> parameters(FlowDefinition def) {
+        if (def == null) {
+            return List.of();
+        }
+        return def.parameters().stream().map(p -> {
+            String variable = p.defaultValue() instanceof Parameters.VarRef v ? v.variable() : null;
+            Object value = variable == null ? p.defaultValue() : null;
+            return new FlowViews.Parameter(p.name(), p.kind(), value, variable, value == null && variable == null,
+                p.description());
+        }).toList();
     }
 
     /** Asks a run to stop: a queued run is cancelled at once, a running one within a moment. */
