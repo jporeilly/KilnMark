@@ -47,7 +47,7 @@ export function DiagramSection({ scope, title }: { scope: DiagramScope; title: s
   const centre = scope.kind === "asset" ? scope.urn : undefined;
 
   return (
-    <section aria-labelledby="diagram-h" className="panel">
+    <section aria-labelledby="diagram-h" className="panel browse-wide">
       <h2 id="diagram-h">{title}</h2>
       <div className="dg-controls">
         {scope.kind === "container" && (

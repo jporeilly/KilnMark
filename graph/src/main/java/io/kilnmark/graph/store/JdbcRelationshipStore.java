@@ -199,23 +199,45 @@ public final class JdbcRelationshipStore implements RelationshipStore {
             List<Long> kept = new ArrayList<>();
             try (PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO kilnmark.relationship AS r (from_urn, from_fields, to_urn, to_fields, kind, status,
-                                                        confidence, evidence)
-                SELECT ?, ARRAY[?], ?, ARRAY[?], 'inferred', 'proposed', ?, ?::jsonb
+                                                        confidence, evidence, decided_by, decided_at)
+                SELECT ?, ARRAY[?], ?, ARRAY[?], 'inferred',
+                       CASE WHEN ? >= ? THEN 'accepted' ELSE 'proposed' END, ?, ?::jsonb,
+                       CASE WHEN ? >= ? THEN ? END, CASE WHEN ? >= ? THEN now() END
                 WHERE EXISTS (SELECT 1 FROM kilnmark.asset WHERE urn = ?)
                   AND EXISTS (SELECT 1 FROM kilnmark.asset WHERE urn = ?)
                 ON CONFLICT (from_urn, from_fields, to_urn, to_fields) DO UPDATE
-                SET confidence = EXCLUDED.confidence, evidence = EXCLUDED.evidence, refreshed_at = now()
+                SET confidence = EXCLUDED.confidence, evidence = EXCLUDED.evidence, refreshed_at = now(),
+                    -- A person's decision stays; one made for the confidence follows it.
+                    status = CASE WHEN r.status = 'proposed' OR r.decided_by IS NOT DISTINCT FROM ?
+                                  THEN EXCLUDED.status ELSE r.status END,
+                    decided_by = CASE WHEN r.status = 'proposed' OR r.decided_by IS NOT DISTINCT FROM ?
+                                      THEN EXCLUDED.decided_by ELSE r.decided_by END,
+                    decided_at = CASE WHEN r.status = 'proposed' OR r.decided_by IS NOT DISTINCT FROM ?
+                                      THEN CASE WHEN EXCLUDED.status = r.status AND r.decided_at IS NOT NULL
+                                                THEN r.decided_at ELSE EXCLUDED.decided_at END
+                                      ELSE r.decided_at END
                 WHERE r.kind = 'inferred'
                 RETURNING r.id, (xmax = 0)""")) {
                 for (Inferred f : found) {
-                    ps.setString(1, f.fromUrn());
-                    ps.setString(2, f.fromField());
-                    ps.setString(3, f.toUrn());
-                    ps.setString(4, f.toField());
-                    ps.setDouble(5, f.confidence());
-                    ps.setString(6, f.evidenceJson());
-                    ps.setString(7, f.fromUrn());
-                    ps.setString(8, f.toUrn());
+                    int i = 1;
+                    ps.setString(i++, f.fromUrn());
+                    ps.setString(i++, f.fromField());
+                    ps.setString(i++, f.toUrn());
+                    ps.setString(i++, f.toField());
+                    ps.setDouble(i++, f.confidence());
+                    ps.setDouble(i++, AUTO_ACCEPT);
+                    ps.setDouble(i++, f.confidence());
+                    ps.setString(i++, f.evidenceJson());
+                    ps.setDouble(i++, f.confidence());
+                    ps.setDouble(i++, AUTO_ACCEPT);
+                    ps.setString(i++, AUTO_ACCEPTED_BY);
+                    ps.setDouble(i++, f.confidence());
+                    ps.setDouble(i++, AUTO_ACCEPT);
+                    ps.setString(i++, f.fromUrn());
+                    ps.setString(i++, f.toUrn());
+                    ps.setString(i++, AUTO_ACCEPTED_BY);
+                    ps.setString(i++, AUTO_ACCEPTED_BY);
+                    ps.setString(i++, AUTO_ACCEPTED_BY);
                     try (ResultSet rs = ps.executeQuery()) {
                         if (rs.next()) {
                             kept.add(rs.getLong(1));
@@ -232,14 +254,15 @@ public final class JdbcRelationshipStore implements RelationshipStore {
                 WHERE r.kind = 'inferred'
                   AND (EXISTS (SELECT 1 FROM kilnmark.asset a WHERE a.urn = r.from_urn AND a.source_id = ?)
                        OR EXISTS (SELECT 1 FROM kilnmark.asset a WHERE a.urn = r.to_urn AND a.source_id = ?))
-                  AND ((r.status = 'proposed' AND NOT (r.id = ANY (?)))
+                  AND (((r.status = 'proposed' OR r.decided_by IS NOT DISTINCT FROM ?) AND NOT (r.id = ANY (?)))
                        OR NOT r.from_fields <@ (SELECT coalesce(array_agg(name), '{}') FROM kilnmark.field
                                                 WHERE asset_urn = r.from_urn)
                        OR NOT r.to_fields <@ (SELECT coalesce(array_agg(name), '{}') FROM kilnmark.field
                                               WHERE asset_urn = r.to_urn))""")) {
                 ps.setLong(1, sourceId);
                 ps.setLong(2, sourceId);
-                ps.setArray(3, c.createArrayOf("bigint", kept.toArray()));
+                ps.setString(3, AUTO_ACCEPTED_BY);
+                ps.setArray(4, c.createArrayOf("bigint", kept.toArray()));
                 removed = ps.executeUpdate();
             }
             return new Refresh(kept.size(), added, removed);

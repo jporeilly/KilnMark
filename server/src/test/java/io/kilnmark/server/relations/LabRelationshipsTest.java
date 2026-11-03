@@ -76,8 +76,11 @@ class LabRelationshipsTest {
         Map<String, Object> txn = one(rels, "urn:kilnmark:rel-lab:billing.transactions", "customer_id");
         assertNotNull(txn, rels.toString());
         assertEquals("inferred", txn.get("kind"));
-        assertEquals("proposed", txn.get("status"));
-        assertTrue(((Number) txn.get("confidence")).doubleValue() >= 0.9, txn.toString());
+        double confidence = ((Number) txn.get("confidence")).doubleValue();
+        assertTrue(confidence >= 0.9, txn.toString());
+        // Accepted without a person at 95% or more, proposed below.
+        assertEquals(confidence >= io.kilnmark.graph.store.RelationshipStore.AUTO_ACCEPT ? "accepted" : "proposed",
+            txn.get("status"));
         assertEquals(List.of("customer_id"), ((Map<String, Object>) txn.get("to")).get("fields"));
 
         Map<String, Object> accounts = one(rels, "urn:kilnmark:rel-lab:crm.accounts", "customer_id");

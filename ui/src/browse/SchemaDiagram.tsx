@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Background,
   Controls,
@@ -10,8 +10,8 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import { Graph, layout } from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
+import { layoutBoxes } from "./diagramLayout";
 import { formatNumber } from "../api";
 import { go, href } from "../router";
 import type { DiagramTable, Relationship } from "./browseApi";
@@ -80,7 +80,7 @@ const nodeTypes = { table: TableBox };
  * A schema diagram: tables as boxes with their columns (keys marked PK and FK), relationships as
  * lines from the referring column to the referred one. Declared keys are solid, proposed ones
  * dashed with their confidence, accepted ones solid and labelled; rejected ones are not drawn.
- * Laid out left to right with dagre; pan, zoom and fit with the controls.
+ * Laid out to fill the frame (diagramLayout.ts); pan, zoom and fit with the controls.
  */
 export default function SchemaDiagram({
   tables,
@@ -94,27 +94,28 @@ export default function SchemaDiagram({
   label: string;
 }) {
   const scheme = useColourScheme();
+  // The table pointed at, or pinned with a click: its relationships stand out and the rest fade.
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [pinned, setPinned] = useState<string | null>(null);
+  const focus = pinned ?? hovered;
   const { nodes, edges } = useMemo(() => {
     const boxes = new Map(tables.map((t) => [t.urn, { table: t, ...visibleColumns(t) }]));
     const drawn = relationships.filter((r) => r.status !== "rejected" && boxes.has(r.from.urn) && boxes.has(r.to.urn));
 
-    const g = new Graph();
-    g.setGraph({ rankdir: "LR", nodesep: 28, ranksep: 90, marginx: 16, marginy: 16 });
-    g.setDefaultEdgeLabel(() => ({}));
-    for (const [urn, b] of boxes) {
-      g.setNode(urn, { width: WIDTH, height: HEADER + ROW * (b.columns.length + (b.hidden > 0 ? 1 : 0)) + 8 });
-    }
-    for (const r of drawn) {
-      if (r.from.urn !== r.to.urn) g.setEdge(r.from.urn, r.to.urn);
-    }
-    layout(g);
+    const at = layoutBoxes(
+      [...boxes.entries()].map(([urn, b]) => ({
+        id: urn,
+        width: WIDTH,
+        height: HEADER + ROW * (b.columns.length + (b.hidden > 0 ? 1 : 0)) + 8,
+      })),
+      drawn.map((r): [string, string] => [r.from.urn, r.to.urn]),
+    );
 
     const nodes: TableNode[] = [...boxes.entries()].map(([urn, b]) => {
-      const n = g.node(urn);
       return {
         id: urn,
         type: "table",
-        position: { x: n.x - n.width / 2, y: n.y - n.height / 2 },
+        position: at.get(urn) ?? { x: 0, y: 0 },
         data: { table: b.table, columns: b.columns, hidden: b.hidden, centre: urn === centre },
         draggable: true,
         ariaLabel: `${b.table.name}, ${formatLabel(b.table.format)}, ${b.table.columns.length} columns`,
@@ -126,20 +127,29 @@ export default function SchemaDiagram({
     };
     const edges: Edge[] = drawn.map((r) => {
       const proposed = r.status === "proposed";
+      // The confidence as a pill in the line's colour: a tick for accepted, a question mark for proposed.
       const text =
-        r.kind === "declared"
-          ? undefined
-          : proposed
-            ? `proposed ${r.confidence != null ? percent.format(r.confidence) : ""}`.trim()
-            : "accepted";
+        r.kind === "declared" ? undefined : `${proposed ? "?" : "✓"} ${r.confidence != null ? percent.format(r.confidence) : ""}`.trim();
+      // The badges' tints, whose contrast the theme check covers, edged in the line's colour.
+      const tint = proposed ? "amber" : "green";
       return {
         id: `r${r.id}`,
         source: r.from.urn,
         target: r.to.urn,
         sourceHandle: handle(r.from.urn, r.from.fields[0], "out"),
         targetHandle: handle(r.to.urn, r.to.fields[0], "in"),
-        type: "smoothstep",
+        // Curves rather than steps: steps share the same lanes and lie on top of each other.
+        type: "default",
         label: text,
+        labelStyle: { fill: `var(--km-tint-${tint}-fg)`, fontWeight: 700, fontSize: 12 },
+        labelBgStyle: {
+          fill: `var(--km-tint-${tint}-bg)`,
+          fillOpacity: 1,
+          stroke: proposed ? "var(--km-warn)" : "var(--km-good)",
+          strokeWidth: 1,
+        },
+        labelBgPadding: [6, 3] as [number, number],
+        labelBgBorderRadius: 10,
         className: `dg-edge dg-edge-${r.kind} dg-edge-${r.status}`,
         style: proposed ? { strokeDasharray: "6 4" } : undefined,
         // Arrowheads take the edge's colour from the tokens (xyflow's default grey is too faint).
@@ -161,11 +171,22 @@ export default function SchemaDiagram({
     return { nodes, edges };
   }, [tables, relationships, centre]);
 
+  const shownEdges = useMemo(
+    () =>
+      focus == null
+        ? edges
+        : edges.map((e) => {
+            const near = e.source === focus || e.target === focus;
+            return { ...e, className: `${e.className}${near ? " is-near" : " is-faded"}`, zIndex: near ? 10 : 0 };
+          }),
+    [edges, focus],
+  );
+
   return (
     <div className="dg-frame" role="group" aria-label={label}>
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={shownEdges}
         nodeTypes={nodeTypes}
         fitView
         minZoom={0.1}
@@ -175,6 +196,10 @@ export default function SchemaDiagram({
         edgesFocusable={false}
         elementsSelectable={false}
         onNodeDoubleClick={(_, n) => go(href.asset(n.id))}
+        onNodeMouseEnter={(_, n) => setHovered(n.id)}
+        onNodeMouseLeave={() => setHovered(null)}
+        onNodeClick={(_, n) => setPinned((p) => (p === n.id ? null : n.id))}
+        onPaneClick={() => setPinned(null)}
         proOptions={{ hideAttribution: false }}
         ariaLabelConfig={{
           "node.a11yDescription.default":

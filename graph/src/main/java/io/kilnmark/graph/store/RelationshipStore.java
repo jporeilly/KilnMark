@@ -24,6 +24,12 @@ public interface RelationshipStore {
         }
     }
 
+    /** Inferred relationships at least this confident are accepted without a person (owner, 2 November 2026). */
+    double AUTO_ACCEPT = 0.95;
+
+    /** Who accepted a relationship that was accepted for its confidence: never a person's name. */
+    String AUTO_ACCEPTED_BY = "Kilnmark (95% or more confident)";
+
     /** An inferred single-column relationship, with its confidence and evidence (a JSON object). */
     record Inferred(String fromUrn, String fromField, String toUrn, String toField, double confidence,
                     String evidenceJson) {
@@ -105,9 +111,11 @@ public interface RelationshipStore {
 
     /**
      * Refreshes the inferred relationships touching {@code sourceId} (either end in it) with what
-     * inference found now: found ones are added or updated (confidence, evidence) keeping their
-     * status; proposals not found again are removed; accepted and rejected ones stay unless a
-     * field they name no longer exists. Pairs that are declared stay declared.
+     * inference found now: found ones are added or updated (confidence, evidence). One at least
+     * {@link #AUTO_ACCEPT} confident is accepted by {@link #AUTO_ACCEPTED_BY}, one below it proposed,
+     * unless a person has accepted or rejected it, which is kept. Proposals and those accepted for
+     * their confidence that are not found again are removed; a person's decisions stay unless a field
+     * they name no longer exists. Pairs that are declared stay declared.
      */
     Refresh refreshInferred(long sourceId, List<Inferred> found);
 

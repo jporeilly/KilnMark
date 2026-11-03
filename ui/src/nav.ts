@@ -40,16 +40,16 @@ export const NAV: NavItem[] = [
     tint: "sky",
     current: (r) => (r.page === "sources" ? "page" : r.page === "source" ? "true" : undefined),
   },
-  // In the order the work goes: find the data, see how it joins, set what good looks like, then
-  // build the pipeline; issues last.
-  { id: "browse", label: "Browse", href: href.browse(), icon: "browse", tint: "violet", current: on("browse") },
+  // In the order the work goes: find the data and how it joins (Browse holds the catalogue and the
+  // relationships between its tables, as two views), set what good looks like, then build the
+  // pipeline; issues last.
   {
-    id: "relationships",
-    label: "Relationships",
-    href: href.relationships(),
-    icon: "relationships",
-    tint: "pink",
-    current: on("relationships"),
+    id: "browse",
+    label: "Browse",
+    href: href.browse(),
+    icon: "browse",
+    tint: "violet",
+    current: (r) => (r.page === "browse" ? "page" : r.page === "relationships" ? "true" : undefined),
   },
   { id: "rules", label: "Quality rules", href: href.rules(), icon: "rules", tint: "green", current: on("rules") },
   {

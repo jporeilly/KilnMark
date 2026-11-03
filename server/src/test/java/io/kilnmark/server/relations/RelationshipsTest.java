@@ -187,8 +187,15 @@ class RelationshipsTest {
         Map<String, Object> inferred = find(txn, TRANSACTIONS, "customer_id", CUSTOMERS);
         assertNotNull(inferred, txn.toString());
         assertEquals("inferred", inferred.get("kind"));
-        assertEquals("proposed", inferred.get("status"));
-        assertTrue(((Number) inferred.get("confidence")).doubleValue() >= 0.9, inferred.toString());
+        double confidence = ((Number) inferred.get("confidence")).doubleValue();
+        assertTrue(confidence >= 0.9, inferred.toString());
+        // At 95% or more an inferred join is accepted without a person, and says so; below, it is proposed.
+        if (confidence >= io.kilnmark.graph.store.RelationshipStore.AUTO_ACCEPT) {
+            assertEquals("accepted", inferred.get("status"));
+            assertEquals(io.kilnmark.graph.store.RelationshipStore.AUTO_ACCEPTED_BY, inferred.get("decidedBy"));
+        } else {
+            assertEquals("proposed", inferred.get("status"));
+        }
         @SuppressWarnings("unchecked")
         Map<String, Object> evidence = (Map<String, Object>) inferred.get("evidence");
         assertTrue(((Number) evidence.get("containment")).doubleValue() > 0.97, evidence.toString());
@@ -304,7 +311,8 @@ class RelationshipsTest {
         Map<String, Object> declared = find(relationshipsOf(TRANSACTIONS), TRANSACTIONS, "account_id", ACCOUNTS);
         long declaredId = ((Number) declared.get("id")).longValue();
 
-        Tokens.as(viewer).get("/api/v1/relationships/" + id).then().statusCode(200).body("status", equalTo("proposed"));
+        Tokens.as(viewer).get("/api/v1/relationships/" + id).then().statusCode(200)
+            .body("status", org.hamcrest.Matchers.oneOf("proposed", "accepted"));
         Tokens.as(viewer).post("/api/v1/relationships/" + id + "/accept").then().statusCode(403);
         Tokens.as(steward).post("/api/v1/relationships/" + id + "/accept").then().statusCode(200)
             .body("status", equalTo("accepted")).body("decidedBy", equalTo("rel-steward"))
@@ -356,6 +364,35 @@ class RelationshipsTest {
         assertFalse(around.getList("tables.name").contains("transactions"));
         assertEquals(1, count("SELECT count(*) FROM kilnmark.profile WHERE asset_urn = '" + TRANSACTIONS
             + "' AND field_name = 'customer_id' AND hll IS NOT NULL"), "only the latest profile keeps its sketch");
+    }
+
+    /**
+     * A join across two sources is not proposed when it is already there within one: the same table
+     * read through two sources, or a target the first source holds too.
+     */
+    @Test
+    void joinsAcrossSourcesThatRepeatOneWithinASourceAreNotProposed() {
+        java.util.function.BiFunction<String, String, io.kilnmark.kiln.plugins.relate.KeyInference.Column> col =
+            (urn, field) -> new io.kilnmark.kiln.plugins.relate.KeyInference.Column(urn,
+                urn.split(":")[2], urn.substring(urn.lastIndexOf('.') + 1), field, "int64", false, true, 10, 0, 10);
+        java.util.function.BiFunction<String, String, io.kilnmark.kiln.plugins.relate.KeyInference.Proposal> join =
+            (from, to) -> new io.kilnmark.kiln.plugins.relate.KeyInference.Proposal(col.apply(from, "account_id"),
+                col.apply(to, "account_id"), 0.99, null);
+        List<io.kilnmark.graph.store.RelationshipStore.KeyColumn> columns = List.of(
+            new io.kilnmark.graph.store.RelationshipStore.KeyColumn("urn:kilnmark:a:crm.accounts", "a", "accounts",
+                "account_id", "int64", true, true, 10, 0, 10));
+        // The same table through two sources
+        assertTrue(RelationshipService.acrossSourcesForNothing(
+            join.apply("urn:kilnmark:a:crm.accounts", "urn:kilnmark:b:crm.accounts"), columns));
+        // Source a holds crm.accounts itself: its join from billing.transactions is within a
+        assertTrue(RelationshipService.acrossSourcesForNothing(
+            join.apply("urn:kilnmark:a:billing.transactions", "urn:kilnmark:b:crm.accounts"), columns));
+        // A target only the other source holds is a real join across sources
+        assertFalse(RelationshipService.acrossSourcesForNothing(
+            join.apply("urn:kilnmark:a:billing.transactions", "urn:kilnmark:b:crm.branches"), columns));
+        // Within one source nothing is dropped
+        assertFalse(RelationshipService.acrossSourcesForNothing(
+            join.apply("urn:kilnmark:a:billing.transactions", "urn:kilnmark:a:crm.accounts"), columns));
     }
 
     @Inject
