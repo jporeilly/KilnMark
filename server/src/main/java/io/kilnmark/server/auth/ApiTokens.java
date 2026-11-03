@@ -73,7 +73,8 @@ public class ApiTokens {
 
     /** A stored token, without its hash. {@code unmask}: it holds {@link AccessRole#UNMASK_GRANT}. */
     public record Token(long id, String name, AccessRole role, boolean unmask, String createdBy, Instant createdAt,
-                        Instant expiresAt, Instant lastUsedAt, Instant revokedAt, String revokedReason) {
+                        Instant expiresAt, Instant lastUsedAt, Instant revokedAt, String revokedReason,
+                        String unmaskRequestedBy) {
 
         /**
          * {@code active}, {@code expired}, {@code set-aside} (an environment token replaced by a new
@@ -200,20 +201,24 @@ public class ApiTokens {
                 + days(max.get()) + " (kilnmark.auth.token-max-lifetime); choose an expiry no later than that");
         }
         String secret = newSecret();
-        Token t = limited(db.tx(c -> insert(c, clean, role, grant, hash(secret), createdBy, expiresAt)));
+        // With approval required, the grant waits for a second admin: made without it, and asked for
+        boolean waits = grant && unmaskApproval();
+        Token t = limited(db.tx(c -> insert(c, clean, role, grant && !waits, hash(secret), createdBy, expiresAt,
+            waits ? createdBy : null)));
         LOG.infof("API token %d (%s, %s%s) created by %s", t.id(), loggable(t.name()), t.role().id(),
             t.unmask() ? ", sees unmasked values" : "", loggable(createdBy));
         return new Issued(t, secret);
     }
 
     private static final String COLUMNS =
-        "id, name, role, created_by, created_at, expires_at, last_used_at, revoked_at, revoked_reason, unmask";
+        "id, name, role, created_by, created_at, expires_at, last_used_at, revoked_at, revoked_reason, unmask, "
+            + "unmask_requested_by";
 
     /** A token as stored. */
     private static Token row(ResultSet rs) throws SQLException {
         return new Token(rs.getLong(1), rs.getString(2), AccessRole.parse(rs.getString(3)), rs.getBoolean(10),
             rs.getString(4), Db.instant(rs.getTimestamp(5)), Db.instant(rs.getTimestamp(6)),
-            Db.instant(rs.getTimestamp(7)), Db.instant(rs.getTimestamp(8)), rs.getString(9));
+            Db.instant(rs.getTimestamp(7)), Db.instant(rs.getTimestamp(8)), rs.getString(9), rs.getString(11));
     }
 
     /** A token as it works now: its expiry no later than the longest lifetime allows (ADR 0037). */
@@ -225,7 +230,7 @@ public class ApiTokens {
     private Token limited(Token t) {
         Instant limited = expiry(t.createdBy(), t.createdAt(), t.expiresAt());
         return limited == t.expiresAt() ? t : new Token(t.id(), t.name(), t.role(), t.unmask(), t.createdBy(),
-            t.createdAt(), limited, t.lastUsedAt(), t.revokedAt(), t.revokedReason());
+            t.createdAt(), limited, t.lastUsedAt(), t.revokedAt(), t.revokedReason(), t.unmaskRequestedBy());
     }
 
     /** The shortest and longest lifetime the setting may give: under a day no token could be made, and very long would overflow. */
@@ -283,14 +288,22 @@ public class ApiTokens {
 
     private static Token insert(Connection c, String name, AccessRole role, boolean unmask, byte[] hash,
                                 String createdBy, Instant expiresAt) throws SQLException {
+        return insert(c, name, role, unmask, hash, createdBy, expiresAt, null);
+    }
+
+    private static Token insert(Connection c, String name, AccessRole role, boolean unmask, byte[] hash,
+                                String createdBy, Instant expiresAt, String unmaskRequestedBy) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.api_token "
-            + "(name, role, unmask, hash, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING " + COLUMNS)) {
+            + "(name, role, unmask, hash, created_by, expires_at, unmask_requested_by, unmask_requested_at) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL THEN NULL ELSE now() END) RETURNING " + COLUMNS)) {
             ps.setString(1, name);
             ps.setString(2, role.id());
             ps.setBoolean(3, unmask);
             ps.setBytes(4, hash);
             ps.setString(5, createdBy);
             ps.setTimestamp(6, Db.timestamp(expiresAt));
+            ps.setString(7, unmaskRequestedBy);
+            ps.setString(8, unmaskRequestedBy);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();
                 return row(rs); // as stored; create shows it limited()
@@ -320,6 +333,73 @@ public class ApiTokens {
                 ps.setLong(1, id);
                 try (ResultSet rs = ps.executeQuery()) {
                     return rs.next() ? Optional.of(token(rs)) : Optional.empty();
+                }
+            }
+        });
+    }
+
+    /** Whether a second admin must approve the unmask grant (ADR 0038). */
+    public boolean unmaskApproval() {
+        return config != null && config.auth().unmaskApproval();
+    }
+
+    /** Why an approval or refusal of a token's unmask grant was not made. */
+    public enum GrantProblem {
+        /** No such token. */
+        NOT_FOUND,
+        /** The token asks for no grant (approved, refused, revoked, or never asked). */
+        NOTHING_ASKED,
+        /** The admin who asked for it may not approve it: a second person must. */
+        SAME_PERSON
+    }
+
+    /** The outcome of approving or refusing a grant: the token as it now is, or why not. */
+    public record GrantDecision(Token token, GrantProblem problem) {
+    }
+
+    /**
+     * Gives the token the unmask grant it asked for, approved by {@code by}, who must not be the admin
+     * who asked (ADR 0038). Names are compared as Kilnmark records callers: a token's {@code token N
+     * (name)}, a provider sign-in's {@code sso:...}.
+     */
+    public GrantDecision approveUnmask(long id, String by) {
+        return decideUnmask(id, by, true);
+    }
+
+    /** Clears a token's request for the unmask grant; the token stays, without it. Anyone but the asker may. */
+    public GrantDecision refuseUnmask(long id, String by) {
+        return decideUnmask(id, by, false);
+    }
+
+    private GrantDecision decideUnmask(long id, String by, boolean approve) {
+        return db.tx(c -> {
+            String asked;
+            try (PreparedStatement ps = c.prepareStatement("SELECT unmask_requested_by FROM kilnmark.api_token "
+                + "WHERE id = ? AND revoked_at IS NULL FOR UPDATE")) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        return new GrantDecision(null, GrantProblem.NOT_FOUND);
+                    }
+                    asked = rs.getString(1);
+                }
+            }
+            if (asked == null) {
+                return new GrantDecision(null, GrantProblem.NOTHING_ASKED);
+            }
+            if (approve && asked.equals(by)) {
+                return new GrantDecision(null, GrantProblem.SAME_PERSON);
+            }
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.api_token SET unmask = ?, "
+                + "unmask_requested_by = NULL, unmask_requested_at = NULL WHERE id = ? RETURNING " + COLUMNS)) {
+                ps.setBoolean(1, approve);
+                ps.setLong(2, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    rs.next();
+                    Token t = token(rs);
+                    LOG.infof("Unmask grant for API token %d (%s) %s by %s", t.id(), loggable(t.name()),
+                        approve ? "approved" : "refused", loggable(by));
+                    return new GrantDecision(t, null);
                 }
             }
         });

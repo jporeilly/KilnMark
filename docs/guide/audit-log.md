@@ -22,6 +22,9 @@ it (behind a proxy, as its forwarding settings say).
 | Sign-in given no role (`auth.sign_in_refused`) | Someone signed in with the provider but was given no role | Why: no second factor, or none of their groups has a role |
 | Signed out (`auth.sign_out`) | Someone signed out of a provider sign-in | |
 | Access review (`access.review`) | An admin viewed or downloaded the access review (Settings, Access review) | Its format and how many entries it had |
+| Sensitive values asked for (`unmask.requested`) | A designer token was made to see sensitive values, which waits for a second admin | The token's name |
+| Sensitive values approved (`unmask.approved`) | A second admin let a designer token see sensitive values | The token's name |
+| Sensitive values refused (`unmask.refused`) | An admin refused a designer token seeing sensitive values; it sees them masked | The token's name |
 | Column marked sensitive (`mark.set`) | A column was marked | The column |
 | Sensitive mark cleared (`mark.cleared`) | A mark was cleared: the column's values are no longer masked | The column |
 | Source deleted (`source.deleted`) | A source and what was recorded about it were deleted | Its assets and runs, and whether it had marks (deleting it cleared them) |

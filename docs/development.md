@@ -248,6 +248,13 @@ role, grant, status, expiry and last use, and everyone who has signed in with th
 with the role of their last sign-in; each view and download is an audit event. Set the limit on every
 Kilnmark process (api, worker, scheduler): each judges tokens, and notifications, by its own setting.
 
+**Two people for the unmask grant** (ADR 0038). `kilnmark.auth.unmask-approval=true`
+(`KILNMARK_AUTH_UNMASK_APPROVAL`, off by default): a designer token asked to see unmasked values
+is made without the grant, with `unmaskRequestedBy` set; `POST /api/v1/tokens/{id}/unmask/approve`
+by another admin gives it (the asker gets 403), `.../refuse` clears the request.
+`GET /api/v1/tokens/policy` says whether approval is on. Audit events `unmask.requested`,
+`unmask.approved`, `unmask.refused`.
+
 **Sign-in with the identity provider** (ADR 0036). With Quarkus's OIDC client set up
 (`QUARKUS_OIDC_TENANT_ENABLED=true`, `QUARKUS_OIDC_AUTH_SERVER_URL`, `QUARKUS_OIDC_CLIENT_ID`,
 `QUARKUS_OIDC_CREDENTIALS_SECRET`; INSTALL.md says how), the sign-in page offers **Sign in with**

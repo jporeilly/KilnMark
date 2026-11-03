@@ -88,6 +88,8 @@ services:
       KILNMARK_AUTH_OIDC_MAX_SESSION: ${KILNMARK_OIDC_MAX_SESSION:-8h}
       # The longest an API token may last, e.g. 90d (ADR 0037); unset, tokens may never expire.
       KILNMARK_AUTH_TOKEN_MAX_LIFETIME: ${KILNMARK_TOKEN_MAX_LIFETIME:-}
+      # true: a second admin approves a designer token seeing sensitive values (ADR 0038)
+      KILNMARK_AUTH_UNMASK_APPROVAL: ${KILNMARK_UNMASK_APPROVAL:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach databases on this machine (Podman also has host.containers.internal)
     volumes:

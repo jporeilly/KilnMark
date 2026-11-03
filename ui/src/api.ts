@@ -42,6 +42,8 @@ export type ApiToken = {
   expiresAt: string | null;
   lastUsedAt: string | null;
   revokedAt: string | null;
+  /** Who asked for the unmask grant, while it waits for a second admin to approve it (ADR 0038). */
+  unmaskRequestedBy: string | null;
 };
 
 /** A token just created: `token` is shown this once. */
@@ -53,6 +55,8 @@ export type CreatedToken = {
   createdAt: string;
   expiresAt: string | null;
   token: string;
+  /** Set when the unmask grant waits for a second admin (ADR 0038). */
+  unmaskRequestedBy?: string | null;
 };
 
 const RANK: Record<AccessRole, number> = { viewer: 0, steward: 1, designer: 2, admin: 3 };
@@ -561,6 +565,10 @@ export const api = {
   createToken: (t: { name: string; role: AccessRole; expiresAt: string | null; unmask?: boolean }) =>
     call<CreatedToken>("/api/v1/tokens", { method: "POST", body: JSON.stringify(t) }),
   revokeToken: (id: number) => call<null>(`/api/v1/tokens/${id}`, { method: "DELETE" }),
+  /** Gives a designer token the unmask grant it asked for: a second admin only (ADR 0038). */
+  approveUnmask: (id: number) => call<ApiToken>(`/api/v1/tokens/${id}/unmask/approve`, { method: "POST" }),
+  /** Refuses a designer token's request for the unmask grant; the token stays, without it. */
+  refuseUnmask: (id: number) => call<ApiToken>(`/api/v1/tokens/${id}/unmask/refuse`, { method: "POST" }),
   info: () => call<{ product: string; version: string; roles: string[] }>("/api/v1/info"),
   sources: () => call<Source[]>("/api/v1/sources"),
   connectors: () => call<Connector[]>("/api/v1/connectors"),
@@ -1855,7 +1863,7 @@ export const accessReviewApi = {
   /** The review as CSV, for keeping as evidence; each download is in the audit log. */
   csv: () => callText("/api/v1/access-review?format=csv", "text/csv"),
   /** The longest a new token may last, in days, or null for no limit. */
-  tokenPolicy: () => call<{ maxLifetimeDays: number | null }>("/api/v1/tokens/policy"),
+  tokenPolicy: () => call<{ maxLifetimeDays: number | null; unmaskApproval: boolean }>("/api/v1/tokens/policy"),
 };
 
 /** Notification settings and, for admins, email: the feed is notificationsApi in src/notifications/api.ts. */

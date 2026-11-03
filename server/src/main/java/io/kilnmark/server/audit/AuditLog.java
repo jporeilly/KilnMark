@@ -87,13 +87,20 @@ public class AuditLog {
     /** Someone signed out of a provider sign-in. */
     public static final String SIGN_OUT = "auth.sign_out";
 
+    /** A designer token's unmask grant waits for a second admin (ADR 0038); detail: name. */
+    public static final String UNMASK_REQUESTED = "unmask.requested";
+    /** A second admin approved a token's unmask grant; detail: name, asked by. */
+    public static final String UNMASK_APPROVED = "unmask.approved";
+    /** An admin refused a token's unmask grant; detail: name, asked by. */
+    public static final String UNMASK_REFUSED = "unmask.refused";
+
     /** An admin downloaded the access review (ADR 0037); detail: format. */
     public static final String ACCESS_REVIEW = "access.review";
 
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
-        SIGN_OUT, ACCESS_REVIEW);
+        SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;

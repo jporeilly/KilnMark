@@ -85,16 +85,23 @@ public class TokenResource {
         detail.put("unmask", t.unmask());
         detail.put("expiresAt", t.expiresAt() == null ? null : t.expiresAt().toString());
         audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), io.kilnmark.server.audit.AuditLog.TOKEN_CREATED, "token " + t.id(), detail);
+        if (t.unmaskRequestedBy() != null) {
+            audit.record(io.kilnmark.server.audit.AuditLog.actor(identity),
+                io.kilnmark.server.audit.AuditLog.UNMASK_REQUESTED, "token " + t.id(), java.util.Map.of("name", t.name()));
+        }
         CacheControl noStore = new CacheControl();
         noStore.setNoStore(true);
         return Response.created(URI.create("/api/v1/tokens/" + t.id())).cacheControl(noStore)
             .entity(new Views.NewToken(t.id(), t.name(), t.role().id(), t.unmask(), t.createdAt(), t.expiresAt(),
-                issued.secret()))
+                issued.secret(), t.unmaskRequestedBy()))
             .build();
     }
 
-    /** The server's token policy: the longest a token may last, in days, or null for no limit (ADR 0037). */
-    public record TokenPolicy(Long maxLifetimeDays) {
+    /**
+     * The server's token policy: the longest a token may last, in days, or null for no limit (ADR
+     * 0037), and whether a second admin must approve the unmask grant (ADR 0038).
+     */
+    public record TokenPolicy(Long maxLifetimeDays, boolean unmaskApproval) {
     }
 
     /** What a new token may be: the longest lifetime the server allows. The UI offers only expiries within it. */
@@ -102,7 +109,7 @@ public class TokenResource {
     @Path("tokens/policy")
     @RolesAllowed(AccessRole.ADMIN_ROLE)
     public TokenPolicy policy() {
-        return new TokenPolicy(tokens.maxLifetime().map(d -> d.toDays()).orElse(null));
+        return new TokenPolicy(tokens.maxLifetime().map(d -> d.toDays()).orElse(null), tokens.unmaskApproval());
     }
 
     /** Every token, newest first, with its status. Secrets are never returned. */
@@ -112,6 +119,41 @@ public class TokenResource {
     public List<Views.Token> list() {
         Instant now = Instant.now();
         return tokens.list().stream().map(t -> Views.Token.of(t, now)).toList();
+    }
+
+    /**
+     * Gives a designer token the unmask grant it asked for (ADR 0038). Only a second admin may: the
+     * one who asked is refused (403).
+     */
+    @POST
+    @Path("tokens/{id}/unmask/approve")
+    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    public Views.Token approveUnmask(@PathParam("id") long id) {
+        return decided(id, tokens.approveUnmask(id, caller()), io.kilnmark.server.audit.AuditLog.UNMASK_APPROVED);
+    }
+
+    /** Refuses a designer token's request for the unmask grant; the token stays, without it. */
+    @POST
+    @Path("tokens/{id}/unmask/refuse")
+    @RolesAllowed(AccessRole.ADMIN_ROLE)
+    public Views.Token refuseUnmask(@PathParam("id") long id) {
+        return decided(id, tokens.refuseUnmask(id, caller()), io.kilnmark.server.audit.AuditLog.UNMASK_REFUSED);
+    }
+
+    private Views.Token decided(long id, ApiTokens.GrantDecision d, String action) {
+        if (d.problem() != null) {
+            throw switch (d.problem()) {
+                case NOT_FOUND -> ApiError.of(Response.Status.NOT_FOUND, "No token " + id + ", or it was revoked");
+                case NOTHING_ASKED -> ApiError.of(Response.Status.CONFLICT, "Token " + id + " is not waiting for the "
+                    + "unmask grant: it was already approved or refused, or never asked for it");
+                case SAME_PERSON -> ApiError.of(Response.Status.FORBIDDEN, "You asked for this grant, so another "
+                    + "admin must approve it: seeing sensitive values needs two people (kilnmark.auth.unmask-approval)");
+            };
+        }
+        ApiTokens.Token t = d.token();
+        audit.record(io.kilnmark.server.audit.AuditLog.actor(identity), action, "token " + t.id(),
+            java.util.Map.of("name", t.name()));
+        return Views.Token.of(t, Instant.now());
     }
 
     /** Revokes a token at once. Revoking it again changes nothing. */
