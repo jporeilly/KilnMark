@@ -1,0 +1,47 @@
+# Flow: SQL before and after a pipeline (a Kilnmark sample).
+# A sql node makes sure a totals table is there and empties it, the orders pipeline runs, then a
+# second sql node fills the table with a total per status and refreshes its statistics. Each sql node
+# runs its statements in order in one transaction: all of them change the database, or none does.
+# Needs: a PostgreSQL source for shop-db with Allow SQL and Allow writing on, whose login may create
+# tables in its schema and is limited to what the SQL needs (never a superuser); the sample tables in
+# a schema on that login's search path; and a designer who may see unmasked values to add or change it.
+# Look for: totals.rows_affected in the condition and the notice, and each sql node's message on the
+# run, which says how many statements ran and rows changed but never quotes the SQL.
+kilnmark: flow/v1
+name: sample-sql-before-and-after
+description: Empty the totals table, run the orders pipeline, then total the orders by status in SQL.
+
+nodes:
+  - id: empty
+    type: sql
+    source: shop-db
+    statements:
+      - CREATE TABLE IF NOT EXISTS sample_order_totals (status text, orders bigint, fees numeric)
+      - TRUNCATE sample_order_totals
+
+  - id: orders
+    type: run-pipeline
+    pipeline: sample-orders-by-status
+
+  - id: totals
+    type: sql
+    source: shop-db
+    statements:
+      - >-
+        INSERT INTO sample_order_totals
+        SELECT status, count(*), sum(shipping_fee) FROM shop_orders GROUP BY status
+      - ANALYZE sample_order_totals
+
+  - id: done
+    type: notify
+    title: "${totals.rows_affected} status totals written"
+
+  - id: nothing
+    type: stop
+    message: The orders table had no rows to total
+
+connections:
+  - { from: empty, to: orders }
+  - { from: orders, to: totals }
+  - { from: totals, to: done, when: "totals.rows_affected > 0" }
+  - { from: totals, to: nothing, when: "totals.rows_affected = 0" }

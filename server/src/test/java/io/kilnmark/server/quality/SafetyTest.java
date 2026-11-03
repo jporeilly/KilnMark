@@ -82,6 +82,127 @@ class SafetyTest {
         refused("SELECT * FROM ${table} WHERE pg_catalog.dblink_get_connections() IS NOT NULL");
     }
 
+    private static void refusedAction(String sql, String why) {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> SqlTokens.checkAction(sql, 10_000), sql);
+        assertTrue(e.getMessage().contains(why), sql + " gave " + e.getMessage());
+    }
+
+    /** A flow's sql node (ADR 0028): statements that change data or tables, never a query or a way out. */
+    @Test
+    void aSqlNodeTakesStatementsThatChangeDataOrTables() {
+        for (String ok : List.of("TRUNCATE staging.orders", "INSERT INTO t (id, n) VALUES (1, nextval('s'))",
+            "INSERT INTO t SELECT * FROM s ON CONFLICT (id) DO NOTHING", "UPDATE t SET n = n + 1 WHERE id = 3",
+            "DELETE FROM t WHERE at < now() - interval '30 days'", "CREATE INDEX t_n ON t (n)", "DROP INDEX t_n",
+            "CREATE TABLE IF NOT EXISTS staging.x (id integer, \"user\" text)", "ALTER TABLE t ADD COLUMN m integer",
+            "CALL refresh_totals()", "ANALYZE t", "REFRESH MATERIALIZED VIEW totals", "LOCK TABLE t IN EXCLUSIVE MODE",
+            "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET n = s.n", "TRUNCATE t;")) {
+            assertEquals(ok.endsWith(";") ? ok.substring(0, ok.length() - 1) : ok, SqlTokens.checkAction(ok, 10_000));
+        }
+        // Never a query, transaction control, settings or roles, files, or rights
+        refusedAction("SELECT * FROM t", "a statement starts with");
+        refusedAction("WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x", "a statement starts with");
+        for (String start : List.of("BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT a", "SET ROLE postgres",
+            "SET search_path = x", "RESET ALL", "COPY t FROM '/etc/passwd'", "DO $$ BEGIN END $$", "GRANT ALL ON t TO x",
+            "REVOKE ALL ON t FROM x", "VACUUM t", "EXECUTE p", "LISTEN x", "LOAD 'x'", "SHOW ALL", "EXPLAIN DELETE FROM t")) {
+            refusedAction(start, "a statement starts with");
+        }
+        refusedAction("DELETE FROM t RETURNING id", "'returning' is not allowed");
+        refusedAction("CREATE ROLE x LOGIN", "'role' is not allowed");
+        refusedAction("ALTER USER x WITH SUPERUSER", "'user' is not allowed");
+        refusedAction("CREATE EXTENSION file_fdw", "'extension' is not allowed");
+        refusedAction("CREATE OR REPLACE FUNCTION f() RETURNS int AS 'select 1' LANGUAGE sql", "'function' is not allowed");
+        refusedAction("CREATE SERVER s FOREIGN DATA WRAPPER postgres_fdw", "'server' is not allowed");
+        refusedAction("ALTER TABLE t OWNER TO x", "'owner' is not allowed");
+        refusedAction("ALTER DEFAULT PRIVILEGES GRANT ALL ON TABLES TO x", "'privileges' is not allowed");
+        refusedAction("CREATE SCHEMA s AUTHORIZATION x", "'schema' is not allowed");
+        refusedAction("ALTER TABLE t OWNER TO x AUTHORIZATION y", "'owner' is not allowed");
+        refusedAction("ALTER SYSTEM SET work_mem = '1GB'", "'system' is not allowed");
+        refusedAction("CREATE TRIGGER t BEFORE INSERT ON t EXECUTE FUNCTION f()", "'trigger' is not allowed");
+        refusedAction("INSERT INTO t SELECT pg_read_file('/etc/passwd')", "'pg_read_file' is not allowed");
+        refusedAction("INSERT INTO t SELECT * FROM dblink('x', 'y') AS r(a int)", "'dblink' is not allowed");
+        refusedAction("UPDATE t SET n = 1 WHERE id = $1", "parameters such as $1");
+        refusedAction("TRUNCATE t; DROP TABLE s", "one statement only");
+        refusedAction("TRUNCATE t)", "closes more than was opened");
+        refusedAction("  ", "one SQL statement");
+        refusedAction("INSERT INTO t VALUES ('not closed)", "not closed");
+    }
+
+    /**
+     * What PostgreSQL reads as SQL never hides in what the check reads as a comment: a carriage return
+     * ends a line comment for both (found by the review of the sql node), and a U&"..." name, whose
+     * escapes could spell a refused function, is refused. Both checks share the tokenizer.
+     */
+    @Test
+    void nothingHidesInACommentOrAnEscapedName() {
+        refusedAction("CREATE --x\rFUNCTION f() RETURNS int SECURITY DEFINER LANGUAGE sql AS 'select 1'",
+            "'function' is not allowed");
+        refusedAction("ALTER --x\rTABLE t DISABLE ROW LEVEL SECURITY", "'security' is not allowed");
+        refusedAction("INSERT INTO t VALUES (1) --c\r; GRANT ALL ON t TO PUBLIC", "one statement only");
+        refusedAction("INSERT INTO t VALUES (1) --c\r\n; COMMIT", "one statement only");
+        refusedAction("INSERT INTO t SELECT 1 FROM (SELECT U&\"set_config\"('role', 'x', true)) s",
+            "names written as U&");
+        refusedAction("INSERT INTO t SELECT u&\"pg_terminate_backend\"(1)", "names written as U&");
+        refusedAction("INSERT INTO t VALUES (1)\u0000; DROP TABLE t", "a control character");
+        refusedAction("TRUNCATE\u001ct", "a control character");
+        // A comment still ends the line it is on, whichever line ending was pasted
+        assertEquals("TRUNCATE t -- empty it", SqlTokens.checkAction("TRUNCATE t -- empty it\r\n", 10_000));
+        assertEquals("UPDATE t SET n = 1 -- all\n WHERE id = 2",
+            SqlTokens.checkAction("UPDATE t SET n = 1 -- all\n WHERE id = 2", 10_000));
+        // Custom rules share the tokenizer
+        refused("SELECT * FROM t --x\r; DELETE FROM t");
+        refused("SELECT U&\"pg_read_file\"('x')");
+        SqlTokens.checkCustomSql("SELECT *\r\nFROM t -- note\r\nWHERE a > 0", 10_000);
+    }
+
+    /**
+     * The second review of the sql node: a dollar-quote tag is read as PostgreSQL and the driver read
+     * it (any non-ASCII character), a query held in a string is refused, E'' strings are refused, and
+     * whatever the driver would split into statements is refused whatever this check made of it.
+     */
+    @Test
+    void dollarTagsStringsAndTheDriverAgreeOnOneStatement() {
+        String tag = "UPDATE victim SET a = a WHERE a::text <> $\u20ac$ ' $\u20ac$ ; COMMIT; DELETE FROM victim; --'";
+        refusedAction(tag, "one statement only");
+        refused("SELECT $\u20ac$ ' $\u20ac$ AS x; COMMIT; CREATE TABLE leak AS SELECT 1 AS y; --'");
+        // A tag of non-ASCII letters still quotes: nothing inside it is read as SQL
+        assertEquals("UPDATE t SET note = $\u00e9t\u00e9$ ; DROP TABLE t $\u00e9t\u00e9$",
+            SqlTokens.checkAction("UPDATE t SET note = $\u00e9t\u00e9$ ; DROP TABLE t $\u00e9t\u00e9$", 10_000));
+        refusedAction("UPDATE victim SET a = a WHERE EXISTS (SELECT 1 FROM ts_stat('SELECT to_tsvector("
+            + "set_config(''role'', ''admin_grp'', false))'))", "'ts_stat' is not allowed");
+        refused("SELECT * FROM ts_rewrite('a'::tsquery, 'SELECT t, s FROM aliases')");
+        refusedAction("UPDATE t SET a = E'x'\n'\\' || '; COMMIT; DELETE FROM t; --'", "E'...' strings are not allowed");
+        refused("SELECT E'x'\n'\\' || '; DELETE FROM t; --' AS a");
+        // A word written straight after a number is still a word
+        refusedAction("DELETE FROM t WHERE a = 1returning a", "'returning' is not allowed");
+        // The third review: pg_settings changes a session's settings through its rules, views and
+        // routines are code that runs later
+        refusedAction("UPDATE pg_settings SET setting = 'off' WHERE name = 'standard_conforming_strings'",
+            "'pg_settings' is not allowed");
+        refused("SELECT * FROM pg_catalog.pg_settings");
+        refusedAction("CREATE OR REPLACE VIEW v AS SELECT * FROM t", "'view' is not allowed");
+        refusedAction("CREATE MATERIALIZED VIEW m AS SELECT * FROM t", "'view' is not allowed");
+        refusedAction("ALTER VIEW v SET (security_invoker = false)", "'view' is not allowed");
+        refusedAction("ALTER ROUTINE f() SET search_path = evil", "'routine' is not allowed");
+        // The fourth review: a lone surrogate reaches the database as ?, and GRANT can sit inside CREATE SCHEMA
+        refusedAction("UPDATE t SET a = a WHERE '{}'::jsonb \uD800set_config('role', 'other', true) IS NOT NULL",
+            "not valid text");
+        refused("SELECT 1 WHERE '{}'::jsonb \uDC00set_config('search_path', 'evil', true) IS NOT NULL");
+        refusedAction("INSERT INTO t VALUES ('\uD83D')", "not valid text");
+        assertEquals("INSERT INTO t VALUES ('\uD83D\uDE00')",
+            SqlTokens.checkAction("INSERT INTO t VALUES ('\uD83D\uDE00')", 10_000), "a pair is a character");
+        refusedAction("CREATE SCHEMA s2 CREATE TABLE s2.x (a int) GRANT ALL ON TABLE public.t TO PUBLIC",
+            "is not allowed");
+        // GRANT and REVOKE are refused wherever they stand, not only through the schema they sat in
+        refusedAction("CREATE TABLE s2.x (a int) GRANT ALL ON TABLE public.t TO PUBLIC", "'grant' is not allowed");
+        refusedAction("CREATE TABLE s2.x (a int) REVOKE ALL ON TABLE public.t FROM x", "'revoke' is not allowed");
+        // The fifth review: a schema named as the login changes what unqualified names mean
+        refusedAction("CREATE SCHEMA kiln", "'schema' is not allowed");
+        refusedAction("ALTER SCHEMA s2 RENAME TO kiln", "'schema' is not allowed");
+        assertEquals(null, SqlTokens.driverSplits("INSERT INTO t VALUES ('a;b')"));
+        assertEquals("one statement only", SqlTokens.driverSplits("INSERT INTO t VALUES (1); DELETE FROM t"));
+    }
+
     @Test
     void ordinaryReadingSqlIsAccepted() {
         assertEquals("SELECT * FROM ${table} WHERE amount < 0",
@@ -89,7 +210,9 @@ class SafetyTest {
         SqlTokens.checkCustomSql("WITH x AS (SELECT 1 AS a) SELECT * FROM x", 10_000);
         SqlTokens.checkCustomSql("SELECT * FROM t WHERE note = 'delete me; now' AND \"update\" > 0 /* drop; */", 10_000);
         SqlTokens.checkCustomSql("SELECT CASE WHEN a > 0 THEN 'x' ELSE $tag$it's; fine$tag$ END FROM t", 10_000);
-        SqlTokens.checkCustomSql("SELECT E'it\\'s' FROM t -- comment; DROP TABLE t", 10_000);
+        SqlTokens.checkCustomSql("SELECT 'it''s' FROM t -- comment; DROP TABLE t", 10_000);
+        // E'' strings are refused: their escapes can hide where a string ends (review of the sql node)
+        refused("SELECT E'it\\'s' FROM t");
         SqlTokens.checkCustomSql("SELECT * FROM t WHERE \"set\" = 1 AND amount > 1e3", 10_000);
     }
 

@@ -108,4 +108,29 @@ public final class PostgresConnector extends JdbcConnector {
         throws java.sql.SQLException {
         return JdbcCatalog.foreignKeysBySchema(connection, tables);
     }
+
+    /**
+     * Turns {@code standard_conforming_strings} on for the transaction, then checks that the driver
+     * says it is on. SQL a person writes is checked as PostgreSQL reads it with that setting on (a
+     * backslash in a string is a plain character); with it off, a string can end elsewhere and hide a
+     * statement from the check and split differently in the driver. Call it inside a transaction and
+     * again before every statement a person wrote, as an earlier statement may have turned it off.
+     *
+     * @throws java.sql.SQLException when the setting is off however it was set (the database, the
+     *                               login, a URL's options, or SQL run before)
+     */
+    public static void conformingStrings(java.sql.Connection c) throws java.sql.SQLException {
+        try (java.sql.Statement st = c.createStatement()) {
+            st.execute("SET LOCAL standard_conforming_strings = on");
+        }
+        requireConformingStrings(c);
+    }
+
+    /** Checks, without changing it, that the driver says {@code standard_conforming_strings} is on. */
+    public static void requireConformingStrings(java.sql.Connection c) throws java.sql.SQLException {
+        if (!c.unwrap(org.postgresql.core.BaseConnection.class).getStandardConformingStrings()) {
+            throw new java.sql.SQLException("standard_conforming_strings is off for this session: Kilnmark runs SQL a "
+                + "person wrote only with it on", "42000");
+        }
+    }
 }

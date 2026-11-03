@@ -69,6 +69,8 @@ public class AuditLog {
     public static final String WRITING_CHANGED = "source.allow_writing";
     /** Allow SQL was turned on or off; detail: on, via. */
     public static final String SQL_CHANGED = "source.allow_sql";
+    /** A flow's sql node started (ADR 0028); detail: source, statements, version. Target: flow/run/node. */
+    public static final String FLOW_SQL = "flow.sql";
 
     /** A column was marked sensitive; detail: field. */
     public static final String MARK_SET = "mark.set";
@@ -79,7 +81,7 @@ public class AuditLog {
 
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
-        SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, API_REQUEST, API_REFUSED);
+        SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;

@@ -79,8 +79,7 @@ public class PipelineResource {
             + "not see unmasked values"),
         @APIResponse(responseCode = "409", description = "A pipeline with that name exists")})
     public Response create(PipelineViews.NewPipeline body) {
-        pipelines.allowQueries(body == null ? null : body.yaml(), sights);
-        PipelineViews.PipelineDetail d = pipelines.create(body, who());
+        PipelineViews.PipelineDetail d = pipelines.create(body, who(), sights);
         return Response.created(URI.create("/api/v1/pipelines/" + d.name())).tag(etag(d)).entity(d).build();
     }
 
@@ -231,7 +230,6 @@ public class PipelineResource {
         @APIResponse(responseCode = "409", description = "Someone else saved a version after the one in If-Match")})
     public Response save(@PathParam("name") String name, @HeaderParam("If-Match") String ifMatch,
                          PipelineViews.PipelineChange body) {
-        pipelines.allowQueries(body == null ? null : body.yaml(), sights);
         PipelineViews.PipelineDetail d = pipelines.save(name, PipelineService.readVersion(ifMatch), body, who(),
             sights);
         return Response.ok(d).tag(etag(d)).build();
