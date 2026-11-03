@@ -28,12 +28,23 @@ details.
 
 ### Details
 
+- **SBOMs, scanning and signed releases** (ADR 0033, docs/design/supply-chain.md). Every release
+  carries CycloneDX SBOMs of the server's libraries and the web UI's packages, in its `sbom` folder.
+  CI scans them with Trivy on every change and every Monday, and fails on a high or critical
+  vulnerability that has a fix; the base images are reported, not failed. A version tag builds the
+  release, signs every file with the release key and leaves a draft GitHub release; INSTALL.md,
+  "Check a release", says how to verify one. Dependabot proposes updates monthly, one pull request
+  per ecosystem. `SECURITY.md` says how to report a vulnerability.
+- **Security:** lz4-java 1.11.4 and snappy-java 1.1.10.12, over the Quarkus platform's versions, for
+  three high vulnerabilities the new scan found (lz4-java's temporary files; snappy-java's memory use
+  and buffer overflow on malformed input).
 - **Kilnmark's own database over TLS only** (ADR 0032). The bundled PostgreSQL makes a certificate
   on its first start (existing volumes too, with their data as it was) and speaks TLS 1.2 or later;
   Kilnmark connects with `sslmode=require`. **The server no longer starts unless its database
   connection demands TLS** (`sslmode` `require`, `verify-ca` or `verify-full`) **and the session is
-  encrypted**, as read from the connection pool's own settings and the driver's own parser: an installation with its own PostgreSQL turns TLS on there and sets the sslmode
-  (`verify-full` with its CA is best); INSTALL.md, "Kilnmark's own database".
+  encrypted**, as read from the connection pool's own settings and the driver's own parser: an
+  installation with its own PostgreSQL turns TLS on there and sets the sslmode (`verify-full` with
+  its CA is best); INSTALL.md, "Kilnmark's own database".
   `kilnmark.database.require-tls=false` turns the check off, for a developer's own database.
   The database migrations now run after the check, through the checked pool: `quarkus.flyway.*-at-start`
   settings, or a Flyway URL or login of its own, stop the server while the check is on.

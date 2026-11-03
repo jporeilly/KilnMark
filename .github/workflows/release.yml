@@ -1,0 +1,118 @@
+name: Release
+
+# Builds a release from a version tag the owner pushes (vX.Y.Z, matching gradle.properties), signs
+# every file with the release key, and leaves it as a draft GitHub release for the owner to publish
+# (docs/design/supply-chain.md, ADR 0033). A pull request that changes this workflow, or the builds
+# that make the release's files, rehearses it instead: a throwaway key, the same signing and verifying, and no release.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    # what the rehearsal exercises: the workflow and the builds that make the release's files
+    paths: [".github/workflows/release.yml", "build.gradle.kts", "server/build.gradle.kts", "ui/scripts/ui-sbom.mjs"]
+
+permissions:
+  contents: read
+
+env:
+  # cosign, downloaded from its release and checked against this checksum (no third-party action).
+  COSIGN_VERSION: "3.1.4"
+  COSIGN_SHA256: "424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # to create the draft release; a rehearsal creates nothing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Version
+        id: version
+        run: |
+          version=$(sed -n 's/^version=//p' gradle.properties)
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME does not match version=$version in gradle.properties"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # No tests here: a release is tagged on a commit of main, where CI has already passed them.
+      - name: Build the release folder (product only, with its SBOMs)
+        run: ./gradlew release --no-daemon
+
+      - name: Package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir out
+          cd dist/release
+          tar -czf "../../out/kilnmark-${VERSION}.tar.gz" "kilnmark-${VERSION}"
+          zip -qr "../../out/kilnmark-${VERSION}.zip" "kilnmark-${VERSION}"
+          cd ../..
+          cp "dist/release/kilnmark-${VERSION}/sbom/kilnmark-server.cdx.json" "out/kilnmark-${VERSION}-server.cdx.json"
+          cp "dist/release/kilnmark-${VERSION}/sbom/kilnmark-ui.cdx.json" "out/kilnmark-${VERSION}-ui.cdx.json"
+          cd out && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - name: Install cosign
+        run: |
+          curl -sSfL -o cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  cosign" | sha256sum -c -
+          chmod +x cosign && mkdir -p "$RUNNER_TEMP/bin" && mv cosign "$RUNNER_TEMP/bin/"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # The real key lives in the repository's secrets; its public half is config/release/cosign.pub.
+      # A rehearsal makes a throwaway pair. Signatures are kept off the public transparency log:
+      # entries there name the repository, and this one is private. Customers verify with the
+      # public key instead (INSTALL.md, "Check a release").
+      - name: Key
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            (cd "$RUNNER_TEMP" && COSIGN_PASSWORD=rehearsal cosign generate-key-pair)
+            mv "$RUNNER_TEMP/cosign.pub" "$RUNNER_TEMP/verify.pub"
+          else
+            if [ -z "$COSIGN_PRIVATE_KEY" ] || [ -z "$COSIGN_PASSWORD" ] || [ ! -f config/release/cosign.pub ]; then
+              echo "::error::No release key: set the COSIGN_PRIVATE_KEY and COSIGN_PASSWORD secrets and commit config/release/cosign.pub (docs/development.md, Releasing)"
+              exit 1
+            fi
+            (umask 077 && printf '%s\n' "$COSIGN_PRIVATE_KEY" > "$RUNNER_TEMP/cosign.key")
+            cp config/release/cosign.pub "$RUNNER_TEMP/verify.pub"
+          fi
+
+      - name: Sign and verify
+        env:
+          COSIGN_PASSWORD: ${{ github.event_name == 'pull_request' && 'rehearsal' || secrets.COSIGN_PASSWORD }}
+        run: |
+          cd out
+          for f in *; do
+            cosign sign-blob --yes --key "$RUNNER_TEMP/cosign.key" --tlog-upload=false --use-signing-config=false \
+              --bundle "$f.sigstore.json" "$f"
+          done
+          # Checked against the published public key, so a release never goes out signed by another.
+          for f in $(ls | grep -v '\.sigstore\.json$'); do
+            cosign verify-blob --key "$RUNNER_TEMP/verify.pub" --insecure-ignore-tlog=true \
+              --bundle "$f.sigstore.json" "$f"
+          done
+          rm -f "$RUNNER_TEMP/cosign.key"
+          ls -la
+
+      - name: Draft release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* --draft --verify-tag --title "Kilnmark ${VERSION}" \
+            --notes "Kilnmark ${VERSION}. What changed is in CHANGELOG.md. Every file is signed with the release key (config/release/cosign.pub); INSTALL.md, \"Check a release\", says how to verify one."

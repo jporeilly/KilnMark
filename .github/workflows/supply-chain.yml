@@ -1,0 +1,73 @@
+name: Supply chain
+
+# Scans what Kilnmark ships for known vulnerabilities (docs/design/supply-chain.md): on every change,
+# and every Monday, so a vulnerability published after a merge is found without waiting for one.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Trivy, downloaded from its release and checked against this checksum (no third-party action).
+  TRIVY_VERSION: "0.76.1"
+  TRIVY_SHA256: "c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0"
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      # The same SBOMs every release carries: the server's libraries and the web UI's packages.
+      - name: SBOMs
+        run: ./gradlew :server:cyclonedxDirectBom :server:uiSbom --no-daemon
+
+      - name: Install Trivy
+        run: |
+          curl -sSfL -o trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  trivy.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/trivy" && tar -xzf trivy.tar.gz -C "$RUNNER_TEMP/trivy" trivy && rm trivy.tar.gz
+          echo "$RUNNER_TEMP/trivy" >> "$GITHUB_PATH"
+
+      # Fails on a high or critical vulnerability with a fix available in a library or package
+      # Kilnmark ships: raise the version (gradle/libs.versions.toml; the server's securityPins
+      # when the Quarkus platform holds it back) or, for the UI, ui/package.json.
+      - name: Scan the server's libraries
+        run: trivy sbom --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed dist/build/server/sbom/kilnmark-server.cdx.json
+
+      - name: Scan the web UI's packages
+        run: trivy sbom --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed dist/ui-sbom/kilnmark-ui.cdx.json
+
+      # The images' operating system layers come from their base images (PostgreSQL's, Temurin's):
+      # reported here for whoever updates those bases, never failing the build.
+      - name: Build the PostgreSQL image
+        run: docker build -q -t kilnmark-postgres:scan -f containers/postgres/Containerfile containers/postgres
+
+      - name: Report on the base images
+        run: |
+          {
+            echo "## Base images: fixable high and critical vulnerabilities"
+            for image in kilnmark-postgres:scan docker.io/library/eclipse-temurin:25-jre; do
+              echo "### ${image}"
+              echo '```'
+              trivy image --quiet --severity HIGH,CRITICAL --ignore-unfixed --format table "$image"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

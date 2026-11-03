@@ -149,6 +149,29 @@ one) or sets one to a literal value, if `.env.example` fills one in, or if the r
 `.env` file. The developer `compose.yaml` keeps its defaults. A justified exception goes in
 `config/product-only-allow.txt` with its reason. Run it on its own with `./gradlew checkProductOnly`.
 
+## Releasing
+
+The owner tags releases; nothing else does. A tag `v<version>` (matching `gradle.properties`) on a
+commit of main starts `.github/workflows/release.yml`, which builds, signs and checks the release
+and leaves a draft GitHub release to publish ([Supply chain](design/supply-chain.md),
+[ADR 0033](adr/0033-sboms-scanning-and-signed-releases.md)).
+
+Once, before the first signed release, the owner makes the release key on their own machine:
+
+```
+cosign generate-key-pair          # asks for a password (required); writes cosign.key and cosign.pub
+```
+
+Then:
+
+1. In the repository's settings, under **Secrets and variables** > **Actions**, add
+   `COSIGN_PRIVATE_KEY` (the whole of `cosign.key`) and `COSIGN_PASSWORD`.
+2. Commit `cosign.pub` as `config/release/cosign.pub`, through a pull request as usual.
+3. Keep `cosign.key` and its password offline and apart. Never commit `cosign.key`.
+
+Without them a tag fails at the **Key** step, saying what is missing. A changed key is a new
+`cosign.pub`, announced in the next release's changelog.
+
 ## Integration tests
 
 Integration tests use Testcontainers, against the same PostgreSQL image Kilnmark ships. Build it
