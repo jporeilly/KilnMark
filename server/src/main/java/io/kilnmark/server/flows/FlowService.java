@@ -540,9 +540,12 @@ public class FlowService {
      * whether the caller may see the values runs started with (stewards and above, {@code Sights.data()}).
      */
     public List<FlowViews.FlowSummary> list(boolean values) {
-        return store.summaries().stream().map(s -> new FlowViews.FlowSummary(s.flow().name(), s.flow().displayName(),
+        List<FlowStore.Summary> all = store.summaries();
+        Map<Long, PipelineStore.FlowTotals> totals = pipelineStore.flowTotals(all.stream()
+            .filter(s -> s.lastRun() != null).map(s -> s.lastRun().id()).toList());
+        return all.stream().map(s -> new FlowViews.FlowSummary(s.flow().name(), s.flow().displayName(),
             s.flow().description(), s.flow().latestVersion(), s.valid(), s.flow().updatedBy(), s.flow().updatedAt(),
-            s.lastRun() == null ? null : view(s.lastRun(), values))).toList();
+            s.lastRun() == null ? null : view(s.lastRun(), values, totals))).toList();
     }
 
     /** A flow with its latest version and latest run; 404 when there is none. {@code values} as for list. */
@@ -590,7 +593,10 @@ public class FlowService {
     /** A flow's runs as the API shows them, newest first; 404 when there is no such flow. */
     public List<FlowViews.RunSummary> runViews(String name, int limit, boolean values) {
         flow(name);
-        return runs(name, limit).stream().map(r -> view(r, values)).toList();
+        List<FlowStore.Run> runs = runs(name, limit);
+        Map<Long, PipelineStore.FlowTotals> totals = pipelineStore.flowTotals(runs.stream().map(FlowStore.Run::id)
+            .toList());
+        return runs.stream().map(r -> view(r, values, totals)).toList();
     }
 
     /**
@@ -616,12 +622,12 @@ public class FlowService {
             List<FlowViews.ItemRunView> items = n.each() == null ? null : items(r, n, s, values);
             nodes.add(s == null
                 ? new FlowViews.NodeRunView(n.id(), n.type(), position, "pending", null, null, null, n.pipeline(), null,
-                    null, items)
-                : nodeView(s, n.pipeline(), values, items));
+                    null, items, null)
+                : nodeView(s, n.pipeline(), values, items, pipelineRunTimes(s)));
             position++;
         }
-        recorded.values().forEach(s -> nodes.add(nodeView(s, null, values, null)));
-        return new FlowViews.RunDetail(view(r, values), nodes);
+        recorded.values().forEach(s -> nodes.add(nodeView(s, null, values, null, pipelineRunTimes(s))));
+        return new FlowViews.RunDetail(view(r, values, pipelineStore.flowTotals(List.of(r.id()))), nodes);
     }
 
     /**
@@ -645,8 +651,9 @@ public class FlowService {
             Object value = show && i < list.size() ? list.get(i) : null;
             String unrun = notStarted.contains(i) ? "failed" : ended ? "skipped" : "pending";
             out.add(pr == null
-                ? new FlowViews.ItemRunView(i, value, unrun, null, null, null)
-                : new FlowViews.ItemRunView(i, value, pr.status(), pr.id(), pr.startedAt(), pr.finishedAt()));
+                ? new FlowViews.ItemRunView(i, value, unrun, null, null, null, null)
+                : new FlowViews.ItemRunView(i, value, pr.status(), pr.id(), pr.requestedAt(), pr.startedAt(),
+                    pr.finishedAt()));
         }
         return out;
     }
@@ -690,9 +697,18 @@ public class FlowService {
     }
 
     private FlowViews.NodeRunView nodeView(FlowStore.NodeRun s, String pipeline, boolean values,
-                                           List<FlowViews.ItemRunView> items) {
+                                           List<FlowViews.ItemRunView> items, FlowViews.PipelineRunTimes times) {
         return new FlowViews.NodeRunView(s.nodeId(), s.type(), s.position(), s.status(), s.startedAt(), s.finishedAt(),
-            s.pipelineRunId(), pipeline, values ? s.message() : withoutValues(s), tree(s.reported()), items);
+            s.pipelineRunId(), pipeline, values ? s.message() : withoutValues(s), tree(s.reported()), items, times);
+    }
+
+    /** The times of the pipeline run a node started, or null when it started none (or it is gone). */
+    private FlowViews.PipelineRunTimes pipelineRunTimes(FlowStore.NodeRun s) {
+        if (s.pipelineRunId() == null) {
+            return null;
+        }
+        return pipelineStore.run(s.pipelineRunId())
+            .map(pr -> new FlowViews.PipelineRunTimes(pr.requestedAt(), pr.startedAt(), pr.finishedAt())).orElse(null);
     }
 
     /** What a message from which values are left out says instead of them. */
@@ -716,9 +732,15 @@ public class FlowService {
     }
 
     private FlowViews.RunSummary view(FlowStore.Run r, boolean values) {
+        return view(r, values, pipelineStore.flowTotals(List.of(r.id())));
+    }
+
+    /** A run as the API shows it, with what its pipeline runs came to, from {@code totals} (by flow run). */
+    private FlowViews.RunSummary view(FlowStore.Run r, boolean values, Map<Long, PipelineStore.FlowTotals> totals) {
+        PipelineStore.FlowTotals t = totals.getOrDefault(r.id(), new PipelineStore.FlowTotals(0, null, null));
         return new FlowViews.RunSummary(r.id(), r.flow(), r.version(), r.status(), r.requestedBy(), r.requestedRole(),
             r.requestedAt(), r.startedAt(), r.finishedAt(), r.cancelRequested(), r.error(),
-            values ? tree(r.parameters()) : null);
+            values ? tree(r.parameters()) : null, t.pipelineRuns(), t.rowsWritten(), t.lowestScore());
     }
 
     private com.fasterxml.jackson.databind.JsonNode tree(String text) {

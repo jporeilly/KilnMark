@@ -540,6 +540,40 @@ public class PipelineStore {
         });
     }
 
+    /**
+     * What the pipeline runs of one flow run came to: how many it started, the rows they wrote in all
+     * (null when none has said yet) and the lowest quality score among them (null when none was
+     * measured). Each run's score is already the lowest of what it wrote.
+     */
+    public record FlowTotals(int pipelineRuns, Long rowsWritten, Double lowestScore) {
+    }
+
+    /** The totals of each of these flow runs that has started a pipeline run, by flow run. */
+    public java.util.Map<Long, FlowTotals> flowTotals(java.util.Collection<Long> flowRunIds) {
+        if (flowRunIds.isEmpty()) {
+            return java.util.Map.of();
+        }
+        return db.tx(c -> {
+            java.util.Map<Long, FlowTotals> out = new java.util.HashMap<>();
+            try (PreparedStatement ps = c.prepareStatement("""
+                SELECT r.flow_run_id, count(*), sum((r.result ->> 'rowsWritten')::bigint)::bigint,
+                       min((r.result -> 'quality' ->> 'score')::double precision)
+                  FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ANY (?) GROUP BY r.flow_run_id""")) {
+                ps.setArray(1, c.createArrayOf("bigint", flowRunIds.toArray()));
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        long rows = rs.getLong(3);
+                        Long rowsV = rs.wasNull() ? null : rows;
+                        double score = rs.getDouble(4);
+                        Double scoreV = rs.wasNull() ? null : score;
+                        out.put(rs.getLong(1), new FlowTotals(rs.getInt(2), rowsV, scoreV));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
     /** The run a pipeline job is for. */
     public Optional<Long> runForJob(long jobId) {
         return db.tx(c -> {

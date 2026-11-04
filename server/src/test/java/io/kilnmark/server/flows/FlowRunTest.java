@@ -202,6 +202,29 @@ class FlowRunTest {
         assertFalse(b.startedAt().isBefore(a.finishedAt()), "second started only after first had finished");
         assertEquals(a.id(), node(run.id(), "first").pipelineRunId());
         assertNotNull(node(run.id(), "second").finishedAt());
+
+        // The run page's summary: what its pipeline runs came to, from what they recorded.
+        FlowViews.RunDetail detail = flows.runDetail(run.id(), false);
+        long rowsA = as(designer).get("/api/v1/pipeline-runs/" + a.id()).then().extract().jsonPath()
+            .getLong("run.rowsWritten");
+        long rowsB = as(designer).get("/api/v1/pipeline-runs/" + b.id()).then().extract().jsonPath()
+            .getLong("run.rowsWritten");
+        Float scoreB = as(designer).get("/api/v1/pipeline-runs/" + b.id()).then().extract().jsonPath()
+            .get("run.qualityScore");
+        assertEquals(2, detail.run().pipelineRuns());
+        assertEquals(rowsA + rowsB, detail.run().rowsWritten(), "the rows its pipeline runs wrote, in all");
+        assertNotNull(scoreB, "the gated pipeline measures what it wrote");
+        assertTrue(detail.run().qualityScore() <= scoreB + 1e-6, "the lowest score among its pipeline runs");
+        FlowViews.RunSummary listed = flows.runViews("fl-sequence", 5, false).get(0);
+        assertEquals(detail.run().rowsWritten(), listed.rowsWritten(), "the runs list says the same");
+        assertEquals(2, listed.pipelineRuns());
+        // And each node's pipeline run times, for where its time went.
+        FlowViews.PipelineRunTimes times = detail.nodes().get(0).pipelineRunTimes();
+        assertEquals(a.requestedAt(), times.requestedAt());
+        assertEquals(a.startedAt(), times.startedAt());
+        assertEquals(a.finishedAt(), times.finishedAt());
+        assertFalse(times.requestedAt().isBefore(detail.nodes().get(0).startedAt().minusSeconds(1)),
+            "the node asked for its run as it started");
     }
 
     @Test
@@ -734,6 +757,9 @@ class FlowRunTest {
         assertEquals(List.of("ea", "eb", "ec"), view.items().stream().map(FlowViews.ItemRunView::value).toList(),
             "items written in the flow are shown to viewers, who can read the flow");
         assertEquals(r2.id(), view.items().get(2).pipelineRunId());
+        assertEquals(r2.requestedAt(), view.items().get(2).requestedAt(), "when the item's run was asked for");
+        assertNull(view.pipelineRunTimes(), "a for-each node's runs are its items'");
+        assertEquals(3, flows.runDetail(run.id(), false).run().pipelineRuns());
         // An item never starts twice: the database refuses a second run for it.
         assertThrows(RuntimeException.class, () -> pipelineStore.queueRun("fl-param", 1, "tester", "steward", run.id(),
             "each", 0, "{}", "{}"));

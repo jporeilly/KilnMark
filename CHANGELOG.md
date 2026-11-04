@@ -14,7 +14,17 @@ details.
   each item with a link to its pipeline run. A flow's own `max_parallel` caps how many of its nodes
   run at once. ([Running one pipeline for each item](docs/guide/flows.md#running-one-pipeline-for-each-item))
 
-- **See a flow, and watch it run.** A flow's page draws it above the YAML: a box per node and an
+- **Flow pages read like pipeline pages.** A flow run's page now opens with a **Summary** as a
+  pipeline run's does: status, version, who started it, its times, its nodes by how they stand, the
+  pipeline runs it started, the rows they wrote in all and the lowest quality among them. Then
+  **Where each node spent its time**: wall-clock time, most nodes at once, the longest node and the
+  time its pipeline runs were queued for a worker, and a bar per node split into working, queued
+  for a worker and waiting. A flow's page puts Diagram and YAML on tabs, with the Run, Runs and
+  Versions panel under them, as a pipeline's page does; its runs list gives how long each took and
+  the rows it wrote. The flow run API adds these totals and each pipeline run's times.
+  ([Reading a run](docs/guide/flows.md#reading-a-run))
+
+- **See a flow, and watch it run.** A flow's page draws it on a tab beside the YAML: a box per node and an
   arrow per connection, labelled with when it is taken, following the text as you type. A run's
   page draws the same diagram with each node's status as the run goes, and a run chart: a bar per
   node on one time line, a skipped node hatched, each bar opening the pipeline run it started.

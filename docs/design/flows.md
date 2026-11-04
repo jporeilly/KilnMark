@@ -266,6 +266,15 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
   changes made there while the text is as the last one left it. Choosing works by click or by Enter
   on a focused node or connection, and the list in words has a Change button for each connection,
   which moves the focus to its tools. A node's settings are changed in the YAML.
+- **Pages laid out as a pipeline's, built.** The flow page puts Diagram and YAML on tabs, with the
+  pipeline page's panel under them (`PipelineDock`: Run, Runs, Versions). The run page gives a
+  Summary and "Where each node spent its time" as a pipeline run does (`runFacts.ts`, pure). For
+  them the run API adds, per run, `pipelineRuns`, `rowsWritten` (summed) and `qualityScore` (the
+  lowest) over the pipeline runs it started, one grouped query for a list
+  (`PipelineStore.flowTotals`); per run-pipeline node `pipelineRunTimes` (asked for, started,
+  finished); and per for-each item `requestedAt`. A node's time is split by those times: working
+  while any of its pipeline runs ran, queued while none ran and one waited for a worker, waiting
+  otherwise. Nothing is estimated: runs from servers without the times show unsplit bars.
 - Not in this plan: retries of a node. A SQL *check* stays a pipeline with a `read` and a `gate`.
 
 ## 7. The sql node (ADR 0028)

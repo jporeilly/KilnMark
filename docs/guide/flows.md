@@ -22,6 +22,17 @@ not.
 **Flows**, in the sidebar after Pipelines, lists every flow with its latest version, whether that
 version can run, and its last run. Stewards see **Run now** beside each; designers see **New flow**.
 
+A flow's own page is laid out as a pipeline's: its name with **Run now**, then the flow on two tabs,
+**Diagram** and **YAML**, which show and edit the same flow. Under them, a panel with three tabs:
+
+- **Run**: the latest run's summary, as its run page gives it, kept current while it goes;
+- **Runs**: each run with its status, version, when it was asked for and by whom, how long it took,
+  and the rows its pipeline runs wrote;
+- **Versions**: every saved version.
+
+The problems, the parameters and saving come last, whichever tab is shown. **Collapse** folds the
+panel to its tabs.
+
 ## Writing a flow
 
 Choose **New flow**. The page starts from a small flow that runs one of your pipelines and, if it
@@ -123,7 +134,7 @@ The sample `samples/08-flows/for-each-region.yaml` runs one pipeline for three r
 
 ## The diagram
 
-Above the YAML, **Diagram** draws the flow as you write it: a box for each node, saying what it does
+The **Diagram** tab draws the flow as you write it: a box for each node, saying what it does
 (the pipeline it runs, the notice it sends, how long it waits), and an arrow for each connection,
 labelled with when it is taken:
 
@@ -140,14 +151,14 @@ connections in words**, under it, lists every connection as a sentence.
 ## Changing the flow on the diagram
 
 Designers can change the flow on the diagram as well as in the YAML. Each change is written into
-the YAML below at once, changing only the lines it must, so your comments and spacing stay as they
+the YAML at once, changing only the lines it must, so your comments and spacing stay as they
 are. Nothing is saved until you save a new version.
 
 ![The Diagram section of a flow's page: a node that runs a pipeline joined to a notice and to a second pipeline by two amber connections, each labelled with its condition on the share of customers set aside; under it, the forms to add a node (type and pipeline) and to connect two nodes (from, to and when it is taken)](images/flow-diagram-edit.png)
 
 - **Add a node.** Under the diagram, choose its type (and, for one that runs a pipeline, the
   pipeline), then **Add node**. It gets an id from its type or pipeline, and the settings it starts
-  with; the problems under the YAML say what else it needs, such as a `sql` node's source.
+  with; the problems under the flow say what else it needs, such as a `sql` node's source.
 - **Connect two nodes.** Drag from a node's right edge to another node: that connection is taken
   when the first succeeds. Or choose **From**, **To** and when it is taken under the diagram, then
   **Connect**. A connection that would join a node to itself, make a loop or repeat one already
@@ -161,7 +172,7 @@ are. Nothing is saved until you save a new version.
   are drawn over the nodes. **Lay out again** removes the block, and the diagram lays the flow out
   itself.
 - **Undo** puts back what the last change on the diagram changed, while the YAML is as that change
-  left it. To go back to the saved version, choose **Undo my changes** under the YAML.
+  left it. To go back to the saved version, choose **Undo my changes** under the flow.
 
 The `layout:` block only says where the diagram draws each node: a flow runs the same however it
 is drawn.
@@ -169,8 +180,8 @@ is drawn.
 ## Checking as you type
 
 The YAML is checked a moment after you stop typing: its shape, its connections (no loops), its
-conditions, and that every pipeline it runs exists. Problems are listed under the editor with their
-line; choose one to move to that line. Lines with a problem are marked in the margin.
+conditions, and that every pipeline it runs exists. Problems are listed under the flow with their
+line; choose one to move to that line in the YAML tab. Lines with a problem are marked in the margin.
 
 The parameters the flow declares are listed under the problems, saying which must be given.
 
@@ -188,7 +199,7 @@ If someone else saved a version after you opened the page, Kilnmark refuses your
 undo theirs unseen. Your text stays on the page. **Load the latest version and keep my text** loads
 theirs, and **Put my changes back** brings yours back, to compare or to make your change again.
 
-**Versions**, at the foot of the page, lists every version with who saved it, when and why. Open
+The **Versions** tab, in the panel under the flow, lists every version with who saved it, when and why. Open
 one to see its YAML exactly as it was saved.
 
 ## Running a flow
@@ -203,30 +214,47 @@ running at a time.
 
 ## Reading a run
 
-Open a run from the flow's **Runs** list.
+Open a run from the **Runs** tab on the flow's page, or the last run from the line under its name.
+A run page is laid out as a pipeline run's, in this order:
 
-![A run page: the run succeeded; its diagram shows the two pipeline nodes outlined green as Succeeded and the notice node dashed as Skipped; the run chart has a bar for each pipeline node, one after the other, and a hatched row for the skipped one; the Nodes table gives each node's status, start, time taken, rows written and score, with a link to its pipeline run](images/flow-run-page.png)
+- **Summary**: its status, the version that ran, who started it, when it was asked for, started and
+  finished, and how long it took; its nodes by how they stand ("2 succeeded, 1 skipped"); how many
+  pipeline runs it started, the rows they wrote in all, and the lowest quality score among them
+  (each pipeline run's score is already the lowest of what it wrote). If the run failed, or a stop
+  node gave a message, it is said under the summary.
+- **Values it ran with**, for stewards and above. Viewers do not see them, nor the messages that
+  quote them, since they can hold server variables.
+- **Where each node spent its time**: four tiles give the run at a glance: its **wall-clock time**,
+  the **most nodes at once**, the **longest node** and its share of the run, and the time its
+  pipeline runs were **queued for a worker**, added up. A line under them says what the run waited
+  for: workers, a pipeline busy with another run (a pipeline runs once at a time), and its `wait`
+  nodes; and, when several ran together, the most pipeline runs at once. Then a bar per node that
+  started, split three ways, each with its own pattern:
+  - **Working**: its pipeline running (for a `for-each` node, any of its items), or its own work,
+    such as a `sql` node's statements or a notice;
+  - **Queued for a worker**: none of its pipeline runs running, and one waiting for a worker;
+  - **Waiting**: the rest, such as a `wait` node waiting, a node waiting for its pipeline to finish
+    another run, or the moment the flow takes to see a pipeline run end.
 
-The run page shows:
-
-- its status, the version that ran, who started it, and, for stewards and above, the values it ran
-  with (viewers do not see them, nor the messages that quote them, since they can hold server
-  variables);
-- the **diagram** of that version, each node outlined and labelled with how it stands in the run,
-  kept current while the run goes;
+  Beside each bar, its share working and what it did. **Show where each node spent its time as a
+  table** gives the same as figures. All of it comes from the times Kilnmark records for each node
+  and each pipeline run; for runs from before these were recorded, each bar is just the node's
+  share of the run, not split.
 - the **run chart**: a bar for each node on one time line from the run's start, with its status
   beside it: green when it succeeded, red when it failed, striped blue while it runs; a skipped
   node is hatched across its row. A bar for a node that ran a pipeline opens that pipeline run;
-- every node of that version in order: its status (Not started, Running, Succeeded, Failed,
-  Cancelled or Skipped), when it started, how long it took, and what happened, such as the rows a
-  pipeline wrote and its score;
-- for a node that ran a pipeline, a link to that **pipeline run**, where its nodes, rows and errors
-  are;
-- for a `for-each` node, how far its items have got ("3 of 5 items done, 1 failed") and each item
-  with its status and a link to its pipeline run; an item that could not be started is shown failed,
-  with no run, and the node's message says why. On the run chart its bar runs from its first
-  item's start to its last item's end. Viewers see the items' values when they are written in the
-  flow, not when they came from the run's values.
+- the **diagram** of that version, each node outlined and labelled with how it stands in the run,
+  kept current while the run goes;
+- **Nodes**: every node of that version in order: its status (Not started, Running, Succeeded,
+  Failed, Cancelled or Skipped), when it started, how long it took, and what happened, such as the
+  rows a pipeline wrote and its score, with a link to its **pipeline run**, where its nodes, rows
+  and errors are. For a `for-each` node, how far its items have got ("3 of 5 items done, 1
+  failed") and each item with its status and a link to its pipeline run; an item that could not be
+  started is shown failed, with no run, and the node's message says why. On the run chart its bar
+  runs from its first item's start to its last item's end. Viewers see the items' values when they
+  are written in the flow, not when they came from the run's values.
+
+![A run page: the run succeeded; its diagram shows the two pipeline nodes outlined green as Succeeded and the notice node dashed as Skipped; the run chart has a bar for each pipeline node, one after the other, and a hatched row for the skipped one; the Nodes table gives each node's status, start, time taken, rows written and score, with a link to its pipeline run](images/flow-run-page.png)
 
 A node's message says that a pipeline failed and where to look, never why: why can quote values
 from the data, and the pipeline run's own page shows it to those who may see it.

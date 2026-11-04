@@ -314,3 +314,20 @@
 .fr-items li {
   margin: 2px 0;
 }
+
+/* Where each node spent its time, for a node whose pipeline run times were not given: its share of
+   the run as one plain bar, not split (the pattern key is for split bars only). */
+.fr-ts-plain {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  background: var(--km-tint-slate-fg);
+  opacity: 0.45;
+}
+
+@media (forced-colors: active) {
+  .fr-ts-plain {
+    background: GrayText;
+    forced-color-adjust: none;
+  }
+}

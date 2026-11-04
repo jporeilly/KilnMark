@@ -1589,6 +1589,12 @@ export type FlowRun = {
   error: string | null;
   /** The parameter values the run started with. */
   parameters: Record<string, unknown> | null;
+  /** How many pipeline runs it has started (absent from older servers). */
+  pipelineRuns?: number;
+  /** The rows its pipeline runs wrote in all; null until one says. */
+  rowsWritten?: number | null;
+  /** The lowest measured quality score (0 to 1) among its pipeline runs; null when nothing was measured. */
+  qualityScore?: number | null;
 };
 export type FlowSummary = {
   name: string;
@@ -1642,7 +1648,14 @@ export type FlowNodeRun = {
   reported: Record<string, unknown> | null;
   /** A for-each node's items, each with its pipeline run; absent for other nodes. */
   items?: FlowItemRun[] | null;
+  /**
+   * The times of the pipeline run a run-pipeline node started: with the node's own times, how long
+   * it waited before asking for the run, how long the run was queued for a worker, and how long it ran.
+   */
+  pipelineRunTimes?: PipelineRunTimes | null;
 };
+/** When a pipeline run was asked for, taken by a worker (started) and finished; null until each happens. */
+export type PipelineRunTimes = { requestedAt: string | null; startedAt: string | null; finishedAt: string | null };
 /**
  * One item of a for-each node in a run. `value` is null for viewers when the items came from a
  * parameter of the run. `status` is pending before its run starts, skipped if the node ended without
@@ -1654,6 +1667,8 @@ export type FlowItemRun = {
   value: string | number | null;
   status: FlowNodeStatus | "queued";
   pipelineRunId: number | null;
+  /** When its pipeline run was asked for (absent from older servers). */
+  requestedAt?: string | null;
   startedAt: string | null;
   finishedAt: string | null;
 };
