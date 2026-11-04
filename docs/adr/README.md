@@ -42,3 +42,4 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0037](0037-token-lifetime-and-access-review.md) | A longest token lifetime, and the access review | Accepted |
 | [0038](0038-a-second-admin-approves-the-unmask-grant.md) | Two people for the unmask grant | Accepted |
 | [0039](0039-backup-and-restore.md) | Backup and restore: a dump of the database, a copy of the keys, kept apart | Accepted |
+| [0041](0041-flow-nodes-for-resources-and-control.md) | Flow nodes that check resources, and controls on how nodes run | Accepted |
