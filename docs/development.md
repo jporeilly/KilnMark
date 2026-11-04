@@ -283,7 +283,8 @@ worker is running, scans stay `queued`.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `kilnmark.worker.concurrency` (`KILNMARK_WORKER_CONCURRENCY`) | `2` | Scans one worker runs at the same time |
+| `kilnmark.worker.concurrency` (`KILNMARK_WORKER_CONCURRENCY`) | `2` | Jobs (scans, quality checks and pipeline runs) one worker runs at the same time: its slots |
+| `kilnmark.worker.flows` (`KILNMARK_WORKER_FLOWS`) | `8` | Flows one worker watches at the same time; they hold no slot, but a database connection each |
 | `kilnmark.worker.poll-interval` | `5s` | How often to look for jobs when no notification arrives |
 | `kilnmark.worker.heartbeat-interval` | `10s` | How often a running job reports that it is alive |
 | `kilnmark.worker.stale-after` | `2m` | A running job silent this long, whose worker is gone, is recovered |
@@ -294,7 +295,19 @@ Pipeline runs are jobs of kind `pipeline`, tried once (they hold a lock of their
 Flow runs are jobs of kind `flow` (docs/design/flows.md), also tried once; a flow only decides which
 pipeline runs next, so its job holds **no** worker slot: the pipeline runs it queues need the slots, and
 a flow holding one could fill every slot while waiting for runs that never start. "Job" is this queue;
-what orchestrates pipelines is called a flow.
+what orchestrates pipelines is called a flow. How to size the slots and flows against the database's
+connections is in [INSTALL.md](../INSTALL.md#sizing-the-workers).
+
+**Source limits** (ADR 0040, docs/design/parallel-runs.md). A source's `max_runs` caps the pipeline
+runs and flow `sql` nodes using it at once. Before a pipeline run starts, its worker takes one place
+on each limited source the version reads or writes: an advisory lock keyed from
+`kilnmark:source-place:<source id>:<k>`, for `k` below the limit, on the job's own lease connection,
+sources in id order, all or nothing. If one is full the run stays queued with a note saying which
+source it waits for, and its job goes back in the queue for 5 s without using its attempt
+(`ScanService.Outcome.WAITING`). A flow's `sql` node takes its place on the flow job's lease and
+waits there, tried again on each look at the flow. Places are given back when the lease closes, by
+PostgreSQL if the worker dies. The lease counts the places it holds itself, since advisory locks
+nest within one session.
 
 Workers wake at once on a PostgreSQL notification and poll as a fallback. A source has at most
 one scan waiting or running: asking for another returns the one in progress. While a worker scans
@@ -515,6 +528,7 @@ listed by `GET /api/v1/common-settings`:
 | `keep_samples` | `true` (the default) keeps sample rows and example values; `false` keeps shapes and statistics only |
 | `sample_rows` | Rows sampled per table or file for profiling, 0 to 10,000; empty for the server's setting |
 | `table_sample_above_rows` | Databases: tables above this many rows (at least 1000) are profiled from a sample |
+| `max_runs` | Most runs at once: pipeline runs and flow `sql` nodes that may use the source at the same time, 1 to 100; empty for no limit (ADR 0040) |
 
 Each has a kind (text, choice, boolean or number) that a save checks, as for connector settings.
 

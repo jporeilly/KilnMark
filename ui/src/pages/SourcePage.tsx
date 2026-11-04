@@ -22,7 +22,7 @@ import { Icon } from "../components/icons";
 import { Button, Card, DataTable, EmptyState, PageHeader } from "../components/ui";
 import { go, href } from "../router";
 
-const COMMON = new Set(["description", "ai_egress", "include", "exclude", "allow_writing", "allow_sql"]);
+const COMMON = new Set(["description", "ai_egress", "include", "exclude", "allow_writing", "allow_sql", "max_runs"]);
 const AI = { local_only: "Local models only", allowed: "Any configured model", none: "No AI models" } as Record<
   string,
   string
@@ -218,6 +218,10 @@ export function SourcePage({ name, role }: { name: string; role: AccessRole }) {
             <div>
               <dt>Pipelines may write</dt>
               <dd>{source.settings.allow_writing === "true" ? "Yes" : "No (read-only)"}</dd>
+            </div>
+            <div>
+              <dt>Most runs at once</dt>
+              <dd>{source.settings.max_runs ? source.settings.max_runs : "No limit"}</dd>
             </div>
             {source.kind === "postgresql" && (
               <div>

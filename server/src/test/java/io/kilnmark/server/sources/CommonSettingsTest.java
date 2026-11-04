@@ -25,7 +25,7 @@ class CommonSettingsTest {
         assertTrue(CommonSettings.problems(Map.of("description", "x".repeat(2001))).get(0).startsWith("description:"));
         assertTrue(CommonSettings.problems(Map.of("include", "*.{csv")).get(0).startsWith("include:"));
         assertEquals(List.of("description", "ai_egress", "include", "exclude", "allow_writing", "allow_sql",
-                "keep_samples", "sample_rows", "table_sample_above_rows"),
+                "keep_samples", "sample_rows", "table_sample_above_rows", "max_runs"),
             CommonSettings.definitions().stream().map(CommonSettings.Definition::key).toList());
     }
 
@@ -35,7 +35,7 @@ class CommonSettingsTest {
         CommonSettings.definitions().forEach(d -> kinds.put(d.key(), d.kind().name()));
         assertEquals(Map.of("description", "TEXT", "ai_egress", "CHOICE", "include", "TEXT", "exclude", "TEXT",
             "allow_writing", "BOOLEAN", "allow_sql", "BOOLEAN", "keep_samples", "BOOLEAN", "sample_rows", "NUMBER",
-            "table_sample_above_rows", "NUMBER"), kinds);
+            "table_sample_above_rows", "NUMBER", "max_runs", "NUMBER"), kinds);
         // The kind follows the choices when a definition gives none, as before kinds.
         assertEquals("CHOICE", new CommonSettings.Definition("k", "K", "", false, List.of("a"), "a").kind().name());
         assertEquals("TEXT", new CommonSettings.Definition("k", "K", "", false, List.of(), null).kind().name());
@@ -56,6 +56,22 @@ class CommonSettingsTest {
         assertEquals("false", CommonSettings.normalise(Map.of("keep_samples", "FALSE ")).get("keep_samples"));
         assertEquals("No", CommonSettings.normalise(Map.of("keep_samples", "No")).get("keep_samples"),
             "only true and false are rewritten; anything else is left for the check to name");
+    }
+
+    @Test
+    void mostRunsAtOnceIsAWholeNumberFromOneToAHundredOrNothing() {
+        assertEquals(null, CommonSettings.maxRuns(Map.of()));
+        assertEquals(null, CommonSettings.maxRuns(null));
+        assertEquals(null, CommonSettings.maxRuns(Map.of("max_runs", " ")));
+        assertEquals(3, CommonSettings.maxRuns(Map.of("max_runs", " 3 ")));
+        assertEquals(100, CommonSettings.maxRuns(Map.of("max_runs", "100")));
+        assertTrue(CommonSettings.problems(Map.of("max_runs", "1")).isEmpty());
+        assertTrue(CommonSettings.problems(Map.of("max_runs", "")).isEmpty(), "empty: no limit");
+        for (String bad : List.of("0", "101", "-1", "2.5", "many")) {
+            assertEquals(List.of("max_runs: a whole number from 1 to 100, or empty for no limit"),
+                CommonSettings.problems(Map.of("max_runs", bad)), bad);
+            assertEquals(null, CommonSettings.maxRuns(Map.of("max_runs", bad)), "a value a save refuses is no limit");
+        }
     }
 
     @Test

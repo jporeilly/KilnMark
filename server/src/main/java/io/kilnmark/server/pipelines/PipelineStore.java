@@ -525,14 +525,34 @@ public class PipelineStore {
         });
     }
 
-    /** Marks a queued run running; false when it is no longer queued (cancelled, or already taken). */
+    /**
+     * Marks a queued run running, clearing what it said while it waited; false when it is no longer
+     * queued (cancelled, or already taken).
+     */
     public boolean startRun(long id) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.pipeline_run SET status = 'running', "
-                + "started_at = now() WHERE id = ? AND status = 'queued' AND NOT cancel_requested")) {
+                + "started_at = now(), error = NULL WHERE id = ? AND status = 'queued' AND NOT cancel_requested")) {
                 ps.setLong(1, id);
                 return ps.executeUpdate() == 1;
             }
+        });
+    }
+
+    /**
+     * Says on a queued run what it is waiting for (a free place on a source, ADR 0040): its page shows
+     * it as a note until the run starts. Nothing changes once the run has started or been cancelled.
+     */
+    public void waiting(long id, String why) {
+        db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("UPDATE kilnmark.pipeline_run SET error = ? "
+                + "WHERE id = ? AND status = 'queued' AND NOT cancel_requested AND error IS DISTINCT FROM ?")) {
+                ps.setString(1, why);
+                ps.setLong(2, id);
+                ps.setString(3, why);
+                ps.executeUpdate();
+            }
+            return null;
         });
     }
 

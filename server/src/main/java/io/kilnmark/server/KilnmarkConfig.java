@@ -343,9 +343,16 @@ public interface KilnmarkConfig {
 
     /** The worker role: how it pulls jobs from the queue. */
     interface Worker {
-        /** Jobs (scans) one worker runs at the same time. */
+        /** Jobs (scans, quality checks and pipeline runs) one worker runs at the same time: its slots. */
         @WithDefault("2")
         int concurrency();
+
+        /**
+         * Flows one worker watches at the same time. They hold no slot, but each holds a database
+         * connection for its lock while it watches (ADR 0040).
+         */
+        @WithDefault("8")
+        int flows();
 
         /** How often to look for jobs when no notification arrives. */
         @WithDefault("5s")

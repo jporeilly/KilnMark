@@ -37,7 +37,7 @@ A job runs when all of these have room:
    that many of the flow's nodes are running; a `for-each` node's items, only when fewer than its own
    `max_parallel` are.
 
-## P1. Worker settings and sizing (planned)
+## P1. Worker settings and sizing (built)
 
 - `kilnmark.worker.flows` (`KILNMARK_WORKER_FLOWS`, 8, at least 1) replaces `JobWorker.MAX_FLOWS`.
 - The installation guide gains **Sizing the workers**: what a slot is, how to raise the slots, and
@@ -48,7 +48,9 @@ A job runs when all of these have room:
   all Kilnmark processes.
 - `docs/development.md` says the concurrency setting is jobs, not scans.
 
-## P2. Source limits (planned)
+Built: `KilnmarkConfig.Worker.flows()`, read by `JobWorker.start`; INSTALL.md, "Sizing the workers".
+
+## P2. Source limits (built)
 
 - **Setting.** A source's **Most runs at once** (`maxRuns` in the API, `max_runs` in the database),
   1 to 100, or empty for no limit. Admins and designers who may edit the source set it; changing it
@@ -66,6 +68,29 @@ A job runs when all of these have room:
 - **Lowering the limit** while runs hold places above it: they keep them; new runs see the new limit.
 - Tests: a limit of 1 makes two runs on one source take turns, and neither fails; a dead worker's
   places are free again; a run on two full sources holds neither while it waits.
+
+Built, with these changes from the plan above:
+
+- **Stored with the source's other common settings**, as `max_runs` in `source.settings` (beside
+  `allow_writing` and `sample_rows`), not in a column of its own: `CommonSettings` is the one place
+  the API, bulk import and the form take a source's settings from, so the setting came with
+  them, and no migration was needed. In the API it is `settings.max_runs`, a text holding 1 to 100.
+- **Audited** as `source.max_runs` (before, after, via), beside `source.allow_writing`; the
+  `api.request` event records the edit too.
+- **The waiting note** is the queued run's `error` text, which the run page shows as a note while a
+  run is not failed; `PipelineStore.startRun` clears it. The note names the source by its name,
+  which the run's readers already see in the pipeline's YAML and the run's writes.
+- **Which sources**: every saved source a node's source setting names (read and write nodes),
+  worked out by `compiler.check` on the run's version and values before the run is marked running,
+  so a waiting run stays Queued and nothing connects to a source first.
+- **Same lease, counted**: advisory locks nest within one session, so the lease keeps the places it
+  holds and never counts one twice. This matters for a flow, whose `sql` nodes share its lease.
+- **A flow's `sql` node** takes its place on the flow job's lease and waits there, saying so in its
+  message, tried again on each look at the flow; it gives the place back when it ends. A flow
+  cancelled meanwhile ends it as Cancelled, unstarted. It has no time limit, as a waiting pipeline
+  run has none.
+- A run whose job is back in the queue goes behind runs queued since (the queue takes the earliest
+  `run_after`). Fairness between waiting runs is not promised.
 
 ## P3. A flow's `max_parallel` (planned)
 
@@ -103,10 +128,16 @@ A job runs when all of these have room:
   its value and a link. The run chart draws the node's bar from its first item's start to its last
   item's end.
 
-## P5. Several workers (planned)
+## P5. Several workers (built)
 
 - A test runs two workers in one process against one database, queues more jobs than either has
   slots, and checks every job runs once, the slots of both are used, and source limits hold across
   both.
 - The installation guide says how to run a second Kilnmark with the worker role only, against the
   same database.
+
+Built: `TwoWorkersTest` starts a second `JobWorker` beside the server's own; six held pipeline runs
+fill both workers' two slots, every run starts once, and with `max_runs: 2` on the source they all
+read, two run while the other four wait, across both workers. INSTALL.md, "A second worker", lists
+what a worker-only process must share: the database, the key for stored passwords, the files and
+drivers.

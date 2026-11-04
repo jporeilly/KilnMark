@@ -64,7 +64,8 @@ Map with `MaxConcurrency`).
 
 ## Consequences
 
-- A migration adds `max_runs` to sources, and `flow_item` to pipeline runs so a run is found again
+- A migration adds `max_runs` to sources (built instead as a common setting in the source's
+  settings, with `allow_writing`: docs/design/parallel-runs.md, P2), and `flow_item` to pipeline runs so a run is found again
   by its flow run, node and item (the unique index moves from `(flow_run_id, flow_step)` to include
   the item).
 - Waiting for a source's place is not a failure and uses no attempt: a pipeline job is still tried

@@ -797,6 +797,25 @@ waits. A pipeline with parameters runs with their defaults; see
 To stop a run, open it and choose **Cancel run**. A queued run is cancelled at once; a running one
 stops within a few seconds. Rows already written stay written.
 
+### Sources that take a few runs at a time
+
+A source can say how many runs may use it at once, so a busy production database is never asked
+for more sessions than its administrators agree to. Open the source, choose **Edit**, and on the
+last step set **Most runs at once** (1 to 100; leave it empty for no limit). Designers and admins
+can change it, and each change is in the [audit log](audit-log.md).
+
+A pipeline run counts once against every source it reads or writes, and a flow's `sql` node against
+its source. Scans and quality checks do not count: a source is scanned once at a time anyway.
+
+A run whose source is full waits in the queue. It stays **Queued**, and its page says
+"Waiting for a free place on source warehouse. The run starts by itself when another run using the
+source ends." Waiting is not failing: the run starts when a place is free, and its one attempt is
+not used. A run that uses several sources takes a place on all of them or none, so two runs never
+hold up each other. You can cancel a waiting run as any queued run.
+
+Lowering the limit does not stop runs already going: they finish, and new runs see the new limit.
+A limit of 1 makes the runs that use the source take turns.
+
 ## Reading a run
 
 Open a run from the **Runs** tab. The page updates itself until the run ends, and says when its

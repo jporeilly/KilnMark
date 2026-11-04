@@ -50,6 +50,38 @@ public class JobQueue {
     public record Recovery(int requeued, int failed) {
     }
 
+    /**
+     * A source a run uses that limits how many runs use it at once: its id, its name (for the run's
+     * page) and its Most runs at once (ADR 0040).
+     */
+    public record SourceLimit(long sourceId, String source, int max) {
+    }
+
+    /**
+     * What taking places found: the places taken (their lock keys, to give back with
+     * {@link ScanLease#givePlaces}), or {@code full}, the first source with no free place, in which
+     * case nothing is held.
+     */
+    public record Places(List<Long> keys, SourceLimit full) {
+
+        public Places {
+            keys = List.copyOf(keys);
+        }
+
+        /** Whether every place asked for was taken. */
+        public boolean taken() {
+            return full == null;
+        }
+    }
+
+    /**
+     * The lock key of place {@code k} of source {@code sourceId}: a 64-bit advisory lock key, made as
+     * {@link #targetKey} makes a written asset's.
+     */
+    static long placeKey(long sourceId, int k) {
+        return targetKey("kilnmark:source-place:" + sourceId + ":" + k);
+    }
+
     private final Db db;
     private final KilnmarkConfig config;
 
@@ -232,6 +264,8 @@ public class JobQueue {
         private final int lockClass;
         private final long sourceId;
         private final int backendPid;
+        /** Source places held on this connection: advisory locks nest within a session, so they are counted here. */
+        private final java.util.Set<Long> places = new java.util.HashSet<>();
         private boolean closed;
 
         /** {@code sourceId} is the lock's key: a source id, or a pipeline job's id. */
@@ -280,6 +314,55 @@ public class JobQueue {
             });
         }
 
+        /**
+         * Takes one place on each source, on this lease's connection: sources in id order, the first
+         * free place of each (place {@code k} for {@code k} from 0 to the limit less one). All or
+         * nothing: if a source has no free place, the places taken so far are given back, so a run
+         * never holds a place while it waits for another. Places are freed by {@link #givePlaces},
+         * or when the lease closes (by PostgreSQL, when a worker dies).
+         */
+        public synchronized Places takePlaces(java.util.Collection<SourceLimit> sources) {
+            java.util.Map<Long, SourceLimit> byId = new java.util.TreeMap<>();
+            sources.forEach(s -> byId.putIfAbsent(s.sourceId(), s));
+            List<Long> taken = new ArrayList<>();
+            try {
+                for (SourceLimit s : byId.values()) {
+                    Long got = null;
+                    for (int k = 0; k < s.max() && got == null; k++) {
+                        long key = placeKey(s.sourceId(), k);
+                        // A place this session already holds would be granted again: it is not free.
+                        if (!places.contains(key)
+                            && tryLock("SELECT pg_try_advisory_lock(?)", ps -> ps.setLong(1, key))) {
+                            got = key;
+                        }
+                    }
+                    if (got == null) {
+                        givePlaces(taken);
+                        return new Places(List.of(), s);
+                    }
+                    places.add(got);
+                    taken.add(got);
+                }
+            } catch (RuntimeException e) {
+                givePlaces(taken);
+                throw e;
+            }
+            return new Places(taken, null);
+        }
+
+        /** Gives back places taken with {@link #takePlaces}; never throws (closing the lease frees them anyway). */
+        public synchronized void givePlaces(List<Long> keys) {
+            for (long key : keys) {
+                if (places.remove(key)) {
+                    try {
+                        tryLock("SELECT pg_advisory_unlock(?)", ps -> ps.setLong(1, key));
+                    } catch (RuntimeException e) {
+                        LOG.debugf("Could not give back a source's place; closing the lease does");
+                    }
+                }
+            }
+        }
+
         private interface Binder {
             void bind(PreparedStatement ps) throws SQLException;
         }
@@ -320,6 +403,7 @@ public class JobQueue {
                 return;
             }
             closed = true;
+            places.clear();
             // Every advisory lock this session took (a pipeline's target and source locks too), so the
             // connection goes back to the pool holding none.
             try (c; PreparedStatement ps = c.prepareStatement("SELECT pg_advisory_unlock_all()")) {

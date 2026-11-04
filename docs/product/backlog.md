@@ -36,7 +36,9 @@ Last reviewed: 4 November 2026 (after #78-#85 merged).
    in Plan & Scope).
 4. **Flows F4** ([ADR 0026](../adr/0026-flows.md), docs/design/flows.md): the diagram and the run
    chart (F4a) shipped (#85); next, editing on the canvas (F4b); adding the sample flows from Add
-   samples; deleting a flow; resource control; the built-in scheduler.
+   samples; deleting a flow; resource control (ADR 0040: worker settings, source limits and
+   several workers are built; a flow's `max_parallel` and the `for-each` node next); the built-in
+   scheduler.
 5. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030); then
    templates, version history, and v0.1.0.
