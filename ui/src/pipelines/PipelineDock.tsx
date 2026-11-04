@@ -17,7 +17,7 @@ const LABELS: Record<DockTab, string> = {
   run: "Run",
   suggestions: "Suggestions",
   nodes: "Nodes",
-  runs: "Runs",
+  runs: "History",
   versions: "Versions",
 };
 

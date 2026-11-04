@@ -652,7 +652,7 @@ export function FlowPage({ name, version, role }: { name: string | null; version
               {runs === null && <p role="status">Loading…</p>}
               {runs?.length === 0 && <p>Not run yet.{steward ? " Run now runs the saved version." : ""}</p>}
               {runs && runs.length > 0 && (
-                <div className="table-scroll" role="region" aria-label="Runs table" tabIndex={0}>
+                <div className="table-scroll" role="region" aria-label="History table" tabIndex={0}>
                   <table>
                     <thead>
                       <tr>

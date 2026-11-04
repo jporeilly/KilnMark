@@ -269,7 +269,7 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
   which moves the focus to its tools. A node's settings are changed in the YAML (but see the panel's
   Settings tab, below).
 - **Pages laid out as a pipeline's, built.** The flow page puts Diagram and YAML on tabs, with the
-  pipeline page's panel under them (`PipelineDock`: Run, Runs, Versions). The run page gives a
+  pipeline page's panel under them (`PipelineDock`: Run, History, Versions). The run page gives a
   Summary and "Where each node spent its time" as a pipeline run does (`runFacts.ts`, pure). For
   them the run API adds, per run, `pipelineRuns` (asked for), `rowsWritten` (summed) and
   `qualityScore` (the lowest) over its pipeline runs, one grouped query for a list
@@ -285,7 +285,7 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
   key (`kilnmark.flow.panel`), and reads the latest run only while its Run or Nodes tab is shown.
 - **The panel's Nodes and Settings tabs, built.** The flow page's panel has the pipeline page's
   tabs in the same order: Nodes, Settings (only while a designer has a node or connection chosen),
-  Run, Runs, Versions; a new flow has Nodes and Settings. Nodes is a table of every node, what it
+  Run, History, Versions; a new flow has Nodes and Settings. Nodes is a table of every node, what it
   runs after and how, and its part in the latest run (none on an old version's page); a node's name
   chooses it. Under the table are the forms to add a node and to connect
   two, which were under the diagram. Choosing a node or connection, anywhere, shows Settings, even when it
