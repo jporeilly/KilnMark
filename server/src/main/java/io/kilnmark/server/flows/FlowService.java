@@ -32,6 +32,7 @@ import io.kilnmark.server.jobs.JobQueue;
 import io.kilnmark.server.notify.NotificationPublisher;
 import io.kilnmark.server.pipelines.PipelineService;
 import io.kilnmark.server.pipelines.PipelineStore;
+import io.kilnmark.server.pipelines.WriteNodeFactory;
 import io.kilnmark.server.scan.ScanService;
 import io.kilnmark.server.variables.VariableService;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -194,6 +195,40 @@ public class FlowService {
             problems.add(new Problem(at.line(), at.column(), s.id(), "Node " + s.id() + " fills " + each.as() + " with "
                 + "each item, a " + given + ", but " + s.pipeline() + " takes a " + p.kind() + " for it"));
         }
+        String shared = each.maxParallel() > 1 ? sharedTarget(pipeline, each.as()) : null;
+        if (shared != null) {
+            // A run waits only a while for another writing its target, then fails: items at once must not share one.
+            Position mp = s.at("max_parallel");
+            problems.add(new Problem(mp.line(), mp.column(), s.id(), "Every item would write " + shared + ", so they "
+                + "would fail waiting for each other: put ${" + each.as() + "} in the write's target, or set "
+                + "max_parallel: 1"));
+        }
+    }
+
+    /**
+     * The target of the first write node of {@code pipeline} that every item would share: one whose
+     * target (or table or path) and source do not name the parameter {@code as}. Null when each item
+     * writes its own.
+     */
+    static String sharedTarget(PipelineDefinition pipeline, String as) {
+        for (PipelineDefinition.NodeDefinition n : pipeline.nodes()) {
+            if (!WriteNodeFactory.TYPE.equals(n.type())) {
+                continue;
+            }
+            String target = null;
+            for (String key : List.of("target", "table", "path")) {
+                if (n.configText().get(key) instanceof String t) {
+                    target = t;
+                    break;
+                }
+            }
+            String source = n.configText().get("source") instanceof String t ? t : null;
+            if (target != null && !Parameters.names(target).contains(as)
+                && (source == null || !Parameters.names(source).contains(as))) {
+                return target;
+            }
+        }
+        return null;
     }
 
     /**
@@ -602,14 +637,30 @@ public class FlowService {
         boolean show = values || each.itemsParameter() == null;
         java.util.SortedMap<Integer, PipelineStore.Run> runs = pipelineStore.flowItemRuns(r.id(), n.id());
         boolean ended = s != null && !"running".equals(s.status()) && !"pending".equals(s.status());
+        Set<Integer> notStarted = notStarted(s);
         List<FlowViews.ItemRunView> out = new ArrayList<>();
         int count = Math.max(list.size(), runs.isEmpty() ? 0 : runs.lastKey() + 1);
         for (int i = 0; i < count; i++) {
             PipelineStore.Run pr = runs.get(i);
             Object value = show && i < list.size() ? list.get(i) : null;
+            String unrun = notStarted.contains(i) ? "failed" : ended ? "skipped" : "pending";
             out.add(pr == null
-                ? new FlowViews.ItemRunView(i, value, ended ? "skipped" : "pending", null, null, null)
+                ? new FlowViews.ItemRunView(i, value, unrun, null, null, null)
                 : new FlowViews.ItemRunView(i, value, pr.status(), pr.id(), pr.startedAt(), pr.finishedAt()));
+        }
+        return out;
+    }
+
+    /** Where a for-each node's row lists the items that failed without a run (its node message says why). */
+    static final String NOT_STARTED = "not_started";
+
+    /** The items a for-each node's row records as failed without a run. */
+    private Set<Integer> notStarted(FlowStore.NodeRun s) {
+        Set<Integer> out = new HashSet<>();
+        com.fasterxml.jackson.databind.JsonNode reported = s == null ? null : tree(s.reported());
+        if (reported != null && reported.get(NOT_STARTED) instanceof com.fasterxml.jackson.databind.JsonNode list
+            && list.isArray()) {
+            list.forEach(x -> out.add(x.asInt()));
         }
         return out;
     }
@@ -835,7 +886,8 @@ public class FlowService {
                         Fan fan = fans.get(s);
                         if (fan != null) {
                             fan.running().forEach(this::cancelPipelineRun);
-                            save(def, s, "failed", null, Instant.now(), "The worker running this flow stopped", Map.of());
+                            save(def, s, "failed", null, Instant.now(), "The worker running this flow stopped",
+                                recorded(fan, Map.of()));
                             continue;
                         }
                         Long prId = pipelineRuns.get(s);
@@ -980,6 +1032,8 @@ public class FlowService {
             /** How each item ended: succeeded, failed or cancelled; failed too for one that could not start. */
             final java.util.SortedMap<Integer, String> ended = new java.util.TreeMap<>();
             final Set<Integer> cancelAsked = new HashSet<>();
+            /** Items that failed without a run: the pipeline refused their values, or could not be run. */
+            final java.util.SortedSet<Integer> notStarted = new java.util.TreeSet<>();
             int next;
             Instant waitingSince;
             /** Nothing more starts: the flow was cancelled or stopped, a run was cancelled by hand, or it gave up waiting. */
@@ -1079,18 +1133,40 @@ public class FlowService {
 
         private void itemNotStarted(Fan fan, int i, String why) {
             fan.ended.put(i, "failed");
+            fan.notStarted.add(i);
             fan.next++;
             if (fan.problem == null) {
                 fan.problem = "Item " + (i + 1) + ": " + why;
             }
         }
 
+        /**
+         * What the node's row records besides what conditions read: the items that failed without a
+         * run, so the run's page shows them as failed rather than not started.
+         */
+        private Map<String, Object> recorded(Fan fan, Map<String, Object> reported) {
+            Map<String, Object> out = new LinkedHashMap<>(reported);
+            if (!fan.notStarted.isEmpty()) {
+                out.put(NOT_STARTED, List.copyOf(fan.notStarted));
+            }
+            return out;
+        }
+
         /** Saves the node's message when it changes. */
         private void say(FlowDefinition def, Fan fan, String message) {
             if (!message.equals(fan.said)) {
                 fan.said = message;
-                save(def, fan.node.id(), "running", null, null, message, Map.of());
+                save(def, fan.node.id(), "running", null, null, message, recorded(fan, Map.of()));
             }
+        }
+
+        /** Ends a for-each node: conditions read the counts; its row also records the items that never started. */
+        private void endFan(FlowDefinition def, FlowEngine engine, Fan fan, FlowEngine.State state, String message,
+                            Map<String, Object> reported) {
+            engine.finish(fan.node.id(), state, reported);
+            nodeWasCancelled |= state == FlowEngine.State.CANCELLED;
+            save(def, fan.node.id(), state.name().toLowerCase(Locale.ROOT), null, Instant.now(), message,
+                recorded(fan, reported));
         }
 
         /**
@@ -1145,16 +1221,16 @@ public class FlowService {
             int n = fan.items.size();
             String of = " of " + n + (n == 1 ? " item" : " items");
             if (succeeded == n) {
-                end(def, engine, fan.node.id(), FlowEngine.State.SUCCEEDED, null, succeeded + of + " succeeded", reported);
+                endFan(def, engine, fan, FlowEngine.State.SUCCEEDED, succeeded + of + " succeeded", reported);
             } else if (fan.byHand || stopped) {
-                end(def, engine, fan.node.id(), FlowEngine.State.CANCELLED, null, (fan.byHand ? "A run of one of its "
-                    + "items was cancelled" : "Cancelled") + ": " + fan.ended.size() + of + " had ended, " + succeeded
+                endFan(def, engine, fan, FlowEngine.State.CANCELLED, (fan.byHand ? "A run of one of its items was "
+                    + "cancelled" : "Cancelled") + ": " + fan.ended.size() + of + " had ended, " + succeeded
                     + " succeeded", reported);
             } else {
                 String why = failed > 0 ? failed + of + " failed; their pipeline runs say why"
                     : (n - fan.ended.size()) + of + " did not run";
-                end(def, engine, fan.node.id(), FlowEngine.State.FAILED, null, why
-                    + (fan.problem == null ? "" : ". " + fan.problem), reported);
+                endFan(def, engine, fan, FlowEngine.State.FAILED, why + (fan.problem == null ? "" : ". " + fan.problem),
+                    reported);
             }
         }
 

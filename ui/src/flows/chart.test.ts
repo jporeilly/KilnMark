@@ -122,6 +122,10 @@ describe("for-each nodes", () => {
   test("its row says how far the items have got", () => {
     expect(itemsProgress(items)).toBe("2 of 5 items done, 1 failed");
     expect(itemsProgress([{ ...items[0] }])).toBe("1 of 1 item done");
+    // An item that could not be queued has no run, and is failed: the row agrees with the node's message.
+    expect(itemsProgress([{ ...items[0] }, { ...items[4], status: "failed" }, { ...items[2], status: "succeeded" }])).toBe(
+      "3 of 3 items done, 1 failed",
+    );
     expect(itemsProgress([{ ...items[0], status: "cancelled" }, { ...items[4], status: "skipped" }])).toBe(
       "1 of 2 items done, 1 cancelled, 1 not run",
     );

@@ -776,6 +776,11 @@ class FlowRunTest {
         assertEquals("skipped", node(run.id(), "after").status());
         assertTrue(flows.runDetail(run.id(), false).nodes().get(0).message().contains("shown to stewards"),
             "viewers do not see the values an item could not run with");
+        // The item that could not start is failed on the run page too, not "not started", so the two agree.
+        List<FlowViews.ItemRunView> items = flows.runDetail(run.id(), true).nodes().get(0).items();
+        assertEquals(List.of("failed", "failed", "succeeded"), items.stream().map(FlowViews.ItemRunView::status).toList());
+        assertNull(items.get(1).pipelineRunId());
+        assertTrue(each.reported().replace(" ", "").contains("\"not_started\":[1]"), each.reported());
     }
 
     @Test
@@ -853,6 +858,17 @@ class FlowRunTest {
         List<String> missing = flows.validate(yaml.replace("pipeline: fl-param", "pipeline: no-such-pipeline")).problems()
             .stream().map(io.kilnmark.kiln.yaml.Problem::message).toList();
         assertTrue(missing.stream().anyMatch(m -> m.contains("'no-such-pipeline', which does not exist")), missing.toString());
+        // Items at once that would all write one table would fail waiting for each other: refused when saved.
+        as(designer).body(Map.of("name", "fl-shared", "yaml", PARAM.replace("name: fl-param", "name: fl-shared")
+            .replace("table: lab.fl_${suffix}_${vars.area}", "table: lab.fl_shared"))).post("/api/v1/pipelines")
+            .then().statusCode(201);
+        String shared = yaml.replace("pipeline: fl-param", "pipeline: fl-shared");
+        List<String> together = flows.validate(shared).problems().stream().map(io.kilnmark.kiln.yaml.Problem::message)
+            .toList();
+        assertTrue(together.contains("Every item would write lab.fl_shared, so they would fail waiting for each other: "
+            + "put ${suffix} in the write's target, or set max_parallel: 1"), together.toString());
+        assertTrue(flows.validate(shared.replace("as: suffix", "as: suffix\n    max_parallel: 1")).valid(),
+            "one at a time, they take turns");
         // The flow's own suffix is not passed by name to the parameter each item fills.
         assertTrue(flows.validate(yaml.replace("suffixes: { type: text list, default: [pa] }",
             "suffixes: { type: text list, default: [pa] }\n  suffix: { type: number, default: 1 }")).valid());

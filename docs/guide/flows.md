@@ -96,17 +96,25 @@ connections:
   - { from: regions, to: tell, when: "regions.failed = 0" }
 ```
 
-- **Items** are 1 to 500 texts or numbers, all of one kind, or one list parameter of the flow, so
-  each run of the flow can give its own list. `as` must be a parameter the pipeline takes, of the
-  items' kind; saving the flow says so if it is not.
+- **Items** are 1 to 500 texts or numbers written in the node, all of one kind, or one list
+  parameter of the flow, so each run of the flow can give its own list; a list parameter holds at
+  most 200 values. `as` must be a parameter the pipeline takes, of the items' kind; saving the flow
+  says so if it is not.
 - **Each item is an ordinary pipeline run**, started as you, so it shows on the pipeline's own runs
   and waits for a free worker like any other. The items of one node may run the pipeline at the same
-  time; anyone else's run of that pipeline still waits for them, and they wait for it. Two items that
-  write the same table or file take turns, so give each item its own file or table (here, a
-  parameter in the path) to run them side by side.
+  time. While they run, **Run now** on that pipeline is refused (a run is already going); another
+  flow's node that runs it waits for them, and the items wait for any other run of it.
+- **Each item must write its own table or file.** A run waits only a short while for another
+  writing the same one, then fails. So when items run at once, saving the flow refuses a pipeline
+  whose write does not name the item's parameter in its target (here, `${region}` in the path), and
+  says to put it there or to set the node's `max_parallel: 1`, which runs the items one after
+  another.
 - **Every item runs**, even when one fails. The node then succeeds if every item did, and fails if
   any failed; a connection's condition can read `regions.items`, `regions.succeeded` and
-  `regions.failed`. Cancelling the flow cancels the items still running and starts no more.
+  `regions.failed`. An item the pipeline would not run with its value counts as failed, and the
+  node's message says why. Cancelling the flow cancels the items still running and starts no more.
+  Cancelling one item's pipeline run by hand cancels the whole flow, as cancelling a run-pipeline
+  node's run does.
 - **The flow's own `max_parallel`** (1 to 50) caps how many of its nodes run at once; nodes wait
   their turn in the order they are written. A for-each node counts once, however many items it
   runs, and a `stop` node never waits, so a flow can always end. Left out, there is no limit.
@@ -134,6 +142,8 @@ connections in words**, under it, lists every connection as a sentence.
 Designers can change the flow on the diagram as well as in the YAML. Each change is written into
 the YAML below at once, changing only the lines it must, so your comments and spacing stay as they
 are. Nothing is saved until you save a new version.
+
+![The Diagram section of a flow's page: a node that runs a pipeline joined to a notice and to a second pipeline by two amber connections, each labelled with its condition on the share of customers set aside; under it, the forms to add a node (type and pipeline) and to connect two nodes (from, to and when it is taken)](images/flow-diagram-edit.png)
 
 - **Add a node.** Under the diagram, choose its type (and, for one that runs a pipeline, the
   pipeline), then **Add node**. It gets an id from its type or pipeline, and the settings it starts
@@ -193,7 +203,11 @@ running at a time.
 
 ## Reading a run
 
-Open a run from the flow's **Runs** list. The run page shows:
+Open a run from the flow's **Runs** list.
+
+![A run page: the run succeeded; its diagram shows the two pipeline nodes outlined green as Succeeded and the notice node dashed as Skipped; the run chart has a bar for each pipeline node, one after the other, and a hatched row for the skipped one; the Nodes table gives each node's status, start, time taken, rows written and score, with a link to its pipeline run](images/flow-run-page.png)
+
+The run page shows:
 
 - its status, the version that ran, who started it, and, for stewards and above, the values it ran
   with (viewers do not see them, nor the messages that quote them, since they can hold server
@@ -209,7 +223,8 @@ Open a run from the flow's **Runs** list. The run page shows:
 - for a node that ran a pipeline, a link to that **pipeline run**, where its nodes, rows and errors
   are;
 - for a `for-each` node, how far its items have got ("3 of 5 items done, 1 failed") and each item
-  with its status and a link to its pipeline run. On the run chart its bar runs from its first
+  with its status and a link to its pipeline run; an item that could not be started is shown failed,
+  with no run, and the node's message says why. On the run chart its bar runs from its first
   item's start to its last item's end. Viewers see the items' values when they are written in the
   flow, not when they came from the run's values.
 

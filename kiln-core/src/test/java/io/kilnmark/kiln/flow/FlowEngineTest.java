@@ -266,6 +266,22 @@ class FlowEngineTest {
     }
 
     @Test
+    void aNodeReadyOnlyAfterASkipStillGoesInItsWrittenTurn() {
+        // e waits for s and f; s is skipped once f fails, which makes e ready. e is written before l, so
+        // e takes the one place, although l was ready before the skip was worked out.
+        FlowEngine e = new FlowEngine(List.of("f", "e", "s", "l"), List.of(p("f", "s", Kind.SUCCESS),
+            p("s", "e", Kind.SUCCESS), p("f", "e", Kind.FAILURE), p("f", "l", Kind.FAILURE)), Map.of(), 1,
+            java.util.Set.of());
+        assertEquals(List.of("f"), e.ready());
+        e.finish("f", State.FAILED, Map.of());
+        assertEquals(List.of("e"), e.ready());
+        assertEquals(State.SKIPPED, e.state("s"));
+        assertEquals(State.PENDING, e.state("l"));
+        e.finish("e", State.SUCCEEDED, Map.of());
+        assertEquals(List.of("l"), e.ready());
+    }
+
+    @Test
     void aSkippedBranchDoesNotCountAgainstTheLimit() {
         // b is skipped (a failed, b runs on success), so c may start beside d.
         FlowEngine e = new FlowEngine(List.of("a", "b", "c", "d"), List.of(p("a", "b", Kind.SUCCESS),

@@ -148,30 +148,30 @@ public final class FlowEngine {
         if (cancelled || haltMessage != null) {
             return started;
         }
-        long running = states.values().stream().filter(s -> s == State.RUNNING).count();
+        // First every skip, which can settle further connections; starting a node settles none.
         boolean changed = true;
         while (changed) {
             changed = false;
             for (String node : nodes) {
-                if (states.get(node) != State.PENDING) {
-                    continue;
-                }
-                List<Connection> into = connections.stream().filter(p -> p.to().equals(node)).toList();
-                if (!into.isEmpty() && !into.stream().allMatch(this::settled)) {
-                    continue;
-                }
-                if (into.isEmpty() || into.stream().anyMatch(this::taken)) {
-                    if (maxParallel > 0 && running >= maxParallel && !neverHeld.contains(node)) {
-                        continue; // held: it starts when a running node ends
-                    }
-                    states.put(node, State.RUNNING);
-                    started.add(node);
-                    running++;
-                } else {
+                List<Connection> into = intoIfSettled(node);
+                if (into != null && !into.isEmpty() && into.stream().noneMatch(this::taken)) {
                     states.put(node, State.SKIPPED);
+                    changed = true;
                 }
-                changed = true;
             }
+        }
+        // Then what can start, in the order the nodes were given, while the limit allows.
+        long running = states.values().stream().filter(s -> s == State.RUNNING).count();
+        for (String node : nodes) {
+            if (intoIfSettled(node) == null) {
+                continue;
+            }
+            if (maxParallel > 0 && running >= maxParallel && !neverHeld.contains(node)) {
+                continue; // held: it starts when a running node ends
+            }
+            states.put(node, State.RUNNING);
+            started.add(node);
+            running++;
         }
         return started;
     }
@@ -285,6 +285,15 @@ public final class FlowEngine {
             }
         }
         return Outcome.SUCCEEDED;
+    }
+
+    /** The connections into a pending node whose connections in are all settled; null for any other node. */
+    private List<Connection> intoIfSettled(String node) {
+        if (states.get(node) != State.PENDING) {
+            return null;
+        }
+        List<Connection> into = connections.stream().filter(p -> p.to().equals(node)).toList();
+        return into.stream().allMatch(this::settled) ? into : null;
     }
 
     /** Whether a connection is settled: the node it leaves has ended or been skipped. */

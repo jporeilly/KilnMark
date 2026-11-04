@@ -1646,7 +1646,8 @@ export type FlowNodeRun = {
 /**
  * One item of a for-each node in a run. `value` is null for viewers when the items came from a
  * parameter of the run. `status` is pending before its run starts, skipped if the node ended without
- * starting it, else its pipeline run's.
+ * starting it, failed with no `pipelineRunId` if it could not be queued (the node's message says
+ * why), else its pipeline run's.
  */
 export type FlowItemRun = {
   item: number;

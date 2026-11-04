@@ -98,7 +98,8 @@ public final class FlowViews {
      * viewers when the items came from a parameter of the run, which can hold server variables),
      * and its pipeline run with that run's status ({@code pending} before it starts, {@code queued},
      * running, succeeded, failed or cancelled; {@code skipped} if the node ended without starting it)
-     * and times.
+     * and times. An item that failed with no pipeline run is one that could not be queued (the
+     * pipeline refused its values, or could not be run); the node's message says why.
      */
     public record ItemRunView(int item, Object value, String status, Long pipelineRunId, Instant startedAt,
                               Instant finishedAt) {

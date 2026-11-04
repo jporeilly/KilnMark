@@ -39,9 +39,12 @@ public class FlowRunResource {
     @Operation(summary = "A flow run", description = "The run's status, timings, the parameter values it started with "
         + "and, for every node of its version in order: its status (pending until it starts, then running, "
         + "succeeded, failed, cancelled or skipped), when it started and ended, its message, what it reported, and "
-        + "the pipeline run it started. Messages are in Kilnmark's words, never a pipeline's error: the pipeline "
-        + "run's own page shows that to those who may see it. Viewers do not see the values the run started with, "
-        + "nor messages quoting them, which can hold server variables. Role: viewer.")
+        + "the pipeline run it started. A for-each node has items instead: each item's place, value, status "
+        + "(pending, queued, running, succeeded, failed, cancelled or skipped; failed with no pipeline run when it "
+        + "could not be queued) and pipeline run with its times. Messages are in Kilnmark's words, never a "
+        + "pipeline's error: the pipeline run's own page shows that to those who may see it. Viewers do not see "
+        + "the values the run started with, nor messages quoting them, nor items that came from those values, "
+        + "which can hold server variables. Role: viewer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "The run"),
         @APIResponse(responseCode = "401", description = "Not signed in"),

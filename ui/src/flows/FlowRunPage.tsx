@@ -60,11 +60,13 @@ function ItemRuns({ node, items }: { node: string; items: FlowItemRun[] }) {
           <li key={i.item}>
             {i.value == null ? <span className="muted">Item {i.item + 1}</span> : <span className="mono">{String(i.value)}</span>}{" "}
             <FlowStatus status={i.status} />
-            {i.pipelineRunId != null && (
+            {i.pipelineRunId != null ? (
               <>
                 {" "}
                 <a href={href.pipelineRun(i.pipelineRunId)}>Pipeline run {i.pipelineRunId}</a>
               </>
+            ) : (
+              i.status === "failed" && <span className="muted"> Could not be started; the node's message says why.</span>
             )}
           </li>
         ))}

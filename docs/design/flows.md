@@ -196,7 +196,7 @@ started; a message; what it reported, as JSON); `pipeline_run.flow_run_id` and `
 index allows one queued or running run per flow. V20 named them `flow_step_run`, `step_id` and
 `flow_step`; V21 renamed them to the names above. V22 adds `flow_run.variables` and
 `pipeline_run.parameters` and `variables`, and the server variables (`variable`, `variable_change`).
-V29 adds `flow_version.sql_checked` (section 7). V32 adds `pipeline_run.flow_item` (section 8) and
+V29 adds `flow_version.sql_checked` (section 7). V31 adds `pipeline_run.flow_item` (section 8) and
 moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
 
 ## 5. Who may do what
@@ -334,7 +334,9 @@ Built 4 November 2026, as slices P3 and P4 of docs/design/parallel-runs.md.
 no limit when left out. `FlowEngine` takes the limit and the nodes never held back: a node that
 could start while that many run stays pending (not skipped) and starts, in the order the nodes are
 written, when one ends. `stop` nodes are never held back, so a flow can always end; a stop node that
-runs skips what was held. A for-each node counts once, however many items it runs. The limit is in
+runs skips what was held. `ready()` first works out every skip (a skip can make other nodes ready),
+then hands out places in written order, so a node that became ready only after a skip still goes
+before a later one. A for-each node counts once, however many items it runs. The limit is in
 the engine rather than in `FlowService.startReady`, because the engine marks a node running as it
 hands it out; holding it there keeps the engine's states true and lets kiln-core test it.
 
@@ -353,25 +355,37 @@ hands it out; holding it there keeps the engine's states true and lets kiln-core
 
 - **Checked when saved** (kiln-core): `pipeline`, `items` and `as` are needed; `items` is a list of 1
   to 500 values, all texts or all numbers (never true/false, a list or `${...}`), or exactly one
-  `${name}` naming a list parameter of the flow; `as` is a parameter name and not also in `with:`;
-  `max_parallel` 1 to 50. The server then checks that the pipeline exists (and the version), that
-  `with:` suits it as for a run-pipeline node, and that it takes `as` as one value of the items'
-  kind. The flow's own parameter of the same name as `as` is not passed on: the item fills it.
+  `${name}` naming a list parameter of the flow (which holds 1 to 200 values, `Parameters.MAX_LIST`);
+  `as` is a parameter name and not also in `with:`; `max_parallel` 1 to 50. The server then checks
+  that the pipeline exists (and the version), that `with:` suits it as for a run-pipeline node, and
+  that it takes `as` as one value of the items' kind. The flow's own parameter of the same name as
+  `as` is not passed on: the item fills it.
+- **Each item writes its own asset** when items run at once. A run waits only
+  `kilnmark.pipelines.wait-for-target` (30 seconds) for another writing the same asset, holding a
+  worker slot, then fails ("Another pipeline run is writing ..."); so items sharing a target would
+  not take turns, they would fail. With `max_parallel` above 1, saving refuses a node whose
+  pipeline (the version it runs) has a write whose target, table or path, and source, do not name
+  `${<as>}` (`FlowService.sharedTarget`): "Every item would write t, so they would fail waiting for
+  each other: put ${region} in the write's target, or set max_parallel: 1". The check is skipped
+  when the version cannot be read.
 - **Runs.** Each item is an ordinary pipeline run, queued as the flow's starter with their role, with
   the node's values and the item in `as`, linked to the flow run, node and item
-  (`pipeline_run.flow_item`, from 0; V32). Items start in the order listed while fewer than the
+  (`pipeline_run.flow_item`, from 0; V31). Items start in the order listed while fewer than the
   node's `max_parallel` run, so with worker slots and source limits they share the queue with
   everything else. `PipelineStore.queueRun` keeps one run of a pipeline at a time, except between
-  the items of one for-each node in one flow run (ADR 0040, decision 5): a run anyone else asks for
-  still waits, and so do the items while another run of the pipeline goes ("Waiting for p to finish
-  its current run", giving up after `queue_timeout`). Two items writing one asset still take turns
-  through the write locks. Before an item starts, the flow looks for its run by flow run, node and
+  the items of one for-each node in one flow run (ADR 0040, decision 5). A person's Run now of the
+  pipeline is refused with 409 while items run (only flow nodes wait); another flow's node waits for
+  them, and the items wait while another run of the pipeline goes ("Waiting for p to finish its
+  current run", giving up after `queue_timeout`). An item run whose flow run was deleted
+  (`flow_run_id` set to null) still counts as another run. Before an item starts, the flow looks for its run by flow run, node and
   item (`PipelineStore.flowItemRun`), and the node finds the runs it already has when it starts
   (`flowItemRuns`); the unique index refuses a second run of an item whatever happens.
 - **Ending.** Every item runs: a failed item does not stop the others, and those already started are
   never stopped by it. The node then succeeds when every item's run succeeded, and fails otherwise
   ("2 of 5 items failed; their pipeline runs say why"); an item that could not be queued counts as
-  failed and its reason (the flow's own words, the values left out for viewers) is added. A cancel of
+  failed and its reason (the flow's own words, the values left out for viewers) is added; the node's
+  row records those items (`reported.not_started`), so the run page shows them failed, with no
+  pipeline run, and its count agrees with the message. A cancel of
   the flow, or a stop node, cancels the items still going, starts no more, and the node ends
   cancelled. Someone cancelling one item's run by hand does the same, and so stops the flow, as for a
   run-pipeline node. It reports `items`, `succeeded` and `failed` for conditions and `${...}`.

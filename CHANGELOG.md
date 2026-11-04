@@ -91,12 +91,15 @@ details.
 - **Parallel runs in flows** (ADR 0040, docs/design/flows.md section 8). A flow's top-level
   `max_parallel` (1 to 50) holds ready nodes back, in the order written, while that many run; `stop`
   nodes never wait. The `for-each` node takes `pipeline`, `version`, `items` (1 to 500 texts or
-  numbers, or a text list or number list parameter), `as`, `with` and `max_parallel` (4 by default);
-  saving checks that the pipeline takes `as` as one value of the items' kind. Each item is an
-  ordinary pipeline run with `flow_item` set (migration V32, which moves the unique index to the
-  flow run, node and item); the items of one node are the one exception to a pipeline having at most
-  one run queued or running, and asset write locks still keep two of them from writing one asset at
-  once. It reports `items`, `succeeded` and `failed`. `GET /api/v1/flow-runs/{id}` lists a for-each
+  numbers, or a text list or number list parameter of up to 200), `as`, `with` and `max_parallel` (4
+  by default); saving checks that the pipeline takes `as` as one value of the items' kind, and, when
+  items run at once, that each writes its own asset (`${<as>}` in every write's target), since a run
+  waiting for another writing its asset fails after 30 seconds. Each item is an ordinary pipeline
+  run with `flow_item` set (migration V31, which moves the unique index to the flow run, node and
+  item); the items of one node are the one exception to a pipeline having at most one run queued or
+  running, so Run now on that pipeline is refused while they run. An item that cannot be queued
+  counts as failed. Cancelling one item's run cancels the flow. It reports `items`, `succeeded` and
+  `failed`. `GET /api/v1/flow-runs/{id}` lists a for-each
   node's `items`, each with its value (withheld from viewers when it came from the run's values),
   status and pipeline run. The diagram and the add-node form know the new type; the sample
   `sample-for-each-region` shows it.

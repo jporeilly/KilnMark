@@ -396,7 +396,9 @@ public class PipelineStore {
             }
             try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.pipeline_run WHERE pipeline = ? "
                 + "AND status IN ('queued', 'running')"
-                + (flowItem == null ? "" : " AND NOT (flow_item IS NOT NULL AND flow_run_id = ? AND flow_node = ?)")
+                // An item run whose flow run is gone (flow_run_id set to null) still counts: null is never "same".
+                + (flowItem == null ? "" : " AND NOT coalesce(flow_item IS NOT NULL AND flow_run_id = ? AND flow_node = ?, "
+                    + "false)")
                 + " LIMIT 1")) {
                 ps.setString(1, name);
                 if (flowItem != null) {
