@@ -70,6 +70,8 @@ public class AuditLog {
     public static final String WRITING_CHANGED = "source.allow_writing";
     /** Allow SQL was turned on or off; detail: on, via. */
     public static final String SQL_CHANGED = "source.allow_sql";
+    /** Most runs at once was changed (ADR 0040); detail: before, after (null: no limit), via. */
+    public static final String MAX_RUNS_CHANGED = "source.max_runs";
     /** A flow's sql node started (ADR 0028); detail: source, statements, version. Target: flow/run/node. */
     public static final String FLOW_SQL = "flow.sql";
 
@@ -106,7 +108,7 @@ public class AuditLog {
 
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
-        SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
+        SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, MAX_RUNS_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
         SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED);
 
     /** The most events one request returns. */
@@ -433,9 +435,9 @@ public class AuditLog {
     }
 
     /**
-     * Records Allow writing and Allow SQL turned on or off between {@code before} (null for a new
-     * source) and {@code after}; {@code via} says how (the form, an import). A new source records a
-     * setting only when it is on.
+     * Records Allow writing and Allow SQL turned on or off, and Most runs at once changed, between
+     * {@code before} (null for a new source) and {@code after}; {@code via} says how (the form, an
+     * import). A new source records a setting only when it is on, or set.
      */
     public void sourceSettings(Actor actor, String source, Map<String, String> before, Map<String, String> after,
                                String via) {
@@ -448,6 +450,15 @@ public class AuditLog {
         boolean sqlAfter = CommonSettings.allowsSql(after);
         if (sqlBefore != sqlAfter) {
             record(actor, SQL_CHANGED, source, Map.of("on", sqlAfter, "via", via));
+        }
+        Integer runsBefore = before == null ? null : CommonSettings.maxRuns(before);
+        Integer runsAfter = CommonSettings.maxRuns(after);
+        if (!java.util.Objects.equals(runsBefore, runsAfter)) {
+            Map<String, Object> detail = new java.util.LinkedHashMap<>();
+            detail.put("before", runsBefore);
+            detail.put("after", runsAfter);
+            detail.put("via", via);
+            record(actor, MAX_RUNS_CHANGED, source, detail);
         }
     }
 

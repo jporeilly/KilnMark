@@ -653,7 +653,7 @@ public class SourceService {
 
     /** Settings that do not change what is read or how its columns are named. */
     private static final java.util.Set<String> NOT_READING = java.util.Set.of("description", "ai_egress", "display_name",
-        "keep_samples", "sample_rows", "table_sample_above_rows");
+        "keep_samples", "sample_rows", "table_sample_above_rows", CommonSettings.MAX_RUNS);
 
     /**
      * A draft preview for a non-admin. New connections have no marks, so there is nothing to mask

@@ -95,7 +95,12 @@ public class ScanService {
         /** Nothing to do: the run or its source is gone, or the run had already finished. */
         SKIPPED,
         /** Stopped part-way because it was asked to; the run is left for the caller to requeue. */
-        CANCELLED
+        CANCELLED,
+        /**
+         * Not started: a source it uses has no free place (ADR 0040). The run stays queued, and the
+         * caller puts its job back for a few seconds without using an attempt.
+         */
+        WAITING
     }
 
     /** {@code note} says why a scan was skipped; null otherwise. */

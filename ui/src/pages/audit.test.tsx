@@ -17,6 +17,10 @@ group("the audit log page", () => {
   test("says what each event did in a few words", () => {
     expect(describe(event("source.allow_sql", { on: true, via: "import" }))).toBe("Turned on (import)");
     expect(describe(event("source.allow_writing", { on: false, via: "form" }))).toBe("Turned off (form)");
+    expect(describe(event("source.max_runs", { before: null, after: 2, via: "form" }))).toBe("From no limit to 2 (form)");
+    expect(describe(event("source.max_runs", { before: 4, after: null, via: "import" }))).toBe(
+      "From 4 to no limit (import)",
+    );
     expect(describe(event("token.created", { name: "ci", role: "designer", unmask: true, expiresAt: null }))).toBe(
       "ci: designer, sees unmasked values, never expires",
     );
@@ -55,6 +59,7 @@ group("the audit log page", () => {
         "mark.set",
         "source.allow_sql",
         "source.allow_writing",
+        "source.max_runs",
         "source.deleted",
         "token.created",
         "token.revoked",

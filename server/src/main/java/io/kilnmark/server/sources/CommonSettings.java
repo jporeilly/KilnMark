@@ -29,6 +29,8 @@ import io.kilnmark.kiln.connect.SourceConfig;
  *   <li>{@value #ALLOW_SQL}: whether SQL a person writes may run on the source ({@code true}): custom
  *       SQL rules, and later query reads and flow SQL actions (ADR 0028). Off when absent; PostgreSQL
  *       sources only for now. Only designers and admins may change it.</li>
+ *   <li>{@value #MAX_RUNS}: the most pipeline runs and flow sql nodes that may use the source at
+ *       once, 1 to {@value #MAX_MAX_RUNS}; no limit when absent (ADR 0040).</li>
  *   <li>{@value #KEEP_SAMPLES}, {@value #SAMPLE_ROWS} and {@value #TABLE_SAMPLE_ABOVE_ROWS}: how
  *       profiling samples a source (docs/design/data-quality.md); the last applies to databases.</li>
  * </ul>
@@ -44,6 +46,10 @@ public final class CommonSettings {
     public static final String KEEP_SAMPLES = "keep_samples";
     public static final String SAMPLE_ROWS = "sample_rows";
     public static final String TABLE_SAMPLE_ABOVE_ROWS = "table_sample_above_rows";
+    public static final String MAX_RUNS = "max_runs";
+
+    /** The highest limit {@value #MAX_RUNS} may set. */
+    public static final int MAX_MAX_RUNS = 100;
 
     /** The most rows a source's {@value #SAMPLE_ROWS} may ask for. */
     public static final int MAX_SAMPLE_ROWS = 10_000;
@@ -137,7 +143,10 @@ public final class CommonSettings {
             SettingSpec.Kind.NUMBER),
         new Definition(TABLE_SAMPLE_ABOVE_ROWS, "Sample tables above (rows)", "Databases only: tables with more rows "
             + "than this, at least 1000, are profiled from a sample of about that many rows. Leave empty to read "
-            + "every row", false, List.of(), null, SettingSpec.Kind.NUMBER));
+            + "every row", false, List.of(), null, SettingSpec.Kind.NUMBER),
+        new Definition(MAX_RUNS, "Most runs at once", "How many pipeline runs and flow sql nodes may use this source "
+            + "at the same time, from 1 to " + MAX_MAX_RUNS + ". Others wait their turn, without failing. Leave empty "
+            + "for no limit", false, List.of(), null, SettingSpec.Kind.NUMBER));
 
     private static final Set<String> KEYS = keys(DEFINITIONS);
 
@@ -193,6 +202,19 @@ public final class CommonSettings {
         return w != null && w.trim().equalsIgnoreCase("true");
     }
 
+    /**
+     * The most runs that may use a source with these settings at once ({@value #MAX_RUNS}), or null
+     * for no limit. A value a save would refuse counts as no limit.
+     */
+    public static Integer maxRuns(Map<String, String> settings) {
+        String v = settings == null ? null : settings.get(MAX_RUNS);
+        if (v == null || v.isBlank() || !wholeUpTo(v.strip(), MAX_MAX_RUNS)) {
+            return null;
+        }
+        int n = Integer.parseInt(v.strip());
+        return n >= 1 ? n : null;
+    }
+
     /** Problems with the common settings, each starting with its key; empty when all are acceptable. */
     public static List<String> problems(Map<String, String> settings) {
         List<String> problems = new ArrayList<>();
@@ -217,6 +239,11 @@ public final class CommonSettings {
         if (rows != null && !rows.isBlank() && !wholeUpTo(rows.strip(), MAX_SAMPLE_ROWS)) {
             problems.removeIf(p -> p.startsWith(SAMPLE_ROWS + ":"));
             problems.add(SAMPLE_ROWS + ": a whole number from 0 to " + MAX_SAMPLE_ROWS + ", not '" + rows + "'");
+        }
+        String runs = settings.get(MAX_RUNS);
+        if (runs != null && !runs.isBlank() && maxRuns(settings) == null) {
+            problems.removeIf(p -> p.startsWith(MAX_RUNS + ":"));
+            problems.add(MAX_RUNS + ": a whole number from 1 to " + MAX_MAX_RUNS + ", or empty for no limit");
         }
         problems.addAll(AssetFilter.problems(new SourceConfig("check", "check", settings, null)));
         return problems;

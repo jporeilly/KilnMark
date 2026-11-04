@@ -34,9 +34,9 @@ public class AuditResource {
     @GET
     @RolesAllowed(AccessRole.ADMIN_ROLE)
     @Operation(summary = "The audit log", description = "Who did what, newest first: requests that changed "
-        + "something or were refused, tokens created and revoked, marks set and cleared, sources deleted, and Allow "
-        + "writing and Allow SQL turned on or off. Filter by action; page with before (the next value of the "
-        + "previous page). The same events go to the kilnmark.audit log category, one JSON object a line, for a "
+        + "something or were refused, tokens created and revoked, marks set and cleared, sources deleted, Allow "
+        + "writing and Allow SQL turned on or off, and Most runs at once changed. Filter by action; page with "
+        + "before (the next value of the previous page). The same events go to the kilnmark.audit log category, one JSON object a line, for a "
         + "SIEM. Role: admin.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "A page of events"),

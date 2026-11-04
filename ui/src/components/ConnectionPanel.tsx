@@ -33,10 +33,11 @@ const AI_LABELS: Record<string, string> = {
   true: "Yes: pipelines may write tables or files here",
 };
 /**
- * Whether pipelines may write to the source, and whether SQL a person writes may run on it
- * (PostgreSQL only, ADR 0028): designers and admins see and change them.
+ * Whether pipelines may write to the source, whether SQL a person writes may run on it
+ * (PostgreSQL only, ADR 0028), and how many runs may use it at once (ADR 0040): designers and
+ * admins see and change them.
  */
-const ADMIN_STEP = new Set(["allow_writing", "allow_sql"]);
+const ADMIN_STEP = new Set(["allow_writing", "allow_sql", "max_runs"]);
 
 /**
  * A connection, step by step: 1 Connect (fields with help and examples; host, port and database
@@ -138,7 +139,7 @@ export function ConnectionPanel({
 
   /** The step that holds a setting, so an error about it can be shown where it is fixed. */
   const stepOf = (key: string) => {
-    if (key === "displayName" || SAVE_STEP.has(key)) return 3;
+    if (key === "displayName" || SAVE_STEP.has(key) || ADMIN_STEP.has(key)) return 3;
     if (READING.has(key) || PATTERNS.has(key) || key === connector.containerSetting) return 2;
     return 0;
   };
@@ -364,6 +365,7 @@ export function ConnectionPanel({
             value={settings[c.key] ?? ""}
             autoComplete="off"
             spellCheck={false}
+            inputMode={c.kind === "number" ? "numeric" : undefined}
             onChange={(e) => set(c.key, e.target.value)}
             aria-describedby={field(`c-${c.key}-hint`)}
           />

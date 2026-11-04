@@ -39,6 +39,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Writing a connector](design/connectors.md): the connector interface, the reader and writer nodes, registering and testing
 - [Pipelines](design/pipelines.md): graphs of nodes, the YAML format, expressions, the node catalogue, running and recording
 - [Flows](design/flows.md): pipelines run in an order joined by connections (on success, on failure, always, or on a quality condition), conditions, how a flow runs and is recorded
+- [Parallel runs](design/parallel-runs.md): how much runs at once, worker slots, limits per source and per flow, and the for-each node
 - [Flow controls](design/flow-controls.md): nodes that check or wait for what a pipeline needs, and timeout, retries and priority on a node
 - [The assistant](design/assistant.md): a chat window that answers from knowledge domains, starting with the documentation
 - [Notifications](design/notifications.md): one event type, dedupe, masking per recipient, the email worker and the in-app feed's contract

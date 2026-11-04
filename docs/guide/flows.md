@@ -168,6 +168,12 @@ from the data, and the pipeline run's own page shows it to those who may see it.
 
 A node is **Skipped** when no connection into it was taken: the flow went another way.
 
+A source can limit how many runs use it at once (**Most runs at once**, see
+[Sources that take a few runs at a time](pipelines.md#sources-that-take-a-few-runs-at-a-time)). A
+`sql` node on a full source stays Running and says "Waiting for a free place on source warehouse";
+it starts when a place is free, and a run cancelled meanwhile never starts it. A pipeline run a
+node started waits the same way, on its own page.
+
 To stop a run, open it and choose **Cancel run** (stewards). Nothing more starts, and the pipeline
 runs it started that are still going are cancelled. What they had already written stays written.
 
