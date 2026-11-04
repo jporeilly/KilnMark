@@ -130,9 +130,9 @@ you chose):
   took, the rows read and written, and each node's rows in and out, time, peak memory, quality and
   error. While it runs it updates every two seconds. **Open run** goes to the run's own page, with
   its timeline and log.
-- **Suggestions**, **Nodes** (the nodes as a table), **Runs** (every run) and **Versions**.
+- **Suggestions**, **Nodes** (the nodes as a table), **History** (every run) and **Versions**.
 
-**Settings**, **Preview** and **Suggestions** need the canvas; **Run**, **Nodes**, **Runs** and
+**Settings**, **Preview** and **Suggestions** need the canvas; **Run**, **Nodes**, **History** and
 **Versions** also work beside the YAML. A node you add shows its settings at once.
 
 ### Adding and connecting nodes
@@ -793,7 +793,7 @@ YAML exactly as it was saved.
 
 Choose **Run now**, on the Pipelines page or the pipeline's own page. Kilnmark checks the latest
 version again first, since a source may have changed, then queues the run for a worker. The run
-appears in the **Runs** tab, under the canvas, as Queued, then Running, and the panel shows the
+appears in the **History** tab, under the canvas, as Queued, then Running, and the panel shows the
 **Run** tab, following the run as it goes.
 
 A run uses the version that was latest when you asked, even if someone saves another while it
@@ -833,7 +833,7 @@ place frees can still take it first.
 
 ![A run's page: its summary (status, version, times, rows written, quality) and where each node spent its time](images/pipeline-run-page.png)
 
-Open a run from the **Runs** tab. The page updates itself until the run ends, and says when its
+Open a run from the **History** tab. The page updates itself until the run ends, and says when its
 status changes.
 
 - **Summary:** the status, the version that ran, who asked, when it started and finished, how long

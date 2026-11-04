@@ -23,11 +23,14 @@ not.
 version can run, and its last run. Stewards see **Run now** beside each; designers see **New flow**.
 
 A flow's own page is laid out as a pipeline's: its name with **Run now**, then the flow on two tabs,
-**Diagram** and **YAML**, which show and edit the same flow. Under them, a panel with three tabs:
+**Diagram** and **YAML**, which show and edit the same flow. Under them, a panel with the pipeline
+page's tabs:
 
+- **Nodes**: every node, what it runs after, and how it went in the latest run;
+- **Settings**: the node or connection chosen on the diagram, while one is chosen (designers only);
 - **Run**: the latest run's summary, as its run page gives it, kept current while it goes;
-- **Runs**: each run with its status, version, when it was asked for and by whom, how long it took,
-  and the rows its pipeline runs wrote;
+- **History**: each run with its status, version, when it was asked for and by whom, how long it
+  took, and the rows its pipeline runs wrote;
 - **Versions**: every saved version.
 
 The problems, the parameters and saving come last, whichever tab is shown. **Collapse** folds the
@@ -162,7 +165,7 @@ The panel under the diagram has the same tabs as a pipeline's:
   forms to add a node and to connect two.
 - **Settings** shows the node or connection chosen on the diagram or in the table, while one is
   chosen.
-- **Run**, **Runs** and **Versions** show the latest run, every run and every saved version.
+- **Run**, **History** and **Versions** show the latest run, every run and every saved version.
 
 ![A flow's page: the diagram, with a node that runs a pipeline joined to a notice and to a second pipeline by two amber connections labelled with their conditions; under it the Nodes tab, a table giving each node, what it does, what it runs after, and its status, start, time and result in the latest run](images/flow-diagram-edit.png)
 
@@ -232,7 +235,7 @@ running at a time.
 
 ## Reading a run
 
-Open a run from the **Runs** tab on the flow's page, or the last run from the line under its name.
+Open a run from the **History** tab on the flow's page, or the last run from the line under its name.
 A run page is laid out as a pipeline run's, in this order:
 
 - **Summary**: its status, the version that ran, who started it, when it was asked for, started and

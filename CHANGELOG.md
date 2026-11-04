@@ -22,8 +22,10 @@ details.
   for a worker and waiting, all on the run's scale. A flow's page puts Diagram and YAML on tabs, with
   the pipeline page's panel under them: **Nodes** lists every node, what it runs after and how it
   went in the latest run; **Settings** changes the chosen node's settings (its pipeline, version,
-  notice, wait and so on) or connection without touching the YAML by hand; then **Run**, **Runs**
-  and **Versions**. Its runs list gives how long each took and the rows it wrote. The flow run API adds these totals and each pipeline run's times.
+  notice, wait and so on) or connection without touching the YAML by hand; then **Run**,
+  **History** and **Versions**. Its history gives how long each run took and the rows it wrote. On
+  pipeline and flow pages alike, the tab once called Runs is now **History**, so it is not mistaken
+  for **Run**. The flow run API adds these totals and each pipeline run's times.
   ([Reading a run](docs/guide/flows.md#reading-a-run))
 
 - **A limit on runs per source, and more workers** (ADR 0040). A source can set **Most runs at
