@@ -307,7 +307,10 @@ source it waits for, and its job goes back in the queue for 5 s without using it
 (`ScanService.Outcome.WAITING`). A flow's `sql` node takes its place on the flow job's lease and
 waits there, tried again on each look at the flow. Places are given back when the lease closes, by
 PostgreSQL if the worker dies. The lease counts the places it holds itself, since advisory locks
-nest within one session.
+nest within one session. The queue hands out due jobs oldest first, and a lease that held places
+makes the waiting pipeline jobs due at once when it lets them go, so a waiting run is not overtaken
+by later ones. A pipeline job whose run has not started is never failed: recovery and errors put it
+back without using its attempt.
 
 Workers wake at once on a PostgreSQL notification and poll as a fallback. A source has at most
 one scan waiting or running: asking for another returns the one in progress. While a worker scans

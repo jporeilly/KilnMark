@@ -55,9 +55,9 @@ A job runs when all of these have room:
 - `kilnmark.worker.flows` (`KILNMARK_WORKER_FLOWS`, 8, at least 1) replaces `JobWorker.MAX_FLOWS`.
 - The installation guide gains **Sizing the workers**: what a slot is, how to raise the slots, and
   the database connections it takes. Each running job holds one connection for its lease and uses
-  one or two more while it works; each watched flow holds one. The pool
-  (`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`, 20 by default) must be at least
-  `concurrency × 3 + flows + 5` for the API; PostgreSQL's `max_connections` at least the sum over
+  one or two more while it works; each watched flow holds one; each worker keeps one for `LISTEN`.
+  The pool (`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`, 20 by default) must be at least
+  `concurrency × 3 + flows + 6` (five of them for the API and scheduler); PostgreSQL's `max_connections` at least the sum over
   all Kilnmark processes.
 - `docs/development.md` says the concurrency setting is jobs, not scans.
 
@@ -78,7 +78,8 @@ Built: `KilnmarkConfig.Worker.flows()`, read by `JobWorker.start`; INSTALL.md, "
   it gives back what it took, and its job goes back to the queue for 5 seconds without using an
   attempt; the run says "Waiting for a free place on source s". Places are freed when the lease
   closes, by the run or by PostgreSQL when a worker dies.
-- **Lowering the limit** while runs hold places above it: they keep them; new runs see the new limit.
+- **Lowering the limit** while runs hold places above it: they keep them and finish. New runs try
+  only the places below the new limit, so until those runs end, up to the old limit may run at once.
 - Tests: a limit of 1 makes two runs on one source take turns, and neither fails; a dead worker's
   places are free again; a run on two full sources holds neither while it waits.
 
@@ -102,8 +103,20 @@ Built, with these changes from the plan above:
   message, tried again on each look at the flow; it gives the place back when it ends. A flow
   cancelled meanwhile ends it as Cancelled, unstarted. It has no time limit, as a waiting pipeline
   run has none.
-- A run whose job is back in the queue goes behind runs queued since (the queue takes the earliest
-  `run_after`). Fairness between waiting runs is not promised.
+- **Oldest first** (after review): `JobQueue.claim` takes the first queued of the due jobs (by id,
+  not by `run_after`), and a lease that held places, when it closes or a `sql` node gives its place
+  back, makes the queued pipeline jobs due at once and notifies the workers. A waiting run then
+  takes a freed place before runs queued after it. Not strict: a run queued in the moment between
+  the place freeing and the wake can still take it. Waking makes every waiting run look again, so a
+  freed place costs one claim per waiting run.
+- **Never failed before it starts** (after review): a pipeline job whose run is still queued is put
+  back without using its attempt by recovery (`recoverStale`) and by `retryOrFail`, so a worker that
+  dies, or a database error while it takes places, never fails a run that did not start.
+- **Cost of waiting**: each look at a waiting run (every 5 s, or when woken) reads its version and
+  checks it (`compiler.check`) to find its sources, without connecting to them. Runs left by a
+  stopped worker are marked failed only by the workers' periodic recovery, no longer on each claim.
+- **Who may change it**: `max_runs` does not change how a source is read, so a designer who sees
+  values masked may change it on a source with marked columns (`SourceService.NOT_READING`).
 
 ## P3. A flow's `max_parallel` (planned)
 

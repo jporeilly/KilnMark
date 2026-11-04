@@ -8,9 +8,10 @@ details.
 ### What's new
 
 - **A limit on runs per source, and more workers** (ADR 0040). A source can set **Most runs at
-  once** (1 to 100), so a production database is never asked for more sessions than its
-  administrators agree to: pipeline runs and flow `sql` nodes beyond it wait their turn, saying
-  which source they wait for, and neither fail nor use up an attempt. Each change is in the audit
+  once** (1 to 100), a cap its administrators can agree to: pipeline runs and flow `sql` nodes
+  beyond it wait their turn, oldest first, saying which source they wait for, and neither fail nor
+  use up an attempt. It counts runs, not database sessions: a run may open a few connections, and
+  previews, scans and quality checks are not counted. Each change is in the audit
   log. Workers watch `KILNMARK_WORKER_FLOWS` flows at once (8), and INSTALL.md says how to size the
   slots against the database's connections and how to add a worker-only process.
   ([Sources that take a few runs at a time](docs/guide/pipelines.md#sources-that-take-a-few-runs-at-a-time))
@@ -94,7 +95,7 @@ details.
   when a worker dies. Scans and quality checks do not count. A change of the limit is the audit
   event `source.max_runs`, with what it was and is. A test runs two workers in one process against
   one queue: every run runs once, both workers' slots are used, and a source limit holds across
-  both. INSTALL.md gains "Sizing the workers" (`concurrency × 3 + flows + 5` connections per
+  both. INSTALL.md gains "Sizing the workers" (`concurrency × 3 + flows + 6` connections per
   process) and "A second worker".
 
 - **The flows API** (docs/design/flows.md, F3): `GET/POST /api/v1/flows`, `POST

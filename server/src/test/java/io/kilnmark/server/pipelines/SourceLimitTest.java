@@ -28,8 +28,9 @@ import io.restassured.specification.RequestSpecification;
 /**
  * A source's Most runs at once (ADR 0040), end to end: set and checked through the API, recorded in
  * the audit log, and kept by pipeline runs, which wait their turn in the queue without failing or
- * using their one attempt, saying which source they wait for. Sources are the in-memory test
- * connector.
+ * using their one attempt, saying which source they wait for, and are not overtaken by runs queued
+ * after them. A designer who sees values masked may still change the limit of a source with columns
+ * marked sensitive. Sources are the in-memory test connector.
  */
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -45,6 +46,7 @@ class SourceLimitTest {
     static final String OUT = "lim-out-" + ID;
     static final String A = "lim-a-" + ID;
     static final String B = "lim-b-" + ID;
+    static final String C = "lim-c-" + ID;
 
     static String yaml(String name, String table) {
         return """
@@ -133,7 +135,7 @@ class SourceLimitTest {
             status = admin().get("/api/v1/runs/" + scan).then().extract().jsonPath().getString("status");
         }
         assertEquals("succeeded", status);
-        for (String name : new String[] {A, B}) {
+        for (String name : new String[] {A, B, C}) {
             json().body(Map.of("name", name, "yaml", yaml(name, "lab." + name.replace('-', '_')))).post("/api/v1/pipelines")
                 .then().statusCode(201).body("latest.valid", equalTo(true));
         }
@@ -174,5 +176,58 @@ class SourceLimitTest {
     private static long lastRun(String pipeline) {
         return admin().get("/api/v1/pipelines/" + pipeline + "/runs?limit=1").then().statusCode(200).extract().jsonPath()
             .getLong("[0].id");
+    }
+
+    private static long run(String pipeline) {
+        return json().post("/api/v1/pipelines/" + pipeline + "/runs").then().statusCode(202).extract().jsonPath()
+            .getLong("id");
+    }
+
+    @Test
+    @Order(3)
+    void aWaitingRunIsNotOvertakenByALaterOne() throws Exception {
+        HoldingGraphRunner.hold = true;
+        long b;
+        long c;
+        try {
+            long a = run(A);
+            awaitRun(a, r -> "running".equals(r.getString("run.status")));
+            b = run(B);
+            awaitRun(b, r -> r.getString("run.error") != null);
+            // a ends; b, back in the queue for a few seconds, is woken as the place frees. A run queued
+            // just after must not take the place first.
+            admin().contentType(ContentType.JSON).post("/api/v1/pipeline-runs/" + a + "/cancel").then().statusCode(200);
+            awaitRun(a, r -> "cancelled".equals(r.getString("run.status")));
+            Thread.sleep(500);
+            c = run(C);
+            long later = c;
+            JsonPath runB = awaitRun(b, r -> "running".equals(r.getString("run.status"))
+                || "running".equals(admin().get("/api/v1/pipeline-runs/" + later).then().extract().jsonPath()
+                    .getString("run.status")));
+            assertEquals("running", runB.getString("run.status"), "the run that waited goes first: " + runB.prettify());
+            JsonPath runC = awaitRun(c, r -> r.getString("run.error") != null);
+            assertEquals("queued", runC.getString("run.status"), "the later run waits: " + runC.prettify());
+        } finally {
+            HoldingGraphRunner.hold = false;
+        }
+        assertEquals("succeeded", awaitRun(b, r -> !"running".equals(r.getString("run.status"))).getString("run.status"));
+        assertEquals("succeeded", awaitRun(c, r -> "succeeded".equals(r.getString("run.status"))
+            || "failed".equals(r.getString("run.status"))).getString("run.status"));
+    }
+
+    @Test
+    @Order(4)
+    void aDesignerWhoSeesValuesMaskedMayChangeTheLimitOfAMarkedSource() {
+        admin().contentType(ContentType.JSON).body(Map.of("field", "name", "sensitive", true))
+            .queryParam("urn", "urn:kilnmark:" + SRC + ":lab.people").put("/api/v1/quality/asset/sensitive").then()
+            .statusCode(204);
+        String designer = io.kilnmark.server.Tokens.newToken("designer", false);
+        io.kilnmark.server.Tokens.as(designer).contentType(ContentType.JSON)
+            .body(Map.of("settings", Map.of("rows", "50", "max_runs", "2"))).put("/api/v1/sources/" + SRC).then()
+            .statusCode(200).body("settings.max_runs", equalTo("2"));
+        // How it is read is still theirs to leave alone.
+        io.kilnmark.server.Tokens.as(designer).contentType(ContentType.JSON)
+            .body(Map.of("settings", Map.of("rows", "50", "max_runs", "2", "include", "lab.*")))
+            .put("/api/v1/sources/" + SRC).then().statusCode(403);
     }
 }

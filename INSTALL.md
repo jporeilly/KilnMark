@@ -94,20 +94,23 @@ which caps the runs using it whichever worker runs them
 and the database connections below.
 
 More running at once needs more connections to Kilnmark's own database. Each running job holds one
-for its lease and uses one or two more while it works; each watched flow holds one. So each
-Kilnmark process needs a pool (`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`, 20 by default) of at least
+for its lease and uses one or two more while it works; each watched flow holds one; and each worker
+keeps one open to hear of new jobs. So each Kilnmark process needs a pool
+(`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`, 20 by default) of at least
 
 ```
-concurrency × 3 + flows + 5
+concurrency × 3 + flows + 6
 ```
 
-where the 5 is for the API and the scheduler. With the defaults that is 2 × 3 + 8 + 5 = 19. With 8
-slots and 8 flows it is 37: set `QUARKUS_DATASOURCE_JDBC_MAX_SIZE=40`. PostgreSQL's
+where the 6 is one for the worker's listening and five for the API and the scheduler. With the
+defaults that is 2 × 3 + 8 + 6 = 20, the default pool. With 8 slots and 8 flows it is 38: set
+`QUARKUS_DATASOURCE_JDBC_MAX_SIZE=40`. PostgreSQL's
 `max_connections` (100 in the bundled database) must be at least the sum of the pools of every
 Kilnmark process, plus what backups and your own tools use.
 
 The sources themselves see one connection, or a few, per run that reads or writes them; set their
-**Most runs at once** where their administrators ask for a cap.
+**Most runs at once** where their administrators ask for a cap. It counts runs, not sessions, and
+previews, scans and quality checks are outside it.
 
 ### A second worker
 

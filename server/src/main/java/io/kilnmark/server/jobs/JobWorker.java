@@ -313,7 +313,13 @@ public class JobWorker {
         }
         if (waiting) {
             // A source it uses is full: back in the queue for a few seconds, without using its one attempt.
-            queue.release(job, PLACE_RETRY, null);
+            try {
+                queue.release(job, PLACE_RETRY, null);
+            } catch (RuntimeException e) {
+                // Still running in the queue, never started: recovery puts it back (JobQueue.recoverStale).
+                LOG.warnf("Could not put waiting %s job %d back in the queue; recovery will", what.toLowerCase(),
+                    job.id());
+            }
         }
     }
 

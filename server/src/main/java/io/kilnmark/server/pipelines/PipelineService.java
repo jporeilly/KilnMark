@@ -1061,7 +1061,8 @@ public class PipelineService {
 
     /** Runs the pipeline run behind job {@code jobId}; called by a worker. */
     public ScanService.Result execute(long jobId, JobQueue.ScanLease lease, BooleanSupplier shutdown) {
-        store.failOrphanedRuns();
+        // Runs left by a stopped worker are marked failed by the workers' periodic recovery, not here:
+        // a run waiting for a place comes through here every few seconds.
         Optional<Long> runId = store.runForJob(jobId);
         if (runId.isEmpty()) {
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Job " + jobId + " names no pipeline run");

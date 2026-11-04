@@ -25,8 +25,9 @@ import jakarta.inject.Inject;
 /**
  * A source's places (ADR 0040), on leases as workers hold them: a limit lets that many in at once,
  * a run takes all its places or none, a lease never counts a place it holds twice, places above a
- * lowered limit are kept, and a dead worker's places are free again. The api role alone, so no
- * worker takes anything meanwhile.
+ * lowered limit are kept, and a dead worker's places are free again; and a pipeline run that never
+ * started is queued again, not failed, when its worker stops or errs before it starts. The api role
+ * alone, so no worker takes anything meanwhile.
  */
 @QuarkusTest
 @TestProfile(JobQueueTest.ApiOnly.class)
@@ -37,6 +38,9 @@ class SourcePlacesTest {
 
     @Inject
     AgroalDataSource db;
+
+    @Inject
+    io.kilnmark.server.pipelines.PipelineStore pipelines;
 
     private final List<JobQueue.ScanLease> leases = new ArrayList<>();
 
@@ -168,5 +172,72 @@ class SourcePlacesTest {
         assertTrue(a.takePlaces(List.of(limit(s, 1))).taken());
         a.close();
         assertTrue(lease().takePlaces(List.of(limit(s, 1))).taken());
+    }
+
+    private void sql(String statement) throws Exception {
+        try (Connection c = db.getConnection(); Statement st = c.createStatement()) {
+            st.execute(statement);
+        }
+    }
+
+    private record JobRow(long id, String status, int attempts, String lastError, boolean due) {
+    }
+
+    private JobRow jobOf(long run) throws Exception {
+        try (Connection c = db.getConnection(); PreparedStatement ps = c.prepareStatement("SELECT id, status, attempts, "
+            + "last_error, run_after <= now() FROM kilnmark.job WHERE kind = 'pipeline' "
+            + "AND (payload ->> 'pipelineRunId')::bigint = ?")) {
+            ps.setLong(1, run);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return new JobRow(rs.getLong(1), rs.getString(2), rs.getInt(3), rs.getString(4), rs.getBoolean(5));
+            }
+        }
+    }
+
+    /** A worker took the run's job and is gone: running, its heartbeat old, no lock held. */
+    private void takenByADeadWorker(long jobId) throws Exception {
+        sql("UPDATE kilnmark.job SET status = 'running', attempts = 1, locked_by = 'dead-worker', locked_at = now(), "
+            + "heartbeat_at = now() - interval '10 minutes' WHERE id = " + jobId);
+    }
+
+    @Test
+    void aRunThatNeverStartedIsQueuedAgainNotFailed() throws Exception {
+        String name = "places-never-" + Long.toString(ThreadLocalRandom.current().nextLong(1L << 30, 1L << 40), 36);
+        pipelines.create(name, name, null, "tester", "kilnmark: pipeline/v1\nname: " + name + "\nnodes: []\n", "test",
+            true, "[]");
+        long run = pipelines.queueRun(name, 1, "tester", "steward").id();
+        try {
+            // The worker died after it took the job, while the run waited for its places.
+            JobRow job = jobOf(run);
+            takenByADeadWorker(job.id());
+            queue.recoverStale(Duration.ofMinutes(2));
+            JobRow back = jobOf(run);
+            assertEquals("queued", back.status(), "nothing ran, so it waits again");
+            assertEquals(0, back.attempts(), "and its one attempt is not used");
+            assertTrue(back.lastError().contains("before the run started"), back.lastError());
+            assertEquals(0, pipelines.failOrphanedRuns());
+            assertEquals("queued", pipelines.run(run).orElseThrow().status());
+
+            // An error before it started (reading the queue, taking its places) puts it back too.
+            takenByADeadWorker(job.id());
+            assertTrue(queue.retryOrFail(new JobQueue.Job(job.id(), "pipeline", -1, -1, 1, 1, "dead-worker"),
+                "the database went away"));
+            back = jobOf(run);
+            assertEquals("queued", back.status());
+            assertEquals(0, back.attempts());
+            assertFalse(back.due(), "back in a few seconds");
+            assertEquals("queued", pipelines.run(run).orElseThrow().status());
+
+            // Once the run has started, a stopped worker still fails it, as before.
+            takenByADeadWorker(job.id());
+            assertTrue(pipelines.startRun(run));
+            queue.recoverStale(Duration.ofMinutes(2));
+            assertEquals("failed", jobOf(run).status());
+        } finally {
+            pipelines.requestCancel(run, "tester");
+            pipelines.finishRun(run, "cancelled", "test", null);
+            pipelines.delete(name);
+        }
     }
 }
