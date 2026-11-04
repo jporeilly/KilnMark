@@ -8,7 +8,7 @@
  * Positions live in the top-level `layout:` block, node id → { x, y }. The server accepts and
  * ignores it, so a flow runs the same however it is drawn.
  */
-import { isMap, isScalar, isSeq, parseDocument, type Document, type Pair, type YAMLMap, type YAMLSeq } from "yaml";
+import { isMap, isScalar, isSeq, parseDocument, Scalar, type Document, type Pair, type YAMLMap, type YAMLSeq } from "yaml";
 import type { Change } from "../pipelines/canvas/model";
 import { freshId } from "../pipelines/canvas/model";
 import { isBlockSeq, Patch, scalarYaml, writeLayoutBlock } from "../pipelines/canvas/patch";
@@ -186,6 +186,53 @@ export function removeNode(text: string, id: string): Change {
     }
     if (ctx.graph.positions[id]) writeLayoutBlock(ctx.doc, ctx.p, {}, [id], LAYOUT_COMMENT);
   });
+}
+
+/** How a setting is written: text (quoted when YAML would read it otherwise), a whole number, or a word from a fixed list. */
+export type SettingKind = "text" | "number" | "word";
+
+/** One setting of a node, or its removal: `value` blank or null removes it. */
+export type SettingChange = { key: string; value: string | null; kind: SettingKind };
+
+const WHOLE = /^\d{1,9}$/;
+
+/**
+ * Sets settings of one node, each to a single value, or removes those left blank. A node's id and
+ * type are not settings; its lists and mappings (`items`, `with`, `statements`) are changed in the
+ * YAML. The server's check says whether the values make sense.
+ */
+export function setNodeSettings(text: string, id: string, changes: SettingChange[]): Change {
+  let out = text;
+  for (const { key, value, kind } of changes) {
+    if (key === "id" || key === "type") return { error: `${key} is not a setting.` };
+    const v = value?.trim() ?? "";
+    if (kind === "number" && v !== "" && !WHOLE.test(v)) return { error: `Write ${key} as a whole number, or leave it blank.` };
+    if (/[\r\n]/.test(v)) return { error: `Write ${key} on one line, or change it in the YAML.` };
+    const c = change(out, (ctx) => {
+      const map = listOf(ctx.top, "nodes")?.items.find((m) => idOf(m) === id);
+      if (!isMap(map)) throw new Error(`There is no node ${id}.`);
+      const at = pairOf(map, key);
+      if (v === "") {
+        if (at && (map.items as Pair[])[0] === at && !map.flow) {
+          throw new Error(`${key} is on the node's first line, so it cannot be removed here. Remove it in the YAML.`);
+        }
+        ctx.p.remove(map, key);
+        return;
+      }
+      // Inside `{ … }` a comma or bracket would end the value, so such text is quoted there.
+      const raw = kind === "text" ? scalarYaml(v, map.flow && /[,[\]{}]/.test(v)) : v;
+      if (at && isScalar(at.value) && (at.value.type === Scalar.BLOCK_LITERAL || at.value.type === Scalar.BLOCK_FOLDED)) {
+        throw new Error(`${key} is written over several lines. Change it in the YAML.`);
+      }
+      const written = at && isScalar(at.value) ? (at.value as unknown as Ranged).range : null;
+      // A value written in place, or (`key:` with nothing after it) the whole pair rewritten.
+      if (written && written[0] < written[1]) ctx.p.scalar(at!.value as Scalar, raw);
+      else ctx.p.put(map, key, null, { raw });
+    });
+    if ("error" in c) return c;
+    out = c.text;
+  }
+  return { text: out };
 }
 
 /** `when` as the diagram reads it: trimmed, and on success when blank. */

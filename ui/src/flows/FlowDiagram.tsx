@@ -316,8 +316,8 @@ export default function FlowDiagram({
                       aria-label={`Change the connection: ${connectionSentence(c)}`}
                       onClick={() => {
                         onSelect?.({ connection: c.index, from: c.from, to: c.to });
-                        // Its tools are under the diagram: go there, to change it.
-                        requestAnimationFrame(() => document.getElementById("fd-chosen")?.focus());
+                        // Its settings are in the panel under the diagram: go there, once shown, to change it.
+                        window.setTimeout(() => document.getElementById("fd-chosen")?.focus(), 30);
                       }}
                     >
                       Change

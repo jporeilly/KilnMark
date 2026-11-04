@@ -19,9 +19,11 @@ details.
   pipeline runs it asked for, the rows they wrote and the lowest quality among them. Then
   **Where each node spent its time**: wall-clock time, most nodes at once, the longest node and the
   time its pipeline runs were queued for a worker, and a bar per node split into working, queued
-  for a worker and waiting, all on the run's scale. A flow's page puts Diagram and YAML on tabs, with the Run, Runs and
-  Versions panel under them, as a pipeline's page does; its runs list gives how long each took and
-  the rows it wrote. The flow run API adds these totals and each pipeline run's times.
+  for a worker and waiting, all on the run's scale. A flow's page puts Diagram and YAML on tabs, with
+  the pipeline page's panel under them: **Nodes** lists every node, what it runs after and how it
+  went in the latest run; **Settings** changes the chosen node's settings (its pipeline, version,
+  notice, wait and so on) or connection without touching the YAML by hand; then **Run**, **Runs**
+  and **Versions**. Its runs list gives how long each took and the rows it wrote. The flow run API adds these totals and each pipeline run's times.
   ([Reading a run](docs/guide/flows.md#reading-a-run))
 
 - **A limit on runs per source, and more workers** (ADR 0040). A source can set **Most runs at
@@ -50,7 +52,7 @@ details.
   ([Building and running a flow](docs/guide/flows.md#the-diagram))
 
 - **Change a flow on its diagram.** Designers add nodes, connect them (by dragging from one node to
-  another, or with the form under the diagram), change when a connection is taken, remove nodes and
+  another, or with the form in the panel's Nodes tab), change when a connection is taken, remove nodes and
   connections, and move nodes, with Undo. Each change is written into the YAML at once, touching
   only the lines it must; a connection that would make a loop or repeat one is refused, saying why.
   Moved nodes stay where you put them, in a `layout:` block; **Lay out again** goes back to the
