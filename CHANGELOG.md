@@ -16,6 +16,16 @@ details.
   slots against the database's connections and how to add a worker-only process.
   ([Sources that take a few runs at a time](docs/guide/pipelines.md#sources-that-take-a-few-runs-at-a-time))
 
+- **Pictures in the guides, and a guide to signing in.** The guides now have diagrams of how things
+  work (a pipeline run, a quality gate, choosing a write mode, a rule's cycle, how notifications
+  reach you, where audit events go, what the Ask panel sends, a restore's steps) and screenshots of
+  the pages they describe, in the app's documentation and on GitHub. A new guide,
+  [Signing in, roles and tokens](docs/guide/signing-in.md), explains API tokens, signing in with
+  your organisation, the four roles and the unmask grant, token lifetime, the access review and two
+  people for sensitive values. Page descriptions and the guides' text now use the page's full
+  width. The notifications guide now lists flow
+  events too, and **Settings › Notifications** shows each event's description on its own line again.
+
 - **See a flow, and watch it run.** A flow's page draws it above the YAML: a box per node and an
   arrow per connection, labelled with when it is taken, following the text as you type. A run's
   page draws the same diagram with each node's status as the run goes, and a run chart: a bar per

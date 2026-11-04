@@ -933,6 +933,25 @@ Icons are Tabler Icons, named in one place (`ui/src/components/icons.tsx`); prod
 tiles (`ConnectorTile.tsx`), never vendor logos. The build also writes the UI packages' licences
 to `dist/ui/third-party-notices.txt` ([third-party UI software](legal/third-party-ui.md)).
 
+### Pictures in the guides
+
+The guides' diagrams and screenshots are in `docs/guide/images`, shown in the app's documentation and
+on GitHub alike: `![what it shows](images/name.svg)`. The app shows only pictures from that folder
+(bundled with the UI), and any other image as its description, so a guide never loads anything from
+elsewhere. The app's security policy allows no inline styles, so the diagrams are SVG drawn with
+presentation attributes only (no `<style>`, no `style=""`), on white, so they read the same in
+every theme.
+
+- **Diagrams** are drawn by `docs/guide/images/diagrams.mjs`, with plain Node and no packages:
+  `node docs/guide/images/diagrams.mjs` writes every `.svg` beside it. Each diagram is a few lines
+  of cards, lanes, arrows and icons, in the house colours: one colour per kind of thing (people,
+  scripts, Kilnmark, a grant), green for what succeeds, red and dashed for what fails or is
+  refused. Change the script and run it again; never edit an SVG by hand. Keep a diagram 760
+  wide and let it grow down: the guide's column shows it at about nine tenths.
+- **Screenshots** come from a running Kilnmark with the sample data only: no lab source names,
+  no real people or tokens, the header cropped off, the light theme, 1200 pixels wide.
+- Give every picture a description that says what it shows, for people who cannot see it.
+
 ## Rules
 
 - Versions go up by exactly 0.0.1 per release.

@@ -61,6 +61,8 @@ at least the five years some regulators ask for.
 
 ## Sending it to your SIEM
 
+![Where an audit event goes: a row in Kilnmark's database that is only ever added to, shown under Settings › Audit log, and a JSON line your SIEM can collect](images/audit-log-flow.svg)
+
 Every event is also written, one JSON object a line, to the log category `kilnmark.audit`:
 
 ```json
@@ -79,6 +81,8 @@ KILNMARK_AUDIT_SYSLOG_PROTOCOL=tcp      # or udp, ssl-tcp
 Or collect the container's own output, where the same lines appear, and filter on the category.
 
 ## Reading it
+
+![Settings › Audit log: newest events first, each with when, who (and which token), what, on what, and its details](images/audit-log-page.png)
 
 The page shows the newest events first, a hundred at a time; **Show older events** loads the next
 hundred. **Show** narrows it to one kind of event. Through the API, `action` filters, `limit` sets
