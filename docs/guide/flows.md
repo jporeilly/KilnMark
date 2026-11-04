@@ -80,8 +80,35 @@ labelled with when it is taken:
 
 The diagram is drawn from left to right, with each arrow routed round the nodes it passes. It
 follows the text a moment after you stop typing; while the YAML cannot be read, it says so and
-keeps showing the flow as it last could be read. Zoom with the buttons in its corner; **The connections in words**, under it, lists every connection as a sentence. To change the
-flow, change the YAML: editing on the diagram comes later.
+keeps showing the flow as it last could be read. Zoom with the buttons in its corner; **The
+connections in words**, under it, lists every connection as a sentence.
+
+## Changing the flow on the diagram
+
+Designers can change the flow on the diagram as well as in the YAML. Each change is written into
+the YAML below at once, changing only the lines it must, so your comments and spacing stay as they
+are. Nothing is saved until you save a new version.
+
+- **Add a node.** Under the diagram, choose its type (and, for one that runs a pipeline, the
+  pipeline), then **Add node**. It gets an id from its type or pipeline, and the settings it starts
+  with; the problems under the YAML say what else it needs, such as a `sql` node's source.
+- **Connect two nodes.** Drag from a node's right edge to another node: that connection is taken
+  when the first succeeds. Or choose **From**, **To** and when it is taken under the diagram, then
+  **Connect**. A connection that would join a node to itself, make a loop or repeat one already
+  there is refused, and the note under the diagram says why.
+- **Change or remove a node or connection.** Choose it on the diagram (click it, or Tab to it and
+  press Enter), or choose **Change** beside a connection in **The connections in words**. Its tools
+  appear under the diagram: change when a connection is taken, including its condition, or remove
+  it. Removing a node removes its connections too. A node's settings are changed in the YAML.
+- **Move a node.** Drag it. The diagram then keeps every node where you see it, in a `layout:`
+  block at the end of the YAML; connections between the same two nodes are drawn apart, and labels
+  are drawn over the nodes. **Lay out again** removes the block, and the diagram lays the flow out
+  itself.
+- **Undo** puts back what the last change on the diagram changed, while the YAML is as that change
+  left it. To go back to the saved version, choose **Undo my changes** under the YAML.
+
+The `layout:` block only says where the diagram draws each node: a flow runs the same however it
+is drawn.
 
 ## Checking as you type
 
@@ -146,7 +173,7 @@ runs it started that are still going are cancelled. What they had already writte
 
 ## What is not here yet
 
-- Editing a flow on the diagram: for now, edit its YAML.
+- Changing a node's settings on the diagram: for now, change them in the YAML.
 - Deleting a flow.
 - Adding the sample flows from **Add samples**: for now, copy one from `samples/08-flows` into a
   new flow.

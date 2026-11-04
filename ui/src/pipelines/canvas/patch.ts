@@ -213,3 +213,78 @@ export class Patch {
 
 export const isBlockMap = (n: unknown): n is YAMLMap => isMap(n) && !n.flow;
 export const isBlockSeq = (n: unknown): n is YAMLSeq => isSeq(n) && !n.flow;
+
+type Point = { x: number; y: number };
+
+const topPair = (doc: Document, key: string) =>
+  ((doc.contents as YAMLMap).items as Pair[]).find((p) => isScalar(p.key) && String(p.key.value) === key) ?? null;
+
+const keyText = (n: unknown): string | null => {
+  if (!isScalar(n) || n.value == null) return null;
+  return typeof n.source === "string" && n.type === Scalar.PLAIN ? n.source : String(n.value);
+};
+
+/**
+ * Writes positions in the top-level `layout:` block (creating it, last, under `comment`, if there is
+ * none) and drops the ids in `drop`. Pipelines and flows keep where the canvas draws each node there.
+ */
+export function writeLayoutBlock(
+  doc: Document,
+  p: Patch,
+  positions: Record<string, Point>,
+  drop: Iterable<string>,
+  comment: string,
+) {
+  const xy = (pt: Point) => ({ x: Math.round(pt.x), y: Math.round(pt.y) });
+  const pair = topPair(doc, "layout");
+  const layout = pair?.value;
+  const dropped = new Set(drop);
+  if (pair && isBlockMap(layout) && layout.items.length > 0) {
+    const entries = layout.items as Pair[];
+    const fresh: string[] = [];
+    const indent = p.col((entries[0].key as unknown as { range: [number, number, number] }).range[0]);
+    for (const [id, pt] of Object.entries(positions)) {
+      if (dropped.has(id)) continue;
+      const e = entries.find((x) => isScalar(x.key) && String(x.key.value) === id);
+      if (e && e.value) {
+        const r = (e.value as unknown as { range: [number, number, number] }).range;
+        const padded = /^\{\s/.test(p.text.slice(r[0], r[1]));
+        p.replace(r[0], p.valueEnd(e), flowYaml(xy(pt), false, padded));
+      } else if (!e) {
+        fresh.push(`${" ".repeat(indent)}${scalarYaml(id)}: ${flowYaml(xy(pt))}${p.eol}`);
+      } else {
+        p.replace((e.key as unknown as { range: [number, number, number] }).range[0], p.valueEnd(e), `${scalarYaml(id)}: ${flowYaml(xy(pt))}`);
+      }
+    }
+    for (const id of dropped) p.remove(layout, id);
+    if (fresh.length) {
+      const end = p.pairEnd(entries[entries.length - 1]);
+      p.insert(end, (p.text[end - 1] === "\n" ? "" : p.eol) + fresh.join(""));
+    }
+    return;
+  }
+  const kept: Record<string, Point> = {};
+  if (pair && isMap(layout)) {
+    for (const e of layout.items as Pair[]) {
+      const id = keyText(e.key);
+      const v = e.value;
+      if (id && isMap(v) && !dropped.has(id)) kept[id] = { x: Number(v.get("x")), y: Number(v.get("y")) };
+    }
+  }
+  for (const [id, pt] of Object.entries(positions)) if (!dropped.has(id)) kept[id] = pt;
+  const lines = Object.entries(kept).map(([id, pt]) => `  ${scalarYaml(id)}: ${flowYaml(xy(pt))}`);
+  if (pair) {
+    if (lines.length === 0) {
+      p.replace(p.lineStart((pair.key as unknown as { range: [number, number, number] }).range[0]), p.pairEnd(pair), "");
+      return;
+    }
+    const start = (pair.key as unknown as { range: [number, number, number] }).range[0];
+    p.replace(start, p.valueEnd(pair), `layout:${p.eol}${lines.join(p.eol)}`);
+    return;
+  }
+  if (lines.length === 0) return;
+  const top = doc.contents as YAMLMap & { range: [number, number, number] };
+  const end = top.range[1];
+  const lead = end > 0 && p.text[end - 1] !== "\n" ? p.eol : "";
+  p.insert(end, `${lead}${p.eol}#${comment}${p.eol}layout:${p.eol}${lines.join(p.eol)}${p.eol}`);
+}

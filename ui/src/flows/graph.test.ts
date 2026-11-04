@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { connectionSentence, readFlowGraph, whenWords } from "./graph";
+import { bowOffsets, connectionSentence, readFlowGraph, whenWords } from "./graph";
 
 const FLOW = `kilnmark: flow/v1
 name: nightly-customers
@@ -50,7 +50,7 @@ describe("readFlowGraph", () => {
       ["tell", "notify", "Too many set aside"],
       ["later", "wait", "Waits 10m"],
       ["empty", "sql", "2 SQL statements on warehouse"],
-      ["halt", "stop", "Ends the flow: succeeded"],
+      ["halt", "stop", "The run counts as succeeded"],
     ]);
     expect(r.graph.connections.map((c) => [c.from, c.to, c.kind])).toEqual([
       ["clean", "spend", "condition"],
@@ -59,6 +59,8 @@ describe("readFlowGraph", () => {
       ["later", "empty", "always"],
       ["empty", "halt", "success"],
     ]);
+    // Each keeps its place in the YAML list, which the canvas changes it by.
+    expect(r.graph.connections.map((c) => c.index)).toEqual([0, 1, 2, 3, 4]);
     // A connection to a node that is not there, and a position for one, are left out.
     expect(r.graph.positions).toEqual({ clean: { x: 10, y: 20 }, spend: { x: 300, y: 20 } });
   });
@@ -73,8 +75,8 @@ paths:
   - { from: a, to: b, when: failure }
 `);
     expect(r.ok && r.graph.nodes.map((n) => n.id)).toEqual(["a", "b"]);
-    expect(r.ok && r.graph.connections).toEqual([{ from: "a", to: "b", kind: "failure", when: "failure" }]);
-    expect(r.ok && r.graph.nodes[1].summary).toBe("Ends the flow: failed");
+    expect(r.ok && r.graph.connections).toEqual([{ from: "a", to: "b", kind: "failure", when: "failure", index: 0 }]);
+    expect(r.ok && r.graph.nodes[1].summary).toBe("The run counts as failed");
   });
 
   test("says why there is nothing to draw", () => {
@@ -105,7 +107,7 @@ layout:
 });
 
 describe("connection words", () => {
-  const c = (kind: "success" | "failure" | "always" | "condition", when: string) => ({ from: "a", to: "b", kind, when });
+  const c = (kind: "success" | "failure" | "always" | "condition", when: string) => ({ from: "a", to: "b", kind, when, index: 0 });
 
   test("label each kind, shortening a long condition", () => {
     expect(whenWords(c("success", "success"))).toBe("on success");
@@ -120,5 +122,19 @@ describe("connection words", () => {
   test("say in a sentence when the next node runs", () => {
     expect(connectionSentence(c("failure", "failure"))).toBe("b runs when a fails");
     expect(connectionSentence(c("condition", "a.score >= good"))).toBe("b runs when a succeeds and a.score >= good");
+  });
+});
+
+describe("bowOffsets", () => {
+  test("leaves a pair's only connection straight and spreads several either side, whichever way they go", () => {
+    const offsets = bowOffsets([
+      { from: "a", to: "b" },
+      { from: "a", to: "c" },
+      { from: "a", to: "b" },
+      { from: "b", to: "a" },
+    ]);
+    expect(offsets[1]).toBe(0);
+    // a-b has three: -36, 0, 36 in one frame; b→a is turned round, so its offset changes sign.
+    expect([offsets[0], offsets[2], -offsets[3]]).toEqual([-36, 0, 36]);
   });
 });
