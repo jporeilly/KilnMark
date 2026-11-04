@@ -1,0 +1,8 @@
+flowchart TD
+  Q["Your question,<br/>and the page you are on"] --> S["The guide sections<br/>that match it"]
+  S --> M{"May a hosted model<br/>be used?"}
+  M -- yes --> L["The model gets the question<br/>and those sections only:<br/>nothing from your catalogue"]
+  M -- "no: local models only" --> N["A local model, or the<br/>matching sections listed"]
+  L --> A(["An answer with links<br/>to the sections"])
+  N --> A
+  A --> U["Recorded under AI usage"]

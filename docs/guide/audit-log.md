@@ -60,6 +60,8 @@ at least the five years some regulators ask for.
 
 ## Sending it to your SIEM
 
+![Where an audit event goes: a row in Kilnmark's database that is only ever added to, shown under Settings › Audit log, and a JSON line your SIEM can collect](images/audit-log-flow.png)
+
 Every event is also written, one JSON object a line, to the log category `kilnmark.audit`:
 
 ```json

@@ -1,5 +1,5 @@
 import { Marked } from "marked";
-import { docHref, docPage, plainHeading, slug, uniqueSlug, type DocPage } from "./index";
+import { docHref, docPage, docPicture, plainHeading, slug, uniqueSlug, type DocPage } from "./index";
 
 const ENTITIES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ENTITIES[c]);
@@ -35,8 +35,9 @@ function decode(part: string): string {
 }
 
 /**
- * A guide as HTML. Raw HTML in the Markdown is shown as text, never rendered; images show their
- * description only; links are limited as in {@link target}. Section headings get the id
+ * A guide as HTML. Raw HTML in the Markdown is shown as text, never rendered; a picture bundled
+ * with the guides ({@link docPicture}) is shown, any other image as its description only; links are
+ * limited as in {@link target}. Section headings get the id
  * doc-<slug> (see docHeadings) and can take focus; level 1 headings are left out, as the page
  * shows the title (DocPage.title) itself.
  */
@@ -64,8 +65,10 @@ export function renderDoc(page: DocPage): string {
           external ? ' rel="noopener noreferrer"' : ""
         }>${inner}</a>`;
       },
-      image({ text }) {
-        return escapeHtml(text);
+      image({ href, text }) {
+        const src = docPicture(href);
+        if (src == null) return escapeHtml(text);
+        return `<img class="doc-picture" src="${escapeHtml(src)}" alt="${escapeHtml(text)}" loading="lazy">`;
       },
     },
   });

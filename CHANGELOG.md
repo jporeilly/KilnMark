@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **Pictures in the guides.** The guides now have diagrams of how things work (a pipeline run, a
+  quality gate, choosing a write mode, a rule's cycle, how notifications reach you, where audit
+  events go, what the Ask panel sends, a restore's steps) and screenshots of the pages they
+  describe, in the app's documentation and on GitHub. The notifications guide now lists flow
+  events too, and **Settings › Notifications** shows each event's description on its own line again.
+
 - **See a flow, and watch it run.** A flow's page draws it above the YAML: a box per node and an
   arrow per connection, labelled with when it is taken, following the text as you type. A run's
   page draws the same diagram with each node's status as the run goes, and a run chart: a bar per

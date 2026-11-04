@@ -1,0 +1,6 @@
+flowchart TD
+  A{"Does the table<br/>exist yet?"} -- no --> C["create: made from the<br/>input's columns, then filled"]
+  A -- "yes, or it may" --> B{"What should happen<br/>to its rows?"}
+  B -- "keep them, add these" --> P["append: rows added;<br/>every column must fit"]
+  B -- "swap them all for these" --> R["replace: a new table is filled,<br/>then swapped in, in one step"]
+  B -- "update rows with the same key,<br/>add the rest" --> U["upsert: needs a key"]

@@ -98,3 +98,14 @@
 .doc-body [id^="doc-"] {
   scroll-margin-top: calc(var(--km-topbar-h) + 16px);
 }
+
+/* A diagram or screenshot: drawn on white, so it reads the same in every theme. */
+.doc-body .doc-picture {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0 4px;
+  background: #fff;
+  border: 1px solid var(--km-border);
+  border-radius: 8px;
+}

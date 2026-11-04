@@ -1,0 +1,8 @@
+flowchart TD
+  A["An event: a rule fails or recovers,<br/>an issue opens, a scan or run fails,<br/>drift, a connection test fails"] --> B{"Told already<br/>about this problem?"}
+  B -- "yes, and no worse" --> Z(["Nothing new sent"])
+  B -- "no, or it got worse" --> C["Everyone whose choices<br/>include this kind and source"]
+  C --> D["In the app:<br/>Settings › Notifications"]
+  C --> E{"Email on and confirmed, the kind<br/>ticked, its severity reached?"}
+  E -- yes --> F["An email now, or in<br/>the daily digest"]
+  E -- no --> G(["In the app only"])
