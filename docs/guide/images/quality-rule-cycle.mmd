@@ -1,9 +1,0 @@
-flowchart TD
-  A["Profile suggests a rule,<br/>or you write one"] --> B["Try it before saving:<br/>see the failing rows"]
-  B --> C["Save, with thresholds:<br/>Warn above, Fail above"]
-  C --> D["Runs after every scan,<br/>or with Run rules now"]
-  D --> E{"Result"}
-  E -- Pass --> F["Score in its dimension =<br/>share of rows that passed"]
-  E -- "Warning, Fail or<br/>Could not run" --> G["Task in the issue list,<br/>notification, webhook"]
-  G --> D
-  F --> D

@@ -69,7 +69,7 @@ minutes rather than a day), and still back up the keys volume.
 
 A restore puts Kilnmark back as it was when the backup was taken. Everything since is lost.
 
-![The restore's steps: files checked, the backup restored into a database of its own while Kilnmark runs, then the old database and keys kept aside and the restored ones put in place](images/restore-steps.png)
+![The restore's steps: files checked, the backup restored into a database of its own while Kilnmark runs, then the old database and keys kept aside and the restored ones put in place](images/restore-steps.svg)
 
 1. **Install the release** you ran, or a later one (INSTALL.md, A), with your `.env`. A later
    release updates the database at its first start, as an upgrade does; an earlier one cannot run a

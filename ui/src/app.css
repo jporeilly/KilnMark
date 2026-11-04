@@ -81,7 +81,6 @@ a:hover {
   font-size: var(--km-text-lg);
   color: var(--km-muted);
   margin: 4px 0 20px;
-  max-width: 75ch;
 }
 
 .muted {

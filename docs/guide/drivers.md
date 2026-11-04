@@ -9,6 +9,8 @@ connection, and a connection test says that the driver is missing.
 
 ## Install a driver (admins)
 
+![Settings › Drivers: a driver Kilnmark does not ship, with its licence, whether it is installed, and Accept and download](images/drivers-page.png)
+
 Open **Settings**, **Drivers**. Each driver your server's connectors need is listed with the
 connectors that use it, its licence and whether it is installed.
 

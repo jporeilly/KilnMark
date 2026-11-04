@@ -1,6 +1,0 @@
-flowchart LR
-  R["Rows from<br/>the read"] --> G{"gate:<br/>does the row pass<br/>its rules?"}
-  G -- passes --> O["out: on to<br/>the next node"]
-  G -- "fails past a rule's limit,<br/>on_fail: stop" --> S(["The run fails;<br/>writes after the gate<br/>do not commit"])
-  G -- "fails, on_fail: quarantine" --> Q["quarantine:<br/>set aside, the run goes on"]
-  G -- "fails, on_fail: warn" --> W["out, and recorded<br/>with the run"]

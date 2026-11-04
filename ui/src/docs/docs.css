@@ -53,10 +53,6 @@
   overflow-wrap: break-word;
 }
 
-.doc-body > * {
-  max-width: 78ch;
-}
-
 .doc-body > :first-child {
   margin-top: 0;
 }

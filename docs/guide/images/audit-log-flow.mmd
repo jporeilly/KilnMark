@@ -1,5 +1,0 @@
-flowchart TD
-  A["A security-relevant change:<br/>sign-in, token, source, grant,<br/>setting, restore"] --> B[("Audit log in Kilnmark's database:<br/>rows are only ever added")]
-  A --> C["One JSON line in the<br/>kilnmark.audit log category"]
-  B --> D["Settings › Audit log:<br/>admins read and filter it"]
-  C --> E["Your SIEM: by syslog with<br/>the siem profile, or from<br/>the container's output"]

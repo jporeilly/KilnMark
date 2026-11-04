@@ -1,9 +1,0 @@
-flowchart TD
-  A["Build on the canvas or in YAML,<br/>checked as you type"] --> C["Save a version<br/>(a draft if it has problems)"]
-  C --> D["Run now: checked again,<br/>then queued"]
-  D --> E["A worker with a free slot takes it,<br/>and locks every table or file it writes"]
-  E --> G["Nodes read, change and check<br/>the rows in one pass"]
-  G --> H{"Did it finish?"}
-  H -- yes --> I["Writes commit; what was written<br/>is catalogued and scored"]
-  I --> J(["Succeeded"])
-  H -- "no: a stop gate, an error<br/>or Cancel run" --> K(["Failed or cancelled:<br/>the run says why"])

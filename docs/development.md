@@ -918,23 +918,19 @@ to `dist/ui/third-party-notices.txt` ([third-party UI software](legal/third-part
 
 ### Pictures in the guides
 
-The guides' diagrams and screenshots are PNG files in `docs/guide/images`, shown in the app's
-documentation and on GitHub alike: `![what it shows](images/name.png)`. The app shows only pictures
-from that folder (bundled with the UI), and any other image as its description, so a guide never
-loads anything from elsewhere. The app's security policy allows no inline styles, which rules out
-drawing Mermaid in the page or showing SVGs that carry their own styles; PNGs on white read the same
-in every theme.
+The guides' diagrams and screenshots are in `docs/guide/images`, shown in the app's documentation and
+on GitHub alike: `![what it shows](images/name.svg)`. The app shows only pictures from that folder
+(bundled with the UI), and any other image as its description, so a guide never loads anything from
+elsewhere. The app's security policy allows no inline styles, so the diagrams are SVG drawn with
+presentation attributes only (no `<style>`, no `style=""`), on white, so they read the same in
+every theme.
 
-- **Diagrams** are written in Mermaid beside their picture (`name.mmd`) and drawn with Mermaid's
-  command-line tool, which is not a dependency of the build:
-
-  ```
-  npx -p @mermaid-js/mermaid-cli@11.4.2 mmdc -i docs/guide/images/name.mmd -o docs/guide/images/name.png \
-    -c docs/guide/images/mermaid-config.json -b white -s 2 -w 900
-  ```
-
-  Keep them top to bottom when they have more than four or five steps, so they stay readable in
-  the guide's column. Change the `.mmd` and draw it again; never edit the PNG.
+- **Diagrams** are drawn by `docs/guide/images/diagrams.mjs`, with plain Node and no packages:
+  `node docs/guide/images/diagrams.mjs` writes every `.svg` beside it. Each diagram is a few lines
+  of cards, lanes, arrows and icons, in the house colours: one colour per kind of thing (people,
+  scripts, Kilnmark, a grant), green for what succeeds, red and dashed for what fails or is
+  refused. Change the script and run it again; never edit an SVG by hand. Keep a diagram 760
+  wide and let it grow down: the guide's column shows it at about nine tenths.
 - **Screenshots** come from a running Kilnmark with the sample data only: no lab source names,
   no real people or tokens, the header cropped off, the light theme, 1200 pixels wide.
 - Give every picture a description that says what it shows, for people who cannot see it.

@@ -32,7 +32,7 @@ A failed pipeline run is told once until a run of that pipeline succeeds, and a 
 once until a run of that flow succeeds. Drift, new issues, pipeline runs below their quality
 threshold and flow notices are told each time they happen, once per run.
 
-![How an event reaches you: told once per problem, to everyone whose choices include it, in the app, and by email when it is on, confirmed and the severity is reached](images/notifications-flow.png)
+![How an event reaches you: told once per problem, to everyone whose choices include it, in the app, and by email when it is on, confirmed and the severity is reached](images/notifications-flow.svg)
 
 ## In the app
 

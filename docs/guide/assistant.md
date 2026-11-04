@@ -61,7 +61,7 @@ the documentation falls short. Administrators can list recent ratings with
 
 ## Privacy
 
-![What the Ask panel sends: your question and the matching guide sections, to a hosted model only when allowed, never anything from your catalogue](images/assistant-privacy.png)
+![What the Ask panel sends: your question and the matching guide sections, to a hosted model only when allowed, never anything from your catalogue](images/assistant-privacy.svg)
 
 - Your question is sent to the model chosen for the Assistant feature, together with the sections
   of documentation that match it. Nothing about your catalogue is sent.

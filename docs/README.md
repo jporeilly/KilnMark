@@ -26,6 +26,7 @@ on 24 October 2026. Diagrams embedded in the originals appear as placeholders he
 - [Installing database drivers](guide/drivers.md): the drivers Kilnmark ships, and registering one whose licence keeps it out of the release
 - [Backing up and restoring Kilnmark](guide/backup-and-restore.md): what to back up, the backup and restore scripts, what to check after a restore, and testing a restore
 - [The audit log](guide/audit-log.md): what is recorded, why it cannot be changed, sending it to a SIEM, and reading it
+- [Signing in, roles and tokens](guide/signing-in.md): API tokens and signing in with your organisation, the four roles and the unmask grant, token lifetime, the access review and two people for sensitive values
 - [Notifications and email alerts](guide/notifications.md): what can notify you, in the app and by email; choosing what you get; setting up email and team addresses
 
 ## Spikes

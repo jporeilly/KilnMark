@@ -602,7 +602,7 @@ which runs in the database, for larger tables.
 
 ### What happens when rows fail
 
-![What a gate does with a row that fails its rules: stop fails the run, quarantine sets the row aside, warn lets it through and records it](images/gate-on-fail.png)
+![What a gate does with a row that fails its rules: stop fails the run, quarantine sets the row aside, warn lets it through and records it](images/gate-on-fail.svg)
 
 `on_fail` decides:
 
@@ -789,7 +789,7 @@ YAML exactly as it was saved.
 
 ## Running a pipeline
 
-![How a pipeline goes from building to a finished run: saved as a version, queued, taken by a worker with a free slot, its writes locked, its nodes run in one pass, then committed and catalogued, or failed](images/pipeline-run.png)
+![How a pipeline goes from building to a finished run: saved as a version, queued, taken by a worker with a free slot, its writes locked, its nodes run in one pass, then committed and catalogued, or failed](images/pipeline-run.svg)
 
 Choose **Run now**, on the Pipelines page or the pipeline's own page. Kilnmark checks the latest
 version again first, since a source may have changed, then queues the run for a worker. The run
