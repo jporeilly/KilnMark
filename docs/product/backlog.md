@@ -35,8 +35,8 @@ Last reviewed: 4 November 2026 (after #78-#85 merged).
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope).
 4. **Flows F4** ([ADR 0026](../adr/0026-flows.md), docs/design/flows.md): the diagram and the run
-   chart (F4a) shipped (#85); next, editing on the canvas (F4b); adding the sample flows from Add
-   samples; deleting a flow; resource control; the built-in scheduler.
+   chart (F4a) shipped (#85); editing on the diagram (F4b) in review; then adding the sample
+   flows from Add samples; deleting a flow; resource control; the built-in scheduler.
 5. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030); then
    templates, version history, and v0.1.0.

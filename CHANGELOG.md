@@ -13,6 +13,13 @@ details.
   node on one time line, a skipped node hatched, each bar opening the pipeline run it started.
   ([Building and running a flow](docs/guide/flows.md#the-diagram))
 
+- **Change a flow on its diagram.** Designers add nodes, connect them (by dragging from one node to
+  another, or with the form under the diagram), change when a connection is taken, remove nodes and
+  connections, and move nodes, with Undo. Each change is written into the YAML at once, touching
+  only the lines it must; a connection that would make a loop or repeat one is refused, saying why.
+  Moved nodes stay where you put them, in a `layout:` block; **Lay out again** goes back to the
+  diagram's own layout. ([Changing the flow on the diagram](docs/guide/flows.md#changing-the-flow-on-the-diagram))
+
 - **How Kilnmark is built, for buyers who ask** ([SSDF self-assessment](docs/product/ssdf-self-assessment.md)):
   each task of NIST's Secure Software Development Framework, with where the evidence is and what is
   still missing, for a federal attestation or a bank's due diligence. The build tool's download is
