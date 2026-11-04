@@ -21,7 +21,9 @@ Last reviewed: 3 November 2026 (after #61-#69 merged).
      in review (ADR 0036); then the Keycloak profile for customers without a provider;
    - access reviews and token policy (ADR 0037, #81); separation of duties for the unmask grant
      (ADR 0038, #82); backup and restore with a runbook: in review (ADR 0039);
-   - the evidence pack, with an SSDF self-assessment; a full export in open formats, for exit;
+   - the SSDF self-assessment: in review; its gaps (static analysis, Gradle dependency
+     verification, build provenance, a threat model) join this list; the rest of the evidence pack
+     when a customer's due diligence asks; a full export in open formats, for exit;
    - Generic JDBC drivers in a process of their own (ADR 0030, decision 5);
    - change approval and environments;
    - `KILNMARK_DB_PASSWORD` in the dev compose, a JDBC `socketTimeout`, masking on the run quality
