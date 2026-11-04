@@ -17,7 +17,7 @@ import { Graph, layout } from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
 import type { FlowNodeStatus } from "../api";
 import { useColourScheme } from "../theme/appearance";
-import { FlowStatus } from "./RunFlow";
+import { FlowStatus, flowStatusWords } from "./RunFlow";
 import { connectionSentence, TYPE_WORDS, whenWords, type ConnectionKind, type FlowGraph, type FlowGraphNode, type Point } from "./graph";
 import "./flows.css";
 
@@ -83,10 +83,10 @@ const edgeTypes = { routed: Routed };
 /**
  * A flow as a read-only graph: a box per node with what it does, a labelled arrow per connection
  * (solid on success, dashed on failure, dotted always, and a condition's text), laid out left to
- * right with room for each label, and each connection routed round the nodes it passes. Where the
- * flow's `layout:` block places every node, it is drawn there, with plain arrows. With `statuses`,
- * each node shows how it stands in a run, in words and colour. The list under it says the same in
- * sentences.
+ * right with room for each label, and each connection routed round the nodes it passes. The
+ * `layout:` block is not used yet: it is for editing on the canvas, which places nodes by hand.
+ * With `statuses`, each node shows how it stands in a run, in words and colour. The list under it
+ * says the same in sentences.
  */
 export default function FlowDiagram({
   graph,
@@ -99,67 +99,56 @@ export default function FlowDiagram({
 }) {
   const scheme = useColourScheme();
   const height = HEIGHT + (statuses ? STATUS_ROW : 0);
-  const { cards, links } = useMemo(() => {
-    const marker = (kind: ConnectionKind) => ({
-      type: MarkerType.ArrowClosed,
-      color: kind === "failure" ? "var(--km-bad)" : kind === "condition" ? "var(--km-warn)" : "var(--km-ink)",
-    });
-    const placed = graph.nodes.every((n) => graph.positions[n.id]);
+  // The layout depends only on the flow: a run's page asks for statuses every two seconds, and
+  // only the cards change with them.
+  const { where, links } = useMemo(() => {
+    const g = new Graph({ multigraph: true });
+    g.setGraph({ rankdir: "LR", nodesep: 30, edgesep: 20, ranksep: 60, marginx: 16, marginy: 16 });
+    for (const n of graph.nodes) g.setNode(n.id, { width: WIDTH, height });
+    graph.connections.forEach((c, i) =>
+      g.setEdge(c.from, c.to, { width: labelWidth(whenWords(c)), height: LABEL_HEIGHT, labelpos: "c" }, `c${i}`),
+    );
+    layout(g);
     const where: Record<string, Point> = {};
-    let links: Edge[];
-    if (placed) {
-      for (const n of graph.nodes) where[n.id] = graph.positions[n.id];
-      links = graph.connections.map((c, i) => ({
+    for (const n of graph.nodes) {
+      const p = g.node(n.id);
+      where[n.id] = { x: p.x - WIDTH / 2, y: p.y - height / 2 };
+    }
+    const links = graph.connections.map((c, i): RoutedEdge => {
+      const e = g.edge({ v: c.from, w: c.to, name: `c${i}` }) as { points: Point[]; x: number; y: number };
+      return {
         id: `c${i}`,
         source: c.from,
         target: c.to,
-        type: "smoothstep",
-        label: whenWords(c),
+        type: "routed",
         className: `fd-edge fd-edge-${c.kind}`,
-        labelStyle: { fontWeight: 600 },
-        markerEnd: marker(c.kind),
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: c.kind === "failure" ? "var(--km-bad)" : c.kind === "condition" ? "var(--km-warn)" : "var(--km-ink)",
+        },
         ariaLabel: connectionSentence(c),
-      }));
-    } else {
-      const g = new Graph({ multigraph: true });
-      g.setGraph({ rankdir: "LR", nodesep: 30, edgesep: 20, ranksep: 60, marginx: 16, marginy: 16 });
-      for (const n of graph.nodes) g.setNode(n.id, { width: WIDTH, height });
-      graph.connections.forEach((c, i) =>
-        g.setEdge(c.from, c.to, { width: labelWidth(whenWords(c)), height: LABEL_HEIGHT, labelpos: "c" }, `c${i}`),
-      );
-      layout(g);
-      for (const n of graph.nodes) {
-        const p = g.node(n.id);
-        where[n.id] = { x: p.x - WIDTH / 2, y: p.y - height / 2 };
-      }
-      links = graph.connections.map((c, i): RoutedEdge => {
-        const e = g.edge({ v: c.from, w: c.to, name: `c${i}` }) as { points: Point[]; x: number; y: number };
-        return {
-          id: `c${i}`,
-          source: c.from,
-          target: c.to,
-          type: "routed",
-          className: `fd-edge fd-edge-${c.kind}`,
-          markerEnd: marker(c.kind),
-          ariaLabel: connectionSentence(c),
-          data: { points: e.points, label: whenWords(c), labelAt: { x: e.x, y: e.y }, kind: c.kind, full: c.when },
-        };
-      });
-    }
-    const cards: FlowCard[] = graph.nodes.map((n) => {
-      const status = statuses?.[n.id] ?? null;
-      return {
-        id: n.id,
-        type: "flowNode",
-        position: where[n.id],
-        data: { node: n, status },
-        // Routes are fixed by the layout, so a node dragged away would leave its arrows behind.
-        draggable: placed,
-        ariaLabel: `Node ${n.id}, ${TYPE_WORDS[n.type] ?? n.type}: ${n.summary}${status ? `. ${status}` : ""}`,
+        data: { points: e.points, label: whenWords(c), labelAt: { x: e.x, y: e.y }, kind: c.kind, full: c.when },
       };
     });
-    return { cards, links };
-  }, [graph, statuses, height]);
+    return { where, links };
+  }, [graph, height]);
+
+  const cards = useMemo(
+    () =>
+      graph.nodes.map((n): FlowCard => {
+        const status = statuses?.[n.id] ?? null;
+        return {
+          id: n.id,
+          type: "flowNode",
+          position: where[n.id],
+          data: { node: n, status },
+          // The routes are fixed by the layout: nodes stay where it put them.
+          draggable: false,
+          ariaLabel: `Node ${n.id}, ${TYPE_WORDS[n.type] ?? n.type}: ${n.summary}${status ? `. ${flowStatusWords(status)}` : ""}`,
+        };
+      }),
+    [graph, statuses, where],
+  );
 
   return (
     <>

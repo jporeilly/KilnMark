@@ -17,7 +17,7 @@ import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { YamlEditor, type YamlEditorHandle } from "../pipelines/YamlEditor";
-import { readFlowGraph } from "./graph";
+import { readFlowGraph, type FlowGraph } from "./graph";
 import { FlowRunStatus, RunFlowButton } from "./RunFlow";
 import { starterFlow } from "./template";
 import "../pipelines/pipelines.css";
@@ -25,6 +25,7 @@ import "../pipelines/pipelines.css";
 const FlowDiagram = lazy(() => import("./FlowDiagram"));
 
 const CHECK_DELAY_MS = 600;
+const DRAW_DELAY_MS = 400;
 
 /**
  * One flow, written as YAML: checked a moment after each change, with the problems listed below
@@ -120,7 +121,17 @@ export function FlowPage({ name, version, role }: { name: string | null; version
   }, [active, loadLists]);
 
   const text = viewing ? (shown?.yaml ?? "") : yaml;
-  const drawn = useMemo(() => readFlowGraph(text), [text]);
+  // The diagram follows the text once typing pauses, and keeps the last flow it could read while
+  // the YAML cannot be read, so the editor under it does not jump.
+  const [drawnText, setDrawnText] = useState(text);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDrawnText(text), DRAW_DELAY_MS);
+    return () => window.clearTimeout(t);
+  }, [text]);
+  const drawn = useMemo(() => readFlowGraph(drawnText), [drawnText]);
+  const lastDrawn = useRef<FlowGraph | null>(null);
+  if (drawn.ok) lastDrawn.current = drawn.graph;
+  const shownGraph = drawn.ok ? drawn.graph : lastDrawn.current;
 
   // Check the YAML a moment after typing stops. Only the latest answer counts.
   useEffect(() => {
@@ -333,12 +344,16 @@ export function FlowPage({ name, version, role }: { name: string | null; version
 
       <section aria-labelledby="fl-diagram-h" className="panel">
         <h2 id="fl-diagram-h">Diagram</h2>
-        {drawn.ok ? (
-          <Suspense fallback={<p role="status">Loading…</p>}>
-            <FlowDiagram graph={drawn.graph} label={`Diagram of ${viewing ? `version ${version} of ` : ""}the flow`} />
-          </Suspense>
+        {shownGraph ? (
+          // The note lies over the diagram, so nothing below it moves while the YAML is being typed.
+          <div className="fd-holder">
+            {!drawn.ok && <p className="fd-stale-note small">{drawn.error} The diagram shows the flow as it last could be read.</p>}
+            <Suspense fallback={<p role="status">Loading…</p>}>
+              <FlowDiagram graph={shownGraph} label={`Diagram of ${viewing ? `version ${version} of ` : ""}the flow`} />
+            </Suspense>
+          </div>
         ) : (
-          <p className="muted">{drawn.error} The diagram follows the YAML below.</p>
+          <p className="muted">{drawn.ok ? "" : `${drawn.error} The diagram follows the YAML below.`}</p>
         )}
       </section>
       <section aria-labelledby="fl-yaml-h" className="panel">

@@ -83,6 +83,21 @@ paths:
     expect(readFlowGraph("kilnmark: flow/v1\nname: x\n")).toEqual({ ok: false, error: "The flow has no nodes yet." });
   });
 
+  test("reads when as the server does, in any case; a position needs x and y", () => {
+    const r = readFlowGraph(`nodes:
+  - { id: a, type: wait, for: 1m }
+  - { id: b, type: stop }
+connections:
+  - { from: a, to: b, when: " Failure " }
+  - { from: a, to: b, when: ALWAYS }
+layout:
+  a: { x: 5 }
+  b: { x: 1, y: 2 }
+`);
+    expect(r.ok && r.graph.connections.map((c) => c.kind)).toEqual(["failure", "always"]);
+    expect(r.ok && r.graph.positions).toEqual({ b: { x: 1, y: 2 } });
+  });
+
   test("keeps the first of two nodes with one id", () => {
     const r = readFlowGraph("nodes:\n  - { id: a, type: wait, for: 1m }\n  - { id: a, type: stop }\n");
     expect(r.ok && r.graph.nodes).toEqual([{ id: "a", type: "wait", summary: "Waits 1m" }]);

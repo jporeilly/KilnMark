@@ -35,7 +35,8 @@ export function flowChart(detail: FlowRunDetail, now: number = Date.now()): Flow
         type: n.type,
         status: n.status,
         start: started == null ? null : Math.max(0, started - origin),
-        end: finished != null ? Math.max(0, finished - origin) : live ? Math.max(0, now - origin) : null,
+        // The browser's clock can be behind the server's: a running bar never ends before it starts.
+        end: finished != null ? Math.max(0, finished - origin) : live ? Math.max(0, started - origin, now - origin) : null,
         live,
         pipelineRunId: n.pipelineRunId,
       };

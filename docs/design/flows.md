@@ -224,12 +224,16 @@ V29 adds `flow_version.sql_checked` (section 7).
   nodes as boxes with what each does, connections as labelled arrows (solid on success, red dashed
   on failure, dotted always, amber with the condition's text), laid out left to right by dagre
   with room made for each label and each connection drawn along the route dagre found, so none
-  crosses a node it does not join. Where the `layout:` block places every node it is drawn there,
-  with plain arrows. Read only: the wheel scrolls the page, zoom is by buttons or pinch, and a list
-  under it says every connection in words. On the run page the same diagram carries each node's
-  status (in words and its outline), and `FlowRunChart` draws the run: a bar per node from the
-  run's start (`flowChart`), coloured by status, running bars growing to now, a skipped row
-  hatched, a bar that started a pipeline run linking to it. Built on its own rather than on the
+  crosses a node it does not join; `when` is read as the server reads it, in any case. The
+  `layout:` block is read but not used yet: it is for F4b, which places nodes by hand (and must
+  then route parallel connections apart). Read only: the wheel scrolls the page, zoom is by
+  buttons or pinch, and a list under it says every connection in words. On the flow page it
+  follows the text 400 ms after typing stops, keeping the last flow it could read. On the run page
+  the same diagram carries each node's status (in words and its outline), laid out once per
+  version, and `FlowRunChart` draws the run: a bar per node from the run's start (`flowChart`),
+  with its status beside it, running bars striped and growing to now (never ending before they
+  start, whatever the browser's clock), a skipped row hatched, a bar that started a pipeline run
+  linking to it. Built on its own rather than on the
   pipeline run's timeline: a flow node has no rows or ports.
 - **F4b.** Editing on the canvas: adding and removing nodes, drawing connections, a connection
   inspector for `when`, dragging into `layout:`; every edit a text patch of the YAML, as the

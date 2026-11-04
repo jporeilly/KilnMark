@@ -55,8 +55,11 @@ function summaryOf(type: string, node: { get: (k: string) => unknown }): string 
   }
 }
 
-const kindOf = (when: string): ConnectionKind =>
-  when === "success" || when === "failure" || when === "always" ? when : "condition";
+/** How a connection is taken, read as the server reads `when`: trimmed, in any case. */
+function kindOf(when: string): ConnectionKind {
+  const word = when.trim().toLowerCase();
+  return word === "success" || word === "failure" || word === "always" ? word : "condition";
+}
 
 /**
  * Reads a flow's YAML into what the diagram draws: nodes, connections and positions. Only what is
@@ -101,8 +104,10 @@ export function readFlowGraph(yamlText: string): FlowGraphResult {
     for (const p of layout.items) {
       const id = text(p.key);
       if (!id || !ids.has(id) || !isMap(p.value)) continue;
-      const x = Number(text(p.value.get("x", true)));
-      const y = Number(text(p.value.get("y", true)));
+      const xs = text(p.value.get("x", true));
+      const ys = text(p.value.get("y", true));
+      const x = xs == null || xs.trim() === "" ? NaN : Number(xs);
+      const y = ys == null || ys.trim() === "" ? NaN : Number(ys);
       if (Number.isFinite(x) && Number.isFinite(y)) positions[id] = { x, y };
     }
   }

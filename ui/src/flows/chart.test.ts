@@ -68,6 +68,14 @@ describe("flowChart", () => {
     expect(chart?.rows[0]).toMatchObject({ start: 1_000, end: 4_000, live: false });
   });
 
+  test("a running bar never ends before it starts, if the browser's clock is behind", () => {
+    const chart = flowChart(
+      detail([node({ node: "a", position: 0, status: "running", startedAt: at(20) })]),
+      T0 + 5_000,
+    );
+    expect(chart?.rows[0]).toMatchObject({ start: 20_000, end: 20_000, live: true });
+  });
+
   test("nothing to draw before the run starts", () => {
     expect(flowChart(detail([node({ node: "a", position: 0 })], { status: "queued", startedAt: null }))).toBeNull();
   });

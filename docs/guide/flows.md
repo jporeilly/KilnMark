@@ -79,8 +79,8 @@ labelled with when it is taken:
 - an amber arrow with the condition: it runs when this one succeeds and the condition holds.
 
 The diagram is drawn from left to right, with each arrow routed round the nodes it passes. It
-follows the text: while the YAML cannot be read, it says so and waits. Zoom with the buttons in its
-corner; **The connections in words**, under it, lists every connection as a sentence. To change the
+follows the text a moment after you stop typing; while the YAML cannot be read, it says so and
+keeps showing the flow as it last could be read. Zoom with the buttons in its corner; **The connections in words**, under it, lists every connection as a sentence. To change the
 flow, change the YAML: editing on the diagram comes later.
 
 ## Checking as you type
@@ -127,9 +127,9 @@ Open a run from the flow's **Runs** list. The run page shows:
   variables);
 - the **diagram** of that version, each node outlined and labelled with how it stands in the run,
   kept current while the run goes;
-- the **run chart**: a bar for each node on one time line from the run's start, green when it
-  succeeded, red when it failed, blue while it runs; a skipped node is hatched across its row. A
-  bar for a node that ran a pipeline opens that pipeline run;
+- the **run chart**: a bar for each node on one time line from the run's start, with its status
+  beside it: green when it succeeded, red when it failed, striped blue while it runs; a skipped
+  node is hatched across its row. A bar for a node that ran a pipeline opens that pipeline run;
 - every node of that version in order: its status (Not started, Running, Succeeded, Failed,
   Cancelled or Skipped), when it started, how long it took, and what happened, such as the rows a
   pipeline wrote and its score;

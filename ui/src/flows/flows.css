@@ -103,6 +103,25 @@
   border-color: var(--km-warn);
 }
 
+/* While the YAML cannot be read: a note over the last diagram, so the page below does not move. */
+.fd-holder {
+  position: relative;
+}
+
+.fd-stale-note {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 5;
+  margin: 0;
+  padding: 4px 8px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-warn);
+  border-radius: 6px;
+}
+
 .fd-words {
   margin-top: 8px;
 }
@@ -115,7 +134,7 @@
 /* The run chart: a bar per node on a shared time axis. */
 .fc-chart {
   display: grid;
-  grid-template-columns: minmax(8em, 14em) minmax(0, 1fr);
+  grid-template-columns: minmax(8em, 14em) max-content minmax(0, 1fr);
   gap: 4px 12px;
   align-items: center;
 }
@@ -151,8 +170,15 @@
   background: var(--km-bad);
 }
 
+/* Running: striped as well as coloured, as the chip beside it says. */
 .fc-bar.fc-running {
-  background: var(--km-tint-blue-fg);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--km-tint-blue-fg),
+    var(--km-tint-blue-fg) 6px,
+    var(--km-tint-blue-bg) 6px,
+    var(--km-tint-blue-bg) 9px
+  );
 }
 
 .fc-bar.fc-cancelled {
@@ -170,14 +196,6 @@
   );
 }
 
-.fc-track-words {
-  position: absolute;
-  left: 8px;
-  top: 0;
-  line-height: 22px;
-  color: var(--km-muted);
-}
-
 .fc-axis {
   position: relative;
   height: 18px;
@@ -192,6 +210,10 @@
 
 .fc-tick:first-child {
   transform: none;
+}
+
+.fc-tick:last-child:not(:first-child) {
+  transform: translateX(-100%);
 }
 
 @media (forced-colors: active) {
