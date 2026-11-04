@@ -55,17 +55,63 @@ connections:
   - { from: clean, to: halt, when: failure }
 ```
 
-- **Nodes** do the work: `run-pipeline` runs a saved pipeline, `notify` sends a notice, `wait`
-  waits a while, `stop` ends the flow, and `sql` runs statements on a PostgreSQL source.
+- **Nodes** do the work: `run-pipeline` runs a saved pipeline, `for-each` runs one once for each
+  item of a list, `notify` sends a notice, `wait` waits a while, `stop` ends the flow, and `sql`
+  runs statements on a PostgreSQL source.
 - **Connections** say what runs after what, and when: `success` (the default), `failure`,
   `always`, or a condition on what an earlier node reported, such as its `score`,
   `quarantined_share`, `rows_written` or `status`.
 - **Parameters** are values each run can change. One with no default must be given when the flow
   runs.
 
-The full format, the condition language and how a run decides what starts next are in the design
-notes (`docs/design/flows.md`). The sample flows that ship with Kilnmark, in `samples/08-flows`,
+Nodes with no connection between them run at the same time. The full format, the condition
+language and how a run decides what starts next are in the design notes (`docs/design/flows.md`). The sample flows that ship with Kilnmark, in `samples/08-flows`,
 show one idea each.
+
+## Running one pipeline for each item
+
+A `for-each` node runs one pipeline once for each item of a list, giving each run the item as one of
+the pipeline's parameters. Use it to load each region, each file or each year with the same
+pipeline, several at once.
+
+```yaml
+kilnmark: flow/v1
+name: nightly-regions
+max_parallel: 2               # at most two of this flow's nodes run at once
+
+nodes:
+  - id: regions
+    type: for-each
+    pipeline: sales-by-region
+    items: [EMEA, APAC, AMER]   # or "${regions}", a text list or number list parameter of the flow
+    as: region                  # the pipeline's parameter that each item fills
+    with: { label: nightly }    # its other parameters, as for run-pipeline
+    max_parallel: 3             # items running at once; 4 when left out, 50 at most
+
+  - id: tell
+    type: notify
+    title: "${regions.succeeded} of ${regions.items} regions loaded"
+
+connections:
+  - { from: regions, to: tell, when: "regions.failed = 0" }
+```
+
+- **Items** are 1 to 500 texts or numbers, all of one kind, or one list parameter of the flow, so
+  each run of the flow can give its own list. `as` must be a parameter the pipeline takes, of the
+  items' kind; saving the flow says so if it is not.
+- **Each item is an ordinary pipeline run**, started as you, so it shows on the pipeline's own runs
+  and waits for a free worker like any other. The items of one node may run the pipeline at the same
+  time; anyone else's run of that pipeline still waits for them, and they wait for it. Two items that
+  write the same table or file take turns, so give each item its own file or table (here, a
+  parameter in the path) to run them side by side.
+- **Every item runs**, even when one fails. The node then succeeds if every item did, and fails if
+  any failed; a connection's condition can read `regions.items`, `regions.succeeded` and
+  `regions.failed`. Cancelling the flow cancels the items still running and starts no more.
+- **The flow's own `max_parallel`** (1 to 50) caps how many of its nodes run at once; nodes wait
+  their turn in the order they are written. A for-each node counts once, however many items it
+  runs, and a `stop` node never waits, so a flow can always end. Left out, there is no limit.
+
+The sample `samples/08-flows/for-each-region.yaml` runs one pipeline for three regions, two at once.
 
 ## The diagram
 
@@ -161,7 +207,11 @@ Open a run from the flow's **Runs** list. The run page shows:
   Cancelled or Skipped), when it started, how long it took, and what happened, such as the rows a
   pipeline wrote and its score;
 - for a node that ran a pipeline, a link to that **pipeline run**, where its nodes, rows and errors
-  are.
+  are;
+- for a `for-each` node, how far its items have got ("3 of 5 items done, 1 failed") and each item
+  with its status and a link to its pipeline run. On the run chart its bar runs from its first
+  item's start to its last item's end. Viewers see the items' values when they are written in the
+  flow, not when they came from the run's values.
 
 A node's message says that a pipeline failed and where to look, never why: why can quote values
 from the data, and the pipeline run's own page shows it to those who may see it.

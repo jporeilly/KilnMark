@@ -373,6 +373,20 @@ public class PipelineStore {
      */
     public Run queueRun(String name, int version, String by, String role, Long flowRunId, String flowNode,
                         String parameters, String variables) {
+        return queueRun(name, version, by, role, flowRunId, flowNode, null, parameters, variables);
+    }
+
+    /**
+     * As {@link #queueRun(String, int, String, String, Long, String, String, String)}, for item
+     * {@code flowItem} (from 0) of a for-each node when it is not null. The one exception to one run
+     * of a pipeline at a time (ADR 0040): the items of one for-each node, in one flow run, may run the
+     * pipeline at once. Any other run of it, queued or running, still makes this one wait.
+     */
+    public Run queueRun(String name, int version, String by, String role, Long flowRunId, String flowNode,
+                        Integer flowItem, String parameters, String variables) {
+        if (flowItem != null && (flowRunId == null || flowNode == null || flowItem < 0)) {
+            throw new IllegalArgumentException("An item's run belongs to a flow run and node");
+        }
         return db.tx(c -> {
             // One run of a pipeline at a time: the pipeline's row is locked while checking.
             try (PreparedStatement ps = c.prepareStatement(
@@ -381,8 +395,14 @@ public class PipelineStore {
                 ps.executeQuery().close();
             }
             try (PreparedStatement ps = c.prepareStatement("SELECT 1 FROM kilnmark.pipeline_run WHERE pipeline = ? "
-                + "AND status IN ('queued', 'running') LIMIT 1")) {
+                + "AND status IN ('queued', 'running')"
+                + (flowItem == null ? "" : " AND NOT (flow_item IS NOT NULL AND flow_run_id = ? AND flow_node = ?)")
+                + " LIMIT 1")) {
                 ps.setString(1, name);
+                if (flowItem != null) {
+                    ps.setLong(2, flowRunId);
+                    ps.setString(3, flowNode);
+                }
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
                         throw new Busy();
@@ -391,8 +411,8 @@ public class PipelineStore {
             }
             long id;
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_run (pipeline, version, "
-                + "requested_by, requested_role, flow_run_id, flow_node, parameters, variables) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb) RETURNING id")) {
+                + "requested_by, requested_role, flow_run_id, flow_node, flow_item, parameters, variables) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb) RETURNING id")) {
                 ps.setString(1, name);
                 ps.setInt(2, version);
                 ps.setString(3, by);
@@ -403,8 +423,13 @@ public class PipelineStore {
                     ps.setLong(5, flowRunId);
                 }
                 ps.setString(6, flowNode);
-                ps.setString(7, parameters == null ? "{}" : parameters);
-                ps.setString(8, variables == null ? "{}" : variables);
+                if (flowItem == null) {
+                    ps.setNull(7, Types.INTEGER);
+                } else {
+                    ps.setInt(7, flowItem);
+                }
+                ps.setString(8, parameters == null ? "{}" : parameters);
+                ps.setString(9, variables == null ? "{}" : variables);
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     id = rs.getLong(1);
@@ -462,11 +487,48 @@ public class PipelineStore {
         });
     }
 
-    /** The run a flow node started, if it has started one (a flow node runs its pipeline once). */
+    /**
+     * The runs a for-each node has started in one flow run, by item (from 0): found again by flow run,
+     * node and item, so no item starts twice.
+     */
+    public java.util.SortedMap<Integer, Run> flowItemRuns(long flowRunId, String flowNode) {
+        return db.tx(c -> {
+            java.util.SortedMap<Integer, Run> out = new java.util.TreeMap<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT r.flow_item, " + RUN_COLUMNS
+                + " FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ? AND r.flow_node = ? AND r.flow_item IS NOT NULL"
+                + " ORDER BY r.flow_item")) {
+                ps.setLong(1, flowRunId);
+                ps.setString(2, flowNode);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.put(rs.getInt(1), run(rs, 2));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
+    /** The run item {@code flowItem} of a for-each node started in one flow run, if it has started one. */
+    public Optional<Run> flowItemRun(long flowRunId, String flowNode, int flowItem) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS
+                + " FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ? AND r.flow_node = ? AND r.flow_item = ?")) {
+                ps.setLong(1, flowRunId);
+                ps.setString(2, flowNode);
+                ps.setInt(3, flowItem);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? Optional.of(run(rs, 1)) : Optional.<Run>empty();
+                }
+            }
+        });
+    }
+
+    /** The run a run-pipeline node started, if it has started one (a flow node runs its pipeline once). */
     public Optional<Run> flowNodeRun(long flowRunId, String flowNode) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS
-                + " FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ? AND r.flow_node = ?")) {
+                + " FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ? AND r.flow_node = ? AND r.flow_item IS NULL")) {
                 ps.setLong(1, flowRunId);
                 ps.setString(2, flowNode);
                 try (ResultSet rs = ps.executeQuery()) {

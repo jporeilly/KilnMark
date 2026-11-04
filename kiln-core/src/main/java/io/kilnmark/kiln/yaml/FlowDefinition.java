@@ -28,9 +28,10 @@ import io.kilnmark.kiln.flow.FlowEngine;
  * @param nodes        the nodes in the order written
  * @param connections  the connections in the order written
  * @param queueTimeout how long a node waits for a pipeline that is already running before it fails
+ * @param maxParallel  how many of its nodes run at once (a for-each node counts once), or null for no limit
  */
 public record FlowDefinition(String name, String description, List<Parameters.Parameter> parameters, List<Node> nodes,
-                             List<Connection> connections, Duration queueTimeout) {
+                             List<Connection> connections, Duration queueTimeout, Integer maxParallel) {
 
     /** The format this version reads. */
     public static final String FORMAT = "flow/v1";
@@ -46,8 +47,16 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     public static final String WAIT = "wait";
     /** The node type that runs SQL statements on a source (ADR 0028). */
     public static final String SQL = "sql";
+    /** The node type that runs a pipeline once for each item of a list (ADR 0040). */
+    public static final String FOR_EACH = "for-each";
     /** The node types this version knows. */
-    public static final List<String> TYPES = List.of(RUN_PIPELINE, STOP, NOTIFY, WAIT, SQL);
+    public static final List<String> TYPES = List.of(RUN_PIPELINE, FOR_EACH, STOP, NOTIFY, WAIT, SQL);
+    /** The most of a flow's nodes, or of a for-each node's items, that may run at once. */
+    public static final int MAX_PARALLEL = 50;
+    /** How many of a for-each node's items run at once when it does not say. */
+    public static final int DEFAULT_ITEMS_AT_ONCE = 4;
+    /** Most items a for-each node lists. */
+    public static final int MAX_ITEMS = 500;
     /** Most statements in one sql node. */
     public static final int MAX_STATEMENTS = 20;
     /** Longest statement in a sql node. */
@@ -66,6 +75,11 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         "duration_s", FlowCondition.Type.NUMBER);
     /** What a sql node reports, for conditions, besides {@code status}: the rows its statements changed. */
     public static final Map<String, FlowCondition.Type> SQL_VALUES = Map.of("rows_affected", FlowCondition.Type.NUMBER);
+    /** What a for-each node reports, for conditions, besides {@code status}: how many items, and how they ended. */
+    public static final Map<String, FlowCondition.Type> FOR_EACH_VALUES = Map.of(
+        "items", FlowCondition.Type.NUMBER,
+        "succeeded", FlowCondition.Type.NUMBER,
+        "failed", FlowCondition.Type.NUMBER);
 
     /** The default of {@code queue_timeout}. */
     public static final Duration DEFAULT_QUEUE_TIMEOUT = Duration.ofMinutes(30);
@@ -74,10 +88,11 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     static final int MAX_CONNECTIONS = 1_000;
 
     static final Set<String> TOP_LEVEL_KEYS = Set.of("kilnmark", "name", "description", "parameters", "queue_timeout",
-        "nodes", "connections", "layout");
+        "max_parallel", "nodes", "connections", "layout");
     static final Set<String> NODE_KEYS = Set.of("id", "type");
     static final Map<String, Set<String>> TYPE_KEYS = Map.of(
         RUN_PIPELINE, Set.of("pipeline", "version", "with"),
+        FOR_EACH, Set.of("pipeline", "version", "items", "as", "with", "max_parallel"),
         STOP, Set.of("status", "message"),
         NOTIFY, Set.of("severity", "title", "message"),
         WAIT, Set.of("for"),
@@ -91,15 +106,24 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
      * true/false) are set for {@link #RUN_PIPELINE}; {@code status} ({@code succeeded} or
      * {@code failed}) and {@code message} for {@link #STOP}; {@code severity}, {@code title} and
      * {@code message} for {@link #NOTIFY}; {@code waitFor} for {@link #WAIT}; {@code source} and
-     * {@code statements} (as written, run in order in one transaction) for {@link #SQL}.
+     * {@code statements} (as written, run in order in one transaction) for {@link #SQL}. A
+     * {@link #FOR_EACH} node has {@code pipeline}, {@code version} and {@code with} as a run-pipeline
+     * node, and {@code each}: its items, the parameter each fills, and how many run at once.
      */
     public record Node(String id, String type, String pipeline, Integer version, String status, String message,
                        Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
-                       String title, Duration waitFor, String source, List<String> statements) {
+                       String title, Duration waitFor, String source, List<String> statements, Each each) {
 
         public Node {
             with = with == null ? Map.of() : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(with));
             statements = statements == null ? List.of() : List.copyOf(statements);
+        }
+
+        public Node(String id, String type, String pipeline, Integer version, String status, String message,
+                    Position position, Map<String, Position> keys, Map<String, Object> with, String severity,
+                    String title, Duration waitFor, String source, List<String> statements) {
+            this(id, type, pipeline, version, status, message, position, keys, with, severity, title, waitFor, source,
+                statements, null);
         }
 
         Node(String id, String type, String pipeline, Integer version, String status, String message,
@@ -117,6 +141,26 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         /** Where {@code key} is written, or where the node starts if it is not. */
         public Position at(String key) {
             return keys.getOrDefault(key, position);
+        }
+    }
+
+    /**
+     * What a for-each node runs over. {@code items} are the values written in the node (texts as
+     * written, numbers as Doubles), or empty when {@code itemsParameter} names a list parameter of the
+     * flow that holds them; {@code as} is the pipeline parameter each item fills; {@code maxParallel}
+     * how many items run at once.
+     */
+    public record Each(List<Object> items, String itemsParameter, String as, int maxParallel) {
+        public Each {
+            items = items == null ? List.of() : List.copyOf(items);
+        }
+
+        /** The items of one run: those written, or the list parameter's value in {@code parameters}. */
+        public List<Object> itemsIn(Map<String, Object> parameters) {
+            if (itemsParameter == null) {
+                return items;
+            }
+            return parameters.get(itemsParameter) instanceof List<?> l ? List.copyOf(l) : List.of();
         }
     }
 
@@ -144,6 +188,12 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         nodes = List.copyOf(nodes);
         connections = List.copyOf(connections);
         queueTimeout = queueTimeout == null ? DEFAULT_QUEUE_TIMEOUT : queueTimeout;
+    }
+
+    /** A flow with no limit on how many of its nodes run at once. */
+    public FlowDefinition(String name, String description, List<Parameters.Parameter> parameters, List<Node> nodes,
+                          List<Connection> connections, Duration queueTimeout) {
+        this(name, description, parameters, nodes, connections, queueTimeout, null);
     }
 
     /** The connection conditions as the engine reads them. */
@@ -207,7 +257,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             if (!TOP_LEVEL_KEYS.contains(e.key()) && !Renamed.isOld(e.key(), TOP_LEVEL_KEYS)) {
                 problems.add(Problem.at(e.keyPosition(), null, "Unknown key '" + Suggest.clip(e.key()) + "'"
                     + Suggest.hint(e.key(), TOP_LEVEL_KEYS)
-                    + ": a flow has kilnmark, name, description, parameters, queue_timeout, nodes, connections and layout"));
+                    + ": a flow has kilnmark, name, description, parameters, queue_timeout, max_parallel, nodes, "
+                    + "connections and layout"));
             }
         }
         String name = text(top.entries().get("name"), "name", problems);
@@ -220,9 +271,13 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         }
         String description = text(top.entries().get("description"), "description", problems);
         Duration timeout = queueTimeout(top.entries().get("queue_timeout"), problems);
+        Integer maxParallel = atOnce(top.entries().get("max_parallel"), null,
+            "max_parallel is how many of the flow's nodes run at once", problems);
         List<Parameters.Parameter> parameters = Parameters.read(top.entries().get("parameters"), "flow", false, problems);
         Set<String> names = new LinkedHashSet<>();
         parameters.forEach(p -> names.add(p.name()));
+        Map<String, Parameters.Parameter> declared = new LinkedHashMap<>();
+        parameters.forEach(p -> declared.put(p.name(), p));
 
         List<Node> nodes = new ArrayList<>();
         YamlReader.Entry nodesEntry = Renamed.entry(top, "nodes", "flow", problems);
@@ -238,7 +293,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         } else {
             Map<String, Position> ids = new HashMap<>();
             for (YamlReader.Node item : list.items()) {
-                Node s = node(item, ids, names, problems);
+                Node s = node(item, ids, names, declared, problems);
                 if (s != null) {
                     nodes.add(s);
                 }
@@ -258,10 +313,25 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
                 connectionItems(list, byId, parameters, connections, problems);
             }
         }
-        FlowDefinition def = new FlowDefinition(name, description, parameters, nodes, connections, timeout);
+        FlowDefinition def = new FlowDefinition(name, description, parameters, nodes, connections, timeout, maxParallel);
         loops(def, connectionsEntry, problems);
         nodeValues(def, problems);
         return new Parsed(def, problems);
+    }
+
+    /**
+     * A number of things at once, 1 to {@value #MAX_PARALLEL}: the flow's {@code max_parallel}, or a
+     * for-each node's. Null when it is not written, or is wrong (with a problem saying so).
+     */
+    private static Integer atOnce(YamlReader.Entry e, String id, String what, List<Problem> problems) {
+        if (e == null) {
+            return null;
+        }
+        if (e.value().value() instanceof Integer n && n >= 1 && n <= MAX_PARALLEL) {
+            return n;
+        }
+        problems.add(Problem.at(e.value().position(), id, what + ": a whole number from 1 to " + MAX_PARALLEL));
+        return null;
     }
 
     private static Duration queueTimeout(YamlReader.Entry e, List<Problem> problems) {
@@ -289,7 +359,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
     }
 
     private static Node node(YamlReader.Node item, Map<String, Position> ids, Set<String> names,
-                             List<Problem> problems) {
+                             Map<String, Parameters.Parameter> declared, List<Problem> problems) {
         if (!(item instanceof YamlReader.Mapping m)) {
             problems.add(Problem.at(item.position(), null, "Each node is a mapping starting with - id: …"));
             return null;
@@ -345,7 +415,7 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
                     allowed.stream().sorted().toList())));
             }
         }
-        if (type.equals(RUN_PIPELINE)) {
+        if (type.equals(RUN_PIPELINE) || type.equals(FOR_EACH)) {
             YamlReader.Entry p = m.entries().get("pipeline");
             String pipeline = null;
             if (p == null) {
@@ -369,7 +439,9 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
                 }
             }
             Map<String, Object> with = with(m.entries().get("with"), id, names, problems);
-            return new Node(id, type, pipeline, version, null, null, m.position(), keys, with, null, null, null);
+            Each each = type.equals(FOR_EACH) ? each(id, m, with, declared, problems) : null;
+            return new Node(id, type, pipeline, version, null, null, m.position(), keys, with, null, null, null, null,
+                null, each);
         }
         if (type.equals(NOTIFY)) {
             return notifyNode(id, m, keys, names, problems);
@@ -446,6 +518,83 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
             out.put(p.key(), v);
         }
         return out;
+    }
+
+    /**
+     * A for-each node's items, the parameter each fills and how many run at once (ADR 0040). Items are
+     * a list of 1 to {@value #MAX_ITEMS} texts or numbers, all of one kind, or one {@code ${name}}
+     * naming a list parameter of the flow. Whether the pipeline takes {@code as}, and of which kind, is
+     * for the server to check.
+     */
+    private static Each each(String id, YamlReader.Mapping m, Map<String, Object> with,
+                             Map<String, Parameters.Parameter> declared, List<Problem> problems) {
+        List<Object> items = new ArrayList<>();
+        String itemsParameter = null;
+        String itemsHelp = "a list of the values to run the pipeline with, such as [EMEA, APAC], or \"${regions}\", "
+            + "a list parameter of the flow";
+        YamlReader.Entry it = m.entries().get("items");
+        if (it == null) {
+            problems.add(Problem.at(m.position(), id, "Node " + id + " needs items: " + itemsHelp));
+        } else if (it.value() instanceof YamlReader.Sequence list) {
+            if (list.items().isEmpty() || list.items().size() > MAX_ITEMS) {
+                problems.add(Problem.at(list.position(), id, "items is a list of 1 to " + MAX_ITEMS + " values"));
+            }
+            FlowCondition.Type kind = null;
+            for (YamlReader.Node item : list.items()) {
+                Object v = item instanceof YamlReader.Scalar sc && sc.value() != null
+                    ? (sc.value() instanceof String ? sc.written() : sc.value()) : null;
+                FlowCondition.Type k = v instanceof String ? FlowCondition.Type.TEXT
+                    : v instanceof Number && !(v instanceof java.math.BigInteger) ? FlowCondition.Type.NUMBER : null;
+                String wrong = k == null ? "Each item is one value: text or a number"
+                    : v instanceof String t && t.contains("${") ? "An item is a value as written: ${...} is not read "
+                        + "in a list of items; to take the items from a list parameter, write items: \"${name}\""
+                    : kind != null && kind != k ? "The items are all texts or all numbers: each fills the same parameter"
+                    : null;
+                if (wrong == null) {
+                    try {
+                        v = Parameters.typed("An item", k, v);
+                    } catch (IllegalArgumentException e) {
+                        wrong = e.getMessage();
+                    }
+                }
+                if (wrong != null) {
+                    problems.add(Problem.at(item.position(), id, wrong));
+                    continue;
+                }
+                kind = k;
+                items.add(v);
+            }
+        } else if (it.value() instanceof YamlReader.Scalar sc && sc.value() instanceof String t
+            && Parameters.whole(t) != null) {
+            String name = Parameters.whole(t);
+            Parameters.Parameter p = declared.get(name);
+            if (p == null || !p.list()) {
+                problems.add(Problem.at(it.value().position(), id, "items names " + Suggest.clip(name) + ", which is not "
+                    + "a list parameter of the flow: declare it as a text list or number list"
+                    + (p == null ? Suggest.hint(name, declared.keySet()) : "")));
+            } else {
+                itemsParameter = name;
+            }
+        } else {
+            problems.add(Problem.at(it.value().position(), id, "items is " + itemsHelp));
+        }
+        YamlReader.Entry a = m.entries().get("as");
+        String as = null;
+        if (a == null) {
+            problems.add(Problem.at(m.position(), id, "Node " + id + " needs as: the pipeline parameter each item fills"));
+        } else if (a.value() instanceof YamlReader.Scalar sc && sc.value() instanceof String t
+            && Parameters.NAME.matcher(t.strip()).matches()) {
+            as = t.strip();
+            if (with.containsKey(as)) {
+                problems.add(Problem.at(a.value().position(), id, "Node " + id + " fills " + as + " with each item, so "
+                    + "with: cannot give it a value too"));
+            }
+        } else {
+            problems.add(Problem.at(a.value().position(), id, "as is the name of the pipeline parameter each item fills"));
+        }
+        Integer atOnce = atOnce(m.entries().get("max_parallel"), id, "max_parallel is how many items run at once",
+            problems);
+        return new Each(items, itemsParameter, as, atOnce == null ? DEFAULT_ITEMS_AT_ONCE : atOnce);
     }
 
     private static Node notifyNode(String id, YamlReader.Mapping m, Map<String, Position> keys, Set<String> names,
@@ -636,8 +785,9 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
 
     /**
      * The type of a node's value as ${node.field} names it ({@code status} for any node; {@code score},
-     * {@code quarantined_share}, {@code rows_written} and {@code duration_s} for a run-pipeline node), or
-     * null when there is no such value.
+     * {@code quarantined_share}, {@code rows_written} and {@code duration_s} for a run-pipeline node;
+     * {@code rows_affected} for a sql node; {@code items}, {@code succeeded} and {@code failed} for a
+     * for-each node), or null when there is no such value.
      */
     public static FlowCondition.Type nodeValueType(FlowDefinition def, String name) {
         int dot = name.indexOf('.');
@@ -652,8 +802,13 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         if (field.equals("status")) {
             return FlowCondition.Type.TEXT;
         }
-        return RUN_PIPELINE.equals(n.type()) ? PIPELINE_VALUES.get(field)
-            : SQL.equals(n.type()) ? SQL_VALUES.get(field) : null;
+        return reports(n.type()).get(field);
+    }
+
+    /** What a node of this type reports besides its status, for conditions and ${node.field}. */
+    public static Map<String, FlowCondition.Type> reports(String type) {
+        return RUN_PIPELINE.equals(type) ? PIPELINE_VALUES : SQL.equals(type) ? SQL_VALUES
+            : FOR_EACH.equals(type) ? FOR_EACH_VALUES : Map.of();
     }
 
     /**
@@ -727,8 +882,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
                             + "may skip the others"
                         : nodeValueType(def, name) == null
                             ? " names " + name + ", which " + other + " does not report: a node reports status, a "
-                                + "run-pipeline node score, quarantined_share, rows_written and duration_s, and a sql "
-                                + "node rows_affected"
+                                + "run-pipeline node score, quarantined_share, rows_written and duration_s, a "
+                                + "for-each node items, succeeded and failed, and a sql node rows_affected"
                             : null;
                     if (why != null) {
                         problems.add(Problem.at(n.position(), n.id(), "Node " + n.id() + why));
@@ -766,10 +921,8 @@ public record FlowDefinition(String name, String description, List<Parameters.Pa
         for (String id : upstream) {
             Node s = byId.get(id);
             types.put(id + ".status", FlowCondition.Type.TEXT);
-            if (s != null && RUN_PIPELINE.equals(s.type())) {
-                PIPELINE_VALUES.forEach((field, type) -> types.put(id + "." + field, type));
-            } else if (s != null && SQL.equals(s.type())) {
-                SQL_VALUES.forEach((field, type) -> types.put(id + "." + field, type));
+            if (s != null) {
+                reports(s.type()).forEach((field, type) -> types.put(id + "." + field, type));
             }
         }
         FlowCondition.Parsed parsed = FlowCondition.parse(text, new FlowCondition.Scope() {

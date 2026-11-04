@@ -83,7 +83,25 @@ public final class FlowViews {
      */
     public record NodeRunView(String node, String type, int position, String status, Instant startedAt,
                               Instant finishedAt, Long pipelineRunId, String pipeline, String message,
-                              JsonNode reported) {
+                              JsonNode reported, List<ItemRunView> items) {
+
+        /** A node that runs no items. */
+        public NodeRunView(String node, String type, int position, String status, Instant startedAt,
+                           Instant finishedAt, Long pipelineRunId, String pipeline, String message,
+                           JsonNode reported) {
+            this(node, type, position, status, startedAt, finishedAt, pipelineRunId, pipeline, message, reported, null);
+        }
+    }
+
+    /**
+     * One item of a for-each node in a run: its place in the list (from 0), its value (null for
+     * viewers when the items came from a parameter of the run, which can hold server variables),
+     * and its pipeline run with that run's status ({@code pending} before it starts, {@code queued},
+     * running, succeeded, failed or cancelled; {@code skipped} if the node ended without starting it)
+     * and times.
+     */
+    public record ItemRunView(int item, Object value, String status, Long pipelineRunId, Instant startedAt,
+                              Instant finishedAt) {
     }
 
     /** A flow run with every node of its version, in the order the YAML gives them. */

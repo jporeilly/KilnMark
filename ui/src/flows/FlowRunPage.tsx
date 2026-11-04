@@ -5,6 +5,7 @@ import {
   formatNumber,
   formatTime,
   type AccessRole,
+  type FlowItemRun,
   type FlowNodeRun,
   type FlowNodeStatus,
   type FlowRunDetail,
@@ -12,6 +13,7 @@ import {
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { formatDuration } from "../pipelines/RunStatus";
+import { itemsProgress } from "./chart";
 import { FlowRunChart } from "./FlowRunChart";
 import { readFlowGraph, TYPE_WORDS, type FlowGraphResult } from "./graph";
 import { FlowRunStatus, FlowStatus } from "./RunFlow";
@@ -41,6 +43,34 @@ export function reportedWords(n: FlowNodeRun): string {
   const changed = num("rows_affected");
   if (changed != null) out.push(`${formatNumber(changed)} rows changed`);
   return out.join(", ");
+}
+
+/**
+ * A for-each node's items: each value with its status and a link to its pipeline run. Open while
+ * there are few; with many, closed until asked for. A value withheld from viewers is said as such.
+ */
+function ItemRuns({ node, items }: { node: string; items: FlowItemRun[] }) {
+  return (
+    <details className="small fr-items" open={items.length <= 10}>
+      <summary>
+        Items of {node} ({items.length})
+      </summary>
+      <ol>
+        {items.map((i) => (
+          <li key={i.item}>
+            {i.value == null ? <span className="muted">Item {i.item + 1}</span> : <span className="mono">{String(i.value)}</span>}{" "}
+            <FlowStatus status={i.status} />
+            {i.pipelineRunId != null && (
+              <>
+                {" "}
+                <a href={href.pipelineRun(i.pipelineRunId)}>Pipeline run {i.pipelineRunId}</a>
+              </>
+            )}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
 }
 
 /**
@@ -223,7 +253,8 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
             </thead>
             <tbody>
               {nodes.map((n) => {
-                const said = [n.message, reportedWords(n)].filter(Boolean).join(". ");
+                const progress = n.items && n.items.length > 0 ? itemsProgress(n.items) : null;
+                const said = [n.message === progress ? null : n.message, reportedWords(n)].filter(Boolean).join(". ");
                 return (
                   <tr key={n.node}>
                     <th scope="row">
@@ -243,7 +274,9 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
                     <td>{n.startedAt ? formatTime(n.startedAt) : "–"}</td>
                     <td>{took(n.startedAt, n.finishedAt)}</td>
                     <td>
-                      {said || <span className="muted">–</span>}
+                      {progress && <div>{progress}.</div>}
+                      {said || (!progress && <span className="muted">–</span>)}
+                      {progress && n.items && <ItemRuns node={n.node} items={n.items} />}
                       {n.pipelineRunId != null && (
                         <div className="small">
                           <a href={href.pipelineRun(n.pipelineRunId)}>Pipeline run {n.pipelineRunId}</a>

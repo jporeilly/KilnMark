@@ -640,4 +640,221 @@ class FlowRunTest {
         await("the failure notice", () -> count("SELECT count(*) FROM kilnmark.notify_event WHERE kind = 'flow_failed' "
             + "AND dedupe_key = 'flow:fl-told'"), n -> n == 1L);
     }
+
+    // ---- max_parallel and for-each (ADR 0040) ----
+
+    private PipelineStore.Run item(long runId, String node, int i) {
+        return pipelineStore.flowItemRun(runId, node, i).orElse(null);
+    }
+
+    private long itemRuns(long runId, String node) {
+        return count("SELECT count(*) FROM kilnmark.pipeline_run WHERE flow_run_id = ? AND flow_node = ?", runId, node);
+    }
+
+    @Test
+    @Order(15)
+    void aFlowsMaxParallelHoldsReadyNodesBackInTheOrderWritten() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-one-at-a-time
+            max_parallel: 1
+            nodes:
+              - { id: first, type: run-pipeline, pipeline: fl-copy }
+              - { id: second, type: run-pipeline, pipeline: fl-gated }
+            """);
+        HoldingGraphRunner.hold = true;
+        FlowStore.Run run = start("fl-one-at-a-time", Map.of());
+        PipelineStore.Run first = await("the first node's run", () -> pipelineStore.flowNodeRun(run.id(), "first")
+            .orElse(null), r -> r != null && "running".equals(r.status()));
+        Thread.sleep(1500); // several looks of the flow
+        assertTrue(pipelineStore.flowNodeRun(run.id(), "second").isEmpty(), "second waits while first runs");
+        assertEquals("pending", flows.runDetail(run.id(), true).nodes().get(1).status());
+        HoldingGraphRunner.hold = false;
+        waitForFlow(run.id(), "succeeded");
+        PipelineStore.Run a = pipelineStore.run(first.id()).orElseThrow();
+        PipelineStore.Run b = pipelineStore.flowNodeRun(run.id(), "second").orElseThrow();
+        assertFalse(b.requestedAt().isBefore(a.finishedAt()), "second was queued only after first had finished");
+    }
+
+    @Test
+    @Order(16)
+    void aForEachNodeRunsItsItemsAtOnceUpToItsLimit() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-each
+            nodes:
+              - id: each
+                type: for-each
+                pipeline: fl-param
+                items: [ea, eb, ec]
+                as: suffix
+                max_parallel: 2
+              - id: tell
+                type: notify
+                title: "${each.succeeded} of ${each.items} written"
+            connections:
+              - { from: each, to: tell, when: "each.failed = 0" }
+            """);
+        HoldingGraphRunner.hold = true;
+        FlowStore.Run run = start("fl-each", Map.of());
+        // The same pipeline, twice at once: the items of one node are the exception to one run at a time.
+        await("two items running at once", () -> List.of(Optional.ofNullable(item(run.id(), "each", 0)),
+                Optional.ofNullable(item(run.id(), "each", 1))),
+            l -> l.stream().allMatch(r -> r.isPresent() && "running".equals(pipelineStore.run(r.get().id())
+                .orElseThrow().status())));
+        Thread.sleep(1500);
+        assertNull(item(run.id(), "each", 2), "a third item waits: the node runs at most two at once");
+        FlowViews.NodeRunView going = flows.runDetail(run.id(), true).nodes().get(0);
+        assertEquals("running", going.status());
+        assertEquals("0 of 3 items done", going.message());
+        assertEquals(List.of("running", "running", "pending"), going.items().stream().map(FlowViews.ItemRunView::status)
+            .toList());
+        // Any other run of the pipeline still waits its turn.
+        as(designer).post("/api/v1/pipelines/fl-param/runs").then().statusCode(409);
+        HoldingGraphRunner.hold = false;
+
+        FlowStore.Run done = waitForFlow(run.id(), "succeeded");
+        assertNull(done.error());
+        PipelineStore.Run r0 = item(run.id(), "each", 0);
+        PipelineStore.Run r1 = item(run.id(), "each", 1);
+        PipelineStore.Run r2 = item(run.id(), "each", 2);
+        assertTrue(r0.startedAt().isBefore(r1.finishedAt()) && r1.startedAt().isBefore(r0.finishedAt()),
+            "the first two items overlapped");
+        assertTrue(r0.result().contains("lab.fl_ea_north") && r2.result().contains("lab.fl_ec_north"), r2.result());
+        assertTrue(r1.parameters().replace(" ", "").contains("\"suffix\":\"eb\""), r1.parameters());
+        assertEquals("tester", r2.requestedBy());
+        assertEquals(3, itemRuns(run.id(), "each"), "each item ran once");
+        FlowStore.NodeRun each = node(run.id(), "each");
+        assertEquals("succeeded", each.status());
+        assertEquals("3 of 3 items succeeded", each.message());
+        assertTrue(each.reported().replace(" ", "").contains("\"failed\":0.0"), each.reported());
+        assertEquals("Sent: 3 of 3 written", node(run.id(), "tell").message());
+        assertNull(each.pipelineRunId(), "a for-each node's runs are its items'");
+        FlowViews.NodeRunView view = flows.runDetail(run.id(), false).nodes().get(0);
+        assertEquals(List.of("ea", "eb", "ec"), view.items().stream().map(FlowViews.ItemRunView::value).toList(),
+            "items written in the flow are shown to viewers, who can read the flow");
+        assertEquals(r2.id(), view.items().get(2).pipelineRunId());
+        // An item never starts twice: the database refuses a second run for it.
+        assertThrows(RuntimeException.class, () -> pipelineStore.queueRun("fl-param", 1, "tester", "steward", run.id(),
+            "each", 0, "{}", "{}"));
+        assertEquals(3, itemRuns(run.id(), "each"));
+    }
+
+    @Test
+    @Order(17)
+    void aFailingItemFailsTheNodeOnceTheOthersHaveEnded() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-each-fails
+            nodes:
+              - id: each
+                type: for-each
+                pipeline: fl-param
+                items: [fa, "../x", fc]
+                as: suffix
+                max_parallel: 1
+              - { id: after, type: run-pipeline, pipeline: fl-copy }
+              - { id: tell, type: stop, status: failed, message: "Some items failed" }
+            connections:
+              - { from: each, to: after }
+              - { from: each, to: tell, when: failure }
+            """);
+        HoldingGraphRunner.failWith = "the engine failed on purpose";
+        FlowStore.Run run = start("fl-each-fails", Map.of());
+        FlowStore.Run done = waitForFlow(run.id(), "failed");
+        assertEquals("Some items failed", done.error());
+        assertEquals("failed", item(run.id(), "each", 0).status(), "the first item's run failed");
+        assertNull(item(run.id(), "each", 1), "the second could not start: its value leaves its part of the name");
+        assertEquals("succeeded", item(run.id(), "each", 2).status(), "the others still ran");
+        FlowStore.NodeRun each = node(run.id(), "each");
+        assertEquals("failed", each.status());
+        assertTrue(each.message().startsWith("2 of 3 items failed; their pipeline runs say why. Item 2:"),
+            each.message());
+        assertFalse(each.message().contains("the engine failed"), "never why a run failed");
+        assertFalse(each.finishedAt().isBefore(item(run.id(), "each", 2).finishedAt()), "it ended after the last item");
+        assertTrue(each.reported().replace(" ", "").contains("\"succeeded\":1.0"), each.reported());
+        assertEquals("skipped", node(run.id(), "after").status());
+        assertTrue(flows.runDetail(run.id(), false).nodes().get(0).message().contains("shown to stewards"),
+            "viewers do not see the values an item could not run with");
+    }
+
+    @Test
+    @Order(18)
+    void cancellingAFlowCancelsItsItemsAndStartsNoMore() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-each-cancel
+            nodes:
+              - id: each
+                type: for-each
+                pipeline: fl-param
+                items: [ca, cb, cc]
+                as: suffix
+                max_parallel: 2
+            """);
+        HoldingGraphRunner.hold = true;
+        FlowStore.Run run = start("fl-each-cancel", Map.of());
+        await("two items running", () -> List.of(Optional.ofNullable(item(run.id(), "each", 0)),
+                Optional.ofNullable(item(run.id(), "each", 1))),
+            l -> l.stream().allMatch(r -> r.isPresent() && "running".equals(pipelineStore.run(r.get().id())
+                .orElseThrow().status())));
+        flows.cancel(run.id(), "tester", AccessRole.STEWARD);
+        waitForFlow(run.id(), "cancelled");
+        assertEquals("cancelled", item(run.id(), "each", 0).status());
+        assertEquals("cancelled", item(run.id(), "each", 1).status());
+        assertNull(item(run.id(), "each", 2), "nothing more starts");
+        assertEquals("cancelled", node(run.id(), "each").status());
+        assertEquals("skipped", flows.runDetail(run.id(), true).nodes().get(0).items().get(2).status());
+
+        // Someone cancelling one item's run by hand stops the node, and the flow, the same way.
+        FlowStore.Run again = start("fl-each-cancel", Map.of());
+        PipelineStore.Run first = await("an item running", () -> item(again.id(), "each", 0),
+            r -> r != null && "running".equals(pipelineStore.run(r.id()).orElseThrow().status()));
+        as(designer).post("/api/v1/pipeline-runs/" + first.id() + "/cancel").then().statusCode(200);
+        waitForFlow(again.id(), "cancelled");
+        assertTrue(node(again.id(), "each").message().startsWith("A run of one of its items was cancelled"),
+            node(again.id(), "each").message());
+        HoldingGraphRunner.hold = false;
+    }
+
+    @Test
+    @Order(19)
+    void aForEachNodeTakesItsItemsFromAListParameterAndIsChecked() throws Exception {
+        String yaml = """
+            kilnmark: flow/v1
+            name: fl-each-param
+            parameters:
+              suffixes: { type: text list, default: [pa] }
+            nodes:
+              - id: each
+                type: for-each
+                pipeline: fl-param
+                items: "${suffixes}"
+                as: suffix
+            """;
+        save(yaml);
+        FlowStore.Run run = start("fl-each-param", Map.of("suffixes", List.of("pb", "pc")));
+        waitForFlow(run.id(), "succeeded");
+        assertTrue(item(run.id(), "each", 1).result().contains("lab.fl_pc_north"), item(run.id(), "each", 1).result());
+        assertEquals(List.of("pb", "pc"), flows.runDetail(run.id(), true).nodes().get(0).items().stream()
+            .map(FlowViews.ItemRunView::value).toList());
+        assertEquals(java.util.Arrays.asList(null, null), flows.runDetail(run.id(), false).nodes().get(0).items()
+            .stream().map(FlowViews.ItemRunView::value).toList(), "a run's values are for stewards");
+
+        // Checked when saved, against the pipeline it runs.
+        List<String> notTaken = flows.validate(yaml.replace("as: suffix", "as: colour")).problems().stream()
+            .map(io.kilnmark.kiln.yaml.Problem::message).toList();
+        assertTrue(notTaken.stream().anyMatch(m -> m.contains("fills colour with each item, but fl-param takes no such "
+            + "parameter: it takes suffix")), notTaken.toString());
+        List<String> kind = flows.validate(yaml.replace("type: text list, default: [pa]", "type: number list, default: [1]"))
+            .problems().stream().map(io.kilnmark.kiln.yaml.Problem::message).toList();
+        assertTrue(kind.stream().anyMatch(m -> m.contains("each item, a number, but fl-param takes a text for it")),
+            kind.toString());
+        List<String> missing = flows.validate(yaml.replace("pipeline: fl-param", "pipeline: no-such-pipeline")).problems()
+            .stream().map(io.kilnmark.kiln.yaml.Problem::message).toList();
+        assertTrue(missing.stream().anyMatch(m -> m.contains("'no-such-pipeline', which does not exist")), missing.toString());
+        // The flow's own suffix is not passed by name to the parameter each item fills.
+        assertTrue(flows.validate(yaml.replace("suffixes: { type: text list, default: [pa] }",
+            "suffixes: { type: text list, default: [pa] }\n  suffix: { type: number, default: 1 }")).valid());
+    }
 }

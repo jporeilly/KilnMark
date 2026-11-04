@@ -130,7 +130,7 @@ public class FlowService {
                     sqlProblems(s, problems);
                     continue;
                 }
-                if (!FlowDefinition.RUN_PIPELINE.equals(s.type()) || s.pipeline() == null) {
+                if (!runsPipeline(s) || s.pipeline() == null) {
                     continue;
                 }
                 Position at = s.at("pipeline");
@@ -144,13 +144,56 @@ public class FlowService {
                         + s.version() + " of " + s.pipeline() + ", which has only " + p.get().latestVersion()));
                 } else {
                     int n = s.version() == null ? p.get().latestVersion() : s.version();
-                    pipelineStore.version(s.pipeline(), n).ifPresent(v -> withProblems(def, s,
-                        PipelineDefinition.parse(v.yaml()).definition(), vars, problems));
+                    pipelineStore.version(s.pipeline(), n).ifPresent(v -> {
+                        PipelineDefinition pd = PipelineDefinition.parse(v.yaml()).definition();
+                        withProblems(def, s, pd, vars, problems);
+                        if (s.each() != null) {
+                            eachProblems(def, s, pd, problems);
+                        }
+                    });
                 }
             }
         }
         problems.sort(Problem.BY_POSITION);
         return new Validation(problems.isEmpty() && def != null, def == null ? null : def.name(), problems);
+    }
+
+    /** Whether a node runs a pipeline: a run-pipeline node, or a for-each node once per item. */
+    static boolean runsPipeline(FlowDefinition.Node s) {
+        return FlowDefinition.RUN_PIPELINE.equals(s.type()) || FlowDefinition.FOR_EACH.equals(s.type());
+    }
+
+    /**
+     * What is wrong with a for-each node against the pipeline it runs: the pipeline must take
+     * {@code as}, as one value of the items' kind (ADR 0040).
+     */
+    private static void eachProblems(FlowDefinition def, FlowDefinition.Node s, PipelineDefinition pipeline,
+                                     List<Problem> problems) {
+        FlowDefinition.Each each = s.each();
+        if (pipeline == null || each.as() == null) {
+            return;
+        }
+        Position at = s.at("as");
+        Parameters.Parameter p = pipeline.parameters().stream().filter(x -> x.name().equals(each.as())).findFirst()
+            .orElse(null);
+        if (p == null) {
+            List<String> takes = pipeline.parameters().stream().map(Parameters.Parameter::name).toList();
+            problems.add(new Problem(at.line(), at.column(), s.id(), "Node " + s.id() + " fills " + each.as() + " with "
+                + "each item, but " + s.pipeline() + " takes no such parameter" + (takes.isEmpty() ? ": it takes none"
+                : ": it takes " + String.join(", ", takes))));
+            return;
+        }
+        String given;
+        if (each.itemsParameter() != null) {
+            Parameters.Parameter list = def.parameter(each.itemsParameter());
+            given = list == null ? null : list.type().name().toLowerCase(Locale.ROOT);
+        } else {
+            given = each.items().isEmpty() ? null : each.items().getFirst() instanceof Double ? "number" : "text";
+        }
+        if (given != null && !given.equals(p.kind())) {
+            problems.add(new Problem(at.line(), at.column(), s.id(), "Node " + s.id() + " fills " + each.as() + " with "
+                + "each item, a " + given + ", but " + s.pipeline() + " takes a " + p.kind() + " for it"));
+        }
     }
 
     /**
@@ -197,7 +240,8 @@ public class FlowService {
         Position at = s.at("with");
         for (Parameters.Parameter p : pipeline.parameters()) {
             Parameters.Parameter mine = def.parameter(p.name());
-            if (!s.with().containsKey(p.name()) && mine != null && !mine.kind().equals(p.kind())) {
+            boolean fromItem = s.each() != null && p.name().equals(s.each().as());
+            if (!fromItem && !s.with().containsKey(p.name()) && mine != null && !mine.kind().equals(p.kind())) {
                 problems.add(new Problem(s.position().line(), s.position().column(), s.id(), "Node " + s.id()
                     + " passes the flow's " + p.name() + " (a " + mine.kind() + ") to " + s.pipeline() + ", which takes "
                     + "a " + p.kind() + " for it: give it with: or rename one of them"));
@@ -534,14 +578,49 @@ public class FlowService {
         int position = 0;
         for (FlowDefinition.Node n : declared.values()) {
             FlowStore.NodeRun s = recorded.remove(n.id());
+            List<FlowViews.ItemRunView> items = n.each() == null ? null : items(r, n, s, values);
             nodes.add(s == null
                 ? new FlowViews.NodeRunView(n.id(), n.type(), position, "pending", null, null, null, n.pipeline(), null,
-                    null)
-                : nodeView(s, n.pipeline(), values));
+                    null, items)
+                : nodeView(s, n.pipeline(), values, items));
             position++;
         }
-        recorded.values().forEach(s -> nodes.add(nodeView(s, null, values)));
+        recorded.values().forEach(s -> nodes.add(nodeView(s, null, values, null)));
         return new FlowViews.RunDetail(view(r, values), nodes);
+    }
+
+    /**
+     * A for-each node's items in a run, each with its pipeline run. Items written in the flow are
+     * shown to everyone who reads the flow; items from a parameter of the run only with
+     * {@code values}, since a run's values can hold server variables.
+     */
+    private List<FlowViews.ItemRunView> items(FlowStore.Run r, FlowDefinition.Node n, FlowStore.NodeRun s,
+                                              boolean values) {
+        FlowDefinition.Each each = n.each();
+        List<Object> list = each.itemsParameter() == null ? each.items()
+            : each.itemsIn(numbers(Optional.ofNullable(readParameters(r.parameters())).orElse(Map.of())));
+        boolean show = values || each.itemsParameter() == null;
+        java.util.SortedMap<Integer, PipelineStore.Run> runs = pipelineStore.flowItemRuns(r.id(), n.id());
+        boolean ended = s != null && !"running".equals(s.status()) && !"pending".equals(s.status());
+        List<FlowViews.ItemRunView> out = new ArrayList<>();
+        int count = Math.max(list.size(), runs.isEmpty() ? 0 : runs.lastKey() + 1);
+        for (int i = 0; i < count; i++) {
+            PipelineStore.Run pr = runs.get(i);
+            Object value = show && i < list.size() ? list.get(i) : null;
+            out.add(pr == null
+                ? new FlowViews.ItemRunView(i, value, ended ? "skipped" : "pending", null, null, null)
+                : new FlowViews.ItemRunView(i, value, pr.status(), pr.id(), pr.startedAt(), pr.finishedAt()));
+        }
+        return out;
+    }
+
+    /** Values read back from JSON with every number, in lists too, as a Double, as a run holds them. */
+    private static Map<String, Object> numbers(Map<String, Object> m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        m.forEach((k, v) -> out.put(k, v instanceof List<?> l
+            ? l.stream().map(x -> x instanceof Number num ? (Object) num.doubleValue() : x).toList()
+            : v instanceof Number num ? num.doubleValue() : v));
+        return out;
     }
 
     /** Asks a run to stop, as {@link #cancel(long, String, AccessRole)}, answering as the API shows runs. */
@@ -559,9 +638,10 @@ public class FlowService {
         return store.find(name).orElseThrow(() -> fail(Response.Status.NOT_FOUND, "No flow called " + name));
     }
 
-    private FlowViews.NodeRunView nodeView(FlowStore.NodeRun s, String pipeline, boolean values) {
+    private FlowViews.NodeRunView nodeView(FlowStore.NodeRun s, String pipeline, boolean values,
+                                           List<FlowViews.ItemRunView> items) {
         return new FlowViews.NodeRunView(s.nodeId(), s.type(), s.position(), s.status(), s.startedAt(), s.finishedAt(),
-            s.pipelineRunId(), pipeline, values ? s.message() : withoutValues(s), tree(s.reported()));
+            s.pipelineRunId(), pipeline, values ? s.message() : withoutValues(s), tree(s.reported()), items);
     }
 
     /** What a message from which values are left out says instead of them. */
@@ -697,7 +777,11 @@ public class FlowService {
         /** What ${...} reads: the run's parameters and the variables it started with (vars.name). */
         private Map<String, Object> scope = Map.of();
         private Map<String, Object> runVariables = Map.of();
+        /** The values the run started with, numbers in lists too as Doubles: a for-each node's items may be one. */
+        private Map<String, Object> runParameters = Map.of();
         private final Map<String, List<String>> declared = new HashMap<>();
+        /** The for-each nodes started, each with its items' runs. */
+        private final Map<String, Fan> fans = new HashMap<>();
 
         Execution(FlowStore.Run run, BooleanSupplier shutdown) {
             this.run = run;
@@ -731,8 +815,13 @@ public class FlowService {
                 return;
             }
             scope = Parameters.scope(params, runVariables);
+            runParameters = numbers(params);
             List<String> ids = def.nodes().stream().map(FlowDefinition.Node::id).toList();
-            FlowEngine engine = new FlowEngine(ids, def.engineConnections(), params);
+            // max_parallel (ADR 0040): a for-each node counts once; stop nodes are never held, so a flow can always end.
+            Set<String> stops = new HashSet<>();
+            def.nodes().stream().filter(n -> FlowDefinition.STOP.equals(n.type())).forEach(n -> stops.add(n.id()));
+            FlowEngine engine = new FlowEngine(ids, def.engineConnections(), params,
+                def.maxParallel() == null ? 0 : def.maxParallel(), stops);
             AccessRole role = role(run.requestedRole());
             boolean cancelling = false;
             while (true) {
@@ -741,6 +830,12 @@ public class FlowService {
                     for (String s : engine.running()) {
                         if (sqlRuns.containsKey(s)) {
                             save(def, s, "failed", null, Instant.now(), stoppedSql(s), Map.of());
+                            continue;
+                        }
+                        Fan fan = fans.get(s);
+                        if (fan != null) {
+                            fan.running().forEach(this::cancelPipelineRun);
+                            save(def, s, "failed", null, Instant.now(), "The worker running this flow stopped", Map.of());
                             continue;
                         }
                         Long prId = pipelineRuns.get(s);
@@ -863,8 +958,231 @@ public class FlowService {
                 startSql(def, s);
                 return;
             }
+            if (FlowDefinition.FOR_EACH.equals(s.type())) {
+                startEach(def, engine, s, role);
+                return;
+            }
             save(def, node, "running", null, null, null, Map.of());
             tryQueue(def, engine, s, role);
+        }
+
+        // ---- for-each (ADR 0040) ----
+
+        /**
+         * A for-each node in a run: its items, and the pipeline run each started (by item, from 0).
+         * Items start in order while fewer than the node's max_parallel run; every item runs, and the
+         * node ends when the last one does.
+         */
+        private final class Fan {
+            final FlowDefinition.Node node;
+            final List<Object> items;
+            final java.util.SortedMap<Integer, Long> runs = new java.util.TreeMap<>();
+            /** How each item ended: succeeded, failed or cancelled; failed too for one that could not start. */
+            final java.util.SortedMap<Integer, String> ended = new java.util.TreeMap<>();
+            final Set<Integer> cancelAsked = new HashSet<>();
+            int next;
+            Instant waitingSince;
+            /** Nothing more starts: the flow was cancelled or stopped, a run was cancelled by hand, or it gave up waiting. */
+            boolean stopping;
+            boolean byHand;
+            String problem;
+            String said;
+
+            Fan(FlowDefinition.Node node, List<Object> items) {
+                this.node = node;
+                this.items = items;
+            }
+
+            /** The items' runs still going, by pipeline run id. */
+            List<Long> running() {
+                List<Long> out = new ArrayList<>();
+                runs.forEach((i, id) -> {
+                    if (!ended.containsKey(i)) {
+                        out.add(id);
+                    }
+                });
+                return out;
+            }
+
+            long count(String status) {
+                return ended.values().stream().filter(status::equals).count();
+            }
+
+            /** How far it has got, as the run page says it: "3 of 5 items done, 1 failed". */
+            String progress() {
+                long failed = count("failed");
+                return ended.size() + " of " + items.size() + (items.size() == 1 ? " item" : " items") + " done"
+                    + (failed > 0 ? ", " + failed + " failed" : "");
+            }
+        }
+
+        /** Starts a for-each node: reads its items, finds any runs it already started, and starts the first items. */
+        private void startEach(FlowDefinition def, FlowEngine engine, FlowDefinition.Node s, AccessRole role) {
+            List<Object> items = s.each().itemsIn(runParameters);
+            if (items.isEmpty() || items.size() > FlowDefinition.MAX_ITEMS) {
+                end(def, engine, s.id(), FlowEngine.State.FAILED, null, "Node " + s.id() + " has " + items.size()
+                    + " items: a for-each node runs 1 to " + FlowDefinition.MAX_ITEMS, Map.of());
+                return;
+            }
+            Fan fan = new Fan(s, items);
+            fans.put(s.id(), fan);
+            // Found again by flow run, node and item, so no item starts twice.
+            pipelineStore.flowItemRuns(run.id(), s.id()).forEach((i, pr) -> fan.runs.put(i, pr.id()));
+            save(def, s.id(), "running", null, null, fan.progress(), Map.of());
+            fan.said = fan.progress();
+            fill(def, engine, fan, role);
+        }
+
+        /** Starts the next items while fewer than the node's max_parallel run, in the order they are listed. */
+        private void fill(FlowDefinition def, FlowEngine engine, Fan fan, AccessRole role) {
+            FlowDefinition.Node s = fan.node;
+            while (!fan.stopping && fan.next < fan.items.size() && fan.running().size() < s.each().maxParallel()) {
+                int i = fan.next;
+                if (fan.runs.containsKey(i)) {
+                    fan.next++;
+                    continue;
+                }
+                Optional<PipelineStore.Run> again = pipelineStore.flowItemRun(run.id(), s.id(), i);
+                if (again.isPresent()) {
+                    fan.runs.put(i, again.get().id());
+                    fan.next++;
+                    continue;
+                }
+                try {
+                    PipelineStore.Run queued = pipelines.queueRunForFlow(s.pipeline(), s.version(), run.requestedBy(),
+                        role, run.id(), s.id(), i, itemValues(engine, def, s, fan.items.get(i)), runVariables);
+                    fan.runs.put(i, queued.id());
+                    fan.next++;
+                    fan.waitingSince = null;
+                } catch (PipelineStore.Busy busy) {
+                    // Another run of the pipeline, not one of this node's items, is queued or running.
+                    Instant since = fan.waitingSince == null ? (fan.waitingSince = Instant.now()) : fan.waitingSince;
+                    if (Duration.between(since, Instant.now()).compareTo(def.queueTimeout()) > 0) {
+                        fan.stopping = true;
+                        fan.problem = "Waited " + pretty(def.queueTimeout()) + " for " + s.pipeline() + " to finish its "
+                            + "current run, and gave up";
+                    } else if (fan.running().isEmpty()) {
+                        say(def, fan, "Waiting for " + s.pipeline() + " to finish its current run");
+                    }
+                    return;
+                } catch (IllegalArgumentException e) {
+                    itemNotStarted(fan, i, "The pipeline " + s.pipeline() + " could not be run with these values: "
+                        + e.getMessage());
+                } catch (WebApplicationException e) {
+                    boolean refused = e.getResponse().getStatus() == Response.Status.CONFLICT.getStatusCode();
+                    itemNotStarted(fan, i, refused ? "The pipeline " + s.pipeline() + " has problems with these values ("
+                        + itemValuesText(engine, def, s, fan.items.get(i)) + "); check it with them on its page"
+                        : "The pipeline " + s.pipeline() + " could not be run; its page says why");
+                }
+            }
+        }
+
+        private void itemNotStarted(Fan fan, int i, String why) {
+            fan.ended.put(i, "failed");
+            fan.next++;
+            if (fan.problem == null) {
+                fan.problem = "Item " + (i + 1) + ": " + why;
+            }
+        }
+
+        /** Saves the node's message when it changes. */
+        private void say(FlowDefinition def, Fan fan, String message) {
+            if (!message.equals(fan.said)) {
+                fan.said = message;
+                save(def, fan.node.id(), "running", null, null, message, Map.of());
+            }
+        }
+
+        /**
+         * Looks at a for-each node's items: records those that ended, starts more, and ends the node
+         * once nothing more will start and none is running. It succeeds when every item succeeded, fails
+         * when any failed (after the others end), and is cancelled with the flow, or when someone
+         * cancels one of its runs by hand.
+         */
+        private void pollEach(FlowDefinition def, FlowEngine engine, Fan fan, AccessRole role, boolean cancelling) {
+            boolean stopped = cancelling || engine.halted();
+            if (stopped) {
+                fan.stopping = true;
+            }
+            for (Map.Entry<Integer, Long> e : fan.runs.entrySet()) {
+                if (fan.ended.containsKey(e.getKey())) {
+                    continue;
+                }
+                Optional<PipelineStore.Run> pr = pipelineStore.run(e.getValue());
+                if (pr.isEmpty()) {
+                    fan.ended.put(e.getKey(), "failed");
+                } else if (pr.get().finished()) {
+                    String status = pr.get().status();
+                    fan.ended.put(e.getKey(), status.equals("succeeded") || status.equals("cancelled") ? status : "failed");
+                    if (status.equals("cancelled") && !fan.cancelAsked.contains(e.getKey()) && !stopped) {
+                        // Someone cancelled an item's run: the node, and so the flow, stops.
+                        fan.byHand = true;
+                        fan.stopping = true;
+                    }
+                }
+            }
+            if (fan.byHand || stopped) {
+                fan.runs.forEach((i, id) -> {
+                    if (!fan.ended.containsKey(i) && fan.cancelAsked.add(i)) {
+                        cancelPipelineRun(id);
+                    }
+                });
+            }
+            fill(def, engine, fan, role);
+            if (!fan.running().isEmpty() || (!fan.stopping && fan.next < fan.items.size())) {
+                if (!fan.running().isEmpty() || fan.waitingSince == null) {
+                    say(def, fan, fan.progress());
+                }
+                return;
+            }
+            long succeeded = fan.count("succeeded");
+            long failed = fan.count("failed");
+            Map<String, Object> reported = new LinkedHashMap<>();
+            reported.put("items", (double) fan.items.size());
+            reported.put("succeeded", (double) succeeded);
+            reported.put("failed", (double) failed);
+            fans.remove(fan.node.id());
+            int n = fan.items.size();
+            String of = " of " + n + (n == 1 ? " item" : " items");
+            if (succeeded == n) {
+                end(def, engine, fan.node.id(), FlowEngine.State.SUCCEEDED, null, succeeded + of + " succeeded", reported);
+            } else if (fan.byHand || stopped) {
+                end(def, engine, fan.node.id(), FlowEngine.State.CANCELLED, null, (fan.byHand ? "A run of one of its "
+                    + "items was cancelled" : "Cancelled") + ": " + fan.ended.size() + of + " had ended, " + succeeded
+                    + " succeeded", reported);
+            } else {
+                String why = failed > 0 ? failed + of + " failed; their pipeline runs say why"
+                    : (n - fan.ended.size()) + of + " did not run";
+                end(def, engine, fan.node.id(), FlowEngine.State.FAILED, null, why
+                    + (fan.problem == null ? "" : ". " + fan.problem), reported);
+            }
+        }
+
+        /** The values one item's run is given: the node's, as a run-pipeline node's, with the item in {@code as}. */
+        private Map<String, Object> itemValues(FlowEngine engine, FlowDefinition def, FlowDefinition.Node s, Object item) {
+            Map<String, Object> out = withValues(engine, def, s);
+            out.put(s.each().as(), item);
+            return out;
+        }
+
+        private String itemValuesText(FlowEngine engine, FlowDefinition def, FlowDefinition.Node s, Object item) {
+            try {
+                List<String> out = new ArrayList<>();
+                itemValues(engine, def, s, item).forEach((k, v) -> out.add(k + "=" + (v instanceof Double d
+                    ? Parameters.numberText(d) : v)));
+                String text = String.join(", ", out);
+                return text.length() > 300 ? text.substring(0, 300) + "…" : text;
+            } catch (IllegalArgumentException e) {
+                return "values that could not be worked out";
+            }
+        }
+
+        private void cancelPipelineRun(long id) {
+            try {
+                pipelines.cancel(id, run.requestedBy());
+            } catch (RuntimeException e) {
+                // already finished: the next look sees how it ended
+            }
         }
 
         /**
@@ -1061,6 +1379,13 @@ public class FlowService {
                 pollSql(def, engine, node, cancelling);
                 return;
             }
+            if (FlowDefinition.FOR_EACH.equals(s.type())) {
+                Fan fan = fans.get(node);
+                if (fan != null) {
+                    pollEach(def, engine, fan, role, cancelling);
+                }
+                return;
+            }
             if (FlowDefinition.WAIT.equals(s.type())) {
                 if (cancelling || engine.halted()) {
                     end(def, engine, node, FlowEngine.State.CANCELLED, null, "Stopped waiting: the flow was stopped",
@@ -1109,6 +1434,16 @@ public class FlowService {
 
         private void cancelRunning(FlowEngine engine, FlowDefinition def, AccessRole role) {
             for (String node : engine.running()) {
+                Fan fan = fans.get(node);
+                if (fan != null) {
+                    fan.stopping = true;
+                    fan.runs.forEach((i, id) -> {
+                        if (!fan.ended.containsKey(i) && fan.cancelAsked.add(i)) {
+                            cancelPipelineRun(id);
+                        }
+                    });
+                    continue;
+                }
                 Long prId = pipelineRuns.get(node);
                 if (prId != null && cancelAsked.add(node)) {
                     try {

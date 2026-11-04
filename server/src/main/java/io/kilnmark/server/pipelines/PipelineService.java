@@ -578,12 +578,23 @@ public class PipelineService {
     public PipelineStore.Run queueRunForFlow(String name, Integer version, String by, AccessRole role,
                                              long flowRunId, String flowNode, Map<String, Object> parameters,
                                              Map<String, Object> variables) {
+        return queueRunForFlow(name, version, by, role, flowRunId, flowNode, null, parameters, variables);
+    }
+
+    /**
+     * As {@link #queueRunForFlow(String, Integer, String, AccessRole, long, String, Map, Map)}, for item
+     * {@code flowItem} (from 0) of a for-each node when it is not null: the items of one node may run
+     * the pipeline at once (ADR 0040).
+     */
+    public PipelineStore.Run queueRunForFlow(String name, Integer version, String by, AccessRole role,
+                                             long flowRunId, String flowNode, Integer flowItem,
+                                             Map<String, Object> parameters, Map<String, Object> variables) {
         RunnableVersion checked = runnableVersion(name, version, parameters, variables);
         int n = checked.version();
-        PipelineStore.Run run = store.queueRun(name, n, by, role.id(), flowRunId, flowNode,
+        PipelineStore.Run run = store.queueRun(name, n, by, role.id(), flowRunId, flowNode, flowItem,
             writeJson(checked.parameters()), writeJson(variables));
-        LOG.infof("Run %d of pipeline %s (version %d) queued by %s for node %s of flow run %d", run.id(), name, n, by,
-            flowNode, flowRunId);
+        LOG.infof("Run %d of pipeline %s (version %d) queued by %s for node %s%s of flow run %d", run.id(), name, n,
+            by, flowNode, flowItem == null ? "" : ", item " + flowItem, flowRunId);
         return run;
     }
 

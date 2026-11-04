@@ -222,4 +222,57 @@ class FlowEngineTest {
         assertThrows(IllegalArgumentException.class,
             () -> new FlowEngine(List.of("a"), List.of(p("a", "x", Kind.SUCCESS)), Map.of()));
     }
+
+    // ---- max_parallel (ADR 0040) ----
+
+    @Test
+    void aLimitHoldsReadyNodesBackInTheOrderWritten() {
+        FlowEngine e = new FlowEngine(List.of("a", "b", "c", "d"), List.of(), Map.of(), 2, java.util.Set.of());
+        assertEquals(List.of("a", "b"), e.ready(), "two at once, in the order written");
+        assertTrue(e.ready().isEmpty(), "c and d wait for one of them to end");
+        assertEquals(State.PENDING, e.state("c"), "a node held back is still pending, not skipped");
+        e.finish("b", State.SUCCEEDED, Map.of());
+        assertEquals(List.of("c"), e.ready());
+        e.finish("a", State.FAILED, Map.of());
+        e.finish("c", State.SUCCEEDED, Map.of());
+        assertEquals(List.of("d"), e.ready());
+        e.finish("d", State.SUCCEEDED, Map.of());
+        assertTrue(e.done());
+        assertEquals(FlowEngine.Outcome.FAILED, e.outcome());
+    }
+
+    @Test
+    void aStopNodeIsNeverHeldBackAndSkipsWhatWasHeld() {
+        FlowEngine e = new FlowEngine(List.of("slow", "later", "halt"), List.of(), Map.of(), 1, java.util.Set.of("halt"));
+        assertEquals(List.of("slow", "halt"), e.ready(), "halt starts although the limit is reached");
+        e.halt(true, "Stopped");
+        e.finish("halt", State.SUCCEEDED, Map.of());
+        assertEquals(State.SKIPPED, e.state("later"), "a node held back never started, so it is skipped");
+        e.finish("slow", State.CANCELLED, Map.of());
+        assertTrue(e.done());
+        assertEquals(FlowEngine.Outcome.FAILED, e.outcome());
+    }
+
+    @Test
+    void aCancelSkipsWhatWasHeldAndNoLimitMeansAllAtOnce() {
+        FlowEngine held = new FlowEngine(List.of("a", "b"), List.of(), Map.of(), 1, java.util.Set.of());
+        assertEquals(List.of("a"), held.ready());
+        held.cancel();
+        assertEquals(State.SKIPPED, held.state("b"));
+        FlowEngine free = new FlowEngine(List.of("a", "b", "c"), List.of(), Map.of(), 0, java.util.Set.of());
+        assertEquals(List.of("a", "b", "c"), free.ready());
+        assertThrows(IllegalArgumentException.class,
+            () -> new FlowEngine(List.of("a"), List.of(), Map.of(), -1, java.util.Set.of()));
+    }
+
+    @Test
+    void aSkippedBranchDoesNotCountAgainstTheLimit() {
+        // b is skipped (a failed, b runs on success), so c may start beside d.
+        FlowEngine e = new FlowEngine(List.of("a", "b", "c", "d"), List.of(p("a", "b", Kind.SUCCESS),
+            p("a", "c", Kind.FAILURE), p("a", "d", Kind.ALWAYS)), Map.of(), 2, java.util.Set.of());
+        assertEquals(List.of("a"), e.ready());
+        e.finish("a", State.FAILED, Map.of());
+        assertEquals(List.of("c", "d"), e.ready());
+        assertEquals(State.SKIPPED, e.state("b"));
+    }
 }

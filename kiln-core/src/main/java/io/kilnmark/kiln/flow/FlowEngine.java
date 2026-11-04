@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -54,6 +55,8 @@ public final class FlowEngine {
     private final List<String> nodes;
     private final List<Connection> connections;
     private final Map<String, Object> parameters;
+    private final int maxParallel;
+    private final Set<String> neverHeld;
     private final Map<String, State> states = new LinkedHashMap<>();
     private final Map<String, Map<String, Object>> results = new LinkedHashMap<>();
     private boolean cancelled;      // a person asked the flow to stop
@@ -67,6 +70,23 @@ public final class FlowEngine {
      * @param parameters  the flow's parameters by name
      */
     public FlowEngine(List<String> nodes, List<Connection> connections, Map<String, Object> parameters) {
+        this(nodes, connections, parameters, 0, Set.of());
+    }
+
+    /**
+     * A flow with a limit on how many of its nodes run at once ({@code max_parallel}, ADR 0040): a node
+     * ready beyond it stays pending, and nodes start in the order {@code nodes} gives as others end.
+     *
+     * @param maxParallel the most nodes running at once, or 0 for no limit
+     * @param neverHeld   nodes started however many are running ({@code stop} nodes, so a flow can always end)
+     */
+    public FlowEngine(List<String> nodes, List<Connection> connections, Map<String, Object> parameters,
+                      int maxParallel, Set<String> neverHeld) {
+        if (maxParallel < 0) {
+            throw new IllegalArgumentException("maxParallel is 0 (no limit) or more");
+        }
+        this.maxParallel = maxParallel;
+        this.neverHeld = Set.copyOf(neverHeld);
         this.nodes = List.copyOf(nodes);
         this.connections = List.copyOf(connections);
         this.parameters = parameters == null ? Map.of() : Map.copyOf(parameters);
@@ -119,13 +139,16 @@ public final class FlowEngine {
 
     /**
      * Marks as running, and returns, every node that can start now, after skipping the nodes whose
-     * connections are all settled and none taken. Call it again after each {@link #finish}.
+     * connections are all settled and none taken. Call it again after each {@link #finish}. With a
+     * limit, a node that could start while the limit's worth are running stays pending (held) until
+     * one ends, unless it is never held; nodes are started in the order they were given.
      */
     public List<String> ready() {
         List<String> started = new ArrayList<>();
         if (cancelled || haltMessage != null) {
             return started;
         }
+        long running = states.values().stream().filter(s -> s == State.RUNNING).count();
         boolean changed = true;
         while (changed) {
             changed = false;
@@ -138,8 +161,12 @@ public final class FlowEngine {
                     continue;
                 }
                 if (into.isEmpty() || into.stream().anyMatch(this::taken)) {
+                    if (maxParallel > 0 && running >= maxParallel && !neverHeld.contains(node)) {
+                        continue; // held: it starts when a running node ends
+                    }
                     states.put(node, State.RUNNING);
                     started.add(node);
+                    running++;
                 } else {
                     states.put(node, State.SKIPPED);
                 }

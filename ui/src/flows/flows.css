@@ -13,8 +13,14 @@
   font-size: 12px;
 }
 
-.fd-node.fd-type-run-pipeline {
+.fd-node.fd-type-run-pipeline,
+.fd-node.fd-type-for-each {
   border-top-color: var(--km-link);
+}
+
+/* A for-each node: a second edge behind it, a stack of runs. */
+.fd-node.fd-type-for-each {
+  box-shadow: 4px 4px 0 -1px var(--km-surface), 4px 4px 0 0 var(--km-border-control);
 }
 
 .fd-node.fd-type-stop {
@@ -293,4 +299,18 @@
   .fc-bar {
     background: Highlight;
   }
+}
+
+/* A for-each node's items on the run page. */
+.fr-items {
+  margin-top: 4px;
+}
+
+.fr-items ol {
+  margin: 4px 0 0;
+  padding-left: 1.5em;
+}
+
+.fr-items li {
+  margin: 2px 0;
 }

@@ -1635,8 +1635,26 @@ export type FlowNodeRun = {
   pipelineRunId: number | null;
   pipeline: string | null;
   message: string | null;
-  /** What it reported: status, score, quarantined_share, rows_written, duration_s; rows_affected for sql. */
+  /**
+   * What it reported: status, score, quarantined_share, rows_written, duration_s; rows_affected for
+   * sql; items, succeeded and failed for for-each.
+   */
   reported: Record<string, unknown> | null;
+  /** A for-each node's items, each with its pipeline run; absent for other nodes. */
+  items?: FlowItemRun[] | null;
+};
+/**
+ * One item of a for-each node in a run. `value` is null for viewers when the items came from a
+ * parameter of the run. `status` is pending before its run starts, skipped if the node ended without
+ * starting it, else its pipeline run's.
+ */
+export type FlowItemRun = {
+  item: number;
+  value: string | number | null;
+  status: FlowNodeStatus | "queued";
+  pipelineRunId: number | null;
+  startedAt: string | null;
+  finishedAt: string | null;
 };
 export type FlowRunDetail = { run: FlowRun; nodes: FlowNodeRun[] };
 

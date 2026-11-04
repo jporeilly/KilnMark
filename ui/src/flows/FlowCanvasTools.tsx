@@ -1,7 +1,7 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { pipelinesApi } from "../api";
 import type { FlowSelection } from "./FlowDiagram";
-import { addNode, clearLayout, connect, disconnect, NODE_TYPES, removeNode, setWhen, type Change, type NodeTypeName } from "./edit";
+import { addNode, clearLayout, connect, disconnect, NODE_TYPES, removeNode, runsPipeline, setWhen, type Change, type NodeTypeName } from "./edit";
 import { connectionSentence, kindOf, TYPE_WORDS, type FlowGraph } from "./graph";
 
 /** The ways a connection is taken, as the form offers them. */
@@ -130,7 +130,7 @@ export function FlowCanvasTools({
     // Placed by hand, a new node goes to the right of the others.
     const xs = Object.values(graph.positions);
     const at = xs.length ? { x: Math.max(...xs.map((p) => p.x)) + 280, y: Math.min(...xs.map((p) => p.y)) } : undefined;
-    const c = addNode(text, type, { pipeline: type === "run-pipeline" ? pipelineName || undefined : undefined, at });
+    const c = addNode(text, type, { pipeline: runsPipeline(type) ? pipelineName || undefined : undefined, at });
     if (apply(c, "id" in c && c.id ? `Added node ${c.id}.` : "")) {
       if ("id" in c && c.id) onSelect({ node: c.id });
     }
@@ -157,7 +157,7 @@ export function FlowCanvasTools({
             ))}
           </select>
         </div>
-        {type === "run-pipeline" && (
+        {runsPipeline(type) && (
           <div className="field">
             <label htmlFor={`${id}-pipeline`}>Pipeline</label>
             {pipelines && pipelines.length > 0 ? (

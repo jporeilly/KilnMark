@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import type { FlowNodeRun, FlowRunDetail } from "../api";
-import { chartRowWords, flowChart } from "./chart";
+import type { FlowItemRun, FlowNodeRun, FlowRunDetail } from "../api";
+import { chartRowWords, flowChart, itemsProgress } from "./chart";
 
 const T0 = Date.parse("2026-11-04T10:00:00Z");
 const at = (s: number) => new Date(T0 + s * 1000).toISOString();
@@ -92,5 +92,38 @@ describe("chartRowWords", () => {
     );
     expect(chartRowWords({ ...row, status: "skipped", start: null, end: null, live: false })).toBe("clean: skipped");
     expect(chartRowWords({ ...row, status: "pending", start: null, end: null, live: false })).toBe("clean: not started");
+  });
+});
+
+describe("for-each nodes", () => {
+  const items: FlowItemRun[] = [
+    { item: 0, value: "EMEA", status: "succeeded", pipelineRunId: 21, startedAt: at(5), finishedAt: at(20) },
+    { item: 1, value: "APAC", status: "failed", pipelineRunId: 22, startedAt: at(6), finishedAt: at(40) },
+    { item: 2, value: "AMER", status: "running", pipelineRunId: 23, startedAt: at(21), finishedAt: null },
+    { item: 3, value: "LATAM", status: "queued", pipelineRunId: 24, startedAt: null, finishedAt: null },
+    { item: 4, value: "ANZ", status: "pending", pipelineRunId: null, startedAt: null, finishedAt: null },
+  ];
+
+  test("a bar spans the items' runs: from the first to start to the last to end, or to now while one runs", () => {
+    const going = flowChart(
+      detail([node({ node: "regions", type: "for-each", position: 0, status: "running", startedAt: at(1), items })]),
+      T0 + 50_000,
+    );
+    expect(going?.rows[0]).toMatchObject({ start: 5_000, end: 50_000, live: true });
+    const ended = items.slice(0, 2);
+    const done = flowChart(
+      detail([node({ node: "regions", type: "for-each", position: 0, status: "failed", startedAt: at(1), finishedAt: at(41), items: ended })]),
+    );
+    expect(done?.rows[0]).toMatchObject({ start: 5_000, end: 40_000, live: false });
+    const none = flowChart(detail([node({ node: "regions", type: "for-each", position: 0, status: "running", startedAt: at(1), items: [items[4]] })]), T0 + 3_000);
+    expect(none?.rows[0]).toMatchObject({ start: 1_000, end: 3_000, live: true });
+  });
+
+  test("its row says how far the items have got", () => {
+    expect(itemsProgress(items)).toBe("2 of 5 items done, 1 failed");
+    expect(itemsProgress([{ ...items[0] }])).toBe("1 of 1 item done");
+    expect(itemsProgress([{ ...items[0], status: "cancelled" }, { ...items[4], status: "skipped" }])).toBe(
+      "1 of 2 items done, 1 cancelled, 1 not run",
+    );
   });
 });

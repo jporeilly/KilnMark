@@ -159,18 +159,26 @@ class LabPipelinesTest {
             FlowDefinition flow = parsed.definition();
             assertTrue(flow.name().startsWith(prefix), file + ": named " + prefix + "...");
             for (FlowDefinition.Node n : flow.nodes()) {
-                if (!FlowDefinition.RUN_PIPELINE.equals(n.type())) {
+                if (!FlowDefinition.RUN_PIPELINE.equals(n.type()) && !FlowDefinition.FOR_EACH.equals(n.type())) {
                     continue;
                 }
                 PipelineDefinition p = pipelines.get(n.pipeline());
                 assertTrue(p != null, file + ": node " + n.id() + " runs " + n.pipeline() + ", which is not there");
+                if (n.each() != null) {
+                    // A for-each node fills a text or number parameter of the pipeline with each item.
+                    Parameters.Parameter as = p.parameters().stream().filter(x -> x.name().equals(n.each().as()))
+                        .findFirst().orElse(null);
+                    assertTrue(as != null && !as.list(), file + ": " + n.pipeline() + " takes no parameter "
+                        + n.each().as() + " for one item");
+                }
                 for (String key : n.with().keySet()) {
                     assertTrue(p.parameters().stream().anyMatch(x -> x.name().equals(key)),
                         file + ": " + n.pipeline() + " takes no parameter " + key);
                 }
                 for (Parameters.Parameter x : p.parameters()) {
                     Parameters.Parameter mine = flow.parameter(x.name());
-                    if (mine != null && !n.with().containsKey(x.name())) {
+                    boolean fromItem = n.each() != null && x.name().equals(n.each().as());
+                    if (mine != null && !fromItem && !n.with().containsKey(x.name())) {
                         assertEquals(x.kind(), mine.kind(), file + ": " + x.name() + " passed to " + n.pipeline());
                     }
                 }

@@ -7,6 +7,13 @@ details.
 
 ### What's new
 
+- **Run one pipeline for each item, several at once** (ADR 0040). A flow's new `for-each` node runs
+  a pipeline once for each item of a list (regions, files, years), written in the flow or given as
+  a list parameter when it runs, with up to `max_parallel` of them at once. Every item runs; the
+  node fails if any did, and conditions can read how many succeeded and failed. The run page lists
+  each item with a link to its pipeline run. A flow's own `max_parallel` caps how many of its nodes
+  run at once. ([Running one pipeline for each item](docs/guide/flows.md#running-one-pipeline-for-each-item))
+
 - **See a flow, and watch it run.** A flow's page draws it above the YAML: a box per node and an
   arrow per connection, labelled with when it is taken, following the text as you type. A run's
   page draws the same diagram with each node's status as the run goes, and a run chart: a bar per
@@ -80,6 +87,19 @@ details.
   or deleted, and can be sent to a SIEM. Admins read it under Settings, Audit log (ADR 0029).
 
 ### Details
+
+- **Parallel runs in flows** (ADR 0040, docs/design/flows.md section 8). A flow's top-level
+  `max_parallel` (1 to 50) holds ready nodes back, in the order written, while that many run; `stop`
+  nodes never wait. The `for-each` node takes `pipeline`, `version`, `items` (1 to 500 texts or
+  numbers, or a text list or number list parameter), `as`, `with` and `max_parallel` (4 by default);
+  saving checks that the pipeline takes `as` as one value of the items' kind. Each item is an
+  ordinary pipeline run with `flow_item` set (migration V32, which moves the unique index to the
+  flow run, node and item); the items of one node are the one exception to a pipeline having at most
+  one run queued or running, and asset write locks still keep two of them from writing one asset at
+  once. It reports `items`, `succeeded` and `failed`. `GET /api/v1/flow-runs/{id}` lists a for-each
+  node's `items`, each with its value (withheld from viewers when it came from the run's values),
+  status and pipeline run. The diagram and the add-node form know the new type; the sample
+  `sample-for-each-region` shows it.
 
 - **The flows API** (docs/design/flows.md, F3): `GET/POST /api/v1/flows`, `POST
   /api/v1/flows/validate`, `GET/PUT /api/v1/flows/{name}` (the ETag is the latest version; a `PUT`
