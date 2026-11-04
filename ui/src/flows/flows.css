@@ -186,6 +186,17 @@
   border-color: var(--km-accent);
 }
 
+@media (min-width: 640px) {
+  .fd-tools-row .fd-field-long {
+    grid-column: span 2;
+  }
+}
+
+/* In the Nodes tab, the tools follow the table. */
+.fd-dock-add {
+  margin-top: 16px;
+}
+
 .fd-tools-h,
 .fd-tools-wide {
   grid-column: 1 / -1;

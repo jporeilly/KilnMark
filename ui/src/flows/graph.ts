@@ -10,8 +10,11 @@ export const TYPE_WORDS: Record<string, string> = {
   sql: "Runs SQL",
 };
 
-/** A flow node as the diagram draws it: its id, type and a few words of what it does. */
-export type FlowGraphNode = { id: string; type: string; summary: string };
+/**
+ * A flow node as the diagram draws it: its id, type and a few words of what it does; `settings` are
+ * its settings written as single values (`pipeline: x`, `for: 10m`), for the Settings tab.
+ */
+export type FlowGraphNode = { id: string; type: string; summary: string; settings: Record<string, string> };
 /** How a connection is taken: on success (the default), on failure, always, or when a condition holds. */
 export type ConnectionKind = "success" | "failure" | "always" | "condition";
 /** `index` is the connection's place in the YAML list, which is how the canvas changes it. */
@@ -94,7 +97,13 @@ export function readFlowGraph(yamlText: string): FlowGraphResult {
     if (!id || ids.has(id)) continue;
     const type = text(item.get("type", true)) ?? "unknown";
     ids.add(id);
-    nodes.push({ id, type, summary: summaryOf(type, { get: (k) => item.get(k, true) }) });
+    const settings: Record<string, string> = {};
+    for (const p of item.items) {
+      const k = text(p.key);
+      const v = isScalar(p.value) ? text(p.value) : null;
+      if (k && k !== "id" && k !== "type" && v != null) settings[k] = v;
+    }
+    nodes.push({ id, type, summary: summaryOf(type, { get: (k) => item.get(k, true) }), settings });
   }
 
   const connections: FlowConnection[] = [];

@@ -102,7 +102,7 @@ layout:
 
   test("keeps the first of two nodes with one id", () => {
     const r = readFlowGraph("nodes:\n  - { id: a, type: wait, for: 1m }\n  - { id: a, type: stop }\n");
-    expect(r.ok && r.graph.nodes).toEqual([{ id: "a", type: "wait", summary: "Waits 1m" }]);
+    expect(r.ok && r.graph.nodes).toEqual([{ id: "a", type: "wait", summary: "Waits 1m", settings: { for: "1m" } }]);
   });
 });
 

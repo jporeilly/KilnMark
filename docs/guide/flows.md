@@ -150,23 +150,41 @@ connections in words**, under it, lists every connection as a sentence.
 
 ## Changing the flow on the diagram
 
-Designers can change the flow on the diagram as well as in the YAML. Each change is written into
-the YAML at once, changing only the lines it must, so your comments and spacing stay as they
-are. Nothing is saved until you save a new version.
+Designers can change the flow on the diagram, and in the panel under it, as well as in the YAML.
+Each change is written into the YAML at once, changing only the lines it must, so your comments and
+spacing stay as they are. Nothing is saved until you save a new version.
 
-![The Diagram tab of a flow's page: a node that runs a pipeline joined to a notice and to a second pipeline by two amber connections, each labelled with its condition on the share of customers set aside; under it, the forms to add a node (type and pipeline) and to connect two nodes (from, to and when it is taken)](images/flow-diagram-edit.png)
+The panel under the diagram has the same tabs as a pipeline's:
 
-- **Add a node.** Under the diagram, choose its type (and, for one that runs a pipeline, the
+- **Nodes** lists every node: what it does, what it runs after and when, and how it went in the
+  flow's latest run (its status, when it started, how long it took, the rows its pipeline wrote and
+  a link to that pipeline run). Choose a node's name to show its settings. Under the table are the
+  forms to add a node and to connect two.
+- **Settings** shows the node or connection chosen on the diagram or in the table, while one is
+  chosen.
+- **Run**, **Runs** and **Versions** show the latest run, every run and every saved version.
+
+![A flow's page: the diagram, with a node that runs a pipeline joined to a notice and to a second pipeline by two amber connections labelled with their conditions; under it the Nodes tab, a table giving each node, what it does, what it runs after, and its status, start, time and result in the latest run](images/flow-diagram-edit.png)
+
+- **Add a node.** In the **Nodes** tab, choose its type (and, for one that runs a pipeline, the
   pipeline), then **Add node**. It gets an id from its type or pipeline, and the settings it starts
-  with; the problems under the flow say what else it needs, such as a `sql` node's source.
+  with, and its settings open; the problems under the flow say what else it needs, such as a `sql`
+  node's source.
 - **Connect two nodes.** Drag from a node's right edge to another node: that connection is taken
-  when the first succeeds. Or choose **From**, **To** and when it is taken under the diagram, then
-  **Connect**. A connection that would join a node to itself, make a loop or repeat one already
+  when the first succeeds. Or, in the **Nodes** tab, choose **From**, **To** and when it is taken,
+  then **Connect**. A connection that would join a node to itself, make a loop or repeat one already
   there is refused, and the note under the diagram says why.
-- **Change or remove a node or connection.** Choose it on the diagram (click it, or Tab to it and
-  press Enter), or choose **Change** beside a connection in **The connections in words**. Its tools
-  appear under the diagram: change when a connection is taken, including its condition, or remove
-  it. Removing a node removes its connections too. A node's settings are changed in the YAML.
+- **Change a node's settings.** Choose it on the diagram (click it, or Tab to it and press Enter)
+  or by its name in the **Nodes** tab. The **Settings** tab shows the settings its type takes one
+  value for: the pipeline and version it runs, the parameter a `for-each` node's items fill and how
+  many run at once, a notice's severity, title and message, how long to wait, how a `stop` node ends
+  the run, and a `sql` node's source. Change them and choose **Change**; a setting left blank is
+  removed. Lists and mappings (a `for-each` node's items, the parameters given with `with`, a `sql`
+  node's statements) are changed in the YAML.
+- **Change or remove a connection.** Choose it on the diagram, or choose **Change** beside it in
+  **The connections in words**. The **Settings** tab shows when it is taken, including its
+  condition, to change, or **Remove connection**. **Remove node**, in a node's settings, removes its
+  connections too.
 - **Move a node.** Drag it, or choose it and use the arrow keys. The diagram then keeps every node where you see it, in a `layout:`
   block at the end of the YAML; connections between the same two nodes are drawn apart, and labels
   are drawn over the nodes. **Lay out again** removes the block, and the diagram lays the flow out

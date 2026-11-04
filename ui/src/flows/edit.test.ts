@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { addNode, clearLayout, connect, connectProblem, disconnect, NODE_TYPES, removeNode, runsPipeline, setPositions, setWhen, type Change } from "./edit";
+import { addNode, clearLayout, connect, connectProblem, disconnect, NODE_TYPES, removeNode, runsPipeline, setNodeSettings, setPositions, setWhen, type Change } from "./edit";
 import { readFlowGraph } from "./graph";
 
 const FLOW = `kilnmark: flow/v1
@@ -186,7 +186,94 @@ describe("for-each nodes", () => {
     const text = ok(c);
     expect(text).toContain("  - id: sales-by-region\n    type: for-each\n    pipeline: sales-by-region\n    items: []\n");
     const g = graphOf(text);
-    expect(g.nodes.at(-1)).toEqual({ id: "sales-by-region", type: "for-each", summary: "sales-by-region for each of 0 items" });
+    expect(g.nodes.at(-1)).toEqual({
+      id: "sales-by-region",
+      type: "for-each",
+      summary: "sales-by-region for each of 0 items",
+      settings: { pipeline: "sales-by-region" },
+    });
     expect(graphOf(ok(addNode(FLOW, "for-each"))).nodes.at(-1)?.id).toBe("for-each");
+  });
+});
+
+describe("setNodeSettings", () => {
+  test("changes a setting in place, keeping its comment", () => {
+    const text = ok(setNodeSettings(FLOW, "clean", [{ key: "pipeline", value: "order-totals", kind: "text" }]));
+    expect(text).toContain("    pipeline: order-totals   # the cleaning pipeline\n");
+    expect(graphOf(text).nodes[0].settings).toEqual({ pipeline: "order-totals" });
+  });
+
+  test("adds settings after the node's last, numbers as written", () => {
+    const text = ok(
+      setNodeSettings(FLOW, "halt", [
+        { key: "status", value: "succeeded", kind: "word" },
+        { key: "message", value: "All done: 3 loaded", kind: "text" },
+      ]),
+    );
+    expect(text).toContain('  - id: halt\n    type: stop\n    status: succeeded\n    message: "All done: 3 loaded"\n');
+    const v = ok(setNodeSettings(FLOW, "clean", [{ key: "version", value: " 7 ", kind: "number" }]));
+    expect(v).toContain("    pipeline: demo-customers-clean   # the cleaning pipeline\n    version: 7\n");
+  });
+
+  test("quotes text that YAML would read as something else", () => {
+    const text = ok(setNodeSettings(FLOW, "tell", [{ key: "title", value: "true", kind: "text" }]));
+    expect(text).toContain('    title: "true"\n');
+    expect(graphOf(text).nodes[1].settings.title).toBe("true");
+  });
+
+  test("removes a setting left blank", () => {
+    const text = ok(setNodeSettings(FLOW, "clean", [{ key: "pipeline", value: "  ", kind: "text" }]));
+    expect(text).toContain("  - id: clean\n    type: run-pipeline\n\n  - id: tell");
+  });
+
+  test("writes into a node written on one line", () => {
+    const flow = "nodes:\n  - { id: a, type: wait, for: 1m }\n";
+    expect(ok(setNodeSettings(flow, "a", [{ key: "for", value: "10m", kind: "text" }]))).toBe("nodes:\n  - { id: a, type: wait, for: 10m }\n");
+    expect(ok(setNodeSettings("nodes:\n  - { id: a, type: stop }\n", "a", [{ key: "status", value: "succeeded", kind: "word" }]))).toBe(
+      "nodes:\n  - { id: a, type: stop, status: succeeded }\n",
+    );
+  });
+
+  test("quotes a comma or bracket inside a node written on one line", () => {
+    const flow = "nodes:\n  - { id: s, type: stop, message: Done }\n";
+    const text = ok(setNodeSettings(flow, "s", [{ key: "message", value: "Stopped, sorry", kind: "text" }]));
+    expect(text).toBe('nodes:\n  - { id: s, type: stop, message: "Stopped, sorry" }\n');
+    expect(graphOf(text).nodes[0].settings).toEqual({ message: "Stopped, sorry" });
+    const added = ok(setNodeSettings("nodes:\n  - { id: s, type: stop }\n", "s", [{ key: "message", value: "a [b]", kind: "text" }]));
+    expect(graphOf(added).nodes[0].settings).toEqual({ message: "a [b]" });
+  });
+
+  test("fills a setting written with nothing after it", () => {
+    const flow = "nodes:\n  - id: a\n    type: run-pipeline\n    version:\n";
+    const text = ok(setNodeSettings(flow, "a", [{ key: "version", value: "3", kind: "number" }]));
+    expect(text).toBe("nodes:\n  - id: a\n    type: run-pipeline\n    version: 3\n");
+  });
+
+  test("leaves a value over several lines, and a first key, to the YAML", () => {
+    const flow = "nodes:\n  - id: s\n    type: stop\n    message: |\n      one\n      two\n";
+    expect(setNodeSettings(flow, "s", [{ key: "message", value: "x", kind: "text" }])).toEqual({
+      error: "message is written over several lines. Change it in the YAML.",
+    });
+    const first = "nodes:\n  - version: 2\n    id: a\n    type: run-pipeline\n";
+    expect(setNodeSettings(first, "a", [{ key: "version", value: "", kind: "number" }])).toEqual({
+      error: "version is on the node's first line, so it cannot be removed here. Remove it in the YAML.",
+    });
+    expect(ok(setNodeSettings(first, "a", [{ key: "version", value: "4", kind: "number" }]))).toContain("  - version: 4\n");
+  });
+
+  test("refuses what it cannot write", () => {
+    expect(setNodeSettings(FLOW, "clean", [{ key: "version", value: "latest", kind: "number" }])).toEqual({
+      error: "Write version as a whole number, or leave it blank.",
+    });
+    expect(setNodeSettings(FLOW, "clean", [{ key: "id", value: "x", kind: "text" }])).toEqual({ error: "id is not a setting." });
+    expect(setNodeSettings(FLOW, "nobody", [{ key: "for", value: "1m", kind: "text" }])).toEqual({ error: "There is no node nobody." });
+    expect(setNodeSettings("nodes: [", "a", [{ key: "for", value: "1m", kind: "text" }])).toHaveProperty("error");
+    // Nothing is half done: the first change is not kept when a later one is refused.
+    expect(
+      setNodeSettings(FLOW, "clean", [
+        { key: "pipeline", value: "other", kind: "text" },
+        { key: "version", value: "x", kind: "number" },
+      ]),
+    ).toHaveProperty("error");
   });
 });

@@ -6,7 +6,6 @@ import {
   flowsApi,
   formatNumber,
   formatTime,
-  pipelinesApi,
   type AccessRole,
   type FlowDetail,
   type FlowProblem,
@@ -22,7 +21,7 @@ import { docHref } from "../docs/links";
 import { YamlEditor, type YamlEditorHandle } from "../pipelines/YamlEditor";
 import { PipelineDock, useDock, type DockTab } from "../pipelines/PipelineDock";
 import type { FlowSelection } from "./FlowDiagram";
-import { FlowCanvasTools } from "./FlowCanvasTools";
+import { FlowAddTools, FlowNodesTable, FlowSettings, usePipelineNames } from "./FlowCanvasTools";
 import { FlowRunFacts, took } from "./FlowRunSummary";
 import { connect, setPositions, type Change } from "./edit";
 import { readFlowGraph, type FlowGraph } from "./graph";
@@ -46,19 +45,18 @@ function savedView(): View {
     return "diagram";
   }
 }
-/** The tabs of the panel under the flow, as a pipeline's: its latest run, its runs and its versions. */
-const DOCK_TABS: DockTab[] = ["run", "runs", "versions"];
-/** Whether that panel is open, remembered apart from the pipeline page's. */
+/** Whether the panel under the flow is open, remembered apart from the pipeline page's. */
 const FLOW_DOCK_KEY = "kilnmark.flow.panel";
 
 /**
  * One flow, laid out as a pipeline's page is: its diagram or its YAML, one tab at a time, both
- * views of one document; under them a panel with its latest run, its runs and its versions; then
- * the problems (choosing one moves the caret to its line in the YAML) and saving. The YAML is
- * checked a moment after each change. Designers save it with a message, and can change the flow on
- * its diagram: each change there is a change to the YAML, which stays the one record. Stewards run
- * the saved version, with a dialog for its parameters. With name null, a new flow from a starter;
- * with a version, that saved version, read-only.
+ * views of one document; under them a panel with its nodes, the chosen node's or connection's
+ * settings, its latest run, its runs and its versions; then the problems (choosing one moves the
+ * caret to its line in the YAML) and saving. The YAML is checked a moment after each change.
+ * Designers save it with a message, and can change the flow on its diagram and in the panel: each
+ * change there is a change to the YAML, which stays the one record. Stewards run the saved version,
+ * with a dialog for its parameters. With name null, a new flow from a starter; with a version, that
+ * saved version, read-only.
  */
 export function FlowPage({ name, version, role }: { name: string | null; version: number | null; role: AccessRole }) {
   const steward = allows(role, "steward");
@@ -100,9 +98,38 @@ export function FlowPage({ name, version, role }: { name: string | null; version
     }
   }, []);
   const dock = useDock(dockId, FLOW_DOCK_KEY);
-  const dockTab: DockTab = DOCK_TABS.includes(dock.tab) ? dock.tab : "run";
-  // The latest run in full, for the Run tab: read only while that tab is shown, and again whenever
-  // the runs list is.
+  const pipelines = usePipelineNames(designer);
+  // The node or connection chosen on the diagram or in the Nodes tab; choosing one shows its settings.
+  const [selected, setSelected] = useState<FlowSelection | null>(null);
+  const selectedNow = useRef(selected);
+  selectedNow.current = selected;
+  const { show: showTab, setTab: setDockTab } = dock;
+  const choose = useCallback(
+    (s: FlowSelection | null) => {
+      if (s) showTab("settings");
+      if (JSON.stringify(selectedNow.current) === JSON.stringify(s)) return;
+      selectedNow.current = s;
+      setSelected(s);
+    },
+    [showTab],
+  );
+  // The panel's tabs, as a pipeline's: the nodes first, the chosen node's or connection's settings
+  // (only while one is chosen, for designers), then the flow's latest run, its runs and versions.
+  const dockTabs: DockTab[] = [
+    "nodes",
+    ...(editable && selected != null ? (["settings"] as const) : []),
+    ...(isNew ? [] : (["run", "runs", "versions"] as const)),
+  ];
+  // When the tab shown goes (nothing is chosen any more): the flow's tab shown last; at first, Run,
+  // or Nodes for a new flow.
+  const lastFlowTab = useRef<DockTab | null>(null);
+  const dockTab: DockTab = dockTabs.includes(dock.tab) ? dock.tab : (lastFlowTab.current ?? (isNew ? "nodes" : "run"));
+  useEffect(() => {
+    if (dockTab !== dock.tab) setDockTab(dockTab);
+    if (dockTab !== "settings") lastFlowTab.current = dockTab;
+  }, [dockTab, dock.tab, setDockTab]);
+  // The latest run in full, for the Run and Nodes tabs: read only while one of them is shown, and
+  // again whenever the runs list is.
   const [latestRun, setLatestRun] = useState<FlowRunDetail | null>(null);
   const [latestError, setLatestError] = useState<string | null>(null);
 
@@ -141,19 +168,9 @@ export function FlowPage({ name, version, role }: { name: string | null; version
   // A new flow's starter runs one of the person's pipelines once they are known, unless the YAML
   // has been changed by then.
   useEffect(() => {
-    if (!isNew) return;
-    let live = true;
-    pipelinesApi
-      .list()
-      .then((ps) => {
-        if (!live || ps.length === 0) return;
-        setYaml((y) => (y === starterFlow() ? starterFlow(ps[0].name) : y));
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [isNew]);
+    if (!isNew || !pipelines || pipelines.length === 0) return;
+    setYaml((y) => (y === starterFlow() ? starterFlow(pipelines[0]) : y));
+  }, [isNew, pipelines]);
 
   // Keep the runs table current while a run is queued or running. Only the lists: reloading the
   // flow would replace text being edited, and take in someone else's save without the conflict.
@@ -164,7 +181,7 @@ export function FlowPage({ name, version, role }: { name: string | null; version
     return () => window.clearInterval(t);
   }, [active, loadLists]);
 
-  const runShown = !isNew && dockTab === "run" && dock.open;
+  const runShown = !isNew && (dockTab === "run" || (dockTab === "nodes" && !viewing)) && dock.open;
   useEffect(() => {
     const id = runs?.[0]?.id;
     if (id == null) {
@@ -202,15 +219,9 @@ export function FlowPage({ name, version, role }: { name: string | null; version
   // Changes made on the diagram. The tools read the text as it is now, not as last drawn, so what
   // they change is what is in the editor.
   const live = useMemo(() => (editable ? readFlowGraph(yaml) : null), [editable, yaml]);
-  const [selected, setSelected] = useState<FlowSelection | null>(null);
   const [canvasNote, setCanvasNote] = useState<{ text: string; bad: boolean } | null>(null);
   const undos = useRef<{ before: string; after: string; label: string }[]>([]);
   const [, setUndoTick] = useState(0);
-  const choose = useCallback(
-    (s: FlowSelection | null) =>
-      setSelected((old) => (JSON.stringify(old) === JSON.stringify(s) ? old : s)),
-    [],
-  );
   const applyEdit = (c: Change, label: string): boolean => {
     if ("error" in c) {
       setCanvasNote({ text: c.error, bad: true });
@@ -225,6 +236,17 @@ export function FlowPage({ name, version, role }: { name: string | null; version
     setCanvasNote({ text: label, bad: false });
     return true;
   };
+  // A node or connection chosen and then renamed or removed in the YAML is no longer chosen.
+  useEffect(() => {
+    if (!selected || !live?.ok) return;
+    const g = live.graph;
+    const there =
+      "node" in selected
+        ? g.nodes.some((n) => n.id === selected.node)
+        : g.connections.some((c) => c.index === selected.connection && c.from === selected.from && c.to === selected.to);
+    if (!there) choose(null);
+  }, [selected, live, choose]);
+
   // Undo is offered while the text is still what the last change left; typing in the YAML ends it.
   const lastChange = undos.current.at(-1);
   const canUndo = !!lastChange && lastChange.after === yaml;
@@ -510,11 +532,7 @@ export function FlowPage({ name, version, role }: { name: string | null; version
                       </button>
                     )}
                   </div>
-                  {live?.ok ? (
-                    <FlowCanvasTools graph={live.graph} text={yaml} selected={selected} onSelect={choose} apply={applyEdit} />
-                  ) : (
-                    <p className="small muted">The diagram can be changed again once the YAML can be read.</p>
-                  )}
+                  {!live?.ok && <p className="small muted">The diagram can be changed again once the YAML can be read.</p>}
                 </>
               )}
             </>
@@ -541,116 +559,164 @@ export function FlowPage({ name, version, role }: { name: string | null; version
           )}
         </TabPanel>
 
-        {!isNew && (
-          <PipelineDock
-            idBase={dockId}
-            tabs={DOCK_TABS}
-            tab={dockTab}
-            open={dock.open}
-            onTab={dock.show}
-            onOpen={dock.setOpen}
-            label="Panels under the flow"
-          >
-            {dockTab === "run" && (
-              <>
-                {latestRun ? (
-                  <div className="pl-dock-run">
-                    <div className="pl-dock-run-head">
-                      <h3 className="cv-side-title">
-                        Run {latestRun.run.id} of version {latestRun.run.version}
-                        {(latestRun.run.status === "queued" || latestRun.run.status === "running") && (
-                          <span className="muted">, updating as it goes</span>
-                        )}
-                      </h3>
-                      <a href={href.flowRun(latestRun.run.id)}>
-                        Open run {latestRun.run.id}: where its time went, its chart and its nodes
-                      </a>
-                    </div>
-                    <FlowRunFacts detail={latestRun} />
-                  </div>
-                ) : runs === null || (runs.length > 0 && latestError == null) ? (
-                  <p role="status">Loading…</p>
-                ) : latestError ? (
-                  <p role="alert" className="error">
-                    {latestError}
+        <PipelineDock
+          idBase={dockId}
+          tabs={dockTabs}
+          tab={dockTab}
+          open={dock.open}
+          onTab={dock.show}
+          onOpen={dock.setOpen}
+          label="Panels under the flow"
+        >
+          {dockTab === "nodes" && (
+            <>
+              <h3 className="visually-hidden">Nodes</h3>
+              {shownGraph ? (
+                <FlowNodesTable
+                  graph={shownGraph}
+                  // The latest run is of the latest version: an old version's page shows none.
+                  run={viewing ? null : latestRun}
+                  onChoose={
+                    editable && drawn.ok
+                      ? (node) => {
+                          setView("diagram");
+                          choose({ node });
+                        }
+                      : undefined
+                  }
+                />
+              ) : (
+                <p className="muted">The nodes are listed here once the flow can be read.</p>
+              )}
+              {editable &&
+                (view !== "diagram" ? (
+                  <p className="hint fd-dock-add">
+                    Nodes are added and connected with the diagram.{" "}
+                    <button type="button" className="link-button" onClick={() => setView("diagram")}>
+                      Show the diagram
+                    </button>
                   </p>
-                ) : (
-                  <p>Not run yet.{steward ? " Run now runs the saved version, and its progress is shown here." : ""}</p>
-                )}
-              </>
-            )}
-            {dockTab === "runs" && (
-              <>
-                <h3 className="visually-hidden">Runs</h3>
-                {runs === null && <p role="status">Loading…</p>}
-                {runs?.length === 0 && <p>Not run yet.{steward ? " Run now runs the saved version." : ""}</p>}
-                {runs && runs.length > 0 && (
-                  <div className="table-scroll" role="region" aria-label="Runs table" tabIndex={0}>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th scope="col">Run</th>
-                          <th scope="col">Status</th>
-                          <th scope="col">Version</th>
-                          <th scope="col">Asked for</th>
-                          <th scope="col">Took</th>
-                          <th scope="col">Rows written</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {runs.map((r) => (
-                          <tr key={r.id}>
-                            <th scope="row">
-                              <a href={href.flowRun(r.id)}>Run {r.id}</a>
-                            </th>
-                            <td>
-                              <FlowRunStatus run={r} />
-                              {r.error && <div className="small muted">{r.error}</div>}
-                            </td>
-                            <td>{r.version}</td>
-                            <td className="small">
-                              {formatTime(r.requestedAt)} by {r.requestedBy}
-                            </td>
-                            <td>{took(r.startedAt, r.finishedAt)}</td>
-                            <td>{formatNumber(r.rowsWritten)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                ) : live?.ok ? (
+                  <div className="fd-dock-add">
+                    <FlowAddTools graph={live.graph} text={yaml} pipelines={pipelines} onSelect={choose} apply={applyEdit} />
                   </div>
-                )}
-              </>
-            )}
-            {dockTab === "versions" && (
-              <>
-                <h3 className="visually-hidden">Versions</h3>
-                {versions === null && <p role="status">Loading…</p>}
-                {versions && (
-                  <ol className="pl-versions" reversed>
-                    {versions.map((v) => (
-                      <li key={v.n}>
-                        <a href={href.flow(name!, v.n)} aria-current={version === v.n ? "page" : undefined}>
-                          Version {v.n}
-                        </a>
-                        {v.n === detail?.latestVersion && " (latest)"}
-                        {!v.valid && (
-                          <span className="pl-bad">
-                            {" "}
-                            · {v.problems} {v.problems === 1 ? "problem" : "problems"}
-                          </span>
-                        )}
-                        <div className="small muted">
-                          {formatTime(v.createdAt)} by {v.author}
-                          {v.message && <>: {v.message}</>}
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </>
-            )}
-          </PipelineDock>
-        )}
+                ) : (
+                  <p className="small muted fd-dock-add">Nodes can be added again once the YAML can be read.</p>
+                ))}
+            </>
+          )}
+          {dockTab === "settings" &&
+            (view !== "diagram" ? (
+              <p className="hint">
+                A node&apos;s settings are shown with the diagram.{" "}
+                <button type="button" className="link-button" onClick={() => setView("diagram")}>
+                  Show the diagram
+                </button>
+              </p>
+            ) : live?.ok ? (
+              <FlowSettings graph={live.graph} text={yaml} pipelines={pipelines} selected={selected} onSelect={choose} apply={applyEdit} />
+            ) : (
+              <p className="small muted">The settings can be changed again once the YAML can be read.</p>
+            ))}
+          {dockTab === "run" && (
+            <>
+              {latestRun ? (
+                <div className="pl-dock-run">
+                  <div className="pl-dock-run-head">
+                    <h3 className="cv-side-title">
+                      Run {latestRun.run.id} of version {latestRun.run.version}
+                      {(latestRun.run.status === "queued" || latestRun.run.status === "running") && (
+                        <span className="muted">, updating as it goes</span>
+                      )}
+                    </h3>
+                    <a href={href.flowRun(latestRun.run.id)}>
+                      Open run {latestRun.run.id}: where its time went, its chart and its nodes
+                    </a>
+                  </div>
+                  <FlowRunFacts detail={latestRun} />
+                </div>
+              ) : runs === null || (runs.length > 0 && latestError == null) ? (
+                <p role="status">Loading…</p>
+              ) : latestError ? (
+                <p role="alert" className="error">
+                  {latestError}
+                </p>
+              ) : (
+                <p>Not run yet.{steward ? " Run now runs the saved version, and its progress is shown here." : ""}</p>
+              )}
+            </>
+          )}
+          {dockTab === "runs" && (
+            <>
+              <h3 className="visually-hidden">Runs</h3>
+              {runs === null && <p role="status">Loading…</p>}
+              {runs?.length === 0 && <p>Not run yet.{steward ? " Run now runs the saved version." : ""}</p>}
+              {runs && runs.length > 0 && (
+                <div className="table-scroll" role="region" aria-label="Runs table" tabIndex={0}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">Run</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Version</th>
+                        <th scope="col">Asked for</th>
+                        <th scope="col">Took</th>
+                        <th scope="col">Rows written</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {runs.map((r) => (
+                        <tr key={r.id}>
+                          <th scope="row">
+                            <a href={href.flowRun(r.id)}>Run {r.id}</a>
+                          </th>
+                          <td>
+                            <FlowRunStatus run={r} />
+                            {r.error && <div className="small muted">{r.error}</div>}
+                          </td>
+                          <td>{r.version}</td>
+                          <td className="small">
+                            {formatTime(r.requestedAt)} by {r.requestedBy}
+                          </td>
+                          <td>{took(r.startedAt, r.finishedAt)}</td>
+                          <td>{formatNumber(r.rowsWritten)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+          {dockTab === "versions" && (
+            <>
+              <h3 className="visually-hidden">Versions</h3>
+              {versions === null && <p role="status">Loading…</p>}
+              {versions && (
+                <ol className="pl-versions" reversed>
+                  {versions.map((v) => (
+                    <li key={v.n}>
+                      <a href={href.flow(name!, v.n)} aria-current={version === v.n ? "page" : undefined}>
+                        Version {v.n}
+                      </a>
+                      {v.n === detail?.latestVersion && " (latest)"}
+                      {!v.valid && (
+                        <span className="pl-bad">
+                          {" "}
+                          · {v.problems} {v.problems === 1 ? "problem" : "problems"}
+                        </span>
+                      )}
+                      <div className="small muted">
+                        {formatTime(v.createdAt)} by {v.author}
+                        {v.message && <>: {v.message}</>}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </>
+          )}
+        </PipelineDock>
 
         <div className="pl-problems">
           <p id="fl-check-summary" className={problems.length > 0 ? "pl-summary pl-bad" : "pl-summary"} aria-live="polite">

@@ -266,7 +266,8 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
   again** removes the block and its comment. Undo, under the diagram, steps back through the
   changes made there while the text is as the last one left it. Choosing works by click or by Enter
   on a focused node or connection, and the list in words has a Change button for each connection,
-  which moves the focus to its tools. A node's settings are changed in the YAML.
+  which moves the focus to its tools. A node's settings are changed in the YAML (but see the panel's
+  Settings tab, below).
 - **Pages laid out as a pipeline's, built.** The flow page puts Diagram and YAML on tabs, with the
   pipeline page's panel under them (`PipelineDock`: Run, Runs, Versions). The run page gives a
   Summary and "Where each node spent its time" as a pipeline run does (`runFacts.ts`, pure). For
@@ -281,7 +282,22 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
   waits, and the page says so. Nothing is estimated: a node whose pipeline run times are not known
   (deleted, or from before they were recorded) has an unsplit bar, and the totals say of how many
   pipeline runs they speak. The flow page's panel keeps its open or collapsed state under its own
-  key (`kilnmark.flow.panel`), and reads the latest run only while its Run tab is shown.
+  key (`kilnmark.flow.panel`), and reads the latest run only while its Run or Nodes tab is shown.
+- **The panel's Nodes and Settings tabs, built.** The flow page's panel has the pipeline page's
+  tabs in the same order: Nodes, Settings (only while a designer has a node or connection chosen),
+  Run, Runs, Versions; a new flow has Nodes and Settings. Nodes is a table of every node, what it
+  runs after and how, and its part in the latest run (none on an old version's page); a node's name
+  chooses it. Under the table are the forms to add a node and to connect
+  two, which were under the diagram. Choosing a node or connection, anywhere, shows Settings, even when it
+  is already chosen; when nothing is chosen any more (a choice renamed or removed in the YAML is
+  dropped) the panel goes back to the tab shown before. A node's settings that
+  take one value are fields there, per type, as `FlowDefinition` reads them: `pipeline`, `version`,
+  `as`, `max_parallel`, `severity`, `title`, `message`, `for`, `status`, `source`. They are
+  written by `setNodeSettings` (`edit.ts`): in place when the setting is a single value, after the
+  node's last pair otherwise, quoted when YAML would read the text as something else (in a node
+  written on one line, also at a comma or bracket), a number as typed; blank removes it. A value
+  written over several lines, and removing the key on the node's first line, are left to the YAML. Lists and mappings (`items`, `with`, `statements`) stay in the YAML.
+  `FlowGraphNode.settings` carries each node's single-value settings for the form.
 - Not in this plan: retries of a node. A SQL *check* stays a pipeline with a `read` and a `gate`.
 
 ## 7. The sql node (ADR 0028)
