@@ -67,6 +67,22 @@ The full format, the condition language and how a run decides what starts next a
 notes (`docs/design/flows.md`). The sample flows that ship with Kilnmark, in `samples/08-flows`,
 show one idea each.
 
+## The diagram
+
+Above the YAML, **Diagram** draws the flow as you write it: a box for each node, saying what it does
+(the pipeline it runs, the notice it sends, how long it waits), and an arrow for each connection,
+labelled with when it is taken:
+
+- a solid arrow, **on success**: the next node runs when this one succeeds (the default);
+- a red dashed arrow, **on failure**: it runs when this one fails;
+- a dotted arrow, **always**: it runs whether this one succeeds or fails;
+- an amber arrow with the condition: it runs when this one succeeds and the condition holds.
+
+The diagram is drawn from left to right, with each arrow routed round the nodes it passes. It
+follows the text: while the YAML cannot be read, it says so and waits. Zoom with the buttons in its
+corner; **The connections in words**, under it, lists every connection as a sentence. To change the
+flow, change the YAML: editing on the diagram comes later.
+
 ## Checking as you type
 
 The YAML is checked a moment after you stop typing: its shape, its connections (no loops), its
@@ -109,6 +125,11 @@ Open a run from the flow's **Runs** list. The run page shows:
 - its status, the version that ran, who started it, and, for stewards and above, the values it ran
   with (viewers do not see them, nor the messages that quote them, since they can hold server
   variables);
+- the **diagram** of that version, each node outlined and labelled with how it stands in the run,
+  kept current while the run goes;
+- the **run chart**: a bar for each node on one time line from the run's start, green when it
+  succeeded, red when it failed, blue while it runs; a skipped node is hatched across its row. A
+  bar for a node that ran a pipeline opens that pipeline run;
 - every node of that version in order: its status (Not started, Running, Succeeded, Failed,
   Cancelled or Skipped), when it started, how long it took, and what happened, such as the rows a
   pipeline wrote and its score;
@@ -125,7 +146,7 @@ runs it started that are still going are cancelled. What they had already writte
 
 ## What is not here yet
 
-- The flow canvas and a chart of a run over time.
+- Editing a flow on the diagram: for now, edit its YAML.
 - Deleting a flow.
 - Adding the sample flows from **Add samples**: for now, copy one from `samples/08-flows` into a
   new flow.

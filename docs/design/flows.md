@@ -2,8 +2,9 @@
 
 Status: design, 29 October 2026. Round 4. Slices F1 (the engine, storage and the service) and F2
 (parameters passed to pipelines, server variables, notify and wait nodes) are built, and so are the
-`sql` node (ADR 0028, 2 November 2026) and F3, the API and the pages (3 November 2026); the canvas
-and the run chart (F4) are marked **planned** below. ADR 0026 records the decision.
+`sql` node (ADR 0028, 2 November 2026), F3, the API and the pages (3 November 2026), and F4a, the
+diagram and the run chart (4 November 2026); editing on the canvas (F4b) is marked **planned**
+below. ADR 0026 records the decision.
 
 A pipeline moves and checks data. A **flow** runs pipelines in an order, and decides what runs next
 from how each ended and what it measured: carry on only if the gate set aside under 2% of the rows
@@ -218,10 +219,21 @@ V29 adds `flow_version.sql_checked` (section 7).
   and a run page listing each node's status, time and message, linked to the pipeline run it
   started. No delete: a flow's runs and the pipeline runs they started stay linked, and deleting
   waits until what that means is decided. The sample flows are not yet added by Add samples.
-- **F4.** The flow canvas: flow nodes as boxes, connections as labelled edges, a connection
-  inspector, a live run overlay; editing as text patches as the pipeline canvas does. The run page's
-  Gantt chart: a bar per flow node, coloured by status, skipped nodes hatched, each linked to its
-  pipeline run (the Gantt component kept for this, see pipelines.md section 5).
+- **F4a, built.** `FlowDiagram` (ui/src/flows): the flow read from its YAML on the page
+  (`readFlowGraph`, which reads only what it draws; the server's check says whether it is valid),
+  nodes as boxes with what each does, connections as labelled arrows (solid on success, red dashed
+  on failure, dotted always, amber with the condition's text), laid out left to right by dagre
+  with room made for each label and each connection drawn along the route dagre found, so none
+  crosses a node it does not join. Where the `layout:` block places every node it is drawn there,
+  with plain arrows. Read only: the wheel scrolls the page, zoom is by buttons or pinch, and a list
+  under it says every connection in words. On the run page the same diagram carries each node's
+  status (in words and its outline), and `FlowRunChart` draws the run: a bar per node from the
+  run's start (`flowChart`), coloured by status, running bars growing to now, a skipped row
+  hatched, a bar that started a pipeline run linking to it. Built on its own rather than on the
+  pipeline run's timeline: a flow node has no rows or ports.
+- **F4b.** Editing on the canvas: adding and removing nodes, drawing connections, a connection
+  inspector for `when`, dragging into `layout:`; every edit a text patch of the YAML, as the
+  pipeline canvas does.
 - Not in this plan: retries of a node. A SQL *check* stays a pipeline with a `read` and a `gate`.
 
 ## 7. The sql node (ADR 0028)

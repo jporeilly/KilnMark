@@ -1,10 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { allows, flowsApi, formatNumber, formatTime, type AccessRole, type FlowNodeRun, type FlowRunDetail } from "../api";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  allows,
+  flowsApi,
+  formatNumber,
+  formatTime,
+  type AccessRole,
+  type FlowNodeRun,
+  type FlowNodeStatus,
+  type FlowRunDetail,
+} from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { formatDuration } from "../pipelines/RunStatus";
+import { FlowRunChart } from "./FlowRunChart";
+import { readFlowGraph, TYPE_WORDS, type FlowGraphResult } from "./graph";
 import { FlowRunStatus, FlowStatus } from "./RunFlow";
 import "../pipelines/pipelines.css";
+
+const FlowDiagram = lazy(() => import("./FlowDiagram"));
 
 const LOOK_MS = 2000;
 
@@ -30,18 +43,11 @@ export function reportedWords(n: FlowNodeRun): string {
   return out.join(", ");
 }
 
-const TYPE: Record<string, string> = {
-  "run-pipeline": "Runs a pipeline",
-  notify: "Sends a notice",
-  wait: "Waits",
-  stop: "Ends the flow",
-  sql: "Runs SQL",
-};
-
 /**
- * One flow run: its status, who started it and with which values, and each node of its version in
- * order, with its status, time and message, linked to the pipeline run it started. Looked at every
- * two seconds while it is queued or running. Stewards can cancel it while it goes.
+ * One flow run: its status, who started it and with which values; the diagram of its version with
+ * each node's status on it; the run chart; and each node in order, with its status, time and
+ * message, linked to the pipeline run it started. Looked at every two seconds while it is queued
+ * or running. Stewards can cancel it while it goes.
  */
 export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
   useTitle(`Flow run ${id}`);
@@ -50,6 +56,8 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const [cancelling, setCancelling] = useState(false);
+  // The diagram's YAML: the run's own version, read once.
+  const [graph, setGraph] = useState<FlowGraphResult | null>(null);
 
   // Only the latest answer counts: an earlier look can arrive after a later one.
   const sequence = useRef(0);
@@ -71,6 +79,26 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
     setDetail(null);
     load();
   }, [load]);
+
+  const flow = detail?.run.flow;
+  const flowVersion = detail?.run.version;
+  useEffect(() => {
+    if (flow == null || flowVersion == null) return;
+    let live = true;
+    flowsApi
+      .version(flow, flowVersion)
+      .then((v) => live && setGraph(readFlowGraph(v.yaml)))
+      .catch(() => live && setGraph({ ok: false, error: "The flow's version could not be read." }));
+    return () => {
+      live = false;
+    };
+  }, [flow, flowVersion]);
+
+  const statuses = useMemo(() => {
+    const out: Record<string, FlowNodeStatus> = {};
+    for (const n of detail?.nodes ?? []) out[n.node] = n.status;
+    return out;
+  }, [detail]);
 
   const going = detail != null && (detail.run.status === "queued" || detail.run.status === "running");
   useEffect(() => {
@@ -164,6 +192,22 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
           </dl>
         </section>
       )}
+      <section aria-labelledby="fr-diagram-h" className="panel">
+        <h2 id="fr-diagram-h">Diagram</h2>
+        {graph == null ? (
+          <p role="status">Loading…</p>
+        ) : graph.ok ? (
+          <Suspense fallback={<p role="status">Loading…</p>}>
+            <FlowDiagram graph={graph.graph} statuses={statuses} label={`Diagram of version ${run.version} of ${run.flow}, with each node's status in this run`} />
+          </Suspense>
+        ) : (
+          <p className="muted">{graph.error}</p>
+        )}
+      </section>
+      <section aria-labelledby="fr-chart-h" className="panel">
+        <h2 id="fr-chart-h">Run chart</h2>
+        <FlowRunChart detail={detail} now={Date.now()} />
+      </section>
       <section aria-labelledby="fr-nodes-h" className="panel">
         <h2 id="fr-nodes-h">Nodes</h2>
         <div className="table-scroll" role="region" aria-label="Nodes (scrolls sideways on small screens)" tabIndex={0}>
@@ -185,7 +229,7 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
                     <th scope="row">
                       <span className="mono">{n.node}</span>
                       <div className="small muted">
-                        {TYPE[n.type] ?? n.type}
+                        {TYPE_WORDS[n.type] ?? n.type}
                         {n.pipeline && (
                           <>
                             : <a href={href.pipeline(n.pipeline)}>{n.pipeline}</a>

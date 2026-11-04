@@ -31,9 +31,9 @@ Last reviewed: 3 November 2026 (after #61-#69 merged).
 3. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope).
-4. **Flows F4** ([ADR 0026](../adr/0026-flows.md), docs/design/flows.md): the flow canvas and the
-   run chart; adding the sample flows from Add samples; deleting a flow; resource control; the
-   built-in scheduler. F3 (the API and the pages) is in review.
+4. **Flows F4** ([ADR 0026](../adr/0026-flows.md), docs/design/flows.md): the diagram and the run
+   chart (F4a) in review; then editing on the canvas (F4b); adding the sample flows from Add
+   samples; deleting a flow; resource control; the built-in scheduler.
 5. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030); then
    templates, version history, and v0.1.0.

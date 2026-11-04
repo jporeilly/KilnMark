@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   allows,
   ApiError,
@@ -17,9 +17,12 @@ import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { YamlEditor, type YamlEditorHandle } from "../pipelines/YamlEditor";
+import { readFlowGraph } from "./graph";
 import { FlowRunStatus, RunFlowButton } from "./RunFlow";
 import { starterFlow } from "./template";
 import "../pipelines/pipelines.css";
+
+const FlowDiagram = lazy(() => import("./FlowDiagram"));
 
 const CHECK_DELAY_MS = 600;
 
@@ -117,6 +120,7 @@ export function FlowPage({ name, version, role }: { name: string | null; version
   }, [active, loadLists]);
 
   const text = viewing ? (shown?.yaml ?? "") : yaml;
+  const drawn = useMemo(() => readFlowGraph(text), [text]);
 
   // Check the YAML a moment after typing stops. Only the latest answer counts.
   useEffect(() => {
@@ -327,6 +331,16 @@ export function FlowPage({ name, version, role }: { name: string | null; version
         </div>
       )}
 
+      <section aria-labelledby="fl-diagram-h" className="panel">
+        <h2 id="fl-diagram-h">Diagram</h2>
+        {drawn.ok ? (
+          <Suspense fallback={<p role="status">Loading…</p>}>
+            <FlowDiagram graph={drawn.graph} label={`Diagram of ${viewing ? `version ${version} of ` : ""}the flow`} />
+          </Suspense>
+        ) : (
+          <p className="muted">{drawn.error} The diagram follows the YAML below.</p>
+        )}
+      </section>
       <section aria-labelledby="fl-yaml-h" className="panel">
         <h2 id="fl-yaml-h">YAML</h2>
         <p id="fl-yaml-hint" className="hint">

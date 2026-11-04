@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **See a flow, and watch it run.** A flow's page draws it above the YAML: a box per node and an
+  arrow per connection, labelled with when it is taken, following the text as you type. A run's
+  page draws the same diagram with each node's status as the run goes, and a run chart: a bar per
+  node on one time line, a skipped node hatched, each bar opening the pipeline run it started.
+  ([Building and running a flow](docs/guide/flows.md#the-diagram))
+
 - **Backup and restore** (ADR 0039). `./backup.sh` in the release folder saves the database and the
   keys that open stored source passwords, as two files to keep apart; `./restore.sh` puts them back,
   on the same machine or a new one. It restores into a database of its own before touching the
