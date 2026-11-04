@@ -6,6 +6,8 @@ node has a YAML example you can copy into a pipeline.
 
 ## How nodes connect
 
+![A pipeline on the canvas with the Nodes panel open: nodes grouped by what they do, and a pipeline of a read, an aggregate and a write, each joined from its out port to the next node's in port](images/node-palette.png)
+
 Every node has named **ports**. Most nodes read from `in` and write to `out`; some have more:
 
 | Node | Reads from | Writes to |

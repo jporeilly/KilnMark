@@ -24,6 +24,25 @@ details.
   the rows it wrote. The flow run API adds these totals and each pipeline run's times.
   ([Reading a run](docs/guide/flows.md#reading-a-run))
 
+- **A limit on runs per source, and more workers** (ADR 0040). A source can set **Most runs at
+  once** (1 to 100), a cap its administrators can agree to: pipeline runs and flow `sql` nodes
+  beyond it wait their turn, oldest first, saying which source they wait for, and neither fail nor
+  use up an attempt. It counts runs, not database sessions: a run may open a few connections, and
+  previews, scans and quality checks are not counted. Each change is in the audit
+  log. Workers watch `KILNMARK_WORKER_FLOWS` flows at once (8), and INSTALL.md says how to size the
+  slots against the database's connections and how to add a worker-only process.
+  ([Sources that take a few runs at a time](docs/guide/pipelines.md#sources-that-take-a-few-runs-at-a-time))
+
+- **Pictures in the guides, and a guide to signing in.** The guides now have diagrams of how things
+  work (a pipeline run, a quality gate, choosing a write mode, a rule's cycle, how notifications
+  reach you, where audit events go, what the Ask panel sends, a restore's steps) and screenshots of
+  the pages they describe, in the app's documentation and on GitHub. A new guide,
+  [Signing in, roles and tokens](docs/guide/signing-in.md), explains API tokens, signing in with
+  your organisation, the four roles and the unmask grant, token lifetime, the access review and two
+  people for sensitive values. Page descriptions and the guides' text now use the page's full
+  width. The notifications guide now lists flow
+  events too, and **Settings › Notifications** shows each event's description on its own line again.
+
 - **See a flow, and watch it run.** A flow's page draws it on a tab beside the YAML: a box per node and an
   arrow per connection, labelled with when it is taken, following the text as you type. A run's
   page draws the same diagram with each node's status as the run goes, and a run chart: a bar per
@@ -113,6 +132,21 @@ details.
   node's `items`, each with its value (withheld from viewers when it came from the run's values),
   status and pipeline run. The diagram and the add-node form know the new type; the sample
   `sample-for-each-region` shows it.
+
+- **Parallel runs, P1, P2 and P5** (ADR 0040, docs/design/parallel-runs.md). `kilnmark.worker.flows`
+  (`KILNMARK_WORKER_FLOWS`, 8) replaces the fixed eight flows a worker watched;
+  `kilnmark.worker.concurrency` is documented as jobs (scans, quality checks, pipeline runs), not
+  scans. A source's `max_runs` (a common setting, in `settings` in the API, 1 to 100 or empty) caps
+  the pipeline runs and flow `sql` nodes using it. A run takes one place on each limited source its
+  version reads or writes before it starts: advisory locks on its job's lease connection, sources
+  in id order, all or nothing. A run on a full source stays queued with the note "Waiting for a
+  free place on source <name>", and its job goes back in the queue for 5 seconds without using its
+  attempt; a `sql` node waits inside its flow. Places are freed when the run ends, or by PostgreSQL
+  when a worker dies. Scans and quality checks do not count. A change of the limit is the audit
+  event `source.max_runs`, with what it was and is. A test runs two workers in one process against
+  one queue: every run runs once, both workers' slots are used, and a source limit holds across
+  both. INSTALL.md gains "Sizing the workers" (`concurrency × 3 + flows + 6` connections per
+  process) and "A second worker".
 
 - **The flows API** (docs/design/flows.md, F3): `GET/POST /api/v1/flows`, `POST
   /api/v1/flows/validate`, `GET/PUT /api/v1/flows/{name}` (the ETag is the latest version; a `PUT`

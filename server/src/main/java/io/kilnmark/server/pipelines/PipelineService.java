@@ -1010,9 +1010,70 @@ public class PipelineService {
         }
     }
 
+    /** What a run waiting for a free place on a source says: the source's name, never its settings. */
+    public static String waitingFor(String source) {
+        return "Waiting for a free place on source " + source + ". The run starts by itself when another run "
+            + "using the source ends.";
+    }
+
+    /**
+     * The sources a compiled pipeline reads or writes that limit runs at once: every saved source a
+     * node's source setting names (read and write nodes), with its Most runs at once.
+     */
+    List<JobQueue.SourceLimit> sourceLimits(PipelineCompilerPort.Compilation c) {
+        Map<Long, JobQueue.SourceLimit> out = new java.util.TreeMap<>();
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        for (PipelineCompilerPort.NodeOutline n : c.nodes()) {
+            NodeFactory f = n.type() == null ? null : nodes.get(n.type()).orElse(null);
+            if (f == null) {
+                continue;
+            }
+            Map<String, Object> config = c.configs().getOrDefault(n.id(), Map.of());
+            for (SettingSpec spec : f.settings()) {
+                String name = spec.kind() == SettingSpec.Kind.SOURCE ? PipelineSources.text(config, spec.key()) : null;
+                if (name != null) {
+                    names.add(name);
+                }
+            }
+        }
+        for (String name : names) {
+            sources.source(name).ifPresent(src -> {
+                Integer max = io.kilnmark.server.sources.CommonSettings.maxRuns(src.settings());
+                if (max != null) {
+                    out.put(src.id(), new JobQueue.SourceLimit(src.id(), src.name(), max));
+                }
+            });
+        }
+        return List.copyOf(out.values());
+    }
+
+    /**
+     * Takes a place on each limited source the run's version uses, on the job's lease, where they stay
+     * until the lease closes. Null when every place was taken (or none was needed), else the first source
+     * that had none free, with nothing held. A version that cannot be read or checked takes none: the run
+     * then fails as it starts, saying why.
+     */
+    private JobQueue.SourceLimit takePlaces(PipelineStore.Run run, JobQueue.ScanLease lease) {
+        List<JobQueue.SourceLimit> limits;
+        try {
+            PipelineStore.Version v = store.version(run.pipeline(), run.version()).orElse(null);
+            Map<String, Object> parameters = jsonMap(run.parameters());
+            Map<String, Object> variables = jsonMap(run.variables());
+            if (v == null || parameters == null || variables == null) {
+                return null;
+            }
+            limits = sourceLimits(compiler.check(v.yaml(), nodes, parameters, variables));
+        } catch (RuntimeException e) {
+            LOG.debugf("Could not tell which sources run %d uses before it starts; it takes no places", run.id());
+            return null;
+        }
+        return limits.isEmpty() ? null : lease.takePlaces(limits).full();
+    }
+
     /** Runs the pipeline run behind job {@code jobId}; called by a worker. */
     public ScanService.Result execute(long jobId, JobQueue.ScanLease lease, BooleanSupplier shutdown) {
-        store.failOrphanedRuns();
+        // Runs left by a stopped worker are marked failed by the workers' periodic recovery, not here:
+        // a run waiting for a place comes through here every few seconds.
         Optional<Long> runId = store.runForJob(jobId);
         if (runId.isEmpty()) {
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Job " + jobId + " names no pipeline run");
@@ -1025,6 +1086,13 @@ public class PipelineService {
         PipelineStore.Run run = found.get();
         if (run.finished()) {
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Pipeline run " + id + " had already finished");
+        }
+        // A place on every source it reads or writes that limits runs at once, before it starts (ADR 0040).
+        // A run asked to stop ends below without one.
+        JobQueue.SourceLimit full = run.cancelRequested() || lease == null ? null : takePlaces(run, lease);
+        if (full != null) {
+            store.waiting(id, waitingFor(full.source()));
+            return new ScanService.Result(ScanService.Outcome.WAITING, null);
         }
         if (!store.startRun(id)) {
             if (store.cancelRequested(id)) {

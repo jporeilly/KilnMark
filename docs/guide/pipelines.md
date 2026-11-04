@@ -109,6 +109,8 @@ tables, and `"schema": "public"` added to the first points the samples at them.
 
 ## Building on the canvas
 
+![A pipeline on the canvas: a read node, a quality gate setting aside 10 rows, and two writes, each with its rows and quality from the last run](images/pipeline-canvas.png)
+
 The **Canvas** and **YAML** tabs show the same pipeline: a change on the canvas rewrites only the
 lines it changes in the YAML, so your comments, layout and every other setting stay exactly as
 they were, and a change to the YAML redraws the canvas. Kilnmark remembers which tab you used last.
@@ -600,6 +602,8 @@ which runs in the database, for larger tables.
 
 ### What happens when rows fail
 
+![What a gate does with a row that fails its rules: stop fails the run, quarantine sets the row aside, warn lets it through and records it](images/gate-on-fail.svg)
+
 `on_fail` decides:
 
 | `on_fail` | Rows | The run |
@@ -785,6 +789,8 @@ YAML exactly as it was saved.
 
 ## Running a pipeline
 
+![How a pipeline goes from building to a finished run: saved as a version, queued, taken by a worker with a free slot, its writes locked, its nodes run in one pass, then committed and catalogued, or failed](images/pipeline-run.svg)
+
 Choose **Run now**, on the Pipelines page or the pipeline's own page. Kilnmark checks the latest
 version again first, since a source may have changed, then queues the run for a worker. The run
 appears in the **Runs** tab, under the canvas, as Queued, then Running, and the panel shows the
@@ -797,7 +803,35 @@ waits. A pipeline with parameters runs with their defaults; see
 To stop a run, open it and choose **Cancel run**. A queued run is cancelled at once; a running one
 stops within a few seconds. Rows already written stay written.
 
+### Sources that take a few runs at a time
+
+A source can say how many runs may use it at once, so a busy production database has a cap its
+administrators agree to. The cap counts runs, not database sessions: one run may open a few
+connections to the source (a read and a write, say), and previews, scans and quality checks are not
+counted. Open the source, choose **Edit**, and on the
+last step set **Most runs at once** (1 to 100; leave it empty for no limit). Designers and admins
+can change it, and each change is in the [audit log](audit-log.md).
+
+A pipeline run counts once against every source it reads or writes, and a flow's `sql` node against
+its source. Scans and quality checks do not count: a source is scanned once at a time anyway.
+
+A run whose source is full waits in the queue. It stays **Queued**, and its page says
+"Waiting for a free place on source warehouse. The run starts by itself when another run using the
+source ends." Waiting is not failing: the run starts when a place is free, and its one attempt is
+not used. A run that uses several sources takes a place on all of them or none, so two runs never
+hold up each other. You can cancel a waiting run as any queued run.
+
+Lowering the limit stops no run already going: those above the new limit finish. Until they have,
+new runs fill only the places below the new limit, so for a while up to the old limit may run at
+once. A limit of 1 makes the runs that use the source take turns.
+
+A run that has waited goes before runs queued after it: when a place is freed, the waiting runs
+are looked at again at once, oldest first. This is not a strict queue: a run queued at the moment a
+place frees can still take it first.
+
 ## Reading a run
+
+![A run's page: its summary (status, version, times, rows written, quality) and where each node spent its time](images/pipeline-run-page.png)
 
 Open a run from the **Runs** tab. The page updates itself until the run ends, and says when its
 status changes.

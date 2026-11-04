@@ -13,6 +13,7 @@ export const ACTIONS: { value: string; label: string; tone: Tone }[] = [
   { value: "source.deleted", label: "Source deleted", tone: "warn" },
   { value: "source.allow_writing", label: "Allow writing changed", tone: "warn" },
   { value: "source.allow_sql", label: "Allow SQL changed", tone: "warn" },
+  { value: "source.max_runs", label: "Most runs at once changed", tone: "neutral" },
   { value: "flow.sql", label: "Flow ran SQL", tone: "warn" },
   { value: "auth.sign_in", label: "Signed in", tone: "neutral" },
   { value: "auth.sign_in_refused", label: "Sign-in given no role", tone: "bad" },
@@ -33,6 +34,10 @@ export function describe(e: AuditEvent): string {
   const d = e.detail ?? {};
   if (e.action === "source.allow_writing" || e.action === "source.allow_sql") {
     return `${d.on ? "Turned on" : "Turned off"}${d.via ? ` (${String(d.via)})` : ""}`;
+  }
+  if (e.action === "source.max_runs") {
+    const limit = (v: unknown) => (v == null ? "no limit" : String(v));
+    return `From ${limit(d.before)} to ${limit(d.after)}${d.via ? ` (${String(d.via)})` : ""}`;
   }
   if (e.action === "flow.sql") {
     const n = Number(d.statements ?? 0);

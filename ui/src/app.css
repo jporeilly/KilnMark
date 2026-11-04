@@ -81,7 +81,6 @@ a:hover {
   font-size: var(--km-text-lg);
   color: var(--km-muted);
   margin: 4px 0 20px;
-  max-width: 75ch;
 }
 
 .muted {
@@ -4334,6 +4333,8 @@ h1.with-tile {
 .km-note > :first-child {
   justify-self: start;
   margin-top: 2px; /* lines the chip up with the title's first line */
+}
+
 /* ---- Notifications (settings, email, sent log): layout only, colours from the tokens above ---- */
 .choice-hint {
   display: block;

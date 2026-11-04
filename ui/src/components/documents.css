@@ -69,7 +69,6 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.6;
-  max-width: 80ch;
   padding: 16px;
   border: 1px solid var(--km-border);
   border-radius: 8px;

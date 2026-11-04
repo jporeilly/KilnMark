@@ -31,6 +31,7 @@ it (behind a proxy, as its forwarding settings say).
 | Source deleted (`source.deleted`) | A source and what was recorded about it were deleted | Its assets and runs, and whether it had marks (deleting it cleared them) |
 | Allow writing changed (`source.allow_writing`) | Allow writing turned on or off | On or off, and how: in the form, or by an import |
 | Allow SQL changed (`source.allow_sql`) | Allow SQL turned on or off | On or off, and how |
+| Most runs at once changed (`source.max_runs`) | A source's limit on runs at once was set, changed or removed ([Sources that take a few runs at a time](pipelines.md#sources-that-take-a-few-runs-at-a-time)) | What it was and is (empty: no limit), and how: in the form, or by an import |
 | Flow ran SQL (`flow.sql`) | A flow's sql node started, as the person who started the flow; the event is on `flow/run/node` | The source, how many statements, and the flow's version. Never the statements themselves, which can hold values: they are in that version of the flow |
 | Request (`api.request`) | Any request that may change something (`POST`, `PUT`, `PATCH`, `DELETE`) and succeeded. Some of these only read, such as previews and dry runs | The method, status and the caller's address; the event is on the request's path |
 | Request refused (`api.refused`) | A request refused for want of a role (403), or for want of sign-in when it would have changed something (401) | The method, status and address. In the table, refusals are kept at most 30 a minute for each token, and for everyone not signed in together; the next one kept says how many were not. The JSON line has every one |
@@ -60,6 +61,8 @@ at least the five years some regulators ask for.
 
 ## Sending it to your SIEM
 
+![Where an audit event goes: a row in Kilnmark's database that is only ever added to, shown under Settings › Audit log, and a JSON line your SIEM can collect](images/audit-log-flow.svg)
+
 Every event is also written, one JSON object a line, to the log category `kilnmark.audit`:
 
 ```json
@@ -78,6 +81,8 @@ KILNMARK_AUDIT_SYSLOG_PROTOCOL=tcp      # or udp, ssl-tcp
 Or collect the container's own output, where the same lines appear, and filter on the category.
 
 ## Reading it
+
+![Settings › Audit log: newest events first, each with when, who (and which token), what, on what, and its details](images/audit-log-page.png)
 
 The page shows the newest events first, a hundred at a time; **Show older events** loads the next
 hundred. **Show** narrows it to one kind of event. Through the API, `action` filters, `limit` sets

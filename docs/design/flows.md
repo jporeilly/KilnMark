@@ -139,7 +139,8 @@ clean.status = 'failed' or (clean.rows_written = 0 and region != 'APAC')
 1. A flow run is queued as a job of kind `flow`, tried once. The worker holds the job's own advisory
    lock and **no worker slot**: it only watches, and the pipeline runs it queues need the slots
    (ADR 0026). Because each watching flow holds a database connection for its lock, one worker
-   watches at most 8 flows at a time (`JobWorker.MAX_FLOWS`); further flow jobs wait in the queue.
+   watches at most `kilnmark.worker.flows` (8) flows at a time (ADR 0040); further flow jobs wait in
+   the queue.
 2. About twice a second it asks the engine what is ready and starts it (with `max_parallel`, only
    while fewer than that many nodes run; section 8). A `run-pipeline` node queues
    an ordinary pipeline run with the flow starter's name and role, linked to the flow run and node

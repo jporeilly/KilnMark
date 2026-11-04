@@ -822,7 +822,7 @@ public class FlowService {
             }
             return new ScanService.Result(ScanService.Outcome.SKIPPED, "Flow run " + id + " was cancelled");
         }
-        Execution execution = new Execution(run, shutdown);
+        Execution execution = new Execution(run, shutdown, lease);
         try {
             execution.run();
         } catch (RuntimeException e) {
@@ -848,6 +848,12 @@ public class FlowService {
         /** The sql nodes running, each on a thread of its own so the flow keeps watching its other nodes. */
         private final Map<String, java.util.concurrent.CompletableFuture<SqlAction.Outcome>> sqlRuns = new HashMap<>();
         private final Map<String, SqlAction.Control> sqlControls = new HashMap<>();
+        /** The flow job's lease: a sql node takes its place on its source here (ADR 0040); null in some tests. */
+        private final JobQueue.ScanLease lease;
+        /** Places on their sources held by running sql nodes, given back as each ends. */
+        private final Map<String, List<Long>> sqlPlaces = new HashMap<>();
+        /** Sql nodes waiting for a free place on their source. */
+        private final Set<String> sqlWaiting = new HashSet<>();
         private boolean nodeWasCancelled;
         /** What ${...} reads: the run's parameters and the variables it started with (vars.name). */
         private Map<String, Object> scope = Map.of();
@@ -858,9 +864,10 @@ public class FlowService {
         /** The for-each nodes started, each with its items' runs. */
         private final Map<String, Fan> fans = new HashMap<>();
 
-        Execution(FlowStore.Run run, BooleanSupplier shutdown) {
+        Execution(FlowStore.Run run, BooleanSupplier shutdown, JobQueue.ScanLease lease) {
             this.run = run;
             this.shutdown = shutdown;
+            this.lease = lease;
         }
 
         void run() {
@@ -1031,7 +1038,7 @@ public class FlowService {
                 return;
             }
             if (FlowDefinition.SQL.equals(s.type())) {
-                startSql(def, s);
+                trySql(def, s);
                 return;
             }
             if (FlowDefinition.FOR_EACH.equals(s.type())) {
@@ -1286,6 +1293,30 @@ public class FlowService {
         }
 
         /**
+         * Starts a sql node once it has a place on its source, when the source limits runs at once
+         * (ADR 0040); until then it waits, saying so, and is tried again on each look at the flow.
+         */
+        private void trySql(FlowDefinition def, FlowDefinition.Node s) {
+            JobQueue.SourceLimit limit = lease == null || sqlSources == null ? null : sqlSources.source(s.source())
+                .map(src -> {
+                    Integer max = io.kilnmark.server.sources.CommonSettings.maxRuns(src.settings());
+                    return max == null ? null : new JobQueue.SourceLimit(src.id(), src.name(), max);
+                }).orElse(null);
+            if (limit != null) {
+                JobQueue.Places places = lease.takePlaces(List.of(limit));
+                if (!places.taken()) {
+                    if (sqlWaiting.add(s.id())) {
+                        save(def, s.id(), "running", null, null, PipelineService.waitingFor(s.source()), Map.of());
+                    }
+                    return;
+                }
+                sqlPlaces.put(s.id(), places.keys());
+            }
+            sqlWaiting.remove(s.id());
+            startSql(def, s);
+        }
+
+        /**
          * Starts a sql node on a thread of its own, as the person who started the flow, and records that it
          * ran in the audit log: who, the flow and run, the source and how many statements, never their text.
          */
@@ -1316,6 +1347,16 @@ public class FlowService {
 
         /** Ends a sql node whose thread has finished: with the rows it changed, or why it did not. */
         private void pollSql(FlowDefinition def, FlowEngine engine, String node, boolean cancelling) {
+            if (sqlWaiting.contains(node)) {
+                if (cancelling || engine.halted()) {
+                    sqlWaiting.remove(node);
+                    end(def, engine, node, FlowEngine.State.CANCELLED, null, "Not started: the flow was stopped",
+                        Map.of());
+                } else {
+                    trySql(def, def.node(node));
+                }
+                return;
+            }
             SqlAction.Control control = sqlControls.get(node);
             if ((cancelling || engine.halted()) && control != null && !control.stopped()) {
                 control.stop();
@@ -1327,6 +1368,10 @@ public class FlowService {
             SqlAction.Outcome o = f.join();
             sqlRuns.remove(node);
             sqlControls.remove(node);
+            List<Long> places = sqlPlaces.remove(node);
+            if (places != null) {
+                lease.givePlaces(places);
+            }
             if (o.succeeded()) {
                 end(def, engine, node, FlowEngine.State.SUCCEEDED, null, o.message(),
                     Map.of("rows_affected", (double) o.rowsAffected()));

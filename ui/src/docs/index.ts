@@ -34,5 +34,21 @@ export const DOC_PAGES: DocPage[] = [
 
 export const docPage = (id: string): DocPage | undefined => DOC_PAGES.find((p) => p.id === id);
 
+/** The guides' pictures (diagrams and screenshots), bundled with the app: file name → URL. */
+const pictures = import.meta.glob("../../../docs/guide/images/*.{png,svg}", { query: "?url", import: "default", eager: true }) as Record<
+  string,
+  string
+>;
+
+/**
+ * Where a guide's picture is served from: `images/<name>.png` or `.svg` beside the guides, as GitHub shows it
+ * too. Null for any other image, which the guide then shows as its description: nothing is ever
+ * loaded from elsewhere.
+ */
+export function docPicture(src: string): string | null {
+  const m = /^(?:\.\/)?images\/([\w-]+\.(?:png|svg))$/.exec(src);
+  return m ? (pictures[`../../../docs/guide/images/${m[1]}`] ?? null) : null;
+}
+
 /** The section headings of a page (level 2 and below), each with its slug. */
 export const docHeadings = (page: DocPage): DocHeading[] => markdownHeadings(page.markdown);

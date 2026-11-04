@@ -78,6 +78,60 @@ Kilnmark reaches its database over TLS only, and does not start otherwise
 If the server stops with "does not demand TLS" or "not encrypted", its log says which and what to
 change.
 
+### Sizing the workers
+
+Scans, quality checks and pipeline runs are jobs that wait in a queue in Kilnmark's database. A
+process with the worker role takes them a few at a time. Each job it runs holds one of its
+**slots**: `KILNMARK_WORKER_CONCURRENCY` (2 by default). Flows hold no slot, since they only decide
+which pipeline runs next; a worker watches up to `KILNMARK_WORKER_FLOWS` of them at once (8 by
+default). A job or flow beyond these waits in the queue until there is room
+([ADR 0040](docs/adr/0040-parallel-runs-and-limits.md)).
+
+To run more at once, raise the slots, or add a second worker (below). Two limits keep that from
+overwhelming what Kilnmark reads and writes: a source's **Most runs at once**, set on the source,
+which caps the runs using it whichever worker runs them
+([Sources that take a few runs at a time](docs/guide/pipelines.md#sources-that-take-a-few-runs-at-a-time)),
+and the database connections below.
+
+More running at once needs more connections to Kilnmark's own database. Each running job holds one
+for its lease and uses one or two more while it works; each watched flow holds one; and each worker
+keeps one open to hear of new jobs. So each Kilnmark process needs a pool
+(`QUARKUS_DATASOURCE_JDBC_MAX_SIZE`, 20 by default) of at least
+
+```
+concurrency × 3 + flows + 6
+```
+
+where the 6 is one for the worker's listening and five for the API and the scheduler. With the
+defaults that is 2 × 3 + 8 + 6 = 20, the default pool. With 8 slots and 8 flows it is 38: set
+`QUARKUS_DATASOURCE_JDBC_MAX_SIZE=40`. PostgreSQL's
+`max_connections` (100 in the bundled database) must be at least the sum of the pools of every
+Kilnmark process, plus what backups and your own tools use.
+
+The sources themselves see one connection, or a few, per run that reads or writes them; set their
+**Most runs at once** where their administrators ask for a cap. It counts runs, not sessions, and
+previews, scans and quality checks are outside it.
+
+### A second worker
+
+Any number of Kilnmark processes can share one database: the queue hands each job to one worker
+only, and a worker that stops has its jobs taken up by another. To add capacity, run a second
+Kilnmark with the worker role only, for example as another service in `compose.yaml`, copied from
+the `kilnmark` service with:
+
+- `KILNMARK_ROLES: worker`, so it takes jobs but serves no one (keep `api` and `scheduler` on the
+  first);
+- the same database settings (`QUARKUS_DATASOURCE_*`);
+- the same key for stored source passwords: mount the same `keys` volume on the same machine, or on
+  another machine set `KILNMARK_SECRET_KEY` on both to the key from the first's
+  `/var/lib/kilnmark/secret.key`. A worker with another key cannot open the sources' passwords, and
+  says so in its log at start;
+- the same files mounted at `KILNMARK_FILES_ROOTS`, and the same drivers (`drivers/` in the keys
+  volume), so it can reach every source the first can;
+- no published port, and the same `stop_grace_period`.
+
+Size its pool as above, and count its pool in `max_connections`.
+
 ### HTTPS
 
 Kilnmark should be reached over HTTPS only. Either:
