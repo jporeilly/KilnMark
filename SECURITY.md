@@ -27,5 +27,5 @@ Include what you can of:
 
 ## Checking what you received
 
-Every release is signed, and carries SBOMs of what it contains. INSTALL.md, "Check a release",
+Releases are signed by the release workflow, and carry SBOMs of what they contain. INSTALL.md, "Check a release",
 says how to verify one.
