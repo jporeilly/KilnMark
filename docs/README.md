@@ -8,6 +8,7 @@ All project documentation lives in this folder.
 - [Plan and scope](product/plan-and-scope.md): v0.1 scope, sprints, risks and open decisions
 - [Positioning and design partners](product/positioning-and-design-partners.md): who it is for and how to recruit early users
 - [Compliance](product/compliance.md): running Kilnmark in banks: DORA, NYDFS Part 500, US third-party risk, NIST 800-53, and what is missing
+- [SSDF self-assessment](product/ssdf-self-assessment.md): how Kilnmark is built against NIST's Secure Software Development Framework, task by task, with the evidence and the gaps
 - [Backlog](product/backlog.md): what is decided and not yet done, in order
 
 The live, editable versions of these three documents are in Claude; the copies here were exported

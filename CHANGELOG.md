@@ -7,6 +7,11 @@ details.
 
 ### What's new
 
+- **How Kilnmark is built, for buyers who ask** ([SSDF self-assessment](docs/product/ssdf-self-assessment.md)):
+  each task of NIST's Secure Software Development Framework, with where the evidence is and what is
+  still missing, for a federal attestation or a bank's due diligence. The build tool's download is
+  now checked against its published checksum, and every CI action is pinned to an exact commit.
+
 - **Backup and restore** (ADR 0039). `./backup.sh` in the release folder saves the database and the
   keys that open stored source passwords, as two files to keep apart; `./restore.sh` puts them back,
   on the same machine or a new one. It restores into a database of its own before touching the
