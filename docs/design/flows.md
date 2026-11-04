@@ -2,9 +2,9 @@
 
 Status: design, 29 October 2026. Round 4. Slices F1 (the engine, storage and the service) and F2
 (parameters passed to pipelines, server variables, notify and wait nodes) are built, and so are the
-`sql` node (ADR 0028, 2 November 2026), F3, the API and the pages (3 November 2026), and F4a, the
-diagram and the run chart (4 November 2026); editing on the canvas (F4b) is marked **planned**
-below. ADR 0026 records the decision.
+`sql` node (ADR 0028, 2 November 2026), F3, the API and the pages (3 November 2026), F4a, the
+diagram and the run chart, and F4b, editing on the diagram (4 November 2026). ADR 0026 records the
+decision.
 
 A pipeline moves and checks data. A **flow** runs pipelines in an order, and decides what runs next
 from how each ended and what it measured: carry on only if the gate set aside under 2% of the rows
@@ -225,10 +225,9 @@ V29 adds `flow_version.sql_checked` (section 7).
   nodes as boxes with what each does, connections as labelled arrows (solid on success, red dashed
   on failure, dotted always, amber with the condition's text), laid out left to right by dagre
   with room made for each label and each connection drawn along the route dagre found, so none
-  crosses a node it does not join; `when` is read as the server reads it, in any case. The
-  `layout:` block is read but not used yet: it is for F4b, which places nodes by hand (and must
-  then route parallel connections apart). Read only: the wheel scrolls the page, zoom is by
-  buttons or pinch, and a list under it says every connection in words. On the flow page it
+  crosses a node it does not join; `when` is read as the server reads it, in any case. The wheel
+  scrolls the page, zoom is by buttons or pinch, and a list under it says every connection in
+  words. On the flow page it
   follows the text 400 ms after typing stops, keeping the last flow it could read. On the run page
   the same diagram carries each node's status (in words and its outline), laid out once per
   version, and `FlowRunChart` draws the run: a bar per node from the run's start (`flowChart`),
@@ -236,9 +235,25 @@ V29 adds `flow_version.sql_checked` (section 7).
   start, whatever the browser's clock), a skipped row hatched, a bar that started a pipeline run
   linking to it. Built on its own rather than on the
   pipeline run's timeline: a flow node has no rows or ports.
-- **F4b.** Editing on the canvas: adding and removing nodes, drawing connections, a connection
-  inspector for `when`, dragging into `layout:`; every edit a text patch of the YAML, as the
-  pipeline canvas does.
+- **F4b, built.** Editing on the diagram, for designers on the flow page. Every change is a
+  function of `edit.ts` (text in, text out, refused rather than guessed), written as a patch of the
+  YAML with the pipeline canvas's `Patch` (pipelines/canvas/patch.ts), so only the lines that change
+  are rewritten; `writeLayoutBlock` moved there so pipelines and flows share it. Adding a node (an id
+  from its type or pipeline, `freshId`, with starting settings), removing one with its connections
+  and position, connecting two (by dragging between handles or with a form; written as the list's
+  other items are, flow mappings or blocks, with `when:` left out for on success and a condition
+  double-quoted), changing `when` in the chosen connection's tools, removing a connection, and
+  moving nodes. Refused before the server sees them: a connection to itself, one written twice (as
+  the server tells them apart) and one that closes a loop. Lists written in flow style (`[ … ]`)
+  are refused rather than rewritten. A connection is known by its place in the YAML list
+  (`FlowConnection.index`). Dragging writes every node's position into `layout:`, so the picture
+  stays as it was seen; with `layout:`, nodes are drawn where it says (those it does not name where
+  dagre would put them) and connections are drawn as curves between the nodes' handles, those
+  between the same two nodes bowed apart (`bowOffsets`), with labels over the nodes. **Lay out
+  again** removes the block and its comment. Undo, under the diagram, steps back through the
+  changes made there while the text is as the last one left it. Choosing works by click or by Enter
+  on a focused node or connection, and the list in words has a Change button for each connection,
+  which moves the focus to its tools. A node's settings are changed in the YAML.
 - Not in this plan: retries of a node. A SQL *check* stays a pipeline with a `read` and a `gate`.
 
 ## 7. The sql node (ADR 0028)

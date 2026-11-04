@@ -122,6 +122,74 @@
   border-radius: 6px;
 }
 
+/* Editing on the diagram: what is chosen, and the tools under it. */
+.fd-editable .react-flow__node:focus-visible {
+  outline: 3px solid var(--km-focus);
+  outline-offset: 3px;
+}
+
+.fd-editable .react-flow__node.selected .fd-node {
+  border-color: var(--km-accent);
+  box-shadow: 0 0 0 2px var(--km-accent);
+}
+
+.fd-editable .react-flow__edge:focus-visible .react-flow__edge-path,
+.fd-editable .react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--km-accent);
+  stroke-width: 3;
+}
+
+/* Handles big enough to start a connection from, and labels over the nodes placed by hand. */
+.fd-editable .react-flow__handle {
+  width: 12px;
+  height: 12px;
+}
+
+.fd-frame .react-flow__edgelabel-renderer {
+  z-index: 4;
+}
+
+.fd-note-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 2.2em;
+  margin-top: 8px;
+}
+
+.fd-note-row p {
+  margin: 0;
+}
+
+.fd-tools {
+  display: grid;
+  gap: 12px;
+}
+
+.fd-tools-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 8px 16px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--km-border);
+  border-radius: 8px;
+}
+
+.fd-tools-row.fd-chosen {
+  border-color: var(--km-accent);
+}
+
+.fd-tools-h,
+.fd-tools-wide {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.fd-tools-h {
+  font-size: var(--km-text-sm);
+}
+
 .fd-words {
   margin-top: 8px;
 }

@@ -17,6 +17,9 @@ import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { YamlEditor, type YamlEditorHandle } from "../pipelines/YamlEditor";
+import type { FlowSelection } from "./FlowDiagram";
+import { FlowCanvasTools } from "./FlowCanvasTools";
+import { connect, setPositions, type Change } from "./edit";
 import { readFlowGraph, type FlowGraph } from "./graph";
 import { FlowRunStatus, RunFlowButton } from "./RunFlow";
 import { starterFlow } from "./template";
@@ -26,12 +29,15 @@ const FlowDiagram = lazy(() => import("./FlowDiagram"));
 
 const CHECK_DELAY_MS = 600;
 const DRAW_DELAY_MS = 400;
+/** How many changes made on the diagram can be undone. */
+const UNDO_DEPTH = 50;
 
 /**
  * One flow, written as YAML: checked a moment after each change, with the problems listed below
  * (choosing one moves the caret to its line). Designers save it with a message; stewards run the
  * saved version, with a dialog for its parameters. Its versions and runs below. With name null, a
- * new flow from a starter; with a version, that saved version, read-only. The canvas comes later.
+ * new flow from a starter; with a version, that saved version, read-only. Designers can also change
+ * the flow on its diagram: each change there is a change to the YAML, which stays the one record.
  */
 export function FlowPage({ name, version, role }: { name: string | null; version: number | null; role: AccessRole }) {
   const steward = allows(role, "steward");
@@ -132,6 +138,44 @@ export function FlowPage({ name, version, role }: { name: string | null; version
   const lastDrawn = useRef<FlowGraph | null>(null);
   if (drawn.ok) lastDrawn.current = drawn.graph;
   const shownGraph = drawn.ok ? drawn.graph : lastDrawn.current;
+
+  // Changes made on the diagram. The tools read the text as it is now, not as last drawn, so what
+  // they change is what is in the editor.
+  const live = useMemo(() => (editable ? readFlowGraph(yaml) : null), [editable, yaml]);
+  const [selected, setSelected] = useState<FlowSelection | null>(null);
+  const [canvasNote, setCanvasNote] = useState<{ text: string; bad: boolean } | null>(null);
+  const undos = useRef<{ before: string; after: string; label: string }[]>([]);
+  const [, setUndoTick] = useState(0);
+  const choose = useCallback(
+    (s: FlowSelection | null) =>
+      setSelected((old) => (JSON.stringify(old) === JSON.stringify(s) ? old : s)),
+    [],
+  );
+  const applyEdit = (c: Change, label: string): boolean => {
+    if ("error" in c) {
+      setCanvasNote({ text: c.error, bad: true });
+      return false;
+    }
+    if (c.text !== yaml) {
+      undos.current = [...undos.current, { before: yaml, after: c.text, label }].slice(-UNDO_DEPTH);
+      setUndoTick((n) => n + 1);
+      setYaml(c.text);
+      setDrawnText(c.text);
+    }
+    setCanvasNote({ text: label, bad: false });
+    return true;
+  };
+  // Undo is offered while the text is still what the last change left; typing in the YAML ends it.
+  const lastChange = undos.current.at(-1);
+  const canUndo = !!lastChange && lastChange.after === yaml;
+  const undoChange = () => {
+    if (!lastChange || !canUndo) return;
+    undos.current = undos.current.slice(0, -1);
+    setUndoTick((n) => n + 1);
+    setYaml(lastChange.before);
+    setDrawnText(lastChange.before);
+    setCanvasNote({ text: `Undone: ${lastChange.label}`, bad: false });
+  };
 
   // Check the YAML a moment after typing stops. Only the latest answer counts.
   useEffect(() => {
@@ -349,11 +393,38 @@ export function FlowPage({ name, version, role }: { name: string | null; version
           <div className="fd-holder">
             {!drawn.ok && <p className="fd-stale-note small">{drawn.error} The diagram shows the flow as it last could be read.</p>}
             <Suspense fallback={<p role="status">Loading…</p>}>
-              <FlowDiagram graph={shownGraph} label={`Diagram of ${viewing ? `version ${version} of ` : ""}the flow`} />
+              <FlowDiagram
+                graph={shownGraph}
+                label={`Diagram of ${viewing ? `version ${version} of ` : ""}the flow`}
+                editable={editable && drawn.ok}
+                selected={selected}
+                onSelect={choose}
+                onMove={(positions) => applyEdit(setPositions(yaml, positions), "Moved a node.")}
+                onConnect={(from, to) => applyEdit(connect(yaml, from, to), `Connected ${from} to ${to}.`)}
+              />
             </Suspense>
           </div>
         ) : (
           <p className="muted">{drawn.ok ? "" : `${drawn.error} The diagram follows the YAML below.`}</p>
+        )}
+        {editable && (
+          <>
+            <div className="fd-note-row">
+              <p id="fd-note" tabIndex={-1} role="status" className={canvasNote?.bad ? "error small" : "small muted"}>
+                {canvasNote?.text ?? ""}
+              </p>
+              {canUndo && (
+                <button type="button" onClick={undoChange}>
+                  Undo
+                </button>
+              )}
+            </div>
+            {live?.ok ? (
+              <FlowCanvasTools graph={live.graph} text={yaml} selected={selected} onSelect={choose} apply={applyEdit} />
+            ) : (
+              <p className="small muted">The diagram can be changed again once the YAML can be read.</p>
+            )}
+          </>
         )}
       </section>
       <section aria-labelledby="fl-yaml-h" className="panel">

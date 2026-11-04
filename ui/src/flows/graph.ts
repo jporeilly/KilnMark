@@ -13,7 +13,8 @@ export const TYPE_WORDS: Record<string, string> = {
 export type FlowGraphNode = { id: string; type: string; summary: string };
 /** How a connection is taken: on success (the default), on failure, always, or when a condition holds. */
 export type ConnectionKind = "success" | "failure" | "always" | "condition";
-export type FlowConnection = { from: string; to: string; kind: ConnectionKind; when: string };
+/** `index` is the connection's place in the YAML list, which is how the canvas changes it. */
+export type FlowConnection = { from: string; to: string; kind: ConnectionKind; when: string; index: number };
 export type Point = { x: number; y: number };
 export type FlowGraph = {
   nodes: FlowGraphNode[];
@@ -43,7 +44,7 @@ function summaryOf(type: string, node: { get: (k: string) => unknown }): string 
     case "wait":
       return get("for") ? `Waits ${get("for")}` : "Waits";
     case "stop":
-      return get("status") === "succeeded" ? "Ends the flow: succeeded" : "Ends the flow: failed";
+      return get("status") === "succeeded" ? "The run counts as succeeded" : "The run counts as failed";
     case "sql": {
       const statements = node.get("statements");
       const n = isSeq(statements) ? statements.items.length : 0;
@@ -56,7 +57,7 @@ function summaryOf(type: string, node: { get: (k: string) => unknown }): string 
 }
 
 /** How a connection is taken, read as the server reads `when`: trimmed, in any case. */
-function kindOf(when: string): ConnectionKind {
+export function kindOf(when: string): ConnectionKind {
   const word = when.trim().toLowerCase();
   return word === "success" || word === "failure" || word === "always" ? word : "condition";
 }
@@ -88,14 +89,14 @@ export function readFlowGraph(yamlText: string): FlowGraphResult {
   const connections: FlowConnection[] = [];
   const connList = top.get("connections", true) ?? top.get("paths", true);
   if (isSeq(connList)) {
-    for (const item of connList.items) {
-      if (!isMap(item)) continue;
+    connList.items.forEach((item, index) => {
+      if (!isMap(item)) return;
       const from = text(item.get("from", true));
       const to = text(item.get("to", true));
-      if (!from || !to || !ids.has(from) || !ids.has(to)) continue;
+      if (!from || !to || !ids.has(from) || !ids.has(to)) return;
       const when = (text(item.get("when", true)) ?? "success").trim() || "success";
-      connections.push({ from, to, kind: kindOf(when), when });
-    }
+      connections.push({ from, to, kind: kindOf(when), when, index });
+    });
   }
 
   const positions: Record<string, Point> = {};
@@ -140,4 +141,30 @@ export function connectionSentence(c: FlowConnection): string {
     default:
       return `${c.to} runs when ${c.from} succeeds and ${c.when}`;
   }
+}
+
+/** How far apart connections between the same two nodes are drawn, where nodes are placed by hand. */
+const PARALLEL_GAP = 36;
+
+/**
+ * How far each connection bows from the straight line between its nodes: none for a pair's only
+ * connection, and spread evenly either side for several, whichever way each goes.
+ */
+export function bowOffsets(connections: { from: string; to: string }[]): number[] {
+  const groups = new Map<string, number[]>();
+  connections.forEach((c, i) => {
+    const key = c.from < c.to ? `${c.from}\u0000${c.to}` : `${c.to}\u0000${c.from}`;
+    groups.set(key, [...(groups.get(key) ?? []), i]);
+  });
+  const out = connections.map(() => 0);
+  for (const members of groups.values()) {
+    members.forEach((i, k) => {
+      const c = connections[i];
+      // The offset is measured to the left of the way the connection goes: one going back the
+      // other way is turned round, so all of a pair's connections share one frame.
+      const side = c.from < c.to ? 1 : -1;
+      out[i] = (k - (members.length - 1) / 2) * PARALLEL_GAP * side;
+    });
+  }
+  return out;
 }
