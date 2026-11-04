@@ -98,8 +98,9 @@ public class AuditLog {
     public static final String ACCESS_REVIEW = "access.review";
 
     /**
-     * The database was restored from a backup (ADR 0039). Recorded by {@code restore.sh}, never by
-     * the server; detail: backup, takenAt, version.
+     * The database was restored from a backup (ADR 0039), recorded at the next start from the note
+     * {@code restore.sh} leaves ({@link RestoreRecord}); detail: backup, takenAt, version,
+     * previousDatabase, keys.
      */
     public static final String DATABASE_RESTORED = "database.restored";
 

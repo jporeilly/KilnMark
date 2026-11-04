@@ -14,7 +14,7 @@ import jakarta.enterprise.event.Observes;
  * Says at start, in the log, when the stored passwords cannot be opened with this server's key: a
  * database restored without the keys from the same backup gets a new key on its first start, and
  * nothing else shows it until a scan fails (ADR 0039). The server starts either way, so an admin
- * can enter the passwords again.
+ * can enter the passwords again: a check that cannot run is a warning, never a stop.
  */
 @ApplicationScoped
 public class SecretKeyCheck {
@@ -35,7 +35,11 @@ public class SecretKeyCheck {
     }
 
     void onStart(@Observes StartupEvent event) {
-        problem().ifPresent(LOG::error);
+        try {
+            problem().ifPresent(LOG::error);
+        } catch (RuntimeException e) {
+            LOG.warnf("Could not check that the stored passwords open with this server's key: %s", e.getMessage());
+        }
     }
 
     /** What is wrong, in words, when a stored value cannot be opened; empty when every one can. */
@@ -48,8 +52,8 @@ public class SecretKeyCheck {
                     all++;
                     try {
                         secrets.open(rs.getBytes(1));
-                    } catch (SecretBox.WrongKey e) {
-                        wrong++;
+                    } catch (RuntimeException e) {
+                        wrong++;     // sealed with another key (WrongKey), or not a sealed value at all
                     }
                 }
             }

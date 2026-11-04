@@ -41,14 +41,16 @@ fail() {
 # One consistent snapshot of the database while Kilnmark keeps working.
 $compose exec -T postgres pg_dump -U kilnmark -d kilnmark --format=custom > "$dir/kilnmark-db.dump" \
   || fail "the database could not be dumped"
-# A dump that cannot be read back is no backup: list its contents as a restore would.
-$compose exec -T postgres pg_restore --list < "$dir/kilnmark-db.dump" > /dev/null \
+# A dump that cannot be read back is no backup: read every part of it, as a restore would.
+$compose exec -T postgres pg_restore -f /dev/null < "$dir/kilnmark-db.dump" \
   || fail "the dump cannot be read back"
 migration=$($compose exec -T postgres psql -U kilnmark -d kilnmark -Atc \
   "SELECT version FROM kilnmark.flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1") \
   || fail "the database's migration could not be read"
 
-$compose exec -T kilnmark tar -C /var/lib/kilnmark -cf - . > "$dir/kilnmark-keys.tar" \
+# Not the keys an earlier restore set aside, nor its note for the audit log (restore.sh).
+$compose exec -T kilnmark tar -C /var/lib/kilnmark --exclude='./before-restore-*' --exclude=./restored.properties \
+  -cf - . > "$dir/kilnmark-keys.tar" \
   || fail "the keys volume could not be copied"
 tar -tf "$dir/kilnmark-keys.tar" > /dev/null || fail "the copy of the keys volume cannot be read back"
 # The key is made when the first source password is stored: until then there is none to keep.

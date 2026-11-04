@@ -9,7 +9,9 @@ details.
 
 - **Backup and restore** (ADR 0039). `./backup.sh` in the release folder saves the database and the
   keys that open stored source passwords, as two files to keep apart; `./restore.sh` puts them back,
-  on the same machine or a new one, and the audit log shows the restore. The runbook,
+  on the same machine or a new one. It restores into a database of its own before touching the
+  running one, keeps what it replaces to go back to, and the audit log (and your SIEM) shows the
+  restore. The runbook,
   [Backing up and restoring Kilnmark](docs/guide/backup-and-restore.md), covers scheduling, what to
   check after a restore (tokens revoked since the backup work again), and a quarterly restore
   test. A database restored without its keys is now named in the log at start, and testing a

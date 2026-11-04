@@ -29,24 +29,33 @@ statement it runs, works after a restore. A restored graph with labels of its ow
 1. **Two scripts in the release folder.** `backup.sh` writes a new folder for each backup: the
    database as a `pg_dump` in PostgreSQL's custom format, the keys volume as a tar, a `backup.txt`
    (when it was taken, the Kilnmark version, the last migration) and `SHA256SUMS`. It reads the
-   dump back before it finishes, so a dump that cannot be restored fails the backup. It runs while
-   Kilnmark runs: the dump is one consistent snapshot.
-2. **`restore.sh` replaces both, then starts Kilnmark.** It refuses a backup whose checksums do not
-   match, or one from a newer Kilnmark than the release it is run from, before changing anything,
-   and asks for `--yes`. It drops and recreates the database, restores the dump, replaces the
-   keys volume, records `database.restored` in the audit log (the backup, and when it was taken),
-   starts Kilnmark and waits until it is ready. A later release migrates the restored database at
-   its first start, as an upgrade does.
-3. **The keys are kept apart from the dumps.** A dump holds the source passwords sealed; the key
-   opens them. Kept together, one stolen copy gives both. Without the key, a restore works but every
-   stored source password must be entered again.
-4. **A restore sets everything back to the backup's time, the audit log too.** What happened since
-   is in the SIEM's copy of the log (ADR 0029). Tokens revoked since then work again, and grants
+   whole dump back (`pg_restore -f /dev/null`) before it finishes, so a dump cut short fails the
+   backup. It runs while Kilnmark runs: the dump is one consistent snapshot.
+2. **`restore.sh` never leaves Kilnmark without a working database.** It refuses, before changing
+   anything, a backup whose files do not match their checksums (each file checked by name) or one
+   from a newer Kilnmark than the release it is run from, and asks for `--yes`. It restores the dump
+   into a database of its own in one transaction, while Kilnmark runs; only when that has worked
+   does it stop Kilnmark (and check it stopped), rename the old database to
+   `kilnmark_before_<time>` and the restored one to `kilnmark`, and replace the keys volume, keeping
+   the old keys in it. If it fails part way, it says how far it got. The old database and keys stay
+   until the operator removes them, so going back is two renames and a move. A later release
+   migrates the restored database at its first start, as an upgrade does.
+3. **The server records the restore**, not the script: the script leaves `restored.properties`
+   beside the key, and at its next start the server records `database.restored` (the backup, when
+   it was taken, the database kept) as a row and as the JSON line the SIEM collects, then deletes
+   the file.
+4. **The keys are kept apart from the dumps.** A dump holds the source passwords sealed; the key
+   opens them. Kept together, one stolen copy gives both. If the keys are lost, `--without-keys`
+   restores the database alone; every stored password must then be entered again. A database
+   restored without its keys is named at start (how many stored values the key cannot open), and
+   using such a value answers 409 saying what to do, rather than a server error.
+5. **A restore sets everything back to the backup's time, the audit log too.** What happened since
+   is in the SIEM's copy of the log (ADR 0029), and in the kept database. Tokens revoked since then work again, and grants
    given or taken since are undone: the runbook has the operator revoke them again and check the
    access review, and the restore script says so.
-5. **Customers with their own PostgreSQL** use their own backups (snapshots, point-in-time
+6. **Customers with their own PostgreSQL** use their own backups (snapshots, point-in-time
    recovery) for the database, and still back up the keys volume.
-6. **A restore drill**, in the runbook, for the customer's schedule: restore a recent backup to a
+7. **A restore drill**, in the runbook, for the customer's schedule: restore a recent backup to a
    spare machine, and check what the runbook lists.
 
 ## Consequences
@@ -54,11 +63,14 @@ statement it runs, works after a restore. A restored graph with labels of its ow
 - Recovery point: the time since the last backup (daily is the runbook's starting point; with the
   customer's own PostgreSQL and point-in-time recovery, minutes). Recovery time: our drill on a
   small database (a fresh install from a destroyed machine, the restore, the server ready, a stored
-  password tested) took about a minute after the install; a large database takes as long as
+  password tested) took just over a minute after the install; a large database takes as long as
   `pg_restore` needs for it, which the customer's drill measures.
 - The graph limit above binds future work: before Kilnmark keeps nodes in the graph, restore must
   rebuild it (it can be made again from the relational tables) or repair its ids, with a test.
 - The audit log stays append-only: the restore adds its event as a row like any other.
+- A restore runs the dump with full rights on Kilnmark's database, so the checksums show damage,
+  not tampering: backups must be kept where only the backup job can write.
+- Kept databases and keys use disk and hold sensitive data until the operator removes them.
 - The dump holds the audit log and what Kilnmark keeps about sources' data (profiles, quality
   results), so backups are as sensitive as the database: the customer encrypts them and controls
   who reads them.

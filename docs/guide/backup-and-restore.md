@@ -18,12 +18,18 @@ fetched again, but keep the version you run.
 
 **Keep the keys apart from the database dumps.** A dump holds the source passwords sealed, and the
 key opens them: one copy holding both gives an attacker every password. Put the keys file in a
-different place (a secrets store or a separate vault), and encrypt both. Without the key, a restore
-still works, but every stored source password must be entered again under **Sources**.
+different place (a secrets store or a separate vault), and encrypt both. If the keys file is lost
+for good, `restore.sh --without-keys` restores the database alone, and every stored password must be
+entered again.
 
 Backups are as sensitive as the database: they hold the audit log, people's names, and what
 Kilnmark keeps about your sources' data. Limit who can read them as you limit who can reach the
-database.
+database. Keep them where only the backup job can write: a restore runs the dump with full rights
+on Kilnmark's database, so a dump someone could change, with its checksums, is a way in.
+
+If you gave the bundled database a certificate of your own (INSTALL.md, "Kilnmark's own
+database"), keep a copy of it: it lives in the database volume, not in the dump. A new volume makes
+its own certificate again.
 
 ## Back up
 
@@ -40,8 +46,8 @@ It writes a new folder, `kilnmark-<UTC time>`, holding:
 - `backup.txt`: when it was taken, the Kilnmark version, and the last database migration;
 - `SHA256SUMS`: a checksum of each file, which the restore checks.
 
-The script reads the dump back before it finishes, so a backup it reports is one that can be
-restored. It uses `podman compose`, or `docker compose` if Podman is not installed;
+The script reads the whole dump back before it finishes, as a restore reads it, so a dump that was
+cut short or damaged on the way fails the backup. It uses `podman compose`, or `docker compose` if Podman is not installed;
 `KILNMARK_COMPOSE` overrides that. Then move `kilnmark-keys.tar` to where you keep keys, and the rest
 to your backup store.
 
@@ -72,10 +78,19 @@ A restore puts Kilnmark back as it was when the backup was taken. Everything sin
    ./restore.sh /path/to/backups/kilnmark-<time>
    ```
 
-   It checks the backup's files against `SHA256SUMS`, then says what it will replace and asks you to
-   run it again with `--yes`. With `--yes`, it stops Kilnmark, replaces the database and the keys
-   volume with the backup's, records the restore in the audit log, starts Kilnmark and waits until
-   it is ready. Put `kilnmark-keys.tar` back in the backup's folder first.
+   Put `kilnmark-keys.tar` back in the backup's folder first. The script checks each of the backup's
+   files against `SHA256SUMS`, then says what it will do and asks you to run it again with `--yes`.
+   With `--yes`, it:
+   - restores the backup into a database of its own, `kilnmark_restoring`, while Kilnmark keeps
+     running. If that fails, nothing has changed: Kilnmark still runs on its own database, and the
+     next restore starts `kilnmark_restoring` again;
+   - stops Kilnmark, and keeps the database it had as `kilnmark_before_<time>`;
+   - puts the restored database in place as `kilnmark`;
+   - replaces the keys volume with the backup's, keeping the keys it had in `before-restore-<time>`
+     in the volume;
+   - starts Kilnmark and waits until it is ready.
+
+   If it stops part way, it says how far it got and what it left.
 3. **Redo what security changes were made since the backup.** The restored database is from before
    them:
    - **Tokens revoked since then work again.** Find them in your SIEM's copy of the audit log
@@ -87,9 +102,33 @@ A restore puts Kilnmark back as it was when the backup was taken. Everything sin
 4. **Run again** the scans, quality checks, pipelines and flows that ran after the backup, if you
    need their results.
 
-**Settings › Audit log** shows the restore as **Database restored**, with the backup it came from
-and when that was taken. Events between the backup and the restore are only in your SIEM; note the
-restore in your change record too.
+**Settings › Audit log** shows the restore as **Database restored**, with the backup it came from,
+when that was taken, and the name of the database kept; your SIEM gets the event too. Kilnmark
+records it at its first start after the restore. Events between the backup and the restore are not
+in the restored log: they are in your SIEM, and in the kept database. Note the restore in your
+change record too.
+
+## Going back, and tidying up
+
+Until you remove them, the database and keys the restore replaced are kept. To go back to them,
+from the release folder (with `<time>` from the restore's last lines):
+
+```
+podman compose stop kilnmark
+podman compose exec postgres psql -U kilnmark -d postgres -c "ALTER DATABASE kilnmark RENAME TO kilnmark_restored" -c "ALTER DATABASE kilnmark_before_<time> RENAME TO kilnmark"
+podman compose run --rm --no-deps --entrypoint sh kilnmark -c "cd /var/lib/kilnmark && rm -rf drivers drivers.loaded secret.key && mv before-restore-<time>/* ."
+podman compose up -d
+```
+
+Once the restored Kilnmark has worked for a while, remove them, as they hold the same sensitive
+data:
+
+```
+podman compose exec postgres dropdb -U kilnmark kilnmark_before_<time>
+podman compose exec kilnmark rm -rf /var/lib/kilnmark/before-restore-<time>
+```
+
+A restore with `--without-keys` keeps the keys volume as it was.
 
 ## Test a restore
 
@@ -112,7 +151,10 @@ A backup is proven only by restoring it. Every quarter, or as your policy asks:
 | What you see | What to do |
 | --- | --- |
 | `Backup failed: the database could not be dumped` | Check the database runs: `podman compose ps`, and its log with `podman compose logs postgres` |
-| `The backup's files do not match its SHA256SUMS` | The backup is damaged or incomplete (often the keys file was not put back). Restore an earlier one |
+| `kilnmark-db.dump is missing from the backup or does not match its checksum` | The backup is damaged or incomplete. Restore an earlier one |
+| `kilnmark-keys.tar is missing from the backup or does not match its checksum` | Put the keys file back from where you keep keys. If it is lost for good, run with `--without-keys` |
+| `Restore failed while restoring the backup into kilnmark_restoring` | Nothing changed. Read the error above it: often the disk is full, or the dump is damaged |
+| `Kilnmark is still running after the stop` | Nothing was replaced. Stop it (`podman compose stop kilnmark`) and run the restore again |
 | `The backup is from Kilnmark X, newer than this release` | Install release X or later, then restore |
 | `Kilnmark did not become ready` | Read `podman compose logs kilnmark`: it says why it stopped |
 | **Test** on a source, or Kilnmark's log at start, says "A stored password cannot be opened with this server's key" | The keys were not restored, or came from another backup: restore the database and the keys from the same backup, or enter each password again under **Sources** (and AI models' keys and the mail password under **Settings**) |
