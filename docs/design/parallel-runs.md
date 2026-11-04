@@ -28,6 +28,19 @@ the installation, the pipeline or flow, and the shared resource. Kilnmark alread
 
 ## How much runs at once
 
+```mermaid
+flowchart TD
+  F["A flow node is ready"] --> M{"Fewer of the flow's nodes running<br/>than its max_parallel?"}
+  M -- no --> MW["Waits in written order"] --> M
+  M -- yes --> Q["Its pipeline run is queued<br/>(a for-each node queues items up to its own max_parallel)"]
+  P["Run now, or a scan or quality check"] --> Q
+  Q --> W{"A worker has a free slot?"}
+  W -- no --> WQ["Stays queued"] --> W
+  W -- yes --> S{"A free place on every source<br/>it reads or writes?"}
+  S -- no --> SW["Back in the queue for 5 s,<br/>no attempt used: Waiting for a free place"] --> W
+  S -- yes --> R(["Runs, holding its slot and places<br/>until it ends"])
+```
+
 A job runs when all of these have room:
 
 1. **A worker's slot.** `kilnmark.worker.concurrency` (2) jobs per worker: scans, quality checks and
