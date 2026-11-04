@@ -22,6 +22,9 @@ const CLASS: Record<FlowRunStatus | FlowNodeStatus, string> = {
   skipped: "badge-none",
 };
 
+/** A flow run's or node's status in words, as the chips say it. */
+export const flowStatusWords = (status: FlowRunStatus | FlowNodeStatus) => LABEL[status];
+
 /** A flow run's or node's status in words (never colour alone); "Stopping" while a cancel is on its way. */
 export function FlowStatus({ status, stopping }: { status: FlowRunStatus | FlowNodeStatus | null; stopping?: boolean }) {
   if (!status) return <span className="badge badge-none">Never run</span>;

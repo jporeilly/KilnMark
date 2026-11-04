@@ -832,8 +832,8 @@ asset's previous profile.
   **Rows per second through the run**: a line per node from the series, with a band under it for
   its output queue's fill (Held up), the run's warnings, errors and gates starting to quarantine
   marked on the time axis, each point readable by pointer or keyboard, and a table. Each node's
-  share of the run is in the nodes table. The Gantt chart (with its critical path) is kept in the
-  code for flows (docs/design/flows.md), not shown on pipeline runs.
+  share of the run is in the nodes table. The Gantt chart with its critical path (`RunTimeline`) is
+  kept in the code but not shown; flows draw their own run chart (docs/design/flows.md).
 - **API.** The run view adds each node's times and waits and `progress`; it stays small however
   long the run, as rows a second are read on their own: `GET /api/v1/pipeline-runs/{id}/series?after=`
   gives the nodes, the stride and the points after `after` ms (the page reads only the new ones while

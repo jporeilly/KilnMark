@@ -1,0 +1,228 @@
+/* The flow diagram (FlowDiagram) and the run chart (FlowRunChart). */
+.fd-frame {
+  height: 380px;
+}
+
+.fd-node {
+  width: 220px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border-control);
+  border-top: 4px solid var(--km-muted);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.fd-node.fd-type-run-pipeline {
+  border-top-color: var(--km-link);
+}
+
+.fd-node.fd-type-stop {
+  border-top-color: var(--km-bad);
+}
+
+.fd-node.fd-type-notify,
+.fd-node.fd-type-wait {
+  border-top-color: var(--km-warn);
+}
+
+.fd-node.fd-type-sql {
+  border-top-color: var(--km-good);
+}
+
+.fd-node-head {
+  display: grid;
+  padding: 6px 10px 2px;
+}
+
+.fd-node-summary {
+  padding: 0 10px 6px;
+  color: var(--km-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-node-status {
+  padding: 0 10px 6px;
+}
+
+/* How a node stands in a run: the chip says it in words, the outline repeats it. */
+.fd-node.fd-status-running {
+  box-shadow: 0 0 0 2px var(--km-tint-blue-fg);
+}
+
+.fd-node.fd-status-succeeded {
+  box-shadow: 0 0 0 2px var(--km-good);
+}
+
+.fd-node.fd-status-failed {
+  box-shadow: 0 0 0 2px var(--km-bad);
+}
+
+.fd-node.fd-status-skipped,
+.fd-node.fd-status-cancelled {
+  opacity: 0.75;
+  border-style: dashed;
+}
+
+.dg-frame .react-flow__edge.fd-edge-failure .react-flow__edge-path {
+  stroke: var(--km-bad);
+  stroke-dasharray: 6 4;
+}
+
+.dg-frame .react-flow__edge.fd-edge-always .react-flow__edge-path {
+  stroke-dasharray: 2 4;
+}
+
+.dg-frame .react-flow__edge.fd-edge-condition .react-flow__edge-path {
+  stroke: var(--km-warn);
+}
+
+/* A routed connection's label, where the layout made room for it. */
+.fd-edge-label {
+  position: absolute;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-border);
+  border-radius: 4px;
+  pointer-events: all;
+}
+
+.fd-edge-label.fd-edge-label-failure {
+  color: var(--km-bad);
+  border-color: var(--km-bad);
+}
+
+.fd-edge-label.fd-edge-label-condition {
+  color: var(--km-tint-amber-fg);
+  border-color: var(--km-warn);
+}
+
+/* While the YAML cannot be read: a note over the last diagram, so the page below does not move. */
+.fd-holder {
+  position: relative;
+}
+
+.fd-stale-note {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 5;
+  margin: 0;
+  padding: 4px 8px;
+  background: var(--km-surface);
+  color: var(--km-ink);
+  border: 1px solid var(--km-warn);
+  border-radius: 6px;
+}
+
+.fd-words {
+  margin-top: 8px;
+}
+
+.fd-words ul {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
+}
+
+/* The run chart: a bar per node on a shared time axis. */
+.fc-chart {
+  display: grid;
+  grid-template-columns: minmax(8em, 14em) max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: center;
+}
+
+.fc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-track {
+  position: relative;
+  height: 22px;
+  background: var(--km-surface-2);
+  border-radius: 4px;
+}
+
+.fc-bar {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  min-width: 3px;
+  border-radius: 3px;
+  background: var(--km-muted);
+  display: block;
+}
+
+.fc-bar.fc-succeeded {
+  background: var(--km-good);
+}
+
+.fc-bar.fc-failed {
+  background: var(--km-bad);
+}
+
+/* Running: striped as well as coloured, as the chip beside it says. */
+.fc-bar.fc-running {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--km-tint-blue-fg),
+    var(--km-tint-blue-fg) 6px,
+    var(--km-tint-blue-bg) 6px,
+    var(--km-tint-blue-bg) 9px
+  );
+}
+
+.fc-bar.fc-cancelled {
+  background: var(--km-muted);
+}
+
+/* A skipped node: hatched across the row, so it is not read as a short bar. */
+.fc-track.fc-skipped {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--km-surface-2),
+    var(--km-surface-2) 6px,
+    var(--km-surface-3) 6px,
+    var(--km-surface-3) 12px
+  );
+}
+
+.fc-axis {
+  position: relative;
+  height: 18px;
+  color: var(--km-muted);
+}
+
+.fc-tick {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.fc-tick:first-child {
+  transform: none;
+}
+
+.fc-tick:last-child:not(:first-child) {
+  transform: translateX(-100%);
+}
+
+@media (forced-colors: active) {
+  .fd-node,
+  .fc-bar {
+    border: 1px solid CanvasText;
+  }
+
+  .fc-bar {
+    background: Highlight;
+  }
+}
