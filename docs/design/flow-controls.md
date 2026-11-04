@@ -4,6 +4,21 @@ Status: design, 4 November 2026. ADR 0041 records the decision. Slices: C1 `chec
 `wait-for`, C3 `timeout`, C4 `retries`, C5 `priority`. Each is marked **planned** or **built**.
 It builds on [Flows](flows.md) and [Parallel runs](parallel-runs.md).
 
+How a node with all five runs, start to end:
+
+```mermaid
+flowchart TD
+  A["Node ready"] --> P{"Queued by priority:<br/>high, normal, low"}
+  P --> S["A worker slot and its sources'<br/>places are free: the run starts"]
+  S --> T{"Ended within<br/>its timeout?"}
+  T -- "no" --> X["Cancelled: took too long"]
+  T -- "yes, succeeded" --> OK(["Node succeeded"])
+  T -- "yes, failed" --> R{"Retries left, and a retry<br/>cannot write twice?"}
+  X --> R
+  R -- "yes" --> W["Wait retry_delay<br/>(doubled each try)"] --> P
+  R -- "no" --> F(["Node failed"])
+```
+
 ## C1. `check-source` (planned)
 
 ```yaml
@@ -25,6 +40,15 @@ It builds on [Flows](flows.md) and [Parallel runs](parallel-runs.md).
 - Pairs with `failure` connections: check, then notify and stop if anything is missing.
 
 ## C2. `wait-for` (planned)
+
+```mermaid
+flowchart LR
+  A["Check now"] --> B{"Ready?<br/>file there, or query true"}
+  B -- yes --> OK(["Succeeds: found, waited_s"])
+  B -- no --> C{"Past timeout?"}
+  C -- yes --> F(["Fails: gave up"])
+  C -- no --> D["Wait every<br/>(no slot held)"] --> A
+```
 
 ```yaml
   - id: arrived
@@ -63,6 +87,18 @@ It builds on [Flows](flows.md) and [Parallel runs](parallel-runs.md).
   stopped". A timed-out try may be retried (C4) when retries allow.
 
 ## C4. `retries` (planned)
+
+```mermaid
+flowchart TD
+  A{"How did the try end?"} -- "cancelled by a person<br/>or the flow" --> N(["Never retried"])
+  A -- "failed or timed out" --> B{"Node type"}
+  B -- sql --> Y(["Retried: its transaction<br/>was rolled back"])
+  B -- "run-pipeline or<br/>a for-each item" --> C{"Did any write begin?"}
+  C -- no --> Y2(["Retried"])
+  C -- yes --> D{"Every write in the version<br/>replace or upsert?"}
+  D -- yes --> Y3(["Retried: writing again<br/>gives the same result"])
+  D -- no --> N2(["Not retried. The flow is<br/>refused when saved"])
+```
 
 - On `run-pipeline`, `for-each` and `sql`: `retries` 0 to 5, `retry_delay` 10s to 1h (1 minute by
   default), doubled after each try.
