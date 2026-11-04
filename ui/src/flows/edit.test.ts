@@ -131,6 +131,11 @@ describe("connections", () => {
     expect(setWhen(twins, 2, "failure")).toEqual({ error: "clean is already connected to tell that way." });
   });
 
+  test("sets a when written first in a block item to success in place", () => {
+    const block = "nodes:\n  - { id: a, type: stop }\n  - { id: b, type: stop }\nconnections:\n  - when: failure\n    from: a\n    to: b\n";
+    expect(ok(setWhen(block, 0, "success"))).toBe(block.replace("when: failure", "when: success"));
+  });
+
   test("removes a connection by its place in the list", () => {
     expect(ok(disconnect(FLOW, 0))).toBe(FLOW.replace("  - { from: clean, to: tell, when: failure }\n", ""));
     expect(disconnect(FLOW, 7)).toEqual({ error: "That connection is no longer in the YAML." });

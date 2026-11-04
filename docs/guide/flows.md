@@ -100,7 +100,7 @@ are. Nothing is saved until you save a new version.
   press Enter), or choose **Change** beside a connection in **The connections in words**. Its tools
   appear under the diagram: change when a connection is taken, including its condition, or remove
   it. Removing a node removes its connections too. A node's settings are changed in the YAML.
-- **Move a node.** Drag it. The diagram then keeps every node where you see it, in a `layout:`
+- **Move a node.** Drag it, or choose it and use the arrow keys. The diagram then keeps every node where you see it, in a `layout:`
   block at the end of the YAML; connections between the same two nodes are drawn apart, and labels
   are drawn over the nodes. **Lay out again** removes the block, and the diagram lays the flow out
   itself.

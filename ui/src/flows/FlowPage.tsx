@@ -410,7 +410,7 @@ export function FlowPage({ name, version, role }: { name: string | null; version
         {editable && (
           <>
             <div className="fd-note-row">
-              <p role="status" className={canvasNote?.bad ? "error small" : "small muted"}>
+              <p id="fd-note" tabIndex={-1} role="status" className={canvasNote?.bad ? "error small" : "small muted"}>
                 {canvasNote?.text ?? ""}
               </p>
               {canUndo && (

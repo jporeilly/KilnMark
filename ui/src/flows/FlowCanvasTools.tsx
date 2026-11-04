@@ -16,6 +16,12 @@ type WhenChoice = (typeof WHEN_CHOICES)[number][0];
 /** A `when` from the form: the word, or the condition's text. */
 const whenOf = (choice: WhenChoice, condition: string) => (choice === "condition" ? condition : choice);
 
+const NO_CONDITION: Change = { error: "Write the condition, for example clean.score >= good." };
+const blank = (choice: WhenChoice, condition: string) => choice === "condition" && condition.trim() === "";
+
+/** After a removal its tools are gone: the focus goes to the note saying what happened. */
+const focusNote = () => requestAnimationFrame(() => document.getElementById("fd-note")?.focus());
+
 function WhenFields({
   choice,
   condition,
@@ -106,7 +112,10 @@ export function FlowCanvasTools({
   const byHand = Object.keys(graph.positions).length > 0;
 
   const chosenNode = selected && "node" in selected ? graph.nodes.find((n) => n.id === selected.node) : undefined;
-  const chosenConnection = selected && "connection" in selected ? graph.connections.find((c) => c.index === selected.connection) : undefined;
+  const chosenConnection =
+    selected && "connection" in selected
+      ? graph.connections.find((c) => c.index === selected.connection && c.from === selected.from && c.to === selected.to)
+      : undefined;
 
   // The inspector starts from how the chosen connection is taken.
   useEffect(() => {
@@ -129,7 +138,7 @@ export function FlowCanvasTools({
 
   const join = (e: FormEvent) => {
     e.preventDefault();
-    apply(connect(text, fromId, toId, whenOf(choice, condition)), `Connected ${fromId} to ${toId}.`);
+    apply(blank(choice, condition) ? NO_CONDITION : connect(text, fromId, toId, whenOf(choice, condition)), `Connected ${fromId} to ${toId}.`);
   };
 
   return (
@@ -217,7 +226,10 @@ export function FlowCanvasTools({
               type="button"
               className="danger"
               onClick={() => {
-                if (apply(removeNode(text, chosenNode.id), `Removed node ${chosenNode.id} and its connections.`)) onSelect(null);
+                if (apply(removeNode(text, chosenNode.id), `Removed node ${chosenNode.id} and its connections.`)) {
+                  onSelect(null);
+                  focusNote();
+                }
               }}
             >
               Remove node
@@ -235,7 +247,7 @@ export function FlowCanvasTools({
           onSubmit={(e) => {
             e.preventDefault();
             apply(
-              setWhen(text, chosenConnection.index, whenOf(editChoice, editCondition)),
+              blank(editChoice, editCondition) ? NO_CONDITION : setWhen(text, chosenConnection.index, whenOf(editChoice, editCondition)),
               `Changed when the connection from ${chosenConnection.from} to ${chosenConnection.to} is taken.`,
             );
           }}
@@ -259,6 +271,7 @@ export function FlowCanvasTools({
               onClick={() => {
                 if (apply(disconnect(text, chosenConnection.index), `Removed the connection from ${chosenConnection.from} to ${chosenConnection.to}.`)) {
                   onSelect(null);
+                  focusNote();
                 }
               }}
             >

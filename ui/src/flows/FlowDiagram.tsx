@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   applyNodeChanges,
   Background,
@@ -32,8 +32,11 @@ const LABEL_HEIGHT = 20;
 /** About how wide a connection's label is drawn (11px semibold, with its padding). */
 const labelWidth = (text: string) => Math.ceil(text.length * 6.6) + 16;
 
-/** What is chosen on the diagram: a node by id, or a connection by its place in the YAML list. */
-export type FlowSelection = { node: string } | { connection: number };
+/**
+ * What is chosen on the diagram: a node by id, or a connection by its place in the YAML list with
+ * its ends, so that a list changed since (in the YAML) never puts another connection in its place.
+ */
+export type FlowSelection = { node: string } | { connection: number; from: string; to: string };
 
 type NodeData = { node: FlowGraphNode; status: FlowNodeStatus | null };
 type FlowCard = Node<NodeData, "flowNode">;
@@ -212,16 +215,39 @@ export default function FlowDiagram({
   // React Flow moves a node while it is dragged through these; the YAML takes the place it is dropped at.
   const [nodes, setNodes] = useState(cards);
   useEffect(() => setNodes(cards), [cards]);
+  // A drag is written when it stops (onNodeDragStop). A chosen node moved with the arrow keys is
+  // written once the keys have been still for a moment, so each press is not a change of its own.
+  const dragging = useRef(false);
+  const keyMoves = useRef<Record<string, Point>>({});
+  const keyTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(keyTimer.current), []);
   // Choosing (by click, or Enter on a focused node or connection) is the page's to keep.
   const onNodesChange = (changes: NodeChange<FlowCard>[]) => {
     const chosen = changes.find((c) => c.type === "select" && c.selected);
     if (chosen && "id" in chosen) onSelect?.({ node: chosen.id });
+    if (!dragging.current) {
+      let moved = false;
+      for (const c of changes) {
+        if (c.type === "position" && c.position && !c.dragging) {
+          keyMoves.current[c.id] = c.position;
+          moved = true;
+        }
+      }
+      if (moved) {
+        window.clearTimeout(keyTimer.current);
+        keyTimer.current = window.setTimeout(() => {
+          const next = { ...where, ...keyMoves.current };
+          keyMoves.current = {};
+          onMove?.(next);
+        }, 400);
+      }
+    }
     setNodes((ns) => applyNodeChanges(changes.filter((c) => c.type === "position" || c.type === "dimensions"), ns));
   };
   const onEdgesChange = (changes: EdgeChange<RoutedEdge | BowedEdge>[]) => {
     const chosen = changes.find((c) => c.type === "select" && c.selected);
     const edge = chosen && "id" in chosen ? links.find((l) => l.id === chosen.id) : null;
-    if (edge?.data) onSelect?.({ connection: edge.data.index });
+    if (edge?.data) onSelect?.({ connection: edge.data.index, from: edge.source, to: edge.target });
   };
 
   return (
@@ -251,16 +277,20 @@ export default function FlowDiagram({
           isValidConnection={(c) => c.source !== c.target}
           onConnect={(c) => onConnect?.(c.source, c.target)}
           onPaneClick={() => onSelect?.(null)}
-          onNodeDragStart={() => setMoving(true)}
+          onNodeDragStart={() => {
+            dragging.current = true;
+            setMoving(true);
+          }}
           onNodeDragStop={(_, __, moved) => {
             const next = { ...where };
             for (const n of moved) next[n.id] = n.position;
+            dragging.current = false;
             setMoving(false);
             onMove?.(next);
           }}
           ariaLabelConfig={{
             "node.a11yDescription.default": editable
-              ? "A node of the flow. Press Enter to choose it; the buttons under the diagram change it."
+              ? "A node of the flow. Press Enter to choose it, then the arrow keys to move it; the buttons under the diagram change it."
               : "A node of the flow. The list under the diagram says the same in words.",
           }}
         >
@@ -285,7 +315,7 @@ export default function FlowDiagram({
                       className="link-button"
                       aria-label={`Change the connection: ${connectionSentence(c)}`}
                       onClick={() => {
-                        onSelect?.({ connection: c.index });
+                        onSelect?.({ connection: c.index, from: c.from, to: c.to });
                         // Its tools are under the diagram: go there, to change it.
                         requestAnimationFrame(() => document.getElementById("fd-chosen")?.focus());
                       }}

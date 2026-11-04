@@ -266,7 +266,9 @@ export function setWhen(text: string, index: number, when: string): Change {
     const problem = connectProblem(ctx.graph, c.from, c.to, when, index);
     if (problem) throw new Error(problem);
     const w = whenText(when);
-    if (w == null) ctx.p.remove(item, "when");
+    if (w == null && (item.items as Pair[])[0] !== pairOf(item, "when")) ctx.p.remove(item, "when");
+    // `- when: failure` cannot lose its line without the item's dash: it says success instead.
+    else if (w == null) ctx.p.put(item, "when", null, { raw: "success" });
     else ctx.p.put(item, "when", null, { raw: w });
   });
 }
