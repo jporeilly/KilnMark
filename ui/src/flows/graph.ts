@@ -3,6 +3,7 @@ import { isMap, isScalar, isSeq, parseDocument, type Scalar } from "yaml";
 /** A node type in words, as the diagram and the run page say it. */
 export const TYPE_WORDS: Record<string, string> = {
   "run-pipeline": "Runs a pipeline",
+  "for-each": "Runs a pipeline for each item",
   notify: "Sends a notice",
   wait: "Waits",
   stop: "Ends the flow",
@@ -38,6 +39,16 @@ function summaryOf(type: string, node: { get: (k: string) => unknown }): string 
       const pipeline = get("pipeline") ?? "a pipeline";
       const version = get("version");
       return version ? `${pipeline}, version ${version}` : pipeline;
+    }
+    case "for-each": {
+      const pipeline = get("pipeline") ?? "a pipeline";
+      const items = node.get("items");
+      if (isSeq(items)) {
+        const n = items.items.length;
+        return `${pipeline} for each of ${n} ${n === 1 ? "item" : "items"}`;
+      }
+      const from = get("items")?.trim().match(/^\$\{\s*([a-z][a-z0-9_]*)\s*\}$/);
+      return from ? `${pipeline} for each of ${from[1]}` : `${pipeline} for each item`;
     }
     case "notify":
       return get("title") ?? "Sends a notice";

@@ -110,6 +110,7 @@ preview a node, and choose **Run now**.
 | `08-flows` | `sample-quality-decides` | A flow: a condition on what a gate set aside decides what runs next; notify and stop |
 | | `sample-passing-values` | A flow passing values on: inheritance by name, `with:`, a node's value, wait and notify |
 | | `sample-sql-before-and-after` | A flow's `sql` nodes before and after a pipeline, one transaction each, with `rows_affected` in a condition (needs `shop-db` with Allow SQL and Allow writing) |
+| | `sample-for-each-region` | A `for-each` node: `sample-server-variable` once for each of three regions, two at once, each writing its own file; a condition on `regions.failed` |
 | `09-volume` | `sample-volume` | Four million rows through a compute, a lookup, a route and an aggregate, long enough to see where a run's time goes: the run's page shows each node's time, rows per second and which node held the others up |
 
 Each file starts with what it shows and what to look for. The

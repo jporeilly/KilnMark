@@ -23,9 +23,9 @@ const LABELS: Record<DockTab, string> = {
 
 export const DOCK_OPEN_KEY = "kilnmark.pipeline.panel";
 
-function savedOpen(): boolean {
+function savedOpen(key: string): boolean {
   try {
-    return window.localStorage.getItem(DOCK_OPEN_KEY) !== "collapsed";
+    return window.localStorage.getItem(key) !== "collapsed";
   } catch {
     return true;
   }
@@ -43,18 +43,24 @@ export type DockControl = {
   panel: () => HTMLElement | null;
 };
 
-/** The panel's state: the tab shown and whether it is open, remembered per viewer. */
-export function useDock(idBase: string) {
+/**
+ * The panel's state: the tab shown and whether it is open, remembered per viewer under `openKey`
+ * (pages other than a pipeline's keep their own, so collapsing one does not collapse the other).
+ */
+export function useDock(idBase: string, openKey: string = DOCK_OPEN_KEY) {
   const [tab, setTab] = useState<DockTab>("settings");
-  const [open, setOpenState] = useState<boolean>(savedOpen);
-  const setOpen = useCallback((o: boolean) => {
-    setOpenState(o);
-    try {
-      window.localStorage.setItem(DOCK_OPEN_KEY, o ? "open" : "collapsed");
-    } catch {
-      // A remembered panel is a convenience only.
-    }
-  }, []);
+  const [open, setOpenState] = useState<boolean>(() => savedOpen(openKey));
+  const setOpen = useCallback(
+    (o: boolean) => {
+      setOpenState(o);
+      try {
+        window.localStorage.setItem(openKey, o ? "open" : "collapsed");
+      } catch {
+        // A remembered panel is a convenience only.
+      }
+    },
+    [openKey],
+  );
   const show = useCallback(
     (t: DockTab) => {
       setTab(t);
@@ -80,6 +86,7 @@ export function PipelineDock({
   open,
   onTab,
   onOpen,
+  label = "Panels under the canvas",
   children,
 }: {
   idBase: string;
@@ -88,6 +95,8 @@ export function PipelineDock({
   open: boolean;
   onTab: (t: DockTab) => void;
   onOpen: (open: boolean) => void;
+  /** The tab bar's name for screen readers. */
+  label?: string;
   children: ReactNode;
 }) {
   const items: TabItem[] = tabs.map((t) => ({ id: t, label: LABELS[t] }));
@@ -123,7 +132,7 @@ export function PipelineDock({
   return (
     <div ref={box} className={`pl-dock${open ? " is-open" : " is-collapsed"}`}>
       <div className="pl-dock-bar">
-        <Tabs idBase={idBase} label="Panels under the canvas" selected={tab} onSelect={(t) => onTab(t as DockTab)} tabs={items} />
+        <Tabs idBase={idBase} label={label} selected={tab} onSelect={(t) => onTab(t as DockTab)} tabs={items} />
         <button
           type="button"
           className="cv-tool pl-dock-toggle"

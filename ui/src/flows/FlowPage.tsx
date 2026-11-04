@@ -1,14 +1,17 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Tabs, TabPanel, useTabsId } from "../components/ui";
 import {
   allows,
   ApiError,
   flowsApi,
+  formatNumber,
   formatTime,
   pipelinesApi,
   type AccessRole,
   type FlowDetail,
   type FlowProblem,
   type FlowRun,
+  type FlowRunDetail,
   type FlowValidation,
   type FlowVersion,
   type FlowVersionSummary,
@@ -17,8 +20,10 @@ import { go, href } from "../router";
 import { useTitle } from "../components/useTitle";
 import { docHref } from "../docs/links";
 import { YamlEditor, type YamlEditorHandle } from "../pipelines/YamlEditor";
+import { PipelineDock, useDock, type DockTab } from "../pipelines/PipelineDock";
 import type { FlowSelection } from "./FlowDiagram";
 import { FlowCanvasTools } from "./FlowCanvasTools";
+import { FlowRunFacts, took } from "./FlowRunSummary";
 import { connect, setPositions, type Change } from "./edit";
 import { readFlowGraph, type FlowGraph } from "./graph";
 import { FlowRunStatus, RunFlowButton } from "./RunFlow";
@@ -32,12 +37,28 @@ const DRAW_DELAY_MS = 400;
 /** How many changes made on the diagram can be undone. */
 const UNDO_DEPTH = 50;
 
+type View = "diagram" | "yaml";
+const VIEW_KEY = "kilnmark.flow.view";
+function savedView(): View {
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === "yaml" ? "yaml" : "diagram";
+  } catch {
+    return "diagram";
+  }
+}
+/** The tabs of the panel under the flow, as a pipeline's: its latest run, its runs and its versions. */
+const DOCK_TABS: DockTab[] = ["run", "runs", "versions"];
+/** Whether that panel is open, remembered apart from the pipeline page's. */
+const FLOW_DOCK_KEY = "kilnmark.flow.panel";
+
 /**
- * One flow, written as YAML: checked a moment after each change, with the problems listed below
- * (choosing one moves the caret to its line). Designers save it with a message; stewards run the
- * saved version, with a dialog for its parameters. Its versions and runs below. With name null, a
- * new flow from a starter; with a version, that saved version, read-only. Designers can also change
- * the flow on its diagram: each change there is a change to the YAML, which stays the one record.
+ * One flow, laid out as a pipeline's page is: its diagram or its YAML, one tab at a time, both
+ * views of one document; under them a panel with its latest run, its runs and its versions; then
+ * the problems (choosing one moves the caret to its line in the YAML) and saving. The YAML is
+ * checked a moment after each change. Designers save it with a message, and can change the flow on
+ * its diagram: each change there is a change to the YAML, which stays the one record. Stewards run
+ * the saved version, with a dialog for its parameters. With name null, a new flow from a starter;
+ * with a version, that saved version, read-only.
  */
 export function FlowPage({ name, version, role }: { name: string | null; version: number | null; role: AccessRole }) {
   const steward = allows(role, "steward");
@@ -67,6 +88,23 @@ export function FlowPage({ name, version, role }: { name: string | null; version
   const editor = useRef<YamlEditorHandle>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const sequence = useRef(0);
+  const tabsId = useTabsId();
+  const dockId = useTabsId();
+  const [view, setViewState] = useState<View>(savedView);
+  const setView = useCallback((v: View) => {
+    setViewState(v);
+    try {
+      window.localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // A remembered view is a convenience only.
+    }
+  }, []);
+  const dock = useDock(dockId, FLOW_DOCK_KEY);
+  const dockTab: DockTab = DOCK_TABS.includes(dock.tab) ? dock.tab : "run";
+  // The latest run in full, for the Run tab: read only while that tab is shown, and again whenever
+  // the runs list is.
+  const [latestRun, setLatestRun] = useState<FlowRunDetail | null>(null);
+  const [latestError, setLatestError] = useState<string | null>(null);
 
   useEffect(() => {
     if (failures > 0) errorRef.current?.focus();
@@ -125,6 +163,28 @@ export function FlowPage({ name, version, role }: { name: string | null; version
     const t = window.setInterval(loadLists, 4000);
     return () => window.clearInterval(t);
   }, [active, loadLists]);
+
+  const runShown = !isNew && dockTab === "run" && dock.open;
+  useEffect(() => {
+    const id = runs?.[0]?.id;
+    if (id == null) {
+      setLatestRun(null);
+      return;
+    }
+    if (!runShown) return;
+    let live = true;
+    flowsApi
+      .runDetail(id)
+      .then((d) => {
+        if (!live) return;
+        setLatestRun(d);
+        setLatestError(null);
+      })
+      .catch((e: Error) => live && setLatestError(e.message));
+    return () => {
+      live = false;
+    };
+  }, [runs, runShown]);
 
   const text = viewing ? (shown?.yaml ?? "") : yaml;
   // The diagram follows the text once typing pauses, and keeps the last flow it could read while
@@ -263,8 +323,15 @@ export function FlowPage({ name, version, role }: { name: string | null; version
     }
   };
 
+  /** Shows a problem's line in the YAML, moving to the YAML tab first when the diagram is shown. */
   const goTo = (p: FlowProblem) => {
-    if (p.line > 0) editor.current?.goToLine(p.line, p.column);
+    if (p.line <= 0) return;
+    if (view === "yaml") {
+      editor.current?.goToLine(p.line, p.column);
+      return;
+    }
+    setView("yaml");
+    window.setTimeout(() => editor.current?.goToLine(p.line, p.column), 0);
   };
 
   const queued = (run: FlowRun) => {
@@ -303,6 +370,12 @@ export function FlowPage({ name, version, role }: { name: string | null; version
     <>
       <p className="small">
         <a href={href.flows()}>Flows</a>
+        {viewing && name && (
+          <>
+            {" "}
+            › <a href={href.flow(name)}>{detail?.displayName ?? name}</a>
+          </>
+        )}
       </p>
       <div className="pl-head">
         <h1 tabIndex={-1}>{isNew ? "New flow" : viewing ? `${title}, version ${version}` : title}</h1>
@@ -329,8 +402,9 @@ export function FlowPage({ name, version, role }: { name: string | null; version
       {detail?.description && <p className="lead">{detail.description}</p>}
       {isNew && (
         <p className="lead">
-          Write the flow&apos;s YAML: its nodes, and the connections that say what runs after what. It is checked as you
-          type; the name on its <span className="mono">name:</span> line is fixed once saved.{" "}
+          Build the flow on its diagram, or write its YAML: both edit the same flow, its nodes and the connections that
+          say what runs after what. It is checked as you go; the name on its <span className="mono">name:</span> line is
+          fixed once saved.{" "}
           <a href={docHref("flows")}>How flows are built</a>.
         </p>
       )}
@@ -386,66 +460,198 @@ export function FlowPage({ name, version, role }: { name: string | null; version
         </div>
       )}
 
-      <section aria-labelledby="fl-diagram-h" className="panel">
-        <h2 id="fl-diagram-h">Diagram</h2>
-        {shownGraph ? (
-          // The note lies over the diagram, so nothing below it moves while the YAML is being typed.
-          <div className="fd-holder">
-            {!drawn.ok && <p className="fd-stale-note small">{drawn.error} The diagram shows the flow as it last could be read.</p>}
-            <Suspense fallback={<p role="status">Loading…</p>}>
-              <FlowDiagram
-                graph={shownGraph}
-                label={`Diagram of ${viewing ? `version ${version} of ` : ""}the flow`}
-                editable={editable && drawn.ok}
-                selected={selected}
-                onSelect={choose}
-                onMove={(positions) => applyEdit(setPositions(yaml, positions), "Moved a node.")}
-                onConnect={(from, to) => applyEdit(connect(yaml, from, to), `Connected ${from} to ${to}.`)}
-              />
-            </Suspense>
-          </div>
-        ) : (
-          <p className="muted">{drawn.ok ? "" : `${drawn.error} The diagram follows the YAML below.`}</p>
-        )}
-        {editable && (
-          <>
-            <div className="fd-note-row">
-              <p id="fd-note" tabIndex={-1} role="status" className={canvasNote?.bad ? "error small" : "small muted"}>
-                {canvasNote?.text ?? ""}
-              </p>
-              {canUndo && (
-                <button type="button" onClick={undoChange}>
-                  Undo
-                </button>
+      <section aria-labelledby="fl-build-h" className="panel pl-build">
+        <h2 id="fl-build-h" className="visually-hidden">
+          {editable ? "Build the flow" : "The flow"}
+        </h2>
+        <div className="pl-view-tabs">
+          <Tabs
+            label="How to show the flow"
+            idBase={tabsId}
+            selected={view}
+            onSelect={(v) => setView(v as View)}
+            tabs={[
+              { id: "diagram", label: "Diagram" },
+              { id: "yaml", label: "YAML" },
+            ]}
+          />
+        </div>
+        <TabPanel idBase={tabsId} selected={view}>
+          {view === "diagram" ? (
+            <>
+              {shownGraph ? (
+                // The note lies over the diagram, so nothing below it moves while the YAML is being typed.
+                <div className="fd-holder">
+                  {!drawn.ok && <p className="fd-stale-note small">{drawn.error} The diagram shows the flow as it last could be read.</p>}
+                  <Suspense fallback={<p role="status">Loading…</p>}>
+                    <FlowDiagram
+                      graph={shownGraph}
+                      label={`Diagram of ${viewing ? `version ${version} of ` : ""}the flow`}
+                      editable={editable && drawn.ok}
+                      selected={selected}
+                      onSelect={choose}
+                      onMove={(positions) => applyEdit(setPositions(yaml, positions), "Moved a node.")}
+                      onConnect={(from, to) => applyEdit(connect(yaml, from, to), `Connected ${from} to ${to}.`)}
+                    />
+                  </Suspense>
+                </div>
+              ) : (
+                <p className="muted">{drawn.ok ? "" : `${drawn.error} Change it in the YAML tab.`}</p>
               )}
-            </div>
-            {live?.ok ? (
-              <FlowCanvasTools graph={live.graph} text={yaml} selected={selected} onSelect={choose} apply={applyEdit} />
-            ) : (
-              <p className="small muted">The diagram can be changed again once the YAML can be read.</p>
+              {editable && (
+                <>
+                  <div className="fd-note-row">
+                    <p id="fd-note" tabIndex={-1} role="status" className={canvasNote?.bad ? "error small" : "small muted"}>
+                      {canvasNote?.text ?? ""}
+                    </p>
+                    {canUndo && (
+                      <button type="button" onClick={undoChange}>
+                        Undo
+                      </button>
+                    )}
+                  </div>
+                  {live?.ok ? (
+                    <FlowCanvasTools graph={live.graph} text={yaml} selected={selected} onSelect={choose} apply={applyEdit} />
+                  ) : (
+                    <p className="small muted">The diagram can be changed again once the YAML can be read.</p>
+                  )}
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <p id="fl-yaml-hint" className="hint">
+                {editable
+                  ? "Tab indents by two spaces; press Escape, then Tab, to move on. Problems are listed below with their lines."
+                  : viewing
+                    ? "A saved version, shown as it was saved."
+                    : "Your role can read this flow. Designers change it."}
+              </p>
+              <YamlEditor
+                ref={editor}
+                id="fl-yaml"
+                label={`YAML of ${title}`}
+                value={text}
+                onChange={setYaml}
+                readOnly={!editable}
+                problemLines={problemLines}
+                describedBy="fl-yaml-hint fl-check-summary"
+              />
+            </>
+          )}
+        </TabPanel>
+
+        {!isNew && (
+          <PipelineDock
+            idBase={dockId}
+            tabs={DOCK_TABS}
+            tab={dockTab}
+            open={dock.open}
+            onTab={dock.show}
+            onOpen={dock.setOpen}
+            label="Panels under the flow"
+          >
+            {dockTab === "run" && (
+              <>
+                {latestRun ? (
+                  <div className="pl-dock-run">
+                    <div className="pl-dock-run-head">
+                      <h3 className="cv-side-title">
+                        Run {latestRun.run.id} of version {latestRun.run.version}
+                        {(latestRun.run.status === "queued" || latestRun.run.status === "running") && (
+                          <span className="muted">, updating as it goes</span>
+                        )}
+                      </h3>
+                      <a href={href.flowRun(latestRun.run.id)}>
+                        Open run {latestRun.run.id}: where its time went, its chart and its nodes
+                      </a>
+                    </div>
+                    <FlowRunFacts detail={latestRun} />
+                  </div>
+                ) : runs === null || (runs.length > 0 && latestError == null) ? (
+                  <p role="status">Loading…</p>
+                ) : latestError ? (
+                  <p role="alert" className="error">
+                    {latestError}
+                  </p>
+                ) : (
+                  <p>Not run yet.{steward ? " Run now runs the saved version, and its progress is shown here." : ""}</p>
+                )}
+              </>
             )}
-          </>
+            {dockTab === "runs" && (
+              <>
+                <h3 className="visually-hidden">Runs</h3>
+                {runs === null && <p role="status">Loading…</p>}
+                {runs?.length === 0 && <p>Not run yet.{steward ? " Run now runs the saved version." : ""}</p>}
+                {runs && runs.length > 0 && (
+                  <div className="table-scroll" role="region" aria-label="Runs table" tabIndex={0}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th scope="col">Run</th>
+                          <th scope="col">Status</th>
+                          <th scope="col">Version</th>
+                          <th scope="col">Asked for</th>
+                          <th scope="col">Took</th>
+                          <th scope="col">Rows written</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {runs.map((r) => (
+                          <tr key={r.id}>
+                            <th scope="row">
+                              <a href={href.flowRun(r.id)}>Run {r.id}</a>
+                            </th>
+                            <td>
+                              <FlowRunStatus run={r} />
+                              {r.error && <div className="small muted">{r.error}</div>}
+                            </td>
+                            <td>{r.version}</td>
+                            <td className="small">
+                              {formatTime(r.requestedAt)} by {r.requestedBy}
+                            </td>
+                            <td>{took(r.startedAt, r.finishedAt)}</td>
+                            <td>{formatNumber(r.rowsWritten)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+            {dockTab === "versions" && (
+              <>
+                <h3 className="visually-hidden">Versions</h3>
+                {versions === null && <p role="status">Loading…</p>}
+                {versions && (
+                  <ol className="pl-versions" reversed>
+                    {versions.map((v) => (
+                      <li key={v.n}>
+                        <a href={href.flow(name!, v.n)} aria-current={version === v.n ? "page" : undefined}>
+                          Version {v.n}
+                        </a>
+                        {v.n === detail?.latestVersion && " (latest)"}
+                        {!v.valid && (
+                          <span className="pl-bad">
+                            {" "}
+                            · {v.problems} {v.problems === 1 ? "problem" : "problems"}
+                          </span>
+                        )}
+                        <div className="small muted">
+                          {formatTime(v.createdAt)} by {v.author}
+                          {v.message && <>: {v.message}</>}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </>
+            )}
+          </PipelineDock>
         )}
-      </section>
-      <section aria-labelledby="fl-yaml-h" className="panel">
-        <h2 id="fl-yaml-h">YAML</h2>
-        <p id="fl-yaml-hint" className="hint">
-          {editable
-            ? "Tab indents by two spaces; press Escape, then Tab, to move on. Problems are listed below with their lines."
-            : viewing
-              ? "A saved version, shown as it was saved."
-              : "Your role can read this flow. Designers change it."}
-        </p>
-        <YamlEditor
-          ref={editor}
-          id="fl-yaml"
-          label={`YAML of ${title}`}
-          value={text}
-          onChange={setYaml}
-          readOnly={!editable}
-          problemLines={problemLines}
-          describedBy="fl-yaml-hint fl-check-summary"
-        />
+
         <div className="pl-problems">
           <p id="fl-check-summary" className={problems.length > 0 ? "pl-summary pl-bad" : "pl-summary"} aria-live="polite">
             {summary}
@@ -515,68 +721,6 @@ export function FlowPage({ name, version, role }: { name: string | null; version
           </form>
         )}
       </section>
-
-      {!isNew && (
-        <section aria-labelledby="fl-runs-h" className="panel">
-          <h2 id="fl-runs-h">Runs</h2>
-          {runs === null && <p role="status">Loading…</p>}
-          {runs?.length === 0 && <p>No runs yet.{steward ? " Run now runs the saved version." : ""}</p>}
-          {runs && runs.length > 0 && (
-            <div className="table-scroll" role="region" aria-label="Runs (scrolls sideways on small screens)" tabIndex={0}>
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Run</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Version</th>
-                    <th scope="col">Started by</th>
-                    <th scope="col">When</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.map((r) => (
-                    <tr key={r.id}>
-                      <th scope="row">
-                        <a href={href.flowRun(r.id)}>Run {r.id}</a>
-                      </th>
-                      <td>
-                        <FlowRunStatus run={r} />
-                        {r.error && <div className="small muted">{r.error}</div>}
-                      </td>
-                      <td>{r.version}</td>
-                      <td>{r.requestedBy}</td>
-                      <td>{formatTime(r.finishedAt ?? r.startedAt ?? r.requestedAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      )}
-
-      {!isNew && (
-        <section aria-labelledby="fl-versions-h" className="panel">
-          <h2 id="fl-versions-h">Versions</h2>
-          {versions === null && <p role="status">Loading…</p>}
-          {versions && versions.length > 0 && (
-            <ol className="pl-versions" reversed>
-              {versions.map((v) => (
-                <li key={v.n}>
-                  <a href={href.flow(name!, v.n)}>Version {v.n}</a>, {formatTime(v.createdAt)} by {v.author}
-                  {v.message && <>: “{v.message}”</>}
-                  {!v.valid && (
-                    <span className="small pl-bad">
-                      {" "}
-                      (draft, {v.problems} {v.problems === 1 ? "problem" : "problems"})
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
-      )}
     </>
   );
 }

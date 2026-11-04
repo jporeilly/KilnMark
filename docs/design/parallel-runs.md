@@ -118,15 +118,18 @@ Built, with these changes from the plan above:
 - **Who may change it**: `max_runs` does not change how a source is read, so a designer who sees
   values masked may change it on a source with marked columns (`SourceService.NOT_READING`).
 
-## P3. A flow's `max_parallel` (planned)
+## P3. A flow's `max_parallel` (built)
 
 - A top-level key, `max_parallel: 4`, 1 to 50; checked when saved. Left out, no limit.
-- `FlowService.startReady` starts ready nodes, in the order they are written, while fewer than that
-  many are running (a `for-each` node counts once, however many items it runs). `stop` nodes are
-  never held back, so a flow can always end.
+- Built 4 November 2026, with the limit in `FlowEngine` rather than `FlowService.startReady`: the
+  engine marks a node running the moment it hands it out, so holding it back there keeps its states
+  true and is tested in kiln-core. Its constructor takes the limit and the `stop` nodes, which are
+  never held back, so a flow can always end. `ready()` settles every skip first, then hands out
+  places in written order in one pass. Held nodes stay pending; a `for-each` node counts once,
+  however many items it runs.
 - The flows guide and the format section of docs/design/flows.md describe it.
 
-## P4. The `for-each` node (planned)
+## P4. The `for-each` node (built)
 
 ```yaml
   - id: regions
@@ -145,10 +148,16 @@ Built, with these changes from the plan above:
 - **Runs.** Each item is an ordinary pipeline run with the item in its parameters, linked to the
   flow run, node and item number (`pipeline_run.flow_item`, 0-based; null for other nodes). The
   pipeline's one-run rule does not apply between runs of the same for-each node (ADR 0040 decision
-  5); the unique index is `(flow_run_id, flow_step, coalesce(flow_item, -1))`, so no item ever starts
-  twice. Writes to one asset still take turns through the target locks.
-- **Ending.** The node succeeds when every item's run succeeded, fails when any failed (after the
-  others end: items already started are not stopped), and is cancelled with the flow. It reports
+  5); the unique index is `(flow_run_id, flow_node, coalesce(flow_item, -1))` (migration V31), so no
+  item ever starts twice. Any other run of the pipeline still makes items wait (up to the flow's
+  `queue_timeout`), and a person's Run now of it is refused while items run. Two runs writing one
+  asset do not take turns: the second fails after `kilnmark.pipelines.wait-for-target` (30 s). So
+  with `max_parallel` above 1, saving refuses a for-each whose pipeline has a write whose target
+  does not use `${<as>}`.
+- **Ending.** Every item runs; the node succeeds when every item's run succeeded, and fails when any
+  failed, once all have ended. An item that could not be queued counts as failed. Cancelling the
+  flow, a `stop` node or a person cancelling one item's run cancels the running items, starts no
+  more and ends the node cancelled. It reports
   `items`, `succeeded` and `failed` (numbers) for conditions, e.g. `regions.failed = 0`.
 - **Run page.** The node's row says "3 of 5 items done, 1 failed", and lists each item's run with
   its value and a link. The run chart draws the node's bar from its first item's start to its last

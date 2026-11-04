@@ -17,7 +17,10 @@ import { kindOf, readFlowGraph, type FlowGraph, type Point } from "./graph";
 export type { Change };
 
 /** The node types the canvas adds, in the order it offers them. */
-export const NODE_TYPES = ["run-pipeline", "notify", "wait", "sql", "stop"] as const;
+export const NODE_TYPES = ["run-pipeline", "for-each", "notify", "wait", "sql", "stop"] as const;
+
+/** Whether a node of this type runs a saved pipeline, so the canvas asks which. */
+export const runsPipeline = (type: string) => type === "run-pipeline" || type === "for-each";
 export type NodeTypeName = (typeof NODE_TYPES)[number];
 
 const LAYOUT_COMMENT = " Where the diagram draws each node. Kilnmark ignores this when it runs the flow.";
@@ -139,6 +142,9 @@ function startingSettings(type: NodeTypeName, pipeline: string | undefined): [st
   switch (type) {
     case "run-pipeline":
       return pipeline ? [["pipeline", scalarYaml(pipeline)]] : [];
+    case "for-each":
+      // The items and the parameter each fills are the designer's to write; the checks ask for them.
+      return [...(pipeline ? [["pipeline", scalarYaml(pipeline)] as [string, string]] : []), ["items", "[]"]];
     case "notify":
       return [["title", scalarYaml("A notice from the flow")]];
     case "wait":
@@ -156,7 +162,7 @@ function startingSettings(type: NodeTypeName, pipeline: string | undefined): [st
  */
 export function addNode(text: string, type: NodeTypeName, opts: { pipeline?: string; at?: Point } = {}): Change {
   return change(text, (ctx) => {
-    const id = freshId(type === "run-pipeline" && opts.pipeline ? opts.pipeline : type, ctx.graph.nodes.map((n) => n.id));
+    const id = freshId(runsPipeline(type) && opts.pipeline ? opts.pipeline : type, ctx.graph.nodes.map((n) => n.id));
     appendItem(ctx, "nodes", [["id", scalarYaml(id)], ["type", type], ...startingSettings(type, opts.pipeline)], true);
     if (opts.at && Object.keys(ctx.graph.positions).length > 0) {
       writeLayoutBlock(ctx.doc, ctx.p, { [id]: opts.at }, [], LAYOUT_COMMENT);

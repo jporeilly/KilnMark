@@ -7,6 +7,23 @@ details.
 
 ### What's new
 
+- **Run one pipeline for each item, several at once** (ADR 0040). A flow's new `for-each` node runs
+  a pipeline once for each item of a list (regions, files, years), written in the flow or given as
+  a list parameter when it runs, with up to `max_parallel` of them at once. Every item runs; the
+  node fails if any did, and conditions can read how many succeeded and failed. The run page lists
+  each item with a link to its pipeline run. A flow's own `max_parallel` caps how many of its nodes
+  run at once. ([Running one pipeline for each item](docs/guide/flows.md#running-one-pipeline-for-each-item))
+
+- **Flow pages read like pipeline pages.** A flow run's page now opens with a **Summary** as a
+  pipeline run's does: status, version, who started it, its times, its nodes by how they stand, the
+  pipeline runs it asked for, the rows they wrote and the lowest quality among them. Then
+  **Where each node spent its time**: wall-clock time, most nodes at once, the longest node and the
+  time its pipeline runs were queued for a worker, and a bar per node split into working, queued
+  for a worker and waiting, all on the run's scale. A flow's page puts Diagram and YAML on tabs, with the Run, Runs and
+  Versions panel under them, as a pipeline's page does; its runs list gives how long each took and
+  the rows it wrote. The flow run API adds these totals and each pipeline run's times.
+  ([Reading a run](docs/guide/flows.md#reading-a-run))
+
 - **A limit on runs per source, and more workers** (ADR 0040). A source can set **Most runs at
   once** (1 to 100), a cap its administrators can agree to: pipeline runs and flow `sql` nodes
   beyond it wait their turn, oldest first, saying which source they wait for, and neither fail nor
@@ -26,7 +43,7 @@ details.
   width. The notifications guide now lists flow
   events too, and **Settings › Notifications** shows each event's description on its own line again.
 
-- **See a flow, and watch it run.** A flow's page draws it above the YAML: a box per node and an
+- **See a flow, and watch it run.** A flow's page draws it on a tab beside the YAML: a box per node and an
   arrow per connection, labelled with when it is taken, following the text as you type. A run's
   page draws the same diagram with each node's status as the run goes, and a run chart: a bar per
   node on one time line, a skipped node hatched, each bar opening the pipeline run it started.
@@ -99,6 +116,22 @@ details.
   or deleted, and can be sent to a SIEM. Admins read it under Settings, Audit log (ADR 0029).
 
 ### Details
+
+- **Parallel runs in flows** (ADR 0040, docs/design/flows.md section 8). A flow's top-level
+  `max_parallel` (1 to 50) holds ready nodes back, in the order written, while that many run; `stop`
+  nodes never wait. The `for-each` node takes `pipeline`, `version`, `items` (1 to 500 texts or
+  numbers, or a text list or number list parameter of up to 200), `as`, `with` and `max_parallel` (4
+  by default); saving checks that the pipeline takes `as` as one value of the items' kind, and, when
+  items run at once, that each writes its own asset (`${<as>}` in every write's target), since a run
+  waiting for another writing its asset fails after 30 seconds. Each item is an ordinary pipeline
+  run with `flow_item` set (migration V31, which moves the unique index to the flow run, node and
+  item); the items of one node are the one exception to a pipeline having at most one run queued or
+  running, so Run now on that pipeline is refused while they run. An item that cannot be queued
+  counts as failed. Cancelling one item's run cancels the flow. It reports `items`, `succeeded` and
+  `failed`. `GET /api/v1/flow-runs/{id}` lists a for-each
+  node's `items`, each with its value (withheld from viewers when it came from the run's values),
+  status and pipeline run. The diagram and the add-node form know the new type; the sample
+  `sample-for-each-region` shows it.
 
 - **Parallel runs, P1, P2 and P5** (ADR 0040, docs/design/parallel-runs.md). `kilnmark.worker.flows`
   (`KILNMARK_WORKER_FLOWS`, 8) replaces the fixed eight flows a worker watched;

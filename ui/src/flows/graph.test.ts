@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { bowOffsets, connectionSentence, readFlowGraph, whenWords } from "./graph";
+import { bowOffsets, connectionSentence, readFlowGraph, TYPE_WORDS, whenWords } from "./graph";
 
 const FLOW = `kilnmark: flow/v1
 name: nightly-customers
@@ -136,5 +136,40 @@ describe("bowOffsets", () => {
     expect(offsets[1]).toBe(0);
     // a-b has three: -36, 0, 36 in one frame; b→a is turned round, so its offset changes sign.
     expect([offsets[0], offsets[2], -offsets[3]]).toEqual([-36, 0, 36]);
+  });
+});
+
+describe("for-each nodes", () => {
+  test("say what they run, and over how many items or which parameter", () => {
+    const r = readFlowGraph(`kilnmark: flow/v1
+name: per-region
+nodes:
+  - id: regions
+    type: for-each
+    pipeline: sales-by-region
+    items: [EMEA, APAC, AMER]
+    as: region
+  - id: one
+    type: for-each
+    pipeline: sales-by-region
+    items: [EMEA]
+    as: region
+  - id: given
+    type: for-each
+    pipeline: sales-by-year
+    items: "\${years}"
+    as: year
+  - id: bare
+    type: for-each
+`);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.graph.nodes.map((n) => n.summary)).toEqual([
+      "sales-by-region for each of 3 items",
+      "sales-by-region for each of 1 item",
+      "sales-by-year for each of years",
+      "a pipeline for each item",
+    ]);
+    expect(TYPE_WORDS["for-each"]).toBe("Runs a pipeline for each item");
   });
 });

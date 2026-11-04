@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { addNode, clearLayout, connect, connectProblem, disconnect, removeNode, setPositions, setWhen, type Change } from "./edit";
+import { addNode, clearLayout, connect, connectProblem, disconnect, NODE_TYPES, removeNode, runsPipeline, setPositions, setWhen, type Change } from "./edit";
 import { readFlowGraph } from "./graph";
 
 const FLOW = `kilnmark: flow/v1
@@ -172,5 +172,21 @@ describe("the layout block", () => {
     const placed = ok(setPositions(FLOW, { clean: { x: 1, y: 2 } }));
     expect(ok(clearLayout(placed))).toBe(FLOW);
     expect(ok(clearLayout(FLOW))).toBe(FLOW);
+  });
+});
+
+describe("for-each nodes", () => {
+  test("the canvas offers them, named after their pipeline, with items for the designer to write", () => {
+    expect(NODE_TYPES).toContain("for-each");
+    expect(runsPipeline("for-each")).toBe(true);
+    expect(runsPipeline("run-pipeline")).toBe(true);
+    expect(runsPipeline("wait")).toBe(false);
+    const c = addNode(FLOW, "for-each", { pipeline: "sales-by-region" });
+    expect("id" in c && c.id).toBe("sales-by-region");
+    const text = ok(c);
+    expect(text).toContain("  - id: sales-by-region\n    type: for-each\n    pipeline: sales-by-region\n    items: []\n");
+    const g = graphOf(text);
+    expect(g.nodes.at(-1)).toEqual({ id: "sales-by-region", type: "for-each", summary: "sales-by-region for each of 0 items" });
+    expect(graphOf(ok(addNode(FLOW, "for-each"))).nodes.at(-1)?.id).toBe("for-each");
   });
 });

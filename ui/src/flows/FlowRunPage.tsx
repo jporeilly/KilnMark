@@ -2,52 +2,63 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import {
   allows,
   flowsApi,
-  formatNumber,
   formatTime,
   type AccessRole,
-  type FlowNodeRun,
+  type FlowItemRun,
   type FlowNodeStatus,
   type FlowRunDetail,
 } from "../api";
 import { href } from "../router";
 import { useTitle } from "../components/useTitle";
-import { formatDuration } from "../pipelines/RunStatus";
+import { itemsProgress } from "./chart";
 import { FlowRunChart } from "./FlowRunChart";
+import { FlowRunFacts, FlowTimeSpent, took } from "./FlowRunSummary";
 import { readFlowGraph, TYPE_WORDS, type FlowGraphResult } from "./graph";
-import { FlowRunStatus, FlowStatus } from "./RunFlow";
+import { FlowStatus } from "./RunFlow";
+import { reportedWords } from "./runFacts";
 import "../pipelines/pipelines.css";
 
 const FlowDiagram = lazy(() => import("./FlowDiagram"));
 
 const LOOK_MS = 2000;
 
-/** How long something took, or has taken so far; a dash before it starts. */
-function took(start: string | null, end: string | null): string {
-  if (!start) return "–";
-  return formatDuration((end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime());
-}
-
-/** What a node reported, in words: rows written, score, share set aside, rows changed. */
-export function reportedWords(n: FlowNodeRun): string {
-  const r = n.reported ?? {};
-  const out: string[] = [];
-  const num = (k: string) => (typeof r[k] === "number" ? (r[k] as number) : null);
-  const written = num("rows_written");
-  if (written != null) out.push(`${formatNumber(written)} rows written`);
-  const score = num("score");
-  if (score != null) out.push(`score ${Math.round(score * 100)}%`);
-  const aside = num("quarantined_share");
-  if (aside != null) out.push(`${(aside * 100).toFixed(aside < 0.1 ? 1 : 0)}% set aside`);
-  const changed = num("rows_affected");
-  if (changed != null) out.push(`${formatNumber(changed)} rows changed`);
-  return out.join(", ");
+/**
+ * A for-each node's items: each value with its status and a link to its pipeline run. Open while
+ * there are few; with many, closed until asked for. A value withheld from viewers is said as such.
+ */
+function ItemRuns({ node, items }: { node: string; items: FlowItemRun[] }) {
+  return (
+    <details className="small fr-items" open={items.length <= 10}>
+      <summary>
+        Items of {node} ({items.length})
+      </summary>
+      <ol>
+        {items.map((i) => (
+          <li key={i.item}>
+            {i.value == null ? <span className="muted">Item {i.item + 1}</span> : <span className="mono">{String(i.value)}</span>}{" "}
+            <FlowStatus status={i.status} />
+            {i.pipelineRunId != null ? (
+              <>
+                {" "}
+                <a href={href.pipelineRun(i.pipelineRunId)}>Pipeline run {i.pipelineRunId}</a>
+              </>
+            ) : (
+              i.status === "failed" && <span className="muted"> Could not be started; the node's message says why.</span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
 }
 
 /**
- * One flow run: its status, who started it and with which values; the diagram of its version with
- * each node's status on it; the run chart; and each node in order, with its status, time and
- * message, linked to the pipeline run it started. Looked at every two seconds while it is queued
- * or running. Stewards can cancel it while it goes.
+ * One flow run, laid out as a pipeline run is: its summary (status, version, who started it, its
+ * times, its nodes by how they stand, and what its pipeline runs came to) and the values it ran
+ * with; where each node spent its time; the diagram of its version with each node's status on it;
+ * the run chart; and each node in order, with its status, time and message, linked to the pipeline
+ * run it started. Looked at every two seconds while it is queued or running. Stewards can cancel
+ * it while it goes.
  */
 export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
   useTitle(`Flow run ${id}`);
@@ -58,6 +69,8 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
   const [cancelling, setCancelling] = useState(false);
   // The diagram's YAML: the run's own version, read once.
   const [graph, setGraph] = useState<FlowGraphResult | null>(null);
+  // The page's clock, read when an answer arrives, so running bars and times move with each look.
+  const [now, setNow] = useState(() => Date.now());
 
   // Only the latest answer counts: an earlier look can arrive after a later one.
   const sequence = useRef(0);
@@ -68,6 +81,7 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
       .then((d) => {
         if (sequence.current !== mine) return;
         setDetail(d);
+        setNow(Date.now());
         setError(null);
       })
       .catch((e: Error) => {
@@ -157,20 +171,6 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
           </div>
         )}
       </div>
-      <p>
-        <FlowRunStatus run={run} />{" "}
-        <span className="small muted">
-          <a href={href.flow(run.flow, run.version)}>Version {run.version}</a>, started by {run.requestedBy}
-          {run.requestedRole ? ` (${run.requestedRole})` : ""}, asked for {formatTime(run.requestedAt)}
-          {run.startedAt && (
-            <>
-              ; {run.finishedAt ? "took" : "running for"} {took(run.startedAt, run.finishedAt)}
-            </>
-          )}
-          .
-        </span>
-      </p>
-      {run.error && <p className={run.status === "failed" ? "error" : "small muted"}>{run.error}</p>}
       <p role="status" className="notice">
         {going ? notice : ""}
       </p>
@@ -179,6 +179,10 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
           {error}
         </p>
       )}
+      <section aria-labelledby="fr-run-h" className="panel">
+        <h2 id="fr-run-h">Summary</h2>
+        <FlowRunFacts detail={detail} now={now} />
+      </section>
       {values.length > 0 && (
         <section aria-labelledby="fr-values-h" className="panel">
           <h2 id="fr-values-h">Values it ran with</h2>
@@ -192,6 +196,10 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
           </dl>
         </section>
       )}
+      <section aria-labelledby="fr-spent-h" className="panel">
+        <h2 id="fr-spent-h">Where each node spent its time</h2>
+        <FlowTimeSpent detail={detail} now={now} />
+      </section>
       <section aria-labelledby="fr-diagram-h" className="panel">
         <h2 id="fr-diagram-h">Diagram</h2>
         {graph == null ? (
@@ -206,7 +214,7 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
       </section>
       <section aria-labelledby="fr-chart-h" className="panel">
         <h2 id="fr-chart-h">Run chart</h2>
-        <FlowRunChart detail={detail} now={Date.now()} />
+        <FlowRunChart detail={detail} now={now} />
       </section>
       <section aria-labelledby="fr-nodes-h" className="panel">
         <h2 id="fr-nodes-h">Nodes</h2>
@@ -223,7 +231,8 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
             </thead>
             <tbody>
               {nodes.map((n) => {
-                const said = [n.message, reportedWords(n)].filter(Boolean).join(". ");
+                const progress = n.items && n.items.length > 0 ? itemsProgress(n.items) : null;
+                const said = [n.message === progress ? null : n.message, reportedWords(n)].filter(Boolean).join(". ");
                 return (
                   <tr key={n.node}>
                     <th scope="row">
@@ -241,9 +250,11 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
                       <FlowStatus status={n.status} />
                     </td>
                     <td>{n.startedAt ? formatTime(n.startedAt) : "–"}</td>
-                    <td>{took(n.startedAt, n.finishedAt)}</td>
+                    <td>{took(n.startedAt, n.finishedAt, now)}</td>
                     <td>
-                      {said || <span className="muted">–</span>}
+                      {progress && <div>{progress}.</div>}
+                      {said || (!progress && <span className="muted">–</span>)}
+                      {progress && n.items && <ItemRuns node={n.node} items={n.items} />}
                       {n.pipelineRunId != null && (
                         <div className="small">
                           <a href={href.pipelineRun(n.pipelineRunId)}>Pipeline run {n.pipelineRunId}</a>
