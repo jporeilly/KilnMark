@@ -48,6 +48,8 @@ function savedView(): View {
 }
 /** The tabs of the panel under the flow, as a pipeline's: its latest run, its runs and its versions. */
 const DOCK_TABS: DockTab[] = ["run", "runs", "versions"];
+/** Whether that panel is open, remembered apart from the pipeline page's. */
+const FLOW_DOCK_KEY = "kilnmark.flow.panel";
 
 /**
  * One flow, laid out as a pipeline's page is: its diagram or its YAML, one tab at a time, both
@@ -97,9 +99,10 @@ export function FlowPage({ name, version, role }: { name: string | null; version
       // A remembered view is a convenience only.
     }
   }, []);
-  const dock = useDock(dockId);
+  const dock = useDock(dockId, FLOW_DOCK_KEY);
   const dockTab: DockTab = DOCK_TABS.includes(dock.tab) ? dock.tab : "run";
-  // The latest run in full, for the Run tab: looked at again whenever the runs list is.
+  // The latest run in full, for the Run tab: read only while that tab is shown, and again whenever
+  // the runs list is.
   const [latestRun, setLatestRun] = useState<FlowRunDetail | null>(null);
   const [latestError, setLatestError] = useState<string | null>(null);
 
@@ -161,12 +164,14 @@ export function FlowPage({ name, version, role }: { name: string | null; version
     return () => window.clearInterval(t);
   }, [active, loadLists]);
 
+  const runShown = !isNew && dockTab === "run" && dock.open;
   useEffect(() => {
     const id = runs?.[0]?.id;
     if (id == null) {
       setLatestRun(null);
       return;
     }
+    if (!runShown) return;
     let live = true;
     flowsApi
       .runDetail(id)
@@ -179,7 +184,7 @@ export function FlowPage({ name, version, role }: { name: string | null; version
     return () => {
       live = false;
     };
-  }, [runs]);
+  }, [runs, runShown]);
 
   const text = viewing ? (shown?.yaml ?? "") : yaml;
   // The diagram follows the text once typing pauses, and keeps the last flow it could read while

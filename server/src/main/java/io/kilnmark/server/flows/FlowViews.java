@@ -50,9 +50,9 @@ public final class FlowViews {
      * A flow run, without its nodes. {@code parameters} are the values it started with, for stewards
      * and above; null for viewers, since they can hold server variables. {@code error} is in
      * Kilnmark's words and the flow's own, never a pipeline's error. {@code pipelineRuns} is how many
-     * pipeline runs it has started, {@code rowsWritten} the rows they wrote in all (null until one
-     * says) and {@code qualityScore} the lowest measured score (0 to 1) among them, each the lowest of
-     * what that run wrote (null when nothing was measured).
+     * pipeline runs it has asked for (queued, running or ended), {@code rowsWritten} the rows they
+     * wrote in all (null until one says) and {@code qualityScore} the lowest measured score (0 to 1)
+     * among them, each the lowest of what that run wrote (null when nothing was measured).
      */
     public record RunSummary(long id, String flow, int version, String status, String requestedBy,
                              String requestedRole, Instant requestedAt, Instant startedAt, Instant finishedAt,

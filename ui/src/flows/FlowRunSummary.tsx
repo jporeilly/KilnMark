@@ -7,7 +7,16 @@ import { ScoreChip } from "../pipelines/RunSummary";
 import { offsetWords, shareWords } from "../pipelines/timeline";
 import { itemsProgress } from "./chart";
 import { FlowRunStatus } from "./RunFlow";
-import { flowShares, flowTimeSpent, flowTotals, nodeCountWords, reportedWords, waitWords, type FlowSpentRow } from "./runFacts";
+import {
+  barWidths,
+  flowShares,
+  flowTimeSpent,
+  flowTotals,
+  nodeCountWords,
+  reportedWords,
+  waitWords,
+  type FlowSpentRow,
+} from "./runFacts";
 import "./flows.css";
 
 /** How long something took, or has taken so far; a dash before it starts. */
@@ -55,14 +64,15 @@ export function FlowRunFacts({ detail, now }: { detail: FlowRunDetail; now?: num
         <dt>Nodes</dt>
         <dd>{nodeCountWords(detail.nodes)}</dd>
         <dt>Pipeline runs</dt>
-        <dd>{formatNumber(totals.pipelineRuns)} started</dd>
+        <dd>{formatNumber(totals.pipelineRuns)} asked for</dd>
         <dt>Rows written</dt>
         <dd>
           {totals.rowsWritten == null ? (
             <span className="muted">{going ? "Known as its pipeline runs end." : "Not known."}</span>
           ) : (
             <>
-              {formatNumber(totals.rowsWritten)} <span className="small muted">by its pipeline runs, in all</span>
+              {formatNumber(totals.rowsWritten)}{" "}
+              <span className="small muted">by its pipeline runs, {going ? "so far" : "in all"}</span>
             </>
           )}
         </dd>
@@ -93,33 +103,36 @@ function result(detail: FlowRunDetail, node: string): string | null {
   return reportedWords(n) || null;
 }
 
-function Segments({ r }: { r: FlowSpentRow }) {
+/** A node's bar on the run's scale: split into its parts, or one plain part when it cannot be split. */
+function Segments({ r, span }: { r: FlowSpentRow; span: number }) {
   const s = flowShares(r);
+  const w = barWidths(r, span);
   const pc = (x: number) => `${(x * 100).toFixed(2)}%`;
   return (
     <span className="pl-ts-bar">
-      {s.working > 0 && <span className="pl-ts-working" style={{ width: pc(s.working) }} title={`Working ${shareWords(s.working)}`} />}
-      {s.queued > 0 && (
-        <span className="pl-ts-heldup" style={{ width: pc(s.queued) }} title={`Queued for a worker ${shareWords(s.queued)}`} />
+      {w.plain > 0 && <span className="fr-ts-plain" style={{ width: pc(w.plain) }} title="Not split" />}
+      {w.working > 0 && <span className="pl-ts-working" style={{ width: pc(w.working) }} title={`Working ${shareWords(s.working)}`} />}
+      {w.queued > 0 && (
+        <span className="pl-ts-heldup" style={{ width: pc(w.queued) }} title={`Queued for a worker ${shareWords(s.queued)}`} />
       )}
-      {s.waiting > 0 && <span className="pl-ts-waiting" style={{ width: pc(s.waiting) }} title={`Waiting ${shareWords(s.waiting)}`} />}
+      {w.waiting > 0 && <span className="pl-ts-waiting" style={{ width: pc(w.waiting) }} title={`Waiting ${shareWords(s.waiting)}`} />}
     </span>
   );
 }
 
 const rowLabel = (r: FlowSpentRow, span: number) => {
-  if (!r.split) {
-    return `${r.node}: ${offsetWords(r.active)}${r.running ? " so far" : ""}, ${shareWords(Math.min(1, r.active / span))} of the run, not split`;
-  }
+  const time = `${offsetWords(r.active)}${r.running ? " so far" : ""}, ${shareWords(Math.min(1, r.active / span))} of the run`;
+  if (!r.split) return `${r.node}: ${time}, not split: its pipeline run times are not known`;
   const s = flowShares(r);
-  return `${r.node}: working ${shareWords(s.working)}, queued for a worker ${shareWords(s.queued)}, waiting ${shareWords(s.waiting)}${r.running ? ", so far" : ""}`;
+  return `${r.node}: ${time}; working ${shareWords(s.working)}, queued for a worker ${shareWords(s.queued)}, waiting ${shareWords(s.waiting)}`;
 };
 
 /**
  * Where each node spent its time (docs/guide/flows.md, "Reading a run"), as a pipeline run shows
- * it: the run at a glance in tiles, what it waited for in one line, and per node a bar of 100%
- * split into working, queued for a worker and waiting, each with its own pattern. A table says the
- * same. From the times recorded for each node and each pipeline run it started.
+ * it: the run at a glance in tiles, what it waited for in one line, and per node a bar on the
+ * run's scale split into working, queued for a worker and waiting, each with its own pattern (one
+ * plain bar for a node whose pipeline run times are not known). A table says the same. From the
+ * times recorded for each node and each pipeline run it asked for.
  */
 export function FlowTimeSpent({ detail, now }: { detail: FlowRunDetail; now: number }) {
   const spent = flowTimeSpent(detail, now);
@@ -155,15 +168,17 @@ export function FlowTimeSpent({ detail, now }: { detail: FlowRunDetail; now: num
         />
         <StatTile
           label="Queued for a worker"
-          value={queued && queued.runs > 0 ? offsetWords(queued.ms) : "–"}
+          value={queued.runs > 0 ? offsetWords(queued.ms) : "–"}
           icon={<IconClockPause size={18} aria-hidden="true" />}
           tint="amber"
           note={
-            queued == null
-              ? "not recorded for this run"
+            queued.of === 0
+              ? "no pipeline runs"
               : queued.runs === 0
-                ? "no pipeline runs"
-                : `in all, across ${queued.runs} ${queued.runs === 1 ? "pipeline run" : "pipeline runs"}`
+                ? "not recorded for this run"
+                : queued.runs < queued.of
+                  ? `in all, across ${queued.runs} of ${queued.of} pipeline runs`
+                  : `in all, across ${queued.runs} ${queued.runs === 1 ? "pipeline run" : "pipeline runs"}`
           }
         />
       </section>
@@ -188,15 +203,11 @@ export function FlowTimeSpent({ detail, now }: { detail: FlowRunDetail; now: num
                 )}
               </span>
               <span className="pl-ts-track" role="img" aria-label={rowLabel(r, spent.span)}>
-                {r.split ? (
-                  <Segments r={r} />
-                ) : (
-                  <span className="fr-ts-plain" style={{ width: `${Math.min(100, (r.active / spent.span) * 100).toFixed(2)}%` }} />
-                )}
+                <Segments r={r} span={spent.span} />
               </span>
               <span className="pl-ts-result small">
                 <strong>
-                  {r.split ? `${shareWords(s.working)} working` : `${offsetWords(r.active)}${r.running ? " so far" : ""}`}
+                  {r.split ? `${shareWords(s.working)} working` : `${offsetWords(r.active)}${r.running ? " so far" : ""}, not split`}
                 </strong>
                 {said && <> · {said}</>}
               </span>
@@ -204,17 +215,21 @@ export function FlowTimeSpent({ detail, now }: { detail: FlowRunDetail; now: num
           );
         })}
       </ul>
-      {spent.rows.some((r) => r.split) ? (
-        <p className="small muted pl-tl-key" aria-hidden="true">
-          <span className="pl-ts-working" /> Working <span className="pl-ts-heldup" /> Queued for a worker{" "}
-          <span className="pl-ts-waiting" /> Waiting
-        </p>
-      ) : (
-        <p className="small muted pl-tl-key">
-          Each bar is the node&apos;s share of the run. This run&apos;s pipeline run times were not recorded, so its time is not
-          split into working, queued and waiting.
-        </p>
-      )}
+      <p className="small muted pl-tl-key" aria-hidden="true">
+        <span className="pl-ts-working" /> Working <span className="pl-ts-heldup" /> Queued for a worker{" "}
+        <span className="pl-ts-waiting" /> Waiting
+        {spent.rows.some((r) => !r.split) && (
+          <>
+            {" "}
+            <span className="fr-ts-plain" /> Not split
+          </>
+        )}
+      </p>
+      <p className="small muted">
+        Each bar is as long as the node&apos;s time, on the run&apos;s scale.
+        {spent.rows.some((r) => !r.split) &&
+          " A bar that is not split is a node whose pipeline run times are not known: its run was deleted, or is from before they were recorded."}
+      </p>
       <details className="pl-tl-table">
         <summary>Show where each node spent its time as a table</summary>
         <div className="table-scroll" role="region" aria-label="Where each node spent its time, as a table" tabIndex={0}>

@@ -23,9 +23,9 @@ const LABELS: Record<DockTab, string> = {
 
 export const DOCK_OPEN_KEY = "kilnmark.pipeline.panel";
 
-function savedOpen(): boolean {
+function savedOpen(key: string): boolean {
   try {
-    return window.localStorage.getItem(DOCK_OPEN_KEY) !== "collapsed";
+    return window.localStorage.getItem(key) !== "collapsed";
   } catch {
     return true;
   }
@@ -43,18 +43,24 @@ export type DockControl = {
   panel: () => HTMLElement | null;
 };
 
-/** The panel's state: the tab shown and whether it is open, remembered per viewer. */
-export function useDock(idBase: string) {
+/**
+ * The panel's state: the tab shown and whether it is open, remembered per viewer under `openKey`
+ * (pages other than a pipeline's keep their own, so collapsing one does not collapse the other).
+ */
+export function useDock(idBase: string, openKey: string = DOCK_OPEN_KEY) {
   const [tab, setTab] = useState<DockTab>("settings");
-  const [open, setOpenState] = useState<boolean>(savedOpen);
-  const setOpen = useCallback((o: boolean) => {
-    setOpenState(o);
-    try {
-      window.localStorage.setItem(DOCK_OPEN_KEY, o ? "open" : "collapsed");
-    } catch {
-      // A remembered panel is a convenience only.
-    }
-  }, []);
+  const [open, setOpenState] = useState<boolean>(() => savedOpen(openKey));
+  const setOpen = useCallback(
+    (o: boolean) => {
+      setOpenState(o);
+      try {
+        window.localStorage.setItem(openKey, o ? "open" : "collapsed");
+      } catch {
+        // A remembered panel is a convenience only.
+      }
+    },
+    [openKey],
+  );
   const show = useCallback(
     (t: DockTab) => {
       setTab(t);

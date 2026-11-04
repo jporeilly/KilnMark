@@ -349,6 +349,12 @@ class FlowRunTest {
         assertEquals("Node copy failed (the pipeline fl-copy)", failed.error());
         assertTrue(node(gives.id(), "copy").message().startsWith("Waited 1 seconds for fl-copy"),
             node(gives.id(), "copy").message());
+        // What the run page reads its wait from: the node's own times, with no pipeline run of its own.
+        FlowViews.NodeRunView gaveUp = flows.runDetail(gives.id(), false).nodes().get(0);
+        assertNull(gaveUp.pipelineRunTimes());
+        assertTrue(Duration.between(gaveUp.startedAt(), gaveUp.finishedAt()).toMillis() >= 1000,
+            "the node's times span its wait");
+        assertEquals(0, flows.runDetail(gives.id(), false).run().pipelineRuns());
         as(designer).post("/api/v1/pipeline-runs/" + again + "/cancel").then().statusCode(200);
         await("the direct run to be cancelled", () -> pipelineStore.run(again).orElseThrow().status(), "cancelled"::equals);
         HoldingGraphRunner.hold = false;

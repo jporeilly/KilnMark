@@ -16,10 +16,10 @@ details.
 
 - **Flow pages read like pipeline pages.** A flow run's page now opens with a **Summary** as a
   pipeline run's does: status, version, who started it, its times, its nodes by how they stand, the
-  pipeline runs it started, the rows they wrote in all and the lowest quality among them. Then
+  pipeline runs it asked for, the rows they wrote and the lowest quality among them. Then
   **Where each node spent its time**: wall-clock time, most nodes at once, the longest node and the
   time its pipeline runs were queued for a worker, and a bar per node split into working, queued
-  for a worker and waiting. A flow's page puts Diagram and YAML on tabs, with the Run, Runs and
+  for a worker and waiting, all on the run's scale. A flow's page puts Diagram and YAML on tabs, with the Run, Runs and
   Versions panel under them, as a pipeline's page does; its runs list gives how long each took and
   the rows it wrote. The flow run API adds these totals and each pipeline run's times.
   ([Reading a run](docs/guide/flows.md#reading-a-run))

@@ -55,8 +55,8 @@ function ItemRuns({ node, items }: { node: string; items: FlowItemRun[] }) {
 /**
  * One flow run, laid out as a pipeline run is: its summary (status, version, who started it, its
  * times, its nodes by how they stand, and what its pipeline runs came to) and the values it ran
- * with; where each node spent its time; the run chart; the diagram of its version with each node's
- * status on it; and each node in order, with its status, time and message, linked to the pipeline
+ * with; where each node spent its time; the diagram of its version with each node's status on it;
+ * the run chart; and each node in order, with its status, time and message, linked to the pipeline
  * run it started. Looked at every two seconds while it is queued or running. Stewards can cancel
  * it while it goes.
  */
@@ -200,10 +200,6 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
         <h2 id="fr-spent-h">Where each node spent its time</h2>
         <FlowTimeSpent detail={detail} now={now} />
       </section>
-      <section aria-labelledby="fr-chart-h" className="panel">
-        <h2 id="fr-chart-h">Run chart</h2>
-        <FlowRunChart detail={detail} now={now} />
-      </section>
       <section aria-labelledby="fr-diagram-h" className="panel">
         <h2 id="fr-diagram-h">Diagram</h2>
         {graph == null ? (
@@ -215,6 +211,10 @@ export function FlowRunPage({ id, role }: { id: number; role: AccessRole }) {
         ) : (
           <p className="muted">{graph.error}</p>
         )}
+      </section>
+      <section aria-labelledby="fr-chart-h" className="panel">
+        <h2 id="fr-chart-h">Run chart</h2>
+        <FlowRunChart detail={detail} now={now} />
       </section>
       <section aria-labelledby="fr-nodes-h" className="panel">
         <h2 id="fr-nodes-h">Nodes</h2>

@@ -541,7 +541,7 @@ public class PipelineStore {
     }
 
     /**
-     * What the pipeline runs of one flow run came to: how many it started, the rows they wrote in all
+     * What the pipeline runs of one flow run came to: how many it asked for, the rows they wrote in all
      * (null when none has said yet) and the lowest quality score among them (null when none was
      * measured). Each run's score is already the lowest of what it wrote.
      */
@@ -567,6 +567,28 @@ public class PipelineStore {
                         double score = rs.getDouble(4);
                         Double scoreV = rs.wasNull() ? null : score;
                         out.put(rs.getLong(1), new FlowTotals(rs.getInt(2), rowsV, scoreV));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
+    /** When a run was asked for, taken by a worker and finished; null until each happens. */
+    public record RunTimes(Instant requestedAt, Instant startedAt, Instant finishedAt) {
+    }
+
+    /** The times of every pipeline run one flow run started, by pipeline run, in one query. */
+    public java.util.Map<Long, RunTimes> flowRunTimes(long flowRunId) {
+        return db.tx(c -> {
+            java.util.Map<Long, RunTimes> out = new java.util.HashMap<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT r.id, r.requested_at, r.started_at, r.finished_at "
+                + "FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ?")) {
+                ps.setLong(1, flowRunId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.put(rs.getLong(1), new RunTimes(Db.instant(rs.getTimestamp(2)),
+                            Db.instant(rs.getTimestamp(3)), Db.instant(rs.getTimestamp(4))));
                     }
                 }
             }

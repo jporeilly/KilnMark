@@ -615,6 +615,7 @@ public class FlowService {
         }
         Map<String, FlowStore.NodeRun> recorded = new LinkedHashMap<>();
         store.nodeRuns(id).forEach(n -> recorded.put(n.nodeId(), n));
+        Map<Long, PipelineStore.RunTimes> times = pipelineStore.flowRunTimes(id);
         List<FlowViews.NodeRunView> nodes = new ArrayList<>();
         int position = 0;
         for (FlowDefinition.Node n : declared.values()) {
@@ -623,10 +624,10 @@ public class FlowService {
             nodes.add(s == null
                 ? new FlowViews.NodeRunView(n.id(), n.type(), position, "pending", null, null, null, n.pipeline(), null,
                     null, items, null)
-                : nodeView(s, n.pipeline(), values, items, pipelineRunTimes(s)));
+                : nodeView(s, n.pipeline(), values, items, pipelineRunTimes(s, times)));
             position++;
         }
-        recorded.values().forEach(s -> nodes.add(nodeView(s, null, values, null, pipelineRunTimes(s))));
+        recorded.values().forEach(s -> nodes.add(nodeView(s, null, values, null, pipelineRunTimes(s, times))));
         return new FlowViews.RunDetail(view(r, values, pipelineStore.flowTotals(List.of(r.id()))), nodes);
     }
 
@@ -702,13 +703,14 @@ public class FlowService {
             s.pipelineRunId(), pipeline, values ? s.message() : withoutValues(s), tree(s.reported()), items, times);
     }
 
-    /** The times of the pipeline run a node started, or null when it started none (or it is gone). */
-    private FlowViews.PipelineRunTimes pipelineRunTimes(FlowStore.NodeRun s) {
-        if (s.pipelineRunId() == null) {
-            return null;
-        }
-        return pipelineStore.run(s.pipelineRunId())
-            .map(pr -> new FlowViews.PipelineRunTimes(pr.requestedAt(), pr.startedAt(), pr.finishedAt())).orElse(null);
+    /**
+     * The times of the pipeline run a node started, from the flow run's pipeline-run times; null when
+     * it started none, or that run is gone.
+     */
+    private static FlowViews.PipelineRunTimes pipelineRunTimes(FlowStore.NodeRun s,
+                                                               Map<Long, PipelineStore.RunTimes> times) {
+        PipelineStore.RunTimes t = s.pipelineRunId() == null ? null : times.get(s.pipelineRunId());
+        return t == null ? null : new FlowViews.PipelineRunTimes(t.requestedAt(), t.startedAt(), t.finishedAt());
     }
 
     /** What a message from which values are left out says instead of them. */

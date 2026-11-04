@@ -154,7 +154,7 @@ Designers can change the flow on the diagram as well as in the YAML. Each change
 the YAML at once, changing only the lines it must, so your comments and spacing stay as they
 are. Nothing is saved until you save a new version.
 
-![The Diagram section of a flow's page: a node that runs a pipeline joined to a notice and to a second pipeline by two amber connections, each labelled with its condition on the share of customers set aside; under it, the forms to add a node (type and pipeline) and to connect two nodes (from, to and when it is taken)](images/flow-diagram-edit.png)
+![The Diagram tab of a flow's page: a node that runs a pipeline joined to a notice and to a second pipeline by two amber connections, each labelled with its condition on the share of customers set aside; under it, the forms to add a node (type and pipeline) and to connect two nodes (from, to and when it is taken)](images/flow-diagram-edit.png)
 
 - **Add a node.** Under the diagram, choose its type (and, for one that runs a pipeline, the
   pipeline), then **Add node**. It gets an id from its type or pipeline, and the settings it starts
@@ -219,17 +219,20 @@ A run page is laid out as a pipeline run's, in this order:
 
 - **Summary**: its status, the version that ran, who started it, when it was asked for, started and
   finished, and how long it took; its nodes by how they stand ("2 succeeded, 1 skipped"); how many
-  pipeline runs it started, the rows they wrote in all, and the lowest quality score among them
-  (each pipeline run's score is already the lowest of what it wrote). If the run failed, or a stop
-  node gave a message, it is said under the summary.
+  pipeline runs it asked for, the rows they wrote (so far, while it runs), and the lowest quality
+  score among them (each pipeline run's score is already the lowest of what it wrote). If the run
+  failed, or a stop node gave a message, it is said under the summary.
 - **Values it ran with**, for stewards and above. Viewers do not see them, nor the messages that
   quote them, since they can hold server variables.
 - **Where each node spent its time**: four tiles give the run at a glance: its **wall-clock time**,
   the **most nodes at once**, the **longest node** and its share of the run, and the time its
   pipeline runs were **queued for a worker**, added up. A line under them says what the run waited
-  for: workers, a pipeline busy with another run (a pipeline runs once at a time), and its `wait`
-  nodes; and, when several ran together, the most pipeline runs at once. Then a bar per node that
-  started, split three ways, each with its own pattern:
+  for: workers; a pipeline busy with another run (a pipeline runs once at a time), counted until a
+  node asked for its run or, if it gave up, until it ended; time a `for-each` node had no item
+  running or queued (Kilnmark does not record whether it waited for a busy pipeline or between
+  items, and says so); its `wait` nodes; and, when several ran together, the most pipeline runs at
+  once. Then a bar per node that started, each as long as its time on the run's scale, so bars
+  compare, and split three ways, each with its own pattern:
   - **Working**: its pipeline running (for a `for-each` node, any of its items), or its own work,
     such as a `sql` node's statements or a notice;
   - **Queued for a worker**: none of its pipeline runs running, and one waiting for a worker;
@@ -238,13 +241,14 @@ A run page is laid out as a pipeline run's, in this order:
 
   Beside each bar, its share working and what it did. **Show where each node spent its time as a
   table** gives the same as figures. All of it comes from the times Kilnmark records for each node
-  and each pipeline run; for runs from before these were recorded, each bar is just the node's
-  share of the run, not split.
+  and each pipeline run. A node whose pipeline run times are not known (its pipeline run was
+  deleted, or the run is from before these were recorded) has a plain bar, not split; the tiles and
+  the line then add up what is known and say of how many pipeline runs.
+- the **diagram** of that version, each node outlined and labelled with how it stands in the run,
+  kept current while the run goes;
 - the **run chart**: a bar for each node on one time line from the run's start, with its status
   beside it: green when it succeeded, red when it failed, striped blue while it runs; a skipped
   node is hatched across its row. A bar for a node that ran a pipeline opens that pipeline run;
-- the **diagram** of that version, each node outlined and labelled with how it stands in the run,
-  kept current while the run goes;
 - **Nodes**: every node of that version in order: its status (Not started, Running, Succeeded,
   Failed, Cancelled or Skipped), when it started, how long it took, and what happened, such as the
   rows a pipeline wrote and its score, with a link to its **pipeline run**, where its nodes, rows
@@ -254,7 +258,7 @@ A run page is laid out as a pipeline run's, in this order:
   runs from its first item's start to its last item's end. Viewers see the items' values when they
   are written in the flow, not when they came from the run's values.
 
-![A run page: the run succeeded; its diagram shows the two pipeline nodes outlined green as Succeeded and the notice node dashed as Skipped; the run chart has a bar for each pipeline node, one after the other, and a hatched row for the skipped one; the Nodes table gives each node's status, start, time taken, rows written and score, with a link to its pipeline run](images/flow-run-page.png)
+![The Diagram, Run chart and Nodes panels of a run page that succeeded: the diagram shows the two pipeline nodes outlined green as Succeeded and the notice node dashed as Skipped; the run chart has a bar for each pipeline node, one after the other, and a hatched row for the skipped one; the Nodes table gives each node's status, start, time taken, rows written and score, with a link to its pipeline run](images/flow-run-page.png)
 
 A node's message says that a pipeline failed and where to look, never why: why can quote values
 from the data, and the pipeline run's own page shows it to those who may see it.

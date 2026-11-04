@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { FlowItemRun, FlowNodeRun, FlowRunDetail } from "../api";
-import { flowShares, flowTimeSpent, flowTotals, nodeCountWords, peak, reportedWords, splitTime, waitWords } from "./runFacts";
+import { barWidths, flowShares, flowTimeSpent, flowTotals, nodeCountWords, peak, reportedWords, splitTime, waitWords } from "./runFacts";
 
 const T0 = Date.parse("2026-11-04T10:00:00Z");
 const at = (s: number) => new Date(T0 + s * 1000).toISOString();
@@ -165,13 +165,22 @@ describe("flowTimeSpent", () => {
     expect(s.mostPipelineRuns).toBe(2);
     expect(s.longest?.node).toBe("each");
     // 2 s for clean's run, then 1, 2 and 6 s for the items'.
-    expect(s.queued).toEqual({ ms: S(11), runs: 4 });
+    expect(s.queued).toEqual({ ms: S(11), runs: 4, of: 4 });
     expect(s.busy).toBe(S(2));
+    expect(s.eachWaiting).toBe(S(1));
     expect(s.waitNodes).toBe(S(10));
     expect(waitWords(s)).toBe(
       "Its 4 pipeline runs waited 11.0 s in all for a worker. Nodes waited 2.0 s for a pipeline busy with another run. " +
-        "Wait nodes waited 10.0 s. At most 2 pipeline runs ran at once.",
+        "For-each nodes waited 1.0 s with no item running or queued: for a pipeline busy with another run, or between items; " +
+        "which is not recorded. Wait nodes waited 10.0 s. At most 2 pipeline runs ran at once.",
     );
+  });
+
+  test("draws every bar on the run's scale", () => {
+    const s = flowTimeSpent(finished, T0 + S(100))!;
+    expect(barWidths(s.rows[0], s.span)).toEqual({ working: 0.125, queued: 0.05, waiting: 0.075, plain: 0 });
+    expect(barWidths(s.rows[2], s.span)).toEqual({ working: 0, queued: 0, waiting: 0.25, plain: 0 });
+    expect(barWidths({ ...s.rows[0], split: false }, s.span)).toEqual({ working: 0, queued: 0, waiting: 0, plain: 0.25 });
   });
 
   test("while it runs, measures to now", () => {
@@ -195,7 +204,7 @@ describe("flowTimeSpent", () => {
     expect(s.rows[0]).toMatchObject({ active: S(6), working: S(5), queued: S(1), running: true });
     expect(s.rows[1]).toMatchObject({ active: S(4), working: S(4) });
     expect(s.mostNodes).toBe(2);
-    expect(s.queued).toEqual({ ms: S(1), runs: 1 });
+    expect(s.queued).toEqual({ ms: S(1), runs: 1, of: 1 });
     expect(waitWords(s)).toBe("Its pipeline run waited 1.0 s in all for a worker so far.");
   });
 
@@ -207,7 +216,48 @@ describe("flowTimeSpent", () => {
     const s = flowTimeSpent(busy, T0 + S(3))!;
     expect(s.rows[0]).toMatchObject({ active: S(3), waiting: S(3) });
     expect(s.busy).toBe(S(3));
-    expect(s.queued).toEqual({ ms: 0, runs: 0 });
+    expect(s.queued).toEqual({ ms: 0, runs: 0, of: 0 });
+  });
+
+  test("a node that waited for a busy pipeline, then gave up, keeps its wait", () => {
+    const gaveUp = detail(
+      [
+        node({
+          node: "copy",
+          position: 0,
+          status: "failed",
+          startedAt: at(0),
+          finishedAt: at(600),
+          message: "Waited 10 minutes for copy to finish its current run, and gave up",
+        }),
+      ],
+      { status: "failed", finishedAt: at(600) },
+    );
+    const s = flowTimeSpent(gaveUp, T0 + S(700))!;
+    expect(s.busy).toBe(600000);
+    expect(s.rows[0]).toMatchObject({ active: S(600), waiting: S(600), split: true });
+    expect(waitWords(s)).toBe("Nodes waited 10 min 0 s for a pipeline busy with another run.");
+  });
+
+  test("a node whose pipeline run was deleted is not split; the others still are, and the totals say of how many", () => {
+    const partial = detail([
+      node({ node: "gone", position: 0, status: "succeeded", startedAt: at(0), finishedAt: at(10), pipelineRunId: 1 }),
+      node({
+        node: "kept",
+        position: 1,
+        status: "succeeded",
+        startedAt: at(10),
+        finishedAt: at(20),
+        pipelineRunId: 2,
+        pipelineRunTimes: { requestedAt: at(10), startedAt: at(13), finishedAt: at(19) },
+      }),
+    ], { finishedAt: at(20) });
+    const s = flowTimeSpent(partial, T0 + S(100))!;
+    expect(s.rows.map((r) => r.split)).toEqual([false, true]);
+    expect(barWidths(s.rows[0], s.span)).toEqual({ working: 0, queued: 0, waiting: 0, plain: 0.5 });
+    expect(barWidths(s.rows[1], s.span)).toEqual({ working: 0.3, queued: 0.15, waiting: 0.05, plain: 0 });
+    expect(s.queued).toEqual({ ms: S(3), runs: 1, of: 2 });
+    expect(waitWords(s)).toBe("1 of its 2 pipeline runs waited 3.0 s in all for a worker. The times of one pipeline run are not known.");
   });
 
   test("from an older server without pipeline run times: not split, and nothing claimed", () => {
@@ -226,11 +276,11 @@ describe("flowTimeSpent", () => {
     const s = flowTimeSpent(old, T0 + S(100))!;
     expect(s.rows.map((r) => r.split)).toEqual([false, false]);
     expect(flowShares(s.rows[0])).toEqual({ working: 0, queued: 0, waiting: 0 });
-    expect(s.queued).toBeNull();
-    expect(s.busy).toBeNull();
-    expect(s.mostPipelineRuns).toBeNull();
+    expect(s.queued).toEqual({ ms: 0, runs: 0, of: 2 });
+    expect(s.busy).toBe(0);
+    expect(s.mostPipelineRuns).toBe(0);
     expect(s.longest?.node).toBe("a");
-    expect(waitWords(s)).toBeNull();
+    expect(waitWords(s)).toBe("The times of 2 pipeline runs are not known.");
   });
 
   test("nothing before the run starts", () => {

@@ -269,12 +269,18 @@ moves the unique index to `(flow_run_id, flow_node, coalesce(flow_item, -1))`.
 - **Pages laid out as a pipeline's, built.** The flow page puts Diagram and YAML on tabs, with the
   pipeline page's panel under them (`PipelineDock`: Run, Runs, Versions). The run page gives a
   Summary and "Where each node spent its time" as a pipeline run does (`runFacts.ts`, pure). For
-  them the run API adds, per run, `pipelineRuns`, `rowsWritten` (summed) and `qualityScore` (the
-  lowest) over the pipeline runs it started, one grouped query for a list
+  them the run API adds, per run, `pipelineRuns` (asked for), `rowsWritten` (summed) and
+  `qualityScore` (the lowest) over its pipeline runs, one grouped query for a list
   (`PipelineStore.flowTotals`); per run-pipeline node `pipelineRunTimes` (asked for, started,
-  finished); and per for-each item `requestedAt`. A node's time is split by those times: working
-  while any of its pipeline runs ran, queued while none ran and one waited for a worker, waiting
-  otherwise. Nothing is estimated: runs from servers without the times show unsplit bars.
+  finished), all read in one query per run (`PipelineStore.flowRunTimes`); and per for-each item
+  `requestedAt`. A node's time is split by those times: working while any of its pipeline runs ran,
+  queued while none ran and one waited for a worker, waiting otherwise; every bar is drawn on the
+  run's scale. A run-pipeline node's wait for a busy pipeline runs to its request, or to its end if
+  it never asked; a for-each node's waits for a busy pipeline are not recorded apart from its other
+  waits, and the page says so. Nothing is estimated: a node whose pipeline run times are not known
+  (deleted, or from before they were recorded) has an unsplit bar, and the totals say of how many
+  pipeline runs they speak. The flow page's panel keeps its open or collapsed state under its own
+  key (`kilnmark.flow.panel`), and reads the latest run only while its Run tab is shown.
 - Not in this plan: retries of a node. A SQL *check* stays a pipeline with a `read` and a `gate`.
 
 ## 7. The sql node (ADR 0028)
