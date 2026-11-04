@@ -109,6 +109,8 @@ tables, and `"schema": "public"` added to the first points the samples at them.
 
 ## Building on the canvas
 
+![A pipeline on the canvas: a read node, a quality gate setting aside 10 rows, and two writes, each with its rows and quality from the last run](images/pipeline-canvas.png)
+
 The **Canvas** and **YAML** tabs show the same pipeline: a change on the canvas rewrites only the
 lines it changes in the YAML, so your comments, layout and every other setting stay exactly as
 they were, and a change to the YAML redraws the canvas. Kilnmark remembers which tab you used last.
@@ -600,6 +602,8 @@ which runs in the database, for larger tables.
 
 ### What happens when rows fail
 
+![What a gate does with a row that fails its rules: stop fails the run, quarantine sets the row aside, warn lets it through and records it](images/gate-on-fail.svg)
+
 `on_fail` decides:
 
 | `on_fail` | Rows | The run |
@@ -785,6 +789,8 @@ YAML exactly as it was saved.
 
 ## Running a pipeline
 
+![How a pipeline goes from building to a finished run: saved as a version, queued, taken by a worker with a free slot, its writes locked, its nodes run in one pass, then committed and catalogued, or failed](images/pipeline-run.svg)
+
 Choose **Run now**, on the Pipelines page or the pipeline's own page. Kilnmark checks the latest
 version again first, since a source may have changed, then queues the run for a worker. The run
 appears in the **Runs** tab, under the canvas, as Queued, then Running, and the panel shows the
@@ -798,6 +804,8 @@ To stop a run, open it and choose **Cancel run**. A queued run is cancelled at o
 stops within a few seconds. Rows already written stay written.
 
 ## Reading a run
+
+![A run's page: its summary (status, version, times, rows written, quality) and where each node spent its time](images/pipeline-run-page.png)
 
 Open a run from the **Runs** tab. The page updates itself until the run ends, and says when its
 status changes.

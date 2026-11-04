@@ -105,7 +105,7 @@ export function NotificationsPage({ confirm }: { confirm: string | null }) {
       <PageHeader
         title="Notifications"
         crumbs={[{ label: "Settings", href: href.settings() }, { label: "Notifications" }]}
-        lead="What Kilnmark tells you about: failing quality rules and their recovery, new issues, failed scans and connection tests, drift, and pipeline runs. Notifications show here in Kilnmark; email is yours to turn on."
+        lead="What Kilnmark tells you about: failing quality rules and their recovery, new issues, failed scans and connection tests, drift, pipeline runs and flows. Notifications show here in Kilnmark; email is yours to turn on."
       />
       <p role="status" className="notice">
         {notice}

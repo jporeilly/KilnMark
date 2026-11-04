@@ -16,6 +16,8 @@ up email, and what an email contains.
 | **Connection test failed** | Testing a saved source's connection fails | Medium |
 | **Pipeline run failed** | A pipeline run fails | High |
 | **Pipeline quality below threshold** | A pipeline run succeeds, but what it wrote scores below the pipeline's quality threshold | Medium |
+| **Flow run failed** | A flow run fails | High |
+| **Flow notice** | A flow's `notify` node sends its message ([Building and running a flow](flows.md)) | The node's own `severity` |
 
 A pipeline has a quality threshold when its YAML sets one, such as `quality: {min_score: 0.95}`
 (see [Building and running a pipeline](pipelines.md#quality-of-what-a-run-writes)). Each run
@@ -26,10 +28,15 @@ threshold, the notification names the write node and says the score and the thre
 failing. You hear again only if it gets worse, for example when a warning becomes a failure, and
 once more when it recovers. A failed scan is told once until a scan of that source succeeds again.
 A failed connection test is told once until a connection test or a scan of that source succeeds.
-A failed pipeline run is told once until a run of that pipeline succeeds. Drift, new issues and
-pipeline runs below their quality threshold are told each time they happen, once per run.
+A failed pipeline run is told once until a run of that pipeline succeeds, and a failed flow run
+once until a run of that flow succeeds. Drift, new issues, pipeline runs below their quality
+threshold and flow notices are told each time they happen, once per run.
+
+![How an event reaches you: told once per problem, to everyone whose choices include it, in the app, and by email when it is on, confirmed and the severity is reached](images/notifications-flow.svg)
 
 ## In the app
+
+![Settings › Notifications: the kinds of event shown in Kilnmark, each with what it means](images/notification-settings.png)
 
 Notifications appear in Kilnmark for every role, with nothing to set up. Each one says what
 happened and links to where to look: the asset, the source or the issue list. Open

@@ -12,14 +12,19 @@ Status: version 0.0.9, early and moving fast; see the [changelog](CHANGELOG.md).
 - **Pipelines:** graphs of nodes (read, filter, compute, select, lookup, aggregate, union, dedupe,
   route, limit, quality gate, write), built on a canvas or in YAML, with parameters, server
   variables, previews at any node and a predicted quality before they run.
-- **Flows** (engine built, API and canvas next) will run pipelines in order, on success, failure
-  or a condition over what they measured.
+- **Flows:** run pipelines in an order, on success, failure or a condition over what they
+  measured, with SQL, notice, wait and stop nodes. Nodes with no connection between them run in
+  parallel. Each flow is drawn as a diagram above its YAML, and each run with its nodes' status and
+  a run chart.
 - **Quality:** rules from a library, drift and issues, sent out as OpenLineage and ODCS 3.1.
 - **Samples:** small pipelines that show one idea each, and a starter pack to run them on.
-- **Sign-in** with API tokens in four roles: viewer, steward (runs pipelines and looks after
-  quality), designer (builds pipelines, flows and sources) and admin (Settings and tokens). Columns
-  marked sensitive stay masked for everyone but designers, admins included
-  ([ADR 0027](docs/adr/0027-unmasking-is-a-grant.md)).
+- **Sign-in** with your organisation's identity provider (OpenID Connect, with MFA) or with API
+  tokens, in four roles: viewer, steward (runs pipelines and looks after quality), designer (builds
+  pipelines, flows and sources) and admin (Settings and tokens). Columns marked sensitive stay masked
+  for everyone but designers, admins included ([ADR 0027](docs/adr/0027-unmasking-is-a-grant.md)).
+- **For regulated organisations:** an append-only audit log that can go to your SIEM, HTTPS and
+  encrypted connections to sources, access reviews, two people for unmasking, and backup and
+  restore scripts ([Compliance](docs/product/compliance.md)).
 
 ## Quick start
 

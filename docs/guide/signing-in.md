@@ -1,0 +1,178 @@
+# Signing in, roles and tokens
+
+How people and programs get into Kilnmark, what each role may do, and the controls an auditor will
+ask about. Administrators set these up; everyone else only needs the first two sections.
+
+## The short version
+
+- **Two ways in.** Scripts and tools use **API tokens**. People can also **sign in with your
+  organisation's own login** (Microsoft Entra ID, Okta and the like), with a second factor.
+- **Four roles**, each including the one below: viewer, steward, designer, admin. Seeing
+  **sensitive values unmasked** is a separate grant that only designers can hold.
+- **Roles for people come from their groups** at your identity provider, as you map them in
+  Kilnmark's settings. Kilnmark never stores anyone's password.
+- **Tokens can be made to expire**: set a longest lifetime (say 90 days) and no token lasts longer.
+- **Settings › Access review** lists who can do what, and when they last did anything, as a CSV for
+  auditors. Every sign-in, refusal and review download is in the [audit log](audit-log.md).
+
+## Two ways in
+
+![Two ways in, one set of roles: a script sends its API token, a person signs in with your organisation's login and MFA; Kilnmark checks either, and a role (and the unmask grant, when held) decides what they can do](images/signin-two-ways.svg)
+
+| | API token | Sign in with your organisation |
+| --- | --- | --- |
+| **Who it's for** | Scripts, CI pipelines, the MCP server, AI assistants, and people who prefer it | People in a browser |
+| **What it is** | A long secret starting `km_`, sent with each request | Your organisation's normal login page, then a session in that browser |
+| **Who decides the role** | The admin who made the token | Your groups at the identity provider, mapped in Kilnmark's settings |
+| **Second factor (MFA)** | No: the token itself is the credential | Yes, required by default |
+| **How long it lasts** | Until its expiry, or the server's longest lifetime | At most 8 hours, then sign in again |
+
+Both can be used on the same server. If your organisation's login is not set up, the sign-in page
+shows only the token box.
+
+## Roles, and seeing sensitive values
+
+Everyone, and every token, has exactly one role. Each role can do everything the one below it can:
+
+- **Viewer**: search and read the catalogue, pipelines, flows and runs.
+- **Steward**: also run pipelines and flows, scan sources, and look after quality rules and issues.
+- **Designer**: also build pipelines and flows, add and edit sources, write custom SQL rules.
+- **Admin**: also Settings, API tokens and the audit log.
+
+![The four roles as steps, each including the one below; the unmask grant sits beside designers, and admins see values masked](images/signin-roles.svg)
+
+**Seeing sensitive values unmasked** (columns marked sensitive, such as customer emails) is not part
+of any role. It is a separate **grant** that only a designer can hold. Admins always see those
+values masked, on purpose: the people who manage access are not the people who read the data. For a
+token, the admin ticks it when making a designer token. For a person signing in through your
+organisation, they need to be in a designer group *and* an "unmask" group.
+
+## API tokens
+
+An API token is a password for a program. It starts with `km_`, is shown **once** when it is made,
+and Kilnmark keeps only a fingerprint of it (a hash), so nobody can read it back later, not even an
+admin.
+
+- **Making one:** an admin goes to **API tokens**, gives it a name (like `nightly-ci`), the least
+  role that will do, and an expiry.
+- **Using one:** the program sends it in a header with every request. The web UI can use one too:
+  paste it on the sign-in page.
+- **Revoking one:** **API tokens**, revoke. It stops working at once, on every server.
+- **Last used:** Kilnmark records when each token was last used, so you can spot and remove ones
+  nobody uses.
+
+**The first admin token.** A new install has no tokens, so the server writes a one-off admin token to
+a private file (`admin-token`), good for 24 hours: sign in with it and make a proper one. Or the
+operator sets `KILNMARK_ADMIN_TOKEN` in the server's settings, which is the operator's own
+break-glass key. If ever no admin token works, the next restart writes a fresh 24-hour file, so you
+cannot be locked out for good.
+
+No token may be named `sso:...`: that prefix is kept for people who sign in through your
+organisation, so a token can never pass for a person in the records.
+
+## Signing in with your organisation
+
+This uses **OpenID Connect**, the standard behind "Sign in with Microsoft" and the like. Kilnmark is
+registered with your identity provider once (INSTALL.md, "Sign in with your identity provider");
+after that:
+
+1. On Kilnmark's sign-in page, the person chooses **Sign in with** *your organisation*.
+2. They go to your normal login page, sign in there with their usual second factor, and come back.
+3. Kilnmark reads what the provider says about them (their groups, how they signed in, when) and
+   gives them a role.
+
+![The three checks after your organisation's login: MFA used, signed in within 8 hours, in a mapped group; all three give a role, any no gives none, with the reason shown and recorded](images/signin-checks.svg)
+
+**Roles come only from your settings.** You list which groups give which role, for example
+`km-admins` gives admin. A group that merely happens to be called "admin" at the provider gives
+nothing unless you name it. Someone in several groups gets the highest role among them. Someone in
+none signs in but gets **no role**, and the page tells them why.
+
+**MFA is checked, not assumed.** The provider says how the person signed in. Kilnmark wants either
+"mfa", or two different *kinds* of factor: something you know (a password), something you have (a
+code, a key, a phone), something you are (a fingerprint). One factor alone, even a strong one, or two
+of the same kind, is not enough. Without it: no role, and the reason shown.
+
+**Sessions end.** A sign-in lasts at most **8 hours** from when the person last signed in at the
+provider. Kilnmark asks the provider to make them sign in again after that, and refuses an older
+sign-in if the provider does not.
+
+**In the records**, a person shows as `sso:` plus their name and the provider's fixed ID for them,
+for example `sso:ada (3f2a…)`, so a chosen display name cannot pass for anyone else.
+
+**Taking access away** is done at the provider: remove them from the group, and their next sign-in
+gives them no role.
+
+## Token lifetime and the access review
+
+**Longest token lifetime.** An administrator can set, for example,
+`KILNMARK_TOKEN_MAX_LIFETIME=90d`. Then:
+
+- every new token must expire within 90 days (the form only offers expiries that fit);
+- any token **older than 90 days stops working**, even if it was made earlier with a longer expiry,
+  or none.
+
+So **look at the access review before turning it on**, and replace any old token a script still
+relies on. The operator's own `KILNMARK_ADMIN_TOKEN` is not limited, and Kilnmark makes sure a fresh
+first-admin file is written if the limit would otherwise leave no admin able to sign in. It is off
+unless set, and must be between 1 and 3650 days, so a typing mistake cannot quietly mean "no limit".
+
+**Access review** (Settings › Access review) is one list of who can do what:
+
+- every API token: its role, whether it sees sensitive values, who made it, when it expires and
+  when it was last used;
+- everyone who has signed in through your organisation: the role their last sign-in gave them (or
+  none, if it was refused), when, and how often.
+
+![Settings › Access review: every API token with what it can do, its status, expiry, when it was last used and who made it, and everyone who signs in with your identity provider](images/access-review.png)
+
+**Download CSV** gives your auditors a copy to keep. Each view and download is recorded in the audit
+log.
+
+## Two people for sensitive values
+
+Without it, an admin could make a designer token that sees sensitive values and use it themselves:
+one person alone giving that access. With `KILNMARK_UNMASK_APPROVAL=true` it takes two people:
+
+1. **Someone asks**, signed in with your identity provider: they make a designer token asking to see
+   sensitive values. It is made, but sees them **masked** for now.
+2. **Someone else approves** it under **API tokens**, also signed in with your provider. From then on
+   the token sees the values.
+
+![Two people for sensitive values: Alice asks, a designer token is made with values masked, Bob approves and the values are unmasked; Alice herself, under any name, or any API token cannot take Bob's place](images/signin-two-people.svg)
+
+**Why it has to be people, not tokens.** An admin can make another admin token at any moment, so two
+tokens never prove two people were involved. Your identity provider knows who each person is, and
+Kilnmark compares them by the provider's fixed ID, not their name. So the person who asked cannot
+approve their own request, not even after changing their display name, and no token can ask or
+approve. That is also why this setting needs sign-in through your organisation: without it, the
+server will not start with the setting on.
+
+**What is recorded:** each request, approval and refusal is in the audit log, naming who asked. The
+access review shows who approved each grant. Anyone can refuse or withdraw a request, and the token
+stays, without the grant.
+
+**The limit:** one person with two accounts at your identity provider could still do it alone.
+Managing those accounts is the provider's job. For people who sign in themselves, the grant comes
+from the "unmask" group at your provider, so there the second person is whoever approves membership
+of that group.
+
+## What keeps it honest
+
+- **The audit log** (Settings › Audit log) records, and never changes or deletes: tokens made and
+  revoked, every sign-in through your organisation and every one given no role, signing out, access
+  reviews, and every request refused for want of a role. It can also go to your security team's
+  SIEM.
+- **Scripts never get a login page.** A request without credentials gets a plain "not signed in"
+  answer, never a redirect.
+- **Another website cannot act as you.** A browser session only changes anything when the request
+  comes from Kilnmark's own pages, which mark every request in a way other sites cannot copy.
+- **Session cookies** are sent over HTTPS only in production, so sign-in through your organisation
+  needs Kilnmark on HTTPS.
+
+## Still open
+
+- **A copied session cookie** keeps working until the provider's token in it expires (usually about
+  an hour), because sessions are not stored on the server. Storing them would let signing out end
+  every copy.
+- **Keycloak as a built-in identity provider**, for customers who have none: planned.
