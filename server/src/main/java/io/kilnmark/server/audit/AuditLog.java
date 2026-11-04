@@ -97,10 +97,17 @@ public class AuditLog {
     /** An admin downloaded the access review (ADR 0037); detail: format. */
     public static final String ACCESS_REVIEW = "access.review";
 
+    /**
+     * The database was restored from a backup (ADR 0039), recorded at the next start from the note
+     * {@code restore.sh} leaves ({@link RestoreRecord}); detail: backup, takenAt, version,
+     * previousDatabase, keys.
+     */
+    public static final String DATABASE_RESTORED = "database.restored";
+
     /** Every kind of event, for the API's filter. */
     public static final Set<String> ACTIONS = Set.of(TOKEN_CREATED, TOKEN_REVOKED, MARK_SET, MARK_CLEARED,
         SOURCE_DELETED, WRITING_CHANGED, SQL_CHANGED, FLOW_SQL, API_REQUEST, API_REFUSED, SIGN_IN, SIGN_IN_REFUSED,
-        SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED);
+        SIGN_OUT, ACCESS_REVIEW, UNMASK_REQUESTED, UNMASK_APPROVED, UNMASK_REFUSED, DATABASE_RESTORED);
 
     /** The most events one request returns. */
     public static final int MAX_LIMIT = 500;

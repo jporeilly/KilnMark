@@ -33,3 +33,12 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0029](0029-audit-log.md) | An append-only audit log in the server's own database | Accepted |
 | [0030](0030-generic-jdbc-vetted-settings.md) | Generic JDBC takes only settings Kilnmark has vetted; isolated drivers later | Accepted |
 | [0028](0028-sql-in-reads-and-flow-actions.md) | SQL a person writes runs in two places only: a read's query, and a flow's SQL action | Accepted |
+| [0031](0031-https-and-security-headers.md) | HTTPS on Kilnmark itself, and the security headers every response carries | Accepted |
+| [0032](0032-tls-to-kilnmarks-own-database.md) | Kilnmark's own database is reached over TLS, or the server does not start | Accepted |
+| [0033](0033-sboms-scanning-and-signed-releases.md) | SBOMs, vulnerability scanning and signed releases | Accepted |
+| [0034](0034-encrypted-connections-to-sources.md) | Encrypted connections to sources, when the administrator requires them | Accepted |
+| [0035](0035-s3-hosts-as-the-sdk-reaches-them.md) | S3 hosts for the allowed-hosts list, as the AWS SDK reaches them | Accepted |
+| [0036](0036-sign-in-with-the-identity-provider.md) | Sign-in with the organisation's identity provider, with MFA | Accepted |
+| [0037](0037-token-lifetime-and-access-review.md) | A longest token lifetime, and the access review | Accepted |
+| [0038](0038-a-second-admin-approves-the-unmask-grant.md) | Two people for the unmask grant | Accepted |
+| [0039](0039-backup-and-restore.md) | Backup and restore: a dump of the database, a copy of the keys, kept apart | Accepted |

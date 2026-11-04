@@ -1,5 +1,5 @@
 import { describe as group, expect, test } from "vitest";
-import type { AuditEvent } from "../api";
+import { formatTime, type AuditEvent } from "../api";
 import { ACTIONS, describe } from "./AuditLogPage";
 import { parse } from "../router";
 
@@ -29,6 +29,9 @@ group("the audit log page", () => {
       "designer, sees unmasked values",
     );
     expect(describe(event("auth.sign_in_refused", { reason: "No second factor." }))).toBe("No second factor.");
+    expect(describe(event("database.restored", { backup: "kilnmark-20261103T200000Z", takenAt: "2026-11-03T20:00:00Z" }))).toBe(
+      `From kilnmark-20261103T200000Z, taken ${formatTime("2026-11-03T20:00:00Z")}`,
+    );
     expect(describe(event("flow.sql", { source: "warehouse", statements: 2, version: 3 }))).toBe(
       "2 statements on warehouse, version 3",
     );
@@ -46,6 +49,7 @@ group("the audit log page", () => {
         "unmask.requested",
         "unmask.approved",
         "unmask.refused",
+        "database.restored",
         "flow.sql",
         "mark.cleared",
         "mark.set",
