@@ -86,8 +86,8 @@ export function SettingsPage({ role }: { role: AccessRole }) {
 }
 
 /**
- * Whether this server offers the samples: Add samples on the Pipelines page, the starter pack and
- * Kilnmark's sample data. Pipelines already added from them stay when they are turned off.
+ * Whether this server offers the samples: Add samples in the Library, the starter pack and
+ * Kilnmark's sample data. Samples already added stay when they are turned off; the templates stay offered.
  */
 function SamplesSwitch() {
   const [offered, setOffered] = useState<boolean | null>(null);
@@ -130,9 +130,9 @@ function SamplesSwitch() {
         </label>
       </p>
       <p id="samples-switch-hint" className="hint">
-        Add samples on the Pipelines page, the starter pack and Kilnmark&apos;s sample data: small pipelines that show
-        one idea each, for learning. Turn them off on a server that should hold your own pipelines only; any already
-        added stay.
+        Add samples in the Library, the starter pack and Kilnmark&apos;s sample data: small pipelines and flows that
+        show one idea each, for learning. Turn them off on a server that should hold your own work only; any already
+        added stay, and the Library&apos;s templates are still offered.
       </p>
       <p role="status" className="small">
         {said}

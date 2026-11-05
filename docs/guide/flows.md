@@ -135,6 +135,68 @@ connections:
 
 The sample `samples/08-flows/for-each-region.yaml` runs one pipeline for three regions, two at once.
 
+## Stopping a node that takes too long
+
+A `run-pipeline`, `for-each` or `sql` node may say how long its work may take, with `timeout`. Use it
+so a load that hangs, or a statement stuck behind a lock, fails the flow in good time rather than
+holding up everything after it.
+
+![What a node's timeout does: time spent ready, waiting for a worker or a source is not counted; once a worker takes the node's work, the timeout counts while it runs. If it ends within the timeout it ends as it ended, succeeded or failed. Past the timeout it is stopped (its pipeline run cancelled, or its SQL rolled back), the node fails saying it took longer than its timeout, and its failure connection is taken. A for-each node gives each item's run the whole timeout; an item stopped for it counts as failed.](images/flow-timeout.svg)
+
+```yaml
+nodes:
+  - id: load
+    type: run-pipeline
+    pipeline: orders-load
+    timeout: 2h                 # 90s, 30m, 2h or 1d; 7d at most; no limit when left out
+
+  - id: regions
+    type: for-each
+    pipeline: sales-by-region
+    items: [EMEA, APAC, AMER]
+    as: region
+    timeout: 30m                # for each item's run, on its own
+
+  - id: tidy
+    type: sql
+    source: warehouse
+    statements: ["DELETE FROM staging.orders"]
+    timeout: 5m
+
+  - id: tell
+    type: notify
+    severity: high
+    title: The orders load failed or took too long
+
+connections:
+  - { from: load, to: tell, when: failure }
+```
+
+- **The time counts from when the work starts**: when a worker takes the pipeline run, or when a
+  `sql` node's statements start. Time spent waiting for a worker, for a free place on a source, or
+  for another run of the same pipeline to finish does not count.
+- **Past it, the work is stopped.** A pipeline run is cancelled, as **Cancel** on its page would
+  (what it had already written stays written); a `sql` node's statement is cancelled and its
+  transaction rolled back, so nothing it ran is kept. The node then **fails**, saying "Took longer
+  than 2h and was stopped". It is not cancelled, so a `failure` or `always` connection from it is
+  taken, as above, and the flow carries on as for any other failure.
+- **For a `for-each` node**, each item's run has the whole timeout to itself. An item stopped for it
+  counts as failed; the others still run, and the node fails once they have ended, its message
+  naming the first item that took too long.
+- The node waits for the stopped work to end before it fails, so nothing after it starts while its
+  pipeline may still be writing. A run that succeeds just as it is stopped counts as succeeded.
+- Saving the flow checks the value: a time in seconds (`s`), minutes (`m`), hours (`h`) or days
+  (`d`), more than nothing and at most 7 days. Only these three node types take one: a `wait` node
+  has `for`, and `notify` and `stop` nodes end at once.
+- On the diagram, choose the node and set **Timeout** on its Settings tab; leave it blank for none.
+
+![The flow's diagram with the run-pipeline node takings chosen: its Settings tab shows Pipeline sample-volume, a blank Version, and Timeout 2h, with the hint "Stopped and failed past it: 30m, 2h, 1d. Blank for none."](images/flow-node-timeout.png)
+
+On the run's page the node shows **Failed** with **Timed out** beside it, and its message says how
+long it was allowed:
+
+![A run of nightly-takings in which the takings node timed out: the diagram outlines takings red as Failed, its notice node too-slow green as Succeeded through the on failure connection, and done as Skipped; the run chart has a red bar for takings; the Nodes table shows takings as Failed and Timed out, "Took longer than 2s and was stopped; its pipeline run was cancelled", with a link to its pipeline run](images/flow-run-timed-out.png)
+
 ## The diagram
 
 The **Diagram** tab draws the flow as you write it. Each node is a card, as on a pipeline's
@@ -277,7 +339,9 @@ A run page is laid out as a pipeline run's, in this order:
   rows a pipeline wrote and its score, with a link to its **pipeline run**, where its nodes, rows
   and errors are. For a `for-each` node, how far its items have got ("3 of 5 items done, 1
   failed") and each item with its status and a link to its pipeline run; an item that could not be
-  started is shown failed, with no run, and the node's message says why. On the run chart its bar
+  started is shown failed, with no run, and the node's message says why. A node, or an item, that
+  took longer than its `timeout` is shown **Failed** with **Timed out** beside it; the timed-out
+  item's link opens its cancelled pipeline run. On the run chart its bar
   runs from its first item's start to its last item's end. Viewers see the items' values when they
   are written in the flow, not when they came from the run's values.
 
@@ -301,6 +365,4 @@ runs it started that are still going are cancelled. What they had already writte
 
 - Changing a node's settings on the diagram: for now, change them in the YAML.
 - Deleting a flow.
-- Adding the sample flows from **Add samples**: for now, copy one from `samples/08-flows` into a
-  new flow.
 - Running flows on a schedule.

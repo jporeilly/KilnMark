@@ -30,6 +30,7 @@ const PipelinePage = page(() => import("./pipelines/PipelinePage"), "PipelinePag
 const PipelineRunPage = page(() => import("./pipelines/PipelineRunPage"), "PipelineRunPage");
 const FlowsPage = page(() => import("./flows/FlowsPage"), "FlowsPage");
 const FlowPage = page(() => import("./flows/FlowPage"), "FlowPage");
+const LibraryPage = page(() => import("./library/LibraryPage"), "LibraryPage");
 const FlowRunPage = page(() => import("./flows/FlowRunPage"), "FlowRunPage");
 const RulesPage = page(() => import("./pages/RulesPage"), "RulesPage");
 const RelationshipsPage = page(() => import("./browse/RelationshipsPage"), "RelationshipsPage");
@@ -363,12 +364,25 @@ function Shell({ me }: { me: Me }) {
           {route.page === "issues" && <IssuesPage role={me.role} />}
           {route.page === "pipelines" && <PipelinesPage role={me.role} />}
           {route.page === "pipeline" && (
-            <PipelinePage key={route.name ?? "#new"} name={route.name} version={route.version} role={me.role} />
+            <PipelinePage
+              key={route.name ?? `#new${route.template ?? ""}`}
+              name={route.name}
+              version={route.version}
+              role={me.role}
+              template={route.template}
+            />
           )}
           {route.page === "pipeline-run" && <PipelineRunPage id={route.id} role={me.role} />}
           {route.page === "flows" && <FlowsPage role={me.role} />}
+          {route.page === "library" && <LibraryPage role={me.role} tab={route.tab} />}
           {route.page === "flow" && (
-            <FlowPage key={route.name ?? "#new"} name={route.name} version={route.version} role={me.role} />
+            <FlowPage
+              key={route.name ?? `#new${route.template ?? ""}`}
+              name={route.name}
+              version={route.version}
+              role={me.role}
+              template={route.template}
+            />
           )}
           {route.page === "flow-run" && <FlowRunPage key={route.id} id={route.id} role={me.role} />}
           {route.page === "docs" && <DocsPage doc={route.doc} section={route.section} />}

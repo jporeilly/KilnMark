@@ -24,8 +24,9 @@ public class FlowStore {
     /** The job kind workers run flows under. */
     public static final String JOB_KIND = "flow";
 
+    /** {@code library}: {@code sample} for one added from the samples (ADR 0043), else null. */
     public record Flow(String name, String displayName, String description, int latestVersion, String createdBy,
-                       Instant createdAt, String updatedBy, Instant updatedAt) {
+                       Instant createdAt, String updatedBy, Instant updatedAt, String library) {
     }
 
     /** {@code problems} is a JSON array of {line, column, node, message}. */
@@ -104,11 +105,11 @@ public class FlowStore {
     // ---- flows and versions ----
 
     private static final String FLOW_COLUMNS = "f.name, f.display_name, f.description, f.latest_version, f.created_by, "
-        + "f.created_at, f.updated_by, f.updated_at";
+        + "f.created_at, f.updated_by, f.updated_at, f.library";
 
     private static Flow flow(ResultSet rs) throws SQLException {
         return new Flow(rs.getString(1), rs.getString(2), rs.getString(3), rs.getInt(4), rs.getString(5),
-            rs.getTimestamp(6).toInstant(), rs.getString(7), rs.getTimestamp(8).toInstant());
+            rs.getTimestamp(6).toInstant(), rs.getString(7), rs.getTimestamp(8).toInstant(), rs.getString(9));
     }
 
     public Optional<Flow> find(String name) {
@@ -152,9 +153,9 @@ public class FlowStore {
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     Flow f = flow(rs);
-                    boolean valid = rs.getBoolean(9);
-                    rs.getLong(10);
-                    out.add(new Summary(f, valid, rs.wasNull() ? null : run(rs, 9)));
+                    boolean valid = rs.getBoolean(10);
+                    rs.getLong(11);
+                    out.add(new Summary(f, valid, rs.wasNull() ? null : run(rs, 10)));
                 }
             }
             return out;
@@ -189,17 +190,28 @@ public class FlowStore {
      */
     public Flow save(String name, Integer expected, boolean create, String displayName, String description, String yaml,
                      String message, String by, boolean valid, String problems) {
+        return save(name, expected, create, displayName, description, yaml, message, by, valid, problems, null);
+    }
+
+    /**
+     * As {@link #save(String, Integer, boolean, String, String, String, String, String, boolean, String)};
+     * a flow created here goes in the library {@code library} ({@code sample}, ADR 0043) or none
+     * (null), in the same transaction. A later version leaves the mark as it is.
+     */
+    public Flow save(String name, Integer expected, boolean create, String displayName, String description, String yaml,
+                     String message, String by, boolean valid, String problems, String library) {
         return db.tx(c -> {
             int next;
             if (create) {
                 try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.flow (name, display_name, "
-                    + "description, latest_version, created_by, updated_by) VALUES (?, ?, ?, 1, ?, ?) "
+                    + "description, latest_version, created_by, updated_by, library) VALUES (?, ?, ?, 1, ?, ?, ?) "
                     + "ON CONFLICT (name) DO NOTHING")) {
                     ps.setString(1, name);
                     ps.setString(2, displayName);
                     ps.setString(3, description);
                     ps.setString(4, by);
                     ps.setString(5, by);
+                    ps.setString(6, library);
                     if (ps.executeUpdate() == 0) {
                         throw new Exists();
                     }

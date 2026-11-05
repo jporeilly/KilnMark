@@ -24,8 +24,9 @@ public class PipelineStore {
     /** The job kind workers run pipelines under. */
     public static final String JOB_KIND = "pipeline";
 
+    /** {@code library}: {@code sample} for one added from the samples (ADR 0043), else null. */
     public record Pipeline(String name, String displayName, String description, int latestVersion, String createdBy,
-                           Instant createdAt, String updatedBy, Instant updatedAt) {
+                           Instant createdAt, String updatedBy, Instant updatedAt, String library) {
     }
 
     /** {@code problems} is a JSON array of {line, column, node, message}. */
@@ -133,11 +134,11 @@ public class PipelineStore {
     // ---- pipelines and versions ----
 
     private static final String PIPELINE_COLUMNS = "p.name, p.display_name, p.description, p.latest_version, "
-        + "p.created_by, p.created_at, p.updated_by, p.updated_at";
+        + "p.created_by, p.created_at, p.updated_by, p.updated_at, p.library";
 
     private static Pipeline pipeline(ResultSet rs) throws SQLException {
         return new Pipeline(rs.getString(1), rs.getString(2), rs.getString(3), rs.getInt(4), rs.getString(5),
-            Db.instant(rs.getTimestamp(6)), rs.getString(7), Db.instant(rs.getTimestamp(8)));
+            Db.instant(rs.getTimestamp(6)), rs.getString(7), Db.instant(rs.getTimestamp(8)), rs.getString(9));
     }
 
     /**
@@ -147,15 +148,27 @@ public class PipelineStore {
      */
     public Pipeline create(String name, String displayName, String description, String by, String yaml, String message,
                            boolean valid, String problems) {
+        return create(name, displayName, description, by, yaml, message, valid, problems, null);
+    }
+
+    /**
+     * Adds a pipeline with its first version, in the library {@code library} ({@code sample}, ADR
+     * 0043) or none (null), in one transaction: a sample is never left saved but unmarked.
+     *
+     * @throws Exists when the name is taken
+     */
+    public Pipeline create(String name, String displayName, String description, String by, String yaml, String message,
+                           boolean valid, String problems, String library) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline (name, display_name, "
-                + "description, latest_version, created_by, updated_by) VALUES (?, ?, ?, 1, ?, ?) "
+                + "description, latest_version, created_by, updated_by, library) VALUES (?, ?, ?, 1, ?, ?, ?) "
                 + "ON CONFLICT (name) DO NOTHING")) {
                 ps.setString(1, name);
                 ps.setString(2, displayName);
                 ps.setString(3, description);
                 ps.setString(4, by);
                 ps.setString(5, by);
+                ps.setString(6, library);
                 if (ps.executeUpdate() == 0) {
                     throw new Exists();
                 }
@@ -244,9 +257,9 @@ public class PipelineStore {
                 + "ORDER BY x.id DESC LIMIT 1) r ON true ORDER BY p.name");
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    rs.getLong(10);
-                    Run last = rs.wasNull() ? null : run(rs, 10);
-                    out.add(new Summary(pipeline(rs), rs.getBoolean(9), last));
+                    rs.getLong(11);
+                    Run last = rs.wasNull() ? null : run(rs, 11);
+                    out.add(new Summary(pipeline(rs), rs.getBoolean(10), last));
                 }
             }
             return out;

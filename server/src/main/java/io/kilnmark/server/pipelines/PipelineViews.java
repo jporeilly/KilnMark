@@ -81,9 +81,13 @@ public final class PipelineViews {
                              String error, Long rowsWritten, Double qualityScore, Double qualityThreshold) {
     }
 
-    /** A pipeline in the list. {@code valid} is whether its latest version can run. */
+    /**
+     * A pipeline in the list. {@code valid} is whether its latest version can run; {@code library} is
+     * {@code sample} for one added from the samples, shown in the Library (ADR 0043), else null.
+     */
     public record PipelineSummary(String name, String displayName, String description, int latestVersion,
-                                  boolean valid, String updatedBy, Instant updatedAt, RunSummary lastRun) {
+                                  boolean valid, String updatedBy, Instant updatedAt, RunSummary lastRun,
+                                  String library) {
     }
 
     public record VersionSummary(int n, String message, String author, Instant createdAt, boolean valid,
@@ -97,7 +101,7 @@ public final class PipelineViews {
     /** A pipeline with its latest version. Its ETag is the latest version's number. */
     public record PipelineDetail(String name, String displayName, String description, int latestVersion,
                                  String createdBy, Instant createdAt, String updatedBy, Instant updatedAt,
-                                 VersionDetail latest, RunSummary lastRun) {
+                                 VersionDetail latest, RunSummary lastRun, String library) {
     }
 
     /**

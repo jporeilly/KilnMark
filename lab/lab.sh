@@ -12,7 +12,7 @@
 #   ./lab/lab.sh sources                  where lab/sources.csv is, and how to import it
 #   ./lab/lab.sh driver oracle [--yes]    download Oracle's JDBC driver (its licence is shown first)
 #   ./lab/lab.sh pipelines                add the demo pipelines in lab/pipelines to a running Kilnmark
-#   ./lab/lab.sh samples                  add the sample pipelines in samples/ to a running Kilnmark
+#   ./lab/lab.sh samples                  add the samples to a running Kilnmark's Library
 #
 # Uses podman if it is on the PATH, otherwise docker. Needs no administrator rights. Works with
 # the bash 3.2 that macOS ships.
@@ -382,12 +382,9 @@ cmd_driver() {
     fi
 }
 
-# Adds each pipeline in a folder (lab/pipelines, or samples/ and its subfolders) to a running
-# Kilnmark through its API. Needs an admin or steward token in KILNMARK_ADMIN_TOKEN (or
-# KILNMARK_TOKEN); KILNMARK_URL defaults to http://localhost:8780. A pipeline that is already there
-# is left as it is. Flows are skipped: they cannot be added until the flows API comes. The samples
-# name their sources by placeholders (crm-db, shop-db, files); a mapping file (lab/sample-sources.csv)
-# replaces each with its lab source, as the server's Add samples does with the person's own.
+# Adds each pipeline in a folder (lab/pipelines) to a running Kilnmark through its API. Needs an
+# admin or steward token in KILNMARK_ADMIN_TOKEN (or KILNMARK_TOKEN); KILNMARK_URL defaults to
+# http://localhost:8780. A pipeline that is already there is left as it is. Flows are skipped.
 cmd_pipelines() {
     local folder=$1 command=$2 mapping=${3:-}
     local url=${KILNMARK_URL:-http://localhost:8780} token=${KILNMARK_TOKEN:-${KILNMARK_ADMIN_TOKEN:-}} file body code
@@ -423,6 +420,43 @@ PY
     echo "Open Pipelines in Kilnmark ($url) to see them."
 }
 
+# Adds the samples (samples/, never samples/templates) to a running Kilnmark the way its Library
+# does, through POST /api/v1/samples, so they are marked as samples and stay off the Pipelines and
+# Flows pages (ADR 0043), and the sample flows come too. The samples name their sources by
+# placeholders (crm-db, shop-db, files); lab/sample-sources.csv maps each to its lab source. Needs a
+# designer or admin token in KILNMARK_ADMIN_TOKEN (or KILNMARK_TOKEN).
+cmd_samples() {
+    local mapping=$1
+    local url=${KILNMARK_URL:-http://localhost:8780} token=${KILNMARK_TOKEN:-${KILNMARK_ADMIN_TOKEN:-}} body out code
+    [ -n "$token" ] || die "set KILNMARK_ADMIN_TOKEN (or KILNMARK_TOKEN) to a designer or admin token first."
+    command -v python3 >/dev/null 2>&1 || die "this needs python3, to send the mapping as JSON."
+    body=$(python3 - "$mapping" <<'PY'
+import csv, json, sys
+with open(sys.argv[1], encoding="utf-8", newline="") as f:
+    print(json.dumps({"sources": {r["placeholder"]: r["lab_source"] for r in csv.DictReader(f)}}))
+PY
+)
+    out=$(mktemp)
+    code=$(printf '%s' "$body" | curl -s -o "$out" -w '%{http_code}' -X POST "$url/api/v1/samples" \
+        -H "Authorization: Bearer $token" -H "Content-Type: application/json" --data-binary @-) || code=000
+    case "$code" in
+        200) python3 - "$out" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+for s in d["samples"]:
+    why = f" ({s['reason']})" if s.get("reason") else ""
+    print(f"{s['outcome'].capitalize():8} {s['name']}{why}")
+print(f"{d['added']} added.")
+PY
+            ;;
+        401|403) rm -f "$out"; die "Kilnmark refused ($code): it needs a designer or admin token, and the samples offered." ;;
+        000) rm -f "$out"; die "could not reach Kilnmark at $url: is it running?" ;;
+        *) rm -f "$out"; die "Kilnmark answered $code." ;;
+    esac
+    rm -f "$out"
+    echo "Open the Library in Kilnmark ($url) to see them."
+}
+
 usage() {
     sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
     echo
@@ -441,7 +475,7 @@ case "$command" in
     sources) cmd_sources ;;
     driver) cmd_driver "$@" ;;
     pipelines) cmd_pipelines "$LAB_DIR/pipelines" pipelines ;;
-    samples) cmd_pipelines "$LAB_DIR/../samples" samples "$LAB_DIR/sample-sources.csv" ;;
+    samples) cmd_samples "$LAB_DIR/sample-sources.csv" ;;
     help|-h|--help) usage ;;
     *) usage >&2; echo >&2; die "unknown command '$command'." ;;
 esac

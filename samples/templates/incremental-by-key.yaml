@@ -1,0 +1,25 @@
+# Template: load only the rows added since the last load (a Kilnmark template).
+# Reads the rows whose key is above after_key and appends them. Run it with after_key set to the
+# highest key already loaded, from a flow or through the API:
+#   POST /api/v1/pipelines/<name>/runs   {"parameters": {"after_key": 41250}}
+# The value is bound, never written into the SQL. Replace each <...> with your own.
+kilnmark: pipeline/v1
+name: template-incremental-by-key
+description: Rows added since the last load, appended.
+
+parameters:
+  after_key: { type: number, default: 0, description: The highest key already loaded }
+
+nodes:
+  - id: new_rows
+    type: read
+    source: <your source database>
+    asset: <schema.table>
+    where: "<key column> > ${after_key}"
+
+  - id: load
+    type: write
+    input: new_rows
+    source: <a database that allows writing>
+    table: <schema.table>
+    mode: append

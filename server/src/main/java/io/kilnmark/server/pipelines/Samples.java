@@ -16,6 +16,8 @@ import java.util.regex.Pattern;
 import org.jboss.logging.Logger;
 
 import io.kilnmark.graph.store.GraphStore;
+import io.kilnmark.server.flows.FlowService;
+import io.kilnmark.server.flows.FlowStore;
 import io.kilnmark.graph.store.Records;
 import io.kilnmark.server.auth.AccessRole;
 import io.kilnmark.server.quality.Sights;
@@ -29,8 +31,9 @@ import jakarta.ws.rs.core.Response;
  * copied into the server's resources at build time (server/build.gradle.kts) with a list of them.
  * They name their sources by placeholders ({@link #PLACEHOLDERS}), never a real source; adding them
  * maps each placeholder to one of the person's saved sources. A sample already there is left as it
- * is, so changes made to it are kept. Flows are listed, to read, but not added until the flows API
- * comes.
+ * is, so changes made to it are kept. Pipelines and flows added from here are marked as samples
+ * ({@link #LIBRARY}): the Library page lists them, and the Pipelines and Flows pages, which hold a
+ * team's own work, do not (ADR 0043).
  *
  * <p>The tables the samples read come with them: Kilnmark's sample data ({@code samples/data}, the
  * {@code sample-data} source kind). {@link #createTables} copies them into one schema of a database
@@ -43,6 +46,8 @@ public class Samples {
 
     private static final Logger LOG = Logger.getLogger(Samples.class);
     static final String ROOT = "kilnmark/samples/";
+    /** The library mark of a pipeline or flow added from the samples (ADR 0043). */
+    public static final String LIBRARY = "sample";
 
     /** A source name the samples use, what kind of source it stands for, and what it should hold. */
     public record Placeholder(String name, String category, String description) {
@@ -88,19 +93,43 @@ public class Samples {
     static final String REGION = "EMEA";
 
     private final PipelineService pipelines;
+    private final PipelineStore pipelineStore;
+    private final FlowService flows;
+    private final FlowStore flowStore;
     private final PipelineSources sources;
     private final GraphStore store;
     private final VariableService variables;
 
-    public Samples(PipelineService pipelines, PipelineSources sources, GraphStore store, VariableService variables) {
+    public Samples(PipelineService pipelines, PipelineStore pipelineStore, FlowService flows, FlowStore flowStore,
+                   PipelineSources sources, GraphStore store, VariableService variables) {
         this.pipelines = pipelines;
+        this.pipelineStore = pipelineStore;
+        this.flows = flows;
+        this.flowStore = flowStore;
         this.sources = sources;
         this.store = store;
         this.variables = variables;
     }
 
-    /** Every bundled sample, in the list's order (by folder). Missing resources give an empty list. */
+    /** The folder under samples/ that holds the templates: starting points, never added as samples. */
+    public static final String TEMPLATES = "templates/";
+
+    /** Every bundled sample, in the list's order (by folder), without the templates. */
     public static List<Sample> bundled() {
+        return everything().stream().filter(s -> !s.file().startsWith(TEMPLATES)).toList();
+    }
+
+    /**
+     * The templates (samples/templates): pipelines and flows to start one's own from, with
+     * {@code <...>} where a source, table or pipeline of one's own goes. Never added as samples: the
+     * Library page opens one in the editor under a name the person gives (ADR 0043).
+     */
+    public static List<Sample> templates() {
+        return everything().stream().filter(s -> s.file().startsWith(TEMPLATES)).toList();
+    }
+
+    /** Every bundled file, samples and templates, in the list's order. Missing resources give an empty list. */
+    private static List<Sample> everything() {
         String list = read(ROOT + "samples.list");
         List<Sample> out = new ArrayList<>();
         if (list == null) {
@@ -173,6 +202,19 @@ public class Samples {
         return out.toString();
     }
 
+    /** {@code pipeline: <name>} in a flow: the pipeline a run-pipeline or for-each node runs. */
+    private static final Pattern PIPELINE_LINE = Pattern.compile("(?m)^\\s*(?:-\\s+)?pipeline:\\s*([a-z][a-z0-9-]*)\\s*$");
+
+    /** The pipelines a flow sample runs, by name. */
+    static List<String> pipelinesRun(String yaml) {
+        Set<String> out = new LinkedHashSet<>();
+        Matcher m = PIPELINE_LINE.matcher(yaml);
+        while (m.find()) {
+            out.add(m.group(1));
+        }
+        return List.copyOf(out);
+    }
+
     /** A {@code query:} setting's first line: its indent in group 1, the rest in group 2. */
     private static final Pattern QUERY_LINE = Pattern.compile("^( *)query\\s*:(.*)$");
 
@@ -221,11 +263,13 @@ public class Samples {
     }
 
     /**
-     * Why a sample whose read runs a query cannot be added with {@code mapping}, or null: each
-     * database it reads must be a PostgreSQL source with Allow SQL on.
+     * Why a sample whose read runs a query, or a flow sample with sql nodes (a flow names sources only
+     * for those), cannot be added with {@code mapping}, or null: each database it uses must be a
+     * PostgreSQL source with Allow SQL on (ADR 0028).
      */
     private String queryProblem(Sample s, Map<String, String> mapping) {
-        if (!readsWithQuery(s.yaml())) {
+        boolean flow = "flow".equals(s.type());
+        if (!readsWithQuery(s.yaml()) && !(flow && !s.sources().isEmpty())) {
             return null;
         }
         for (String p : s.sources()) {
@@ -236,7 +280,8 @@ public class Samples {
             Records.Source src = sources.source(mapping.get(p)).orElse(null);
             if (src == null || !"postgresql".equals(src.kind())
                 || !io.kilnmark.server.sources.CommonSettings.allowsSql(src.settings())) {
-                return "it reads with a query: choose a PostgreSQL source with Allow SQL on for " + p;
+                return (flow ? "it runs SQL" : "it reads with a query") + ": choose a PostgreSQL source with Allow "
+                    + "SQL on for " + p;
             }
         }
         return null;
@@ -318,8 +363,11 @@ public class Samples {
     public Catalogue catalogue(Sights sights) {
         Set<String> existing = new java.util.HashSet<>();
         pipelines.list(sights).forEach(p -> existing.add(p.name()));
+        Set<String> existingFlows = new java.util.HashSet<>();
+        flowStore.summaries().forEach(f -> existingFlows.add(f.flow().name()));
         return new Catalogue(PLACEHOLDERS, bundled().stream().map(s -> new SampleView(s.file(), s.name(), s.type(),
-            s.description(), s.sources(), "pipeline".equals(s.type()) && existing.contains(s.name()))).toList(),
+            s.description(), s.sources(), "flow".equals(s.type()) ? existingFlows.contains(s.name())
+                : existing.contains(s.name()))).toList(),
             existing.contains(SETUP) ? tables(sights) : null);
     }
 
@@ -402,7 +450,8 @@ public class Samples {
         String yaml = setupYaml(name, schema);
         String message = "The sample tables, in " + name + "." + schema;
         if (existing == null) {
-            pipelines.create(new PipelineViews.NewPipeline(SETUP, "Sample tables", null, yaml, message), by, sights);
+            pipelines.create(new PipelineViews.NewPipeline(SETUP, "Sample tables", null, yaml, message), by, sights,
+                LIBRARY);
         } else {
             // Saved over the version read above only: one saved since is not overwritten (409).
             pipelines.save(SETUP, existing.latestVersion(), new PipelineViews.PipelineChange(yaml, message, null, null),
@@ -448,12 +497,13 @@ public class Samples {
     }
 
     /**
-     * Adds every bundled pipeline whose placeholders are all mapped, each to a saved source. A
-     * sample whose name is taken is left as it is; one that checks with problems is saved as a
-     * draft, as any pipeline is. A sample whose read runs a query is skipped unless the caller, seen
-     * through {@code sights}, may see unmasked values (ADR 0028), and always when {@code sights} is null.
+     * Adds every bundled pipeline, then every bundled flow, whose placeholders are all mapped, each to
+     * a saved source, marked as samples ({@link #LIBRARY}). A sample whose name is taken is left as it
+     * is; one that checks with problems is saved as a draft, as any pipeline or flow is. A sample whose
+     * read runs a query is skipped unless the caller, seen through {@code sights}, may see unmasked
+     * values (ADR 0028), and always when {@code sights} is null. Flows go after the pipelines they run.
      */
-    public AddResult add(AddRequest body, String by, io.kilnmark.server.quality.Sights sights) {
+    public AddResult add(AddRequest body, String by, AccessRole role, io.kilnmark.server.quality.Sights sights) {
         Map<String, String> mapping = new LinkedHashMap<>();
         if (body != null && body.sources() != null) {
             for (var e : body.sources().entrySet()) {
@@ -488,16 +538,20 @@ public class Samples {
         if (dataNeeded) {
             ensureSampleData(by);
         }
-        for (Sample s : bundled()) {
-            if ("flow".equals(s.type())) {
-                out.add(new Outcome(s.name(), s.file(), "skipped", "a flow: flows are added once the flows API comes",
-                    null));
-                continue;
-            }
+        List<Sample> ordered = new ArrayList<>(bundled().stream().filter(s -> !"flow".equals(s.type())).toList());
+        ordered.addAll(bundled().stream().filter(s -> "flow".equals(s.type())).toList());
+        for (Sample s : ordered) {
             List<String> missing = s.sources().stream().filter(p -> !mapping.containsKey(p)).toList();
             if (!missing.isEmpty()) {
                 out.add(new Outcome(s.name(), s.file(), "skipped", "no source chosen for " + String.join(", ", missing),
                     null));
+                continue;
+            }
+            List<String> notThere = "flow".equals(s.type()) ? pipelinesRun(s.yaml()).stream()
+                .filter(p -> pipelineStore.pipeline(p).isEmpty()).toList() : List.of();
+            if (!notThere.isEmpty()) {
+                out.add(new Outcome(s.name(), s.file(), "skipped", "it runs " + String.join(", ", notThere)
+                    + ", which is not here: choose sources for it too", null));
                 continue;
             }
             String sql = sights == null && readsWithQuery(s.yaml())
@@ -508,9 +562,18 @@ public class Samples {
             }
             try {
                 String yaml = withSources(s.yaml(), mapping);
+                if ("flow".equals(s.type())) {
+                    flows.createInLibrary(yaml, "Added from the samples (" + s.file() + ")", by, role,
+                        sights != null && sights.mayUnmask(), LIBRARY);
+                    Boolean valid = flowStore.summaries().stream().filter(f -> f.flow().name().equals(s.name()))
+                        .map(FlowStore.Summary::valid).findFirst().orElse(null);
+                    out.add(new Outcome(s.name(), s.file(), "added", null, valid));
+                    added++;
+                    continue;
+                }
                 PipelineViews.PipelineDetail d = pipelines.create(new PipelineViews.NewPipeline(s.name(), null, null,
                     schema == null ? yaml : withTables(yaml, schema), "Added from the samples (" + s.file() + ")"), by,
-                    sights);
+                    sights, LIBRARY);
                 Boolean valid = d.latest() == null ? null : d.latest().valid();
                 out.add(new Outcome(s.name(), s.file(), "added", null, valid));
                 added++;
@@ -518,8 +581,9 @@ public class Samples {
                 if (e.getResponse().getStatus() == Response.Status.CONFLICT.getStatusCode()) {
                     out.add(new Outcome(s.name(), s.file(), "exists", "already there: left as it is", null));
                 } else if (e.getResponse().getStatus() == Response.Status.FORBIDDEN.getStatusCode()) {
-                    out.add(new Outcome(s.name(), s.file(), "skipped", "it reads with a query: only a designer who "
-                        + "may see unmasked values adds it", null));
+                    out.add(new Outcome(s.name(), s.file(), "skipped", ("flow".equals(s.type())
+                        ? "it runs SQL" : "it reads with a query") + ": only a designer who may see unmasked values "
+                        + "adds it", null));
                 } else {
                     out.add(failed(s, e.getResponse().getEntity() instanceof io.kilnmark.server.api.ApiError a
                         ? a.error() : e.getMessage(), e));
@@ -529,7 +593,7 @@ public class Samples {
                 out.add(failed(s, e.getMessage(), e));
             }
         }
-        LOG.infof("%d sample pipeline(s) added by %s", added, by);
+        LOG.infof("%d sample(s) added by %s", added, by);
         return new AddResult(out, added);
     }
 

@@ -12,6 +12,20 @@ details.
   Connections run in square steps from one node's `out` to the next one's `in`, never from a
   corner, and the diagram fits every connection, even one that runs round the others.
   ([The diagram](docs/guide/flows.md#the-diagram))
+- **A Library of samples and templates** (ADR 0043). **Library**, in the navigation, holds what
+  ships with Kilnmark, apart from your own work. **Samples**: Add samples and the starter pack moved
+  here from the Pipelines page, and added samples stay here, so the Pipelines and Flows pages show
+  only your team's own development and production work. The sample flows are now added too, after
+  the pipelines they run. **Templates**: five starting points (copy a table, load a file, a quality
+  gate, an incremental load by key, and a flow running pipelines in order); **Use this template**
+  opens one in the editor as a new pipeline or flow of your own. **From a template** on the
+  Pipelines and Flows pages opens them. ([The Library](docs/guide/library.md))
+- **Stop a flow node that takes too long** (ADR 0041). A `run-pipeline`, `for-each` or `sql` node
+  can say how long its work may take (`timeout: 2h`, at most 7 days). Past it, the pipeline run is
+  cancelled or the statement rolled back, and the node fails, saying so, so a `failure` connection
+  can send a notice; for a `for-each` node, each item has the time to itself. Time waiting for a
+  worker or a source does not count. The run page marks the node, or item, **Timed out**.
+  ([Stopping a node that takes too long](docs/guide/flows.md#stopping-a-node-that-takes-too-long))
 
 - **Start and stop Kilnmark with one click**, on Windows 11 and Ubuntu. The release folder has
   `start-kilnmark` and `stop-kilnmark` scripts for each, and `create-shortcut` puts **Kilnmark**
@@ -151,12 +165,35 @@ details.
   between nodes placed by hand still bow apart. Two unseen 1-pixel points at the corners of the
   routes let fitting the view take in a route round the outside. The hint under the Nodes tab says
   to drag from a node's out connector.
-
+- **The Library** (ADR 0043). Migration V32 adds `library` to `pipeline` and `flow`: `sample` for
+  one added from the samples, set by the server, never by the YAML; samples added before are marked
+  by their fixed names, never by a pattern. `GET /api/v1/pipelines`, `/flows` and each one's detail
+  give `library`. `POST /api/v1/samples` adds the sample flows after their pipelines, skipping one
+  whose pipelines are not all there. `GET /api/v1/templates` lists the templates in
+  `samples/templates`, with their YAML, for any signed-in person, even with the samples turned off.
+  `#/pipelines/new?template=<file>` and `#/flows/new?template=<file>` open one in the editor.
+- **The release key** is in place: `config/release/cosign.pub` is the public half of the key that
+  signs every file of a release from now on. Check a release with it as INSTALL.md, "Check a
+  release", says.
 - **People are greeted by name.** Someone signed in through the identity provider now shows as their
   name there ("Alex Morgan"), with their initials, in the top bar and on Home, rather than as
   `sso:<name> (<ID>)`. The audit log, usage and "created by" still record the `sso:` name, which the
   user menu also shows. `GET /api/v1/me` adds `displayName` (ADR 0036).
 - **New pipeline and New flow** are the same height as the Add samples button beside them.
+
+- **A flow node's `timeout`** (ADR 0041, docs/design/flow-controls.md, C3). `run-pipeline`,
+  `for-each` and `sql` nodes take `timeout` (`90s`, `30m`, `2h`, `1d`; more than nothing, at most
+  7 days); other node types refuse it when saved. It counts from the pipeline run's `started_at`, or
+  a `sql` node's start after its place on its source. Past it the flow cancels the pipeline run (as a
+  person's cancel) or stops the `sql` node's statement and rolls back, waits for the run to end, and
+  fails the node: "Took longer than 2h and was stopped". A timed-out item of a `for-each` node counts
+  as failed, not cancelled, so the other items go on. The node's row records `timed_out: true`, or
+  `timed_out_items` for a for-each node, which `GET /api/v1/flow-runs/{id}` returns in `reported`
+  and which conditions do not read; a timed-out item's status there is `failed`. When a timed-out
+  run-pipeline or sql node fails the flow, the flow's error is "Node load took longer than 2h and was
+  stopped"; a for-each node's message names the first item that timed out. The Settings tab on the
+  diagram has a **Timeout** field for the three types. The sample `sample-for-each-region` gives
+  each item 30 minutes. No migration.
 
 - **Parallel runs in flows** (ADR 0040, docs/design/flows.md section 8). A flow's top-level
   `max_parallel` (1 to 50) holds ready nodes back, in the order written, while that many run; `stop`
