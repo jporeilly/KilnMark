@@ -263,11 +263,13 @@ public class Samples {
     }
 
     /**
-     * Why a sample whose read runs a query cannot be added with {@code mapping}, or null: each
-     * database it reads must be a PostgreSQL source with Allow SQL on.
+     * Why a sample whose read runs a query, or a flow sample with sql nodes (a flow names sources only
+     * for those), cannot be added with {@code mapping}, or null: each database it uses must be a
+     * PostgreSQL source with Allow SQL on (ADR 0028).
      */
     private String queryProblem(Sample s, Map<String, String> mapping) {
-        if (!readsWithQuery(s.yaml())) {
+        boolean flow = "flow".equals(s.type());
+        if (!readsWithQuery(s.yaml()) && !(flow && !s.sources().isEmpty())) {
             return null;
         }
         for (String p : s.sources()) {
@@ -278,7 +280,8 @@ public class Samples {
             Records.Source src = sources.source(mapping.get(p)).orElse(null);
             if (src == null || !"postgresql".equals(src.kind())
                 || !io.kilnmark.server.sources.CommonSettings.allowsSql(src.settings())) {
-                return "it reads with a query: choose a PostgreSQL source with Allow SQL on for " + p;
+                return (flow ? "it runs SQL" : "it reads with a query") + ": choose a PostgreSQL source with Allow "
+                    + "SQL on for " + p;
             }
         }
         return null;

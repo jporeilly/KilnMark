@@ -130,11 +130,14 @@ class SampleTablesApiTest {
         JsonPath added = as(designer).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
             "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
             .extract().jsonPath();
-        // 19 pipelines, then the 4 sample flows that run them (ADR 0043).
-        assertEquals(23, added.getInt("added"), added.prettify());
-        assertEquals(List.of("sample-for-each-region", "sample-passing-values", "sample-quality-decides",
-            "sample-sql-before-and-after"), added.getList("samples.findAll { it.outcome == 'added' && "
-            + "it.file.startsWith('08-flows/') }.name"), added.prettify());
+        // 19 pipelines, then the sample flows that run them (ADR 0043). The one with sql nodes needs a
+        // source with Allow SQL on, which e2e-db does not have: skipped, saying so, never a draft.
+        assertEquals(22, added.getInt("added"), added.prettify());
+        assertEquals(List.of("sample-for-each-region", "sample-passing-values", "sample-quality-decides"),
+            added.getList("samples.findAll { it.outcome == 'added' && it.file.startsWith('08-flows/') }.name"),
+            added.prettify());
+        assertEquals("it runs SQL: choose a PostgreSQL source with Allow SQL on for shop-db",
+            added.getString("samples.find { it.name == 'sample-sql-before-and-after' }.reason"), added.prettify());
         JsonPath flows = as(designer).get("/api/v1/flows").then().statusCode(200).extract().jsonPath();
         assertEquals(List.of("sample"), flows.getList("findAll { it.name.startsWith('sample-') }.library").stream()
             .distinct().toList(), flows.prettify());

@@ -74,7 +74,8 @@ change its `asset` to one of yours, or its columns.
 
 The sample flows are added after the pipelines they run. A flow whose pipelines were not all added
 (because a placeholder they use was left out) is not added either, and the dialog says which
-pipeline it needs.
+pipeline it needs. `sample-sql-before-and-after` runs SQL, so it is added only when `shop-db` is a
+PostgreSQL source with **Allow SQL** on, by a designer who may see unmasked values.
 
 ## Templates
 
