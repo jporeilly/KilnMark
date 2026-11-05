@@ -197,6 +197,42 @@ long it was allowed:
 
 ![A run of nightly-takings in which the takings node timed out: the diagram outlines takings red as Failed, its notice node too-slow green as Succeeded through the on failure connection, and done as Skipped; the run timeline has a red bar for takings, chosen, with its details below (Failed, took 3.1 s, "Took longer than 2s and was stopped; its pipeline run was cancelled", reported timed_out true); the Nodes table shows takings as Failed and Timed out, with a link to its pipeline run](images/flow-run-timed-out.png)
 
+## Choosing which runs start first
+
+When more pipeline runs wait than there are workers free, a `run-pipeline` or `for-each` node's
+`priority` says which start first: `high`, `normal` (the default) or `low`.
+
+```yaml
+nodes:
+  - id: close-of-day
+    type: run-pipeline
+    pipeline: ledger-close
+    priority: high              # starts before normal and low runs waiting with it
+
+  - id: archive
+    type: for-each
+    pipeline: archive-month
+    items: [2024, 2025]
+    as: year
+    priority: low               # each item's run waits behind the rest
+```
+
+![The order runs leave the queue: four runs waiting, queued in the order low, normal, normal, high; a worker takes the high one first, then the two normal ones in the order they were queued, then the low one](images/flow-priority.svg)
+
+- **A worker takes the waiting run with the highest priority first**, and of those the one queued
+  first. Scans, quality checks and a person's **Run now** are normal.
+- **Priority only chooses among runs that may start.** It never lets a run past a source's limit
+  on runs at once (**Most runs at once**), a flow's `max_parallel` or a for-each node's, and it never
+  stops a run already going. A low run starts whenever no higher run is ready to start; there is no
+  ageing, so while high runs keep coming, low ones keep waiting. Use `high` for the few runs that
+  must not wait.
+- Only nodes that queue pipeline runs take one: a `sql` node runs on its flow's own watcher, never
+  waiting in the queue, so saving refuses `priority` on it, and on any other node type.
+- On the diagram, choose the node and set **Priority** on its Settings tab. A node of high or low
+  priority says so under its name.
+
+![The flow close-of-day on the diagram: products, a run-pipeline node saying "products-copy, high priority", then totals saying "category-totals, low priority", then a notice. The products node is chosen, and its Settings tab shows Pipeline products-copy, a blank Version and Timeout, and Priority High](images/flow-node-priority.png)
+
 ## The diagram
 
 The **Diagram** tab draws the flow as you write it: a box for each node, saying what it does

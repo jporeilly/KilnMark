@@ -29,6 +29,8 @@ public final class Chunker {
     }
 
     /**
+     * The text in chunks of about {@code size} characters, each with the page it starts on.
+     *
      * @param pageStarts where each page starts in {@code text}, ascending; empty when not known
      * @param size       the most characters a chunk aims for
      * @param overlap    characters repeated from the end of the chunk before

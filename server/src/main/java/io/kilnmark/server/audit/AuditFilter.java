@@ -36,7 +36,7 @@ public class AuditFilter {
         int status = response.getStatus();
         boolean changing = CHANGING.contains(method);
         String action;
-        if (status == 403 || status == 401 && changing) {
+        if (status == 403 || (status == 401 && changing)) {
             action = AuditLog.API_REFUSED;
         } else if (changing && status >= 200 && status < 300) {
             action = AuditLog.API_REQUEST;

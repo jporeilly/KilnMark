@@ -35,34 +35,42 @@ class NodeCategoriesTest {
         assertEquals("Quality", NodeCategories.defaultFor(NodeKind.GATE));
         assertEquals("Other", NodeCategories.defaultFor(NodeKind.TRANSFORM));
         NodeFactory plain = new NodeFactory() {
+            @Override
             public String type() {
                 return "mystery";
             }
 
+            @Override
             public NodeKind kind() {
                 return NodeKind.SINK;
             }
 
+            @Override
             public String label() {
                 return "Mystery";
             }
 
+            @Override
             public String help() {
                 return "";
             }
 
+            @Override
             public java.util.List<String> inputPorts() {
                 return java.util.List.of("in");
             }
 
+            @Override
             public java.util.List<String> outputPorts() {
                 return java.util.List.of();
             }
 
+            @Override
             public java.util.List<io.kilnmark.kiln.SettingSpec> settings() {
                 return java.util.List.of();
             }
 
+            @Override
             public io.kilnmark.kiln.Node create(Map<String, Object> config) {
                 throw new UnsupportedOperationException();
             }

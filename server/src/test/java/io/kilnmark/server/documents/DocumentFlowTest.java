@@ -16,6 +16,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.junit.jupiter.api.MethodOrderer;
@@ -206,7 +207,7 @@ class DocumentFlowTest {
         assertTrue(f.getInt("total") >= 12);
         String snippet = f.getString("pages[0].snippet.text");
         int at = f.getInt("pages[0].snippet.highlights[0].start");
-        assertEquals("north depot", snippet.substring(at, at + 11).toLowerCase());
+        assertEquals("north depot", snippet.substring(at, at + 11).toLowerCase(Locale.ROOT));
         admin().queryParam("urn", DOCS + "remote-working-policy.pdf").queryParam("q", "x")
             .get("/api/v1/documents/find").then().statusCode(400);
     }
@@ -223,7 +224,7 @@ class DocumentFlowTest {
         String text = (String) snippet.get("text");
         @SuppressWarnings("unchecked")
         Map<String, Integer> h = ((List<Map<String, Integer>>) snippet.get("highlights")).get(0);
-        assertEquals("broadband", text.substring(h.get("start"), h.get("start") + h.get("length")).toLowerCase());
+        assertEquals("broadband", text.substring(h.get("start"), h.get("start") + h.get("length")).toLowerCase(Locale.ROOT));
         assertFalse(text.contains(""));
 
         JsonPath byName = admin().queryParam("q", "handbook").get("/api/v1/search").then().statusCode(200)

@@ -31,9 +31,6 @@ import io.kilnmark.kiln.plugins.write.WriteColumn;
  */
 abstract class WriteSql {
 
-    static final WriteSql POSTGRESQL = new Postgres();
-    static final WriteSql SQL_SERVER = new SqlServer();
-
     /** A statement and its parameters, all text. */
     record Sql(String text, List<String> params) {
 
@@ -418,6 +415,10 @@ abstract class WriteSql {
     /** PostgreSQL: transactional DDL, {@code COPY}, {@code INSERT … ON CONFLICT}. */
     static final class Postgres extends WriteSql {
 
+        // Here rather than in WriteSql: a superclass that makes its subclasses can deadlock two threads
+        // loading both at once.
+        static final Postgres INSTANCE = new Postgres();
+
         private static final Set<String> PRIVILEGES = Set.of("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE",
             "REFERENCES", "TRIGGER", "MAINTAIN");
         private static final HexFormat HEX = HexFormat.of();
@@ -771,6 +772,8 @@ abstract class WriteSql {
 
     /** SQL Server: DDL in transactions, {@code sp_rename}, {@code MERGE … WITH (HOLDLOCK)}. */
     static final class SqlServer extends WriteSql {
+
+        static final SqlServer INSTANCE = new SqlServer();
 
         /** Inserts go 5,000 at a time; upserts (one MERGE each) 1,000. */
         @Override

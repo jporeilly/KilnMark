@@ -1,5 +1,7 @@
 package io.kilnmark.kiln.plugins.files;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -87,7 +89,7 @@ final class DocumentReads {
                 IntVector start = (IntVector) b.getVector(DocumentEvents.START);
                 IntVector end = (IntVector) b.getVector(DocumentEvents.END);
                 for (int i = 0; i < b.getRowCount(); i++) {
-                    into.add(new Chunk(new String(urn.get(i)), seq.get(i), new String(text.get(i),
+                    into.add(new Chunk(new String(urn.get(i), UTF_8), seq.get(i), new String(text.get(i),
                         java.nio.charset.StandardCharsets.UTF_8), page.isNull(i) ? null : page.get(i), start.get(i),
                         end.get(i)));
                 }

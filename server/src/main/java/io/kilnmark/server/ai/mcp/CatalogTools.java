@@ -199,7 +199,7 @@ public class CatalogTools {
         for (Records.Source s : store.sources()) {
             EgressPolicy.SourceRule rule = EgressPolicy.SourceRule.of(s);
             if (rule == EgressPolicy.SourceRule.NONE
-                || rule == EgressPolicy.SourceRule.LOCAL_ONLY && !localAssistant) {
+                || (rule == EgressPolicy.SourceRule.LOCAL_ONLY && !localAssistant)) {
                 out.add(s.name());
             }
         }

@@ -243,7 +243,11 @@ public final class LocalFileStore implements FileStore {
         if (path == null || path.isBlank() || path.startsWith("/") || path.contains("\\") || path.contains("\0")) {
             throw new IOException("Refusing to write '" + path + "': give a path relative to " + root);
         }
-        String[] parts = path.split("/");
+        String[] parts = path.split("/", -1); // -1 keeps a trailing empty name: "a/" names no file
+        String name = parts[parts.length - 1];
+        if (name.isEmpty() || name.equals(".") || name.equals("..")) {
+            throw new IOException("Refusing to write '" + path + "': give a file name");
+        }
         Path folder = root;
         for (int i = 0; i < parts.length - 1; i++) {
             String part = parts[i];
@@ -277,10 +281,6 @@ public final class LocalFileStore implements FileStore {
                 }
                 folder = real;
             }
-        }
-        String name = parts[parts.length - 1];
-        if (name.isEmpty() || name.equals(".") || name.equals("..")) {
-            throw new IOException("Refusing to write '" + path + "': give a file name");
         }
         Path target = folder.resolve(name);
         if (!target.normalize().startsWith(root)) {

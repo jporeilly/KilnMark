@@ -461,7 +461,7 @@ public interface Connector {
      * mode, the settings, and whether the source can read back what would be written (for example a
      * CSV delimiter other than the source's). Empty when the write may be tried. Each problem starts
      * with the setting it is about. The default asks {@link #writer} for the node and reports its
-     * refusal; connectors whose {@code writer} connects override it.
+     * refusal; connectors whose {@link #writer} connects override it.
      */
     default List<String> checkWrite(SourceConfig source, WriteOptions write) {
         try {

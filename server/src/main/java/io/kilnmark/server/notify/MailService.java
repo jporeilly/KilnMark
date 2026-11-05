@@ -130,7 +130,7 @@ public class MailService {
         boolean stored = store.settings().map(s -> s.password() != null).orElse(false);
         MailPolicy.PasswordAction action = MailPolicy.password(stored, MailPolicy.destinationChanged(current, v), v);
         boolean entered = action == MailPolicy.PasswordAction.REPLACE
-            || action == MailPolicy.PasswordAction.KEEP && stored;
+            || (action == MailPolicy.PasswordAction.KEEP && stored);
         MailPolicy.checkPlainAuth(v.security(), v.username(), v.allowPlainAuth(), entered);
         byte[] sealed = action == MailPolicy.PasswordAction.REPLACE ? secrets.seal(v.password()) : null;
         store.saveSettings(v, action, sealed, by);
@@ -232,14 +232,18 @@ public class MailService {
         if (server == null || !settings.enabled()) {
             return;
         }
-        sends.submit(() -> {
-            MailMessages.Mail mail = new MailMessages(settings, ZoneId.systemDefault(), e -> Exposure.NONE)
-                .confirmation(code);
+        sends.execute(() -> {
+            // Everything inside the one try: an error escaping here would reach the thread's default
+            // handler, which prints a stack trace outside the server's log.
             try {
-                mailer.send(server, address, mail);
-                store.log(address, subscriberId, "confirm", List.of(), mail.subject(), "sent", 1, null);
-            } catch (SmtpMailer.Failure f) {
-                store.log(address, subscriberId, "confirm", List.of(), mail.subject(), "failed", 1, f.getMessage());
+                MailMessages.Mail mail = new MailMessages(settings, ZoneId.systemDefault(), e -> Exposure.NONE)
+                    .confirmation(code);
+                try {
+                    mailer.send(server, address, mail);
+                    store.log(address, subscriberId, "confirm", List.of(), mail.subject(), "sent", 1, null);
+                } catch (SmtpMailer.Failure f) {
+                    store.log(address, subscriberId, "confirm", List.of(), mail.subject(), "failed", 1, f.getMessage());
+                }
             } catch (RuntimeException e) {
                 LOG.warnf("Could not send a confirmation email (subscriber %d): %s", subscriberId, e.getMessage());
             }

@@ -146,15 +146,16 @@ public class JobQueue {
     }
 
     /**
-     * Claims the job queued first among those that are due, if any, and marks it running for
+     * Claims, among the jobs that are due, the one with the highest priority (ADR 0041: 1 high, 0
+     * normal, -1 low), and of those the one queued first, if any, and marks it running for
      * {@code workerId}. First queued, not first due: a run waiting for a place on a source, put back
-     * for a few seconds, is then not overtaken by runs queued after it (ADR 0040).
+     * for a few seconds, is then not overtaken by runs of its priority queued after it (ADR 0040).
      */
     public Optional<Job> claim(String workerId) {
         return db.tx(c -> {
             long id;
             try (PreparedStatement ps = c.prepareStatement("SELECT id FROM kilnmark.job "
-                + "WHERE status = 'queued' AND run_after <= now() ORDER BY id "
+                + "WHERE status = 'queued' AND run_after <= now() ORDER BY priority DESC, id "
                 + "FOR UPDATE SKIP LOCKED LIMIT 1");
                  ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {

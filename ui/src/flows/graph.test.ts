@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { bowOffsets, connectionSentence, readFlowGraph, TYPE_WORDS, whenWords } from "./graph";
+import { bowOffsets, connectionSentence, priorityWords, readFlowGraph, TYPE_WORDS, whenWords } from "./graph";
 
 const FLOW = `kilnmark: flow/v1
 name: nightly-customers
@@ -171,5 +171,25 @@ nodes:
       "a pipeline for each item",
     ]);
     expect(TYPE_WORDS["for-each"]).toBe("Runs a pipeline for each item");
+  });
+});
+
+describe("priority in a node's summary", () => {
+  test("says a high or low priority, not a normal one", () => {
+    const r = readFlowGraph(`kilnmark: flow/v1
+name: f
+nodes:
+  - { id: a, type: run-pipeline, pipeline: load, priority: high }
+  - { id: b, type: run-pipeline, pipeline: load, priority: normal }
+  - { id: c, type: for-each, pipeline: load, items: [x, y], as: region, priority: LOW }
+  - { id: d, type: run-pipeline, pipeline: load }
+`);
+    expect(r.ok && r.graph.nodes.map((n) => n.summary)).toEqual([
+      "load, high priority",
+      "load",
+      "load for each of 2 items, low priority",
+      "load",
+    ]);
+    expect(priorityWords(undefined)).toBe("");
   });
 });

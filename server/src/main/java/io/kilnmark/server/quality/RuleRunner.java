@@ -75,7 +75,7 @@ public final class RuleRunner {
             return "This source does not allow SQL a person writes, so its custom SQL rules do not run. A designer "
                 + "or an admin turns on Allow SQL (allow_sql) for it.";
         }
-        if (d != SqlDialect.POSTGRESQL) {
+        if (!SqlDialect.POSTGRESQL.equals(d)) {
             return "Custom SQL rules run only on PostgreSQL sources, where they can be held to a read-only "
                 + "transaction.";
         }

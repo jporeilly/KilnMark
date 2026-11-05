@@ -121,7 +121,7 @@ public final class FileInput implements Node {
         Charset charset = charset(context, path);
         columns = catalogued;
         if (!hasHeader) {
-            return noHeader(context, path, format, delimiter, quote, sepLine, charset);
+            return noHeader(path, format, delimiter, quote, sepLine, charset);
         }
         Reader reader = null;
         try {
@@ -156,7 +156,7 @@ public final class FileInput implements Node {
     }
 
     /** A file whose first row is data: columns are column_1, column_2, ... and nothing is skipped but sep=. */
-    private Rows noHeader(NodeContext context, String path, FileFormat format, char delimiter, char quote,
+    private Rows noHeader(String path, FileFormat format, char delimiter, char quote,
                           boolean sepLine, Charset charset) throws IOException {
         if (columns.isEmpty()) {
             byte[] head = store.head(path, FileInspector.SAMPLE_BYTES);

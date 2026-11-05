@@ -53,6 +53,7 @@ import io.kilnmark.kiln.plugins.write.WriteSettings;
 public class MySqlConnector extends JdbcConnector {
 
     /** Which product a source of this kind is. */
+    @SuppressWarnings("ImmutableEnumChecker") // minimum is set once here and never written to
     enum Product {
         MYSQL("mysql", "MySQL", "My", 8, 0, 19),
         MARIADB("mariadb", "MariaDB", "Ma", 10, 6, 0);

@@ -63,7 +63,7 @@ class SampleTablesApiTest {
     }
 
     private static JsonPath waitForRun(String token, long id) throws InterruptedException {
-        long deadline = System.nanoTime() + Duration.ofSeconds(120).toNanos();
+        long deadline = System.nanoTime() + Duration.ofMinutes(2).toNanos();
         JsonPath run = null;
         while (System.nanoTime() < deadline) {
             run = as(token).get("/api/v1/pipeline-runs/" + id).then().statusCode(200).extract().jsonPath();
