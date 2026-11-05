@@ -231,6 +231,12 @@ Then:
 2. Commit `cosign.pub` as `config/release/cosign.pub`, through a pull request as usual.
 3. Keep `cosign.key` and its password offline and apart. Never commit `cosign.key`.
 
+On a tag the release runs where CI runs: on the local runner when `KILNMARK_RUNNER` names it (see
+"CI on a local runner"). It then builds, signs with the real key, pushes the images and drafts the
+release there too, but leaves out the install rehearsal, which runs only on GitHub's runners (it
+makes system accounts with `sudo` and starts Kilnmark on its usual ports, which the local machine's
+own install uses). The rehearsal is run on every pull request that changes what it covers.
+
 Without them a tag fails at the **Key** step, saying what is missing. A changed key is a new
 `cosign.pub`, announced in the next release's changelog.
 
