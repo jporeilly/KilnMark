@@ -9,3 +9,5 @@
 *.eml binary
 *.msg binary
 *.doc binary
+# The local CI runner's entrypoint runs in Linux.
+ci/local-runner/*.sh text eol=lf
