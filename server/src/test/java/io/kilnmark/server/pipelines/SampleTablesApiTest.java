@@ -130,7 +130,14 @@ class SampleTablesApiTest {
         JsonPath added = as(designer).body(Map.of("sources", Map.of("crm-db", "e2e-db", "shop-db", "e2e-db",
             "files", "e2e-files"), "schema", SCHEMA)).post("/api/v1/samples").then().statusCode(200)
             .extract().jsonPath();
-        assertEquals(19, added.getInt("added"), added.prettify());
+        // 19 pipelines, then the 4 sample flows that run them (ADR 0043).
+        assertEquals(23, added.getInt("added"), added.prettify());
+        assertEquals(List.of("sample-for-each-region", "sample-passing-values", "sample-quality-decides",
+            "sample-sql-before-and-after"), added.getList("samples.findAll { it.outcome == 'added' && "
+            + "it.file.startsWith('08-flows/') }.name"), added.prettify());
+        JsonPath flows = as(designer).get("/api/v1/flows").then().statusCode(200).extract().jsonPath();
+        assertEquals(List.of("sample"), flows.getList("findAll { it.name.startsWith('sample-') }.library").stream()
+            .distinct().toList(), flows.prettify());
         // All of them can run: the starter pack also set the server variable one of them reads.
         assertEquals(List.of(true), added.getList("samples.findAll { it.outcome == 'added' }.valid").stream()
             .distinct().toList(), added.prettify());
