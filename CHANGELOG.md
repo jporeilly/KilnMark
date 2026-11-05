@@ -136,6 +136,9 @@ details.
 
 ### Details
 
+- **The release key** is in place: `config/release/cosign.pub` is the public half of the key that
+  signs every file of a release from now on. Check a release with it as INSTALL.md, "Check a
+  release", says.
 - **People are greeted by name.** Someone signed in through the identity provider now shows as their
   name there ("Alex Morgan"), with their initials, in the top bar and on Home, rather than as
   `sso:<name> (<ID>)`. The audit log, usage and "created by" still record the `sso:` name, which the
