@@ -194,6 +194,11 @@ details.
 
 ### Details
 
+- **CI on a local runner**: the `build`, `heavy-databases` and `scan` jobs run where the repository
+  variable `KILNMARK_RUNNER` says, GitHub's runners when it is empty. `ci/local-runner` builds a Linux
+  runner for Podman, with its image pinned by digest and the runner download checked
+  (docs/development.md, "CI on a local runner").
+
 - **The control script** (ADR 0044). One install root per site holds `versions/<version>/`,
   `config/.env` (written by `install` with a new database password and admin token, `600`, never
   overwritten), `certs/https`, `backups` and `logs`. Every command logs what it said and exits
