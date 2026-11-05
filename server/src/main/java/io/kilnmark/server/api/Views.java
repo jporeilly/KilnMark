@@ -196,11 +196,14 @@ public final class Views {
     }
 
     /**
-     * Who is signed in; {@code unmask}: whether they see values of columns marked sensitive;
-     * {@code via}: {@code token}, {@code provider} (the identity provider, ADR 0036) or {@code off}.
+     * Who is signed in. {@code name}: what Kilnmark records them by (for a provider sign-in, the
+     * {@code sso:} name with the provider's ID); {@code displayName}: what the screen greets them by
+     * (for a provider sign-in, their name at the provider; otherwise the same as {@code name});
+     * {@code unmask}: whether they see values of columns marked sensitive; {@code via}: {@code token},
+     * {@code provider} (the identity provider, ADR 0036) or {@code off}.
      */
-    public record Me(String name, String role, Long tokenId, Instant expiresAt, boolean signInRequired,
-                     boolean unmask, String via) {
+    public record Me(String name, String displayName, String role, Long tokenId, Instant expiresAt,
+                     boolean signInRequired, boolean unmask, String via) {
     }
 
     /**

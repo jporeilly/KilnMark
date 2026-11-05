@@ -56,6 +56,8 @@ pasted into the sign-in page.
    names a caller (the audit log, usage, "created by"): the name is whatever the provider sends, which
    some let people choose, so the prefix and the provider's fixed ID keep it from passing for an
    anonymous caller, a token or the server. Its refused requests are counted apart from others'.
+   The screen alone greets the person by their name at the provider (`name`, else `given_name` and
+   `family_name`): `GET /api/v1/me` returns it as `displayName`, which nothing records.
 7. **A sign-in given no role can be replaced**: **Sign in with** on the sign-in page
    (`/api/v1/auth/login?again=true`) ends it and goes back to the provider with `prompt=login`, so
    the provider asks the person afresh rather than answering from its own session. Only when asked:

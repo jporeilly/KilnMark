@@ -64,9 +64,13 @@
   padding-left: 1.2em;
 }
 
+/* A link that looks like a primary button, the same size as a button beside it. */
 .pl-link-button {
   display: inline-flex;
   align-items: center;
+  box-sizing: border-box;
+  font-size: var(--km-text-md);
+  line-height: 1.2;
   min-height: var(--km-control-h);
   padding: var(--km-control-pad);
   border-radius: var(--km-radius-control);

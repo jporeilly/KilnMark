@@ -8,7 +8,10 @@ export type AccessRole = "viewer" | "steward" | "designer" | "admin";
 
 /** Who is signed in. signInRequired is false when the server runs with sign-in turned off. */
 export type Me = {
+  /** What Kilnmark records them by: for a provider sign-in, the sso: name with the provider's ID. */
   name: string;
+  /** What the screen greets them by: their name at the provider, or the token's name. Older servers send none. */
+  displayName?: string;
   role: AccessRole;
   tokenId: number | null;
   expiresAt: string | null;
