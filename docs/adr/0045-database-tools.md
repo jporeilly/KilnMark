@@ -202,8 +202,16 @@ operations**; what they do not cover is said in point 12.
      `is_remote_data_archive_enabled = 0`, and not replicated (`is_published`, `is_merge_published`,
      `is_replicated` and `is_sync_tran_subscribed` all 0), since an article's `ALTER TABLE` reaches
      its subscribers; never a synonym.
-   - Oracle: a table in `ALL_OBJECTS` of type `TABLE`, not in `ALL_EXTERNAL_TABLES` and with no
-     external (hybrid) partition; never a synonym.
+   - Oracle: a table in `ALL_OBJECTS` of type `TABLE`, not in `ALL_EXTERNAL_TABLES`, with no
+     external (hybrid) partition, no materialized view log (`ALL_MVIEW_LOGS`) and no registered
+     materialized view (`ALL_BASE_TABLE_MVIEWS`); never a synonym.
+   - **On every database, the principle behind these lists**: a table the database's catalogue
+     shows as sending its changes anywhere (published, replicated, captured for change data
+     capture or change tracking, logged for materialized views) is refused, and so is any operation
+     whose check cannot read the catalogue it needs. The lists above are that principle written out
+     for each database today; when a review finds another catalogued way, it joins the list rather
+     than becoming an exception. SQL Server also refuses tables tracked by change data capture
+     (`is_tracked_by_cdc`) or change tracking (`sys.change_tracking_tables`).
    Never a table the database or an extension ships: PostgreSQL tables an extension owns
    (`pg_depend` type `e`), SQL Server tables with `is_ms_shipped = 1`. A SQL Server source must name
    its database, and `master`, `msdb`, `model`, `tempdb` and `distribution` are refused, as a MySQL
@@ -453,6 +461,11 @@ flowchart LR
   source's settings; the mark never is. Allow changes, the pooling settings and the
   partitioning limit are keys of the source's settings, as Allow writing and Allow SQL are
   (`CommonSettings`).
+- **A foreign or linked table's preview** (a PostgreSQL foreign table, a MySQL `FEDERATED` table, a
+  view over a database link) reads rows from another server under the source's login, as the
+  source's preview always has; those rows carry this source's marks, set on this source's asset,
+  not the other server's. Count exactly refuses such tables; the preview is left as it is with the
+  never-scanned decision below.
 - **Open owner decision: a table never scanned.** The source's live preview, which Explore reuses,
   masks by the marks the catalogue holds; a table never scanned has none yet, so a steward sees its
   values. This is how the preview has always worked, and Explore does not change it. The owner may
