@@ -9,7 +9,8 @@ on:
     tags: ["v*"]
   pull_request:
     # what the rehearsal exercises: the workflow and the builds that make the release's files
-    paths: [".github/workflows/release.yml", "build.gradle.kts", "server/build.gradle.kts", "ui/scripts/ui-sbom.mjs"]
+    paths: [".github/workflows/release.yml", "build.gradle.kts", "server/build.gradle.kts", "ui/scripts/ui-sbom.mjs",
+            "containers/**"]
 
 permissions:
   contents: read
@@ -24,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write   # to create the draft release; a rehearsal creates nothing
+      packages: write   # to push the images to ghcr.io on a tag; a rehearsal pushes nothing
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -50,11 +52,29 @@ jobs:
       - name: Build the release folder (product only, with its SBOMs)
         run: ./gradlew release --no-daemon
 
+      # The images customers run, built once here from the release folder (ADR 0044), and saved as the
+      # offline images files: Kilnmark's two, and Keycloak's for the auth profile.
+      - name: Images
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cd "dist/release/kilnmark-${VERSION}"
+          docker build -t "ghcr.io/jporeilly/kilnmark-postgres:${VERSION}" -f containers/postgres/Containerfile containers/postgres
+          docker build -t "ghcr.io/jporeilly/kilnmark-server:${VERSION}" --build-arg APP_DIR=server -f containers/server/Containerfile .
+          mkdir -p "$RUNNER_TEMP/images"
+          docker save "ghcr.io/jporeilly/kilnmark-server:${VERSION}" "ghcr.io/jporeilly/kilnmark-postgres:${VERSION}" \
+            | gzip > "$RUNNER_TEMP/images/kilnmark-${VERSION}-images.tar.gz"
+          keycloak=$(grep -m 1 -o 'quay\.io/keycloak/keycloak:[^ ]*' compose.yaml)
+          docker pull "$keycloak"
+          docker save "$keycloak" | gzip > "$RUNNER_TEMP/images/kilnmark-${VERSION}-keycloak-images.tar.gz"
+          ls -la "$RUNNER_TEMP/images"
+
       - name: Package
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir out
+          cp "$RUNNER_TEMP"/images/*.tar.gz out/
           cd dist/release
           tar -czf "../../out/kilnmark-${VERSION}.tar.gz" "kilnmark-${VERSION}"
           zip -qr "../../out/kilnmark-${VERSION}.zip" "kilnmark-${VERSION}"
@@ -91,6 +111,25 @@ jobs:
             cp config/release/cosign.pub "$RUNNER_TEMP/verify.pub"
           fi
 
+      # On a tag only: the images go to ghcr.io, each signed by digest with the release key, and the
+      # signature checked against the published public key. The package is made public once, by the
+      # owner, in its settings on GitHub.
+      - name: Push and sign the images
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for name in kilnmark-server kilnmark-postgres; do
+            docker push "ghcr.io/jporeilly/${name}:${VERSION}"
+            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "ghcr.io/jporeilly/${name}:${VERSION}")
+            cosign sign --yes --key "$RUNNER_TEMP/cosign.key" --tlog-upload=false --use-signing-config=false "$digest"
+            cosign verify --key "$RUNNER_TEMP/verify.pub" --insecure-ignore-tlog=true "$digest" > /dev/null
+            echo "Pushed and signed $digest"
+          done
+
       - name: Sign and verify
         env:
           COSIGN_PASSWORD: ${{ github.event_name == 'pull_request' && 'rehearsal' || secrets.COSIGN_PASSWORD }}
@@ -107,6 +146,51 @@ jobs:
           done
           rm -f "$RUNNER_TEMP/cosign.key"
           ls -la
+
+      # The release installed as a customer would (INSTALL.md, section A): prepare as root makes the
+      # kilnmark account and /opt/kilnmark; then, as that account, install from the offline images
+      # file on Docker, status, check, a backup, a restore of it, down, up, and a purge.
+      - name: Install the release with kilnmark.sh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eux
+          sudo cp "$(command -v cosign)" /usr/local/bin/cosign
+          sudo "dist/release/kilnmark-${VERSION}/kilnmark.sh" prepare --engine docker
+          sudo cp "out/kilnmark-${VERSION}-images.tar.gz" "out/kilnmark-${VERSION}-images.tar.gz.sigstore.json" \
+            "$RUNNER_TEMP/verify.pub" /opt/kilnmark/downloads/
+          sudo chown -R kilnmark:kilnmark /opt/kilnmark/downloads
+          as_kilnmark() {
+            sudo -iu kilnmark env KILNMARK_ENGINE=docker KILNMARK_COSIGN_PUB=/opt/kilnmark/downloads/verify.pub "$@"
+          }
+          as_kilnmark "/opt/kilnmark/versions/${VERSION}/kilnmark.sh" install \
+            --offline "/opt/kilnmark/downloads/kilnmark-${VERSION}-images.tar.gz"
+          test "$(sudo stat -c '%U %a' /opt/kilnmark/config/.env)" = "kilnmark 600"
+          ! sudo grep -E '^KILNMARK_(DB_PASSWORD|ADMIN_TOKEN)=$' /opt/kilnmark/config/.env
+          as_kilnmark /opt/kilnmark/kilnmark.sh status
+          as_kilnmark /opt/kilnmark/kilnmark.sh check
+          as_kilnmark /opt/kilnmark/kilnmark.sh backup
+          backup=$(sudo ls -1d /opt/kilnmark/backups/kilnmark-* | tail -n 1)
+          as_kilnmark sh -c "cd $backup && sha256sum -c SHA256SUMS"
+          as_kilnmark /opt/kilnmark/kilnmark.sh restore "$backup" --yes
+          as_kilnmark /opt/kilnmark/kilnmark.sh down
+          as_kilnmark /opt/kilnmark/kilnmark.sh up --no-browser
+          # An upgrade, to a next release made from this one: its images re-tagged, its archive unsigned.
+          next="${VERSION}.1"
+          mkdir -p "$RUNNER_TEMP/next"
+          cp -a "dist/release/kilnmark-${VERSION}" "$RUNNER_TEMP/next/kilnmark-${next}"
+          sed -i "s/:${VERSION}\$/:${next}/" "$RUNNER_TEMP/next/kilnmark-${next}/compose.yaml"
+          for name in kilnmark-server kilnmark-postgres; do
+            docker tag "ghcr.io/jporeilly/${name}:${VERSION}" "ghcr.io/jporeilly/${name}:${next}"
+          done
+          tar -czf "$RUNNER_TEMP/kilnmark-${next}.tar.gz" -C "$RUNNER_TEMP/next" "kilnmark-${next}"
+          sudo cp "$RUNNER_TEMP/kilnmark-${next}.tar.gz" /opt/kilnmark/downloads/
+          sudo chown kilnmark:kilnmark "/opt/kilnmark/downloads/kilnmark-${next}.tar.gz"
+          as_kilnmark /opt/kilnmark/kilnmark.sh upgrade "/opt/kilnmark/downloads/kilnmark-${next}.tar.gz" --skip-verify
+          test "$(as_kilnmark /opt/kilnmark/kilnmark.sh version)" = "Kilnmark ${next}"
+          test "$(sudo ls -1d /opt/kilnmark/backups/kilnmark-* | wc -l)" = 2
+          echo DELETE | as_kilnmark /opt/kilnmark/kilnmark.sh uninstall --purge
+          test -z "$(docker volume ls -q --filter name=kilnmark_)"
 
       - name: Draft release
         if: github.event_name == 'push'

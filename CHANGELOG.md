@@ -7,6 +7,15 @@ details.
 
 ### What's new
 
+- **Install, start, upgrade and back up Kilnmark with one script**: `kilnmark.sh` on Linux,
+  `kilnmark.cmd` on Windows. On Linux, `sudo kilnmark.sh prepare` first makes the `kilnmark`
+  service account that runs it, and `/opt/kilnmark` its own. `install` checks the machine, makes an install root (`/opt/kilnmark`
+  or `C:\Kilnmark`) with new secrets readable by you only, gets the images and starts Kilnmark;
+  `up`, `down`, `status`, `logs`, `backup`, `restore`, `upgrade` and the rest follow (INSTALL.md,
+  "A. Install a release"; ADR 0044). Backup and restore now work on Windows too.
+- **Signed images, and an install without internet access.** The images are built once, by the
+  release, pinned to exact base images, signed with the release key and published on
+  `ghcr.io/jporeilly`; each release also has them as a signed file to load offline.
 - **Start and stop Kilnmark with one click**, on Windows 11 and Ubuntu. The release folder has
   `start-kilnmark` and `stop-kilnmark` scripts for each, and `create-shortcut` puts **Kilnmark**
   and **Stop Kilnmark** on the desktop and in the Start or applications menu, with Kilnmark's
@@ -135,6 +144,30 @@ details.
   or deleted, and can be sent to a SIEM. Admins read it under Settings, Audit log (ADR 0029).
 
 ### Details
+
+- **The control script** (ADR 0044). One install root per site holds `versions/<version>/`,
+  `config/.env` (written by `install` with a new database password and admin token, `600`, never
+  overwritten), `certs/https`, `backups` and `logs`. Every command logs what it said and exits
+  non-zero on failure; none prints a secret. Downloads, the offline images file and pulled images
+  are checked with cosign against the `cosign.pub` the release now carries (`--skip-verify` to go
+  on without, recorded in the log). `upgrade` backs up first, starts the new version beside the old
+  one, and points back to the old one if it does not answer. `start-kilnmark` and `stop-kilnmark`
+  now run the control script. The Windows script is Windows PowerShell 5.1, through
+  `kilnmark.cmd`.
+- **The compose project is always `kilnmark`** (`name:` in compose.yaml, and `-p`), so volumes
+  keep their names from one version's folder to the next; `KILNMARK_PROJECT` names another for a
+  second install on one machine. **A 0.0.9 install moves over by backup and restore**: its project
+  was named after its folder (INSTALL.md, "From 0.0.9").
+- **Every long-running service restarts by itself** (`restart: unless-stopped`); with rootless
+  Podman, install turns on the `podman-restart` user service.
+- **Images from the release, not built on site.** compose.yaml names
+  `ghcr.io/jporeilly/kilnmark-server` and `-postgres` at the release's version; the base images
+  are pinned by digest. The release workflow builds them, writes `kilnmark-<version>-images.tar.gz`
+  and `-keycloak-images.tar.gz`, signs them with the other files, and on a tag pushes the images
+  and signs them by digest. Its rehearsal on pull requests installs the release with `kilnmark.sh`
+  from the offline file and backs up, restores, stops, starts and purges it.
+- **HTTPS certificates** go in `certs/https` (or the folder `KILNMARK_CERTS_DIR` names), which
+  compose.yaml now always mounts read-only; a release folder run by hand has an empty `tls` folder.
 
 - **The release key** is in place: `config/release/cosign.pub` is the public half of the key that
   signs every file of a release from now on. Check a release with it as INSTALL.md, "Check a

@@ -70,7 +70,7 @@ tasks.register<Sync>("assembleRelease") {
     from("containers/release.env.example") { rename { ".env.example" } }
     from("containers") {
         into("containers")
-        exclude("compose.release.yaml", "release.env.example", "backup.sh", "restore.sh", "launch/**")
+        exclude("compose.release.yaml", "release.env.example", "backup.sh", "restore.sh", "launch/**", "tls/**")
     }
     // Backup and restore (ADR 0039), run from the release folder beside compose.yaml.
     from("containers") {
@@ -85,6 +85,10 @@ tasks.register<Sync>("assembleRelease") {
         include("*.sh")
         filePermissions { unix("rwxr-xr-x") }
     }
+    // Kilnmark's public key, so the control script can check later downloads and images (ADR 0044).
+    from("config/release") { include("cosign.pub") }
+    // The default HTTPS folder compose.yaml mounts: Podman refuses to mount one that does not exist.
+    from("containers/tls") { into("tls") }
     // The samples, as templates to read or add through the API (the server also bundles them).
     from("samples") {
         include("**/*.yaml")
