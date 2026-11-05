@@ -12,10 +12,10 @@ ARG RUNNER_SHA256=baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c
 
 ENV DEBIAN_FRONTEND=noninteractive
 # The workflows need git, curl and tar; the Docker client (docker.io's CLI, talking to Podman's
-# API) builds images and runs the tests' containers. No Docker daemon is started.
+# API) builds images and runs the tests' containers; gh drafts a release. No Docker daemon is started.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git jq tar gzip unzip zip xz-utils \
-      docker.io libicu74 libkrb5-3 zlib1g liblttng-ust1t64 \
+      docker.io gh libicu74 libkrb5-3 zlib1g liblttng-ust1t64 \
  && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL -o /opt/actions-runner.tar.gz \

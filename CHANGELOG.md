@@ -5,6 +5,17 @@ details.
 
 ## Unreleased
 
+### Details
+
+- **Dependencies updated** (Dependabot's Gradle group): Jackson 2.22, the AWS SDK 2.57, LangChain4j
+  1.23, Error Prone 2.52, the SQL Server and Oracle drivers' patch releases, lz4, GreenMail
+  and the licence report plug-in, with their checksums and signing keys in
+  `gradle/verification-metadata.xml` (ADR 0042). `mime4j` stays at 0.8.12, the version the Quarkus
+  platform pins: 0.8.15 cannot be resolved against it. The MariaDB driver stays at 3.5.10: 3.5.11
+  fails every connection to MariaDB, and Dependabot is told to skip it.
+
+## 0.0.10 (5 November 2026)
+
 ### What's new
 
 - **Install, start, upgrade and back up Kilnmark with one script**: `kilnmark.sh` on Linux,
@@ -182,12 +193,10 @@ details.
 
 ### Details
 
-- **Dependencies updated** (Dependabot's Gradle group): Jackson 2.22, the AWS SDK 2.57, LangChain4j
-  1.23, Error Prone 2.52, the SQL Server and Oracle drivers' patch releases, lz4, GreenMail
-  and the licence report plug-in, with their checksums and signing keys in
-  `gradle/verification-metadata.xml` (ADR 0042). `mime4j` stays at 0.8.12, the version the Quarkus
-  platform pins: 0.8.15 cannot be resolved against it. The MariaDB driver stays at 3.5.10: 3.5.11
-  fails every connection to MariaDB, and Dependabot is told to skip it.
+- **Releases on the local runner**: on a tag, `release.yml` runs where `KILNMARK_RUNNER` says, as CI
+  does; on a self-hosted runner it builds, signs, pushes the images and drafts the release, and
+  leaves the install rehearsal to GitHub's runners. The runner image adds `gh`.
+
 - **CI on a local runner**: the `build`, `heavy-databases` and `scan` jobs run where the repository
   variable `KILNMARK_RUNNER` says, GitHub's runners when it is empty. `ci/local-runner` builds a Linux
   runner for Podman, with its image pinned by digest and the runner download checked
