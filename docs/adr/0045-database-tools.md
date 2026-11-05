@@ -160,12 +160,20 @@ operations**; what they do not cover is said in point 12.
    no database set gets no operations. Objects in the database's own schemas (`pg_catalog`, `sys`,
    `information_schema`, Oracle-maintained schemas) are refused. **Only ordinary local tables**: a
    table an operation drops, truncates, alters or indexes must be one whose rows the database keeps
-   itself, never one that reaches elsewhere: on PostgreSQL an ordinary table (`relkind` `r`), or a
-   partitioned one (`p`) with no foreign partition; on MySQL and MariaDB an InnoDB, Aria or MyISAM
-   table (never `FEDERATED`, `CONNECT`, `SPIDER` or `MERGE`); on SQL Server and Oracle a table that is
-   not external or a synonym. The lists are those `replace` already refuses (`WriteSql.blockers`).
-   PostgreSQL truncates with `TRUNCATE ONLY`, and a table with child tables (inheritance) is
-   refused. A column's length, precision and scale are whole numbers within the dialect's ranges,
+   itself, never one that reaches elsewhere, checked against an allow-list for each database:
+   - PostgreSQL: an ordinary table (`relkind` `r`), or a partitioned one (`p`) with no foreign
+     partition at any level; never a table in a publication (`pg_publication_rel`, a `FOR ALL
+     TABLES` publication, or `pg_publication_namespace` on 15 and later), since a truncate or a
+     drop would reach every subscriber. Truncates use `TRUNCATE ONLY`, so a partitioned table and
+     a table with child tables (inheritance) are refused for truncate.
+   - MySQL and MariaDB: an InnoDB, Aria or MyISAM table (never `FEDERATED`, `CONNECT`, `SPIDER` or
+     `MERGE`).
+   - SQL Server: a user table in `sys.tables` (type `U`) with `is_external = 0` and
+     `is_remote_data_archive_enabled = 0`; never a synonym.
+   - Oracle: a table in `ALL_OBJECTS` of type `TABLE`, not in `ALL_EXTERNAL_TABLES` and with no
+     external (hybrid) partition; never a synonym.
+   **Count exactly** in Explore follows the same list, so it never runs a full count on another
+   server through a foreign or linked table; such a table shows the estimate only. A column's length, precision and scale are whole numbers within the dialect's ranges,
    never text. `DROP` and `TRUNCATE` never cascade
    (no PostgreSQL `CASCADE`, no Oracle `CASCADE CONSTRAINTS`): a table other objects depend on is
    refused by the database, and the failure says so.
@@ -192,7 +200,7 @@ operations**; what they do not cover is said in point 12.
      approval is needed now** (point 7), whatever the plan said; that the approver is not the
      maker; and that the audit log has no run of this plan yet;
    - on the run's own connection, inside its transaction: sets PostgreSQL's `search_path` to
-     `pg_catalog` alone (and every catalogue query names `pg_catalog` itself), so a URL's
+     `pg_catalog` alone for the session (`SET`, so it holds for the online forms too) (and every catalogue query names `pg_catalog` itself), so a URL's
      `options` or `currentSchema` cannot put a look-alike type or table in the way; reads the
      database's identity and the own-database marker again (points 7 and 9), takes the table's lock where the database's DDL is
      transactional (PostgreSQL, SQL Server), re-reads the fingerprint, and refuses on any
@@ -217,25 +225,44 @@ operations**; what they do not cover is said in point 12.
    database, a source reached through another host name, alias or proxy, or one made with a
    password reference are all production until someone decides otherwise, and nothing has to
    recognise them as the same database.
-   - **Marking a source Not production** binds the mark to what the source connects to (as Allow
-     changes is bound, point 1) and to the database's own identity, read through the source when it
-     is marked: PostgreSQL `system_identifier` with `current_database()`, SQL Server
-     `service_broker_guid` with `DB_NAME()`, MySQL `@@server_uuid`, MariaDB (which has no server
-     UUID) `@@hostname`, `@@port`, `@@datadir` and `@@server_id` together, Oracle `DBID` with
-     `CON_DBID`. A source whose identity cannot be read cannot be marked: the guide says which right
-     the login needs. Any change to the connection settings removes the mark. An operation runs
-     without approval only when the identity read **on the run's own connection** is the one the
-     mark holds; a failover, an upgrade that makes a new identity, a renamed database or a DNS
-     change therefore makes approval needed again, and the page says why. Marking is an admin's act,
-     an audit event (`source.not_production`); with the identity provider on, it is asked by one
-     admin and approved by another, as the unmask grant is (ADR 0038).
+   - **The mark is not a setting.** It is kept in a table of its own (`source_mark`), written only
+     by the marking endpoint, never by a source's form, its API or an import: a request that
+     carries a mark among a source's settings is refused (400), from anyone, admins included, and
+     an export never includes one. So a new source, a save or an import can never arrive marked.
+   - **Marking** reads the database's identity through the source, on the server, and binds the
+     mark to it and to what the source connects to (a hash of the connection settings, as Allow
+     changes is bound, point 1). The identity is the database's own id **and** the instance it is
+     on, since a restore or a physical copy keeps the database's id:
+     - PostgreSQL: `system_identifier`, `current_database()`, `inet_server_addr()` and its port;
+     - SQL Server: `service_broker_guid` and `create_date` of the database (a restore resets it),
+       `DB_NAME()` and `SERVERPROPERTY('MachineName')`;
+     - MySQL: `@@server_uuid` and `@@hostname`;
+     - Oracle: `DBID`, `CON_DBID` and `RESETLOGS_TIME`.
+     MariaDB has no id a copy does not share (its host name, port, folder and server id are often
+     the same on every replica), so MariaDB sources cannot be marked: every operation on them needs
+     a second person. A source whose identity cannot be read cannot be marked; the guide says which
+     right the login needs.
+   - The mark is sealed (an HMAC, with a key derived from the key that seals source passwords) over
+     the source, the connection hash, the identity, who asked and who approved, and the time; the
+     seal is checked when a plan is made and when it runs. Any change to the connection settings
+     removes the mark. An operation runs without approval only when the mark's seal holds and the
+     identity read **on the run's own connection** is the one the mark holds; a failover to another
+     instance, a restore, an upgrade that makes a new identity, a renamed database or a DNS change to
+     another instance therefore makes approval needed again, and the page says why.
+   - **Who marks.** An admin asks and **another admin approves, both signed in with the identity
+     provider**, compared by issuer and subject as for the unmask grant (ADR 0038); an API token can
+     neither ask nor approve, and without the identity provider nothing can be marked. Asking,
+     approving, refusing and removing a mark are audit events (`source.not_production`). Removing a
+     mark takes one admin: it only adds approval.
    - **Who approves.** Another person, a designer or an admin, as for the unmask grant (ADR 0038).
      **Only people signed in with the identity provider** (ADR 0036) may make, approve or run a
      plan that needs approval; an API token is refused (403), so no one can make a plan with a token
      and approve it as themselves. People are compared by the provider's fixed id (issuer and
      subject), never by name. Only the person who made the plan runs it. Without the identity
-     provider, operations that need approval are refused, so only sources marked Not production
-     can be changed. The approver's role is checked when they approve.
+     provider, nothing can be marked and operations that need approval are refused, so no
+     operation runs. The approver's role is checked when they approve and again at run time. A
+     plan made with a token on a marked source that needs approval at run time (its identity
+     changed) is refused, and must be made again by a person.
    - An approved plan runs once, within 24 hours of approval; a refused, expired, cancelled or
      already run plan cannot run. Before running, Kilnmark also refuses a plan whose id already has
      a `db.change.ran` or `db.change.failed` event in the audit log, so a run state reset in
@@ -338,7 +365,8 @@ flowchart LR
 - Explore runs catalogue queries on demand, which a busy database feels a little. They are small,
   bounded and on the read-only connection; the source's **Most runs at once** does not count them.
 - Production is the default, and Not production a stop-gap until environments: two admins acting
-  together can mark a production database Not production. That is the same limit ADR 0038 accepts:
+  together, both signed in with the identity provider, can mark a production database Not
+  production. That is the same limit ADR 0038 accepts:
   the provider decides who is a person; two people are needed, and the audit log shows both. Every
   new source needs an admin's mark before its operations run without approval, which is the price
   of failing closed.
@@ -350,10 +378,10 @@ flowchart LR
   It is added to the backlog's hardening item.
 - The SQL generator follows `WriteSql`: when a database's `create` types change, so does the
   generated DDL, and the guide's type table stays the one source of truth.
-- Two new tables in Kilnmark's own database, in a migration of their own: `db_change_plan` (the
-  plans, sealed, with their approval and outcome) and `instance` (the random id that point 4.9
-  looks for). Allow changes and the Not production mark (with its identity) are kept with the
-  source's settings. Allow changes, Production, the pooling settings and the
+- Three new tables in Kilnmark's own database, in a migration of their own: `db_change_plan` (the
+  plans, sealed, with their approval and outcome), `instance` (the random id that point 4.9
+  looks for), and `source_mark` (the sealed Not production marks). Allow changes is kept with the
+  source's settings; the mark never is. Allow changes, the pooling settings and the
   partitioning limit are keys of the source's settings, as Allow writing and Allow SQL are
   (`CommonSettings`).
 - **Open owner decision: a table never scanned.** The source's live preview, which Explore reuses,

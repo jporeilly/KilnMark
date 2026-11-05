@@ -118,14 +118,17 @@ an existing source, **Edit** opens the same settings on five tabs, each saving t
 | Tab | Settings |
 | --- | --- |
 | General | display name, description, host, port, database, login, password; Allow writing, Allow SQL, Allow changes, Not production (admins), Most runs at once |
-| Advanced | the connector's own vetted settings (TLS, time zone, application name…); identifier quoting for pipelines' writes: always (default) or when needed |
+| Advanced | the connector's own vetted settings (TLS, time zone, application name…); identifier quoting for pipelines' writes: always (default), or unquoted only for a name that matches the dialect's plain-identifier pattern and is not a reserved word |
 | Options | driver properties, picked from the list the connector allows (a registered driver's `allowedProperties`, within `RegisteredDriver.VETTED`; the block-list still applies); a property off the list cannot be added |
 | Pooling | `pool_max` (1–50), `pool_idle_s`, `pool_wait_s`, `statement_timeout_s`, `socket_timeout_s` (each 1–3,600) |
 | Partitioning | `max_parts` (1–32; 1 = never split) |
 
 New common settings live in `CommonSettings` with their kinds and bounds, so the API, imports and
-the form check them alike, and each change of Allow changes or Not production is an audit event.
-Any change to what a source connects to clears both. The socket timeout is set with
+the form check them alike, and each change of Allow changes is an audit event. The Not production
+mark is not a setting: it lives in `source_mark`, written only by
+`POST /api/v1/sources/{name}/mark` (asked) and `.../mark/approve` (another admin), both people
+signed in with the provider; a source form, PUT or import carrying a mark is refused. Any change
+to what a source connects to clears Allow changes and the mark. The socket timeout is set with
 `Connection.setNetworkTimeout` on every connection to the source; the statement timeout through
 `SqlDialect.timeout`. Pools are per source and per use: one for read-only connections, one for
 writable ones, made on first use and dropped when the source's settings change. A connection is
@@ -177,8 +180,9 @@ SQLSTATE or code; never the database's text). The seal covers the plan's id, sou
 statements, target, identity, fingerprint and expiry; `approval_seal` covers the id, the seal, the
 approver and the time. Both are HMACs with a key derived (HKDF) from the key that seals source
 passwords. Checks in the table: approved and refused are never both set. `instance` holds one
-random id, made at first start, for the own-database check. The Not production mark is kept in the
-source's settings with the identity it was made for, who asked and who approved.
+random id, made at first start, for the own-database check. `source_mark` holds each source's
+Not production mark: the connection hash, the identity (database id and instance), who asked and
+who approved, when, and its seal.
 
 **API**, under `/api/v1/sources/{name}/changes`, `@RolesAllowed(DESIGNER)` (admins hold it too):
 
@@ -196,7 +200,8 @@ source's kind and target, and whether approval is needed now; then, on the run's
 inside its transaction, sets `search_path` to `pg_catalog` on PostgreSQL, reads the database's
 identity and the own-database marker again, takes the table's lock where DDL is transactional, and
 re-reads the fingerprint (identity, kind or engine, partitions and children). Only ordinary local
-tables are acted on, and PostgreSQL truncates with `TRUNCATE ONLY`. A plan id with a run already in
+tables are acted on (an allow-list per database, never a table in a publication), and PostgreSQL
+truncates with `TRUNCATE ONLY`. A plan id with a run already in
 the audit log is refused. When approval is needed (the source is not marked Not production, or the
 identity read now is not the one the mark holds) the maker and the approver
 are both people signed in with the provider (tokens get 403), compared by issuer and subject, never
@@ -209,16 +214,16 @@ source with no database set gets none. `DROP` and `TRUNCATE` never cascade. Ever
 **What the security review must try.** Running text that is not the plan's (changing the stored
 statements, a plan of another source, replaying a run); a name that breaks out of quoting; a table
 renamed, dropped and re-created, or swapped between plan and run; approving one's own plan through
-a second token or a changed name; a plan made with a token and approved by its owner; turning
-Production off alone, or clearing it by a save or import that leaves it out; a second source over
-a Production database; a plan made before a source became Production; an operation on Kilnmark's
+a second token or a changed name; a plan made with a token and approved by its owner; a mark set by a new source, a
+save or an import, or forged in Kilnmark's database; a second source over a production database; a
+copy restored from production that a host name later points at; an operation on Kilnmark's
 own database; Allow changes on through an import; a plan made when Allow changes was on, run after
 it was turned off; a value in a failure's message (a duplicate key in a unique index); a type name
 or index expression from the catalogue reaching a statement; retargeting a source (URL, database,
 a driver property) after Allow changes was turned on; another database on the same MySQL server; a
 plan's maker or approval changed in Kilnmark's own database; DNS or a failover moving the run's
 connection to another database; a foreign, federated or merge table, or a parent with foreign
-children; a `search_path` set in the URL; a run state reset in Kilnmark's own database.
+children; a table in a logical-replication publication; a `search_path` set in the URL; a run state reset in Kilnmark's own database.
 
 ## Not in this plan
 
