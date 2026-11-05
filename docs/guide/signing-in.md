@@ -103,6 +103,44 @@ for example `sso:ada (3f2a…)`, so a chosen display name cannot pass for anyone
 **Taking access away** is done at the provider: remove them from the group, and their next sign-in
 gives them no role.
 
+## Keycloak, if you have no identity provider
+
+An organisation with no identity provider of its own (or with only Active Directory or LDAP) can use
+the **Keycloak** that comes with Kilnmark: an open-source identity provider, started beside Kilnmark
+only when asked for. Your administrator turns it on (INSTALL.md, "Keycloak, if you have no identity
+provider"). It works like any other provider above, with Kilnmark's own look:
+
+![Kilnmark's sign-in page with a Sign in with Keycloak button, and API token sign-in below it](images/sign-in-with-provider.png)
+
+![Keycloak's sign-in page in Kilnmark's colours: the Kilnmark name and logo above a card asking for a username or email and a password](images/keycloak-sign-in.png)
+
+- **Groups give roles.** Keycloak has five groups ready: `kilnmark-viewers`, `kilnmark-stewards`,
+  `kilnmark-designers`, `kilnmark-admins`, and `kilnmark-sensitive-data` for designers who see
+  sensitive values. Your administrator puts each person in one in Keycloak's console.
+- **Every sign-in has two factors**: a password and a one-time code from an authenticator app on
+  the person's phone (Microsoft Authenticator, Google Authenticator, FreeOTP and the like).
+- **The first time**, Keycloak asks the person to set up the code: scan the QR code with the app,
+  then type the code it shows. Keycloak does not count setting it up as using it, so Kilnmark then
+  says the sign-in did not use a second factor: choose **Sign in with Keycloak** again, give the
+  password and the code, and you are in. A code works once, so wait for the app to show a new one
+  if it still shows the code you just set up with. From then on, each sign-in asks for both.
+
+![Keycloak's page for setting up the one-time code: install an authenticator app, scan the QR code (blurred here), type the code it shows and a name for the device](images/keycloak-one-time-code.png)
+
+**For a demonstration**, the administrator can add five example people, one per role, all at
+`kilnmark.com` addresses that receive no mail from here, sharing one demonstration password:
+
+| Person | Signs in as | Role |
+| --- | --- | --- |
+| Vera Lane | `vera.lane@kilnmark.com` | Viewer |
+| Sam Okafor | `sam.okafor@kilnmark.com` | Steward |
+| Dana Reyes | `dana.reyes@kilnmark.com` | Designer |
+| Priya Shah | `priya.shah@kilnmark.com` | Designer who sees sensitive values |
+| Alex Morgan | `alex.morgan@kilnmark.com` | Admin |
+
+Each sets up their own one-time code on first sign-in, as above. They are for showing Kilnmark only:
+never turn them on where real data is.
+
 ## Token lifetime and the access review
 
 **Longest token lifetime.** An administrator can set, for example,
@@ -175,4 +213,6 @@ of that group.
 - **A copied session cookie** keeps working until the provider's token in it expires (usually about
   an hour), because sessions are not stored on the server. Storing them would let signing out end
   every copy.
-- **Keycloak as a built-in identity provider**, for customers who have none: planned.
+- **Keycloak's own session**: signing out of Kilnmark ends Kilnmark's session, not Keycloak's, so
+  choosing **Sign in with Keycloak** again within its session goes straight back in. Signing out of
+  Keycloak too is a later step.
