@@ -20,7 +20,8 @@ env:
 
 jobs:
   scan:
-    runs-on: ubuntu-latest
+    # GitHub's runner, or the one KILNMARK_RUNNER names (docs/development.md, "CI on a local runner").
+    runs-on: ${{ vars.KILNMARK_RUNNER && fromJSON(vars.KILNMARK_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
