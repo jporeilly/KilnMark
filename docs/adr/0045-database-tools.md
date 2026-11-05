@@ -217,7 +217,10 @@ operations**; what they do not cover is said in point 12.
      whose check cannot read the catalogue it needs. The lists above are that principle written out
      for each database today; when a review finds another catalogued way, it joins the list rather
      than becoming an exception. SQL Server also refuses tables tracked by change data capture
-     (`is_tracked_by_cdc`) or change tracking (`sys.change_tracking_tables`).
+     (`is_tracked_by_cdc`) or change tracking (`sys.change_tracking_tables`), and databases with
+     event notifications (`sys.event_notifications`, `sys.server_event_notifications`);
+     PostgreSQL refuses a database with a logical replication slot (`pg_replication_slots`), which
+     can stream changes without any publication (wal2json and the like).
    Never a table the database or an extension ships: PostgreSQL tables an extension owns
    (`pg_depend` type `e`), SQL Server tables with `is_ms_shipped = 1`. A SQL Server source must name
    its database, and `master`, `msdb`, `model`, `tempdb` and `distribution` are refused, as a MySQL
