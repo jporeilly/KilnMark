@@ -5,12 +5,6 @@ details.
 
 ## Unreleased
 
-### Details
-
-- **Release images signed on the local runner**: `release.yml` signs the digest the registry
-  stores for each image, read back by tag after the push. On a Podman engine the digest recorded
-  locally is not the registry's, and signing it failed, which stopped the 0.0.10 release.
-
 ## 0.0.10 (5 November 2026)
 
 ### What's new
@@ -190,6 +184,9 @@ details.
 
 ### Details
 
+- **Release images signed on the local runner**: `release.yml` signs the digest the registry
+  stores for each image, read back by tag after the push. On a Podman engine the digest recorded
+  locally is not the registry's, and signing it failed.
 - **Releases on the local runner**: on a tag, `release.yml` runs where `KILNMARK_RUNNER` says, as CI
   does; on a self-hosted runner it builds, signs, pushes the images and drafts the release, and
   leaves the install rehearsal to GitHub's runners. The runner image adds `gh`.
