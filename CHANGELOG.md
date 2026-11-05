@@ -18,7 +18,8 @@ details.
   indexes with a masked preview; generate `CREATE TABLE`, `ALTER`, `CREATE INDEX` and `DROP` in
   each database's dialect; connection settings on tabs; and operations that change a database,
   behind a per-source Allow changes switch, previewed, confirmed and audited, with a second
-  person's approval on production sources. Nothing is built yet; ADR 0045 amends ADR 0028.
+  person's approval on production sources. ADR 0045 amends ADR 0028. Explore is built (above);
+  the rest follows.
 
 ### Details
 
