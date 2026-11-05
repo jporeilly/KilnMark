@@ -8,8 +8,8 @@ is in [ADR 0039](../adr/0039-backup-and-restore.md).
 
 | What | Where | How |
 | --- | --- | --- |
-| The database: sources and their sealed passwords, pipelines and their versions, flows, runs, profiles, rules, tokens, notifications, the audit log | The `pgdata` volume | `backup.sh` dumps it |
-| The keys: `secret.key`, which opens the stored source passwords, and the drivers registered under **Settings › Drivers** | The `keys` volume | `backup.sh` copies it |
+| The database: sources and their sealed passwords, pipelines and their versions, flows, runs, profiles, rules, tokens, notifications, the audit log | The `pgdata` volume | The backup dumps it |
+| The keys: `secret.key`, which opens the stored source passwords, and the drivers registered under **Settings › Drivers** | The `keys` volume | The backup copies it |
 | The settings: `.env` (the database password, the admin token, the sign-in settings) | The release folder | Your secrets store, once and after each change |
 | Your own files: `tls/`, `branding/`, and the certificate for the database if you gave it one | The release folder, and the `pgdata` volume's `tls` folder | Your usual file backups |
 
@@ -33,13 +33,13 @@ its own certificate again.
 
 ## Back up
 
-From the release folder, beside `compose.yaml`, while Kilnmark runs:
+From the install root, while Kilnmark runs (INSTALL.md, "The control script"):
 
 ```
-./backup.sh /path/to/backups
+./kilnmark.sh backup /path/to/backups       (Windows: kilnmark.cmd backup D:\backups)
 ```
 
-It writes a new folder, `kilnmark-<UTC time>`, holding:
+Without a folder it uses the install root's `backups`. It writes a new folder, `kilnmark-<UTC time>`, holding:
 
 - `kilnmark-db.dump`: the database, as one consistent snapshot, in PostgreSQL's custom format;
 - `kilnmark-keys.tar`: the keys volume;
@@ -47,16 +47,23 @@ It writes a new folder, `kilnmark-<UTC time>`, holding:
 - `SHA256SUMS`: a checksum of each file, which the restore checks.
 
 The script reads the whole dump back before it finishes, as a restore reads it, so a dump that was
-cut short or damaged on the way fails the backup. It uses `podman compose`, or `docker compose` if Podman is not installed;
-`KILNMARK_COMPOSE` overrides that. Then move `kilnmark-keys.tar` to where you keep keys, and the rest
+cut short or damaged on the way fails the backup. On Linux the control script runs the release's
+`backup.sh`, which can also be run by hand from a release folder beside `compose.yaml` (it uses
+`podman compose`, or `docker compose` if Podman is not installed; `KILNMARK_COMPOSE` overrides
+that). On Windows the control script does the same itself, and writes the same files, so a backup
+restores on either. Then move `kilnmark-keys.tar` to where you keep keys, and the rest
 to your backup store.
 
 **How often.** Daily is a sensible start: you lose at most a day of changes. Run it from cron or a
-systemd timer, for example at 02:00:
+systemd timer, for example at 02:00 (it keeps its own log in the install root's `logs`, and fails
+with a non-zero exit code):
 
 ```
-0 2 * * * cd /opt/kilnmark-0.1.0 && ./backup.sh /srv/backups >> /var/log/kilnmark-backup.log 2>&1
+0 2 * * * /opt/kilnmark/kilnmark.sh backup /srv/backups
 ```
+
+On Windows, a Task Scheduler task running `C:\Kilnmark\kilnmark.cmd backup D:\backups` does the
+same.
 
 Keep as many as your retention policy asks, and at least one copy off the machine. Back up again
 before every upgrade.
@@ -74,14 +81,14 @@ A restore puts Kilnmark back as it was when the backup was taken. Everything sin
 1. **Install the release** you ran, or a later one (INSTALL.md, A), with your `.env`. A later
    release updates the database at its first start, as an upgrade does; an earlier one cannot run a
    newer database, and the script refuses it.
-2. **Restore**, from the release folder:
+2. **Restore**, from the install root:
 
    ```
-   ./restore.sh /path/to/backups/kilnmark-<time>
+   ./kilnmark.sh restore /path/to/backups/kilnmark-<time>     (Windows: kilnmark.cmd restore ...)
    ```
 
    Put `kilnmark-keys.tar` back in the backup's folder first. The script checks each of the backup's
-   files against `SHA256SUMS`, then says what it will do and asks you to run it again with `--yes`.
+   files against `SHA256SUMS`, then says what it will do and asks you to run it again with `--yes` (`-Yes` on Windows).
    With `--yes`, it:
    - restores the backup into a database of its own, `kilnmark_restoring`, while Kilnmark keeps
      running. If that fails, nothing has changed: Kilnmark still runs on its own database, and the
