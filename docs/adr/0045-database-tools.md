@@ -282,8 +282,12 @@ operations**; what they do not cover is said in point 12.
      by the marking endpoint, never by a source's form, its API or an import: a request that
      carries a mark among a source's settings is refused (400), from anyone, admins included, and
      an export never includes one. So a new source, a save or an import can never arrive marked.
-   - **Marking** reads the database's identity through the source, on the server, and binds the
-     mark to it and to what the source connects to (a hash of the connection settings, as Allow
+   - **Marking** reads the database's identity through the source, on the server, **when the
+     first admin asks**, and stores it in the request with the connection hash and the certificate
+     fingerprint; the second admin is shown exactly those, and approving reads them again and
+     refuses on any difference. Any change to what the source connects to cancels a pending
+     request, as it removes a mark. The mark is bound to that identity and to what the source
+     connects to (a hash of the connection settings, as Allow
      changes is bound, point 1). The identity is the database's own id **and** the instance it is
      on, since a restore or a physical copy keeps the database's id:
      - PostgreSQL: `system_identifier`, `current_database()`, `inet_server_addr()` and its port;
@@ -362,12 +366,13 @@ operations**; what they do not cover is said in point 12.
    (PostgreSQL `CONCURRENTLY`, MySQL `ALGORITHM=INPLACE, LOCK=NONE`, Oracle `ONLINE`, SQL Server
    `ONLINE = ON` on editions that have it) it is offered as a choice, run outside a transaction.
 9. **Never Kilnmark's own database.** Kilnmark's own database is PostgreSQL. It holds an instance
-   marker: a table `instance`, in the schema Kilnmark's migrations use (`kilnmark`, or what
+   marker: a table `kilnmark_instance_marker`, in the schema Kilnmark's migrations use (`kilnmark`, or what
    `quarkus.flyway.default-schema` is set to; the check reads the setting), with a random id made
    when Kilnmark first starts. Before an
    operation on a PostgreSQL source, at planning and again on the run's connection, Kilnmark asks
    the source's database whether such a table exists, from `pg_class` and `pg_namespace`, which
-   every login can read. If it exists and its id is Kilnmark's, or its id cannot be read, or
+   every login can read. If it exists, whatever its id (another Kilnmark installation's database is
+   refused as this one's is), or
    `pg_class` and `pg_namespace` cannot be read at all (a database that revoked them), the
    operation is refused. As the database itself is asked, host names, aliases and proxies make no
    difference. Refusing every use of such a source (reads and SQL a person writes, ADR 0028's open
@@ -520,7 +525,7 @@ flowchart LR
 - The SQL generator follows `WriteSql`: when a database's `create` types change, so does the
   generated DDL, and the guide's type table stays the one source of truth.
 - Three new tables in Kilnmark's own database, in a migration of their own: `db_change_plan` (the
-  plans, sealed, with their approval and outcome), `instance` (the random id that point 4.9
+  plans, sealed, with their approval and outcome), `kilnmark_instance_marker` (the random id that point 4.9
   looks for), and `source_mark` (the sealed Not production marks). Allow changes is kept with the
   source's settings; the mark never is. Allow changes, the pooling settings and the
   partitioning limit are keys of the source's settings, as Allow writing and Allow SQL are
