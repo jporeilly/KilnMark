@@ -166,7 +166,7 @@ jobs:
           as_kilnmark "/opt/kilnmark/versions/${VERSION}/kilnmark.sh" install \
             --offline "/opt/kilnmark/downloads/kilnmark-${VERSION}-images.tar.gz"
           test "$(sudo stat -c '%U %a' /opt/kilnmark/config/.env)" = "kilnmark 600"
-          ! sudo grep -E '^KILNMARK_(DB_PASSWORD|ADMIN_TOKEN)=$' /opt/kilnmark/config/.env
+          if sudo grep -E '^KILNMARK_(DB_PASSWORD|ADMIN_TOKEN)=$' /opt/kilnmark/config/.env; then exit 1; fi
           as_kilnmark /opt/kilnmark/kilnmark.sh status
           as_kilnmark /opt/kilnmark/kilnmark.sh check
           as_kilnmark /opt/kilnmark/kilnmark.sh backup

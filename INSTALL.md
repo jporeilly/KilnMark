@@ -34,8 +34,10 @@ A release is `kilnmark-<version>.tar.gz` (or `.zip`). It ships with
    - makes the `kilnmark` account that runs Kilnmark (`--user` names another). The account has no
      password and you reach it with `sudo -iu kilnmark`;
    - gives the account the container engine: rootless Podman's id ranges and lingering, so its
-     containers start at boot, or the `docker` group with `--engine docker`;
+     containers start at boot, or the `docker` group with `--engine docker` (that group can act as
+     root on the machine: prefer rootless Podman where that matters);
    - makes `/opt/kilnmark` (`--root` for another) the account's own, and places the release in it.
+     It makes a new folder only, and refuses one that exists; later versions arrive by `upgrade`.
 
    Everything after this runs as that account, never as root. On Windows, Kilnmark runs as your own
    account, and there is no prepare.

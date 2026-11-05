@@ -114,7 +114,9 @@ setting() {
 compose=()
 set_compose() {
   pick_engine
-  local dir="$root/current"
+  # The real folder, not the current symlink: compose resolves relative paths in it (the
+  # certificate folder, ../../certs/https) without following symlinks.
+  local dir; dir="$(readlink -f "$root/current")"
   [ -f "$root/config/.env" ] || die "There is no $root/config/.env. Run: ./kilnmark.sh install"
   compose=("$engine" compose -p "$project" --env-file "$root/config/.env" -f "$dir/compose.yaml")
   local profiles; profiles="$(setting COMPOSE_PROFILES | tr -d '[:space:]')"
@@ -278,8 +280,9 @@ random_value() { head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n'; 
 set_line() {
   local file="$1" key="$2" value="$3" tmp
   tmp="$(mktemp "$file.XXXX")"
-  awk -v k="$key" -v v="$value" '
-    BEGIN { done = 0 }
+  # The value goes through the environment, never the command line, where other users could read it.
+  KM_VALUE="$value" awk -v k="$key" '
+    BEGIN { done = 0; v = ENVIRON["KM_VALUE"] }
     !done && ($0 ~ "^" k "=" || $0 ~ "^# *" k "=") { print k "=" v; done = 1; next }
     { print }
     END { if (!done) print k "=" v }' "$file" > "$tmp"
@@ -404,8 +407,12 @@ place_release() {
 # launchers at the root are its own, so shortcuts made from the root survive upgrades.
 use_version() {
   local f
+  # Copied beside and renamed over: a running script must never be rewritten in place, since bash
+  # goes on reading it from where it was.
   for f in kilnmark.sh start-kilnmark.sh stop-kilnmark.sh create-shortcut.sh kilnmark.png; do
-    [ -f "$root/versions/$1/$f" ] && cp "$root/versions/$1/$f" "$root/$f"
+    if [ -f "$root/versions/$1/$f" ]; then
+      cp "$root/versions/$1/$f" "$root/.$f.new" && mv -f "$root/.$f.new" "$root/$f"
+    fi
   done
   chmod 755 "$root"/*.sh
   ln -sfn "versions/$1" "$root/current"
@@ -464,7 +471,8 @@ cmd_prepare() {
   fi
   if [ "$eng" = docker ]; then
     usermod -aG docker "$user" || die "Could not add $user to the docker group."
-    echo "$user may use Docker (the docker group)."
+    echo "$user may use Docker (the docker group). Note: the docker group can act as root on this"
+    echo "machine; prefer rootless Podman where that matters, and keep the account's sudo access to admins."
   else
     # Rootless Podman maps each container's users onto a range of the account's own ids.
     local f start
@@ -477,9 +485,16 @@ cmd_prepare() {
     loginctl enable-linger "$user" || echo "Note: lingering could not be turned on; Kilnmark will not start at boot."
     echo "$user may use rootless Podman, and its containers start at boot (lingering on)."
   fi
-  mkdir -p "$root/versions" "$root/downloads"
-  if [ ! -d "$root/versions/$v" ]; then cp -a "$here" "$root/versions/$v"; fi
-  chown -R "$user:$user" "$root"
+  # Only a new folder: root never writes into, or hands over, a tree another account could have
+  # shaped (links planted in it, or files that are not Kilnmark's). Later versions arrive by upgrade.
+  if [ -e "$root" ] || [ -L "$root" ]; then
+    die "$root exists already. prepare makes a new install root only; upgrade an installed Kilnmark as $user (./kilnmark.sh upgrade), or choose another --root."
+  fi
+  mkdir -p "$(dirname "$root")"
+  mkdir -m 700 "$root"
+  mkdir "$root/versions" "$root/downloads"
+  cp -a "$here" "$root/versions/$v"
+  chown -R -h "$user:$user" "$root"
   chmod 750 "$root"
   cat <<EOF
 
@@ -565,9 +580,15 @@ cmd_upgrade() {
   cp "$root/versions/$new/.env.example" "$root/config/.env.example"
   use_version "$new"
   if ! "$root/kilnmark.sh" up --no-browser; then
+    echo "Kilnmark $new did not start: stopping it and starting $old again." >&2
+    "$root/kilnmark.sh" down || true
     use_version "$old"
-    echo "Kilnmark $new did not start; current points at $old again." >&2
-    echo "Its database may already be migrated. To go back fully: ./kilnmark.sh restore <the backup above> --yes" >&2
+    if "$root/kilnmark.sh" up --no-browser; then
+      echo "Kilnmark $old runs again. See why $new did not start in logs/." >&2
+    else
+      echo "Kilnmark $old does not start either: $new may have changed its database already." >&2
+      echo "Put it back to the backup taken above: ./kilnmark.sh restore <that backup> --yes" >&2
+    fi
     exit 1
   fi
   if [ -n "$added" ]; then
@@ -618,6 +639,8 @@ cmd_restore() {
 
 # --- main --------------------------------------------------------------------------------------
 
+# All in one function, read whole before it runs: upgrade replaces this file under a running copy.
+main() {
 command="${1:-up}"
 [ $# -eq 0 ] || shift
 case "$command" in
@@ -660,3 +683,5 @@ case "$command" in
   help|-h|--help) usage ;;
   *) usage; exit 2 ;;
 esac
+}
+main "$@"; exit $?

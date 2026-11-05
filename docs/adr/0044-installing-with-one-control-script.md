@@ -40,7 +40,10 @@ A release was a folder to copy, a `.env` to fill in by hand with two secrets, an
    `kilnmark` system account (no password; reached with `sudo -iu`). It gives the account rootless
    Podman (its own id ranges in `/etc/subuid` and `/etc/subgid`, and lingering, so its containers
    start at boot without a sign-in) or the `docker` group. It makes `/opt/kilnmark` the account's
-   own, `750`, and places the release there. Every other command runs as that account (owner
+   own, `750`, and places the release there. It makes a new root only: it refuses one that exists,
+   so root never writes into, or hands over, a tree another account could have shaped. The
+   `docker` group can act as root on the machine, so rootless Podman is the default and the
+   recommendation. Every other command runs as that account (owner
    decision, 5 November 2026). On Windows, Kilnmark runs as the person who installs it.
 4. **An install root**: `/opt/kilnmark` or `C:\Kilnmark` by default, any folder without spaces
    with `--root`. It holds:
@@ -68,7 +71,8 @@ A release was a folder to copy, a `.env` to fill in by hand with two secrets, an
    (INSTALL.md, "Check a release").
 7. **The compose project is always `kilnmark`.** It is `name: kilnmark` in `compose.yaml` and `-p`
    on every call, or `KILNMARK_PROJECT` for a second install on one machine. Every long-running
-   service gets `restart: unless-stopped`. On Linux with rootless Podman, install enables the
+   service gets `restart: always`, which is what Podman's `podman-restart` service starts at boot
+   (`unless-stopped` it leaves alone); `down` removes the containers, so a stop stays a stop. On Linux with rootless Podman, install enables the
    `podman-restart` user service and says to turn on lingering.
 8. **Upgrade goes forward only.**
    1. It checks the new archive and backs up, unless given `--no-backup`.
@@ -94,6 +98,12 @@ A release was a folder to copy, a `.env` to fill in by hand with two secrets, an
   on Windows was run by hand for this change.
 
 ## Consequences
+
+- Not yet proven: `pull` from ghcr.io (the images exist from the first tag on), an offline
+  install with `--auth` on Docker's classic image store (whether `docker load` keeps Keycloak's
+  digest, which compose names), and Podman on Linux (CI has Docker; Ubuntu's Podman is 4.9).
+- Images already present are used without a new signature check; `load-images` or `pull` checks
+  them again.
 
 - Every site runs the images CI scanned and signed. An offline site needs two files and cosign.
 - A 0.0.9 install, a flat folder whose project took the folder's name, moves over by backing up

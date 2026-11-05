@@ -572,9 +572,15 @@ function Invoke-Upgrade([string[]]$Options) {
     Copy-Launchers $new
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:Root 'kilnmark.ps1') up -NoBrowser
     if ($LASTEXITCODE -ne 0) {
+        Write-Host ('Kilnmark ' + $new + ' did not start: stopping it and starting ' + $old + ' again.') -ForegroundColor Red
+        [void](Invoke-Compose down)
         Copy-Launchers $old
-        Write-Host ('Kilnmark ' + $new + ' did not start; current.txt names ' + $old + ' again.') -ForegroundColor Red
-        Write-Host 'Its database may already be migrated. To go back fully: kilnmark.cmd restore <the backup above> -Yes' -ForegroundColor Red
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $script:Root 'kilnmark.ps1') up -NoBrowser
+        if ($LASTEXITCODE -eq 0) { Write-Host ('Kilnmark ' + $old + ' runs again. See why ' + $new + ' did not start in logs\.') -ForegroundColor Red }
+        else {
+            Write-Host ('Kilnmark ' + $old + ' does not start either: ' + $new + ' may have changed its database already.') -ForegroundColor Red
+            Write-Host 'Put it back to the backup taken above: kilnmark.cmd restore <that backup> -Yes' -ForegroundColor Red
+        }
         Stop-Log; exit 1
     }
     if ($added.Count -gt 0) { Write-Host ('Settings new in ' + $new + ' (see config\.env.example): ' + ($added -join ' ')) }

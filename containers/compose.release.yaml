@@ -23,7 +23,7 @@ name: kilnmark
 services:
   postgres:
     image: ghcr.io/jporeilly/kilnmark-postgres:@VERSION@
-    restart: unless-stopped   # back after a reboot, unless stopped on purpose
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     build:
       context: containers/postgres
       dockerfile: Containerfile
@@ -45,7 +45,7 @@ services:
 
   kilnmark:
     image: ghcr.io/jporeilly/kilnmark-server:@VERSION@
-    restart: unless-stopped   # back after a reboot, unless stopped on purpose
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     build:
       context: .
       dockerfile: containers/server/Containerfile
@@ -142,7 +142,7 @@ services:
   # which. They are optional to compose itself, so Kilnmark starts the same without this profile.
   keycloak-db:
     image: ghcr.io/jporeilly/kilnmark-postgres:@VERSION@
-    restart: unless-stopped   # back after a reboot, unless stopped on purpose
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     profiles: ["auth"]
     environment:
       POSTGRES_DB: keycloak
@@ -157,7 +157,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332
-    restart: unless-stopped   # back after a reboot, unless stopped on purpose
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     profiles: ["auth"]
     command: ["start"]
     environment:
@@ -231,7 +231,7 @@ services:
   # context size of 512 in Kilnmark: it then sizes asset text to fit (1.5 characters per token).
   ai:
     image: ghcr.io/ggml-org/llama.cpp:server-b11429@sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1
-    restart: unless-stopped   # back after a reboot, unless stopped on purpose
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     profiles: ["ai"]
     command: ["-m", "/models/${KILNMARK_AI_CHAT_MODEL:-qwen2.5-1.5b-instruct-q4_k_m.gguf}",
               "--alias", "${KILNMARK_AI_CHAT_ALIAS:-qwen2.5-1.5b-instruct}",
@@ -244,7 +244,7 @@ services:
 
   ai-cuda:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda-b11429@sha256:883915ea20a4b350e98f7284098f4d400c21e9b366e248d397cd42d90602a84c
-    restart: unless-stopped   # back after a reboot, unless stopped on purpose
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     profiles: ["ai-cuda"]
     command: ["-m", "/models/${KILNMARK_AI_CHAT_MODEL:-qwen2.5-1.5b-instruct-q4_k_m.gguf}",
               "--alias", "${KILNMARK_AI_CHAT_ALIAS:-qwen2.5-1.5b-instruct}",
@@ -266,7 +266,7 @@ services:
   # Embeddings are small and fast on a CPU, so one service serves both profiles.
   ai-embed:
     image: ghcr.io/ggml-org/llama.cpp:server-b11429@sha256:2f8ebc2dde83c4bd7e5c6d61efa57965e0d5a79d29802c246c4593740d9c04c1
-    restart: unless-stopped   # back after a reboot, unless stopped on purpose
+    restart: always   # back after a reboot (down removes the containers, so a stop stays a stop)
     profiles: ["ai", "ai-cuda"]
     command: ["-m", "/models/${KILNMARK_AI_EMBED_MODEL:-bge-small-en-v1.5-q8_0.gguf}",
               "--alias", "${KILNMARK_AI_EMBED_ALIAS:-bge-small-en-v1.5}",

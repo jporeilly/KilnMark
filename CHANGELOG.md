@@ -173,7 +173,7 @@ details.
   keep their names from one version's folder to the next; `KILNMARK_PROJECT` names another for a
   second install on one machine. **A 0.0.9 install moves over by backup and restore**: its project
   was named after its folder (INSTALL.md, "From 0.0.9").
-- **Every long-running service restarts by itself** (`restart: unless-stopped`); with rootless
+- **Every long-running service restarts by itself** (`restart: always`; `down` removes them); with rootless
   Podman, install turns on the `podman-restart` user service.
 - **Images from the release, not built on site.** compose.yaml names
   `ghcr.io/jporeilly/kilnmark-server` and `-postgres` at the release's version; the base images
