@@ -7,6 +7,8 @@ tabs, and changes to a database behind controls.
 
 ## Explore a database
 
+![Explore on a source's page: the schemas, the tables and views of one, and a table's columns with the database's estimate of its rows and Count exactly](images/source-explore.png)
+
 Open **Sources**, choose a database source (PostgreSQL, SQL Server, MySQL, MariaDB, Oracle or
 Generic JDBC) and scroll to **Explore**. Stewards, designers and admins see it; viewers do not.
 
@@ -18,8 +20,9 @@ Generic JDBC) and scroll to **Explore**. Stewards, designers and admins see it; 
      column) or a default does when a row leaves it out, and whether it is in the primary key.
    - **Keys**: the primary key, the foreign keys that point from this table to others, and the
      tables whose foreign keys point here.
-   - **Indexes**: each index with its columns in order, whether it is unique or holds the primary
-     key, and its kind where the database says.
+   - **Indexes**: each index with its key columns in order, whether it is unique or holds the
+     primary key, its kind where the database says, and whether it is partial (it covers only the
+     rows a condition picks; the condition is not shown).
    - **Preview**: the first 50 rows.
 
 The address keeps the schema and table you chose, so you can send a colleague a link to the same
@@ -42,11 +45,14 @@ table.
 - **No text that can hold a value.** A column's default is shown as "a default", never its text;
   an index on an expression shows as `(expression)`, and a partial index's condition is not shown.
   Each can quote a value from the data (`WHERE ssn = '…'`).
-- **Errors give a code, not the database's message.** When the database refuses a count, the
-  message gives its SQLSTATE or error code only, as its own text can quote a value.
-- **Not the database's own schemas.** Tables in `information_schema`, `pg_catalog`, MySQL's
-  `performance_schema`, `sys` and `mysql`, SQL Server's `sys` and Oracle's own schemas are not
-  shown or previewed, even by name: some keep other sessions' statements with their values.
+- **Errors give a code, not the database's message.** When the database refuses a read of a
+  table's details, a count or a preview, the message gives its SQLSTATE or error code (or says the
+  database refused), never the database's own text, as that can quote a value. A failure to
+  connect is still explained, as **Test connection** explains it.
+- **Not the database's own tables.** Tables in `information_schema`, `pg_catalog`, MySQL's
+  `performance_schema`, `sys` and `mysql`, SQL Server's `sys` and the schemas Oracle maintains are
+  not shown or previewed, even by name, nor are tables a PostgreSQL extension owns (such as
+  `pg_stat_statements`) or SQL Server ships: some keep other sessions' statements with their values.
 - **Count exactly counts ordinary tables only.** A view, or a foreign, federated, linked or external
   table, keeps its estimate: counting it would run the view's query, or reach another server.
 - **Generic JDBC sources** show their schemas, tables, columns and primary key as a scan reads

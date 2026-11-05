@@ -72,6 +72,12 @@ class PostgresExploreTest {
             // a parent's count would include its children, which could be foreign tables
             s.execute("CREATE TABLE shop.events (id integer)");
             s.execute("CREATE TABLE shop.events_2026 () INHERITS (shop.events)");
+            // the key is t_pkey; a unique index on the same column sorts first by name
+            s.execute("CREATE TABLE shop.t (id integer PRIMARY KEY, code text, note text)");
+            s.execute("CREATE UNIQUE INDEX a_id_uq ON shop.t (id)");
+            s.execute("CREATE INDEX t_code_cover ON shop.t (code) INCLUDE (note)");
+            // an extension's view in an ordinary schema keeps the database's own data
+            s.execute("CREATE EXTENSION IF NOT EXISTS pg_buffercache SCHEMA shop");
         }
     }
 
@@ -142,6 +148,30 @@ class PostgresExploreTest {
         assertEquals(300L, t.estimatedRows());
         assertEquals(300L, CONNECTOR.countRows(source(), "shop.customers", LIMIT));
         assertEquals(0L, CONNECTOR.countRows(source(), "shop.my_table", LIMIT));
+    }
+
+    @Test
+    void findsThePrimaryKeyByNameMarksPartialIndexesAndKeepsOnlyKeyColumns() throws Exception {
+        TableDetail t = CONNECTOR.explore(source(), "shop.t", LIMIT);
+        Map<String, TableDetail.Index> byName = new java.util.HashMap<>();
+        t.indexes().forEach(i -> byName.put(i.name(), i));
+        assertTrue(byName.get("t_pkey").primaryKey());
+        assertFalse(byName.get("a_id_uq").primaryKey(), "a unique index on the key's column is not the key");
+        assertEquals(List.of("code"), byName.get("t_code_cover").columns(), "INCLUDE columns are not keys");
+
+        TableDetail customers = CONNECTOR.explore(source(), "shop.customers", LIMIT);
+        assertTrue(customers.indexes().stream().anyMatch(i -> i.name().equals("customers_secret") && i.partial()));
+        assertTrue(customers.indexes().stream().anyMatch(i -> i.name().equals("customers_email") && !i.partial()));
+        assertEquals("int32", customers.columns().get(1).kind());
+    }
+
+    @Test
+    void refusesWhatAnExtensionOwnsEvenInAnOrdinarySchema() {
+        ConnectorException e = assertThrows(ConnectorException.class,
+            () -> CONNECTOR.explore(source(), "shop.pg_buffercache", LIMIT));
+        assertTrue(e.getMessage().contains("belongs to the database itself"), e.getMessage());
+        assertThrows(ConnectorException.class,
+            () -> CONNECTOR.preview(source(), CONNECTOR.asset(source(), "shop.pg_buffercache"), 5));
     }
 
     @Test

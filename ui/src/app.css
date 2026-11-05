@@ -4371,7 +4371,7 @@ h1.with-tile {
 /* Explore on a database source's page (ADR 0045): schemas, tables, then the chosen table. */
 .explore-panes {
   display: grid;
-  grid-template-columns: minmax(10rem, 14rem) minmax(12rem, 18rem) minmax(0, 1fr);
+  grid-template-columns: minmax(8rem, 11rem) minmax(10rem, 15rem) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }

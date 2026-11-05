@@ -380,11 +380,18 @@ public class OracleConnector extends JdbcConnector {
 
     /**
      * Schemas Oracle itself keeps, refused by Explore and previews even when named: SYS holds the
-     * {@code V$} views, whose SQL text quotes other sessions' values.
+     * {@code V$} views, whose SQL text quotes other sessions' values. The database is also asked
+     * ({@link #refusedTableSql}); this list holds when it cannot answer before connecting.
      */
     @Override
     protected boolean refusedSchema(String schema) {
         return ORACLE_OWN.contains(schema.toUpperCase(Locale.ROOT));
+    }
+
+    /** A table of a user Oracle maintains ({@code ALL_USERS.ORACLE_MAINTAINED}): APEX, ORDS and the rest. */
+    @Override
+    protected String refusedTableSql() {
+        return "SELECT 1 FROM ALL_USERS WHERE USERNAME = ? AND ORACLE_MAINTAINED = 'Y' AND ? IS NOT NULL";
     }
 
     private static final java.util.Set<String> ORACLE_OWN = java.util.Set.of("SYS", "SYSTEM", "AUDSYS", "SYSBACKUP",
@@ -499,7 +506,7 @@ public class OracleConnector extends JdbcConnector {
 
     /** Ordinary tables kept in this database only, for Count exactly (ADR 0045). */
     @Override
-    protected String localTableSql() {
+    protected String localTableSql(int major) {
         return "SELECT 1 FROM ALL_TABLES t WHERE t.OWNER = ? AND t.TABLE_NAME = ? AND NOT EXISTS "
             + "(SELECT 1 FROM ALL_EXTERNAL_TABLES e WHERE e.OWNER = t.OWNER AND e.TABLE_NAME = t.TABLE_NAME)";
     }

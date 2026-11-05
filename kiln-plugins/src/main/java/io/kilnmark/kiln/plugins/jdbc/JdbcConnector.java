@@ -651,22 +651,26 @@ public abstract class JdbcConnector implements Connector {
     public io.kilnmark.kiln.connect.TableDetail explore(SourceConfig source, String path, Duration timeout)
         throws ConnectorException {
         AssetInfo a = asset(source, path);
-        refuseSystem(source, a);
         String schema = a.hints().getOrDefault("schema", a.container());
         String table = a.hints().getOrDefault("table", a.name());
         try (Connection c = connectToExplore(source, timeout)) {
             try {
+                refuseSystem(c, source, a, timeout);
                 DatabaseMetaData md = c.getMetaData();
                 JdbcExplorer.Scope scope = exploreScope(md, schema);
                 JdbcExplorer.Key pk = JdbcExplorer.primaryKey(md, scope, table);
                 boolean isTable = a.kind().equals("table") || a.kind().equals("partitioned table");
-                List<io.kilnmark.kiln.connect.TableDetail.Column> columns = JdbcExplorer.columns(md, scope, table);
+                Map<String, String> kinds = new HashMap<>();
+                a.fields().forEach(f -> kinds.put(f.name(), f.kind()));
+                List<io.kilnmark.kiln.connect.TableDetail.Column> columns = JdbcExplorer.columns(md, scope, table)
+                    .stream().map(col -> col.withKind(kinds.get(col.name()))).toList();
                 Set<String> names = new java.util.HashSet<>();
                 columns.forEach(col -> names.add(col.name()));
                 return new io.kilnmark.kiln.connect.TableDetail(a.path(), a.kind(), columns, pk.columns(),
                     isTable ? JdbcExplorer.foreignKeys(md, scope, table, true) : List.of(),
                     isTable ? JdbcExplorer.foreignKeys(md, scope, table, false) : List.of(),
-                    isTable ? JdbcExplorer.indexes(md, scope, table, pk, names) : List.of(),
+                    isTable ? keyColumnsOnly(c, schema, table, JdbcExplorer.indexes(md, scope, table, pk, names))
+                        : List.of(),
                     isTable ? estimate(c, a, timeout) : null);
             } finally {
                 c.rollback();
@@ -679,27 +683,30 @@ public abstract class JdbcConnector implements Connector {
 
     /**
      * {@code SELECT COUNT(*)} of the table, its names as the catalogue spells them and quoted with
-     * {@link #quote}, on a read-only connection within {@code timeout}.
+     * {@link #quote}, on a read-only connection within {@code timeout}, for an ordinary table kept in
+     * the database only ({@link #localTableSql}).
      */
     @Override
     public long countRows(SourceConfig source, String path, Duration timeout) throws ConnectorException {
         AssetInfo a = asset(source, path);
-        refuseSystem(source, a);
-        String sql = "SELECT COUNT(*) FROM " + quote(a.hints().getOrDefault("schema", a.container())) + "."
-            + quote(a.hints().getOrDefault("table", a.name()));
+        String schema = a.hints().getOrDefault("schema", a.container());
+        String table = a.hints().getOrDefault("table", a.name());
+        String sql = "SELECT COUNT(*) FROM " + quote(schema) + "." + quote(table);
         try (Connection c = connectToExplore(source, timeout)) {
-            if (!localTable(c, a.hints().getOrDefault("schema", a.container()),
-                a.hints().getOrDefault("table", a.name()), timeout)) {
-                throw new ConnectorException("Count exactly is offered for ordinary tables kept in this database "
-                    + "only. A view, or a foreign, federated or linked table, is counted when it is read, so "
-                    + a.path() + " keeps its estimate.");
-            }
-            try (java.sql.Statement s = c.createStatement()) {
-                if (timeout != null) {
-                    s.setQueryTimeout(Math.max(1, seconds(timeout)));
+            try {
+                refuseSystem(c, source, a, timeout);
+                if (!localTable(c, schema, table, timeout)) {
+                    throw new ConnectorException("Count exactly is offered for ordinary tables whose rows this "
+                        + "database keeps itself. " + a.path() + " is a view, or a table whose rows are kept "
+                        + "elsewhere (foreign, federated, linked or external), so it keeps its estimate.");
                 }
-                try (java.sql.ResultSet rs = s.executeQuery(sql)) {
-                    return rs.next() ? rs.getLong(1) : 0;
+                try (java.sql.Statement s = c.createStatement()) {
+                    if (timeout != null) {
+                        s.setQueryTimeout(Math.max(1, seconds(timeout)));
+                    }
+                    try (java.sql.ResultSet rs = s.executeQuery(sql)) {
+                        return rs.next() ? rs.getLong(1) : 0;
+                    }
                 }
             } finally {
                 c.rollback();
@@ -745,15 +752,42 @@ public abstract class JdbcConnector implements Connector {
     }
 
     /**
-     * A preview of a table, never of one in the database's own schemas, even when it is named:
-     * those hold other sessions' statements with their values (MySQL's {@code performance_schema},
-     * Oracle's {@code V$SQL}), and no mark covers them (ADR 0045).
+     * A preview of a table, never of one the database itself keeps, even when it is named: those
+     * hold other sessions' statements with their values (MySQL's {@code performance_schema},
+     * Oracle's {@code V$SQL}, PostgreSQL's {@code pg_stat_statements}), and no mark covers them
+     * (ADR 0045).
      */
     @Override
     public io.kilnmark.kiln.connect.Preview preview(SourceConfig source, AssetInfo asset, int rows)
         throws ConnectorException {
-        refuseSystem(source, asset);
-        return Connector.super.preview(source, asset, rows);
+        String schema = asset.hints().getOrDefault("schema", asset.container());
+        if (schema != null && refusedSchema(schema)) {
+            throw systemRefusal(source, asset);
+        }
+        if (refusedTableSql() != null) {
+            try (Connection c = connectToExplore(source, null)) {
+                try {
+                    refuseSystem(c, source, asset, null);
+                } finally {
+                    c.rollback();
+                }
+            } catch (SQLException e) {
+                throw new ConnectorException("Cannot check " + asset.path() + " in " + source.name() + ": "
+                    + refusal(e));
+            }
+        }
+        try {
+            return Connector.super.preview(source, asset, rows);
+        } catch (ConnectorException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("Cannot read " + asset.path() + ": ")) {
+                // the reader's message is the database's own text, which can quote a value (ADR 0045)
+                throw new ConnectorException("Cannot read " + asset.path() + " in " + source.name() + ": the database "
+                    + "refused the read. Kilnmark does not pass on the database's message, as it can quote a value "
+                    + "from the table; a value that does not convert (a cast in a view, say) is the usual cause. Test "
+                    + "the connection to rule out the server.");
+            }
+            throw e;
+        }
     }
 
     /**
@@ -764,30 +798,54 @@ public abstract class JdbcConnector implements Connector {
         return isSystemSchema(schema);
     }
 
-    private void refuseSystem(SourceConfig source, AssetInfo asset) throws ConnectorException {
+    /**
+     * SQL that returns a row when a table (schema and table, bound in that order) belongs to the
+     * database or one of its extensions though it sits in an ordinary schema (PostgreSQL's
+     * {@code pg_stat_statements} in {@code public}; Oracle's own users); null, the default, when
+     * {@link #refusedSchema} says all there is.
+     */
+    protected String refusedTableSql() {
+        return null;
+    }
+
+    private void refuseSystem(Connection c, SourceConfig source, AssetInfo asset, Duration timeout)
+        throws ConnectorException, SQLException {
         String schema = asset.hints().getOrDefault("schema", asset.container());
+        String table = asset.hints().getOrDefault("table", asset.name());
         if (schema != null && refusedSchema(schema)) {
-            throw new ConnectorException(asset.path() + " is in one of the database's own schemas, which Kilnmark "
-                + "does not show: they can hold other sessions' statements and values. Choose a table of "
-                + source.name() + "'s own data.");
+            throw systemRefusal(source, asset);
         }
+        String sql = refusedTableSql();
+        if (sql != null && schema != null && answers(c, sql, schema, table, timeout)) {
+            throw systemRefusal(source, asset);
+        }
+    }
+
+    private static ConnectorException systemRefusal(SourceConfig source, AssetInfo asset) {
+        return new ConnectorException(asset.path() + " belongs to the database itself, which Kilnmark does not "
+            + "show: such tables can hold other sessions' statements and values. Choose a table of " + source.name()
+            + "'s own data.");
     }
 
     /**
      * SQL that returns a row when the table (schema and table, bound in that order) is an ordinary
      * table whose rows this database keeps itself: never a view, nor a foreign, federated, linked or
-     * external table, nor one whose children or partitions are (ADR 0045). Null, the default, means
-     * no table qualifies, so a database without its own list is never counted.
+     * external table, nor one whose children or partitions are (ADR 0045). {@code major} is the
+     * database's major version, for catalogues that differ by version. Null, the default, means no
+     * table qualifies, so a database without its own list is never counted.
      */
-    protected String localTableSql() {
+    protected String localTableSql(int major) {
         return null;
     }
 
     private boolean localTable(Connection c, String schema, String table, Duration timeout) throws SQLException {
-        String sql = localTableSql();
-        if (sql == null) {
-            return false;
-        }
+        String sql = localTableSql(c.getMetaData().getDatabaseMajorVersion());
+        return sql != null && answers(c, sql, schema, table, timeout);
+    }
+
+    /** Whether a query of two bound names (schema, table) gives a row. */
+    private boolean answers(Connection c, String sql, String schema, String table, Duration timeout)
+        throws SQLException {
         try (java.sql.PreparedStatement s = c.prepareStatement(sql)) {
             if (timeout != null) {
                 s.setQueryTimeout(Math.max(1, seconds(timeout)));
@@ -801,8 +859,21 @@ public abstract class JdbcConnector implements Connector {
     }
 
     /**
+     * The indexes with only their key columns in {@code columns}, for databases whose driver lists
+     * an index's included columns as if they were keys (PostgreSQL's {@code INCLUDE}); by default
+     * as the driver gave them.
+     */
+    protected List<io.kilnmark.kiln.connect.TableDetail.Index> keyColumnsOnly(Connection c, String schema,
+                                                                             String table,
+                                                                             List<io.kilnmark.kiln.connect.TableDetail.Index> indexes)
+        throws SQLException {
+        return indexes;
+    }
+
+    /**
      * Where a schema is in metadata calls. By default the schema level, with its name as a pattern
-     * from {@link #schemaPattern}; MySQL and MariaDB keep databases at the catalog level instead.
+     * from {@link #schemaPattern}. (MySQL and MariaDB connections say {@code useCatalogTerm=Schema},
+     * so their databases are schemas here too.)
      */
     protected JdbcExplorer.Scope exploreScope(DatabaseMetaData md, String schema) throws SQLException {
         return new JdbcExplorer.Scope(null, schema, schemaPattern(md, schema));
