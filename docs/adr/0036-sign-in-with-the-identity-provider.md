@@ -80,4 +80,4 @@ pasted into the sign-in page.
 - An admin signed in with the provider can create API tokens, which need neither MFA nor a session
   limit; the audit log shows who did (`sso:...`). Requiring an expiry for tokens is on the backlog
   (token policy).
-- ADR 0014's Keycloak profile, for customers without a provider, is still to come.
+- ADR 0014's Keycloak profile, for customers without a provider, was built on 5 November 2026.

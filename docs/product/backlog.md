@@ -20,8 +20,6 @@ Last reviewed: 4 November 2026 (after #78-#85 merged).
    #78), access reviews and token policy (ADR 0037, #81), two people for the unmask grant
    (ADR 0038, #82), backup and restore with a runbook (ADR 0039, #83), and the SSDF
    self-assessment (#84). Next:
-   - the Keycloak profile for customers without an identity provider
-     ([ADR 0014](../adr/0014-authentication.md));
    - the SSDF gaps: static analysis, Gradle dependency verification, build provenance, a threat
      model; the rest of the evidence pack when a customer's due diligence asks; a full export in
      open formats, for exit;

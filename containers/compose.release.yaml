@@ -123,6 +123,91 @@ services:
       # HTTPS, once a certificate is set (above). Change the host side with KILNMARK_HTTPS_PORT.
       - "${KILNMARK_HTTPS_PORT:-8443}:8443"
 
+  # Keycloak, for an organisation with no identity provider of its own, or with only Active
+  # Directory or LDAP, which Keycloak can read (ADR 0014; INSTALL.md, "Keycloak, if you have no
+  # identity provider"). Started only when asked for, after setting its values in .env:
+  #   podman compose --profile auth up -d
+  # keycloak-setup then makes the kilnmark realm: the groups that give Kilnmark's roles, the client
+  # Kilnmark signs in with, a sign-in of a password and a one-time code, and Kilnmark's sign-in page.
+  # Run it again after changing KILNMARK_URL or the client secret:
+  #   podman compose --profile auth run --rm keycloak-setup
+  # Its secrets have no defaults: while one is missing, keycloak-db or keycloak-setup stops and says
+  # which. They are optional to compose itself, so Kilnmark starts the same without this profile.
+  keycloak-db:
+    image: localhost/kilnmark-postgres:@VERSION@
+    profiles: ["auth"]
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KILNMARK_KEYCLOAK_DB_PASSWORD}
+    volumes:
+      - keycloak-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332
+    profiles: ["auth"]
+    command: ["start"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak?sslmode=require
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KILNMARK_KEYCLOAK_DB_PASSWORD}
+      # The address browsers reach Keycloak at. Kilnmark reaches it inside this stack
+      # (http://keycloak:8080), so its calls behind the scenes use that address instead.
+      KC_HOSTNAME: ${KILNMARK_KEYCLOAK_URL:-http://localhost:8180}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      # Plain HTTP, published on this machine only (ports, below): browsers on it, or a proxy on it
+      # that ends TLS for other machines. Behind that proxy, set KILNMARK_KEYCLOAK_URL to its
+      # https:// address; Keycloak takes the client's address and scheme from the proxy's
+      # X-Forwarded headers, which only something on this machine can send it.
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      # Keycloak's first admin, for its console (KILNMARK_KEYCLOAK_URL/admin) and keycloak-setup.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KILNMARK_KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KILNMARK_KEYCLOAK_ADMIN_PASSWORD}
+    volumes:
+      - ./containers/keycloak/themes/kilnmark:/opt/keycloak/themes/kilnmark:ro,Z
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    # Ready when /health/ready answers on the management port; the image has no curl.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
+      interval: 10s
+      timeout: 5s
+      start_period: 90s
+      retries: 6
+    ports:
+      # On this machine only: Keycloak's pages carry passwords and codes, so other machines reach
+      # it through a proxy here that ends TLS (INSTALL.md). Kilnmark reaches it inside this stack.
+      # If you change the port, change KILNMARK_KEYCLOAK_URL to match.
+      - "127.0.0.1:${KILNMARK_KEYCLOAK_PORT:-8180}:8080"
+
+  keycloak-setup:
+    image: quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332
+    profiles: ["auth"]
+    entrypoint: ["/bin/bash", "/opt/kilnmark/setup.sh"]
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      KC_ADMIN_USER: ${KILNMARK_KEYCLOAK_ADMIN:-admin}
+      KC_ADMIN_PASSWORD: ${KILNMARK_KEYCLOAK_ADMIN_PASSWORD}
+      KILNMARK_OIDC_CLIENT_SECRET: ${KILNMARK_OIDC_CLIENT_SECRET}
+      # The address browsers reach Kilnmark at: Keycloak sends people back there after sign-in.
+      KILNMARK_URL: ${KILNMARK_URL:-http://localhost:8780}
+      # Only for a demonstration: five example people, one per role (see .env.example).
+      KILNMARK_KEYCLOAK_DEMO_PASSWORD: ${KILNMARK_KEYCLOAK_DEMO_PASSWORD}
+    volumes:
+      - ./containers/keycloak/setup.sh:/opt/kilnmark/setup.sh:ro,Z
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    restart: "no"
+
   # AI models, started only when asked for. llama.cpp's llama-server serves GGUF model files from
   # the models volume through the OpenAI API, inside this stack's network. Download the models first:
   #   podman compose --profile ai-download run --rm ai-download
@@ -210,3 +295,4 @@ volumes:
   pgdata:
   keys:
   models:     # GGUF model files for the AI profiles
+  keycloak-pgdata:   # Keycloak's own database, for the auth profile: back it up with pgdata

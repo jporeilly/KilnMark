@@ -189,6 +189,57 @@ given no role, is in **Settings**, **Audit log**, under `sso:` and the person's 
 Kilnmark must be reached over HTTPS for this (see HTTPS above): its session cookies are sent over
 HTTPS only. Behind a proxy that ends TLS, also set `KILNMARK_OIDC_BEHIND_TLS_PROXY=true`.
 
+### Keycloak, if you have no identity provider
+
+Kilnmark comes with **Keycloak**, an open-source identity provider, for an organisation that has none
+of its own, or only Active Directory or LDAP (which Keycloak can read). It is a compose profile,
+`auth`, started only when asked for ([ADR 0014](docs/adr/0014-authentication.md)). It needs about
+1 GB of memory more.
+
+1. In `.env`, set Keycloak's secrets, each a long random value (`openssl rand -base64 32`):
+   `KILNMARK_KEYCLOAK_DB_PASSWORD` and `KILNMARK_KEYCLOAK_ADMIN_PASSWORD` (the password of
+   Keycloak's admin, `KILNMARK_KEYCLOAK_ADMIN`, `admin` unless you set it); and where browsers reach
+   Keycloak and Kilnmark: `KILNMARK_KEYCLOAK_URL` (default `http://localhost:8180`, following
+   `KILNMARK_KEYCLOAK_PORT`) and `KILNMARK_URL` (default `http://localhost:8780`).
+2. Turn on sign-in with it, as `.env.example` shows: `KILNMARK_OIDC_ENABLED=true`,
+   `KILNMARK_OIDC_ISSUER=http://keycloak:8080/realms/kilnmark`, `KILNMARK_OIDC_CLIENT_ID=kilnmark`,
+   a new `KILNMARK_OIDC_CLIENT_SECRET`, `KILNMARK_OIDC_PROVIDER_NAME=Keycloak`, and the five group
+   settings (`kilnmark-viewers`, `kilnmark-stewards`, `kilnmark-designers`, `kilnmark-admins`,
+   `kilnmark-sensitive-data`).
+3. Start it: `podman compose --profile auth up -d`. The `keycloak-setup` service waits for Keycloak,
+   then makes the `kilnmark` realm: those groups, the client Kilnmark signs in with, a sign-in of a
+   password and a one-time code, and Kilnmark's sign-in page. `podman compose logs keycloak-setup`
+   says what it did. Run it again after changing `KILNMARK_URL` or the client secret:
+   `podman compose --profile auth run --rm keycloak-setup`. It finishes anything an earlier run
+   left half done, and keeps what is there.
+4. Add people in Keycloak's console (`KILNMARK_KEYCLOAK_URL/admin`, signing in as
+   `KILNMARK_KEYCLOAK_ADMIN` with `KILNMARK_KEYCLOAK_ADMIN_PASSWORD`, realm **kilnmark**,
+   **Users**), give each a password and put them in a group. Or connect Active Directory or LDAP
+   under **User federation**.
+
+Keycloak makes its admin on its first start only: changing `KILNMARK_KEYCLOAK_ADMIN_PASSWORD` later
+changes nothing, and `keycloak-setup` then cannot sign in. Change the password in Keycloak's console
+first, then in `.env`.
+
+Each person sets up a one-time code (any authenticator app) on their first sign-in. Keycloak does
+not count setting it up as using it, so Kilnmark then asks them to sign in once more, with the code.
+
+For a demonstration, also set `KILNMARK_KEYCLOAK_DEMO_PASSWORD`: `keycloak-setup` then adds five
+example people, one per role, at `kilnmark.com` addresses (Documentation, "Signing in, roles and
+tokens"). Never set it where real data is.
+
+On one machine, `http://localhost` works as it is: browsers treat localhost as secure, so
+Kilnmark's session cookie (sent over HTTPS only) still works there. Keycloak is published on this
+machine only. For other machines, put a proxy on this machine that ends TLS in front of both, set
+`KILNMARK_KEYCLOAK_URL` and `KILNMARK_URL` to their `https://` addresses, and run `keycloak-setup`
+again (above).
+
+`backup.sh` backs up Kilnmark, not Keycloak. Back Keycloak's database up beside it:
+`podman compose --profile auth exec -T keycloak-db pg_dump -U keycloak -Fc keycloak > keycloak.dump`.
+Keycloak keeps compressed copies of its pages: after changing the theme in
+`containers/keycloak/themes`, recreate it
+(`podman compose --profile auth up -d --force-recreate keycloak`).
+
 ### Review who has access
 
 **Settings**, **Access review** lists every API token (role, whether it sees sensitive values,
