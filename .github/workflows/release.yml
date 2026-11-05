@@ -170,7 +170,7 @@ jobs:
           as_kilnmark /opt/kilnmark/kilnmark.sh status
           as_kilnmark /opt/kilnmark/kilnmark.sh check
           as_kilnmark /opt/kilnmark/kilnmark.sh backup
-          backup=$(sudo ls -1d /opt/kilnmark/backups/kilnmark-* | tail -n 1)
+          backup=$(sudo sh -c 'ls -1d /opt/kilnmark/backups/kilnmark-*' | tail -n 1)
           as_kilnmark sh -c "cd $backup && sha256sum -c SHA256SUMS"
           as_kilnmark /opt/kilnmark/kilnmark.sh restore "$backup" --yes
           as_kilnmark /opt/kilnmark/kilnmark.sh down
@@ -188,7 +188,7 @@ jobs:
           sudo chown kilnmark:kilnmark "/opt/kilnmark/downloads/kilnmark-${next}.tar.gz"
           as_kilnmark /opt/kilnmark/kilnmark.sh upgrade "/opt/kilnmark/downloads/kilnmark-${next}.tar.gz" --skip-verify
           test "$(as_kilnmark /opt/kilnmark/kilnmark.sh version)" = "Kilnmark ${next}"
-          test "$(sudo ls -1d /opt/kilnmark/backups/kilnmark-* | wc -l)" = 2
+          test "$(sudo sh -c 'ls -1d /opt/kilnmark/backups/kilnmark-*' | wc -l)" = 2
           echo DELETE | as_kilnmark /opt/kilnmark/kilnmark.sh uninstall --purge
           test -z "$(docker volume ls -q --filter name=kilnmark_)"
 
