@@ -1,0 +1,36 @@
+# Template: check rows on the way and set failing ones aside (a Kilnmark template).
+# Replace each <...> with your own, and the rules with the checks your data needs. Rows that pass
+# go to the target table; rows that fail go to a table of their own, to look at and fix. More than
+# the share in max_failing_share failing stops the run.
+kilnmark: pipeline/v1
+name: template-quality-gate
+description: Rows checked on the way; failing rows set aside.
+
+nodes:
+  - id: rows
+    type: read
+    source: <your source>
+    asset: <schema.table>
+
+  - id: check
+    type: gate
+    input: rows
+    on_fail: quarantine       # quarantine | stop | warn
+    rules:
+      - {name: has a key, type: not_null, field: <key column>}
+      - {name: known status, type: allowed_values, field: <status column>, values: [<value>, <value>]}
+    max_failing_share: 0.05
+
+  - id: good
+    type: write
+    input: check
+    source: <a database that allows writing>
+    table: <schema.table>
+    mode: append
+
+  - id: aside
+    type: write
+    input: check.quarantine
+    source: <a database that allows writing>
+    table: <schema.table_quarantine>
+    mode: append

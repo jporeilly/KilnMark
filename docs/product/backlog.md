@@ -33,16 +33,25 @@ Last reviewed: 5 November 2026 (after #86-#93 merged).
      view, a metric for preview slots;
    - audit events for data read with the unmask grant, and for MCP refusals (ADR 0029);
    - a FIPS mode when a federal customer needs it.
-3. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
+3. **Database tools** (owner, 5 November 2026): on a source, **Explore** (live schemas, tables,
+   columns, keys and indexes, a masked preview of rows); a SQL generator (`CREATE TABLE`, `ALTER`,
+   `CREATE INDEX` and `DROP` in each database's dialect); connection settings as tabs (General,
+   Advanced, Options, Pooling, Partitioning); and operations that change a database, which the
+   owner chose to allow with controls: a per-source **Allow changes** switch (off by default),
+   designers and admins only, a preview of every statement, typing the table's name to confirm a
+   drop or truncate, an audit event for each, and a second person's approval on production
+   sources. Needs an ADR amending ADR 0028 first.
+4. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope).
-4. **Flows F4** ([ADR 0026](../adr/0026-flows.md), docs/design/flows.md): the diagram, run chart and
+5. **Flows F4** ([ADR 0026](../adr/0026-flows.md), docs/design/flows.md): the diagram, run chart and
    editing on the diagram (#85, #86), resource control and the `for-each` node (ADR 0040, #89,
-   #90), and pages laid out as a pipeline's (#90-#92) shipped; then adding the sample flows from
-   Add samples; deleting a flow; the built-in scheduler.
-5. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
+   #90), pages laid out as a pipeline's (#90-#92), and the sample flows in the Library (ADR 0043)
+   shipped; then deleting a flow; the built-in scheduler.
+6. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030); then
-   templates, version history, and v0.1.0.
+   templates of a team's own ("save as template", after the Library's, ADR 0043), version history,
+   and v0.1.0.
 
 ## Owner's items
 

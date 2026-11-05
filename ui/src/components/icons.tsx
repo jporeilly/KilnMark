@@ -8,6 +8,7 @@ import {
   IconArrowsShuffle,
   IconBell,
   IconBook,
+  IconBooks,
   IconBraces,
   IconBucket,
   IconBuildingFactory2,
@@ -181,6 +182,7 @@ const ICONS: Record<string, TablerIcon> = {
   rules: IconShieldCheck,
   issues: IconAlertTriangle,
   docs: IconBook,
+  library: IconBooks,
   "whats-new": IconNews,
   settings: IconSettings,
 

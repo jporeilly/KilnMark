@@ -25,11 +25,12 @@ catalogue with where it came from.
 
 ## The Pipelines page
 
-Choose **Pipelines** in the navigation. The list shows each pipeline with its description, its
-latest version (and whether that version has problems), and its last run with its status in
-words: Queued, Running, Succeeded, Failed or Cancelled.
+Choose **Pipelines** in the navigation. The list shows your team's own pipelines, each with its
+description, its latest version (and whether that version has problems), and its last run with its
+status in words: Queued, Running, Succeeded, Failed or Cancelled. Samples are not listed here: they
+are in the [Library](library.md), and a line under the list says how many there are.
 
-Stewards see **Run now** beside each pipeline; designers also see **Add samples** and **New
+Stewards see **Run now** beside each pipeline; designers also see **From a template** and **New
 pipeline** at the top.
 
 ## Starting a new pipeline
@@ -48,64 +49,12 @@ it with a source's name. To start from nothing instead, choose **Start with an e
    YAML (see below), watching the problems list under both.
 4. Choose **Save pipeline**.
 
-## Adding the samples
+## Samples and templates
 
-Kilnmark comes with samples: small pipelines, one idea each, such as reading some columns and
-rows, filtering and routing, lookups, totals, quality gates and parameters. Each is named
-`sample-...` and starts with comments on what it shows and what to look for. Kilnmark also comes
-with sample data for them to read: made-up customers, accounts, transactions, orders and products.
-One sample, `sample-volume`, reads four million made-up sales, enough for a run of several seconds:
-run it and open the run's page to see where each node spent its time, how many rows a second went
-through, and which node held the others up.
-
-An admin can stop offering the samples on a server that should hold its own pipelines only: under
-**Settings**, **Administration**, clear **Offer the samples**. **Add samples** then leaves the
-Pipelines page, and the samples' API refuses; pipelines already added from them stay.
-
-### The starter pack
-
-The quickest way to try the samples, with nothing of your own to prepare but a database and a file
-source that allow writing:
-
-1. On the **Pipelines** page, choose **Add samples** (designers and admins).
-2. Under **Starter pack**, choose the **Database for the tables**, a **Schema** in it (it must
-   exist; tables of the same names there are replaced), and where the samples' **Files go to**.
-3. Choose **Add the starter pack**.
-
-Kilnmark creates the sample tables in that schema (`crm_customers`, `shop_orders` and so on) with a
-pipeline called `sample-tables`, which you can open and run again to put them back as they were.
-Adding the starter pack again recreates the tables too, but not while they are being created, and
-not over a `sample-tables` pipeline that has been changed (rename or delete it first). It
-adds every sample, reading those tables, and sets the server variable `sample_region` to `EMEA` if it
-is not set, since one sample reads it. The dialog lists each sample, with a link to the run creating
-the tables. Every sample can then run. The sample data's own read-only source, **Kilnmark sample
-data** (`sample-data`), is added too: you can browse its files and read them like any other.
-
-### With your own sources
-
-The samples name their sources by placeholders rather than real sources:
-
-| Placeholder | Stands for |
-| --- | --- |
-| `crm-db` | A database with schemas `crm` (customers, customers_archive_2023, accounts) and `billing` (transactions, invoices) |
-| `shop-db` | A database with schemas `shop` (customers, orders, order_lines) and `stock` (products, supplier_feed) |
-| `files` | File storage the samples write to, under `samples/`; a designer or an admin must turn on **Allow writing** for it |
-
-1. On the **Pipelines** page, choose **Add samples** (designers and admins).
-2. Under **Or choose your own sources**, choose one of your saved sources for each placeholder, or
-   leave it as **Don't add the samples that use it**. The dialog says how many samples use each.
-   Once the sample tables have been created, it offers to read them instead.
-3. Choose **Add samples**. The dialog lists what happened to each: added, already here (a sample
-   whose name is taken is left as it is, so your changes are kept), or not added and why.
-
-Each sample is checked against what Kilnmark has scanned of your sources, so scan them first: a
-table a sample reads that the scan did not find saves it as a draft with problems. Open it and
-change its `asset` to one of yours, or its columns. The sample flows are not added yet; they are
-in the release's `samples` folder to read. Through the API, `GET /api/v1/samples` lists the
-placeholders and samples, and `POST /api/v1/samples` with
-`{"sources": {"crm-db": "my-database", "files": "my-bucket"}}` adds them; `POST
-/api/v1/samples/tables` with `{"source": "my-database", "schema": "public"}` creates the sample
-tables, and `"schema": "public"` added to the first points the samples at them.
+Kilnmark's samples (small pipelines and flows, one idea each, with sample data to read) and its
+templates (starting points for common jobs) are in the **Library**, apart from your own pipelines:
+see [The Library: samples and templates](library.md). Added samples stay there, never on the
+Pipelines page. On the Pipelines page, **From a template** opens the Library's templates.
 
 ## Building on the canvas
 
@@ -376,7 +325,7 @@ is handy while you try a pipeline out; 0 reads them all.
   (naming what Kilnmark does), or "applied by Kilnmark as the rows arrive".
 
 The samples `sample-read-columns-where` and `sample-orders-by-status` show both (see
-[Adding the samples](#adding-the-samples)).
+[The Library](library.md#samples)).
 
 #### Reading with a query
 

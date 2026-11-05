@@ -11,7 +11,7 @@
 #   .\lab\lab.ps1 sources                  where lab\sources.csv is, and how to import it
 #   .\lab\lab.ps1 driver oracle [-Force]   download Oracle's JDBC driver (its licence is shown first)
 #   .\lab\lab.ps1 pipelines                add the demo pipelines in lab\pipelines to a running Kilnmark
-#   .\lab\lab.ps1 samples                  add the sample pipelines in samples\ to a running Kilnmark
+#   .\lab\lab.ps1 samples                  add the samples to a running Kilnmark's Library
 #
 # Names may also be given with commas: .\lab\lab.ps1 start postgres,sqlserver
 # Uses podman if it is on the PATH, otherwise docker, as build.ps1 does. Needs no administrator
@@ -370,13 +370,10 @@ function Invoke-Driver([string[]]$Given) {
     }
 }
 
-# Adds each pipeline in a folder (lab\pipelines, or samples\ and its subfolders) to a running
-# Kilnmark through its API. Needs an admin or steward token in $env:KILNMARK_ADMIN_TOKEN (or
-# $env:KILNMARK_TOKEN); $env:KILNMARK_URL defaults to http://localhost:8780. A pipeline that is
-# already there is left as it is. Flows are skipped: they cannot be added until the flows API comes.
-# The samples name their sources by placeholders (crm-db, shop-db, files); a mapping file
-# (lab\sample-sources.csv) replaces each with its lab source, as the server's Add samples does with
-# the person's own.
+# Adds each pipeline in a folder (lab\pipelines) to a running Kilnmark through its API. Needs an
+# admin or steward token in $env:KILNMARK_ADMIN_TOKEN (or $env:KILNMARK_TOKEN);
+# $env:KILNMARK_URL defaults to http://localhost:8780. A pipeline that is already there is left as
+# it is. Flows are skipped.
 function Invoke-Pipelines([string]$Folder, [string]$Command, [string]$Mapping = '') {
     $url = if ($env:KILNMARK_URL) { $env:KILNMARK_URL.TrimEnd('/') } else { 'http://localhost:8780' }
     $token = if ($env:KILNMARK_TOKEN) { $env:KILNMARK_TOKEN } else { $env:KILNMARK_ADMIN_TOKEN }
@@ -424,6 +421,45 @@ function Invoke-Pipelines([string]$Folder, [string]$Command, [string]$Mapping = 
     Write-Host "Open Pipelines in Kilnmark ($url) to see them."
 }
 
+# Adds the samples (samples\, never samples\templates) to a running Kilnmark the way its Library
+# does, through POST /api/v1/samples, so they are marked as samples and stay off the Pipelines and
+# Flows pages (ADR 0043), and the sample flows come too. The samples name their sources by
+# placeholders (crm-db, shop-db, files); lab\sample-sources.csv maps each to its lab source. Needs a
+# designer or admin token in $env:KILNMARK_ADMIN_TOKEN (or $env:KILNMARK_TOKEN).
+function Invoke-Samples([string]$Mapping) {
+    $url = if ($env:KILNMARK_URL) { $env:KILNMARK_URL.TrimEnd('/') } else { 'http://localhost:8780' }
+    $token = if ($env:KILNMARK_TOKEN) { $env:KILNMARK_TOKEN } else { $env:KILNMARK_ADMIN_TOKEN }
+    if (-not $token) { Fail 'set $env:KILNMARK_ADMIN_TOKEN (or $env:KILNMARK_TOKEN) to a designer or admin token first.' }
+    $to = @{}
+    foreach ($row in (Import-Csv -Path $Mapping)) { $to[$row.placeholder] = $row.lab_source }
+    $body = @{ sources = $to } | ConvertTo-Json -Compress
+    $code = 0
+    $r = $null
+    try {
+        $r = Invoke-WebRequest -UseBasicParsing -Method Post -Uri "$url/api/v1/samples" `
+            -Headers @{ Authorization = "Bearer $token" } -ContentType 'application/json; charset=utf-8' `
+            -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
+        $code = [int]$r.StatusCode
+    } catch {
+        if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } else { $code = 0 }
+    }
+    switch ($code) {
+        200 {
+            $d = $r.Content | ConvertFrom-Json
+            foreach ($s in $d.samples) {
+                $why = if ($s.reason) { " ($($s.reason))" } else { '' }
+                $outcome = $s.outcome.Substring(0, 1).ToUpper() + $s.outcome.Substring(1)
+                Write-Host ('{0,-8} {1}{2}' -f $outcome, $s.name, $why)
+            }
+            Write-Host "$($d.added) added."
+        }
+        { @(401, 403) -contains $_ } { Fail "Kilnmark refused ($code): it needs a designer or admin token, and the samples offered." }
+        0 { Fail "could not reach Kilnmark at $($url): is it running?" }
+        default { Fail "Kilnmark answered $code." }
+    }
+    Write-Host "Open the Library in Kilnmark ($url) to see them."
+}
+
 function Show-Usage {
     Get-Content -Path $PSCommandPath -TotalCount 17 | ForEach-Object { $_ -replace '^# ?', '' }
     Write-Output ''
@@ -440,10 +476,7 @@ switch ($Command) {
     'sources' { Invoke-Sources }
     'driver' { Invoke-Driver $Names }
     'pipelines' { Invoke-Pipelines (Join-Path -Path $LabDir -ChildPath 'pipelines') 'pipelines' }
-    'samples' {
-        Invoke-Pipelines (Join-Path -Path (Split-Path -Path $LabDir -Parent) -ChildPath 'samples') 'samples' `
-            (Join-Path -Path $LabDir -ChildPath 'sample-sources.csv')
-    }
+    'samples' { Invoke-Samples (Join-Path -Path $LabDir -ChildPath 'sample-sources.csv') }
     { @('help', '-h', '--help', '-?') -contains $_ } { Show-Usage }
     default {
         Show-Usage

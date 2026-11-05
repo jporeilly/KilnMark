@@ -69,6 +69,8 @@ export const NAV: NavItem[] = [
     tint: "sky",
     current: (r) => (r.page === "flows" ? "page" : r.page === "flow" || r.page === "flow-run" ? "true" : undefined),
   },
+  // Samples and templates, apart from a team's own pipelines and flows (ADR 0043).
+  { id: "library", label: "Library", href: href.library(), icon: "library", tint: "amber", current: on("library") },
   { id: "issues", label: "Issues", href: href.issues(), icon: "issues", tint: "red", current: on("issues"), badge: "issues" },
   {
     id: "whats-new",

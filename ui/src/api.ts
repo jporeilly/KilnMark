@@ -1255,6 +1255,8 @@ export type PipelineSummary = {
   updatedBy: string;
   updatedAt: string;
   lastRun: PipelineRun | null;
+  /** "sample": added from the samples, listed in the Library, not on the Pipelines or Flows page (ADR 0043). Older servers send none. */
+  library?: "sample" | null;
 };
 export type PipelineVersionSummary = {
   n: number;
@@ -1284,6 +1286,8 @@ export type PipelineDetail = {
   updatedAt: string;
   latest: PipelineVersion | null;
   lastRun: PipelineRun | null;
+  /** "sample": added from the samples, listed in the Library, not on the Pipelines or Flows page (ADR 0043). Older servers send none. */
+  library?: "sample" | null;
 };
 /** ports: rows per input and output port; null where the engine did not count a port on its own. */
 export type PipelineNodeRun = {
@@ -1469,7 +1473,7 @@ export type NodeType = {
 
 /** A source name the bundled samples use in place of a real source, and what it stands for. */
 export type SamplePlaceholder = { name: string; category: string; description: string };
-/** One bundled sample; exists: a pipeline of its name is already there. */
+/** One bundled sample; exists: a pipeline or flow of its name is already there. */
 export type SampleInfo = {
   file: string;
   name: string;
@@ -1489,8 +1493,12 @@ export type SampleOutcome = {
   valid: boolean | null;
 };
 
-/** The samples that ship with Kilnmark (GET/POST /api/v1/samples). */
+/** A template in the Library: a pipeline or flow to start one's own from, with <...> gaps (ADR 0043). */
+export type Template = { file: string; name: string; type: "pipeline" | "flow"; description: string | null; yaml: string };
+
+/** The samples that ship with Kilnmark (GET/POST /api/v1/samples), and the templates (GET /api/v1/templates). */
 export const samplesApi = {
+  templates: () => call<Template[]>("/api/v1/templates"),
   list: () => call<SampleCatalogue>("/api/v1/samples"),
   /** sources: placeholder to saved source; a placeholder left out skips the samples that use it. */
   /** schema: the samples read the sample tables created there. */
@@ -1608,6 +1616,8 @@ export type FlowSummary = {
   updatedBy: string;
   updatedAt: string;
   lastRun: FlowRun | null;
+  /** "sample": added from the samples, listed in the Library, not on the Pipelines or Flows page (ADR 0043). Older servers send none. */
+  library?: "sample" | null;
 };
 export type FlowVersionSummary = PipelineVersionSummary;
 export type FlowVersion = {
@@ -1631,6 +1641,8 @@ export type FlowDetail = {
   updatedAt: string;
   latest: FlowVersion | null;
   lastRun: FlowRun | null;
+  /** "sample": added from the samples, listed in the Library, not on the Pipelines or Flows page (ADR 0043). Older servers send none. */
+  library?: "sample" | null;
 };
 export type FlowNodeStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
 /** One node's part in a flow run; pipelineRunId is the pipeline run a run-pipeline node started. */

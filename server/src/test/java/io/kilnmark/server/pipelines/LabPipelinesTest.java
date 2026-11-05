@@ -102,7 +102,9 @@ class LabPipelinesTest {
 
     private static List<Path> yaml(Path dir) throws Exception {
         try (Stream<Path> all = Files.walk(dir)) {
-            return all.filter(p -> p.toString().endsWith(".yaml")).sorted().toList();
+            // samples/templates has <...> gaps for a person to fill: checked on its own (theTemplatesRead).
+            return all.filter(p -> p.toString().endsWith(".yaml"))
+                .filter(p -> !p.getParent().getFileName().toString().equals("templates")).sorted().toList();
         }
     }
 
@@ -199,6 +201,31 @@ class LabPipelinesTest {
         Map<String, PipelineDefinition> samples = checkPipelines(repo().resolve("samples"), "sample-",
             SAMPLE_VARIABLES, labMapping());
         checkFlows(repo().resolve("samples"), "sample-", samples);
+    }
+
+    /**
+     * The templates (samples/templates) read as pipelines or flows, are named template-..., and leave
+     * a {@code <...>} gap for every source and pipeline, never a placeholder or the lab (ADR 0043).
+     */
+    @Test
+    void theTemplatesRead() throws Exception {
+        List<Path> files;
+        try (Stream<Path> all = Files.list(repo().resolve("samples/templates"))) {
+            files = all.filter(p -> p.toString().endsWith(".yaml")).sorted().toList();
+        }
+        assertTrue(files.size() >= 5, files.toString());
+        assertEquals(files.size(), Samples.templates().size(), "every template is bundled");
+        java.util.regex.Pattern lab = java.util.regex.Pattern.compile("(?i)(?<![a-z])lab(?![a-z])");
+        for (Path file : files) {
+            String text = Files.readString(file);
+            String name = isFlow(file) ? FlowDefinition.parse(text).definition().name()
+                : PipelineDefinition.parse(text).definition().name();
+            assertTrue(name.startsWith("template-"), file + ": named template-...");
+            assertTrue(text.lines().filter(l -> l.strip().matches("(- +)?(source|pipeline):.*"))
+                .allMatch(l -> l.contains("<")), file + ": every source and pipeline is a <...> gap");
+            assertTrue(Samples.sourcesOf(text).isEmpty(), file + ": names a sample placeholder");
+            assertFalse(lab.matcher(text).find(), file + ": mentions the lab, but the templates ship");
+        }
     }
 
     /** The samples ship: they name only the placeholders, every one of which the lab maps, and never the lab. */
