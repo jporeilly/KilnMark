@@ -7,6 +7,12 @@ details.
 
 ### What's new
 
+- **Run timelines, nested as the run went** (docs/guide/flows.md, docs/guide/pipelines.md). A flow
+  run's page has a **Run timeline** in place of the run chart: the flow, then each node, each node
+  opening into its pipeline run's nodes, and a `for-each` node into its items, each with its value,
+  every bar on one time line with how long it took at its end. One sentence sums up the run, and
+  choosing any row shows everything recorded about it. A pipeline run's page shows the same
+  timeline again, with the chosen node's details.
 - **Choose which runs start first** (ADR 0041). A `run-pipeline` or `for-each` node can say its
   `priority`: `high`, `normal` (the default) or `low`. When more runs wait than there are free
   workers, a worker takes the highest priority first, then the one queued first; a source's limit

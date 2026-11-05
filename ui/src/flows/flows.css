@@ -1,4 +1,4 @@
-/* The flow diagram (FlowDiagram) and the run chart (FlowRunChart). */
+/* The flow diagram (FlowDiagram) and the run timeline (FlowRunTimeline). */
 .fd-frame {
   height: 380px;
 }
@@ -218,99 +218,10 @@
   padding-left: 1.2em;
 }
 
-/* The run chart: a bar per node on a shared time axis. */
-.fc-chart {
-  display: grid;
-  grid-template-columns: minmax(8em, 14em) max-content minmax(0, 1fr);
-  gap: 4px 12px;
-  align-items: center;
-}
-
-.fc-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fc-track {
-  position: relative;
-  height: 22px;
-  background: var(--km-surface-2);
-  border-radius: 4px;
-}
-
-.fc-bar {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  min-width: 3px;
-  border-radius: 3px;
-  background: var(--km-muted);
-  display: block;
-}
-
-.fc-bar.fc-succeeded {
-  background: var(--km-good);
-}
-
-.fc-bar.fc-failed {
-  background: var(--km-bad);
-}
-
-/* Running: striped as well as coloured, as the chip beside it says. */
-.fc-bar.fc-running {
-  background: repeating-linear-gradient(
-    45deg,
-    var(--km-tint-blue-fg),
-    var(--km-tint-blue-fg) 6px,
-    var(--km-tint-blue-bg) 6px,
-    var(--km-tint-blue-bg) 9px
-  );
-}
-
-.fc-bar.fc-cancelled {
-  background: var(--km-muted);
-}
-
-/* A skipped node: hatched across the row, so it is not read as a short bar. */
-.fc-track.fc-skipped {
-  background: repeating-linear-gradient(
-    45deg,
-    var(--km-surface-2),
-    var(--km-surface-2) 6px,
-    var(--km-surface-3) 6px,
-    var(--km-surface-3) 12px
-  );
-}
-
-.fc-axis {
-  position: relative;
-  height: 18px;
-  color: var(--km-muted);
-}
-
-.fc-tick {
-  position: absolute;
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
-
-.fc-tick:first-child {
-  transform: none;
-}
-
-.fc-tick:last-child:not(:first-child) {
-  transform: translateX(-100%);
-}
-
+/* The diagram's nodes keep an outline where colours are forced. */
 @media (forced-colors: active) {
-  .fd-node,
-  .fc-bar {
+  .fd-node {
     border: 1px solid CanvasText;
-  }
-
-  .fc-bar {
-    background: Highlight;
   }
 }
 
@@ -342,5 +253,196 @@
   .fr-ts-plain {
     background: GrayText;
     forced-color-adjust: none;
+  }
+}
+
+/* ---- The run timeline: the flow, its nodes, items and pipeline nodes, nested, on one axis ---- */
+
+.ft-chart {
+  --ft-label: minmax(14em, 22em);
+  overflow-x: auto;
+}
+
+.ft-head,
+.ft-row {
+  display: grid;
+  grid-template-columns: var(--ft-label) minmax(18em, 1fr);
+  align-items: center;
+  column-gap: 12px;
+}
+
+.ft-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ft-row {
+  min-height: 30px;
+  border-radius: 6px;
+}
+
+/* A line under an open row that has nothing to show under it yet. */
+.ft-row.ft-note {
+  display: block;
+  min-height: 24px;
+}
+
+.ft-row.ft-chosen {
+  background: var(--km-surface-2);
+}
+
+.ft-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ft-toggle,
+.ft-toggle-space {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--km-muted);
+}
+
+.ft-name {
+  min-height: 0;
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ft-row.ft-chosen .ft-name {
+  font-weight: 700;
+}
+
+.ft-icon--flow {
+  color: var(--km-accent-purple-ink);
+}
+
+.ft-icon--node {
+  color: var(--km-accent-teal-ink);
+}
+
+.ft-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--km-accent-teal-ink);
+  border-radius: 2px;
+}
+
+.ft-dot--item {
+  border-radius: 50%;
+}
+
+.ft-dot--step {
+  border-color: var(--km-accent-blue-ink);
+}
+
+.ft-badge {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--km-accent-teal-ink);
+}
+
+/* The bars' lane: room on the right for how long the last bar took. */
+.ft-lane {
+  position: relative;
+  height: 30px;
+  margin-right: 64px;
+  cursor: pointer;
+}
+
+.ft-head .ft-lane {
+  height: 22px;
+  cursor: default;
+}
+
+.ft-axis {
+  color: var(--km-muted);
+}
+
+.ft-tick {
+  position: absolute;
+  top: 2px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.ft-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed var(--km-border-control);
+}
+
+.ft-bar {
+  position: absolute;
+  top: 8px;
+  height: 14px;
+  min-width: 4px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--km-accent-teal) 45%, var(--km-surface));
+}
+
+.ft-bar--flow {
+  background: color-mix(in srgb, var(--km-accent-purple) 40%, var(--km-surface));
+}
+
+.ft-bar--step {
+  background: color-mix(in srgb, var(--km-accent-blue) 35%, var(--km-surface));
+}
+
+.ft-chosen .ft-bar {
+  background: var(--km-accent-teal-fill);
+}
+
+.ft-chosen .ft-bar--flow {
+  background: var(--km-accent-purple-fill);
+}
+
+.ft-chosen .ft-bar--step {
+  background: var(--km-accent-blue-fill);
+}
+
+.ft-bar.ft-failed {
+  background: var(--km-bad);
+}
+
+.ft-bar.ft-cancelled {
+  background: var(--km-muted);
+}
+
+.ft-bar.ft-running {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--km-tint-blue-fg),
+    var(--km-tint-blue-fg) 6px,
+    var(--km-tint-blue-bg) 6px,
+    var(--km-tint-blue-bg) 9px
+  );
+}
+
+@media (forced-colors: active) {
+  .ft-bar {
+    border: 1px solid CanvasText;
+    background: Highlight;
   }
 }

@@ -160,7 +160,7 @@ Built, with these changes from the plan above:
   more and ends the node cancelled. It reports
   `items`, `succeeded` and `failed` (numbers) for conditions, e.g. `regions.failed = 0`.
 - **Run page.** The node's row says "3 of 5 items done, 1 failed", and lists each item's run with
-  its value and a link. The run chart draws the node's bar from its first item's start to its last
+  its value and a link. The run timeline draws the node's bar from its first item's start to its last
   item's end.
 
 ## P5. Several workers (built)

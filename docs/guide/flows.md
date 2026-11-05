@@ -195,7 +195,7 @@ connections:
 On the run's page the node shows **Failed** with **Timed out** beside it, and its message says how
 long it was allowed:
 
-![A run of nightly-takings in which the takings node timed out: the diagram outlines takings red as Failed, its notice node too-slow green as Succeeded through the on failure connection, and done as Skipped; the run chart has a red bar for takings; the Nodes table shows takings as Failed and Timed out, "Took longer than 2s and was stopped; its pipeline run was cancelled", with a link to its pipeline run](images/flow-run-timed-out.png)
+![A run of nightly-takings in which the takings node timed out: the diagram outlines takings red as Failed, its notice node too-slow green as Succeeded through the on failure connection, and done as Skipped; the run timeline has a red bar for takings, chosen, with its details below (Failed, took 3.1 s, "Took longer than 2s and was stopped; its pipeline run was cancelled", reported timed_out true); the Nodes table shows takings as Failed and Timed out, with a link to its pipeline run](images/flow-run-timed-out.png)
 
 ## Choosing which runs start first
 
@@ -365,9 +365,19 @@ A run page is laid out as a pipeline run's, in this order:
   the line then add up what is known and say of how many pipeline runs.
 - the **diagram** of that version, each node outlined and labelled with how it stands in the run,
   kept current while the run goes;
-- the **run chart**: a bar for each node on one time line from the run's start, with its status
-  beside it: green when it succeeded, red when it failed, striped blue while it runs; a skipped
-  node is hatched across its row. A bar for a node that ran a pipeline opens that pipeline run;
+- the **run timeline**: the whole run on one time line from its start, nested as it ran. One
+  sentence says when it started, how long it took and how it ended. Under the flow's own row is a
+  row for each node, with an icon for its type, the pipeline it runs beside its name, and how long
+  it took at the end of its bar. A node that ran a pipeline opens (▾) into that pipeline run's
+  nodes, placed from when the run started; a `for-each` node opens into a row per item, its value
+  beside it, and each item into its pipeline's nodes. Bars are soft violet for the flow, teal for
+  its nodes and blue for a pipeline's nodes; red when it failed, striped while it runs; a skipped
+  node says so. **Choose a row** (its name, or anywhere on its bar) for everything recorded about
+  it below the chart: its status, start, end and time, the pipeline and its run, the time it
+  waited for a worker, its message and what it reported, an item's value, or a pipeline node's
+  rows, quality and error. An open pipeline run that is queued says it is waiting to start, one stopped
+  before its nodes started says they were not timed, and one that could not be read offers to try
+  again;
 - **Nodes**: every node of that version in order: its status (Not started, Running, Succeeded,
   Failed, Cancelled or Skipped), when it started, how long it took, and what happened, such as the
   rows a pipeline wrote and its score, with a link to its **pipeline run**, where its nodes, rows
@@ -375,11 +385,11 @@ A run page is laid out as a pipeline run's, in this order:
   failed") and each item with its status and a link to its pipeline run; an item that could not be
   started is shown failed, with no run, and the node's message says why. A node, or an item, that
   took longer than its `timeout` is shown **Failed** with **Timed out** beside it; the timed-out
-  item's link opens its cancelled pipeline run. On the run chart its bar
-  runs from its first item's start to its last item's end. Viewers see the items' values when they
+  item's link opens its cancelled pipeline run. On the run timeline its bar runs from its first
+  item's start to its last item's end. Viewers see the items' values when they
   are written in the flow, not when they came from the run's values.
 
-![The Diagram, Run chart and Nodes panels of a run page that succeeded: the diagram shows the two pipeline nodes outlined green as Succeeded and the notice node dashed as Skipped; the run chart has a bar for each pipeline node, one after the other, and a hatched row for the skipped one; the Nodes table gives each node's status, start, time taken, rows written and score, with a link to its pipeline run](images/flow-run-page.png)
+![The Diagram, Run timeline and Nodes panels of a run page that succeeded: the diagram shows the two pipeline nodes outlined green as Succeeded and the notices dashed as Skipped; the run timeline nests the flow, its two pipeline nodes (each with its pipeline's name and time) and, under each, its pipeline's nodes, with the flow's details below; the Nodes table gives each node's status, start, time taken, rows written and score, with a link to its pipeline run](images/flow-run-page.png)
 
 A node's message says that a pipeline failed and where to look, never why: why can quote values
 from the data, and the pipeline run's own page shows it to those who may see it.
