@@ -219,7 +219,7 @@ export function FlowAddTools({
           <div className="buttons">
             <button type="submit">Connect</button>
           </div>
-          <p className="hint fd-tools-wide">Or drag from a node&apos;s right edge to another node: that connection is taken when it succeeds.</p>
+          <p className="hint fd-tools-wide">Or drag from a node&apos;s out connector to another node: that connection is taken when it succeeds.</p>
         </form>
       )}
 
