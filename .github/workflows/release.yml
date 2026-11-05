@@ -22,7 +22,9 @@ env:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # GitHub's runner, or the local one KILNMARK_RUNNER names for the owner's own work, as in ci.yml
+    # (docs/development.md, "CI on a local runner").
+    runs-on: ${{ vars.KILNMARK_RUNNER && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && (github.event_name != 'pull_request' || (github.event.pull_request.user.login == github.repository_owner && !startsWith(github.head_ref, 'dependabot/'))) && fromJSON(vars.KILNMARK_RUNNER) || 'ubuntu-latest' }}
     permissions:
       contents: write   # to create the draft release; a rehearsal creates nothing
       packages: write   # to push the images to ghcr.io on a tag; a rehearsal pushes nothing
@@ -127,7 +129,18 @@ jobs:
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           for name in kilnmark-server kilnmark-postgres; do
             docker push "ghcr.io/jporeilly/${name}:${VERSION}"
-            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "ghcr.io/jporeilly/${name}:${VERSION}")
+            # The digest is the registry's, read back by tag: a Podman engine (the local runner) rewrites
+            # the manifest as it pushes, so the digest it records locally is not the one the registry
+            # stores, and signing that one fails.
+            pull=$(curl -sSf -u "$GITHUB_ACTOR:$GH_TOKEN" \
+              "https://ghcr.io/token?service=ghcr.io&scope=repository:jporeilly/${name}:pull" | jq -r .token)
+            sha=$(curl -sSfI -H "Authorization: Bearer $pull" \
+              -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json" \
+              "https://ghcr.io/v2/jporeilly/${name}/manifests/${VERSION}" \
+              | tr -d '\r' | awk -F': ' 'tolower($1) == "docker-content-digest" { print $2 }')
+            unset pull
+            [ -n "$sha" ] || { echo "::error::ghcr.io has no ${name}:${VERSION} after the push"; exit 1; }
+            digest="ghcr.io/jporeilly/${name}@${sha}"
             cosign sign --yes --key "$RUNNER_TEMP/cosign.key" --tlog-upload=false --use-signing-config=false "$digest"
             cosign verify --key "$RUNNER_TEMP/verify.pub" --insecure-ignore-tlog=true "$digest" > /dev/null
             echo "Pushed and signed $digest"
@@ -153,7 +166,10 @@ jobs:
       # The release installed as a customer would (INSTALL.md, section A): prepare as root makes the
       # kilnmark account and /opt/kilnmark; then, as that account, install from the offline images
       # file on Docker, status, check, a backup, a restore of it, down, up, and a purge.
+      # Only on GitHub's runners: it makes system accounts with sudo and starts Kilnmark on its usual
+      # ports, which a self-hosted runner shares with the machine's own installs.
       - name: Install the release with kilnmark.sh
+        if: runner.environment == 'github-hosted'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
