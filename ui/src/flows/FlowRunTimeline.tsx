@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { formatNumber, pipelinesApi, type FlowRunDetail, type PipelineRunDetail } from "../api";
+import { formatNumber, pipelinesApi, type FlowRunDetail, type FlowTry, type PipelineRunDetail } from "../api";
 import { Icon } from "../components/icons";
 import { href } from "../router";
 import { formatDuration } from "../pipelines/RunStatus";
@@ -241,6 +241,20 @@ export function FlowRunTimeline({ detail, now }: { detail: FlowRunDetail; now: n
 }
 
 /** Everything recorded about the chosen row, in words. */
+/** Each try of a node or item that was tried again (ADR 0041): its number, how it ended and its run. */
+function Tries({ tries }: { tries: FlowTry[] }) {
+  return (
+    <ol className="run-tries">
+      {tries.map((t) => (
+        <li key={t.pipelineRunId}>
+          Try {t.number}: <FlowStatus status={t.status === "queued" ? "running" : t.status} />{" "}
+          <a href={href.pipelineRun(t.pipelineRunId)}>Run {t.pipelineRunId}</a>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function RowDetails({ row: r, detail }: { row: TreeRow; detail: FlowRunDetail }) {
   const facts: [string, ReactNode][] = [];
   const span = r.start != null && r.end != null ? took(r.end - r.start) : r.live ? "still running" : "–";
@@ -263,6 +277,8 @@ function RowDetails({ row: r, detail }: { row: TreeRow; detail: FlowRunDetail })
     if (t?.requestedAt && t.startedAt)
       facts.push(["Waited for a worker", took(Math.max(0, Date.parse(t.startedAt) - Date.parse(t.requestedAt)))]);
     if (n.message) facts.push(["Message", n.message]);
+    const tries = (n.tries ?? []).filter((t) => t.item == null);
+    if (tries.length > 1) facts.push(["Tries", <Tries key="t" tries={tries} />]);
     for (const [k, v] of Object.entries(n.reported ?? {})) {
       if (v != null && typeof v !== "object") facts.push([`Reported ${k}`, String(v)]);
     }
@@ -272,6 +288,9 @@ function RowDetails({ row: r, detail }: { row: TreeRow; detail: FlowRunDetail })
     facts.push(["Started", clock(i.startedAt)], ["Ended", clock(i.finishedAt)], ["Took", span]);
     if (i.pipelineRunId != null)
       facts.push(["Pipeline run", <a key="r" href={href.pipelineRun(i.pipelineRunId)}>Run {i.pipelineRunId}</a>]);
+    const node = detail.nodes.find((x) => x.items?.includes(i));
+    const tries = (node?.tries ?? []).filter((t) => t.item === i.item);
+    if (tries.length > 1) facts.push(["Tries", <Tries key="t" tries={tries} />]);
   } else if (r.kind === "step" && r.step) {
     const s = r.step;
     facts.push(["Type", s.type], ["Status", <FlowStatus key="s" status={r.status === "queued" ? "running" : r.status} />]);

@@ -1161,4 +1161,114 @@ class FlowRunTest {
             .problems().stream().map(io.kilnmark.kiln.yaml.Problem::message).toList();
         assertTrue(query.stream().anyMatch(m -> m.contains("a query runs only on PostgreSQL sources")), query.toString());
     }
+
+    // ---- retries (ADR 0041) ----
+
+    @Test
+    @Order(30)
+    void aFailedNodeIsTriedAgainEachTryARunOfItsOwn() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-retry
+            nodes:
+              - { id: load, type: run-pipeline, pipeline: fl-broken, retries: 1, retry_delay: 10s }
+            """);
+        FlowStore.Run run = start("fl-retry", Map.of());
+        FlowStore.NodeRun waiting = await("the first try to fail", () -> node(run.id(), "load"),
+            n -> n != null && n.message() != null && n.message().startsWith("Try 1 of 2 failed"));
+        assertEquals("running", waiting.status(), "it waits to try again");
+        assertEquals("Try 1 of 2 failed; trying again in 10s", waiting.message());
+        FlowStore.Run done = waitForFlow(run.id(), "failed");
+        FlowStore.NodeRun load = node(run.id(), "load");
+        assertEquals("The pipeline run failed; its run page says why, after 2 tries", load.message());
+        assertTrue(load.reported().replace(" ", "").contains("\"tries\":2.0"), load.reported());
+        List<PipelineStore.Try> tries = pipelineStore.flowTries(run.id(), "load");
+        assertEquals(List.of(0, 1), tries.stream().map(PipelineStore.Try::number).toList());
+        assertTrue(tries.stream().allMatch(t -> "failed".equals(t.run().status())));
+        assertTrue(Duration.between(tries.get(0).run().finishedAt(), tries.get(1).run().requestedAt()).toSeconds() >= 9,
+            "it waited its retry_delay");
+        assertEquals(tries.get(1).run().id(), load.pipelineRunId(), "the node shows its last try");
+        assertEquals(tries.get(1).run().id(), pipelineStore.flowNodeRun(run.id(), "load").orElseThrow().id());
+        List<FlowViews.TryView> shown = flows.runDetail(run.id(), false).nodes().get(0).tries();
+        assertEquals(List.of(1, 2), shown.stream().map(FlowViews.TryView::number).toList(), "the run page lists both");
+        assertNotNull(done.error());
+    }
+
+    @Test
+    @Order(31)
+    void aNodePastItsTimeoutIsTriedAgainAndCanSucceed() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-retry-timeout
+            nodes:
+              - { id: slow, type: run-pipeline, pipeline: fl-copy, timeout: 3s, retries: 2, retry_delay: 10s }
+            """);
+        HoldingGraphRunner.hold = true;
+        FlowStore.Run run = start("fl-retry-timeout", Map.of());
+        FlowStore.NodeRun waiting = await("the first try to time out", () -> node(run.id(), "slow"),
+            n -> n != null && n.message() != null && n.message().contains("Try 1 of 3 failed"));
+        assertEquals("Took longer than 3s and was stopped. Try 1 of 3 failed; trying again in 10s", waiting.message());
+        HoldingGraphRunner.hold = false;
+        waitForFlow(run.id(), "succeeded");
+        FlowStore.NodeRun slow = node(run.id(), "slow");
+        assertEquals("Succeeded at try 2 of 3", slow.message());
+        assertFalse(slow.reported().contains("timed_out"), "the last try did not time out: " + slow.reported());
+        List<PipelineStore.Try> tries = pipelineStore.flowTries(run.id(), "slow");
+        assertEquals(List.of("cancelled", "succeeded"), tries.stream().map(t -> t.run().status()).toList());
+    }
+
+    @Test
+    @Order(32)
+    void aFailedItemIsTriedAgainAndTheOthersRun() throws Exception {
+        save("""
+            kilnmark: flow/v1
+            name: fl-each-retry
+            nodes:
+              - id: each
+                type: for-each
+                pipeline: fl-param
+                items: [ra, rb]
+                as: suffix
+                max_parallel: 1
+                timeout: 3s
+                retries: 1
+                retry_delay: 10s
+            """);
+        HoldingGraphRunner.hold = true;
+        FlowStore.Run run = start("fl-each-retry", Map.of());
+        await("the first item to be stopped", () -> node(run.id(), "each"),
+            n -> n != null && n.message() != null && n.message().contains("to try again"));
+        HoldingGraphRunner.hold = false;
+        waitForFlow(run.id(), "succeeded");
+        FlowStore.NodeRun each = node(run.id(), "each");
+        assertEquals("2 of 2 items succeeded", each.message());
+        assertFalse(each.reported().contains("timed_out_items"), each.reported());
+        List<PipelineStore.Try> tries = pipelineStore.flowTries(run.id(), "each");
+        assertEquals(List.of("0:0:cancelled", "0:1:succeeded", "1:0:succeeded"), tries.stream()
+            .map(t -> t.item() + ":" + t.number() + ":" + t.run().status()).toList());
+        FlowViews.NodeRunView view = flows.runDetail(run.id(), true).nodes().get(0);
+        assertEquals(List.of("succeeded", "succeeded"), view.items().stream().map(FlowViews.ItemRunView::status).toList(),
+            "an item is as its last try ended");
+        assertEquals(3, view.tries().size());
+    }
+
+    @Test
+    @Order(33)
+    void retriesNeedWritesThatReplaceOrUpsert() throws Exception {
+        as(designer).body(Map.of("name", "fl-append", "yaml", COPY.replace("name: fl-copy", "name: fl-append")
+            .replace("table: lab.fl_copy", "table: lab.fl_append").replace("mode: replace", "mode: append")))
+            .post("/api/v1/pipelines").then().statusCode(201);
+        String yaml = """
+            kilnmark: flow/v1
+            name: fl-retry-append
+            nodes:
+              - { id: load, type: run-pipeline, pipeline: fl-append, retries: 2 }
+            """;
+        List<String> problems = flows.validate(yaml).problems().stream().map(io.kilnmark.kiln.yaml.Problem::message)
+            .toList();
+        assertEquals(List.of("Node load is tried again after a failure, so every write in fl-append must replace or "
+            + "upsert: out appends"), problems);
+        assertTrue(flows.validate(yaml.replace(", retries: 2", "")).valid(), "without retries it may append");
+        assertTrue(flows.validate(yaml.replace("fl-append", "fl-copy")).valid(), "a replace may be tried again");
+    }
 }

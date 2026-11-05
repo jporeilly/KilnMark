@@ -407,6 +407,18 @@ public class PipelineStore {
      */
     public Run queueRun(String name, int version, String by, String role, Long flowRunId, String flowNode,
                         Integer flowItem, String parameters, String variables, int priority) {
+        return queueRun(name, version, by, role, flowRunId, flowNode, flowItem, parameters, variables, priority, 0);
+    }
+
+    /**
+     * As {@link #queueRun(String, int, String, String, Long, String, Integer, String, String, int)}, as try
+     * {@code flowTry} (from 0) of its flow node or item (ADR 0041): each try is a run of its own.
+     */
+    public Run queueRun(String name, int version, String by, String role, Long flowRunId, String flowNode,
+                        Integer flowItem, String parameters, String variables, int priority, int flowTry) {
+        if (flowTry < 0 || (flowTry > 0 && flowRunId == null)) {
+            throw new IllegalArgumentException("A try belongs to a flow run's node");
+        }
         if (priority < -1 || priority > 1) {
             throw new IllegalArgumentException("A priority is 1 (high), 0 (normal) or -1 (low)");
         }
@@ -439,8 +451,8 @@ public class PipelineStore {
             }
             long id;
             try (PreparedStatement ps = c.prepareStatement("INSERT INTO kilnmark.pipeline_run (pipeline, version, "
-                + "requested_by, requested_role, flow_run_id, flow_node, flow_item, parameters, variables) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb) RETURNING id")) {
+                + "requested_by, requested_role, flow_run_id, flow_node, flow_item, parameters, variables, flow_try) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?) RETURNING id")) {
                 ps.setString(1, name);
                 ps.setInt(2, version);
                 ps.setString(3, by);
@@ -458,6 +470,7 @@ public class PipelineStore {
                 }
                 ps.setString(8, parameters == null ? "{}" : parameters);
                 ps.setString(9, variables == null ? "{}" : variables);
+                ps.setInt(10, flowTry);
                 try (ResultSet rs = ps.executeQuery()) {
                     rs.next();
                     id = rs.getLong(1);
@@ -523,9 +536,10 @@ public class PipelineStore {
     public java.util.SortedMap<Integer, Run> flowItemRuns(long flowRunId, String flowNode) {
         return db.tx(c -> {
             java.util.SortedMap<Integer, Run> out = new java.util.TreeMap<>();
-            try (PreparedStatement ps = c.prepareStatement("SELECT r.flow_item, " + RUN_COLUMNS
+            // Each item's latest try (ADR 0041): an item is as its last try ended.
+            try (PreparedStatement ps = c.prepareStatement("SELECT DISTINCT ON (r.flow_item) r.flow_item, " + RUN_COLUMNS
                 + " FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ? AND r.flow_node = ? AND r.flow_item IS NOT NULL"
-                + " ORDER BY r.flow_item")) {
+                + " ORDER BY r.flow_item, r.flow_try DESC")) {
                 ps.setLong(1, flowRunId);
                 ps.setString(2, flowNode);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -542,7 +556,8 @@ public class PipelineStore {
     public Optional<Run> flowItemRun(long flowRunId, String flowNode, int flowItem) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS
-                + " FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ? AND r.flow_node = ? AND r.flow_item = ?")) {
+                + " FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ? AND r.flow_node = ? AND r.flow_item = ? "
+                + "ORDER BY r.flow_try DESC LIMIT 1")) {
                 ps.setLong(1, flowRunId);
                 ps.setString(2, flowNode);
                 ps.setInt(3, flowItem);
@@ -553,15 +568,73 @@ public class PipelineStore {
         });
     }
 
-    /** The run a run-pipeline node started, if it has started one (a flow node runs its pipeline once). */
+    /** The latest run a run-pipeline node started, if it has started one: its last try (ADR 0041). */
     public Optional<Run> flowNodeRun(long flowRunId, String flowNode) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement("SELECT " + RUN_COLUMNS
-                + " FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ? AND r.flow_node = ? AND r.flow_item IS NULL")) {
+                + " FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ? AND r.flow_node = ? AND r.flow_item IS NULL "
+                + "ORDER BY r.flow_try DESC LIMIT 1")) {
                 ps.setLong(1, flowRunId);
                 ps.setString(2, flowNode);
                 try (ResultSet rs = ps.executeQuery()) {
                     return rs.next() ? Optional.of(run(rs, 1)) : Optional.<Run>empty();
+                }
+            }
+        });
+    }
+
+    /** One try of a flow node or item: its item (null for a run-pipeline node), its number from 0, and its run. */
+    public record Try(Integer item, int number, Run run) {
+    }
+
+    /** Every try of a flow node's pipeline runs, by item then try (ADR 0041). */
+    public List<Try> flowTries(long flowRunId, String flowNode) {
+        return db.tx(c -> {
+            List<Try> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT r.flow_item, r.flow_try, " + RUN_COLUMNS
+                + " FROM kilnmark.pipeline_run r WHERE r.flow_run_id = ? AND r.flow_node = ? "
+                + "ORDER BY coalesce(r.flow_item, -1), r.flow_try")) {
+                ps.setLong(1, flowRunId);
+                ps.setString(2, flowNode);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        int item = rs.getInt(1);
+                        Integer i = rs.wasNull() ? null : item;
+                        out.add(new Try(i, rs.getInt(2), run(rs, 3)));
+                    }
+                }
+            }
+            return out;
+        });
+    }
+
+    /** The try number of a flow node's or item's latest run, or -1 when it has none. */
+    public int flowLatestTry(long flowRunId, String flowNode, Integer flowItem) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT max(flow_try) FROM kilnmark.pipeline_run "
+                + "WHERE flow_run_id = ? AND flow_node = ? AND coalesce(flow_item, -1) = ?")) {
+                ps.setLong(1, flowRunId);
+                ps.setString(2, flowNode);
+                ps.setInt(3, flowItem == null ? -1 : flowItem);
+                try (ResultSet rs = ps.executeQuery()) {
+                    int t = rs.next() ? rs.getInt(1) : -1;
+                    return rs.wasNull() ? -1 : t;
+                }
+            }
+        });
+    }
+
+    /**
+     * Whether any write of a run had begun: a write node that took a row (ADR 0041). A run that ended
+     * before any did changed nothing a write would, so it may be tried again whatever its write modes.
+     */
+    public boolean writeBegan(long runId) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT EXISTS (SELECT 1 FROM kilnmark.pipeline_node_run "
+                + "WHERE run_id = ? AND type = 'write' AND (first_row_at IS NOT NULL OR coalesce(rows_in, 0) > 0))")) {
+                ps.setLong(1, runId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() && rs.getBoolean(1);
                 }
             }
         });

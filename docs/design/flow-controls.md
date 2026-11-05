@@ -169,7 +169,7 @@ flowchart LR
 - No migration: the timeout is read from the flow's version each time.
 - A timed-out try may be retried (C4) when retries allow.
 
-## C4. `retries` (planned)
+## C4. `retries` (built)
 
 ```mermaid
 flowchart TD
@@ -184,16 +184,35 @@ flowchart TD
 ```
 
 - On `run-pipeline`, `for-each` and `sql`: `retries` 0 to 5, `retry_delay` 10s to 1h (1 minute by
-  default), doubled after each try.
+  default), doubled after each try (`FlowDefinition.Retry.before`). `retry_delay` without `retries`
+  is refused; any other node type refuses both keys.
 - **Pipelines.** Checked when saved: every `write` node of the pipeline's version uses `replace`
   or `upsert`, or the flow is refused, naming the write node ("retries need writes that replace or
   upsert: write-orders appends"). At run time a failed run is also retried when it failed before any
   write began, whatever its modes. A cancelled run (by a person, or the flow) is never retried.
 - **SQL.** A `sql` node runs in one transaction, rolled back on failure, so it may always be
   retried.
+- **Checked when saved** (`FlowService.unsafeWrite`): a write whose mode is set by a parameter
+  counts as unsafe, since it is not known until the run. **At run time** (`mayRetry`) the check is
+  made again against the version the failed run used, unless no write had begun
+  (`PipelineStore.writeBegan`: no write node took a row).
 - Each try is a new pipeline run linked to `(flow run, node, item, try)`; `pipeline_run.flow_try`
-  (0 for the first). The run page lists every try with its link; the node's status is its last
-  try's.
+  (0 for the first), migration V35, with the unique index on all four so each try starts once. The
+  node's row and `flowNodeRun`/`flowItemRun(s)` give the latest try; a worker that takes a flow over
+  carries on from it (`flowLatestTry`), and a failed latest try found again is tried again then if
+  tries are left (the delay starts again).
+- While it waits, the node stays **running**, with "Try 1 of 4 failed; trying again in 2m". It holds
+  no worker and no place. A cancel or stop of the flow while it waits ends it cancelled ("Not tried
+  again: the flow was stopped").
+- A try that timed out is retried as a failure, and the `timed_out` mark is kept only when the last
+  try timed out. A for-each item waiting to be tried again does not count against `max_parallel`;
+  when its time comes, it starts before items not yet started, as places allow.
+- The node's row records `tries` (the number of tries) once there was more than one, which
+  conditions never read. `GET /api/v1/flow-runs/{id}` returns each node's `tries`
+  (`[{item, number, pipelineRunId, status, startedAt, finishedAt}]`, number from 1) when any was a
+  try again, and the run page lists them under **Tries** in the node's or item's details.
+- Not covered by a test: a takeover mid-wait (it needs a second worker), and a person cancelling a
+  try (covered by the cancel rule shared with C3).
 
 ## C5. `priority` (built)
 

@@ -1668,6 +1668,20 @@ export type FlowNodeRun = {
    * it waited before asking for the run, how long the run was queued for a worker, and how long it ran.
    */
   pipelineRunTimes?: PipelineRunTimes | null;
+  /**
+   * Every pipeline run of a node that was tried again after a failure (ADR 0041), by item then try;
+   * absent or null when it never was.
+   */
+  tries?: FlowTry[] | null;
+};
+/** One try of a run-pipeline node, or of a for-each item (`item` from 0; null for run-pipeline): `number` from 1. */
+export type FlowTry = {
+  item: number | null;
+  number: number;
+  pipelineRunId: number;
+  status: FlowNodeStatus | "queued";
+  startedAt: string | null;
+  finishedAt: string | null;
 };
 /** When a pipeline run was asked for, taken by a worker (started) and finished; null until each happens. */
 export type PipelineRunTimes = { requestedAt: string | null; startedAt: string | null; finishedAt: string | null };
