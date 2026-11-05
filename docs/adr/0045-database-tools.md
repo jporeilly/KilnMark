@@ -217,7 +217,10 @@ operations**; what they do not cover is said in point 12.
      whose check cannot read the catalogue it needs. The lists above are that principle written out
      for each database today; when a review finds another catalogued way, it joins the list rather
      than becoming an exception. SQL Server also refuses tables tracked by change data capture
-     (`is_tracked_by_cdc`) or change tracking (`sys.change_tracking_tables`).
+     (`is_tracked_by_cdc`) or change tracking (`sys.change_tracking_tables`), and databases with
+     event notifications (`sys.event_notifications`, `sys.server_event_notifications`);
+     PostgreSQL refuses a database with a logical replication slot (`pg_replication_slots`), which
+     can stream changes without any publication (wal2json and the like).
    Never a table the database or an extension ships: PostgreSQL tables an extension owns
    (`pg_depend` type `e`), SQL Server tables with `is_ms_shipped = 1`. A SQL Server source must name
    its database, and `master`, `msdb`, `model`, `tempdb` and `distribution` are refused, as a MySQL
@@ -365,20 +368,22 @@ operations**; what they do not cover is said in point 12.
    the table while it builds; the preview says so, and where the database has an online form
    (PostgreSQL `CONCURRENTLY`, MySQL `ALGORITHM=INPLACE, LOCK=NONE`, Oracle `ONLINE`, SQL Server
    `ONLINE = ON` on editions that have it) it is offered as a choice, run outside a transaction.
-9. **Never Kilnmark's own database.** Kilnmark's own database is PostgreSQL. It holds an instance
-   marker: a table `kilnmark_instance_marker`, in the schema Kilnmark's migrations use (`kilnmark`, or what
-   `quarkus.flyway.default-schema` is set to; the check reads the setting), with a random id made
-   when Kilnmark first starts. Before an
-   operation on a PostgreSQL source, at planning and again on the run's connection, Kilnmark asks
-   the source's database whether such a table exists, from `pg_class` and `pg_namespace`, which
-   every login can read. If it exists, whatever its id (another Kilnmark installation's database is
-   refused as this one's is), or
-   `pg_class` and `pg_namespace` cannot be read at all (a database that revoked them), the
-   operation is refused. As the database itself is asked, host names, aliases and proxies make no
-   difference. Refusing every use of such a source (reads and SQL a person writes, ADR 0028's open
-   decision) is for the owner; this record refuses operations. Explore's panes and **Count
-   exactly** will make the same check once the marker exists (it comes with operations, D4); the
-   preview, like every other read of such a source, stays with that owner decision.
+9. **Never a Kilnmark database.** Kilnmark's own database is PostgreSQL. Before an operation on a
+   PostgreSQL source, at planning and again on the run's connection, Kilnmark asks the source's
+   database, through `pg_class` and `pg_namespace` (which every login can read), whether it is a
+   Kilnmark database, **in any schema**: whether any schema holds a table `kilnmark_instance_marker`
+   (the random id each installation makes when it first starts, from the release that brings
+   operations), or Kilnmark's own tables together (a `flyway_schema_history` beside tables only
+   Kilnmark makes, such as `data_source`, `asset`, `audit_event` and `api_token`), which also finds
+   an older release's database or one migrated into a schema of another name. If either is found,
+   whoever's installation it is, or if `pg_class` and `pg_namespace` cannot be read at all (a
+   database that revoked them), the operation is refused. As the database itself is asked, host
+   names, aliases and proxies make no difference. Refusing every use of such a source (reads and
+   SQL a person writes, ADR 0028's open decision) is for the owner; this record refuses operations.
+   Explore's panes and **Count exactly** will make the same check once the marker exists (it comes
+   with operations, D4); the preview, like every other read of such a source, stays with that owner
+   decision. A test migrates a Kilnmark database into a schema of another name, and one only to the
+   last release before operations, and both are refused.
 10. **The login check applies.** ADR 0028's login check, made for SQL a person writes, also runs
     before every operation on PostgreSQL (point 3): an operation's statements are fixed shapes, but a
     trigger or an extension can run code with the login's rights, so the login must not be able to
