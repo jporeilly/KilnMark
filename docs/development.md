@@ -942,6 +942,10 @@ elsewhere. The app's security policy allows no inline styles, so the diagrams ar
 presentation attributes only (no `<style>`, no `style=""`), on white, so they read the same in
 every theme.
 
+The README's pictures are in `docs/images` instead: everything in `docs/guide/images` is bundled
+with the UI, and the README's are for GitHub only. They are taken at twice the screen's pixels, so
+they stay sharp at GitHub's width.
+
 - **Diagrams** are drawn by `docs/guide/images/diagrams.mjs`, with plain Node and no packages:
   `node docs/guide/images/diagrams.mjs` writes every `.svg` beside it. Each diagram is a few lines
   of cards, lanes, arrows and icons, in the house colours: one colour per kind of thing (people,

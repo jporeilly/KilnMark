@@ -4,11 +4,13 @@ What is decided and not yet done, in the order it will be worked. Each item name
 decided. When an item ships, it moves to the changelog and leaves this list. Longer-range items
 stay in [Plan & Scope](plan-and-scope.md) under "Beyond v0.1".
 
-Last reviewed: 4 November 2026 (after #78-#85 merged).
+Last reviewed: 5 November 2026 (after #86-#93 merged).
 
 ## Now
 
-1. **README screenshots** of the canvas panel (#55).
+1. **Flow controls** ([ADR 0041](../adr/0041-flow-nodes-for-resources-and-control.md),
+   docs/design/flow-controls.md; owner, 5 November 2026): a node's `timeout`, a flow's `priority`,
+   the `check-source` and `wait-for` nodes, then a node's `retries`, in that order.
 
 ## Next
 
@@ -18,8 +20,9 @@ Last reviewed: 4 November 2026 (after #78-#85 merged).
    and security headers (#67), TLS to Kilnmark's own database (#68), SBOMs, scanning and signed
    releases (#69), encrypted connections to sources (ADR 0034), OIDC sign-in with MFA (ADR 0036,
    #78), access reviews and token policy (ADR 0037, #81), two people for the unmask grant
-   (ADR 0038, #82), backup and restore with a runbook (ADR 0039, #83), and the SSDF
-   self-assessment (#84). Next:
+   (ADR 0038, #82), backup and restore with a runbook (ADR 0039, #83), the SSDF
+   self-assessment (#84), and the bundled Keycloak for customers without an identity provider
+   (ADR 0014, #93). Next:
    - the SSDF gaps: static analysis, Gradle dependency verification, build provenance, a threat
      model; the rest of the evidence pack when a customer's due diligence asks; a full export in
      open formats, for exit;
@@ -32,11 +35,10 @@ Last reviewed: 4 November 2026 (after #78-#85 merged).
 3. **Optimise** (brief of 28 October): a run-page button to optimise, canvas suggestions,
    pre-run checks, flags on slow pipelines. Run tools on the MCP server fold in here (parked item
    in Plan & Scope).
-4. **Flows F4** ([ADR 0026](../adr/0026-flows.md), docs/design/flows.md): the diagram and the run
-   chart (F4a) shipped (#85); editing on the diagram (F4b) shipped (#86); then adding the sample
-   flows from Add samples; deleting a flow; resource control (ADR 0040: worker settings, source
-   limits and several workers are built; a flow's `max_parallel` and the `for-each` node next);
-   the built-in scheduler.
+4. **Flows F4** ([ADR 0026](../adr/0026-flows.md), docs/design/flows.md): the diagram, run chart and
+   editing on the diagram (#85, #86), resource control and the `for-each` node (ADR 0040, #89,
+   #90), and pages laid out as a pipeline's (#90-#92) shipped; then adding the sample flows from
+   Add samples; deleting a flow; the built-in scheduler.
 5. **Connectors** (brief of 28 October): SFTP/FTP, SMB, Azure Blob, REST; Snowflake, Vertica and
    Exasol as connectors of their own, with the SQL that moves files refused (ADR 0030); then
    templates, version history, and v0.1.0.
