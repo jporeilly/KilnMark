@@ -383,6 +383,56 @@ operations**; what they do not cover is said in point 12.
     log. A change to a table such a tool copies reaches its copies. The guide asks that Allow
     changes stay off on a source whose tables are replicated that way.
 
+### 5. How other products do it, and the approach taken
+
+**Generating SQL.** Hibernate's dialects, SQLAlchemy, jOOQ and Liquibase all keep a neutral model
+of a table (columns, types, nulls, keys, indexes) and render it through one dialect per database
+(type mapping, identifier quoting, identity columns, name limits). Kilnmark does the same, with
+the dialects it already has: the write node's `create` code (`WriteSql`) is the dialect, and the
+generator (`DdlWriter`) renders its model through it. So the SQL the generator shows is the SQL a
+pipeline's `create` runs: one code path, not two that drift. Alternatives, and why not:
+
+- **Ask the database for its own DDL** (PostgreSQL's `pg_get_*def`, MySQL's `SHOW CREATE TABLE`,
+  Oracle's `DBMS_METADATA.GET_DDL`, SQL Server's scripting). Exact for the same database, with
+  partitions and constraints, but it cannot translate to another database, and it copies defaults,
+  checks, partition bounds and comments as text, which can quote values (point 2). Not in this
+  record; it could come later for designers with the unmask grant, as text only.
+- **A library** (jOOQ, Liquibase). jOOQ's free edition covers open-source databases only (Oracle and
+  SQL Server need its commercial licence); Liquibase is large and its licence terms would need
+  review. A renderer of Kilnmark's own keeps ADR 0042's dependency verification simple and keeps
+  one code path with `create`.
+- **String templates per database**: rejected; they drift from what pipelines run.
+
+**Managing databases.** Database clients (DBeaver, DataGrip, pgAdmin, SQL Server Management Studio)
+show an object tree from the catalogue; every management action is a form that generates SQL,
+shown before it runs; connections are typed development, test or production, and production is
+marked clearly and asks for confirmation. Change-management tools (Bytebase, Redgate, DBmaestro,
+Atlas) treat a change as a request (its SQL, who asked, why), run review rules that flag
+destructive statements, let the environment decide the policy (development runs, production needs
+a second person), audit every change, offer an undo script where one exists, and keep a history.
+Kilnmark takes both:
+
+- **A fixed set of actions**, each a form that builds its SQL through the same dialect (point 4.3):
+  create a table, add a column, create or drop an index, drop or truncate a table. No free-form
+  change editor: SQL a person writes stays under ADR 0028. Renaming a table or column, and a
+  database's housekeeping (`ANALYZE`, `VACUUM`, statistics), are candidates for later, each added
+  through the same review as this record.
+- **Statements shown first**, with **review rules** that flag what destroys data (drop, truncate)
+  in the preview; typing the table's name confirms those. A later diff of a wanted table against
+  the live one (the Atlas pattern) would add `ALTER`s through the same rules, including type
+  narrowing, which this record does not offer.
+- **The policy follows the environment.** Until environments exist, a source is production unless
+  two admins mark it Not production (point 4.7); a production source is marked clearly on its page
+  and in every preview of a change. When environments arrive (backlog, "change approval and
+  environments"), development and test run on confirmation and production needs a second person,
+  by the same rules.
+- **Undoing.** Where the database can undo DDL (PostgreSQL, SQL Server), each operation runs in one
+  transaction; where it cannot (MySQL, MariaDB, Oracle), the preview says the change cannot be
+  undone. The preview offers an undo script where one exists without losing data (dropping an
+  index or a still-empty table it created) and suggests a backup before a drop or a truncate.
+- **History.** Every plan, approval and run is an audit event (point 4.6), and the source's page
+  lists its changes: what ran, who asked, who approved, and the outcome.
+
 ## What changes in ADR 0028, and what stays
 
 ```mermaid
