@@ -22,6 +22,11 @@ RUN curl -fsSL -o /opt/actions-runner.tar.gz \
       "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
  && echo "${RUNNER_SHA256}  /opt/actions-runner.tar.gz" | sha256sum -c -
 
+# One module's tests at a time on this machine: in parallel, the modules' Testcontainers start their
+# databases at once through Podman's API, which then drops some starts ("Broken pipe") and slows
+# others past their tests' waits. Gradle's user properties override the project's
+# org.gradle.parallel=true here only; GitHub's runners keep building in parallel.
+RUN mkdir -p /root/.gradle && echo 'org.gradle.parallel=false' > /root/.gradle/gradle.properties
 COPY entrypoint.sh /opt/entrypoint.sh
 RUN chmod 755 /opt/entrypoint.sh
 
