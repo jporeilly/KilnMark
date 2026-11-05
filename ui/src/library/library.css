@@ -1,0 +1,121 @@
+/* The Library (ADR 0043): samples in their folders, templates as cards. Colours from tokens.css only. */
+
+.lib-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.lib-bar p,
+.lib-bar-text {
+  margin: 12px 0;
+  max-width: 72ch;
+}
+
+.lib-group h2 {
+  margin-top: 0;
+}
+
+.lib-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.lib-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--km-border);
+}
+
+.lib-item:first-child {
+  border-top: 0;
+}
+
+.lib-item-main {
+  min-width: 0;
+}
+
+.lib-item-state {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+/* Pipeline or flow: a small label before the name, in the colours the sidebar gives each. */
+.lib-kind {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+.lib-kind--pipeline {
+  background: var(--km-accent-teal-tint);
+  color: var(--km-accent-teal-ink);
+}
+
+.lib-kind--flow {
+  background: var(--km-accent-blue-tint);
+  color: var(--km-accent-blue-ink);
+}
+
+.lib-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.lib-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+}
+
+.lib-card h2 {
+  margin: 0;
+  font-size: var(--km-text-md);
+}
+
+.lib-card p {
+  margin: 0;
+}
+
+.lib-card details {
+  width: 100%;
+}
+
+.lib-card .pl-link-button {
+  margin-top: auto;
+}
+
+.lib-yaml {
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
+  white-space: pre;
+}
+
+@media (max-width: 600px) {
+  .lib-item {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .lib-item-state {
+    text-align: left;
+  }
+}

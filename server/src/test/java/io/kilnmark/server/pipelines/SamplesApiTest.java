@@ -1,6 +1,7 @@
 package io.kilnmark.server.pipelines;
 
 import static io.kilnmark.server.Tokens.admin;
+import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItems;
@@ -92,8 +93,20 @@ class SamplesApiTest {
         assertEquals("skipped", added.getString("samples.find { it.name == 'sample-filter' }.outcome"));
         assertEquals("no source chosen for shop-db", added.getString("samples.find { it.name == 'sample-filter' }"
             + ".reason"));
+        // A flow whose pipelines were not all added is skipped, and says which is missing.
         assertEquals("skipped", added.getString("samples.find { it.name == 'sample-quality-decides' }.outcome"));
+        assertTrue(added.getString("samples.find { it.name == 'sample-quality-decides' }.reason")
+            .contains("which is not here"), added.prettify());
         assertTrue(added.getInt("added") > 0);
+
+        // Added samples are marked for the Library; a team's own pipelines are not (ADR 0043).
+        JsonPath pipelines = as(viewer).get("/api/v1/pipelines").then().statusCode(200).extract().jsonPath();
+        assertEquals("sample", pipelines.getString("find { it.name == 'sample-read-write-csv' }.library"));
+        assertEquals("sample", as(viewer).get("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200)
+            .extract().jsonPath().getString("library"));
+        // The templates are never listed or added as samples.
+        assertFalse(list.getList("samples.file", String.class).stream().anyMatch(f -> f.startsWith("templates/")));
+        assertFalse(added.getList("samples.file", String.class).stream().anyMatch(f -> f.startsWith("templates/")));
 
         // Saved with the chosen sources in place of the placeholders.
         String yaml = as(viewer).get("/api/v1/pipelines/sample-read-write-csv").then().statusCode(200)
@@ -107,6 +120,24 @@ class SamplesApiTest {
             .body("samples.findAll { it.name == 'sample-read-write-csv' }.outcome", hasItems("exists"));
         as(viewer).get("/api/v1/samples").then().statusCode(200)
             .body("samples.find { it.name == 'sample-read-write-csv' }.exists", equalTo(true));
+    }
+
+    /** The templates: listed with their YAML for any signed-in person, even with the samples turned off. */
+    @Test
+    void theTemplatesAreListedWithTheirYaml() {
+        String viewer = token("templates-viewer", "viewer");
+        JsonPath t = as(viewer).get("/api/v1/templates").then().statusCode(200).extract().jsonPath();
+        List<String> names = t.getList("name");
+        assertTrue(names.containsAll(List.of("template-copy-table", "template-run-in-order")), names.toString());
+        assertEquals("flow", t.getString("find { it.name == 'template-run-in-order' }.type"));
+        assertTrue(t.getString("find { it.name == 'template-copy-table' }.yaml").contains("source: <your source"));
+        given().get("/api/v1/templates").then().statusCode(401);
+        try {
+            as(Tokens.ADMIN).body(Map.of("offered", false)).put("/api/v1/samples/offered").then().statusCode(200);
+            as(viewer).get("/api/v1/templates").then().statusCode(200);
+        } finally {
+            as(Tokens.ADMIN).body(Map.of("offered", true)).put("/api/v1/samples/offered").then().statusCode(200);
+        }
     }
 
     @Test

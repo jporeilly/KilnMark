@@ -102,12 +102,12 @@ public class SampleResource {
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @RolesAllowed(AccessRole.DESIGNER_ROLE)
-    @Operation(summary = "Add the samples", description = "Adds every sample pipeline whose placeholders are all given "
-        + "a saved source in sources, such as {\"sources\": {\"crm-db\": \"my-postgres\", \"files\": \"my-bucket\"}}. "
+    @Operation(summary = "Add the samples", description = "Adds every sample pipeline and flow whose placeholders are all "
+        + "given a saved source in sources, marked as samples for the Library page, such as {\"sources\": {\"crm-db\": \"my-postgres\", \"files\": \"my-bucket\"}}. "
         + "A placeholder left out skips the samples that use it. A sample whose name is taken is left as it is; one "
         + "that checks with problems (a table the source's scan did not find, a source that does not allow writing) is "
         + "saved as a draft; one that cannot be saved at all is reported as failed, with why, and the rest are still "
-        + "added. Flows are skipped until the flows API comes. With schema, the samples read the sample tables "
+        + "added. Flows are added after the pipelines they run. With schema, the samples read the sample tables "
         + "created there (POST /api/v1/samples/tables) instead of crm.customers and the like. Role: designer.")
     @APIResponses({
         @APIResponse(responseCode = "200", description = "What happened to each sample: added, exists, skipped or failed"),
@@ -117,7 +117,7 @@ public class SampleResource {
         @APIResponse(responseCode = "403", description = "Not a designer")})
     public Samples.AddResult add(Samples.AddRequest body) {
         requireOffered();
-        return samples.add(body, who(), sights);
+        return samples.add(body, who(), AccessRole.highest(identity::hasRole), sights);
     }
 
     @POST

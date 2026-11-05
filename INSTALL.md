@@ -62,8 +62,8 @@ A release is `kilnmark-<version>.tar.gz` (or `.zip`). It ships with
 4. **Open** http://localhost:8780 and sign in with the admin token: it is `KILNMARK_ADMIN_TOKEN` in
    `config/.env`. Under **API tokens**, make a permanent admin token for yourself and keep it safe.
 5. **Add a source** under **Sources**: nothing is scanned until you do.
-6. **To try the samples**, small pipelines that each show one idea, choose **Add samples** on the
-   **Pipelines** page.
+6. **To try the samples**, small pipelines that each show one idea, open the **Library** and choose
+   **Add samples**: they stay in the Library, apart from your own pipelines.
    - **Add the starter pack** creates Kilnmark's sample tables in a database and schema you
      pick, and adds every sample reading them. It needs a database source and a file source that
      allow writing (an admin turns that on under **Sources**).

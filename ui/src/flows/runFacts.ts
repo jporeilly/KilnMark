@@ -10,6 +10,17 @@ const ms = (iso: string | null | undefined) => (iso ? Date.parse(iso) : null);
 const num = (n: FlowNodeRun, k: string) => (typeof n.reported?.[k] === "number" ? (n.reported[k] as number) : null);
 const plural = (n: number, one: string, many: string) => `${formatNumber(n)} ${n === 1 ? one : many}`;
 
+/** Whether a run-pipeline or sql node took longer than its timeout and was stopped (ADR 0041). */
+export function timedOut(n: FlowNodeRun): boolean {
+  return n.reported?.timed_out === true;
+}
+
+/** The items (from 0) of a for-each node whose runs took longer than its timeout and were stopped. */
+export function timedOutItems(n: FlowNodeRun): Set<number> {
+  const list = n.reported?.timed_out_items;
+  return new Set(Array.isArray(list) ? list.filter((x): x is number => typeof x === "number") : []);
+}
+
 /** What a node reported, in words: rows written, score, share set aside, rows changed. */
 export function reportedWords(n: FlowNodeRun): string {
   const out: string[] = [];

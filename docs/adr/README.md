@@ -44,4 +44,5 @@ Add a new record rather than editing an accepted one; mark the old one supersede
 | [0039](0039-backup-and-restore.md) | Backup and restore: a dump of the database, a copy of the keys, kept apart | Accepted |
 | [0040](0040-parallel-runs-and-limits.md) | Parallel runs, and the limits around them | Accepted |
 | [0041](0041-flow-nodes-for-resources-and-control.md) | Flow nodes that check resources, and controls on how nodes run | Accepted |
+| [0043](0043-library-of-samples-and-templates.md) | A Library of samples and templates, apart from a team's own work | Accepted |
 | [0044](0044-installing-with-one-control-script.md) | Installing and running Kilnmark with one control script, from signed images | Accepted |

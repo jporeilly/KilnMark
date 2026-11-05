@@ -1,0 +1,19 @@
+# Template: load a file into a database table (a Kilnmark template).
+# Replace each <...> with your own: the file storage and the file's path, and a database that
+# allows writing. CSV, TSV, JSON, Parquet and Excel files can be read.
+kilnmark: pipeline/v1
+name: template-file-to-table
+description: A file loaded into a database table.
+
+nodes:
+  - id: file
+    type: read
+    source: <your file storage>
+    asset: <folder/file.csv>
+
+  - id: load
+    type: write
+    input: file
+    source: <a database that allows writing>
+    table: <schema.table>
+    mode: append              # create | append | replace | upsert (with key)
